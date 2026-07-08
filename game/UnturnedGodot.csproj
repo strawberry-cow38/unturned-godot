@@ -1,0 +1,14 @@
+<Project Sdk="Godot.NET.Sdk/4.6.2">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>disable</Nullable>
+    <RootNamespace>UnturnedGodot</RootNamespace>
+  </PropertyGroup>
+  <!-- The ported engine-agnostic core lives in these libs; Godot is the presentation host. -->
+  <ItemGroup>
+    <ProjectReference Include="..\core\SDG.Compat\SDG.Compat.csproj" />
+    <ProjectReference Include="..\core\SDG.NetPak\SDG.NetPak.csproj" />
+    <ProjectReference Include="..\core\UnturnedDat\UnturnedDat.csproj" />
+  </ItemGroup>
+</Project>

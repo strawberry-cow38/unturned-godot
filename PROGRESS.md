@@ -17,7 +17,7 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       UnityEngine). PROVEN CORRECT by the game's own UnityDatEx/ColorEx tests passing against them.**
 - [x] **TALLY: 1085 tests green standalone** (NetPak 46 + UnturnedDat 1039). The engine-agnostic core carries.
 - [ ] Un-defer NetPak UnityNetPakTests (Vector/Quat now available) + Steamworks-ex (needs Steamworks.NET)
-- [ ] Godot 4 .NET solution skeleton (Jolt on) + Godot<->SDG.Compat adapter (Vector3<->Godot.Vector3 etc)  ← NEXT
+- [x] **Godot 4.6.2 mono skeleton BUILDS + RUNS the ported core in-engine.** Headless run proof: NetPak 0xABC r/w True, DatParser parsed (2 keys), Unity->Godot adapter Z-flip (1,2,3)->(1,2,-3). game/ = Godot .NET proj refs SDG.Compat+NetPak+UnturnedDat + GodotCompat adapter + Main smoke node. Jolt physics set.
 - [ ] 0a rip station: AssetRipper full rip of the Steam install → canonical ripped/ tree
 - [ ] 0d converter v0 + ContentProvider (GLB/PNG passthrough, static-prop YAML→.tscn, GUID manifest)
 - [ ] GATE: a ripped prop instantiates in a Godot scene via ContentProvider by its original GUID

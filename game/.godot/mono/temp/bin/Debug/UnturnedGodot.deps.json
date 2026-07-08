@@ -1,0 +1,117 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "UnturnedGodot/1.0.0": {
+        "dependencies": {
+          "Godot.SourceGenerators": "4.6.2",
+          "GodotSharp": "4.6.2",
+          "GodotSharpEditor": "4.6.2",
+          "SDG.Compat": "1.0.0",
+          "SDG.NetPak": "1.0.0",
+          "UnturnedDat": "1.0.0"
+        },
+        "runtime": {
+          "UnturnedGodot.dll": {}
+        }
+      },
+      "Godot.SourceGenerators/4.6.2": {},
+      "GodotSharp/4.6.2": {
+        "runtime": {
+          "lib/net8.0/GodotSharp.dll": {
+            "assemblyVersion": "4.6.2.0",
+            "fileVersion": "4.6.2.0"
+          }
+        }
+      },
+      "GodotSharpEditor/4.6.2": {
+        "dependencies": {
+          "GodotSharp": "4.6.2"
+        },
+        "runtime": {
+          "lib/net8.0/GodotSharpEditor.dll": {
+            "assemblyVersion": "4.6.2.0",
+            "fileVersion": "4.6.2.0"
+          }
+        }
+      },
+      "SDG.Compat/1.0.0": {
+        "runtime": {
+          "SDG.Compat.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "SDG.NetPak/1.0.0": {
+        "dependencies": {
+          "SDG.Compat": "1.0.0"
+        },
+        "runtime": {
+          "SDG.NetPak.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "UnturnedDat/1.0.0": {
+        "dependencies": {
+          "SDG.Compat": "1.0.0"
+        },
+        "runtime": {
+          "UnturnedDat.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "UnturnedGodot/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Godot.SourceGenerators/4.6.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-CqSn9E38CqCvHARIpZXzYw/KkDKkrGjCYjRrKq3kTAIsDGOOZ/W9wiVnfbvmTpER7gbbrFKAd6WA201ELBynQw==",
+      "path": "godot.sourcegenerators/4.6.2",
+      "hashPath": "godot.sourcegenerators.4.6.2.nupkg.sha512"
+    },
+    "GodotSharp/4.6.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-yWYaxRtawrYOQ6TZqKovkw6IN3jNWLTjfrL+pvoGdprvGT7LOYdBCwy0OU7rSfzTn48Rr4IuyuZoSuC0Cp2JeA==",
+      "path": "godotsharp/4.6.2",
+      "hashPath": "godotsharp.4.6.2.nupkg.sha512"
+    },
+    "GodotSharpEditor/4.6.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-WbxolK7BIzSl7d8jhTQQSwZ7JEf+6RHeaZWa6aw7f/qXsN/hXzFSgQvpKxGrLo0icQlowjvF0NomnYO5owMG7w==",
+      "path": "godotsharpeditor/4.6.2",
+      "hashPath": "godotsharpeditor.4.6.2.nupkg.sha512"
+    },
+    "SDG.Compat/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "SDG.NetPak/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "UnturnedDat/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
