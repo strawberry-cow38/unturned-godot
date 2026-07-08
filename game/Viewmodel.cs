@@ -8,8 +8,8 @@ namespace UnturnedGodot
     public partial class Viewmodel : Node3D
     {
         MeshInstance3D _gun;
-        Vector3 _basePos = new Vector3(0.24f, -0.27f, -0.44f);
-        Vector3 _baseRotDeg = new Vector3(-86f, 9f, 183f);  // barrel forward + slight downward tilt, right-side up
+        Vector3 _basePos = new Vector3(0.20f, -0.22f, -0.46f);
+        Vector3 _baseRotDeg = new Vector3(90f, 13f, 3f);    // pitch +90 (inverted) = barrel forward, right-side up
         float _recoil;
         double _t;
 
