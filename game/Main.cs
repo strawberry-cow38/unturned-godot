@@ -85,7 +85,7 @@ namespace UnturnedGodot
                 _rigCaptureFrames = new[] { 10, 66, 89, 92, 95, 120 };  // equip -> ADS -> fire+1 (muzzle flash + tracer) -> reload
                 _vmTest = true;
                 GetWindow().Size = new Vector2I(2560, 1440);
-                BuildViewmodelTest();
+                BuildViewmodelTest(gun ?? "eaglefire");   // --gun=<name> picks the gun (eaglefire | maplestrike)
                 return;
             }
 
@@ -211,7 +211,7 @@ namespace UnturnedGodot
 
         // --vm=DIR : render the first-person viewmodel through its own camera (the demo uses a separate cam,
         // so the viewmodel never shows there). Floor + backdrop wall + FP camera + Viewmodel; kick at f20.
-        void BuildViewmodelTest()
+        void BuildViewmodelTest(string gunName)
         {
             var env = new Godot.Environment
             {
@@ -231,7 +231,7 @@ namespace UnturnedGodot
             AddChild(wall);
             var cam = new Camera3D { Current = true, Fov = 70f, Position = new Vector3(0f, 1.6f, 2f) };
             AddChild(cam);
-            _vm = new Viewmodel();   // self-contained: own SubViewport camera at FOV 60, composited on top
+            _vm = new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
         }
 
@@ -344,11 +344,10 @@ namespace UnturnedGodot
             BuildCrates();                 // bundled ripped-prop scenery
 
             var player = new PlayerController();
-            AddChild(player);                       // _Ready builds its camera + collider
-            player.GlobalPosition = new Vector3(0, 1.0f, 0);
-
-            // equip a real Unturned gun from its bundled ItemGunAsset .dat (Eaglefire)
+            // load the gun FIRST so the gun name is set before _Ready builds the per-gun viewmodel
             player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);                       // _Ready builds its camera + collider + viewmodel
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
 
             AddChild(new HUD { Player = player });
 

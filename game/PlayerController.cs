@@ -12,6 +12,7 @@ namespace UnturnedGodot
         readonly PlayerMovementSim _move = new PlayerMovementSim();
         Camera3D _cam;
         Viewmodel _viewmodel;
+        string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
 
         [Export] public float MouseSensitivity = 0.12f;
@@ -107,6 +108,7 @@ namespace UnturnedGodot
             else text = System.IO.File.Exists(datPath) ? System.IO.File.ReadAllText(datPath) : null;
             if (string.IsNullOrEmpty(text)) { GD.PushError($"[gun] .dat not found: {datPath}"); return; }
             Gun = GunDef.FromDatText(text);
+            _gunName = System.IO.Path.GetFileNameWithoutExtension(datPath);
             Ammo = Gun.AmmoMax;
             GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax}");
         }
@@ -122,7 +124,7 @@ namespace UnturnedGodot
 
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
             AddChild(_cam);
-            _viewmodel = new Viewmodel();   // self-contained: its own SubViewport camera at FOV 60, composited on top
+            _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
             AddChild(_viewmodel);
             _rng.Randomize();
 

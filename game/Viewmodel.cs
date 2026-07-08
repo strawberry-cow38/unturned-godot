@@ -50,12 +50,18 @@ namespace UnturnedGodot
         bool _aiming;
         float _aimT;       // 0..1 aim-accuracy ramp over AimInDuration seconds
         float _aimAlpha;   // eased blend (hip 0 -> ADS 1)
-        // ADS aligns the mounted iron sight's real "Aim" hook onto the camera's aim axis (source:
-        // GetAimingViewmodelAlignment + Attachments.defaultAimHook = sightModelLOD0.Find("Aim")). Pulled from
-        // core.masterbundle (UnityPy): eaglefire_iron_sights/sight.prefab mounted at the gun's Sight hook gives
-        // Aim in gun space = SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206)+Aim(0,-0.6,0.0918) = (0,-0.4688,
-        // 0.2098); converted to the port gun frame (x,y,z)->(-x,y,-z) = (0,-0.4688,-0.2098). Marker lands on-axis.
-        static readonly Vector3 AimHookLocal = new Vector3(0f, -0.4688f, -0.2098f);
+        // Per-gun viewmodel visuals: body + sight meshes, albedo, and the sight's ADS "Aim" hook (extracted from
+        // each gun's sight.prefab; source: GetAimingViewmodelAlignment). Unturned assault rifles share the Sight
+        // hook + Military_30 mag + FX hooks, so only these differ. Set GunName before the node enters the tree
+        // (_Ready builds the gun). Aim hooks: Eaglefire SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206)+
+        // Aim(0,-0.6,0.0918) -> port (0,-0.4688,-0.2098); Maplestrike Aim(0,-0.57,0.1111) -> port (0,-0.4388,-0.2291).
+        public string GunName = "eaglefire";
+        struct GunVisual { public string Gun, Sight, Albedo; public Vector3 AimHook; }
+        static GunVisual Visual(string name) => name switch
+        {
+            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Albedo = "maplestrike_albedo.png", AimHook = new Vector3(0f, -0.4388f, -0.2291f) },
+            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Albedo = "eaglefire_albedo.png",   AimHook = new Vector3(0f, -0.4688f, -0.2098f) },
+        };
         Node3D _sight;
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
@@ -111,9 +117,10 @@ namespace UnturnedGodot
                     var att = new BoneAttachment3D { Name = "GunAttach" };
                     skel.AddChild(att);
                     att.BoneName = skel.GetBoneName(hb);
-                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj("res://content/eaglefire_gun.txt") };
+                    var gv = Visual(GunName);
+                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{gv.Gun}") };
                     var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.6f };
-                    var tex = LoadTex("res://content/eaglefire_albedo.png");
+                    var tex = LoadTex($"res://content/{gv.Albedo}");
                     if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
@@ -124,7 +131,7 @@ namespace UnturnedGodot
                     // at localPos 0 / localRot identity / localScale 1. The sight's Model_0 origin therefore sits at
                     // SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206) = (0,0.1312,0.118) -> port (0,0.1312,-0.118).
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.06f, 0.07f), Metallic = 0.75f, Roughness = 0.35f };
-                    var ironMesh = ContentProvider.ParseObj("res://content/eaglefire_iron_sights.txt");
+                    var ironMesh = ContentProvider.ParseObj($"res://content/{gv.Sight}");
                     if (ironMesh != null)
                         mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = new Vector3(0f, 0.1312f, -0.118f) });
 
@@ -137,11 +144,11 @@ namespace UnturnedGodot
                     if (magMesh != null)
                         mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = new Vector3(0f, 0.0166f, 0.0238f) });
 
-                    // ADS anchor marker at the sight's real Aim hook (see AimHookLocal) — ADS slides the arms so this
+                    // ADS anchor marker at the sight's real Aim hook (gv.AimHook, per-gun) — ADS slides the arms so this
                     // lands on the camera axis, i.e. you look straight through the aperture.
                     _sight = new Node3D { Name = "AimHook" };
                     mi.AddChild(_sight);
-                    _sight.Position = AimHookLocal;
+                    _sight.Position = gv.AimHook;
 
                     // muzzle flash = the REAL Muzzle_0 effect (ID 3; the Eaglefire.dat has Muzzle 3), extracted from
                     // core.masterbundle: a warm point light (Unity color (0.94,0.76,0.15), intensity 1.37 — NOT the old
