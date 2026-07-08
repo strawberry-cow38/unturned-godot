@@ -306,3 +306,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       -> proper down-the-sights, no receiver block. Built on the clean 591b2c1 base (view-space aim + additive Aim_Start
       + the AdsSightDepth viewing distance). Pushed c1cb7ad. The skull-eye/camera-slide/source-mount experiments were
       parked (not used) — the clean base + modeled irons is the shipped approach.
+- [ ] **VIEWMODEL — Eaglefire irons = a default SIGHT ITEM (2026-07-08, mechanism FIGURED OUT)** (master: "thats a proc model, FIGURE OUT HOW ITS DONE").
+      Cracked how the Eaglefire irons work (the real question): they're NOT part of the gun mesh — they're a separate
+      default SIGHT ATTACHMENT. Eaglefire.dat has `Sight 5`, and item ID 5 = `Eaglefire_Iron_Sights` (GUID
+      ec62d401a5a94d87a04564cc5705c026, Bundles/Items/Sights/Eaglefire_Iron_Sights/). The game mounts THAT item's
+      model at the gun's Sight hook (0,-0.184,0.17) via Attachments.cs Instantiate(sightAsset.sight) — same path a
+      scope takes. That's why my extracted gun mesh has no irons and why my modeled fakes (c1cb7ad) were wrong
+      (master rejected them). BLOCKER: the actual iron-sight MESH is a generic Model_0 among 200+ item models in the
+      master bundle; the HTTP asset-browser can't pin it (the sight bundle's Aim hook isn't in the loaded AssetRipper
+      session, so it may not be loaded). Need a clean extraction (AssetRipper full named export, or the exact model
+      location) then mount at the hook — the mount + hook are already wired. PENDING master: kick off the export vs
+      point me to the model. NOTE: c1cb7ad on main still has the REJECTED fake sights — replace with the real model.
