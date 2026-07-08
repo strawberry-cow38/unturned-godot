@@ -16,7 +16,11 @@ namespace UnturnedGodot
         RiggedCharacter _arms;
         Node3D _gun;
         CanvasLayer _layer;
-        Vector3 _armsPos = new Vector3(0.22f, -1.75f, 0.12f);  // right-handed lower viewmodel
+        // Source-accurate: horizontal offset is ZERO (PlayerAnimator.cs:1653 base = Vector3.zero,
+        // PreferenceData Offset_Horizontal defaults 0). The gun reads right-handed because the RIG holds
+        // it in the right hand (lefties get localScale.x=-1, PlayerAnimator:1613 — a mirror, not a shift).
+        // Y is the eye-alignment + the source -0.45 vertical drop (PlayerAnimator:1431, gun sits low).
+        Vector3 _armsPos = new Vector3(0f, -1.75f, 0.12f);
         float _gunRoll = 0f;
         float _recoil;
         double _t;
