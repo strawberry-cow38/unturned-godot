@@ -35,10 +35,9 @@ namespace UnturnedGodot
         // ADS just raises the gun's sight onto the view axis (GetAimingViewmodelAlignment centers the aimHook
         // + a +0.45 eye-raise that cancels the hip drop) and cuts sway to 0.1x (viewmodelSwayMultiplier).
         public const float AimInDuration = 0.25f;   // Eaglefire.dat Aim_In_Duration
-        // The View hook is the REAR sight, so aligning it exactly to the eye (source: camera moves to the hook)
-        // parks the breech in your face. Unturned's own model/viewmodel geometry makes that read fine; ours
-        // needs a small forward readability offset so you look DOWN the sights instead of at the breech.
-        const float AdsSightDepth = -0.30f;
+        // ADS uses the real Aim-hook alignment (below), NO depth constant: the source (GetAimingViewmodelAlignment)
+        // parks the viewmodel camera AT the sight's Aim hook, so eye relief + apparent sight size fall straight out
+        // of the real model geometry — nothing tunable.
         bool _aiming;
         float _aimT;       // 0..1 aim-accuracy ramp over AimInDuration seconds
         float _aimAlpha;   // eased blend (hip 0 -> ADS 1)
@@ -172,14 +171,14 @@ namespace UnturnedGodot
             var sway = new Vector3(Mathf.Sin((float)_t * 1.4f) * 0.004f, Mathf.Sin((float)_t * 2.2f) * 0.003f, 0f) * swayMult;
             Vector3 hipPos = _armsPos + sway + new Vector3(0f, 0.01f, 0.05f) * _recoil;
             _arms.Position = hipPos;
-            // fine sight alignment: bring the gun's View hook onto the aim axis (x=0, y=0) at its NATURAL depth.
-            // The additive Aim_Start pose (above) now sets the gross hand position; this just centers the sight
-            // exactly (source: GetAimingViewmodelAlignment). No forced depth anymore.
+            // SOURCE-EXACT ADS (GetAimingViewmodelAlignment): bring the sight's real Aim hook onto the camera
+            // ORIGIN — the source parks the viewmodel camera AT the aim hook (InverseTransformPoint into the cam's
+            // space, scaled by aim progress). No forced depth: the sight sits at its natural eye relief, so its
+            // apparent size is exactly what the real model geometry gives.
             if (_aimAlpha > 0.0001f && _sight != null)
             {
-                Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);
-                Vector3 target = new Vector3(0f, 0f, AdsSightDepth);
-                _arms.Position = hipPos + (target - mCam) * _aimAlpha;
+                Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);   // aim hook, camera-local
+                _arms.Position = hipPos - mCam * _aimAlpha;           // slide arms so the aim hook -> camera origin
             }
             // reload gesture: dip the gun down/in while reloading (simple visual; real Gun_Reload anim is a TODO)
             _reloadBlend = Mathf.MoveToward(_reloadBlend, _reloading ? 1f : 0f, (float)delta * 4f);
