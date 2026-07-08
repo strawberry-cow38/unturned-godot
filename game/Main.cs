@@ -18,7 +18,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -30,6 +30,7 @@ namespace UnturnedGodot
                 else if (arg == "--netdemo") netdemo = true;
                 else if (arg == "--server") server = true;
                 else if (arg == "--client") client = true;
+                else if (arg == "--smoke") smoke = true;
             }
 
             if (server) { BuildServer(); return; }              // headless dedicated server
@@ -55,6 +56,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildShowcase(catalog, picks);
                 return; // capture happens a few frames later in _Process
+            }
+
+            if (!smoke)
+            {
+                // DEFAULT (the exported build): interactive single-player survival.
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildPlayable(null, false, null);
+                return;
             }
 
             // --- smoke: ported core runs in-engine ---
@@ -213,13 +222,15 @@ namespace UnturnedGodot
             ground.AddChild(gmesh);
             AddChild(ground);
 
+            CharacterModel.LoadBundled();  // real ripped character for the zombies
+            BuildCrates();                 // bundled ripped-prop scenery
+
             var player = new PlayerController();
             AddChild(player);                       // _Ready builds its camera + collider
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
 
-            // equip a real Unturned gun from its ItemGunAsset .dat (default: Eaglefire from the retail install)
-            const string eaglefire = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\Items\Guns\Eaglefire\Eaglefire.dat";
-            player.LoadGun(gunPath ?? eaglefire);
+            // equip a real Unturned gun from its bundled ItemGunAsset .dat (Eaglefire)
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
 
             AddChild(new HUD { Player = player });
 
@@ -235,13 +246,25 @@ namespace UnturnedGodot
             }
             else
             {
-                for (int i = 0; i < 4; i++)
-                {
-                    var z = new ZombieController { Target = player };
-                    AddChild(z);
-                    z.GlobalPosition = new Vector3((i - 1.5f) * 3f, 0.2f, -14f);
-                }
+                AddChild(new HordeSpawner { Target = player });
                 GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
+            }
+        }
+
+        // A few bundled ripped crates as cover/scenery (portable res:// assets).
+        void BuildCrates()
+        {
+            var crate = ContentProvider.ParseObj("res://content/crate.txt");
+            if (crate == null) return;
+            var aabb = crate.GetAabb();
+            float big = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
+            float s = big > 0.01f ? 2.2f / big : 1f;
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.45f, 0.32f) };
+            foreach (var pos in new[] { new Vector3(7, 0, -6), new Vector3(-8, 0, -4), new Vector3(6, 0, 8), new Vector3(-6, 0, 9), new Vector3(11, 0, 2) })
+            {
+                var mi = new MeshInstance3D { Mesh = crate, MaterialOverride = mat, Scale = new Vector3(s, s, s) };
+                AddChild(mi);
+                mi.Position = pos + new Vector3(0, -aabb.Position.Y * s, 0);
             }
         }
 
@@ -296,7 +319,7 @@ namespace UnturnedGodot
             AddChild(cp);
             cp.LoadManifest(manifest);
             cp.LoadTextureManifest(@"C:\claude-workspace\ripped-mb\converted\texture_manifest.json");
-            CharacterModel.Load(cp); // the real ripped character mesh for players + zombies
+            CharacterModel.LoadBundled(); // the real ripped character mesh for players + zombies
 
             (string name, float x, float z, float s)[] scenery =
             {

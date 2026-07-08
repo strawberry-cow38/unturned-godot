@@ -21,18 +21,96 @@
           }
         }
       },
-      "GodotSharpEditor/4.6.2": {
-        "type": "package",
+      "SDG.Compat/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "compile": {
+          "bin/placeholder/SDG.Compat.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/SDG.Compat.dll": {}
+        }
+      },
+      "SDG.NetPak/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
         "dependencies": {
-          "GodotSharp": "4.6.2"
+          "SDG.Compat": "1.0.0"
         },
         "compile": {
-          "lib/net8.0/GodotSharpEditor.dll": {
+          "bin/placeholder/SDG.NetPak.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/SDG.NetPak.dll": {}
+        }
+      },
+      "SDG.NetTransport/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "compile": {
+          "bin/placeholder/SDG.NetTransport.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/SDG.NetTransport.dll": {}
+        }
+      },
+      "UnturnedDat/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "dependencies": {
+          "SDG.Compat": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/UnturnedDat.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/UnturnedDat.dll": {}
+        }
+      },
+      "UnturnedNet/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "dependencies": {
+          "SDG.NetPak": "1.0.0",
+          "SDG.NetTransport": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/UnturnedNet.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/UnturnedNet.dll": {}
+        }
+      },
+      "UnturnedSim/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "dependencies": {
+          "SDG.Compat": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/UnturnedSim.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/UnturnedSim.dll": {}
+        }
+      }
+    },
+    "net8.0/win-x64": {
+      "Godot.SourceGenerators/4.6.2": {
+        "type": "package",
+        "build": {
+          "build/Godot.SourceGenerators.props": {}
+        }
+      },
+      "GodotSharp/4.6.2": {
+        "type": "package",
+        "compile": {
+          "lib/net8.0/GodotSharp.dll": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net8.0/GodotSharpEditor.dll": {
+          "lib/net8.0/GodotSharp.dll": {
             "related": ".xml"
           }
         }
@@ -139,19 +217,6 @@
         "lib/net8.0/GodotSharp.xml"
       ]
     },
-    "GodotSharpEditor/4.6.2": {
-      "sha512": "WbxolK7BIzSl7d8jhTQQSwZ7JEf+6RHeaZWa6aw7f/qXsN/hXzFSgQvpKxGrLo0icQlowjvF0NomnYO5owMG7w==",
-      "type": "package",
-      "path": "godotsharpeditor/4.6.2",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "godotsharpeditor.4.6.2.nupkg.sha512",
-        "godotsharpeditor.nuspec",
-        "lib/net8.0/GodotSharpEditor.dll",
-        "lib/net8.0/GodotSharpEditor.xml"
-      ]
-    },
     "SDG.Compat/1.0.0": {
       "type": "project",
       "path": "../core/SDG.Compat/SDG.Compat.csproj",
@@ -187,7 +252,6 @@
     "net8.0": [
       "Godot.SourceGenerators >= 4.6.2",
       "GodotSharp >= 4.6.2",
-      "GodotSharpEditor >= 4.6.2",
       "SDG.Compat >= 1.0.0",
       "SDG.NetPak >= 1.0.0",
       "SDG.NetTransport >= 1.0.0",
@@ -266,11 +330,6 @@
             "target": "Package",
             "version": "[4.6.2, )",
             "autoReferenced": true
-          },
-          "GodotSharpEditor": {
-            "target": "Package",
-            "version": "[4.6.2, )",
-            "autoReferenced": true
           }
         },
         "imports": [
@@ -284,12 +343,31 @@
         ],
         "assetTargetFallback": true,
         "warn": true,
+        "downloadDependencies": [
+          {
+            "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
+            "version": "[8.0.25, 8.0.25]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Runtime.win-x64",
+            "version": "[8.0.25, 8.0.25]"
+          },
+          {
+            "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
+            "version": "[8.0.25, 8.0.25]"
+          }
+        ],
         "frameworkReferences": {
           "Microsoft.NETCore.App": {
             "privateAssets": "all"
           }
         },
         "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
+      }
+    },
+    "runtimes": {
+      "win-x64": {
+        "#import": []
       }
     }
   }

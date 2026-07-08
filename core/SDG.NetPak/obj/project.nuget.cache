@@ -1,8 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "oRMzyJ5DAAk=",
+  "dgSpecHash": "+evcpqvloMA=",
   "success": true,
   "projectFilePath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj",
-  "expectedPackageFiles": [],
+  "expectedPackageFiles": [
+    "C:\\Users\\claude-admin\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.25\\microsoft.netcore.app.runtime.win-x64.8.0.25.nupkg.sha512",
+    "C:\\Users\\claude-admin\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.25\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.25.nupkg.sha512",
+    "C:\\Users\\claude-admin\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.25\\microsoft.aspnetcore.app.runtime.win-x64.8.0.25.nupkg.sha512"
+  ],
   "logs": []
 }

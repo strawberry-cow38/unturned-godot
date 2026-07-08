@@ -89,7 +89,7 @@ namespace UnturnedGodot
             return ParseObj(Resolve(rel));
         }
 
-        static ArrayMesh ParseObj(string path)
+        public static ArrayMesh ParseObj(string path)
         {
             var txt = ReadText(path);
             if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return null; }

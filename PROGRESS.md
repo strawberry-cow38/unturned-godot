@@ -176,5 +176,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       static convention → material is double-sided → renders solid. size (2.25×1.96×0.40), scaled to ~1.8m,
       feet on ground. HONEST: bind-pose T-pose (no skeleton animation yet), and no skin texture mapped
       (Model_0_84 not in the texture map) so it's tinted. But it's the REAL ripped character.
-- [ ] NEXT: skeleton + animation to pose/walk the character (out of T-pose); map its skin texture; the
-      converter's winding for skinned meshes (proper flip vs double-sided); real Zombie AI + UseableGun.
+- [x] **PORTABLE PLAYABLE BUILD** (master: "playable build w/ the launcher"). Made the game self-contained:
+      bundled the ripped **character mesh (res://content/character.txt as raw .obj text so it packs)**, a
+      **crate** prop, the **Eaglefire .dat**, into res://content/ — no more 4080-absolute paths. Loaders
+      made portable: CharacterModel.LoadBundled, PlayerController.LoadGun reads res://, ContentProvider.ParseObj
+      public. Default (no args) now boots **interactive single-player survival**: FP player (WASD/mouse/LMB/
+      Space, real ported movement) + `HordeSpawner` (real character-model zombies chasing) + crate cover +
+      HP/AMMO/KILLS/DEATHS HUD. Verified it boots + renders (assets load from res://). Created UnturnedGodot.sln
+      (Godot .NET export needs it) + export_presets.cfg (Windows, embed_pck, embed .NET, content/ included).
+      Exporting to build/UnturnedGodot.exe now.
+- [ ] NEXT: finish the export → zip → the auto-update launcher (struggle-game/colony pattern); then skeleton
+      animation (out of T-pose); skin texture; real Zombie AI + UseableGun.

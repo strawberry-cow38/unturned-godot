@@ -48,10 +48,17 @@ namespace UnturnedGodot
         // Load a real gun .dat (e.g. Eaglefire) through the ported UnturnedDat layer and equip it.
         public void LoadGun(string datPath)
         {
-            if (!System.IO.File.Exists(datPath)) { GD.PushError($"[gun] .dat not found: {datPath}"); return; }
-            Gun = GunDef.FromDatText(System.IO.File.ReadAllText(datPath));
+            string text;
+            if (datPath.StartsWith("res://") || datPath.StartsWith("user://"))
+            {
+                using var f = Godot.FileAccess.Open(datPath, Godot.FileAccess.ModeFlags.Read);
+                text = f?.GetAsText();
+            }
+            else text = System.IO.File.Exists(datPath) ? System.IO.File.ReadAllText(datPath) : null;
+            if (string.IsNullOrEmpty(text)) { GD.PushError($"[gun] .dat not found: {datPath}"); return; }
+            Gun = GunDef.FromDatText(text);
             Ammo = Gun.AmmoMax;
-            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} playerDmg={Gun.PlayerDamage} range={Gun.Range} firerate={Gun.Firerate}({Gun.Firerate / 50f:F3}s) mag={Gun.AmmoMax}");
+            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax}");
         }
 
         public override void _Ready()

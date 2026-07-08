@@ -40,3 +40,7 @@ skinned.png
 char_model.png
 frealchar.png
 realchar.mp4
+build/
+play.avi
+fplaybuild.png
+*.sln.DotSettings.user
