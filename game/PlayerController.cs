@@ -245,6 +245,7 @@ namespace UnturnedGodot
             if (hit.Count == 0) return false;
             var collider = hit["collider"].As<GodotObject>();
             Vector3 point = hit["position"].AsVector3();
+            SpawnFleshImpact(point, dir);   // blood burst — every hit here is flesh (enemy/ragdoll-bone layers)
             if (collider is ZombieController z)
             {
                 bool wasDead = z.Dead;
@@ -258,6 +259,46 @@ namespace UnturnedGodot
                 return true;
             }
             return false;
+        }
+
+        // Flesh impact — the source Flesh_Dynamic effect (impact ID 5: a ~25-particle billboard blood spray,
+        // size 0.5-1, ~1s life). Ported as a one-shot GPUParticles3D blood burst at the world hit point, sprayed
+        // back out of the wound (-dir) under gravity, auto-freed. (Per-material impacts — concrete/metal/wood —
+        // are a follow-up; flesh is what you hit in the demo.)
+        void SpawnFleshImpact(Vector3 point, Vector3 dir)
+        {
+            var pm = new ParticleProcessMaterial
+            {
+                Direction = -dir,
+                Spread = 60f,
+                InitialVelocityMin = 1.5f,
+                InitialVelocityMax = 4.5f,
+                Gravity = new Vector3(0f, -9.8f, 0f),
+                ScaleMin = 0.5f,
+                ScaleMax = 1.0f,
+                Color = new Color(0.5f, 0.02f, 0.02f),
+            };
+            var mat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.5f, 0.02f, 0.02f),
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            };
+            var ps = new GpuParticles3D
+            {
+                Amount = 24,
+                Lifetime = 1.0,
+                OneShot = true,
+                Explosiveness = 0.95f,
+                ProcessMaterial = pm,
+                DrawPass1 = new QuadMesh { Size = new Vector2(0.1f, 0.1f), Material = mat },
+                Emitting = true,
+            };
+            GetTree().CurrentScene?.AddChild(ps);
+            ps.GlobalPosition = point;
+            var timer = GetTree().CreateTimer(1.4);
+            timer.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
         }
 
         public override void _Process(double delta)
