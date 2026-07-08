@@ -249,3 +249,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       the result links to the gun's collection index -> the hook GameObject's single component is its Transform ->
       `Assets/Yaml?Path={"C":{"B":{"P":[]},"I":<coll>},"D":<transformPathID>}` -> read m_LocalPosition. Gun models
       are all named "Model_0"; find the gun's collection by probing mesh pathID across collections.
+- [x] **VIEWMODEL — real additive Aim_Start layer + ADS distance finding (2026-07-08)** (master: "real fix now!!!!!", no flat depth).
+      Built the genuine additive ADS layer: RiggedCharacter bakes Gun_Aim's per-bone delta (end vs its own
+      frame 0 = the additive reference), switches the arms' AnimationPlayer to Manual advance, and applies that
+      delta over the base hold pose scaled by AimBlend (= aim alpha) in Tick (base-then-additive order). Verified
+      Gun_Aim alone renders as the classic arm-stuck-out additive-delta pose. KEY FINDING: Aim_Start is a SUBTLE
+      hand/shoulder refinement, NOT an arm-extend — its keyframe deltas are small, so it does NOT drive the ADS
+      distance. The distance is the source camera->View-hook alignment, and the View hook is the REAR sight, so
+      aligning it exactly to the eye parks the gun's breech in your face (a black block in our viewmodel;
+      Unturned's own model geometry hides it in-game). Kept a small forward readability offset (AdsSightDepth
+      -0.30), now HONESTLY labeled as a readability call, not source. x/y sight centering still source-exact from
+      the real hook. Pushed 591b2c1. OPEN Q for master: accept the small offset, or go pure-source (the block)?
