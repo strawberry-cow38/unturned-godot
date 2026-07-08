@@ -27,6 +27,7 @@ namespace UnturnedGodot
         bool _reloading;      // true while the Gun_Reload clip plays (blocks ADS)
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
+        AudioStreamPlayer _shootSnd, _reloadSnd;   // real Eaglefire Shoot/Reload sounds (from the bundle AudioClips)
         // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
         // is non-vanilla): a generic 5.56 casing (yellow rectangle cube) tossed from the gun's Eject hook each shot,
         // arcing out to the right + tumbling under gravity, then despawning. Lives in the viewmodel viewport world.
@@ -163,6 +164,14 @@ namespace UnturnedGodot
                     // down the barrel (+Y = aim), shown with the flash. Thin box from the muzzle extending downrange.
                     var tracerMat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, BlendMode = BaseMaterial3D.BlendModeEnum.Add, AlbedoColor = new Color(1f, 0.9f, 0.5f) };
                     _muzzleFlash.AddChild(new MeshInstance3D { Name = "Tracer", Mesh = new BoxMesh { Size = new Vector3(0.03f, 14f, 0.03f) }, MaterialOverride = tracerMat, Position = new Vector3(0f, 7f, 0f) });
+
+                    // real gun sounds — the Eaglefire's Shoot/Reload AudioClips from the bundle (-> ogg). Non-3D
+                    // AudioStreamPlayers output to the Master bus, so they're audible even though the gun lives in
+                    // the viewmodel SubViewport (the player's own gun sound is non-positional anyway).
+                    _shootSnd = new AudioStreamPlayer { Stream = LoadOgg("res://content/eaglefire_shoot.ogg"), VolumeDb = -3f };
+                    mi.AddChild(_shootSnd);
+                    _reloadSnd = new AudioStreamPlayer { Stream = LoadOgg("res://content/eaglefire_reload.ogg"), VolumeDb = -3f };
+                    mi.AddChild(_reloadSnd);
                     mi.AddChild(_muzzleFlash);
 
                     // Eject hook marker (gun Eject hook (0,0.0275,0.0814) -> port (0,0.0275,-0.0814)) + the shared
@@ -182,7 +191,7 @@ namespace UnturnedGodot
             AddChild(_layer);
         }
 
-        public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; EjectCasing(); }
+        public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; EjectCasing(); _shootSnd?.Play(); }
 
         // Toss a casing from the Eject hook: initial velocity = gun-right + up + slightly back (+ jitter), then it
         // arcs under gravity + tumbles (integrated in _Process). Parented to the viewport world so it flies free of
@@ -211,7 +220,7 @@ namespace UnturnedGodot
         public void SetReloading(bool on)
         {
             _reloading = on;
-            if (on) { _aiming = false; _arms?.Play("Gun_Reload"); }   // real Gun_Reload arm anim (plays once, holds its end = ready)
+            if (on) { _aiming = false; _arms?.Play("Gun_Reload"); _reloadSnd?.Play(); }   // real reload arm anim + sound
         }
 
         public float AimAlpha => _aimAlpha;   // 0 hip .. 1 ADS, for spread/accuracy
@@ -286,6 +295,12 @@ namespace UnturnedGodot
             string p = ProjectSettings.GlobalizePath(res);
             if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
             return null;
+        }
+
+        static AudioStream LoadOgg(string res)
+        {
+            string p = ProjectSettings.GlobalizePath(res);
+            return System.IO.File.Exists(p) ? AudioStreamOggVorbis.LoadFromFile(p) : null;
         }
     }
 }
