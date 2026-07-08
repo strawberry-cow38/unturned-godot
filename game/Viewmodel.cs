@@ -26,6 +26,8 @@ namespace UnturnedGodot
         double _t;
         bool _reloading;      // reload gesture: dip the gun while reloading
         float _reloadBlend;   // eased 0..1
+        Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
+        float _flash;
 
         // ADS (aim down sights) — source: hold RMB to aim; blend over Aim_In_Duration with a
         // smootherstep-squared ease (UseableGun.GetInterpolatedAimAlpha). Eaglefire Aim_In_Duration = 0.25s.
@@ -118,6 +120,12 @@ namespace UnturnedGodot
                     mi.AddChild(front);
                     var rear = new MeshInstance3D { Name = "RearSight", Mesh = new TorusMesh { InnerRadius = 0.028f, OuterRadius = 0.045f, RingSegments = 16 }, MaterialOverride = ironMat, Position = new Vector3(0f, -0.1f, -0.15f) };
                     mi.AddChild(rear);
+
+                    // muzzle flash: a warm light + an unshaded spark at the barrel end (+y), flashed briefly on fire
+                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = new Vector3(0f, 0.75f, -0.04f), Visible = false };
+                    _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 1.6f, LightColor = new Color(1f, 0.82f, 0.45f), LightEnergy = 5f });
+                    _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.03f, Height = 0.06f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.9f, 0.5f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } });
+                    mi.AddChild(_muzzleFlash);
                 }
             }
 
@@ -129,7 +137,7 @@ namespace UnturnedGodot
             AddChild(_layer);
         }
 
-        public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); }
+        public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; }
 
         // Hold RMB to aim (Unturned's default aiming mode). PlayerController drives this on RMB down/up.
         // Source gate: can't begin aiming until the equip pull-out is finished (IsEquipAnimationFinished).
@@ -149,6 +157,8 @@ namespace UnturnedGodot
             _t += delta;
             _equipElapsed += (float)delta;
             _recoil = Mathf.Max(0f, _recoil - (float)delta * 5f);
+            _flash = Mathf.Max(0f, _flash - (float)delta);
+            if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f;
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);
             _aimAlpha = AimEase(_aimT);
