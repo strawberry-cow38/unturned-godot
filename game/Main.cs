@@ -18,7 +18,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null;
-            bool play = false, demo = false, netdemo = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -28,7 +28,12 @@ namespace UnturnedGodot
                 else if (arg == "--demo") demo = true;
                 else if (arg == "--play") play = true;
                 else if (arg == "--netdemo") netdemo = true;
+                else if (arg == "--server") server = true;
+                else if (arg == "--client") client = true;
             }
+
+            if (server) { BuildServer(); return; }              // headless dedicated server
+            if (client) { GetWindow().Size = new Vector2I(1280, 720); BuildClient(); return; }
 
             if (netdemo)
             {
@@ -238,6 +243,43 @@ namespace UnturnedGodot
                 }
                 GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }
+        }
+
+        const ushort NetPort = 47872;
+
+        // Headless dedicated server process (+ a scripted bot player).
+        void BuildServer()
+        {
+            var srv = new Net.NetServer(NetPort);
+            var bot = new Net.NetClient("127.0.0.1", NetPort);
+            AddChild(new ServerNode { Server = srv, Bot = bot });
+            GD.Print($"[SERVER] dedicated NetServer + bot on udp {NetPort}");
+        }
+
+        // Rendering client process: connects to the dedicated server, renders the synced players.
+        void BuildClient()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.6f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            AddChild(ground);
+            var cam = new Camera3D { Current = true, Fov = 62f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 9f, 14f);
+            cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
+
+            var cli = new Net.NetClient("127.0.0.1", NetPort);
+            AddChild(new ClientNode { Client = cli });
+            GD.Print($"[CLIENT] connected to 127.0.0.1:{NetPort}; rendering server-synced players");
         }
 
         // In-process 2-player network demo: a real NetServer + two real NetClients over loopback UDP,

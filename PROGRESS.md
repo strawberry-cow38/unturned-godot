@@ -134,6 +134,11 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       NetClients on loopback UDP, rendering a capsule per synced player — BLUE (local id 1) + ORANGE (remote
       id 2), the orange one's position having travelled bot→server→client over sockets+NetPak. Rendered an
       8s clip on the 4080 GPU, sent master. The 2-player networking loop is real + on screen.
-- [ ] NEXT: two SEPARATE Godot processes (headless --server + rendering --client) for true cross-process
-      play; hook the actual PlayerController state into NetClient (replace scripted orbits); interpolation +
-      reliability/ordering on the UDP transport; regenerate NetGen RPC glue for typed messages.
+- [x] **★ TRUE CROSS-PROCESS 2-PLAYER ★**. `--server` (headless dedicated server + bot) and `--client`
+      (rendering) are now separate Godot processes. Ran both on the 4080: `[SERVER] ... udp 47872` +
+      `[CLIENT] connected to 127.0.0.1:47872`, and the client rendered BOTH players (orange = the server's
+      bot from the OTHER process, blue = local) — the orange's position crossed real UDP between two OS
+      processes. 8s clip sent master. So the networking is real cross-process, not co-located.
+- [ ] NEXT: hook the actual PlayerController (movement/input) into NetClient so a REAL controlled player
+      syncs (replace scripted orbits); client-side interpolation for remote players; reliability/ordering
+      + delta-compression on the UDP transport; regenerate NetGen RPC glue for typed messages.
