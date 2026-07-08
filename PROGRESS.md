@@ -38,7 +38,12 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       The whole approach (readable-source core in Godot + Steam-asset rip keyed by original GUID) is PROVEN.
 
 ## Phase 0 — DONE. Pipeline proven end-to-end. Next: Phase 1 vertical slice.
-- [ ] full-tree converter run (all 4,544 meshes → .obj + GUID manifest from every .meta); textures/materials passthrough
+- [x] **full-tree converter run** (tools/batch_convert.py, on 4080): over all 4,544 ripped meshes →
+      **4,458 converted OK (98.1%)** to .obj + a master GUID→asset manifest (4,458 entries, GUID from each
+      .meta). Edge cases parked for converter-v1: **28 mesh-compressed** (m_CompressedMesh packed stream),
+      **57 multi-stream** (vertex data across >1 stream), 1 degenerate 0-vertex (Plane_2). 0 skinned
+      (Unturned meshes are all static — empty m_BindPose). Converted tree + manifest live on the 4080 at
+      `ripped-mb\converted\` (the asset store; NOT git — derived + large). Repo carries the TOOL + a slice.
 - [ ] un-defer NetPak UnityNetPakTests + Steamworks-ex
 - [ ] Phase 1 vertical slice: headless Godot server + ported NetPak transport, a small ripped level,
       1 gun vs a chasing/dying zombie, Godot-Glazier HUD (2 players)
