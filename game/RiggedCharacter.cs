@@ -210,11 +210,11 @@ namespace UnturnedGodot
             skel.AddChild(mi);
             mi.Skin = skin;
             mi.Skeleton = mi.GetPathTo(skel);
-            mi.MaterialOverride = new StandardMaterial3D
-            {
-                AlbedoColor = tint,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled, // skinned winding is doubled
-            };
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled }; // skinned winding is doubled
+            var tex = LoadSkin();
+            if (tex != null) { mat.AlbedoTexture = tex; mat.AlbedoColor = tint; } // real SkinAtlas, tinted per team
+            else mat.AlbedoColor = tint;
+            mi.MaterialOverride = mat;
 
             // ---- animations ----
             var ap = new AnimationPlayer { Name = "Anim" };
@@ -266,6 +266,21 @@ namespace UnturnedGodot
                 }
             }
             return a;
+        }
+
+        static Texture2D _skin; static bool _skinTried;
+        // Load the raw SkinAtlas at runtime (Image.LoadFromFile, not GD.Load) so it works from a source-pull launcher.
+        static Texture2D LoadSkin()
+        {
+            if (_skinTried) return _skin;
+            _skinTried = true;
+            string p = ProjectSettings.GlobalizePath("res://content/skin.png");
+            if (System.IO.File.Exists(p))
+            {
+                var img = Image.LoadFromFile(p);
+                if (img != null) _skin = ImageTexture.CreateFromImage(img);
+            }
+            return _skin;
         }
 
         static Transform3D Xf(double[] pos, double[] rot, double[] scale)

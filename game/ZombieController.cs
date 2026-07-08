@@ -31,7 +31,7 @@ namespace UnturnedGodot
             shape.Position = new Vector3(0, 0.9f, 0);
             AddChild(shape);
 
-            _rig = RiggedCharacter.Build("res://content/rig.json", new Color(0.45f, 0.72f, 0.40f));
+            _rig = RiggedCharacter.Build("res://content/rig.json", new Color(0.58f, 0.82f, 0.52f)); // sickly-green wash over the skin
             if (_rig != null)
             {
                 _body = _rig;

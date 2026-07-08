@@ -47,7 +47,7 @@ namespace UnturnedGodot
             _deathTimer = 3.5;
             Velocity = Vector3.Zero;
 
-            _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.80f, 0.66f, 0.52f));
+            _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.95f, 0.92f, 0.88f));
             if (_corpse != null)
             {
                 GetParent().AddChild(_corpse);

@@ -166,7 +166,7 @@ namespace UnturnedGodot
             gbody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(gbody);
 
-            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.78f, 0.62f, 0.48f));
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.92f, 0.90f, 0.86f));
             if (rc == null) { GD.PrintErr("[rig] build failed"); GetTree().Quit(); return; }
             AddChild(rc);
             _rc = rc;
