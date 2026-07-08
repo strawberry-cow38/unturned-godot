@@ -119,6 +119,23 @@ namespace UnturnedGodot
             pelvis?.ApplyCentralImpulse(impulse * 0.5f);
         }
 
+        // Bullet impact: shove the ragdoll at the exact bone the shot hit (headshot snaps the head,
+        // shooting a corpse tumbles it). Only affects an already-simulating ragdoll.
+        public void ApplyImpact(Vector3 worldPoint, Vector3 impulse)
+        {
+            if (!_ragdolling) return;
+            PhysicalBone3D best = null; float bd = float.MaxValue;
+            foreach (var c in Skeleton.GetChildren())
+                if (c is PhysicalBone3D pb)
+                {
+                    float d = pb.GlobalPosition.DistanceSquaredTo(worldPoint);
+                    if (d < bd) { bd = d; best = pb; }
+                }
+            best?.ApplyImpulse(impulse, worldPoint - best.GlobalPosition);
+        }
+
+        public bool IsRagdolling => _ragdolling;
+
         static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
         static RigData _shared;

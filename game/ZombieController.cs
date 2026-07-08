@@ -52,8 +52,14 @@ namespace UnturnedGodot
         }
 
         bool _ragdoll;
+        [Export] public float ImpactForce = 9f;
 
-        public void Damage(float amount)
+        public void Damage(float amount) => ApplyDamage(amount, GlobalPosition, Vector3.Zero, false);
+
+        // Gun hit: carries the impact point + bullet direction so the death ragdoll gets shoved there.
+        public void DamageHit(float amount, Vector3 point, Vector3 dir) => ApplyDamage(amount, point, dir, true);
+
+        void ApplyDamage(float amount, Vector3 point, Vector3 dir, bool impact)
         {
             if (Dead) return;
             Health -= amount;
@@ -62,15 +68,17 @@ namespace UnturnedGodot
             {
                 Dead = true;
                 Velocity = Vector3.Zero;
+                CollisionLayer = 0;   // corpse: bullets pass through the capsule to the ragdoll bones
                 if (_rig != null)
                 {
-                    // Unturned RagdollTool: force = (hitDir + up*8 + randXZ(+-16)) * 32, applied to the Spine.
-                    Vector3 away = Target != null ? GlobalPosition - Target.GlobalPosition : -GlobalTransform.Basis.Z;
-                    away = new Vector3(away.X, 0, away.Z);
+                    // Unturned RagdollTool spine pop: (dir + up*8 + randXZ +-16) * 32, one physics step.
+                    Vector3 away = impact ? dir : (Target != null ? GlobalPosition - Target.GlobalPosition : -GlobalTransform.Basis.Z);
+                    away = new Vector3(away.X, 0f, away.Z);
                     away = away.LengthSquared() > 0.01f ? away.Normalized() : -GlobalTransform.Basis.Z;
                     var r = new RandomNumberGenerator(); r.Randomize();
                     Vector3 f = (away * 6f + Vector3.Up * 8f + new Vector3(r.RandfRange(-16f, 16f), 0f, r.RandfRange(-16f, 16f))) * 0.64f;
                     _rig.RagdollStart(f);
+                    if (impact) _rig.ApplyImpact(point, dir * ImpactForce);  // shove at the exact bone hit
                     _ragdoll = true;
                 }
             }

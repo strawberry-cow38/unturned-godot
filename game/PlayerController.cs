@@ -143,14 +143,23 @@ namespace UnturnedGodot
 
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition;
-            Vector3 to = from + (-_cam.GlobalTransform.Basis.Z) * range;
-            var query = PhysicsRayQueryParameters3D.Create(from, to, 1u << 1); // zombie/enemy bit
+            Vector3 dir = -_cam.GlobalTransform.Basis.Z;
+            Vector3 to = from + dir * range;
+            var query = PhysicsRayQueryParameters3D.Create(from, to, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
             var hit = space.IntersectRay(query);
-            if (hit.Count > 0 && hit["collider"].As<GodotObject>() is ZombieController z)
+            if (hit.Count == 0) return false;
+            var collider = hit["collider"].As<GodotObject>();
+            Vector3 point = hit["position"].AsVector3();
+            if (collider is ZombieController z)
             {
                 bool wasDead = z.Dead;
-                z.Damage(damage);
+                z.DamageHit(damage, point, dir);         // impact point -> death ragdoll shoved where hit
                 if (!wasDead && z.Dead) Kills++;
+                return true;
+            }
+            if (collider is PhysicalBone3D pb)            // shooting a corpse -> tumble it
+            {
+                pb.ApplyImpulse(dir * 7f, point - pb.GlobalPosition);
                 return true;
             }
             return false;

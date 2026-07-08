@@ -174,7 +174,7 @@ namespace UnturnedGodot
             if (anim == "Ragdoll")
             {
                 _ragTest = true;
-                _rigCaptureFrames = new[] { 6, 14, 24, 38, 58, 85 };   // span the collapse
+                _rigCaptureFrames = new[] { 8, 24, 42, 50, 58, 78 };   // collapse, then a corpse-shot impact at f46
                 rc.Play("Idle_Stand");
             }
             else
@@ -462,6 +462,7 @@ namespace UnturnedGodot
             {
                 _frame++;
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
+                if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {
                     int want = Mathf.Min(_frame / MontageFramesPerClip, _rigList.Length - 1);
