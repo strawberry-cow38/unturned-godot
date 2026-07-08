@@ -226,3 +226,12 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       sight on the axis (align-to-center is the source op), render-verified down the irons. Pushed c15f383.
       TODO polish: additive Aim_Start pose-blend (my aim clip is additive->T-pose, skipped for now) + gameplay
       couplings (Spread_Aim 0.05, aimingMovementSpeedMultiplier) once the fire model grows spread/move-speed hooks.
+- [x] **VIEWMODEL — ADS equip gate + equip-loop fix (2026-07-08)** (master caught it: "can't ADS while pulling out, check src").
+      CONFIRMED in source: UseableGun.ReceivePlayAimStart/Stop BOTH guard on player.equipment.IsEquipAnimationFinished
+      = (Time >= equipStart + GetAnimationLength("Equip"), PlayerEquipment.cs:269/1633). No aim start/stop until the
+      pull-out finishes. Viewmodel.SetAiming(true) is now ignored until the Gun_Equip clip length elapses (Eaglefire
+      equip = 1.633s); tracks _equipElapsed, exposes IsEquipComplete. ALSO fixed the equip clip LOOPING (extractor
+      marks non-Attack/Startle/Jump as loop -> Gun_Equip secretly re-raised); RiggedCharacter.SetClipLoop makes it
+      play ONCE + hold the ready pose. Re-tuned _armsPosADS vs the corrected post-equip hold (the earlier crisp shot
+      was aiming mid-raise, which the gate now correctly forbids; pose is sensitive near eye height — breech hits the
+      lens if raised too far). --vm demo rebuilt data-driven: equip->settle->ADS->release->hip, no recoil. Pushed c78746c.
