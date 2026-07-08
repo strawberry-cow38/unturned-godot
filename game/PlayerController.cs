@@ -59,6 +59,7 @@ namespace UnturnedGodot
                 Vector3 f = (-GlobalTransform.Basis.Z * 5f + Vector3.Up * 8f + new Vector3(r.RandfRange(-16f, 16f), 0f, r.RandfRange(-16f, 16f))) * 0.64f;
                 _corpse.RagdollStart(f);
             }
+            _viewmodel?.SetAiming(false);
             _viewmodel?.SetShown(false);   // no gun in the death-cam
             if (_cam != null)
             {
@@ -131,6 +132,8 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
                 Fire();
+            else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
+                _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to aim down sights (Unturned default mode)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
                 Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
                     ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

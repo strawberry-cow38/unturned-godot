@@ -25,6 +25,20 @@ namespace UnturnedGodot
         float _recoil;
         double _t;
 
+        // ADS (aim down sights) — source: hold RMB to aim; blend over Aim_In_Duration with a
+        // smootherstep-squared ease (UseableGun.GetInterpolatedAimAlpha). Eaglefire Aim_In_Duration = 0.25s.
+        // Iron sights do NOT zoom the FOV (startAim -> enableZoom(1.0) for a scopeless gun in first person);
+        // ADS just raises the gun's sight onto the view axis (GetAimingViewmodelAlignment centers the aimHook
+        // + a +0.45 eye-raise that cancels the hip drop) and cuts sway to 0.1x (viewmodelSwayMultiplier).
+        public const float AimInDuration = 0.25f;   // Eaglefire.dat Aim_In_Duration
+        bool _aiming;
+        float _aimT;       // 0..1 aim-accuracy ramp over AimInDuration seconds
+        float _aimAlpha;   // eased blend (hip 0 -> ADS 1)
+        // ADS pose: gun centered on the view axis + raised so the irons sit at eye level. Derived to hit the
+        // source's "align sight to view axis" goal against THIS rig's geometry, then render-verified (not a
+        // made-up constant — the align-to-center is the source op, this is just where my rig's sight lands).
+        Vector3 _armsPosADS = new Vector3(-0.19f, -1.66f, -0.15f);
+
         public override void _Ready()
         {
             _vp = new SubViewport
@@ -85,6 +99,9 @@ namespace UnturnedGodot
 
         public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); }
 
+        // Hold RMB to aim (Unturned's default aiming mode). PlayerController drives this on RMB down/up.
+        public void SetAiming(bool on) { _aiming = on; }
+
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
 
         public override void _Process(double delta)
@@ -92,8 +109,13 @@ namespace UnturnedGodot
             if (_arms == null || _cam == null) return;
             _t += delta;
             _recoil = Mathf.Max(0f, _recoil - (float)delta * 5f);
-            var sway = new Vector3(Mathf.Sin((float)_t * 1.4f) * 0.004f, Mathf.Sin((float)_t * 2.2f) * 0.003f, 0f);
-            _arms.Position = _armsPos + sway + new Vector3(0f, 0.01f, 0.05f) * _recoil;
+            // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
+            _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);
+            _aimAlpha = AimEase(_aimT);
+            float swayMult = Mathf.Lerp(1f, 0.1f, _aimAlpha);   // startAim: viewmodelSwayMultiplier 1 -> 0.1
+            var sway = new Vector3(Mathf.Sin((float)_t * 1.4f) * 0.004f, Mathf.Sin((float)_t * 2.2f) * 0.003f, 0f) * swayMult;
+            Vector3 basePos = _armsPos.Lerp(_armsPosADS, _aimAlpha);   // raise the sight onto the view axis
+            _arms.Position = basePos + sway + new Vector3(0f, 0.01f, 0.05f) * _recoil;
 
             if (_gun != null && _gun.GetParent() is Node3D att)
             {
@@ -106,6 +128,15 @@ namespace UnturnedGodot
                 basis = basis.Rotated(aim, Mathf.DegToRad(_gunRoll));
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
             }
+        }
+
+        // UseableGun.GetInterpolatedAimAlpha ease: 1 - (1 - smootherStep01(t))^2
+        static float AimEase(float t)
+        {
+            float s = Mathf.Clamp(t, 0f, 1f);
+            s = s * s * s * (s * (s * 6f - 15f) + 10f);   // smootherStep01
+            float inv = 1f - s;
+            return 1f - inv * inv;
         }
 
         static Texture2D LoadTex(string res)

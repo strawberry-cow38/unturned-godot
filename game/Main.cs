@@ -501,6 +501,7 @@ namespace UnturnedGodot
                 _frame++;
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
                 if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
+                if (_vmTest && _frame == 6) _vm?.SetAiming(true);   // --vm: ADS on, so the strip shows aim-down-sights
                 if (_vmTest && _frame == 20) _vm?.Kick();   // fire recoil
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {
