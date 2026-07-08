@@ -119,7 +119,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       shared skeleton). `Player.002` = a torso/shirt piece, `Richard_Head_1` = a head part (rendered + confirmed).
       A real ripped zombie needs the modular character assembly + rig + skinning — that's the plan's Phase-2
       character/anim track, not a quick capsule swap. Capsule placeholders stay for the slice (honest).
-- [ ] NEXT candidates: 2-player headless dedicated server (NetPak transport over SystemSockets + NetGen) —
-      the last slice piece + genuinely source-based; OR gun spread/recoil from the .dat (bounded, source-
-      faithful); OR port the REAL Zombie AI from source (bigger, needs navmesh = Phase 2). Awaiting master's
-      priority (they're actively reviewing + asked about source-fidelity).
+- [x] **★ NETCODE SPINE WORKING ★** (master: "keep going"). Ported `SDG.NetTransport` (the real interface
+      lib: IServerTransport/IClientTransport/ITransportConnection/ENetReliability + IPv4Address) — builds
+      standalone. Wrote `UdpNetTransport` (UdpServer/Client/Connection) = the plan's transport REWORK: a
+      standalone UDP impl of those exact interfaces, no Steam dep, poll-based to match. **Round-trip test
+      GREEN**: a NetPak-packed player state (tick + pos x/y/z as float bits) crosses a REAL UDP socket
+      client→server through the ported interfaces, unpacks byte-exact, and the server replies down the
+      ITransportConnection → client receives it. So ported NetPak (real source) + the real transport
+      interfaces + the UDP rework = the 2-player networking spine, proven over real sockets.
+- [ ] NEXT: wire the game loop to the transport (server authoritative: clients send input/state → server
+      broadcasts world state) for an actual 2-player headless-server session; regenerate NetGen RPC glue;
+      then reliability/ordering on the UDP transport (currently best-effort datagrams).
