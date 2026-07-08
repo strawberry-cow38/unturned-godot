@@ -31,13 +31,16 @@ namespace UnturnedGodot
         // ADS just raises the gun's sight onto the view axis (GetAimingViewmodelAlignment centers the aimHook
         // + a +0.45 eye-raise that cancels the hip drop) and cuts sway to 0.1x (viewmodelSwayMultiplier).
         public const float AimInDuration = 0.25f;   // Eaglefire.dat Aim_In_Duration
+        const float AdsSightDepth = -0.45f;          // how far in front the aligned sight sits (see _Process)
         bool _aiming;
         float _aimT;       // 0..1 aim-accuracy ramp over AimInDuration seconds
         float _aimAlpha;   // eased blend (hip 0 -> ADS 1)
-        // ADS pose: gun centered on the view axis + raised so the irons sit at eye level. Derived to hit the
-        // source's "align sight to view axis" goal against THIS rig's geometry, then render-verified (not a
-        // made-up constant — the align-to-center is the source op, this is just where my rig's sight lands).
-        Vector3 _armsPosADS = new Vector3(-0.19f, -1.66f, -0.15f);
+        // ADS aligns the gun's real "View" hook onto the camera's aim axis (source: GetAimingViewmodelAlignment
+        // takes the aimHook world pos into the viewmodel-camera space). The View hook = the Eaglefire's actual
+        // aim transform, pulled from the model (collection I:13): gun-local (0, -0.7706, 0.1337) in Unity, Z
+        // negated to Godot. We attach a marker there and move the arms so that marker lands on-axis at eye level.
+        static readonly Vector3 ViewHookLocal = new Vector3(0f, -0.7706487f, -0.1337f);
+        Node3D _sight;
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
         // (UseableGun.ReceivePlayAimStart/Stop both guard on player.equipment.IsEquipAnimationFinished, which is
@@ -98,6 +101,9 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+                    _sight = new Node3D { Name = "ViewHook" };   // the gun's aim point, from the real model
+                    mi.AddChild(_sight);
+                    _sight.Position = ViewHookLocal;
                 }
             }
 
@@ -128,8 +134,19 @@ namespace UnturnedGodot
             _aimAlpha = AimEase(_aimT);
             float swayMult = Mathf.Lerp(1f, 0.1f, _aimAlpha);   // startAim: viewmodelSwayMultiplier 1 -> 0.1
             var sway = new Vector3(Mathf.Sin((float)_t * 1.4f) * 0.004f, Mathf.Sin((float)_t * 2.2f) * 0.003f, 0f) * swayMult;
-            Vector3 basePos = _armsPos.Lerp(_armsPosADS, _aimAlpha);   // raise the sight onto the view axis
-            _arms.Position = basePos + sway + new Vector3(0f, 0.01f, 0.05f) * _recoil;
+            Vector3 hipPos = _armsPos + sway + new Vector3(0f, 0.01f, 0.05f) * _recoil;
+            _arms.Position = hipPos;
+            // ADS: move the arms so the gun's View-hook marker lands on the camera's aim axis (x=0) at eye
+            // level (y=0), keeping its natural depth — the source aligns the aim hook to the view axis. Blended
+            // by alpha; converges as the marker (rigid on the gun) is driven onto the axis over the aim-in.
+            if (_aimAlpha > 0.0001f && _sight != null)
+            {
+                Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);
+                // x=0 (on-axis) + y=0 (eye height) are source-exact from the hook; the sight sits AdsSightDepth
+                // in front — a presentation distance standing in for the Aim_Start arm-extend we don't blend.
+                Vector3 target = new Vector3(0f, 0f, AdsSightDepth);
+                _arms.Position = hipPos + (target - mCam) * _aimAlpha;
+            }
 
             if (_gun != null && _gun.GetParent() is Node3D att)
             {
