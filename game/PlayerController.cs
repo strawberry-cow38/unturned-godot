@@ -29,6 +29,9 @@ namespace UnturnedGodot
 
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
         float _fireCd;              // seconds until the gun can fire again
+        bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
+        double _reloadTimer;
+        const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
 
         bool _dead;
         double _deathTimer;
@@ -134,16 +137,30 @@ namespace UnturnedGodot
                 Fire();
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
                 _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to aim down sights (Unturned default mode)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
+                StartReload();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
                 Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
                     ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+        }
+
+        // R to reload: block firing, then refill the magazine after the reload's duration. The reload takes the
+        // Gun_Reload clip's length (the Eaglefire .dat has no separate reload-time key), so ReloadTime = that.
+        void StartReload()
+        {
+            if (_reloading || _dead) return;
+            int max = Gun?.AmmoMax ?? 30;
+            if (Ammo >= max) return;
+            _reloading = true;
+            _reloadTimer = ReloadTime;
+            _viewmodel?.SetReloading(true);
         }
 
         // Hitscan: ray from the camera along its forward, masked to the zombie layer. Damage/range/firerate
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (_fireCd > 0f || Ammo <= 0 || _cam == null) return false;
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null) return false;
             float range = Gun?.Range ?? 200f;
             float damage = Gun?.ZombieDamage ?? 34f;
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
@@ -185,6 +202,11 @@ namespace UnturnedGodot
                 return;
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
+            if (_reloading)
+            {
+                _reloadTimer -= delta;
+                if (_reloadTimer <= 0) { Ammo = Gun?.AmmoMax ?? 30; _reloading = false; _viewmodel?.SetReloading(false); }
+            }
 
             _move.Stance = Input.IsPhysicalKeyPressed(Key.Shift) ? EPlayerStance.SPRINT
                          : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH

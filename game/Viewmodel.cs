@@ -24,6 +24,8 @@ namespace UnturnedGodot
         float _gunRoll = 0f;
         float _recoil;
         double _t;
+        bool _reloading;      // reload gesture: dip the gun while reloading
+        float _reloadBlend;   // eased 0..1
 
         // ADS (aim down sights) — source: hold RMB to aim; blend over Aim_In_Duration with a
         // smootherstep-squared ease (UseableGun.GetInterpolatedAimAlpha). Eaglefire Aim_In_Duration = 0.25s.
@@ -133,6 +135,10 @@ namespace UnturnedGodot
         // Source gate: can't begin aiming until the equip pull-out is finished (IsEquipAnimationFinished).
         public void SetAiming(bool on) { if (on && !EquipDone) return; _aiming = on; }
 
+        // Driven by PlayerController while reloading — the gun dips down as a simple reload gesture (the full
+        // Gun_Reload clip is a TODO; it needs additive-layer integration like the aim pose). Can't ADS mid-reload.
+        public void SetReloading(bool on) { _reloading = on; if (on) _aiming = false; }
+
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
 
         public override void _Process(double delta)
@@ -159,6 +165,10 @@ namespace UnturnedGodot
                 Vector3 target = new Vector3(0f, 0f, AdsSightDepth);
                 _arms.Position = hipPos + (target - mCam) * _aimAlpha;
             }
+            // reload gesture: dip the gun down/in while reloading (simple visual; real Gun_Reload anim is a TODO)
+            _reloadBlend = Mathf.MoveToward(_reloadBlend, _reloading ? 1f : 0f, (float)delta * 4f);
+            if (_reloadBlend > 0.001f)
+                _arms.Position += new Vector3(0.04f, -0.32f, 0.04f) * _reloadBlend;
 
             if (_gun != null && _gun.GetParent() is Node3D att)
             {
