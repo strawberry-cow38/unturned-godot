@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (Player != null)
-                _info.Text = $"AMMO {Player.Ammo}    KILLS {Player.Kills}";
+                _info.Text = $"HP {Player.Health:0}    AMMO {Player.Ammo}    KILLS {Player.Kills}    DEATHS {Player.Deaths}";
         }
     }
 }

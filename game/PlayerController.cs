@@ -17,8 +17,27 @@ namespace UnturnedGodot
         public int Ammo = 30;
         public int Kills { get; private set; }
 
+        public float Health = 100f;
+        public float MaxHealth = 100f;
+        public int Deaths;
+        public Vector3 Spawn = new Vector3(0, 1f, 0);
+
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
         float _fireCd;              // seconds until the gun can fire again
+
+        // Zombie melee lands here; on death, respawn (keeps the loop going for the demo).
+        public void TakeDamage(float amount)
+        {
+            if (Health <= 0f) return;
+            Health -= amount;
+            if (Health <= 0f)
+            {
+                Deaths++;
+                Health = MaxHealth;
+                GlobalPosition = Spawn;
+                Velocity = Vector3.Zero;
+            }
+        }
 
         public Camera3D Camera => _cam;
 

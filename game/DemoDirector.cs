@@ -28,9 +28,9 @@ namespace UnturnedGodot
                     if (d < best) { best = d; nearest = z; }
                 }
 
-            // maintain a small horde so the fight reads on screen
+            // maintain a dense horde so some break through to melee (shows the HP-drop / survival stakes)
             _spawnCd -= (float)delta;
-            if (alive < 5 && _spawned < 26 && _spawnCd <= 0f) { SpawnZombie(); _spawnCd = 0.25f; }
+            if (alive < 9 && _spawned < 60 && _spawnCd <= 0f) { SpawnZombie(); _spawnCd = 0.12f; }
 
             if (nearest == null) return;
 
@@ -42,8 +42,9 @@ namespace UnturnedGodot
             float pitch = Mathf.RadToDeg(Mathf.Atan2(camTo.Y, new Vector2(camTo.X, camTo.Z).Length()));
             Player.Camera.RotationDegrees = new Vector3(pitch, 0f, 0f);
 
-            // fire every tick; the gun self-limits to its real .dat firerate. Never dry in the demo.
-            if (best < 45f)
+            // fire at approaching zombies (gun self-limits to the real .dat firerate); deliberately let
+            // ones inside 2.5 m close to melee so the player TAKES damage -- demonstrates the survival loop.
+            if (best > 2.5f && best < 45f)
             {
                 if (Player.Ammo <= 0) Player.Ammo = Player.Gun?.AmmoMax ?? 30;
                 Player.Fire();
@@ -53,10 +54,10 @@ namespace UnturnedGodot
         void SpawnZombie()
         {
             _spawned++;
-            var z = new ZombieController { Target = Player, Speed = 2.6f + (_spawned % 4) * 0.5f };
+            var z = new ZombieController { Target = Player, Speed = 3.4f + (_spawned % 4) * 0.5f };
             SpawnRoot.AddChild(z);
             float spread = (GD.Randf() - 0.5f) * 2.2f;   // front arc (around -Z)
-            float r = 12f + GD.Randf() * 7f;
+            float r = 8f + GD.Randf() * 6f;
             z.GlobalPosition = Player.GlobalPosition + new Vector3(Mathf.Sin(spread) * r, 0.2f, -Mathf.Cos(spread) * r);
         }
     }

@@ -109,5 +109,11 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       `[gun] 4: zombieDmg=99 playerDmg=40 range=200 firerate=4(0.080s) mag=30`. PlayerController.Fire now
       uses .dat damage/range + self-limits to the .dat firerate (`--gun=<path>` swaps weapons). Demo horde
       → 14 kills in 8s w/ the real Eaglefire ROF. The ported data layer now feeds live gameplay.
-- [ ] NEXT: zombie ripped mesh + ported anim; player damage/death + respawn; gun spread/recoil/reload from
-      the .dat; then the 2-player headless dedicated server (NetPak transport over SystemSockets + NetGen).
+- [x] **Player damage / death / respawn — two-way survival loop VALIDATED.** ZombieController melees the
+      player in range (AttackDamage on an interval); PlayerController.TakeDamage → death → respawn at spawn;
+      HUD shows HP/AMMO/KILLS/DEATHS. Verified on screen: HP dropped 100→40 and DEATHS hit 1 as a horde
+      swarmed (had to let the demo director spare point-blank zombies — its aimbot was killing melee ones
+      before they landed a hit; the mechanic itself was correct). It's a real fight now, not a shooting gallery.
+- [ ] NEXT: zombie ripped mesh + ported anim (skinned → bind-pose first); gun spread/recoil/reload/aim from
+      the .dat; real per-type zombie damage; then the 2-player headless dedicated server (NetPak transport
+      over SystemSockets + regenerated NetGen glue) — the last slice piece.

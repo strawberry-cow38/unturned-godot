@@ -9,8 +9,11 @@ namespace UnturnedGodot
     {
         public Node3D Target;
         [Export] public float Speed = 3.2f;      // placeholder chase speed (m/s)
-        [Export] public float MeleeRange = 1.3f;
+        [Export] public float MeleeRange = 1.4f;
         [Export] public float Health = 100f;
+        [Export] public float AttackDamage = 12f;   // placeholder; real per-type zombie dmg comes with the .dat
+        [Export] public float AttackInterval = 0.8f;
+        float _attackCd;
 
         public bool Dead { get; private set; }
 
@@ -68,6 +71,14 @@ namespace UnturnedGodot
             Vector3 horiz = dist > MeleeRange && dist > 0.001f ? to.Normalized() * Speed : Vector3.Zero;
             Velocity = new Vector3(horiz.X, Velocity.Y - g * (float)delta, horiz.Z);
             MoveAndSlide();
+
+            // melee the player when in range
+            if (_attackCd > 0f) _attackCd -= (float)delta;
+            if (dist <= MeleeRange && _attackCd <= 0f && Target is PlayerController p)
+            {
+                p.TakeDamage(AttackDamage);
+                _attackCd = AttackInterval;
+            }
 
             if (dist > 0.1f)
                 LookAt(new Vector3(Target.GlobalPosition.X, GlobalPosition.Y, Target.GlobalPosition.Z), Vector3.Up);
