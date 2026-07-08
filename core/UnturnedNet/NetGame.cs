@@ -67,6 +67,7 @@ namespace UnturnedGodot.Net
         readonly Dictionary<ITransportConnection, byte> _clients = new();
         readonly Dictionary<byte, PlayerState> _states = new();
         readonly List<ZombieState> _zombies = new();
+        readonly List<float> _zombieHp = new();   // parallel to _zombies
         readonly byte[] _rx = new byte[4096];
         byte _nextId = 1;
         float _spawnCd;
@@ -107,31 +108,52 @@ namespace UnturnedGodot.Net
                 {
                     r.ReadBits(32, out uint ox); r.ReadBits(32, out uint oy); r.ReadBits(32, out uint oz);
                     r.ReadBits(32, out uint dx); r.ReadBits(32, out uint dy); r.ReadBits(32, out uint dz);
+                    r.ReadBits(32, out uint dmg);
                     Hitscan(
                         BitConverter.UInt32BitsToSingle(ox), BitConverter.UInt32BitsToSingle(oy), BitConverter.UInt32BitsToSingle(oz),
-                        BitConverter.UInt32BitsToSingle(dx), BitConverter.UInt32BitsToSingle(dy), BitConverter.UInt32BitsToSingle(dz));
+                        BitConverter.UInt32BitsToSingle(dx), BitConverter.UInt32BitsToSingle(dy), BitConverter.UInt32BitsToSingle(dz),
+                        BitConverter.UInt32BitsToSingle(dmg));
                 }
             }
         }
 
-        // Server-authoritative hitscan: kill the nearest zombie whose center lies within a small radius of
-        // the ray (origin + t*dir, t>0). Math only -- no engine physics on the dedicated server.
-        void Hitscan(float ox, float oy, float oz, float dx, float dy, float dz, float radius = 0.6f, float range = 200f)
+        // Per-limb (zone) hitboxes, feet=0 -- mirror of game/Humanoid.cs so the visual model IS the hitbox.
+        const float ZoneHeadMinY = 1.45f, ZoneTorsoMinY = 0.78f, ZoneTopY = 1.8f, ZoneRadius = 0.42f;
+
+        // Server-authoritative hitscan against the nearest zombie's vertical hit-cylinder; the hit HEIGHT
+        // picks the zone (head 3x / torso 1x / legs 0.6x) and damage is applied to that zombie's health.
+        // Math only -- no engine physics on the dedicated server.
+        void Hitscan(float ox, float oy, float oz, float dx, float dy, float dz, float damage, float range = 200f)
         {
             float len = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
             if (len < 1e-4f) return;
             dx /= len; dy /= len; dz /= len;
-            int hit = -1; float bestT = range;
+
+            int hit = -1; float bestT = range, hitMult = 1f;
+            float axz = dx * dx + dz * dz;
+            if (axz < 1e-6f) return; // (near-)vertical ray never crosses an upright body
             for (int i = 0; i < _zombies.Count; i++)
             {
                 var z = _zombies[i];
-                float vx = z.X - ox, vy = z.Y - oy, vz = z.Z - oz;
-                float t = vx * dx + vy * dy + vz * dz;            // projection onto ray
+                float ex = ox - z.X, ez = oz - z.Z;
+                float t = -(ex * dx + ez * dz) / axz;          // t at closest XZ approach to the body axis
                 if (t < 0f || t > bestT) continue;
-                float cx = ox + dx * t - z.X, cy = oy + dy * t - z.Y, cz = oz + dz * t - z.Z;
-                if (cx * cx + cy * cy + cz * cz <= radius * radius) { bestT = t; hit = i; }
+                float hx = ex + dx * t, hz = ez + dz * t;
+                if (hx * hx + hz * hz > ZoneRadius * ZoneRadius) continue; // ray misses the cylinder
+                float rel = (oy + dy * t) - z.Y;               // hit height above the feet
+                if (rel < -0.1f || rel > ZoneTopY + 0.15f) continue;
+                float mult = rel >= ZoneHeadMinY ? 3.0f : (rel >= ZoneTorsoMinY ? 1.0f : 0.6f);
+                bestT = t; hit = i; hitMult = mult;
             }
-            if (hit >= 0) { _zombies.RemoveAt(hit); Kills++; }
+
+            if (hit < 0) return;
+            _zombieHp[hit] -= damage * hitMult;
+            if (_zombieHp[hit] <= 0f)
+            {
+                _zombies.RemoveAt(hit);
+                _zombieHp.RemoveAt(hit);
+                Kills++;
+            }
         }
 
         // Authoritative zombie sim: keep a horde, each chases the nearest player on the ground plane.
@@ -141,7 +163,8 @@ namespace UnturnedGodot.Net
             if (_zombies.Count < maxZombies && _states.Count > 0 && _spawnCd <= 0f)
             {
                 double a = _rng.NextDouble() * Math.PI * 2.0;
-                _zombies.Add(new ZombieState { X = (float)Math.Cos(a) * 16f, Y = 1f, Z = (float)Math.Sin(a) * 16f });
+                _zombies.Add(new ZombieState { X = (float)Math.Cos(a) * 16f, Y = 0f, Z = (float)Math.Sin(a) * 16f }); // feet on ground
+                _zombieHp.Add(100f);
                 _spawnCd = 0.4f;
             }
             for (int i = 0; i < _zombies.Count; i++)
@@ -206,8 +229,8 @@ namespace UnturnedGodot.Net
             _transport.Send(w.buffer, w.writeByteIndex, ENetReliability.Unreliable);
         }
 
-        // Tell the server "I fired a ray from origin along dir" -- the server does authoritative hit-reg.
-        public void SendFire(float ox, float oy, float oz, float dx, float dy, float dz)
+        // Tell the server "I fired a ray from origin along dir for `damage`" -- server does authoritative hit-reg.
+        public void SendFire(float ox, float oy, float oz, float dx, float dy, float dz, float damage)
         {
             var w = new NetPakWriter { buffer = new byte[64] };
             w.Reset();
@@ -218,6 +241,7 @@ namespace UnturnedGodot.Net
             w.WriteBits(BitConverter.SingleToUInt32Bits(dx), 32);
             w.WriteBits(BitConverter.SingleToUInt32Bits(dy), 32);
             w.WriteBits(BitConverter.SingleToUInt32Bits(dz), 32);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(damage), 32);
             w.Flush();
             _transport.Send(w.buffer, w.writeByteIndex, ENetReliability.Reliable);
         }

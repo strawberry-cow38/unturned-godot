@@ -158,6 +158,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       nearest zombie + fires → server hit-reg. Renders blue=self (via SelfId) / orange=remote / green=server
       zombies. Demo drives it via ScriptedInput; a human `--client` run uses real WASD/mouse (flip off the
       scripting). So the networked player moves with the actual ported movement. Net test still green.
-- [ ] NEXT (real ports to close gaps): the real Zombie AI + UseableGun from source (replace my chase/hitscan
-      placeholders); a human-interactive --client (FP camera + input, un-scripted); client interpolation;
-      reliability/ordering + delta-compression; NetGen-generated RPC glue for typed messages.
+- [x] **Capsules → HUMANOID models + per-limb HITBOXES** (master: "swap caps for actual player models +
+      the hitboxes involved"). `game/Humanoid.cs` = a blocky low-poly humanoid (head/torso/arms/legs) —
+      Unturned's actual angular style — used for BOTH players (blue=self, orange=remote) and zombies (green).
+      **Per-zone server hit-reg**: NetServer.Hitscan is now ray-vs-vertical-cylinder → hit HEIGHT picks the
+      zone (head 3x / torso 1x / legs 0.6x) → damage to that zombie's HEALTH (100); the box layout mirrors
+      the hitbox math so the visual model IS the hitbox. Fire msg carries damage; client aims headshots.
+      Feet-based coords throughout. Plus ripped-prop scenery (crates/structures). 2-process networked render
+      shows both-humanoids + horde + scene. HONEST: blocky stand-in for the full modular-skinned ripped
+      character (Phase 2 to assemble); the zone/hitbox gameplay is real. Net test green.
+- [ ] NEXT: the full modular-skinned ripped character (assemble body+clothes on a skeleton) to replace the
+      blocky stand-in; real Zombie AI + UseableGun from source; human-interactive --client (FP); interpolation.

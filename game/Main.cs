@@ -280,9 +280,45 @@ namespace UnturnedGodot
             cam.Position = new Vector3(0f, 9f, 14f);
             cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
 
+            ScatterScenery(); // real ripped Unturned props so the arena isn't a bare plane
+
             var cli = new Net.NetClient("127.0.0.1", NetPort);
             AddChild(new ClientNode { Client = cli });
             GD.Print($"[CLIENT] connected to 127.0.0.1:{NetPort}; local player = real PlayerController (synced)");
+        }
+
+        // Scatter a few real ripped props (textured) around the arena as static scenery.
+        void ScatterScenery()
+        {
+            const string manifest = @"C:\claude-workspace\ripped-mb\converted\manifest.json";
+            if (!System.IO.File.Exists(manifest)) return;
+            var cp = new ContentProvider();
+            AddChild(cp);
+            cp.LoadManifest(manifest);
+            cp.LoadTextureManifest(@"C:\claude-workspace\ripped-mb\converted\texture_manifest.json");
+
+            (string name, float x, float z, float s)[] scenery =
+            {
+                ("Crate", -9f, -7f, 2.2f), ("Crate_0", 9f, -6f, 2.2f), ("Crate", 7f, 8f, 2.0f),
+                ("Brickoven_Fire_0", -10f, 6f, 2.6f), ("Kiln_Fire_0", 11f, 3f, 2.6f),
+                ("Berry_0", -6f, 10f, 1.6f), ("Crate_0", -12f, -1f, 2.0f),
+            };
+            foreach (var (name, x, z, s) in scenery)
+            {
+                var g = cp.FindGuidByName(name);
+                if (g == null) continue;
+                var mesh = cp.LoadMesh(g);
+                if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
+                Material mat = new StandardMaterial3D { AlbedoColor = new Color(0.7f, 0.68f, 0.62f) };
+                var tp = cp.GetTexturePath(g);
+                if (tp != null) { var img = Image.LoadFromFile(tp); if (img != null) mat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img) }; }
+                var aabb = mesh.GetAabb();
+                float big = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
+                float sc = big > 0.001f ? s / big : 1f;
+                var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Scale = new Vector3(sc, sc, sc) };
+                AddChild(mi);
+                mi.Position = new Vector3(x, -aabb.Position.Y * sc, z);
+            }
         }
 
         // In-process 2-player network demo: a real NetServer + two real NetClients over loopback UDP,
