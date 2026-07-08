@@ -25,11 +25,14 @@ namespace UnturnedGodot
             { _ap.Play(name, -1, speed); }
         }
 
+        // Locomotion clip names (players use the human set; zombies swap in their Move_N/Idle_N shamble).
+        public string IdleClip = "Idle_Stand", WalkClip = "Move_Walk", RunClip = "Move_Run";
+
         // Drive locomotion by horizontal speed (m/s): idle / walk / run. Won't interrupt a one-shot.
         public void SetLocomotion(float speed)
         {
             if (_ap == null || _oneShot > 0) return;
-            string want = speed < 0.2f ? "Idle_Stand" : (speed < 4.5f ? "Move_Walk" : "Move_Run");
+            string want = speed < 0.2f ? IdleClip : (speed < 4.5f ? WalkClip : RunClip);
             if (!_ap.HasAnimation(want)) return;
             if (want != _loco || _ap.CurrentAnimation != want) { _loco = want; _ap.Play(want); }
         }

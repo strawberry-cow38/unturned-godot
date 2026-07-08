@@ -34,8 +34,16 @@ namespace UnturnedGodot
             _rig = RiggedCharacter.Build("res://content/rig.json", new Color(0.45f, 0.72f, 0.40f));
             if (_rig != null)
             {
+                // Unturned zombies (Zombie.cs): moveAnim="Move_"+move, idleAnim="Idle_"+idle, per-zombie bytes.
+                // These are the arms-out shamble clips, NOT the human Move_Walk. Randomise for variety.
+                var rng = new RandomNumberGenerator(); rng.Randomize();
+                _rig.WalkClip = "Move_" + rng.RandiRange(0, 4);
+                _rig.RunClip = _rig.WalkClip;                 // zombies don't run; shamble at any speed
+                _rig.IdleClip = "Idle_" + rng.RandiRange(0, 4);
+                _startleId = rng.RandiRange(0, 1);
+                _atkId = rng.RandiRange(0, 2);
                 _body = _rig;
-                _rig.Play("Idle_Stand");
+                _rig.Play(_rig.IdleClip);
             }
             else if (CharacterModel.Loaded)
             {
@@ -52,6 +60,7 @@ namespace UnturnedGodot
         }
 
         bool _ragdoll;
+        int _atkId, _startleId;
         [Export] public float ImpactForce = 9f;
 
         public void Damage(float amount) => ApplyDamage(amount, GlobalPosition, Vector3.Zero, false);
@@ -119,8 +128,8 @@ namespace UnturnedGodot
             if (_rig != null)
             {
                 _rig.Tick(delta);
-                if (!_startled) { _startled = true; _rig.PlayOnce("Startle_0"); }
-                else if (attacked) _rig.PlayOnce("Attack_0");
+                if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); }
+                else if (attacked) _rig.PlayOnce("Attack_" + _atkId);
                 else _rig.SetLocomotion(horiz.Length());
             }
 
