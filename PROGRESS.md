@@ -317,3 +317,4 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       session, so it may not be loaded). Need a clean extraction (AssetRipper full named export, or the exact model
       location) then mount at the hook — the mount + hook are already wired. PENDING master: kick off the export vs
       point me to the model. NOTE: c1cb7ad on main still has the REJECTED fake sights — replace with the real model.
+- [x] **RELOAD (basic mechanic) (2026-07-08)** — non-blocked progress while the iron sights await master's extraction call. R to reload: PlayerController blocks firing + timer = ReloadTime (1.633s = Gun_Reload clip length; no reload-time key in the .dat), refills Ammo to Gun.AmmoMax. Viewmodel.SetReloading dips the gun (can't ADS mid-reload). TODO: real Gun_Reload arm anim (needs additive-layer integration). Pushed 0fcdd95.
