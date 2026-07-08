@@ -19,6 +19,9 @@ namespace UnturnedGodot
         // gets kick*Recover then recovers; the gun viewmodel gets the full kick (UseableGun.cs:1049/1188/1191).
         public float RecoilMinX, RecoilMaxX, RecoilMinY, RecoilMaxY;
         public float RecoverX, RecoverY;
+        // Firemodes (flags in the .dat): the Eaglefire has Safety + Semi + Bursts 3.
+        public bool HasSafety, HasSemi, HasAuto;
+        public int BurstCount;   // Bursts value; 0 = no burst mode
 
         public static GunDef FromDatText(string datText)
         {
@@ -39,6 +42,10 @@ namespace UnturnedGodot
                 RecoilMaxY = d.ParseFloat("Recoil_Max_Y"),
                 RecoverX = d.ParseFloat("Recover_X", 0.4f),
                 RecoverY = d.ParseFloat("Recover_Y", 0.4f),
+                HasSafety = d.ContainsKey("Safety"),
+                HasSemi = d.ContainsKey("Semi"),
+                HasAuto = d.ContainsKey("Auto"),
+                BurstCount = d.ParseInt32("Bursts", 0),
             };
         }
     }

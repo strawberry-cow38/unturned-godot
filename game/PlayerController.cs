@@ -34,6 +34,9 @@ namespace UnturnedGodot
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
         float _recoilPitch, _recoilYaw;  // camera recoil offset (deg), decays back toward 0 (PlayerLook Lerp rate 4)
         readonly RandomNumberGenerator _rng = new();
+        enum FireMode { Safety, Semi, Auto, Burst }   // EFiremode; the gun's available set comes from its .dat flags
+        FireMode _firemode = FireMode.Semi;
+        int _burstLeft;                               // rounds remaining in the current burst
 
         bool _dead;
         double _deathTimer;
@@ -137,11 +140,13 @@ namespace UnturnedGodot
                 _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
-                Fire();
+                StartFire();
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
                 _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to aim down sights (Unturned default mode)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
                 StartReload();
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
+                CycleFiremode();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
                 Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
                     ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
@@ -157,6 +162,41 @@ namespace UnturnedGodot
             _reloading = true;
             _reloadTimer = ReloadTime;
             _viewmodel?.SetReloading(true);
+        }
+
+        // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
+        void StartFire()
+        {
+            switch (_firemode)
+            {
+                case FireMode.Semi: Fire(); break;
+                case FireMode.Auto: Fire(); break;   // held-fire continues in _PhysicsProcess
+                case FireMode.Burst: _burstLeft = Gun?.BurstCount ?? 3; break;
+                case FireMode.Safety: break;
+            }
+        }
+
+        // V cycles through the modes the gun's .dat actually offers (Eaglefire: Safety -> Semi -> Burst).
+        void CycleFiremode()
+        {
+            var modes = AvailableModes();
+            int i = System.Array.IndexOf(modes, _firemode);
+            _firemode = modes[(i + 1) % modes.Length];
+            _burstLeft = 0;
+        }
+
+        FireMode[] AvailableModes()
+        {
+            var list = new System.Collections.Generic.List<FireMode>();
+            if (Gun != null)
+            {
+                if (Gun.HasSafety) list.Add(FireMode.Safety);
+                if (Gun.HasSemi) list.Add(FireMode.Semi);
+                if (Gun.HasAuto) list.Add(FireMode.Auto);
+                if (Gun.BurstCount > 0) list.Add(FireMode.Burst);
+            }
+            if (list.Count == 0) list.Add(FireMode.Semi);
+            return list.ToArray();
         }
 
         // Random unit vector within a cone of half-angle `spread` (radians) around `dir` — the port of
@@ -245,6 +285,12 @@ namespace UnturnedGodot
             {
                 _reloadTimer -= delta;
                 if (_reloadTimer <= 0) { Ammo = Gun?.AmmoMax ?? 30; _reloading = false; _viewmodel?.SetReloading(false); }
+            }
+            // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
+            if (_fireCd <= 0f && !_reloading)
+            {
+                if (_burstLeft > 0) { if (Fire()) _burstLeft--; else _burstLeft = 0; }
+                else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
             _move.Stance = Input.IsPhysicalKeyPressed(Key.Shift) ? EPlayerStance.SPRINT
