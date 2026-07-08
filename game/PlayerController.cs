@@ -32,6 +32,8 @@ namespace UnturnedGodot
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
+        float _recoilPitch, _recoilYaw;  // camera recoil offset (deg), decays back toward 0 (PlayerLook Lerp rate 4)
+        readonly RandomNumberGenerator _rng = new();
 
         bool _dead;
         double _deathTimer;
@@ -119,6 +121,7 @@ namespace UnturnedGodot
             AddChild(_cam);
             _viewmodel = new Viewmodel();   // self-contained: its own SubViewport camera at FOV 60, composited on top
             AddChild(_viewmodel);
+            _rng.Randomize();
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
             foreach (var a in OS.GetCmdlineUserArgs()) if (a == "--pdie") _pdieTest = 2.0; // render-test: die at 2s
@@ -166,6 +169,11 @@ namespace UnturnedGodot
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
             _viewmodel?.Kick();
+            if (Gun != null)   // camera recoil: pitch up + random-sign yaw, scaled by Recover (source: aim gets kick*Recover)
+            {
+                _recoilPitch += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;
+                _recoilYaw += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f);
+            }
 
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition;
@@ -189,6 +197,16 @@ namespace UnturnedGodot
                 return true;
             }
             return false;
+        }
+
+        public override void _Process(double delta)
+        {
+            // Camera recoil recovers toward 0 (PlayerLook decays it with Lerp rate 4) and rides on top of the
+            // mouse pitch each frame; while dead the death-cam owns the camera, so leave it alone.
+            _recoilPitch = Mathf.Lerp(_recoilPitch, 0f, 4f * (float)delta);
+            _recoilYaw = Mathf.Lerp(_recoilYaw, 0f, 4f * (float)delta);
+            if (_cam != null && !_dead)
+                _cam.RotationDegrees = new Vector3(_pitchDeg + _recoilPitch, _recoilYaw, 0f);
         }
 
         public override void _PhysicsProcess(double delta)

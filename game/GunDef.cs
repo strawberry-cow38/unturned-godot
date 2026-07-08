@@ -14,6 +14,10 @@ namespace UnturnedGodot
         public float SpreadAngleDegrees;
         public int Firerate;   // sim ticks between shots (lower = faster); cooldown = Firerate / 50 s
         public int AmmoMax;
+        // Per-shot camera recoil (degrees): X = horizontal (yaw, random sign), Y = vertical (pitch up). The aim
+        // gets kick*Recover then recovers; the gun viewmodel gets the full kick (UseableGun.cs:1049/1188/1191).
+        public float RecoilMinX, RecoilMaxX, RecoilMinY, RecoilMaxY;
+        public float RecoverX, RecoverY;
 
         public static GunDef FromDatText(string datText)
         {
@@ -27,6 +31,12 @@ namespace UnturnedGodot
                 Firerate = d.ParseInt32("Firerate", 8),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
                 SpreadAngleDegrees = d.ParseFloat("Spread_Angle_Degrees"),
+                RecoilMinX = d.ParseFloat("Recoil_Min_X"),
+                RecoilMaxX = d.ParseFloat("Recoil_Max_X"),
+                RecoilMinY = d.ParseFloat("Recoil_Min_Y"),
+                RecoilMaxY = d.ParseFloat("Recoil_Max_Y"),
+                RecoverX = d.ParseFloat("Recover_X", 0.4f),
+                RecoverY = d.ParseFloat("Recover_Y", 0.4f),
             };
         }
     }
