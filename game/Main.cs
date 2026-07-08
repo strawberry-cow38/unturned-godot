@@ -82,7 +82,7 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                _rigCaptureFrames = new[] { 10, 34, 54, 66, 82, 96 };  // equip -> settle -> ADS in/hold -> release -> hip
+                _rigCaptureFrames = new[] { 10, 54, 66, 82, 90, 96 };  // equip -> ADS (clean) -> un-ADS + hip fire/ejection
                 _vmTest = true;
                 GetWindow().Size = new Vector2I(2560, 1440);
                 BuildViewmodelTest();
@@ -509,6 +509,8 @@ namespace UnturnedGodot
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
                     { _vm.SetAiming(true); _vmAimed = true; _vmAimStart = _frame; }
                     if (_vmAimed && _frame == _vmAimStart + 30) _vm.SetAiming(false);
+                    // after un-ADS, fire a few HIP shots so the test also exercises recoil + case ejection
+                    if (_frame == 88 || _frame == 91 || _frame == 94) _vm.Kick();
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {

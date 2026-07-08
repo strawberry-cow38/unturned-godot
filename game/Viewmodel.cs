@@ -28,6 +28,15 @@ namespace UnturnedGodot
         float _reloadBlend;   // eased 0..1
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
+        // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
+        // is non-vanilla): a generic 5.56 casing (yellow rectangle cube) tossed from the gun's Eject hook each shot,
+        // arcing out to the right + tumbling under gravity, then despawning. Lives in the viewmodel viewport world.
+        Node3D _ejectHook;
+        BoxMesh _casingMesh;
+        StandardMaterial3D _casingMat;
+        readonly System.Collections.Generic.List<Casing> _casings = new();
+        readonly RandomNumberGenerator _rng = new();
+        sealed class Casing { public MeshInstance3D Node; public Vector3 Vel; public Vector3 Spin; public float Life; }
 
         // ADS (aim down sights) — source: hold RMB to aim; blend over Aim_In_Duration with a
         // smootherstep-squared ease (UseableGun.GetInterpolatedAimAlpha). Eaglefire Aim_In_Duration = 0.25s.
@@ -138,6 +147,13 @@ namespace UnturnedGodot
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 1.6f, LightColor = new Color(1f, 0.82f, 0.45f), LightEnergy = 5f });
                     _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.03f, Height = 0.06f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.9f, 0.5f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } });
                     mi.AddChild(_muzzleFlash);
+
+                    // Eject hook marker (gun Eject hook (0,0.0275,0.0814) -> port (0,0.0275,-0.0814)) + the shared
+                    // casing mesh/material: a small yellow rectangle cube standing in for the 5.56 brass.
+                    _ejectHook = new Node3D { Name = "EjectHook", Position = new Vector3(0f, 0.0275f, -0.0814f) };
+                    mi.AddChild(_ejectHook);
+                    _casingMesh = new BoxMesh { Size = new Vector3(0.009f, 0.009f, 0.028f) };
+                    _casingMat = new StandardMaterial3D { AlbedoColor = new Color(0.96f, 0.79f, 0.15f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
                 }
             }
 
@@ -149,7 +165,25 @@ namespace UnturnedGodot
             AddChild(_layer);
         }
 
-        public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; }
+        public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; EjectCasing(); }
+
+        // Toss a casing from the Eject hook: initial velocity = gun-right + up + slightly back (+ jitter), then it
+        // arcs under gravity + tumbles (integrated in _Process). Parented to the viewport world so it flies free of
+        // the gun. Non-vanilla for the Eaglefire (it has no Shell effect) — a visual feel add per master.
+        void EjectCasing()
+        {
+            if (_ejectHook == null || _casingMesh == null || _vp == null || _gun == null) return;
+            var node = new MeshInstance3D { Mesh = _casingMesh, MaterialOverride = _casingMat };
+            _vp.AddChild(node);
+            node.GlobalPosition = _ejectHook.GlobalPosition;
+            node.Basis = _gun.GlobalTransform.Basis;                       // casing starts in the gun's orientation
+            Basis cb = _cam.GlobalTransform.Basis;                         // camera: X=right, Y=up, -Z=forward
+            Vector3 vel = cb.X * (2.1f + _rng.RandfRange(-0.3f, 0.3f))      // eject to the shooter's right
+                        + cb.Y * (1.2f + _rng.RandfRange(-0.2f, 0.2f))      // up
+                        - cb.Z * (0.5f + _rng.RandfRange(-0.2f, 0.2f));     // slightly forward, so it stays in view
+            Vector3 spin = new Vector3(_rng.RandfRange(-18f, 18f), _rng.RandfRange(-18f, 18f), _rng.RandfRange(-18f, 18f));
+            _casings.Add(new Casing { Node = node, Vel = vel, Spin = spin, Life = 0f });
+        }
 
         // Hold RMB to aim (Unturned's default aiming mode). PlayerController drives this on RMB down/up.
         // Source gate: can't begin aiming until the equip pull-out is finished (IsEquipAnimationFinished).
@@ -204,6 +238,19 @@ namespace UnturnedGodot
                 var basis = new Basis(x, aim, x.Cross(aim).Normalized());   // barrel (+Y) -> aim
                 basis = basis.Rotated(aim, Mathf.DegToRad(_gunRoll));
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
+            }
+
+            // integrate ejected casings: gravity + tumble in the viewport world, despawn after ~1.3s
+            for (int i = _casings.Count - 1; i >= 0; i--)
+            {
+                var c = _casings[i];
+                c.Life += (float)delta;
+                c.Vel += Vector3.Down * 9.8f * (float)delta;
+                c.Node.GlobalPosition += c.Vel * (float)delta;
+                c.Node.RotateX(c.Spin.X * (float)delta);
+                c.Node.RotateY(c.Spin.Y * (float)delta);
+                c.Node.RotateZ(c.Spin.Z * (float)delta);
+                if (c.Life > 1.3f) { c.Node.QueueFree(); _casings.RemoveAt(i); }
             }
         }
 
