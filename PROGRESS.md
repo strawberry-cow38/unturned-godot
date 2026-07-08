@@ -114,6 +114,12 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       HUD shows HP/AMMO/KILLS/DEATHS. Verified on screen: HP dropped 100→40 and DEATHS hit 1 as a horde
       swarmed (had to let the demo director spare point-blank zombies — its aimbot was killing melee ones
       before they landed a hit; the mechanic itself was correct). It's a real fight now, not a shooting gallery.
-- [ ] NEXT: zombie ripped mesh + ported anim (skinned → bind-pose first); gun spread/recoil/reload/aim from
-      the .dat; real per-type zombie damage; then the 2-player headless dedicated server (NetPak transport
-      over SystemSockets + regenerated NetGen glue) — the last slice piece.
+- [~] Zombie ripped mesh — INVESTIGATED, DEFERRED to Phase 2. There is no single humanoid "zombie body"
+      mesh: Unturned characters are MODULAR SKINNED meshes (base body + separate clothing/head parts on a
+      shared skeleton). `Player.002` = a torso/shirt piece, `Richard_Head_1` = a head part (rendered + confirmed).
+      A real ripped zombie needs the modular character assembly + rig + skinning — that's the plan's Phase-2
+      character/anim track, not a quick capsule swap. Capsule placeholders stay for the slice (honest).
+- [ ] NEXT candidates: 2-player headless dedicated server (NetPak transport over SystemSockets + NetGen) —
+      the last slice piece + genuinely source-based; OR gun spread/recoil from the .dat (bounded, source-
+      faithful); OR port the REAL Zombie AI from source (bigger, needs navmesh = Phase 2). Awaiting master's
+      priority (they're actively reviewing + asked about source-fidelity).
