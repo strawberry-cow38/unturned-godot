@@ -253,9 +253,26 @@ if RAGDOLL_JSON and os.path.exists(RAGDOLL_JSON):
             c = bx['center']; bx['center'] = [c[0], c[1], -c[2]]  # Unity->Godot z-flip
     print('  ragdoll bones:', len(rag))
 
+# ---- arms-only mesh for the 1P viewmodel: keep only verts skinned to the arm bones ----
+# BONE_ORDER indices 1..8 = Left/Right {Shoulder,Arm,Hand,Hook}. Drops head/torso/legs so the
+# first-person camera sees just the arms holding the gun (no body to occlude).
+ARM_BONES = set(range(1, 9))
+keep = [i for i in range(VCOUNT) if sk_idx[i][0] in ARM_BONES]
+remap = {old: new for new, old in enumerate(keep)}
+arms_faces = []
+for k in range(0, len(faces), 3):
+    a, b, c = faces[k], faces[k+1], faces[k+2]
+    if a in remap and b in remap and c in remap:
+        arms_faces += [remap[a], remap[b], remap[c]]
+arms = {'vcount': len(keep),
+        'positions': [positions[i] for i in keep], 'normals': [normals[i] for i in keep],
+        'uvs': [uvs[i] for i in keep], 'skin_index': [sk_idx[i] for i in keep],
+        'skin_weight': [sk_w[i] for i in keep], 'faces': arms_faces}
+print('  arms-only mesh:', len(keep), 'verts', len(arms_faces)//3, 'faces')
+
 rig={'vcount':VCOUNT,'positions':positions,'normals':normals,'uvs':uvs,
      'skin_index':sk_idx,'skin_weight':sk_w,'faces':faces,
-     'bones':bones,'skin':skin,'anims':anims,'ragdoll':rag}
+     'bones':bones,'skin':skin,'anims':anims,'ragdoll':rag,'arms':arms}
 json.dump(rig,open(OUT,'w'))
 # report
 print('VERTS',VCOUNT,'FACES',len(faces)//3,'BONES',len(bones),'SKINBINDS',len(skin))

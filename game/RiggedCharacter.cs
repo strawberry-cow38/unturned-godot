@@ -143,7 +143,7 @@ namespace UnturnedGodot
 
         static RigData _shared;
         // Parse rig.json once, reuse the data for every character built (20 zombies shouldn't reparse 600KB).
-        public static RiggedCharacter Build(string resPath, Color tint)
+        public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false)
         {
             if (_shared == null)
             {
@@ -151,10 +151,12 @@ namespace UnturnedGodot
                 if (f == null) { GD.PrintErr($"[rig] cannot open {resPath}"); return null; }
                 _shared = JsonSerializer.Deserialize<RigData>(f.GetAsText(), JsonOpts);
             }
-            return BuildFrom(_shared, tint);
+            return BuildFrom(_shared, tint, armsOnly);
         }
 
-        public static RiggedCharacter BuildFrom(RigData rig, Color tint)
+        public MeshInstance3D Body { get; private set; }
+
+        public static RiggedCharacter BuildFrom(RigData rig, Color tint, bool armsOnly = false)
         {
             var root = new RiggedCharacter();
 
@@ -171,23 +173,25 @@ namespace UnturnedGodot
             skel.ResetBonePoses();
             root.Skeleton = skel;
 
-            // ---- skinned mesh (raw arrays, vertex order preserved) ----
-            int vc = rig.vcount;
+            // ---- skinned mesh (raw arrays; arms-only variant for the 1P viewmodel) ----
+            var m = (armsOnly && rig.arms != null) ? rig.arms
+                : new MeshData { vcount = rig.vcount, positions = rig.positions, normals = rig.normals, uvs = rig.uvs, skin_index = rig.skin_index, skin_weight = rig.skin_weight, faces = rig.faces };
+            int vc = m.vcount;
             var verts = new Vector3[vc]; var norms = new Vector3[vc]; var uvs = new Vector2[vc];
             var bones = new int[vc * 4]; var weights = new float[vc * 4];
             for (int v = 0; v < vc; v++)
             {
-                verts[v] = new Vector3((float)rig.positions[v][0], (float)rig.positions[v][1], (float)rig.positions[v][2]);
-                norms[v] = new Vector3((float)rig.normals[v][0], (float)rig.normals[v][1], (float)rig.normals[v][2]);
-                uvs[v] = new Vector2((float)rig.uvs[v][0], (float)rig.uvs[v][1]);
-                bones[v * 4 + 0] = rig.skin_index[v][0];
-                bones[v * 4 + 1] = rig.skin_index[v][1];
-                float w0 = (float)rig.skin_weight[v][0], w1 = (float)rig.skin_weight[v][1];
+                verts[v] = new Vector3((float)m.positions[v][0], (float)m.positions[v][1], (float)m.positions[v][2]);
+                norms[v] = new Vector3((float)m.normals[v][0], (float)m.normals[v][1], (float)m.normals[v][2]);
+                uvs[v] = new Vector2((float)m.uvs[v][0], (float)m.uvs[v][1]);
+                bones[v * 4 + 0] = m.skin_index[v][0];
+                bones[v * 4 + 1] = m.skin_index[v][1];
+                float w0 = (float)m.skin_weight[v][0], w1 = (float)m.skin_weight[v][1];
                 float sum = w0 + w1; if (sum < 1e-6f) { w0 = 1f; w1 = 0f; sum = 1f; }
                 weights[v * 4 + 0] = w0 / sum; weights[v * 4 + 1] = w1 / sum;
             }
-            var idx = new int[rig.faces.Length];
-            Array.Copy(rig.faces, idx, rig.faces.Length);
+            var idx = new int[m.faces.Length];
+            Array.Copy(m.faces, idx, m.faces.Length);
 
             var arr = new Godot.Collections.Array();
             arr.Resize((int)Mesh.ArrayType.Max);
@@ -210,6 +214,7 @@ namespace UnturnedGodot
             }
 
             var mi = new MeshInstance3D { Name = "Body", Mesh = mesh };
+            root.Body = mi;
             skel.AddChild(mi);
             mi.Skin = skin;
             mi.Skeleton = mi.GetPathTo(skel);
@@ -293,6 +298,17 @@ namespace UnturnedGodot
             public SkinBind[] skin { get; set; }
             public Dictionary<string, ClipData> anims { get; set; }
             public Dictionary<string, RagBone> ragdoll { get; set; }
+            public MeshData arms { get; set; }
+        }
+        public class MeshData
+        {
+            public int vcount { get; set; }
+            public double[][] positions { get; set; }
+            public double[][] normals { get; set; }
+            public double[][] uvs { get; set; }
+            public int[][] skin_index { get; set; }
+            public double[][] skin_weight { get; set; }
+            public int[] faces { get; set; }
         }
         public class RagBone { public RagRb rb { get; set; } public RagBox box { get; set; } public RagJoint joint { get; set; } }
         public class RagRb { public double mass { get; set; } = 1; public double drag { get; set; } = 0.01; public double adrag { get; set; } = 0.05; }
