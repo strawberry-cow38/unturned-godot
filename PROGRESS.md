@@ -297,3 +297,12 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       block). Doing it right = a focused ground-up pass: lock the gun's coordinate frame, model source-positioned
       irons, seat the eye on the sight line. PENDING master: dedicated pass vs lock in the clean 591b2c1 + move to
       reload. GitHub stays at clean 591b2c1; skull-eye/mount experiments parked locally + 4080.
+- [x] **VIEWMODEL — ADS iron sights DONE (2026-07-08)** (master: "get the eaglefire irons on there" -> "just keep going").
+      Resolved the ADS. The irons aren't extractable (modular hook model), so MODELED them: a front post at the
+      muzzle + a rear aperture ring (TorusMesh) on the receiver, both on the sight line. KEY unlock: the gun mesh
+      up-axis is -z (barrel +y) in the view-space-aimed frame — nailed empirically with bright diagnostic sights
+      (mesh +z rendered DOWN, so all my earlier mesh-frame guesses were upside-down; that convention was the whole
+      wall). The ADS eye viewpoint (ViewHookLocal, behind at the sight height) looks through the ring at the post
+      -> proper down-the-sights, no receiver block. Built on the clean 591b2c1 base (view-space aim + additive Aim_Start
+      + the AdsSightDepth viewing distance). Pushed c1cb7ad. The skull-eye/camera-slide/source-mount experiments were
+      parked (not used) — the clean base + modeled irons is the shipped approach.
