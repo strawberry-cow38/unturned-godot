@@ -29,17 +29,55 @@ namespace UnturnedGodot
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
         float _fireCd;              // seconds until the gun can fire again
 
-        // Zombie melee lands here; on death, respawn (keeps the loop going for the demo).
+        bool _dead;
+        double _deathTimer;
+        RiggedCharacter _corpse;
+
+        // Zombie melee lands here; on death, drop a ragdoll corpse + third-person death-cam, then respawn.
         public void TakeDamage(float amount)
         {
-            if (Health <= 0f) return;
+            if (_dead || Health <= 0f) return;
             Health -= amount;
-            if (Health <= 0f)
+            if (Health <= 0f) { Deaths++; Die(); }
+        }
+
+        void Die()
+        {
+            _dead = true;
+            _deathTimer = 3.5;
+            Velocity = Vector3.Zero;
+
+            _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.80f, 0.66f, 0.52f));
+            if (_corpse != null)
             {
-                Deaths++;
-                Health = MaxHealth;
-                GlobalPosition = Spawn;
-                Velocity = Vector3.Zero;
+                GetParent().AddChild(_corpse);
+                _corpse.GlobalPosition = GlobalPosition - new Vector3(0f, 0.9f, 0f);
+                _corpse.Rotation = new Vector3(0f, Rotation.Y, 0f);
+                var r = new RandomNumberGenerator(); r.Randomize();
+                // Unturned RagdollTool force: (dir + up*8 + randXZ +-16) * 32, applied as one physics step (~*0.02).
+                Vector3 f = (-GlobalTransform.Basis.Z * 5f + Vector3.Up * 8f + new Vector3(r.RandfRange(-16f, 16f), 0f, r.RandfRange(-16f, 16f))) * 0.64f;
+                _corpse.RagdollStart(f);
+            }
+            if (_cam != null)
+            {
+                _cam.TopLevel = true;   // hold the death-cam still in world space while the body flops
+                _cam.LookAtFromPosition(GlobalPosition + new Vector3(2.2f, 2.2f, 2.8f), GlobalPosition - new Vector3(0f, 0.6f, 0f), Vector3.Up);
+            }
+        }
+
+        void Respawn()
+        {
+            _dead = false;
+            Health = MaxHealth;
+            GlobalPosition = Spawn;
+            Velocity = Vector3.Zero;
+            _corpse?.QueueFree(); _corpse = null;
+            if (_cam != null)
+            {
+                _cam.TopLevel = false;
+                _cam.Position = new Vector3(0f, 1.6f, 0f);
+                _cam.Rotation = Vector3.Zero;
+                _pitchDeg = 0f;
             }
         }
 
@@ -74,7 +112,9 @@ namespace UnturnedGodot
             AddChild(_cam);
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
+            foreach (var a in OS.GetCmdlineUserArgs()) if (a == "--pdie") _pdieTest = 2.0; // render-test: die at 2s
         }
+        double _pdieTest = -1;
 
         public override void _UnhandledInput(InputEvent @event)
         {
@@ -118,6 +158,14 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
+            if (_dead)
+            {
+                _deathTimer -= delta;
+                Velocity = Vector3.Zero;
+                if (_deathTimer <= 0) Respawn();
+                return;
+            }
             if (_fireCd > 0f) _fireCd -= (float)delta;
 
             _move.Stance = Input.IsPhysicalKeyPressed(Key.Shift) ? EPlayerStance.SPRINT
