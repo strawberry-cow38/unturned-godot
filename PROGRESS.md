@@ -15,7 +15,7 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       any engine-agnostic code that `using UnityEngine;` for Mathf. First harness piece.
       - deferred: UnityNetPakTests (need Vector3/Quaternion shims), NetGenTests (need NetGen-generated code),
         SteamworksNetPak ex (need Steamworks.NET bindings).
-- [ ] UnturnedDat (data/mod .dat layer, pure-.NET per plan) extract + tests green  ← NEXT
+- [x] **UnturnedDat (data/mod .dat layer) proven engine-agnostic:** core compiles standalone + test suite GREEN: 800 passed / 0 failed (parser/tokenizer/dict/list/writer/metadata). The modding backbone carries untouched. (InternalsVisibleTo added; UnityDatEx/ColorEx deferred to Vector/Color shims.)
 - [ ] SDG.Compat: Vector2/3/4, Quaternion, Color32 (→ unblocks UnityNetPakTests + tons of downstream)
 - [ ] Godot 4 .NET solution skeleton (Jolt on) + Linux-headless CI
 - [ ] 0a rip station: AssetRipper full rip of the Steam install → canonical ripped/ tree

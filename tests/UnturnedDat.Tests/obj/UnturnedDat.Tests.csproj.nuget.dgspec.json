@@ -1,0 +1,207 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\claude-workspace\\unturned-godot\\tests\\UnturnedDat.Tests\\UnturnedDat.Tests.csproj": {}
+  },
+  "projects": {
+    "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj",
+        "projectName": "SDG.Compat",
+        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj",
+        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
+        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj",
+        "projectName": "UnturnedDat",
+        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj",
+        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
+        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
+                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\claude-workspace\\unturned-godot\\tests\\UnturnedDat.Tests\\UnturnedDat.Tests.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\tests\\UnturnedDat.Tests\\UnturnedDat.Tests.csproj",
+        "projectName": "UnturnedDat.Tests",
+        "projectPath": "C:\\claude-workspace\\unturned-godot\\tests\\UnturnedDat.Tests\\UnturnedDat.Tests.csproj",
+        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
+        "outputPath": "C:\\claude-workspace\\unturned-godot\\tests\\UnturnedDat.Tests\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
+                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              },
+              "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj": {
+                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "dependencies": {
+            "Microsoft.NET.Test.Sdk": {
+              "target": "Package",
+              "version": "[17.11.1, )"
+            },
+            "NUnit": {
+              "target": "Package",
+              "version": "[3.14.0, )"
+            },
+            "NUnit3TestAdapter": {
+              "target": "Package",
+              "version": "[4.6.0, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>SDG.Unturned</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SDG.Compat\SDG.Compat.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="UnturnedDat.Tests" />
+  </ItemGroup>
+</Project>

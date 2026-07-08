@@ -1,0 +1,15 @@
+C:\claude-workspace\unturned-godot\core\UnturnedDat\bin\Debug\net8.0\UnturnedDat.deps.json
+C:\claude-workspace\unturned-godot\core\UnturnedDat\bin\Debug\net8.0\UnturnedDat.dll
+C:\claude-workspace\unturned-godot\core\UnturnedDat\bin\Debug\net8.0\UnturnedDat.pdb
+C:\claude-workspace\unturned-godot\core\UnturnedDat\bin\Debug\net8.0\SDG.Compat.dll
+C:\claude-workspace\unturned-godot\core\UnturnedDat\bin\Debug\net8.0\SDG.Compat.pdb
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\UnturnedDat.csproj.AssemblyReference.cache
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\UnturnedDat.GeneratedMSBuildEditorConfig.editorconfig
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\UnturnedDat.AssemblyInfoInputs.cache
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\UnturnedDat.AssemblyInfo.cs
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\UnturnedDat.csproj.CoreCompileInputs.cache
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\Unturned.72FBA0C2.Up2Date
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\UnturnedDat.dll
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\refint\UnturnedDat.dll
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\UnturnedDat.pdb
+C:\claude-workspace\unturned-godot\core\UnturnedDat\obj\Debug\net8.0\ref\UnturnedDat.dll

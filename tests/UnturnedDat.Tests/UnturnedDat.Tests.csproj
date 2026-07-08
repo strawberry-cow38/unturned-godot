@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <!-- 0b gate: U3-SDK UnturnedDat tests standalone. UnityDatEx/ColorEx tests deferred (need Vector/Color shims). -->
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\UnturnedDat\UnturnedDat.csproj" />
+    <ProjectReference Include="..\..\core\SDG.Compat\SDG.Compat.csproj" />
+  </ItemGroup>
+</Project>
