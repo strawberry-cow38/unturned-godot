@@ -1,0 +1,33 @@
+using SDG.Unturned; // DatParser + DatDictionaryEx (the game's own .dat accessors), from the ported UnturnedDat
+
+namespace UnturnedGodot
+{
+    // A gun's stats read from a real Unturned ItemGunAsset .dat through the ported UnturnedDat layer,
+    // using the SAME accessors (ParseFloat/ParseInt32/GetString) the game's ItemGunAsset uses -- so the
+    // numbers are the real ones (Eaglefire: dmg 40/99, range 200, firerate 4, mag 30), not placeholders.
+    public sealed class GunDef
+    {
+        public string Id;
+        public float PlayerDamage;
+        public float ZombieDamage;
+        public float Range;
+        public float SpreadAngleDegrees;
+        public int Firerate;   // sim ticks between shots (lower = faster); cooldown = Firerate / 50 s
+        public int AmmoMax;
+
+        public static GunDef FromDatText(string datText)
+        {
+            IDatDictionary d = new DatParser().Parse(datText);
+            return new GunDef
+            {
+                Id = d.GetString("ID"),
+                PlayerDamage = d.ParseFloat("Player_Damage"),
+                ZombieDamage = d.ParseFloat("Zombie_Damage"),
+                Range = d.ParseFloat("Range", 100f),
+                Firerate = d.ParseInt32("Firerate", 8),
+                AmmoMax = d.ParseInt32("Ammo_Max", 30),
+                SpreadAngleDegrees = d.ParseFloat("Spread_Angle_Degrees"),
+            };
+        }
+    }
+}

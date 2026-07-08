@@ -103,5 +103,11 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       get shot (→red→topple), KILLS + AMMO tick live. THE CORE LOOP RUNS. Sent master the clip.
       Gaps (next): gun is a generic hitscan (not yet ItemGunAsset.dat-driven damage/ammo/spread); zombies
       are capsules (no ripped mesh/anim yet); no melee-damage-to-player; single-player (no netcode yet).
-- [ ] NEXT: data-drive the gun from ItemGunAsset .dat (damage/rof/ammo/falloff) via UnturnedDat; zombie
-      ripped mesh + ported anim; player damage/death; then the 2-player headless server (NetPak transport).
+- [x] **Gun data-driven from the real ItemGunAsset .dat** (closes "1 gun end-to-end"). `game/GunDef.cs`
+      reads a gun .dat through the ported UnturnedDat layer using the game's OWN accessors
+      (ParseFloat/ParseInt32/GetString). Default = retail **Eaglefire**: loaded live in the demo →
+      `[gun] 4: zombieDmg=99 playerDmg=40 range=200 firerate=4(0.080s) mag=30`. PlayerController.Fire now
+      uses .dat damage/range + self-limits to the .dat firerate (`--gun=<path>` swaps weapons). Demo horde
+      → 14 kills in 8s w/ the real Eaglefire ROF. The ported data layer now feeds live gameplay.
+- [ ] NEXT: zombie ripped mesh + ported anim; player damage/death + respawn; gun spread/recoil/reload from
+      the .dat; then the 2-player headless dedicated server (NetPak transport over SystemSockets + NetGen).

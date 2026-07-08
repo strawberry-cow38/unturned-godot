@@ -17,13 +17,14 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null;
+            string catalog = null, shot = null, picks = null, gun = null;
             bool play = false, demo = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
+                else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
                 else if (arg == "--play") play = true;
             }
@@ -31,7 +32,7 @@ namespace UnturnedGodot
             if (play || demo)
             {
                 GetWindow().Size = new Vector2I(1280, 720);
-                BuildPlayable(catalog, demo);
+                BuildPlayable(catalog, demo, gun);
                 return; // interactive, or demo records via --write-movie
             }
 
@@ -179,7 +180,7 @@ namespace UnturnedGodot
 
         // The playable vertical slice: ground + player (ported movement + hitscan gun) + chasing zombies +
         // HUD. `--play` = interactive; `--demo` = a scripted DemoDirector drives it for a --write-movie clip.
-        void BuildPlayable(string catalog, bool demo)
+        void BuildPlayable(string catalog, bool demo, string gunPath)
         {
             var env = new Godot.Environment
             {
@@ -202,6 +203,10 @@ namespace UnturnedGodot
             var player = new PlayerController();
             AddChild(player);                       // _Ready builds its camera + collider
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
+
+            // equip a real Unturned gun from its ItemGunAsset .dat (default: Eaglefire from the retail install)
+            const string eaglefire = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\Items\Guns\Eaglefire\Eaglefire.dat";
+            player.LoadGun(gunPath ?? eaglefire);
 
             AddChild(new HUD { Player = player });
 

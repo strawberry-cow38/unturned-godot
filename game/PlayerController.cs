@@ -14,11 +14,22 @@ namespace UnturnedGodot
         float _pitchDeg;
 
         [Export] public float MouseSensitivity = 0.12f;
-        [Export] public int Ammo = 30;
-        [Export] public float Damage = 34f;
+        public int Ammo = 30;
         public int Kills { get; private set; }
 
+        public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
+        float _fireCd;              // seconds until the gun can fire again
+
         public Camera3D Camera => _cam;
+
+        // Load a real gun .dat (e.g. Eaglefire) through the ported UnturnedDat layer and equip it.
+        public void LoadGun(string datPath)
+        {
+            if (!System.IO.File.Exists(datPath)) { GD.PushError($"[gun] .dat not found: {datPath}"); return; }
+            Gun = GunDef.FromDatText(System.IO.File.ReadAllText(datPath));
+            Ammo = Gun.AmmoMax;
+            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} playerDmg={Gun.PlayerDamage} range={Gun.Range} firerate={Gun.Firerate}({Gun.Firerate / 50f:F3}s) mag={Gun.AmmoMax}");
+        }
 
         public override void _Ready()
         {
@@ -50,20 +61,25 @@ namespace UnturnedGodot
                     ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
         }
 
-        // Hitscan: ray from the camera along its forward, masked to the zombie layer.
+        // Hitscan: ray from the camera along its forward, masked to the zombie layer. Damage/range/firerate
+        // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (Ammo <= 0 || _cam == null) return false;
+            if (_fireCd > 0f || Ammo <= 0 || _cam == null) return false;
+            float range = Gun?.Range ?? 200f;
+            float damage = Gun?.ZombieDamage ?? 34f;
+            _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
+
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition;
-            Vector3 to = from + (-_cam.GlobalTransform.Basis.Z) * 200f;
+            Vector3 to = from + (-_cam.GlobalTransform.Basis.Z) * range;
             var query = PhysicsRayQueryParameters3D.Create(from, to, 1u << 1); // zombie/enemy bit
             var hit = space.IntersectRay(query);
             if (hit.Count > 0 && hit["collider"].As<GodotObject>() is ZombieController z)
             {
                 bool wasDead = z.Dead;
-                z.Damage(Damage);
+                z.Damage(damage);
                 if (!wasDead && z.Dead) Kills++;
                 return true;
             }
@@ -72,6 +88,8 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            if (_fireCd > 0f) _fireCd -= (float)delta;
+
             _move.Stance = Input.IsPhysicalKeyPressed(Key.Shift) ? EPlayerStance.SPRINT
                          : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH
                          : EPlayerStance.STAND;

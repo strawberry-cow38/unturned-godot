@@ -10,7 +10,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         public Node SpawnRoot;
 
-        float _fireCd, _spawnCd = 0.3f;
+        float _spawnCd = 0.3f;
         int _spawned;
 
         public override void _PhysicsProcess(double delta)
@@ -42,13 +42,11 @@ namespace UnturnedGodot
             float pitch = Mathf.RadToDeg(Mathf.Atan2(camTo.Y, new Vector2(camTo.X, camTo.Z).Length()));
             Player.Camera.RotationDegrees = new Vector3(pitch, 0f, 0f);
 
-            // fire cadence (never dry in the demo)
-            _fireCd -= (float)delta;
-            if (_fireCd <= 0f && best < 45f)
+            // fire every tick; the gun self-limits to its real .dat firerate. Never dry in the demo.
+            if (best < 45f)
             {
-                if (Player.Ammo <= 0) Player.Ammo = 30;
+                if (Player.Ammo <= 0) Player.Ammo = Player.Gun?.AmmoMax ?? 30;
                 Player.Fire();
-                _fireCd = 0.3f;
             }
         }
 
