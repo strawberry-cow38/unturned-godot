@@ -72,6 +72,16 @@
         "runtime": {
           "bin/placeholder/UnturnedDat.dll": {}
         }
+      },
+      "UnturnedSim/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "compile": {
+          "bin/placeholder/UnturnedSim.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/UnturnedSim.dll": {}
+        }
       }
     }
   },
@@ -129,6 +139,11 @@
       "type": "project",
       "path": "../core/UnturnedDat/UnturnedDat.csproj",
       "msbuildProject": "../core/UnturnedDat/UnturnedDat.csproj"
+    },
+    "UnturnedSim/1.0.0": {
+      "type": "project",
+      "path": "../core/UnturnedSim/UnturnedSim.csproj",
+      "msbuildProject": "../core/UnturnedSim/UnturnedSim.csproj"
     }
   },
   "projectFileDependencyGroups": {
@@ -138,7 +153,8 @@
       "GodotSharpEditor >= 4.6.2",
       "SDG.Compat >= 1.0.0",
       "SDG.NetPak >= 1.0.0",
-      "UnturnedDat >= 1.0.0"
+      "UnturnedDat >= 1.0.0",
+      "UnturnedSim >= 1.0.0"
     ]
   },
   "packageFolders": {
@@ -174,6 +190,9 @@
             },
             "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj": {
               "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj"
+            },
+            "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj": {
+              "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj"
             }
           }
         }

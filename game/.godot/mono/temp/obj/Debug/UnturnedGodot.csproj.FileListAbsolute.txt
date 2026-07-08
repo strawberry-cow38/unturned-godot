@@ -21,3 +21,5 @@ C:\claude-workspace\unturned-godot\game\.godot\mono\temp\obj\Debug\refint\Unturn
 C:\claude-workspace\unturned-godot\game\.godot\mono\temp\obj\Debug\UnturnedGodot.pdb
 C:\claude-workspace\unturned-godot\game\.godot\mono\temp\obj\Debug\UnturnedGodot.genruntimeconfig.cache
 C:\claude-workspace\unturned-godot\game\.godot\mono\temp\obj\Debug\ref\UnturnedGodot.dll
+C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\UnturnedSim.dll
+C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\UnturnedSim.pdb

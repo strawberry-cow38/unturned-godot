@@ -49,5 +49,21 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       loaded a 200-GUID sample from the full 4,458-entry manifest → **200/200 OK, 78,363 verts / 26,121
       tris**, zero failures. The GUID→real-geometry pipeline scales to the whole catalog.
 - [ ] un-defer NetPak UnityNetPakTests + Steamworks-ex
-- [ ] Phase 1 vertical slice: headless Godot server + ported NetPak transport, a small ripped level,
-      1 gun vs a chasing/dying zombie, Godot-Glazier HUD (2 players)
+
+## Phase 1 — Vertical Slice (STARTED). Scope (from plan §5): ~150×150m ripped-prop level → ported
+## movement/look/stance → 1 gun end-to-end (ItemGunAsset.dat→UseableGun raycast→damage→death) → 1
+## direct-chase zombie w/ ported anims → minimal HUD on Glazier_Godot v0 → 2 players on a headless
+## dedicated server over SystemSockets w/ NetPak RPCs. Foundations first, then fan out.
+- [x] **Grounded the sim constants from retail ProjectSettings** — Fixed Timestep **0.02s (50 Hz)**,
+      Maximum Allowed Timestep 0.33s (TimeManager); full 32-entry **layer table** (TagManager, all slots
+      verified) → `core/UnturnedSim/Layers.cs` (LayerMasks indices + RayMasks bitmasks, faithful port of
+      U3-SDK ELayerMask/RayMasks). Composite combat masks (DAMAGE_*/BLOCK_*) parked for the gun step.
+- [x] **SimRoot tick spine (plan 0c) — `core/UnturnedSim/` (engine-agnostic) + 7 tests GREEN.**
+      SimClock = deterministic fixed-timestep accumulator at 50 Hz (epsilon-guarded FP boundary, 0.33
+      clamp vs spiral-of-death); SimRoot ticks registered ISimStepped systems in order w/ consecutive
+      tick numbers; `game/SimDriver.cs` drives it from Godot _PhysicsProcess on its OWN 50 Hz clock
+      (decoupled from Godot's tick = same as the dedicated server). Movement/AI/combat/replication hang here.
+      Godot project rebuild GREEN with UnturnedSim referenced.
+- [ ] NEXT: port the player movement/look/stance subset (PlayerMovement.cs → CharacterBody3D on SimRoot),
+      movement-trace test; then 1 gun end-to-end; then the direct-chase zombie; then Glazier HUD v0; then
+      the 2-player headless server (NetPak transport over SystemSockets + regenerated NetGen glue).
