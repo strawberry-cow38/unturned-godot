@@ -1,0 +1,11 @@
+C:\claude-workspace\unturned-godot\core\SDG.Compat\bin\Debug\net8.0\SDG.Compat.deps.json
+C:\claude-workspace\unturned-godot\core\SDG.Compat\bin\Debug\net8.0\SDG.Compat.dll
+C:\claude-workspace\unturned-godot\core\SDG.Compat\bin\Debug\net8.0\SDG.Compat.pdb
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\SDG.Compat.GeneratedMSBuildEditorConfig.editorconfig
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\SDG.Compat.AssemblyInfoInputs.cache
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\SDG.Compat.AssemblyInfo.cs
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\SDG.Compat.csproj.CoreCompileInputs.cache
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\SDG.Compat.dll
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\refint\SDG.Compat.dll
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\SDG.Compat.pdb
+C:\claude-workspace\unturned-godot\core\SDG.Compat\obj\Debug\net8.0\ref\SDG.Compat.dll

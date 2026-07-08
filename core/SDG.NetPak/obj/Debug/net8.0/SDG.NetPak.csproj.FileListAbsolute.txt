@@ -9,3 +9,7 @@ C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.d
 C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\refint\SDG.NetPak.dll
 C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.pdb
 C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\ref\SDG.NetPak.dll
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\bin\Debug\net8.0\SDG.Compat.dll
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\bin\Debug\net8.0\SDG.Compat.pdb
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.csproj.AssemblyReference.cache
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.csproj.Up2Date

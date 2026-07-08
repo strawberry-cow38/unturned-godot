@@ -7,14 +7,30 @@
   "targets": {
     ".NETCoreApp,Version=v8.0": {
       "SDG.NetPak/1.0.0": {
+        "dependencies": {
+          "SDG.Compat": "1.0.0"
+        },
         "runtime": {
           "SDG.NetPak.dll": {}
+        }
+      },
+      "SDG.Compat/1.0.0": {
+        "runtime": {
+          "SDG.Compat.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
         }
       }
     }
   },
   "libraries": {
     "SDG.NetPak/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "SDG.Compat/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

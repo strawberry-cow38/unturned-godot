@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Godot port 0b gate: run the U3-SDK NetPak tests standalone (NUnit). UnityNetPakTests + NetGenTests
+         deferred (need Vector3/Quaternion shims + the NetGen-generated code). -->
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="NetPakTests.cs" /><Compile Include="StringNetPakTests.cs" />
+    <Compile Include="NetPakAngleTests.cs" /><Compile Include="NetPakDeferReadTests.cs" />
+    <Compile Include="NetPakReadOverrunTests.cs" /><Compile Include="NetPakWriteOverrunTests.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\SDG.NetPak\SDG.NetPak.csproj" />
+    <ProjectReference Include="..\..\core\SDG.Compat\SDG.Compat.csproj" />
+  </ItemGroup>
+</Project>

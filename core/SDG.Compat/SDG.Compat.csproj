@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings>
+    <!-- Godot port Phase 0c: compatibility shims so engine-agnostic U3-SDK code compiles/runs outside Unity. -->
+  </PropertyGroup>
+</Project>
