@@ -19,7 +19,7 @@ def guid_of(asset_path):
     except Exception:
         return None
 
-manifest, errs = {}, []
+manifest, errs, ms_names = {}, [], []
 stats = dict(ok=0, skinned=0, compressed=0, multistream=0, nodata=0, noguid=0, err=0)
 files = glob.glob(os.path.join(MESH_DIR, "*.asset"))
 for f in files:
@@ -29,7 +29,10 @@ for f in files:
             stats["compressed"] += 1; continue
         mesh = parse_yaml_mesh(text)
         if any(c["stream"] != 0 and c["dimension"] > 0 for c in mesh["channels"]):
-            stats["multistream"] += 1; continue
+            stats["multistream"] += 1
+            nm = os.path.splitext(os.path.basename(f))[0]
+            if len(ms_names) < 80:
+                ms_names.append(nm)   # skinned meshes (characters/animals) -- now converted, name them
         if not mesh["vbuf"] or mesh["vcount"] == 0:
             stats["nodata"] += 1; continue
         positions, normals, uvs, tris = decode(mesh)
@@ -53,6 +56,9 @@ json.dump(manifest, open(os.path.join(OUT_ROOT, "manifest.json"), "w"), indent=0
 print("total mesh .asset files:", len(files))
 print("STATS:", json.dumps(stats))
 print("manifest GUID entries:", len(manifest))
+print("MULTISTREAM (skinned) mesh names:")
+for nm in ms_names:
+    print("  ", nm)
 if errs:
     print("sample errors:")
     for e in errs:

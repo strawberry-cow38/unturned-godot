@@ -73,9 +73,10 @@ namespace UnturnedGodot
             {
                 if (!_avatars.TryGetValue(kv.Key, out var av))
                 {
-                    av = kv.Key == Client.SelfId
-                        ? Humanoid.Build(Skin, new Color(0.25f, 0.45f, 0.85f), new Color(0.15f, 0.20f, 0.35f))
-                        : Humanoid.Build(Skin, new Color(0.90f, 0.50f, 0.15f), new Color(0.40f, 0.28f, 0.15f));
+                    var tint = kv.Key == Client.SelfId ? new Color(0.60f, 0.72f, 1.00f) : new Color(1.00f, 0.72f, 0.45f);
+                    av = CharacterModel.Loaded
+                        ? CharacterModel.Build(tint)
+                        : Humanoid.Build(Skin, tint, tint * 0.6f);
                     AddChild(av);
                     _avatars[kv.Key] = av;
                 }
@@ -86,7 +87,9 @@ namespace UnturnedGodot
             // zombies as green humanoids, pooled
             while (_zombieAvatars.Count < zs.Count)
             {
-                var zh = Humanoid.Build(new Color(0.50f, 0.60f, 0.45f), new Color(0.30f, 0.45f, 0.28f), new Color(0.25f, 0.32f, 0.22f));
+                var zTint = new Color(0.55f, 0.95f, 0.55f);
+                var zh = CharacterModel.Loaded ? CharacterModel.Build(zTint)
+                                               : Humanoid.Build(new Color(0.50f, 0.60f, 0.45f), zTint, zTint * 0.6f);
                 AddChild(zh);
                 _zombieAvatars.Add(zh);
             }

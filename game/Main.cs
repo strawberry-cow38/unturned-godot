@@ -296,6 +296,7 @@ namespace UnturnedGodot
             AddChild(cp);
             cp.LoadManifest(manifest);
             cp.LoadTextureManifest(@"C:\claude-workspace\ripped-mb\converted\texture_manifest.json");
+            CharacterModel.Load(cp); // the real ripped character mesh for players + zombies
 
             (string name, float x, float z, float s)[] scenery =
             {

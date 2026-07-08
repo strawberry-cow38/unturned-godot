@@ -61,19 +61,43 @@ def parse_yaml_mesh(text):
 
 def decode(mesh):
     ch = mesh['channels']
+    n = mesh['vcount']
+    vbuf = mesh['vbuf']
+
+    # Multi-stream aware: each vertex STREAM is a contiguous block of n*strideS bytes, blocks concatenated in
+    # ascending stream order. strideS = max(offset+size) over that stream's active channels. Skinned meshes
+    # put positions/normals/uv in stream 0 and bone weights/indices in stream 1 -- so reading stream 0 gives
+    # the bind-pose geometry (what we want; animation comes later).
+    streams_used = sorted({c['stream'] for c in ch if c['dimension'] > 0})
+    if len(streams_used) <= 1:
+        # single stream: use the TRUE total stride (m_DataSize/vcount) so padding/alignment is respected
+        s0 = streams_used[0] if streams_used else 0
+        stream_stride = {s0: (len(vbuf) // n if n else 0)}
+        stream_start = {s0: 0}
+    else:
+        # multi-stream (skinned): each stream is n*strideS bytes, blocks concatenated in stream order
+        stream_stride = {}
+        for c in ch:
+            if c['dimension'] <= 0:
+                continue
+            size = c['dimension'] * FMT_SIZE.get(c['format'], 4)
+            stream_stride[c['stream']] = max(stream_stride.get(c['stream'], 0), c['offset'] + size)
+        stream_start, acc = {}, 0
+        for s in sorted(stream_stride):
+            stream_start[s] = acc
+            acc += stream_stride[s] * n
+
     def chan(i):
         return ch[i] if i < len(ch) and ch[i]['dimension'] > 0 else None
     pos_c, nrm_c, uv_c = chan(0), chan(1), chan(4)
-    vbuf, stride, n = mesh['vbuf'], mesh['stride'], mesh['vcount']
-    positions, normals, uvs = [], [], []
-    for v in range(n):
-        base = v * stride
-        p = pos_c
-        positions.append(tuple(read_scalar(vbuf, base + p['offset'] + k*FMT_SIZE[p['format']], p['format']) for k in range(3)))
-        if nrm_c:
-            normals.append(tuple(read_scalar(vbuf, base + nrm_c['offset'] + k*FMT_SIZE[nrm_c['format']], nrm_c['format']) for k in range(3)))
-        if uv_c:
-            uvs.append(tuple(read_scalar(vbuf, base + uv_c['offset'] + k*FMT_SIZE[uv_c['format']], uv_c['format']) for k in range(2)))
+
+    def read_vec(c, dims, v):
+        base = stream_start[c['stream']] + v * stream_stride[c['stream']] + c['offset']
+        return tuple(read_scalar(vbuf, base + k * FMT_SIZE[c['format']], c['format']) for k in range(dims))
+
+    positions = [read_vec(pos_c, 3, v) for v in range(n)]
+    normals = [read_vec(nrm_c, 3, v) for v in range(n)] if nrm_c else []
+    uvs = [read_vec(uv_c, 2, v) for v in range(n)] if uv_c else []
 
     isize = 2 if mesh['index_format'] == 0 else 4
     ifmt = '<H' if isize == 2 else '<I'

@@ -167,5 +167,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       Feet-based coords throughout. Plus ripped-prop scenery (crates/structures). 2-process networked render
       shows both-humanoids + horde + scene. HONEST: blocky stand-in for the full modular-skinned ripped
       character (Phase 2 to assemble); the zone/hitbox gameplay is real. Net test green.
-- [ ] NEXT: the full modular-skinned ripped character (assemble body+clothes on a skeleton) to replace the
-      blocky stand-in; real Zombie AI + UseableGun from source; human-interactive --client (FP); interpolation.
+- [x] **REAL ripped character model in-game** (master: "get the real models"). KEY UNLOCK: extended the
+      mesh converter to handle **MULTI-STREAM (skinned) vertex data** (positions in stream 0, bone weights in
+      stream 1) — the 57 skinned meshes now convert (4515 total, was 4458). Model_0_84 = the actual Unturned
+      Character body; renders as the real low-poly humanoid (T-pose bind pose). `game/CharacterModel.cs`
+      loads it once + `Build(tint)`; ClientNode uses it for BOTH players (blue/orange) and zombies (green),
+      replacing the blocky stand-in. Fixed master's "inside-out" catch: skinned meshes wind opposite the
+      static convention → material is double-sided → renders solid. size (2.25×1.96×0.40), scaled to ~1.8m,
+      feet on ground. HONEST: bind-pose T-pose (no skeleton animation yet), and no skin texture mapped
+      (Model_0_84 not in the texture map) so it's tinted. But it's the REAL ripped character.
+- [ ] NEXT: skeleton + animation to pose/walk the character (out of T-pose); map its skin texture; the
+      converter's winding for skinned meshes (proper flip vs double-sided); real Zombie AI + UseableGun.
