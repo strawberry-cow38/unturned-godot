@@ -87,5 +87,13 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       (Image.LoadFromFile → ImageTexture → StandardMaterial3D albedo). Meshes already carried UVs from the
       converter, so atlas mapping lands correctly. Rendered 10/10 textured — recognizable items (evil-eye
       amulet w/ iris+pupil, red canister, gold vest). Sent master. Unturned = shared atlas textures.
+- [x] **Winding/"inside-out" investigated (master flagged) — NOT a bug.** Double-sided render = zero
+      change (fronts weren't culled), and a Maplestrike rifle + Fireaxe + Crate all render solid +
+      recognizable (a global winding flip would invert those too). The odd look was thin/hollow shell
+      meshes (open-bottom helmets, frames) + a random-props demo w/ no scale. Added `--pick=<names>` to the
+      shot harness (render named items big/clear via ContentProvider.FindGuidByName). Texture map v2 pairing
+      re-confirmed correct-by-construction. (One outlier: a Crewman helmet reads messy — open shell + maybe
+      a wrong-tinted atlas region; not chased yet.)
 - [ ] NEXT ("playable"): 1 gun end-to-end (ItemGunAsset.dat → UseableGun raycast on RayMasks → damage →
-      death) + a direct-chase zombie + minimal HUD, on the SimRoot tick. Then 2-player headless server.
+      death) + a direct-chase zombie (ZombieController staged) + minimal HUD, on the SimRoot tick. Then
+      2-player headless server. Demonstrable via the harness's --write-movie (motion → mp4).

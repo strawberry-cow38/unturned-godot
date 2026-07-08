@@ -51,6 +51,15 @@ namespace UnturnedGodot
 
         public IEnumerable<string> Guids => _guidToPath.Keys;
 
+        // Resolve a mesh by its asset name (manifest path basename, no ext) -> GUID. For the showcase.
+        public string FindGuidByName(string name)
+        {
+            foreach (var kv in _guidToPath)
+                if (Path.GetFileNameWithoutExtension(kv.Value).Equals(name, System.StringComparison.OrdinalIgnoreCase))
+                    return kv.Key;
+            return null;
+        }
+
         // --- textures: mesh_guid -> albedo .png (built by tools/build_texture_map.py) ---
         readonly Dictionary<string, string> _guidToTex = new();
         public IEnumerable<string> TexturedGuids => _guidToTex.Keys;

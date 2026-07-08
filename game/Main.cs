@@ -17,18 +17,19 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            string catalog = null, shot = null;
+            string catalog = null, shot = null, picks = null;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
+                else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
             }
 
             if (shot != null)
             {
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
-                BuildShowcase(catalog);
+                BuildShowcase(catalog, picks);
                 return; // capture happens a few frames later in _Process
             }
 
@@ -83,7 +84,7 @@ namespace UnturnedGodot
             GetTree().Quit();
         }
 
-        void BuildShowcase(string catalog)
+        void BuildShowcase(string catalog, string picks)
         {
             // sky-ish background + ambient so unlit grey props read clearly
             var env = new Godot.Environment
@@ -107,11 +108,6 @@ namespace UnturnedGodot
             ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
             AddChild(ground);
 
-            var cam = new Camera3D { Current = true };
-            AddChild(cam); // must be in-tree before LookAt (global transform)
-            cam.Position = new Vector3(0f, 2.6f, 6.2f);
-            cam.LookAt(new Vector3(0f, 0.9f, -1.2f), Vector3.Up);
-
             int n = 0;
             if (catalog != null)
             {
@@ -121,12 +117,24 @@ namespace UnturnedGodot
                 var texManifest = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(catalog), "texture_manifest.json");
                 cp.LoadTextureManifest(texManifest);
 
+                // pick list: named items (recognizable), else a sample of textured props.
+                var guids = new System.Collections.Generic.List<string>();
+                if (picks != null)
+                    foreach (var name in picks.Split(','))
+                    {
+                        var g = cp.FindGuidByName(name.Trim());
+                        if (g != null) guids.Add(g);
+                        else GD.Print($"[SHOT] pick not found: {name}");
+                    }
+                else
+                    foreach (var g in cp.TexturedGuids) { guids.Add(g); if (guids.Count >= 10) break; }
+
+                int cols = Mathf.Max(1, Mathf.Min(guids.Count, 5));
+                float spacing = 2.6f;
                 var greyMat = new StandardMaterial3D { AlbedoColor = new Color(0.78f, 0.74f, 0.68f) };
-                const int cols = 5; const float spacing = 2.2f;
                 int textured = 0;
-                foreach (var guid in cp.TexturedGuids) // only props that HAVE a texture
+                foreach (var guid in guids)
                 {
-                    if (n >= 10) break;
                     var mesh = cp.LoadMesh(guid);
                     if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
 
@@ -135,24 +143,27 @@ namespace UnturnedGodot
                     if (texPath != null)
                     {
                         var img = Image.LoadFromFile(texPath);
-                        if (img != null)
-                        {
-                            var tex = ImageTexture.CreateFromImage(img);
-                            mat = new StandardMaterial3D { AlbedoTexture = tex };
-                            textured++;
-                        }
+                        if (img != null) { mat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img) }; textured++; }
                     }
 
                     var aabb = mesh.GetAabb();
                     float big = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
-                    float s = big > 0.001f ? 1.5f / big : 1f; // normalize biggest dim to ~1.5 m
+                    float s = big > 0.001f ? 2.0f / big : 1f; // normalize biggest dim to ~2 m
                     int col = n % cols, row = n / cols;
                     var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Scale = new Vector3(s, s, s) };
                     AddChild(mi);
-                    mi.Position = new Vector3((col - (cols - 1) / 2f) * spacing, -aabb.Position.Y * s, -0.6f - row * 2.6f);
+                    mi.Position = new Vector3((col - (cols - 1) / 2f) * spacing, -aabb.Position.Y * s, -row * 3.0f);
                     n++;
                 }
-                GD.Print($"[SHOT] showcase: {n} props ({textured} textured) of {cp.TexturedCount} textured / {cp.Count} total GUIDs");
+
+                // frame the lineup tightly: close + slightly angled down.
+                float width = cols * spacing;
+                var cam = new Camera3D { Current = true, Fov = 60f };
+                AddChild(cam);
+                cam.Position = new Vector3(0f, 1.7f, width * 0.55f + 1.0f);
+                cam.LookAt(new Vector3(0f, 1.0f, -0.3f), Vector3.Up);
+
+                GD.Print($"[SHOT] showcase: {n} props ({textured} textured){(picks != null ? " [picked]" : "")}");
             }
         }
 
