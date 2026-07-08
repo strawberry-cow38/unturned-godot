@@ -11,7 +11,7 @@ namespace UnturnedGodot.Net
     // nearest player), and broadcasts the whole world (players + zombies); clients render it. Engine-agnostic
     // + headless-testable. (NetGen RPCs/reliability come later; this is the raw authoritative state channel.)
 
-    public enum MsgType : byte { ClientState = 1, WorldState = 2, Fire = 3 }
+    public enum MsgType : byte { ClientState = 1, WorldState = 2, Fire = 3, Welcome = 4 }
 
     public struct PlayerState
     {
@@ -87,7 +87,13 @@ namespace UnturnedGodot.Net
         {
             while (_transport.Receive(_rx, out long size, out ITransportConnection conn))
             {
-                if (!_clients.TryGetValue(conn, out byte id)) { id = _nextId++; _clients[conn] = id; }
+                if (!_clients.TryGetValue(conn, out byte id))
+                {
+                    id = _nextId++; _clients[conn] = id;
+                    var ww = new NetPakWriter { buffer = new byte[8] };
+                    ww.Reset(); ww.WriteBits((byte)MsgType.Welcome, 8); ww.WriteBits(id, 8); ww.Flush();
+                    conn.Send(ww.buffer, ww.writeByteIndex, ENetReliability.Reliable); // tell the client its id
+                }
                 var r = new NetPakReader();
                 r.SetBufferSegment(_rx, (int)size);
                 r.ReadBits(8, out uint type);
@@ -182,6 +188,7 @@ namespace UnturnedGodot.Net
 
         public readonly Dictionary<byte, PlayerState> Remote = new();
         public readonly List<ZombieState> Zombies = new();
+        public byte SelfId;   // assigned by the server's Welcome
 
         public NetClient(string host, ushort port)
         {
@@ -222,6 +229,7 @@ namespace UnturnedGodot.Net
                 var r = new NetPakReader();
                 r.SetBufferSegment(_rx, (int)size);
                 r.ReadBits(8, out uint type);
+                if ((MsgType)type == MsgType.Welcome) { r.ReadBits(8, out uint sid); SelfId = (byte)sid; continue; }
                 if ((MsgType)type != MsgType.WorldState) continue;
 
                 r.ReadBits(8, out uint pcount);

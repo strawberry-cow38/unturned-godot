@@ -152,6 +152,12 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       rendering client shoots the SERVER's zombies and the horde thins to zero (server-authoritative). So
       the full loop is networked: server spawns+chases zombies → client fires → server hit-regs → world
       updates → client sees the horde die. Sent master.
-- [ ] NEXT: hook the real PlayerController (WASD/mouse) into NetClient so a HUMAN player syncs (not scripted
-      orbits); client-side interpolation for remote entities; the real Zombie AI + UseableGun ported (replace
-      my placeholder chase/hitscan); reliability/ordering + delta-compression; NetGen-generated RPC glue.
+- [x] **Real PlayerController wired into the networked client**. Added a Welcome msg (server → client id;
+      NetClient.SelfId) + PlayerController.ScriptedInput/CaptureMouse hooks. The client's local player is now
+      a REAL PlayerController (the ported movement physics on Jolt, not a scripted orbit): it kites the
+      nearest zombie + fires → server hit-reg. Renders blue=self (via SelfId) / orange=remote / green=server
+      zombies. Demo drives it via ScriptedInput; a human `--client` run uses real WASD/mouse (flip off the
+      scripting). So the networked player moves with the actual ported movement. Net test still green.
+- [ ] NEXT (real ports to close gaps): the real Zombie AI + UseableGun from source (replace my chase/hitscan
+      placeholders); a human-interactive --client (FP camera + input, un-scripted); client interpolation;
+      reliability/ordering + delta-compression; NetGen-generated RPC glue for typed messages.

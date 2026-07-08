@@ -269,8 +269,11 @@ namespace UnturnedGodot
             };
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
-            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
-            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
+            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gm);
             AddChild(ground);
             var cam = new Camera3D { Current = true, Fov = 62f };
             AddChild(cam);
@@ -279,7 +282,7 @@ namespace UnturnedGodot
 
             var cli = new Net.NetClient("127.0.0.1", NetPort);
             AddChild(new ClientNode { Client = cli });
-            GD.Print($"[CLIENT] connected to 127.0.0.1:{NetPort}; rendering server-synced players");
+            GD.Print($"[CLIENT] connected to 127.0.0.1:{NetPort}; local player = real PlayerController (synced)");
         }
 
         // In-process 2-player network demo: a real NetServer + two real NetClients over loopback UDP,

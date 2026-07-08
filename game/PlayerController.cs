@@ -22,6 +22,10 @@ namespace UnturnedGodot
         public int Deaths;
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
+        // When set (e.g. by a recorded demo or a net-driven bot), overrides keyboard input: x=strafe, y=forward.
+        public UnityEngine.Vector2? ScriptedInput;
+        public bool CaptureMouse = true;
+
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
         float _fireCd;              // seconds until the gun can fire again
 
@@ -62,7 +66,7 @@ namespace UnturnedGodot
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
             AddChild(_cam);
 
-            Input.MouseMode = Input.MouseModeEnum.Captured;
+            if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
         public override void _UnhandledInput(InputEvent @event)
@@ -113,8 +117,13 @@ namespace UnturnedGodot
                          : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH
                          : EPlayerStance.STAND;
 
-            float forward = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
-            float strafe  = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
+            float forward, strafe;
+            if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
+            else
+            {
+                forward = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
+                strafe  = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
+            }
             bool jump = Input.IsPhysicalKeyPressed(Key.Space);
 
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, IsOnFloor(), (float)delta);
