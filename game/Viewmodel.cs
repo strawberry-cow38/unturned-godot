@@ -42,11 +42,12 @@ namespace UnturnedGodot
         bool _aiming;
         float _aimT;       // 0..1 aim-accuracy ramp over AimInDuration seconds
         float _aimAlpha;   // eased blend (hip 0 -> ADS 1)
-        // ADS aligns the gun's real "View" hook onto the camera's aim axis (source: GetAimingViewmodelAlignment
-        // takes the aimHook world pos into the viewmodel-camera space). The View hook = the Eaglefire's actual
-        // aim transform, pulled from the model (collection I:13): gun-local (0, -0.7706, 0.1337) in Unity, Z
-        // negated to Godot. We attach a marker there and move the arms so that marker lands on-axis at eye level.
-        static readonly Vector3 ViewHookLocal = new Vector3(0f, -0.7706487f, -0.1337f);
+        // ADS aligns the mounted iron sight's real "Aim" hook onto the camera's aim axis (source:
+        // GetAimingViewmodelAlignment + Attachments.defaultAimHook = sightModelLOD0.Find("Aim")). Pulled from
+        // core.masterbundle (UnityPy): eaglefire_iron_sights/sight.prefab mounted at the gun's Sight hook gives
+        // Aim in gun space = SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206)+Aim(0,-0.6,0.0918) = (0,-0.4688,
+        // 0.2098); converted to the port gun frame (x,y,z)->(-x,y,-z) = (0,-0.4688,-0.2098). Marker lands on-axis.
+        static readonly Vector3 AimHookLocal = new Vector3(0f, -0.4688f, -0.2098f);
         Node3D _sight;
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
@@ -108,18 +109,21 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
-                    _sight = new Node3D { Name = "ViewHook" };   // the gun's aim point, from the real model
-                    mi.AddChild(_sight);
-                    _sight.Position = ViewHookLocal;
+                    // Real Eaglefire_Iron_Sights model (item 5) — sight.prefab from core.masterbundle, extracted via
+                    // UnityPy and converted to the port gun frame (x,y,z)->(-x,y,-z), same pipeline as the gun body.
+                    // Mounted exactly as Attachments.cs does: Instantiate(sightAsset.sight) parented to the Sight hook
+                    // at localPos 0 / localRot identity / localScale 1. The sight's Model_0 origin therefore sits at
+                    // SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206) = (0,0.1312,0.118) -> port (0,0.1312,-0.118).
+                    var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.06f, 0.07f), Metallic = 0.75f, Roughness = 0.35f };
+                    var ironMesh = ContentProvider.ParseObj("res://content/eaglefire_iron_sights.txt");
+                    if (ironMesh != null)
+                        mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = new Vector3(0f, 0.1312f, -0.118f) });
 
-                    // Modeled iron sights on the gun mesh frame (up = -z, barrel = +y). Front post at the muzzle +
-                    // a rear aperture ring on the receiver, both on the sight line so ADS lines them up. The eye
-                    // viewpoint (ViewHookLocal, behind at the same height) looks through the ring at the post.
-                    var ironMat = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.06f), Metallic = 0.5f, Roughness = 0.4f };
-                    var front = new MeshInstance3D { Name = "FrontSight", Mesh = new BoxMesh { Size = new Vector3(0.013f, 0.013f, 0.13f) }, MaterialOverride = ironMat, Position = new Vector3(0f, 0.5f, -0.15f) };
-                    mi.AddChild(front);
-                    var rear = new MeshInstance3D { Name = "RearSight", Mesh = new TorusMesh { InnerRadius = 0.028f, OuterRadius = 0.045f, RingSegments = 16 }, MaterialOverride = ironMat, Position = new Vector3(0f, -0.1f, -0.15f) };
-                    mi.AddChild(rear);
+                    // ADS anchor marker at the sight's real Aim hook (see AimHookLocal) — ADS slides the arms so this
+                    // lands on the camera axis, i.e. you look straight through the aperture.
+                    _sight = new Node3D { Name = "AimHook" };
+                    mi.AddChild(_sight);
+                    _sight.Position = AimHookLocal;
 
                     // muzzle flash: a warm light + an unshaded spark at the barrel end (+y), flashed briefly on fire
                     _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = new Vector3(0f, 0.75f, -0.04f), Visible = false };
