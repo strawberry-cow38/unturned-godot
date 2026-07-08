@@ -272,3 +272,16 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       viewing distance is genuinely needed, so it's not a hack. DECISION PENDING master: lock in the clean 591b2c1
       (relabel the offset as eye-relief) vs invest in replicating Unturned's real hip/aim arm poses (bigger task).
       Restructure code parked locally + on the 4080 (NOT pushed); GitHub stays at the clean 591b2c1.
+- [ ] **VIEWMODEL — ADS proper-fix, deep source dig (2026-07-08)** (master: "just do it properly").
+      Went source-pure on the viewmodel camera. FOUND the real eye: the source viewmodel camera is a child of the
+      SKULL bone at localPosition (-0.45,0,0) rot 90deg-Z (PlayerAnimator line 1649: firstSkeleton/Spine/Skull/
+      ViewmodelCamera — that's the actual -0.45, pulled from resources.assets I:8 pathID 2145/transform 2679).
+      Confirmed the gun mount is source-correct (Euler(0,0,90) on the hook = identical placement to my view-space
+      aim). The "View" hook (I:13 pathID 501) is the aiming EYE VIEWPOINT (behind the gun), and source ADS moves
+      the camera exactly onto it (GetAimingViewmodelAlignment). Anchored our camera to the real skull eye (BoneAttachment
+      on Skull, +(-0.45) along skull-X) + move it to the View hook on ADS. WALL: doing that exactly, the eye ends
+      dead-behind the gun and our Eaglefire mesh's receiver/stock (a chunky octagon) fills the view -> block. The
+      source MECHANICS are all correct now; Unturned's exact model geometry (sight-line height over the receiver,
+      possibly mesh scale) is what keeps it clean in-game, and matching that is a deeper mesh job. Skull-eye code
+      parked locally + 4080 (NOT pushed); GitHub stays at the clean 591b2c1 (additive + a small viewing offset that
+      reads fine, down-the-sights). PENDING master: keep drilling the pure-source look vs lock in the clean version.
