@@ -159,6 +159,19 @@ namespace UnturnedGodot
             _viewmodel?.SetReloading(true);
         }
 
+        // Random unit vector within a cone of half-angle `spread` (radians) around `dir` — the port of
+        // RandomEx.GetRandomForwardVectorInCone the source applies to each bullet's direction.
+        Vector3 DeviateInCone(Vector3 dir, float spread)
+        {
+            float ang = _rng.RandfRange(0f, spread);
+            float az = _rng.RandfRange(0f, Mathf.Tau);
+            Vector3 up = Mathf.Abs(dir.Dot(Vector3.Up)) < 0.99f ? Vector3.Up : Vector3.Right;
+            Vector3 right = dir.Cross(up).Normalized();
+            Vector3 realUp = right.Cross(dir).Normalized();
+            Vector3 offset = (right * Mathf.Cos(az) + realUp * Mathf.Sin(az)) * Mathf.Sin(ang);
+            return (dir * Mathf.Cos(ang) + offset).Normalized();
+        }
+
         // Hitscan: ray from the camera along its forward, masked to the zombie layer. Damage/range/firerate
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
@@ -178,6 +191,14 @@ namespace UnturnedGodot
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition;
             Vector3 dir = -_cam.GlobalTransform.Basis.Z;
+            // bullet spread: deviate within a cone (base Spread_Angle_Degrees, * Spread_Aim when aiming) —
+            // source: dir = aim * RandomForwardVectorInCone(spread), spread = base * Lerp(1, spreadAim, aimAlpha)
+            if (Gun != null && Gun.SpreadAngleDegrees > 0f)
+            {
+                float aimA = _viewmodel?.AimAlpha ?? 0f;
+                float spread = Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA);
+                if (spread > 0.0001f) dir = DeviateInCone(dir, spread);
+            }
             Vector3 to = from + dir * range;
             var query = PhysicsRayQueryParameters3D.Create(from, to, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
             var hit = space.IntersectRay(query);

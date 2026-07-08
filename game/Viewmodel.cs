@@ -139,6 +139,8 @@ namespace UnturnedGodot
         // Gun_Reload clip is a TODO; it needs additive-layer integration like the aim pose). Can't ADS mid-reload.
         public void SetReloading(bool on) { _reloading = on; if (on) _aiming = false; }
 
+        public float AimAlpha => _aimAlpha;   // 0 hip .. 1 ADS, for spread/accuracy
+
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
 
         public override void _Process(double delta)

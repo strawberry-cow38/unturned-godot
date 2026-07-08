@@ -12,6 +12,7 @@ namespace UnturnedGodot
         public float ZombieDamage;
         public float Range;
         public float SpreadAngleDegrees;
+        public float SpreadAim = 1f;   // spread multiplier while aiming (Eaglefire 0.05 = 5% of hip spread)
         public int Firerate;   // sim ticks between shots (lower = faster); cooldown = Firerate / 50 s
         public int AmmoMax;
         // Per-shot camera recoil (degrees): X = horizontal (yaw, random sign), Y = vertical (pitch up). The aim
@@ -31,6 +32,7 @@ namespace UnturnedGodot
                 Firerate = d.ParseInt32("Firerate", 8),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
                 SpreadAngleDegrees = d.ParseFloat("Spread_Angle_Degrees"),
+                SpreadAim = d.ParseFloat("Spread_Aim", 1f),
                 RecoilMinX = d.ParseFloat("Recoil_Min_X"),
                 RecoilMaxX = d.ParseFloat("Recoil_Max_X"),
                 RecoilMinY = d.ParseFloat("Recoil_Min_Y"),
