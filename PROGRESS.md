@@ -8,16 +8,16 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
 ## Phase 0 — Foundations (in progress)
 - [x] Prereqs on 4080: .NET 8.0.419, Godot (choco), retail Unturned install present (rip source).
 - [x] Workspace + git repo.
-- [x] **0b — NetPak (netcode) proven engine-agnostic:** core+System-ex compiles standalone in .NET 8, and
-      the **NetPak test suite runs GREEN: 46 passed / 0 failed** (bit-pack, angle-pack, string, defer-read,
-      overrun). fable's "pure-.NET core carries as-is" thesis proven at the LOGIC level, not just compile.
-- [x] **0c start — SDG.Compat.Mathf shim** (namespace UnityEngine, pure System.Math delegation) → unblocks
-      any engine-agnostic code that `using UnityEngine;` for Mathf. First harness piece.
-      - deferred: UnityNetPakTests (need Vector3/Quaternion shims), NetGenTests (need NetGen-generated code),
-        SteamworksNetPak ex (need Steamworks.NET bindings).
-- [x] **UnturnedDat (data/mod .dat layer) proven engine-agnostic:** core compiles standalone + test suite GREEN: 800 passed / 0 failed (parser/tokenizer/dict/list/writer/metadata). The modding backbone carries untouched. (InternalsVisibleTo added; UnityDatEx/ColorEx deferred to Vector/Color shims.)
-- [ ] SDG.Compat: Vector2/3/4, Quaternion, Color32 (→ unblocks UnityNetPakTests + tons of downstream)
-- [ ] Godot 4 .NET solution skeleton (Jolt on) + Linux-headless CI
+- [x] **0b — NetPak (netcode) engine-agnostic: compiles standalone + 46 tests GREEN** (bit/angle/string/
+      defer-read/overrun). Thesis proven at logic level. (Steamworks-ex + UnityNetPakTests still deferred.)
+- [x] **0b — UnturnedDat (data/mod .dat layer) engine-agnostic: compiles standalone + FULL test suite GREEN
+      = 1039 passed / 0 failed** — incl the UnityDatEx (Vector) + UnityDatColorEx (Color32) extensions.
+      The modding backbone carries untouched. (InternalsVisibleTo added.)
+- [x] **0c — SDG.Compat harness: Mathf + Vector2/3/4 + Quaternion + Color + Color32 shims (namespace
+      UnityEngine). PROVEN CORRECT by the game's own UnityDatEx/ColorEx tests passing against them.**
+- [x] **TALLY: 1085 tests green standalone** (NetPak 46 + UnturnedDat 1039). The engine-agnostic core carries.
+- [ ] Un-defer NetPak UnityNetPakTests (Vector/Quat now available) + Steamworks-ex (needs Steamworks.NET)
+- [ ] Godot 4 .NET solution skeleton (Jolt on) + Godot<->SDG.Compat adapter (Vector3<->Godot.Vector3 etc)  ← NEXT
 - [ ] 0a rip station: AssetRipper full rip of the Steam install → canonical ripped/ tree
 - [ ] 0d converter v0 + ContentProvider (GLB/PNG passthrough, static-prop YAML→.tscn, GUID manifest)
 - [ ] GATE: a ripped prop instantiates in a Godot scene via ContentProvider by its original GUID
