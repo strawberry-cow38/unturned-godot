@@ -39,6 +39,15 @@ namespace UnturnedGodot
         // made-up constant — the align-to-center is the source op, this is just where my rig's sight lands).
         Vector3 _armsPosADS = new Vector3(-0.19f, -1.66f, -0.15f);
 
+        // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
+        // (UseableGun.ReceivePlayAimStart/Stop both guard on player.equipment.IsEquipAnimationFinished, which is
+        // Time >= equipStart + GetAnimationLength("Equip"), PlayerEquipment.cs:269/1633). So SetAiming is ignored
+        // while the gun is still raising.
+        float _equipLen;       // Gun_Equip clip length (seconds)
+        float _equipElapsed;   // time since the viewmodel spawned / equip started
+        bool EquipDone => _equipLen <= 0f || _equipElapsed >= _equipLen;
+        public bool IsEquipComplete => EquipDone;
+
         public override void _Ready()
         {
             _vp = new SubViewport
@@ -69,7 +78,10 @@ namespace UnturnedGodot
             {
                 _cam.AddChild(_arms);
                 _arms.Position = _armsPos;
-                _arms.Play("Gun_Equip");   // raise -> holds the two-handed rifle stance
+                _arms.SetClipLoop("Gun_Equip", false);   // equip plays ONCE and holds the ready pose
+                _arms.Play("Gun_Equip");                 // raise -> holds the two-handed rifle stance
+                _equipLen = _arms.ClipLength("Gun_Equip");
+                GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
 
                 var skel = _arms.Skeleton;
                 int hb = skel.FindBone("Right_Hook");
@@ -100,7 +112,8 @@ namespace UnturnedGodot
         public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); }
 
         // Hold RMB to aim (Unturned's default aiming mode). PlayerController drives this on RMB down/up.
-        public void SetAiming(bool on) { _aiming = on; }
+        // Source gate: can't begin aiming until the equip pull-out is finished (IsEquipAnimationFinished).
+        public void SetAiming(bool on) { if (on && !EquipDone) return; _aiming = on; }
 
         public void SetShown(bool shown) { if (_layer != null) _layer.Visible = shown; }
 
@@ -108,6 +121,7 @@ namespace UnturnedGodot
         {
             if (_arms == null || _cam == null) return;
             _t += delta;
+            _equipElapsed += (float)delta;
             _recoil = Mathf.Max(0f, _recoil - (float)delta * 5f);
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);

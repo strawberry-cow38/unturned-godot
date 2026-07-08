@@ -25,6 +25,18 @@ namespace UnturnedGodot
             { _ap.Play(name, -1, speed); }
         }
 
+        // Length (seconds) of a clip, or 0 if absent. Used to gate ADS on the equip animation finishing.
+        public float ClipLength(string name)
+            => (_ap != null && _ap.HasAnimation(name)) ? (float)_ap.GetAnimation(name).Length : 0f;
+
+        // Force a clip's loop mode (the extractor marks non-Attack/Startle/Jump clips as looping; the Equip
+        // pull-out must play ONCE and hold its end pose = the two-handed ready hold).
+        public void SetClipLoop(string name, bool loop)
+        {
+            if (_ap != null && _ap.HasAnimation(name))
+                _ap.GetAnimation(name).LoopMode = loop ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+        }
+
         // Locomotion clip names (players use the human set; zombies swap in their Move_N/Idle_N shamble).
         public string IdleClip = "Idle_Stand", WalkClip = "Move_Walk", RunClip = "Move_Run";
 
