@@ -159,6 +159,10 @@ namespace UnturnedGodot
                     var flashTex = LoadTex("res://content/muzzleflash.png");
                     if (flashTex != null) flashMat.AlbedoTexture = flashTex; else flashMat.AlbedoColor = new Color(1f, 0.85f, 0.4f);
                     _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.6f, 0.6f) }, MaterialOverride = flashMat });
+                    // tracer: the Military_30 mag fires tracers (Tracer 48 = the Trail_0 effect). A brief bright streak
+                    // down the barrel (+Y = aim), shown with the flash. Thin box from the muzzle extending downrange.
+                    var tracerMat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, BlendMode = BaseMaterial3D.BlendModeEnum.Add, AlbedoColor = new Color(1f, 0.9f, 0.5f) };
+                    _muzzleFlash.AddChild(new MeshInstance3D { Name = "Tracer", Mesh = new BoxMesh { Size = new Vector3(0.03f, 14f, 0.03f) }, MaterialOverride = tracerMat, Position = new Vector3(0f, 7f, 0f) });
                     mi.AddChild(_muzzleFlash);
 
                     // Eject hook marker (gun Eject hook (0,0.0275,0.0814) -> port (0,0.0275,-0.0814)) + the shared

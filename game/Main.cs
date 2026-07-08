@@ -82,7 +82,7 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                _rigCaptureFrames = new[] { 10, 108, 122, 136, 148, 154 };  // equip -> reload (100-150): mid-motion frames + return to ready
+                _rigCaptureFrames = new[] { 10, 66, 89, 92, 95, 120 };  // equip -> ADS -> fire+1 (muzzle flash + tracer) -> reload
                 _vmTest = true;
                 GetWindow().Size = new Vector2I(2560, 1440);
                 BuildViewmodelTest();
