@@ -51,6 +51,22 @@ namespace UnturnedGodot
 
         public IEnumerable<string> Guids => _guidToPath.Keys;
 
+        // --- textures: mesh_guid -> albedo .png (built by tools/build_texture_map.py) ---
+        readonly Dictionary<string, string> _guidToTex = new();
+        public IEnumerable<string> TexturedGuids => _guidToTex.Keys;
+        public int TexturedCount => _guidToTex.Count;
+
+        public void LoadTextureManifest(string manifestPath)
+        {
+            var text = ReadText(manifestPath);
+            if (text == null) { GD.PushError($"[ContentProvider] texture manifest not found: {manifestPath}"); return; }
+            var dict = Json.ParseString(text).AsGodotDictionary();
+            foreach (var k in dict.Keys)
+                _guidToTex[(string)k] = (string)dict[k];
+        }
+
+        public string GetTexturePath(string guid) => _guidToTex.TryGetValue(guid, out var p) ? p : null;
+
         string Resolve(string rel) => IsGodotPath(_root) ? $"{_root}/{rel}" : Path.Combine(_root, rel);
 
         // Resolve a mesh by its original Unity GUID -> a live Godot ArrayMesh.

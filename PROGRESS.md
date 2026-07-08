@@ -80,7 +80,12 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       frame loop; captures the viewport in _Process). Confirmed: "OpenGL API ... RTX 4080 SUPER", 10 real
       props rendered + shadowed at 1280×720. Sent master the screenshot. (Grey = textures/materials not
       wired onto meshes yet.) Recipe banked for all future visual checks.
-- [ ] NEXT: wire real textures/materials onto meshes (rip .png already there, .mat refs → StandardMaterial3D)
-      OR push the slice: 1 gun end-to-end (ItemGunAsset.dat → UseableGun raycast on RayMasks → damage →
-      death); ~150×150m ripped-prop test level; direct-chase zombie; Glazier HUD v0; 2-player headless server.
-      (Asked master which to prioritize; continue per their steer or default to textures→gun.)
+- [x] **TEXTURES wired** (master steer: "textures then playable"). Traced the asset chain prefab →
+      MeshRenderer material → `_MainTex` → atlas `.png`; `tools/build_texture_map.py` composes
+      **mesh_guid → albedo .png (2104 meshes mapped)** across the whole tree. ContentProvider loads the
+      texture manifest + serves `GetTexturePath(guid)`; showcase loads each atlas PNG at runtime
+      (Image.LoadFromFile → ImageTexture → StandardMaterial3D albedo). Meshes already carried UVs from the
+      converter, so atlas mapping lands correctly. Rendered 10/10 textured — recognizable items (evil-eye
+      amulet w/ iris+pupil, red canister, gold vest). Sent master. Unturned = shared atlas textures.
+- [ ] NEXT ("playable"): 1 gun end-to-end (ItemGunAsset.dat → UseableGun raycast on RayMasks → damage →
+      death) + a direct-chase zombie + minimal HUD, on the SimRoot tick. Then 2-player headless server.

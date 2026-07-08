@@ -118,29 +118,41 @@ namespace UnturnedGodot
                 var cp = new ContentProvider();
                 AddChild(cp);
                 cp.LoadManifest(catalog);
-                var propMat = new StandardMaterial3D { AlbedoColor = new Color(0.78f, 0.74f, 0.68f) };
+                var texManifest = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(catalog), "texture_manifest.json");
+                cp.LoadTextureManifest(texManifest);
+
+                var greyMat = new StandardMaterial3D { AlbedoColor = new Color(0.78f, 0.74f, 0.68f) };
                 const int cols = 5; const float spacing = 2.2f;
-                foreach (var guid in cp.Guids)
+                int textured = 0;
+                foreach (var guid in cp.TexturedGuids) // only props that HAVE a texture
                 {
                     if (n >= 10) break;
                     var mesh = cp.LoadMesh(guid);
                     if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
+
+                    Material mat = greyMat;
+                    var texPath = cp.GetTexturePath(guid);
+                    if (texPath != null)
+                    {
+                        var img = Image.LoadFromFile(texPath);
+                        if (img != null)
+                        {
+                            var tex = ImageTexture.CreateFromImage(img);
+                            mat = new StandardMaterial3D { AlbedoTexture = tex };
+                            textured++;
+                        }
+                    }
+
                     var aabb = mesh.GetAabb();
                     float big = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
                     float s = big > 0.001f ? 1.5f / big : 1f; // normalize biggest dim to ~1.5 m
                     int col = n % cols, row = n / cols;
-                    var mi = new MeshInstance3D
-                    {
-                        Mesh = mesh,
-                        MaterialOverride = propMat,
-                        Scale = new Vector3(s, s, s),
-                    };
+                    var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Scale = new Vector3(s, s, s) };
                     AddChild(mi);
-                    // seat on the ground: bottom of the scaled AABB at y=0
                     mi.Position = new Vector3((col - (cols - 1) / 2f) * spacing, -aabb.Position.Y * s, -0.6f - row * 2.6f);
                     n++;
                 }
-                GD.Print($"[SHOT] showcase: {n} real ripped props (catalog={cp.Count} GUIDs)");
+                GD.Print($"[SHOT] showcase: {n} props ({textured} textured) of {cp.TexturedCount} textured / {cp.Count} total GUIDs");
             }
         }
 
