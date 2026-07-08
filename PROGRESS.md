@@ -235,3 +235,17 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       play ONCE + hold the ready pose. Re-tuned _armsPosADS vs the corrected post-equip hold (the earlier crisp shot
       was aiming mid-raise, which the gate now correctly forbids; pose is sensitive near eye height — breech hits the
       lens if raised too far). --vm demo rebuilt data-driven: equip->settle->ADS->release->hip, no recoil. Pushed c78746c.
+- [x] **VIEWMODEL — ADS aligns the REAL View-hook offset (2026-07-08)** (master: "ads too high + not centered, check src for offsets").
+      Was eyeballing the ADS pose (the sin master keeps catching). Pulled the Eaglefire's ACTUAL model from the
+      master bundle via the AssetRipper server (collection I:13): a bare gun has no aimHook -> aligns on the "View"
+      hook (Attachments.cs viewHook fallback), gun-local (0, -0.7706, 0.1337) Unity = (0,-0.7706,-0.1337) Godot
+      (unity_mesh_to_obj negates Z). Cross-checks against the gun mesh bounds (x[-.112,.073] y[-.616,.731] z[-.147,.193]):
+      x=0 dead-centered, z=.1337 at the top (iron sight), y=-.77 at the rear (eye ref). A marker Node3D sits at the
+      hook on the gun mesh; the arms move so it lands on the camera aim axis (x=0,y=0 = source-exact per
+      GetAimingViewmodelAlignment), scaled by aim alpha. AdsSightDepth = the forward viewing distance (honest
+      stand-in for the Aim_Start arm-extend anim, which is additive + not yet pose-blended). Render-verified:
+      dead-centered, looking down the irons. Pushed b8dd932.
+      HOOK-EXTRACTION RECIPE (reuse for other guns/offsets): AssetRipper HTTP `Search/View?q=<HookName>` -> filter
+      the result links to the gun's collection index -> the hook GameObject's single component is its Transform ->
+      `Assets/Yaml?Path={"C":{"B":{"P":[]},"I":<coll>},"D":<transformPathID>}` -> read m_LocalPosition. Gun models
+      are all named "Model_0"; find the gun's collection by probing mesh pathID across collections.
