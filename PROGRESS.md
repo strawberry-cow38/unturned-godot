@@ -285,3 +285,15 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       possibly mesh scale) is what keeps it clean in-game, and matching that is a deeper mesh job. Skull-eye code
       parked locally + 4080 (NOT pushed); GitHub stays at the clean 591b2c1 (additive + a small viewing offset that
       reads fine, down-the-sights). PENDING master: keep drilling the pure-source look vs lock in the clean version.
+- [ ] **VIEWMODEL — iron-sight finding + convention wall (2026-07-08)** (master: "get the eaglefire irons on there").
+      Investigated getting the Eaglefire irons on the gun to fix the ADS receiver-block. FINDINGS: the irons are
+      NOT a separate extractable mesh — the gun's a modular model where the "Sight"/"Barrel" objects (I:13 D:395/394)
+      are mount HOOK transforms (Sight at gun-local (0,-0.182,0.134)), not geometry. Also pathID 1156 is a
+      mislabeled MeshRenderer sitting on a "Foliage_0" GameObject (306, mesh 236) — so my eaglefire_gun.txt
+      provenance is murky (it renders as a gun + reads right at hip, but isn't cleanly 1156). My body mesh has a
+      rear receiver bump (top verts ~z=0.19 at y=-0.18) but NO front sight post. So "irons on there" = MODELING a
+      front post + rear aperture at the source hook positions, not extraction. Deeper blocker: the gun's up-axis /
+      z-flip convention keeps biting (View hook z-flip lands the eye on the wrong side of the receiver -> the
+      block). Doing it right = a focused ground-up pass: lock the gun's coordinate frame, model source-positioned
+      irons, seat the eye on the sight line. PENDING master: dedicated pass vs lock in the clean 591b2c1 + move to
+      reload. GitHub stays at clean 591b2c1; skull-eye/mount experiments parked locally + 4080.
