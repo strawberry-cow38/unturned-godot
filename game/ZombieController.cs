@@ -36,10 +36,12 @@ namespace UnturnedGodot
             {
                 // Unturned zombies (Zombie.cs): moveAnim="Move_"+move, idleAnim="Idle_"+idle, per-zombie bytes.
                 // These are the arms-out shamble clips, NOT the human Move_Walk. Randomise for variety.
+                // Move_0..3 = normal upright shambles; Move_4/5 = the CRAWLER variant (separate zombie type).
+                // Normal zombies must NOT use the crawler moves -> restrict to 0..3.
                 var rng = new RandomNumberGenerator(); rng.Randomize();
-                _rig.WalkClip = "Move_" + rng.RandiRange(0, 4);
+                _rig.WalkClip = "Move_" + rng.RandiRange(0, 3);
                 _rig.RunClip = _rig.WalkClip;                 // zombies don't run; shamble at any speed
-                _rig.IdleClip = "Idle_" + rng.RandiRange(0, 4);
+                _rig.IdleClip = "Idle_" + rng.RandiRange(0, 3);
                 _startleId = rng.RandiRange(0, 1);
                 _atkId = rng.RandiRange(0, 2);
                 _body = _rig;
