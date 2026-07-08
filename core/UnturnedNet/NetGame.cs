@@ -195,6 +195,7 @@ namespace UnturnedGodot.Net
             foreach (var st in _states.Values) st.Write(w);
             w.WriteBits((uint)_zombies.Count, 8);
             foreach (var z in _zombies) z.Write(w);
+            w.WriteBits((uint)Kills, 16);
             w.Flush();
             foreach (var conn in _clients.Keys)
                 conn.Send(w.buffer, w.writeByteIndex, ENetReliability.Unreliable);
@@ -212,6 +213,7 @@ namespace UnturnedGodot.Net
         public readonly Dictionary<byte, PlayerState> Remote = new();
         public readonly List<ZombieState> Zombies = new();
         public byte SelfId;   // assigned by the server's Welcome
+        public int Kills;     // authoritative kill count from the server
 
         public NetClient(string host, ushort port)
         {
@@ -267,6 +269,7 @@ namespace UnturnedGodot.Net
                 Zombies.Clear();
                 for (int i = 0; i < zcount; i++)
                     Zombies.Add(ZombieState.Read(r));
+                r.ReadBits(16, out uint k); Kills = (int)k;
             }
         }
 

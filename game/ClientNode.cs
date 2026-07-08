@@ -12,6 +12,7 @@ namespace UnturnedGodot
         public NetClient Client;
 
         PlayerController _player;
+        Label _hud;
         float _fireCd;
         readonly Dictionary<byte, Node3D> _avatars = new();
         readonly List<Node3D> _zombieAvatars = new();
@@ -24,6 +25,12 @@ namespace UnturnedGodot
             AddChild(_player);
             _player.GlobalPosition = new Vector3(0f, 1f, 0f);
             _player.Camera.Current = false; // overview camera (BuildClient) is the demo view
+
+            var layer = new CanvasLayer();
+            _hud = new Label { Position = new Vector2(24, 22) };
+            _hud.AddThemeFontSizeOverride("font_size", 22);
+            layer.AddChild(_hud);
+            AddChild(layer);
         }
 
         public override void _PhysicsProcess(double delta)
@@ -88,6 +95,8 @@ namespace UnturnedGodot
                 _zombieAvatars[i].Visible = i < zs.Count;
                 if (i < zs.Count) _zombieAvatars[i].Position = new Vector3(zs[i].X, zs[i].Y, zs[i].Z);
             }
+
+            _hud.Text = $"MULTIPLAYER   ·   players {Client.Remote.Count}   ·   horde {zs.Count}   ·   zombies killed {Client.Kills}";
         }
     }
 }
