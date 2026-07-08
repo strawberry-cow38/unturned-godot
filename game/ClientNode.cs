@@ -12,6 +12,7 @@ namespace UnturnedGodot
         public NetClient Client;
         float _t;
         readonly Dictionary<byte, MeshInstance3D> _avatars = new();
+        readonly List<MeshInstance3D> _zombieAvatars = new();
 
         public override void _PhysicsProcess(double delta)
         {
@@ -35,6 +36,24 @@ namespace UnturnedGodot
                     _avatars[kv.Key] = av;
                 }
                 av.Position = new Vector3(kv.Value.X, kv.Value.Y, kv.Value.Z);
+            }
+
+            // server-authoritative zombies (green), pooled
+            var zs = Client.Zombies;
+            while (_zombieAvatars.Count < zs.Count)
+            {
+                var zav = new MeshInstance3D
+                {
+                    Mesh = new CapsuleMesh { Height = 1.8f, Radius = 0.4f },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.35f, 0.55f, 0.30f) },
+                };
+                AddChild(zav);
+                _zombieAvatars.Add(zav);
+            }
+            for (int i = 0; i < _zombieAvatars.Count; i++)
+            {
+                _zombieAvatars[i].Visible = i < zs.Count;
+                if (i < zs.Count) _zombieAvatars[i].Position = new Vector3(zs[i].X, zs[i].Y, zs[i].Z);
             }
         }
     }

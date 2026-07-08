@@ -139,6 +139,13 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       `[CLIENT] connected to 127.0.0.1:47872`, and the client rendered BOTH players (orange = the server's
       bot from the OTHER process, blue = local) — the orange's position crossed real UDP between two OS
       processes. 8s clip sent master. So the networking is real cross-process, not co-located.
-- [ ] NEXT: hook the actual PlayerController (movement/input) into NetClient so a REAL controlled player
-      syncs (replace scripted orbits); client-side interpolation for remote players; reliability/ordering
-      + delta-compression on the UDP transport; regenerate NetGen RPC glue for typed messages.
+- [x] **★ NETWORKED SURVIVAL CORE ★**. Extended the protocol: WorldState now carries players AND zombies;
+      NetServer runs an **authoritative zombie sim** (horde spawns, each chases the nearest player) + broadcasts
+      it. Two-process run on the 4080: headless `--server` runs the zombie sim, rendering `--client` shows
+      BLUE (local player) + ORANGE (remote player, other process) + a **horde of GREEN zombies** chasing them
+      — all server-authoritative, synced over UDP. So it's a real networked multiplayer survival core:
+      netcode + server-side sim + players + zombies, cross-process, on screen. Net test still green (zombie
+      count 0-safe). Sent master. THE WHOLE STACK COMES TOGETHER over the network.
+- [ ] NEXT: hook the real PlayerController (WASD) into NetClient so a human-controlled player syncs; client
+      interpolation; server-side hit-reg for the gun (shoot networked zombies); reliability/ordering +
+      delta-compression on UDP; regenerate NetGen RPC glue for typed messages.

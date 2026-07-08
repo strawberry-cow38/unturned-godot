@@ -18,6 +18,7 @@ namespace UnturnedGodot
             var p = new Vector3(Mathf.Cos(_t * 0.7f) * 6.5f, 1f, Mathf.Sin(_t * 0.7f) * 6.5f);
             Bot.SendState(new PlayerState { X = p.X, Y = p.Y, Z = p.Z, Yaw = _t });
             Server.Poll();
+            Server.TickZombies((float)delta); // authoritative zombie sim
             Server.Broadcast();
         }
     }
