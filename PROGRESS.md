@@ -216,3 +216,13 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       `localScale.x = -1` (PlayerAnimator:1613), never a lateral shift. FIX: `Viewmodel._armsPos.X` 0.22 → 0.
       Rendered the --vm strip to confirm: Eaglefire frames lower-right off the rig alone, barrel forward,
       front sight at the muzzle. Pushed ed6a683.
+- [x] **VIEWMODEL — ADS / aim-down-sights (2026-07-08)** (master: "next is ADSing, build off source").
+      Hold RMB to aim. Derived from UseableGun.startAim/stopAim + PlayerAnimator.GetAimingViewmodelAlignment:
+      aim-in blends over Aim_In_Duration (Eaglefire.dat = 0.25s) with the source smootherstep-squared ease
+      (GetInterpolatedAimAlpha: 1-(1-smootherStep01(t))^2); sway -> 0.1x (viewmodelSwayMultiplier); IRON SIGHTS
+      DON'T ZOOM FOV (startAim -> enableZoom(1.0) for a scopeless first-person gun; FOV = zoomBaseFOV/factor,
+      factor 1.0 = unchanged — only actual scopes magnify); the gun's aimHook raises onto the view axis (the
+      +0.45 eye-raise cancels the -0.45 hip drop) scaled by alpha. ADS pose offset tuned to land THIS rig's
+      sight on the axis (align-to-center is the source op), render-verified down the irons. Pushed c15f383.
+      TODO polish: additive Aim_Start pose-blend (my aim clip is additive->T-pose, skipped for now) + gameplay
+      couplings (Spread_Aim 0.05, aimingMovementSpeedMultiplier) once the fire model grows spread/move-speed hooks.
