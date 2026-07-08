@@ -24,8 +24,7 @@ namespace UnturnedGodot
         float _gunRoll = 0f;
         float _recoil;
         double _t;
-        bool _reloading;      // reload gesture: dip the gun while reloading
-        float _reloadBlend;   // eased 0..1
+        bool _reloading;      // true while the Gun_Reload clip plays (blocks ADS)
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
         // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
@@ -98,6 +97,7 @@ namespace UnturnedGodot
                 _cam.AddChild(_arms);
                 _arms.Position = _armsPos;
                 _arms.SetClipLoop("Gun_Equip", false);   // equip plays ONCE and holds the ready pose
+                _arms.SetClipLoop("Gun_Reload", false);  // reload plays ONCE (the clip returns the hands to ready)
                 _arms.Play("Gun_Equip");                 // raise -> holds the two-handed rifle stance
                 _equipLen = _arms.ClipLength("Gun_Equip");
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
@@ -204,7 +204,11 @@ namespace UnturnedGodot
 
         // Driven by PlayerController while reloading — the gun dips down as a simple reload gesture (the full
         // Gun_Reload clip is a TODO; it needs additive-layer integration like the aim pose). Can't ADS mid-reload.
-        public void SetReloading(bool on) { _reloading = on; if (on) _aiming = false; }
+        public void SetReloading(bool on)
+        {
+            _reloading = on;
+            if (on) { _aiming = false; _arms?.Play("Gun_Reload"); }   // real Gun_Reload arm anim (plays once, holds its end = ready)
+        }
 
         public float AimAlpha => _aimAlpha;   // 0 hip .. 1 ADS, for spread/accuracy
 
@@ -236,10 +240,7 @@ namespace UnturnedGodot
                 Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);   // aim hook, camera-local
                 _arms.Position = hipPos - mCam * _aimAlpha;           // slide arms so the aim hook -> camera origin
             }
-            // reload gesture: dip the gun down/in while reloading (simple visual; real Gun_Reload anim is a TODO)
-            _reloadBlend = Mathf.MoveToward(_reloadBlend, _reloading ? 1f : 0f, (float)delta * 4f);
-            if (_reloadBlend > 0.001f)
-                _arms.Position += new Vector3(0.04f, -0.32f, 0.04f) * _reloadBlend;
+            // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 
             if (_gun != null && _gun.GetParent() is Node3D att)
             {

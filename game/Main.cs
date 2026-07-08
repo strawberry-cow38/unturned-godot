@@ -82,7 +82,7 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                _rigCaptureFrames = new[] { 10, 66, 82, 89, 92, 95 };  // equip -> ADS (clean) -> hip fire+1 (muzzle flash renders the frame after Kick 88/91/94)
+                _rigCaptureFrames = new[] { 10, 108, 122, 136, 148, 154 };  // equip -> reload (100-150): mid-motion frames + return to ready
                 _vmTest = true;
                 GetWindow().Size = new Vector2I(2560, 1440);
                 BuildViewmodelTest();
@@ -511,6 +511,9 @@ namespace UnturnedGodot
                     if (_vmAimed && _frame == _vmAimStart + 30) _vm.SetAiming(false);
                     // after un-ADS, fire a few HIP shots so the test also exercises recoil + case ejection
                     if (_frame == 88 || _frame == 91 || _frame == 94) _vm.Kick();
+                    // then a reload, so the test shows the real Gun_Reload arm anim (and its return to ready)
+                    if (_frame == 100) _vm.SetReloading(true);
+                    if (_frame == 150) _vm.SetReloading(false);
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {
