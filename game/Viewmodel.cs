@@ -118,6 +118,15 @@ namespace UnturnedGodot
                     if (ironMesh != null)
                         mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = new Vector3(0f, 0.1312f, -0.118f) });
 
+                    // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
+                    // core.masterbundle, converted (x,y,z)->(-x,y,-z). Mounted as Attachments.cs does
+                    // (Instantiate(magazineAsset.magazine) at the Magazine hook, localPos 0 / identity); the mesh sits
+                    // on the item root so its origin = MagazineHook(0,0.0166,-0.0238) -> port (0,0.0166,0.0238).
+                    var magMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.07f, 0.07f, 0.08f), Metallic = 0.3f, Roughness = 0.6f };
+                    var magMesh = ContentProvider.ParseObj("res://content/eaglefire_mag.txt");
+                    if (magMesh != null)
+                        mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = new Vector3(0f, 0.0166f, 0.0238f) });
+
                     // ADS anchor marker at the sight's real Aim hook (see AimHookLocal) — ADS slides the arms so this
                     // lands on the camera axis, i.e. you look straight through the aperture.
                     _sight = new Node3D { Name = "AimHook" };
