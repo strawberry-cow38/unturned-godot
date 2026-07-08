@@ -19,6 +19,13 @@ namespace UnturnedGodot
         string _loco;
         double _oneShot;   // remaining time a one-shot (attack/startle) clip holds before locomotion resumes
 
+        // Additive ADS layer (viewmodel arms only): Gun_Aim (Aim_Start) is an additive clip — its motion is a
+        // delta relative to its own frame 0. We bake that delta per bone and apply it on top of the base hold
+        // pose, scaled by AimBlend, after manually advancing the base anim (so the order is base-then-additive).
+        public float AimBlend;
+        System.Collections.Generic.Dictionary<int, Quaternion> _aimDR;
+        System.Collections.Generic.Dictionary<int, Vector3> _aimDP;
+
         public void Play(string name, float speed = 1f)
         {
             if (_ap != null && !string.IsNullOrEmpty(name) && _ap.HasAnimation(name))
@@ -58,7 +65,51 @@ namespace UnturnedGodot
             _loco = null;
         }
 
-        public void Tick(double delta) { if (_oneShot > 0) _oneShot -= delta; }
+        public void Tick(double delta)
+        {
+            if (_oneShot > 0) _oneShot -= delta;
+            if (_ap != null && _ap.CallbackModeProcess == AnimationMixer.AnimationCallbackModeProcess.Manual)
+            {
+                _ap.Advance(delta);   // base pose (equip/hold), manually driven so we can layer the aim delta on
+                ApplyAimAdditive();
+            }
+        }
+
+        // Bake the Gun_Aim additive delta (per bone, end relative to frame 0) and switch the arms' player to
+        // manual advance so we can apply that delta on top of the base pose each frame. Viewmodel arms only.
+        void SetupAimAdditive()
+        {
+            if (_ap == null || Skeleton == null || !_ap.HasAnimation("Gun_Aim")) return;
+            var anim = _ap.GetAnimation("Gun_Aim");
+            double end = anim.Length;
+            _aimDR = new(); _aimDP = new();
+            for (int t = 0; t < anim.GetTrackCount(); t++)
+            {
+                string path = anim.TrackGetPath(t).ToString();
+                int c = path.LastIndexOf(':'); if (c < 0) continue;
+                int bi = Skeleton.FindBone(path.Substring(c + 1));
+                if (bi < 0) continue;
+                switch (anim.TrackGetType(t))
+                {
+                    case Animation.TrackType.Rotation3D:
+                        _aimDR[bi] = anim.RotationTrackInterpolate(t, end) * anim.RotationTrackInterpolate(t, 0.0).Inverse();
+                        break;
+                    case Animation.TrackType.Position3D:
+                        _aimDP[bi] = anim.PositionTrackInterpolate(t, end) - anim.PositionTrackInterpolate(t, 0.0);
+                        break;
+                }
+            }
+            _ap.CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Manual;
+        }
+
+        void ApplyAimAdditive()
+        {
+            if (_aimDR == null || AimBlend <= 0.0001f || Skeleton == null) return;
+            foreach (var kv in _aimDR)
+                Skeleton.SetBonePoseRotation(kv.Key, Skeleton.GetBonePoseRotation(kv.Key) * Quaternion.Identity.Slerp(kv.Value, AimBlend));
+            foreach (var kv in _aimDP)
+                Skeleton.SetBonePosePosition(kv.Key, Skeleton.GetBonePosePosition(kv.Key) + kv.Value * AimBlend);
+        }
 
         // ---- ragdoll (built from Unturned's Ragdoll_Player prefab: 11 bodies, box colliders,
         //      per-bone mass + CharacterJoint swing/twist limits, all extracted to rig.json) ----
@@ -253,6 +304,7 @@ namespace UnturnedGodot
             root._ap = ap;
             root.ClipNames = names.ToArray();
             root._rag = rig.ragdoll;
+            if (armsOnly) root.SetupAimAdditive();   // viewmodel: bake the Gun_Aim additive ADS layer
             return root;
         }
 

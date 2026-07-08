@@ -31,7 +31,10 @@ namespace UnturnedGodot
         // ADS just raises the gun's sight onto the view axis (GetAimingViewmodelAlignment centers the aimHook
         // + a +0.45 eye-raise that cancels the hip drop) and cuts sway to 0.1x (viewmodelSwayMultiplier).
         public const float AimInDuration = 0.25f;   // Eaglefire.dat Aim_In_Duration
-        const float AdsSightDepth = -0.45f;          // how far in front the aligned sight sits (see _Process)
+        // The View hook is the REAR sight, so aligning it exactly to the eye (source: camera moves to the hook)
+        // parks the breech in your face. Unturned's own model/viewmodel geometry makes that read fine; ours
+        // needs a small forward readability offset so you look DOWN the sights instead of at the breech.
+        const float AdsSightDepth = -0.30f;
         bool _aiming;
         float _aimT;       // 0..1 aim-accuracy ramp over AimInDuration seconds
         float _aimAlpha;   // eased blend (hip 0 -> ADS 1)
@@ -132,18 +135,18 @@ namespace UnturnedGodot
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);
             _aimAlpha = AimEase(_aimT);
+            _arms.AimBlend = _aimAlpha;
+            _arms.Tick(delta);   // manual-advance the base anim, then layer the additive Aim_Start pose on top
             float swayMult = Mathf.Lerp(1f, 0.1f, _aimAlpha);   // startAim: viewmodelSwayMultiplier 1 -> 0.1
             var sway = new Vector3(Mathf.Sin((float)_t * 1.4f) * 0.004f, Mathf.Sin((float)_t * 2.2f) * 0.003f, 0f) * swayMult;
             Vector3 hipPos = _armsPos + sway + new Vector3(0f, 0.01f, 0.05f) * _recoil;
             _arms.Position = hipPos;
-            // ADS: move the arms so the gun's View-hook marker lands on the camera's aim axis (x=0) at eye
-            // level (y=0), keeping its natural depth — the source aligns the aim hook to the view axis. Blended
-            // by alpha; converges as the marker (rigid on the gun) is driven onto the axis over the aim-in.
+            // fine sight alignment: bring the gun's View hook onto the aim axis (x=0, y=0) at its NATURAL depth.
+            // The additive Aim_Start pose (above) now sets the gross hand position; this just centers the sight
+            // exactly (source: GetAimingViewmodelAlignment). No forced depth anymore.
             if (_aimAlpha > 0.0001f && _sight != null)
             {
                 Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);
-                // x=0 (on-axis) + y=0 (eye height) are source-exact from the hook; the sight sits AdsSightDepth
-                // in front — a presentation distance standing in for the Aim_Start arm-extend we don't blend.
                 Vector3 target = new Vector3(0f, 0f, AdsSightDepth);
                 _arms.Position = hipPos + (target - mCam) * _aimAlpha;
             }
