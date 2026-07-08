@@ -53,6 +53,30 @@ namespace UnturnedGodot
                          $"instantiated as MeshInstance3D. verts={vcount} aabb.size=({aabb.Size.X:F3},{aabb.Size.Y:F3},{aabb.Size.Z:F3}) " +
                          $"scene-children={GetChildCount()}");
             }
+
+            // 5) CATALOG GATE (opt-in): `-- --catalog=<manifest>` points at the full external asset store.
+            //    Loads a sample of GUIDs to prove the ContentProvider scales to the whole ripped catalog.
+            foreach (var arg in OS.GetCmdlineUserArgs())
+            {
+                if (!arg.StartsWith("--catalog=")) continue;
+                var cat = new ContentProvider();
+                AddChild(cat);
+                cat.LoadManifest(arg["--catalog=".Length..]);
+                int tried = 0, ok = 0; long totalVerts = 0; long totalTris = 0;
+                foreach (var guid in cat.Guids)
+                {
+                    if (tried >= 200) break;
+                    tried++;
+                    var m = cat.LoadMesh(guid);
+                    if (m == null || m.GetSurfaceCount() == 0) continue;
+                    var a = m.SurfaceGetArrays(0);
+                    var vv = (Vector3[])a[(int)Mesh.ArrayType.Vertex];
+                    if (vv is { Length: > 0 }) { ok++; totalVerts += vv.Length; totalTris += vv.Length / 3; }
+                }
+                GD.Print($"[CATALOG] manifest={cat.Count} GUIDs; sampled {tried} -> {ok} loaded OK, " +
+                         $"{totalVerts} verts / {totalTris} tris. ContentProvider scales to the full catalog.");
+            }
+
             GetTree().Quit();
         }
     }

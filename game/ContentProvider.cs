@@ -1,6 +1,7 @@
 using Godot;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 
 namespace UnturnedGodot
 {
@@ -9,27 +10,48 @@ namespace UnturnedGodot
     // original GUID; the ContentProvider resolves that GUID to whatever we've got for it (ripped now,
     // our-own-art later) without any caller change.
     //
+    // Content root is the directory holding the manifest; asset paths are relative to it. Reads via
+    // Godot.FileAccess for res://|user:// and System.IO for an absolute dev path (the external ripped
+    // asset store on the 4080), so the same provider serves both the in-repo slice and the full catalog.
+    //
     // v0: static meshes ripped as Wavefront .obj (tools/unity_mesh_to_obj.py, byte-validated vs the
-    // Unity localAABB). Parsed to an ArrayMesh at RUNTIME on purpose -- the shipping game streams
-    // content, so loading is a runtime concern, not an editor-import one.
+    // Unity localAABB). Parsed to an ArrayMesh at RUNTIME on purpose -- the shipping game streams content.
     public partial class ContentProvider : Node
     {
-        const string ContentRoot = "res://content/";
+        string _root = "res://content";
         readonly Dictionary<string, string> _guidToPath = new();
 
         public int Count => _guidToPath.Count;
 
-        public void LoadManifest(string manifestResPath = ContentRoot + "manifest.json")
+        static bool IsGodotPath(string p) => p.StartsWith("res://") || p.StartsWith("user://");
+
+        static string ReadText(string path)
         {
-            using var f = Godot.FileAccess.Open(manifestResPath, Godot.FileAccess.ModeFlags.Read);
-            if (f == null) { GD.PushError($"[ContentProvider] manifest not found: {manifestResPath}"); return; }
-            var parsed = Json.ParseString(f.GetAsText());
-            var dict = parsed.AsGodotDictionary();
+            if (IsGodotPath(path))
+            {
+                using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
+                return f?.GetAsText();
+            }
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+
+        public void LoadManifest(string manifestPath = "res://content/manifest.json")
+        {
+            _root = IsGodotPath(manifestPath)
+                ? manifestPath[..manifestPath.LastIndexOf('/')]
+                : Path.GetDirectoryName(manifestPath);
+            var text = ReadText(manifestPath);
+            if (text == null) { GD.PushError($"[ContentProvider] manifest not found: {manifestPath}"); return; }
+            var dict = Json.ParseString(text).AsGodotDictionary();
             foreach (var k in dict.Keys)
                 _guidToPath[(string)k] = (string)dict[k];
         }
 
         public bool HasGuid(string guid) => _guidToPath.ContainsKey(guid);
+
+        public IEnumerable<string> Guids => _guidToPath.Keys;
+
+        string Resolve(string rel) => IsGodotPath(_root) ? $"{_root}/{rel}" : Path.Combine(_root, rel);
 
         // Resolve a mesh by its original Unity GUID -> a live Godot ArrayMesh.
         public ArrayMesh LoadMesh(string guid)
@@ -39,22 +61,22 @@ namespace UnturnedGodot
                 GD.PushError($"[ContentProvider] unknown GUID {guid}");
                 return null;
             }
-            return ParseObj(ContentRoot + rel);
+            return ParseObj(Resolve(rel));
         }
 
-        static ArrayMesh ParseObj(string resPath)
+        static ArrayMesh ParseObj(string path)
         {
-            using var f = Godot.FileAccess.Open(resPath, Godot.FileAccess.ModeFlags.Read);
-            if (f == null) { GD.PushError($"[ContentProvider] obj not found: {resPath}"); return null; }
+            var txt = ReadText(path);
+            if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return null; }
             var ci = CultureInfo.InvariantCulture;
             var verts = new List<Vector3>();
             var norms = new List<Vector3>();
             var uvs = new List<Vector2>();
             var fv = new List<int>(); var ft = new List<int>(); var fn = new List<int>();
 
-            while (!f.EofReached())
+            foreach (var raw in txt.Split('\n'))
             {
-                var line = f.GetLine();
+                var line = raw.TrimEnd('\r');
                 if (line.Length == 0 || line[0] == '#') continue;
                 var t = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (t.Length == 0) continue;
@@ -64,7 +86,7 @@ namespace UnturnedGodot
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), float.Parse(t[2], ci))); break;
                     case "f":
-                        for (int i = 1; i <= 3; i++)
+                        for (int i = 1; i <= 3 && i < t.Length; i++)
                         {
                             var p = t[i].Split('/');
                             fv.Add(int.Parse(p[0], ci) - 1);

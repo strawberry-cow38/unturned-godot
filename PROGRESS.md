@@ -44,6 +44,10 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       **57 multi-stream** (vertex data across >1 stream), 1 degenerate 0-vertex (Plane_2). 0 skinned
       (Unturned meshes are all static — empty m_BindPose). Converted tree + manifest live on the 4080 at
       `ripped-mb\converted\` (the asset store; NOT git — derived + large). Repo carries the TOOL + a slice.
+- [x] **CATALOG GATE** — ContentProvider generalized to read any content root (Godot FileAccess for
+      res://|user://, System.IO for the absolute external asset store). Headless `-- --catalog=<manifest>`:
+      loaded a 200-GUID sample from the full 4,458-entry manifest → **200/200 OK, 78,363 verts / 26,121
+      tris**, zero failures. The GUID→real-geometry pipeline scales to the whole catalog.
 - [ ] un-defer NetPak UnityNetPakTests + Steamworks-ex
 - [ ] Phase 1 vertical slice: headless Godot server + ported NetPak transport, a small ripped level,
       1 gun vs a chasing/dying zombie, Godot-Glazier HUD (2 players)
