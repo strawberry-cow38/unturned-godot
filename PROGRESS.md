@@ -204,3 +204,15 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       NOTE: 4080 repo (build workspace) diverges from GitHub now — git ops go through the cowtools clone (has gh auth).
 - [ ] NEXT: master tests the launcher (couldn't fully e2e it — clone needs their creds, run needs a display);
       then skeleton animation (out of T-pose); skin texture on the character; real Zombie AI + UseableGun.
+- [x] **VIEWMODEL — source-accurate horizontal offset (2026-07-08)** (master: "is the right hand offset source accurate?").
+      No. My earlier +0.22 right-shift was eyeballed. Verified against the FULL decompile: base
+      `viewmodelCameraLocalPositionOffset` = `Vector3.zero` (PlayerAnimator.cs:1653); the only knobs
+      `ViewmodelPreferenceData.Offset_Horizontal/Vertical/Depth` default 0 (constructor) and have NO menu UI
+      wiring them (across the whole ripped tree `Offset_Horizontal` appears ONLY in PlayerAnimator +
+      ViewmodelPreferenceData — prefs-JSON fields deserialized at Provider.cs:6514, effectively a hard 0 for
+      every player, NOT the "accessibility slider" I first claimed). The ONLY baked-in position constant is
+      `- 0.45f` on the VERTICAL axis (PlayerAnimator.cs:1431 — the gun sits LOW, no horizontal component).
+      Right-handedness is the RIG itself (right arm holds the gun); lefties mirror the whole viewmodel via
+      `localScale.x = -1` (PlayerAnimator:1613), never a lateral shift. FIX: `Viewmodel._armsPos.X` 0.22 → 0.
+      Rendered the --vm strip to confirm: Eaglefire frames lower-right off the rig alone, barrel forward,
+      front sight at the muzzle. Pushed ed6a683.
