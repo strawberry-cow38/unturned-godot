@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>SDG.NetPak</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Godot port Phase 0b: the engine-agnostic NetPak core, extracted from U3-SDK, compiling
+         standalone with ZERO Unity deps. System*Ex.cs deferred to when SDG.Compat.Mathf exists (0c). -->
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="NetPakReader.cs" />
+    <Compile Include="NetPakWriter.cs" />
+    <Compile Include="NetPakConst.cs" />
+    <Compile Include="NetMaxValue.cs" />
+    <Compile Include="NetEnumAttribute.cs" />
+  </ItemGroup>
+</Project>

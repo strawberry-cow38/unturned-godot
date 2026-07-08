@@ -1,0 +1,11 @@
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.GeneratedMSBuildEditorConfig.editorconfig
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.AssemblyInfoInputs.cache
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.AssemblyInfo.cs
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.csproj.CoreCompileInputs.cache
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\bin\Debug\net8.0\SDG.NetPak.deps.json
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\bin\Debug\net8.0\SDG.NetPak.dll
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\bin\Debug\net8.0\SDG.NetPak.pdb
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.dll
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\refint\SDG.NetPak.dll
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\SDG.NetPak.pdb
+C:\claude-workspace\unturned-godot\core\SDG.NetPak\obj\Debug\net8.0\ref\SDG.NetPak.dll
