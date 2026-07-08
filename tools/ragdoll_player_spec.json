@@ -1,0 +1,403 @@
+{
+"Skeleton": {
+"name": "Skeleton",
+"depth": 0,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+0.0,
+0.37,
+0.0
+],
+"size": [
+0.11,
+0.7,
+0.4
+]
+}
+},
+"Left_Leg": {
+"name": "Left_Leg",
+"depth": 2,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.1796063,
+-0.0586488,
+3.979409e-08
+],
+"size": [
+0.35421422,
+0.3351084,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+-1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -30.0,
+"highTwist": 90.0,
+"swing1": 15.0,
+"swing2": 15.0,
+"enablePreprocessing": 0.0
+}
+},
+"Left_Foot": {
+"name": "Left_Foot",
+"depth": 3,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.1796063,
+-0.0586488,
+3.979409e-08
+],
+"size": [
+0.35421422,
+0.3351084,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+-1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -90.0,
+"highTwist": 30.0,
+"swing1": 15.0,
+"swing2": 15.0,
+"enablePreprocessing": 0.0
+}
+},
+"Right_Leg": {
+"name": "Right_Leg",
+"depth": 2,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.17960635,
+0.0586488,
+-3.9794088e-08
+],
+"size": [
+0.35421422,
+0.3351084,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+-1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -30.0,
+"highTwist": 90.0,
+"swing1": 15.0,
+"swing2": 15.0,
+"enablePreprocessing": 0.0
+}
+},
+"Right_Foot": {
+"name": "Right_Foot",
+"depth": 3,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.17960635,
+0.0586488,
+-3.9794088e-08
+],
+"size": [
+0.35421422,
+0.3351084,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+-1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -90.0,
+"highTwist": 30.0,
+"swing1": 15.0,
+"swing2": 15.0,
+"enablePreprocessing": 0.0
+}
+},
+"Spine": {
+"name": "Spine",
+"depth": 1,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.4,
+0.0,
+0.0
+],
+"size": [
+0.7,
+0.7,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -30.0,
+"highTwist": 30.0,
+"swing1": 30.0,
+"swing2": 30.0,
+"enablePreprocessing": 0.0
+}
+},
+"Left_Arm": {
+"name": "Left_Arm",
+"depth": 3,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.191367,
+5.0392093e-05,
+-1.26408695e-05
+],
+"size": [
+0.34148258,
+0.4,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -90.0,
+"highTwist": 30.0,
+"swing1": 30.0,
+"swing2": 30.0,
+"enablePreprocessing": 0.0
+}
+},
+"Left_Hand": {
+"name": "Left_Hand",
+"depth": 4,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.191367,
+5.0392093e-05,
+-1.26408695e-05
+],
+"size": [
+0.34148258,
+0.4,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+0.0,
+1.0
+],
+"swingAxis": [
+0.0,
+1.0,
+0.0
+],
+"lowTwist": -90.0,
+"highTwist": 30.0,
+"swing1": 30.0,
+"swing2": 30.0,
+"enablePreprocessing": 0.0
+}
+},
+"Right_Arm": {
+"name": "Right_Arm",
+"depth": 3,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.191367,
+5.0392093e-05,
+-1.26408695e-05
+],
+"size": [
+0.34148258,
+0.4,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+-1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -90.0,
+"highTwist": 30.0,
+"swing1": 30.0,
+"swing2": 30.0,
+"enablePreprocessing": 0.0
+}
+},
+"Right_Hand": {
+"name": "Right_Hand",
+"depth": 4,
+"rb": {
+"mass": 1.0,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.191367,
+5.0392093e-05,
+-1.26408695e-05
+],
+"size": [
+0.34148258,
+0.4,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+0.0,
+1.0
+],
+"swingAxis": [
+0.0,
+-1.0,
+0.0
+],
+"lowTwist": -90.0,
+"highTwist": 30.0,
+"swing1": 30.0,
+"swing2": 30.0,
+"enablePreprocessing": 0.0
+}
+},
+"Skull": {
+"name": "Skull",
+"depth": 2,
+"rb": {
+"mass": 1.25,
+"drag": 0.01,
+"adrag": 0.05
+},
+"box": {
+"center": [
+-0.4449286,
+5.0323546e-05,
+-1.0574419e-05
+],
+"size": [
+0.36542955,
+0.4,
+0.4
+]
+},
+"joint": {
+"axis": [
+0.0,
+1.0,
+0.0
+],
+"swingAxis": [
+0.0,
+0.0,
+1.0
+],
+"lowTwist": -60.0,
+"highTwist": 60.0,
+"swing1": 30.0,
+"swing2": 30.0,
+"enablePreprocessing": 0.0
+}
+}
+}

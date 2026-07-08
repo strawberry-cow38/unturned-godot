@@ -14,15 +14,25 @@ namespace UnturnedGodot
 
         string _shotPath;
         int _frame;
+        string _rigDir;                              // --rig=DIR : capture a frame strip here
+        int[] _rigCaptureFrames = { 4, 12, 20, 28, 36, 44 };
+        int _rigShot;
+        RiggedCharacter _rc;                         // montage: cycle through several clips
+        string[] _rigList = System.Array.Empty<string>();
+        int _rigMontageIdx = -1;
+        const int MontageFramesPerClip = 55;
+        bool _ragTest;                               // --anim=Ragdoll : trigger the death ragdoll mid-capture
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk";
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
+                else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
+                else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -56,6 +66,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildShowcase(catalog, picks);
                 return; // capture happens a few frames later in _Process
+            }
+
+            if (rig != null)
+            {
+                _rigDir = rig;
+                GetWindow().Size = new Vector2I(900, 1100);
+                BuildRigTest(anim);
+                return; // frame strip captured in _Process
             }
 
             if (!smoke)
@@ -115,6 +133,67 @@ namespace UnturnedGodot
             }
 
             GetTree().Quit();
+        }
+
+        // --rig=DIR : show the real skeletal-animated character playing an Unturned clip,
+        // capturing a frame strip across the cycle so the animation is eyeball-verifiable.
+        void BuildRigTest(string anim)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D
+            {
+                RotationDegrees = new Vector3(-42f, -38f, 0f),
+                LightEnergy = 1.25f,
+                ShadowEnabled = true,
+                LightAngularDistance = 1.6f,            // soft penumbra instead of jagged edges
+                DirectionalShadowMaxDistance = 14f,     // concentrate shadow res near the character
+                ShadowBias = 0.03f,
+                ShadowNormalBias = 1.5f,
+                ShadowBlur = 1.4f,
+            });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
+            AddChild(ground);
+            var gbody = new StaticBody3D { CollisionLayer = 1u << 0 };   // ragdoll bones land on this
+            gbody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(gbody);
+
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.78f, 0.62f, 0.48f));
+            if (rc == null) { GD.PrintErr("[rig] build failed"); GetTree().Quit(); return; }
+            AddChild(rc);
+            _rc = rc;
+            GD.Print($"[rig] clips: {string.Join(",", rc.ClipNames)}  playing '{anim}'");
+            if (anim == "Ragdoll")
+            {
+                _ragTest = true;
+                _rigCaptureFrames = new[] { 6, 14, 24, 38, 58, 85 };   // span the collapse
+                rc.Play("Idle_Stand");
+            }
+            else
+            {
+                _rigList = anim.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
+                if (_rigList.Length > 1)
+                {
+                    _rigCaptureFrames = new int[_rigList.Length];
+                    for (int i = 0; i < _rigList.Length; i++) _rigCaptureFrames[i] = i * MontageFramesPerClip + MontageFramesPerClip / 2;
+                    _rigMontageIdx = 0;
+                    rc.Play(_rigList[0]);
+                }
+                else rc.Play(anim);
+            }
+
+            // 3/4 front view, framed on a ~1.9m character
+            var cam = new Camera3D { Fov = 42f };
+            AddChild(cam);
+            cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
         }
 
         void BuildShowcase(string catalog, string picks)
@@ -379,6 +458,26 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_rigDir != null)
+            {
+                _frame++;
+                if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
+                if (_rigList.Length > 1)   // montage: switch clip every window
+                {
+                    int want = Mathf.Min(_frame / MontageFramesPerClip, _rigList.Length - 1);
+                    if (want != _rigMontageIdx) { _rigMontageIdx = want; _rc?.Play(_rigList[want]); }
+                }
+                if (_rigShot < _rigCaptureFrames.Length && _frame == _rigCaptureFrames[_rigShot])
+                {
+                    var im = GetViewport().GetTexture().GetImage();
+                    string p = $"{_rigDir}/rig_{_rigShot:D2}.png";
+                    im.SavePng(p);
+                    GD.Print($"[RIG] saved {p} (frame {_frame})");
+                    _rigShot++;
+                    if (_rigShot >= _rigCaptureFrames.Length) GetTree().Quit();
+                }
+                return;
+            }
             if (_shotPath == null) return;
             if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
