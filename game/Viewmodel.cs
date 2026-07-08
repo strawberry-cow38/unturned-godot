@@ -142,10 +142,23 @@ namespace UnturnedGodot
                     mi.AddChild(_sight);
                     _sight.Position = AimHookLocal;
 
-                    // muzzle flash: a warm light + an unshaded spark at the barrel end (+y), flashed briefly on fire
+                    // muzzle flash = the REAL Muzzle_0 effect (ID 3; the Eaglefire.dat has Muzzle 3), extracted from
+                    // core.masterbundle: a warm point light (Unity color (0.94,0.76,0.15), intensity 1.37 — NOT the old
+                    // energy 5 that washed the frame) + a brief BILLBOARD star-flash sprite (the real 32x32 Muzzle_0
+                    // texture, size ~0.5 per startSize, additive), flashed ~0.05s on fire.
                     _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = new Vector3(0f, 0.75f, -0.04f), Visible = false };
-                    _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 1.6f, LightColor = new Color(1f, 0.82f, 0.45f), LightEnergy = 5f });
-                    _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.03f, Height = 0.06f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.9f, 0.5f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } });
+                    _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
+                    var flashMat = new StandardMaterial3D
+                    {
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                        BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    };
+                    var flashTex = LoadTex("res://content/muzzleflash.png");
+                    if (flashTex != null) flashMat.AlbedoTexture = flashTex; else flashMat.AlbedoColor = new Color(1f, 0.85f, 0.4f);
+                    _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.6f, 0.6f) }, MaterialOverride = flashMat });
                     mi.AddChild(_muzzleFlash);
 
                     // Eject hook marker (gun Eject hook (0,0.0275,0.0814) -> port (0,0.0275,-0.0814)) + the shared
