@@ -11,5 +11,7 @@
     <ProjectReference Include="..\core\SDG.NetPak\SDG.NetPak.csproj" />
     <ProjectReference Include="..\core\UnturnedDat\UnturnedDat.csproj" />
     <ProjectReference Include="..\core\UnturnedSim\UnturnedSim.csproj" />
+    <ProjectReference Include="..\core\SDG.NetTransport\SDG.NetTransport.csproj" />
+    <ProjectReference Include="..\core\UnturnedNet\UnturnedNet.csproj" />
   </ItemGroup>
 </Project>

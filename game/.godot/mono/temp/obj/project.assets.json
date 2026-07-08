@@ -60,6 +60,16 @@
           "bin/placeholder/SDG.NetPak.dll": {}
         }
       },
+      "SDG.NetTransport/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "compile": {
+          "bin/placeholder/SDG.NetTransport.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/SDG.NetTransport.dll": {}
+        }
+      },
       "UnturnedDat/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
@@ -71,6 +81,20 @@
         },
         "runtime": {
           "bin/placeholder/UnturnedDat.dll": {}
+        }
+      },
+      "UnturnedNet/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "dependencies": {
+          "SDG.NetPak": "1.0.0",
+          "SDG.NetTransport": "1.0.0"
+        },
+        "compile": {
+          "bin/placeholder/UnturnedNet.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/UnturnedNet.dll": {}
         }
       },
       "UnturnedSim/1.0.0": {
@@ -138,10 +162,20 @@
       "path": "../core/SDG.NetPak/SDG.NetPak.csproj",
       "msbuildProject": "../core/SDG.NetPak/SDG.NetPak.csproj"
     },
+    "SDG.NetTransport/1.0.0": {
+      "type": "project",
+      "path": "../core/SDG.NetTransport/SDG.NetTransport.csproj",
+      "msbuildProject": "../core/SDG.NetTransport/SDG.NetTransport.csproj"
+    },
     "UnturnedDat/1.0.0": {
       "type": "project",
       "path": "../core/UnturnedDat/UnturnedDat.csproj",
       "msbuildProject": "../core/UnturnedDat/UnturnedDat.csproj"
+    },
+    "UnturnedNet/1.0.0": {
+      "type": "project",
+      "path": "../core/UnturnedNet/UnturnedNet.csproj",
+      "msbuildProject": "../core/UnturnedNet/UnturnedNet.csproj"
     },
     "UnturnedSim/1.0.0": {
       "type": "project",
@@ -156,7 +190,9 @@
       "GodotSharpEditor >= 4.6.2",
       "SDG.Compat >= 1.0.0",
       "SDG.NetPak >= 1.0.0",
+      "SDG.NetTransport >= 1.0.0",
       "UnturnedDat >= 1.0.0",
+      "UnturnedNet >= 1.0.0",
       "UnturnedSim >= 1.0.0"
     ]
   },
@@ -191,8 +227,14 @@
             "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj": {
               "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj"
             },
+            "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj": {
+              "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj"
+            },
             "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj": {
               "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj"
+            },
+            "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\UnturnedNet.csproj": {
+              "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\UnturnedNet.csproj"
             },
             "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj": {
               "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj"

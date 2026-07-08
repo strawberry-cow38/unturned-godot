@@ -18,7 +18,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null;
-            bool play = false, demo = false;
+            bool play = false, demo = false, netdemo = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -27,6 +27,14 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
                 else if (arg == "--play") play = true;
+                else if (arg == "--netdemo") netdemo = true;
+            }
+
+            if (netdemo)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildNetDemo();
+                return;
             }
 
             if (play || demo)
@@ -230,6 +238,38 @@ namespace UnturnedGodot
                 }
                 GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }
+        }
+
+        // In-process 2-player network demo: a real NetServer + two real NetClients over loopback UDP,
+        // rendering a capsule per synced player (see NetDemoNode). Records via --write-movie.
+        void BuildNetDemo()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.6f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            AddChild(ground);
+
+            var cam = new Camera3D { Current = true, Fov = 62f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 9f, 14f);
+            cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
+
+            const ushort port = 47871;
+            var server = new Net.NetServer(port);
+            var local = new Net.NetClient("127.0.0.1", port);
+            var bot = new Net.NetClient("127.0.0.1", port);
+            AddChild(new NetDemoNode { Server = server, Local = local, Bot = bot });
+            GD.Print("[NETDEMO] real NetServer + 2 NetClients on loopback UDP; rendering server-synced players");
         }
 
         public override void _Process(double delta)

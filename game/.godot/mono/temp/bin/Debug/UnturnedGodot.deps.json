@@ -13,7 +13,9 @@
           "GodotSharpEditor": "4.6.2",
           "SDG.Compat": "1.0.0",
           "SDG.NetPak": "1.0.0",
+          "SDG.NetTransport": "1.0.0",
           "UnturnedDat": "1.0.0",
+          "UnturnedNet": "1.0.0",
           "UnturnedSim": "1.0.0"
         },
         "runtime": {
@@ -59,12 +61,32 @@
           }
         }
       },
+      "SDG.NetTransport/1.0.0": {
+        "runtime": {
+          "SDG.NetTransport.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
       "UnturnedDat/1.0.0": {
         "dependencies": {
           "SDG.Compat": "1.0.0"
         },
         "runtime": {
           "UnturnedDat.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "UnturnedNet/1.0.0": {
+        "dependencies": {
+          "SDG.NetPak": "1.0.0",
+          "SDG.NetTransport": "1.0.0"
+        },
+        "runtime": {
+          "UnturnedNet.dll": {
             "assemblyVersion": "1.0.0",
             "fileVersion": "1.0.0.0"
           }
@@ -120,7 +142,17 @@
       "serviceable": false,
       "sha512": ""
     },
+    "SDG.NetTransport/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
     "UnturnedDat/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "UnturnedNet/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

@@ -23,3 +23,7 @@ C:\claude-workspace\unturned-godot\game\.godot\mono\temp\obj\Debug\UnturnedGodot
 C:\claude-workspace\unturned-godot\game\.godot\mono\temp\obj\Debug\ref\UnturnedGodot.dll
 C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\UnturnedSim.dll
 C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\UnturnedSim.pdb
+C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\SDG.NetTransport.dll
+C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\UnturnedNet.dll
+C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\SDG.NetTransport.pdb
+C:\claude-workspace\unturned-godot\game\.godot\mono\temp\bin\Debug\UnturnedNet.pdb

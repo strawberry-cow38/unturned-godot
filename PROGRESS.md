@@ -127,6 +127,13 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       client→server through the ported interfaces, unpacks byte-exact, and the server replies down the
       ITransportConnection → client receives it. So ported NetPak (real source) + the real transport
       interfaces + the UDP rework = the 2-player networking spine, proven over real sockets.
-- [ ] NEXT: wire the game loop to the transport (server authoritative: clients send input/state → server
-      broadcasts world state) for an actual 2-player headless-server session; regenerate NetGen RPC glue;
-      then reliability/ordering on the UDP transport (currently best-effort datagrams).
+- [x] **★ 2-PLAYER SYNC — server-authoritative, tested + VISUALIZED ★**. `core/UnturnedNet` (NetServer +
+      NetClient + PlayerState over NetPak): clients send state each tick → server assigns ids + broadcasts
+      the world → clients apply it. **Headless test GREEN**: two clients see each other's positions through
+      the server over real UDP. Then wired into Godot (`--netdemo`, NetDemoNode): a real NetServer + 2 real
+      NetClients on loopback UDP, rendering a capsule per synced player — BLUE (local id 1) + ORANGE (remote
+      id 2), the orange one's position having travelled bot→server→client over sockets+NetPak. Rendered an
+      8s clip on the 4080 GPU, sent master. The 2-player networking loop is real + on screen.
+- [ ] NEXT: two SEPARATE Godot processes (headless --server + rendering --client) for true cross-process
+      play; hook the actual PlayerController state into NetClient (replace scripted orbits); interpolation +
+      reliability/ordering on the UDP transport; regenerate NetGen RPC glue for typed messages.
