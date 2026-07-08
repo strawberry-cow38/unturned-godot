@@ -84,7 +84,7 @@ namespace UnturnedGodot
                 _rigDir = vm;                                   // reuse the frame-strip capture
                 _rigCaptureFrames = new[] { 10, 34, 54, 66, 82, 96 };  // equip -> settle -> ADS in/hold -> release -> hip
                 _vmTest = true;
-                GetWindow().Size = new Vector2I(1067, 600);
+                GetWindow().Size = new Vector2I(2560, 1440);
                 BuildViewmodelTest();
                 return;
             }

@@ -5,6 +5,12 @@ config_version=5
 config/name="Unturned Godot"
 config/features=PackedStringArray("4.6", "C#", "Forward Plus")
 run/main_scene="res://Main.tscn"
+boot_splash/show_image=false
+boot_splash/bg_color=Color(0, 0, 0, 1)
+
+[display]
+window/size/viewport_width=2560
+window/size/viewport_height=1440
 
 [dotnet]
 project/assembly_name="UnturnedGodot"
