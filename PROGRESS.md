@@ -73,6 +73,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       project.godot physics set to **50 Hz** to match retail. FIDELITY: constants exact, trajectory is
       "recognizably Unturned + tunable" (cross-engine PhysX→Jolt can't be byte-equal — accepted plan risk).
       Godot build GREEN. (Visual proof pending a render harness.)
-- [ ] NEXT: 1 gun end-to-end (ItemGunAsset.dat → UseableGun raycast on RayMasks → damage → death); a
-      ~150×150m ripped-prop test level; the direct-chase zombie; Glazier HUD v0; 2-player headless server.
-      Also offered master a screenshot render harness (non-headless Godot on the 4080) to eyeball progress.
+- [x] **RENDER HARNESS working — first VISUAL** (`Main.cs --shot=<png>` mode). Builds a lit showcase
+      (WorldEnvironment sky + DirectionalLight + shadows + ground + camera) of N real ripped props loaded
+      via ContentProvider from the catalog, and saves a PNG. Runs on the 4080's real GPU over SSH via
+      `godot --rendering-driver opengl3 --write-movie <avi> --fixed-fps 10 --quit-after 20` (forces the
+      frame loop; captures the viewport in _Process). Confirmed: "OpenGL API ... RTX 4080 SUPER", 10 real
+      props rendered + shadowed at 1280×720. Sent master the screenshot. (Grey = textures/materials not
+      wired onto meshes yet.) Recipe banked for all future visual checks.
+- [ ] NEXT: wire real textures/materials onto meshes (rip .png already there, .mat refs → StandardMaterial3D)
+      OR push the slice: 1 gun end-to-end (ItemGunAsset.dat → UseableGun raycast on RayMasks → damage →
+      death); ~150×150m ripped-prop test level; direct-chase zombie; Glazier HUD v0; 2-player headless server.
+      (Asked master which to prioritize; continue per their steer or default to textures→gun.)

@@ -2,3 +2,6 @@
 bin/
 obj/
 *.import
+shot.png
+shot.avi
+*.avi
