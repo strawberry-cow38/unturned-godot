@@ -9,7 +9,7 @@ namespace UnturnedGodot
     {
         MeshInstance3D _gun;
         Vector3 _basePos = new Vector3(0.20f, -0.22f, -0.46f);
-        Vector3 _baseRotDeg = new Vector3(90f, 13f, 3f);    // pitch +90 (inverted) = barrel forward, right-side up
+        Vector3 _baseRotDeg = new Vector3(90f, 193f, 3f);   // pitch +90 right-side up, yaw +180 barrel points forward
         float _recoil;
         double _t;
 
