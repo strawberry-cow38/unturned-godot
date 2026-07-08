@@ -10,7 +10,7 @@ namespace UnturnedGodot
     public partial class ClientNode : Node3D
     {
         public NetClient Client;
-        float _t;
+        float _t, _fireCd;
         readonly Dictionary<byte, MeshInstance3D> _avatars = new();
         readonly List<MeshInstance3D> _zombieAvatars = new();
 
@@ -54,6 +54,23 @@ namespace UnturnedGodot
             {
                 _zombieAvatars[i].Visible = i < zs.Count;
                 if (i < zs.Count) _zombieAvatars[i].Position = new Vector3(zs[i].X, zs[i].Y, zs[i].Z);
+            }
+
+            // auto-fire at the nearest zombie; the SERVER does the authoritative hit-reg + removes it.
+            _fireCd -= (float)delta;
+            if (_fireCd <= 0f && zs.Count > 0)
+            {
+                var eye = p + new Vector3(0f, 1.4f, 0f);
+                int best = -1; float bd = float.MaxValue;
+                for (int i = 0; i < zs.Count; i++)
+                {
+                    float d = new Vector3(zs[i].X, zs[i].Y, zs[i].Z).DistanceTo(eye);
+                    if (d < bd) { bd = d; best = i; }
+                }
+                var target = new Vector3(zs[best].X, zs[best].Y + 0.6f, zs[best].Z);
+                var dir = (target - eye).Normalized();
+                Client.SendFire(eye.X, eye.Y, eye.Z, dir.X, dir.Y, dir.Z);
+                _fireCd = 0.16f;
             }
         }
     }

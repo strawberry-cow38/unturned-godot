@@ -146,6 +146,12 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       — all server-authoritative, synced over UDP. So it's a real networked multiplayer survival core:
       netcode + server-side sim + players + zombies, cross-process, on screen. Net test still green (zombie
       count 0-safe). Sent master. THE WHOLE STACK COMES TOGETHER over the network.
-- [ ] NEXT: hook the real PlayerController (WASD) into NetClient so a human-controlled player syncs; client
-      interpolation; server-side hit-reg for the gun (shoot networked zombies); reliability/ordering +
-      delta-compression on UDP; regenerate NetGen RPC glue for typed messages.
+- [x] **Server-authoritative hit-reg — networked COMBAT loop closed**. Added a Fire message (origin+dir);
+      the client auto-fires at the nearest zombie → server does a math ray-vs-zombie Hitscan (no engine
+      physics on the dedicated server) → removes the hit zombie + counts the kill. Two-process demo: the
+      rendering client shoots the SERVER's zombies and the horde thins to zero (server-authoritative). So
+      the full loop is networked: server spawns+chases zombies → client fires → server hit-regs → world
+      updates → client sees the horde die. Sent master.
+- [ ] NEXT: hook the real PlayerController (WASD/mouse) into NetClient so a HUMAN player syncs (not scripted
+      orbits); client-side interpolation for remote entities; the real Zombie AI + UseableGun ported (replace
+      my placeholder chase/hitscan); reliability/ordering + delta-compression; NetGen-generated RPC glue.

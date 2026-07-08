@@ -11,7 +11,7 @@ namespace UnturnedGodot.Net
     // nearest player), and broadcasts the whole world (players + zombies); clients render it. Engine-agnostic
     // + headless-testable. (NetGen RPCs/reliability come later; this is the raw authoritative state channel.)
 
-    public enum MsgType : byte { ClientState = 1, WorldState = 2 }
+    public enum MsgType : byte { ClientState = 1, WorldState = 2, Fire = 3 }
 
     public struct PlayerState
     {
@@ -74,6 +74,7 @@ namespace UnturnedGodot.Net
 
         public int ClientCount => _clients.Count;
         public int ZombieCount => _zombies.Count;
+        public int Kills { get; private set; }
         public IReadOnlyDictionary<byte, PlayerState> States => _states;
 
         public NetServer(ushort port)
@@ -96,7 +97,35 @@ namespace UnturnedGodot.Net
                     st.Id = id;
                     _states[id] = st;
                 }
+                else if ((MsgType)type == MsgType.Fire)
+                {
+                    r.ReadBits(32, out uint ox); r.ReadBits(32, out uint oy); r.ReadBits(32, out uint oz);
+                    r.ReadBits(32, out uint dx); r.ReadBits(32, out uint dy); r.ReadBits(32, out uint dz);
+                    Hitscan(
+                        BitConverter.UInt32BitsToSingle(ox), BitConverter.UInt32BitsToSingle(oy), BitConverter.UInt32BitsToSingle(oz),
+                        BitConverter.UInt32BitsToSingle(dx), BitConverter.UInt32BitsToSingle(dy), BitConverter.UInt32BitsToSingle(dz));
+                }
             }
+        }
+
+        // Server-authoritative hitscan: kill the nearest zombie whose center lies within a small radius of
+        // the ray (origin + t*dir, t>0). Math only -- no engine physics on the dedicated server.
+        void Hitscan(float ox, float oy, float oz, float dx, float dy, float dz, float radius = 0.6f, float range = 200f)
+        {
+            float len = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            if (len < 1e-4f) return;
+            dx /= len; dy /= len; dz /= len;
+            int hit = -1; float bestT = range;
+            for (int i = 0; i < _zombies.Count; i++)
+            {
+                var z = _zombies[i];
+                float vx = z.X - ox, vy = z.Y - oy, vz = z.Z - oz;
+                float t = vx * dx + vy * dy + vz * dz;            // projection onto ray
+                if (t < 0f || t > bestT) continue;
+                float cx = ox + dx * t - z.X, cy = oy + dy * t - z.Y, cz = oz + dz * t - z.Z;
+                if (cx * cx + cy * cy + cz * cz <= radius * radius) { bestT = t; hit = i; }
+            }
+            if (hit >= 0) { _zombies.RemoveAt(hit); Kills++; }
         }
 
         // Authoritative zombie sim: keep a horde, each chases the nearest player on the ground plane.
@@ -168,6 +197,22 @@ namespace UnturnedGodot.Net
             s.Write(w);
             w.Flush();
             _transport.Send(w.buffer, w.writeByteIndex, ENetReliability.Unreliable);
+        }
+
+        // Tell the server "I fired a ray from origin along dir" -- the server does authoritative hit-reg.
+        public void SendFire(float ox, float oy, float oz, float dx, float dy, float dz)
+        {
+            var w = new NetPakWriter { buffer = new byte[64] };
+            w.Reset();
+            w.WriteBits((byte)MsgType.Fire, 8);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(ox), 32);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(oy), 32);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(oz), 32);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(dx), 32);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(dy), 32);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(dz), 32);
+            w.Flush();
+            _transport.Send(w.buffer, w.writeByteIndex, ENetReliability.Reliable);
         }
 
         public void Poll()
