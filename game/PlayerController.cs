@@ -167,12 +167,14 @@ namespace UnturnedGodot
         // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
         void StartFire()
         {
+            if (_firemode == FireMode.Safety) return;
+            // dry-fire: trigger pulled on an empty chamber -> hammer click, no shot
+            if (Ammo <= 0 && !_reloading && _fireCd <= 0f) { _viewmodel?.PlayDryFire(); return; }
             switch (_firemode)
             {
                 case FireMode.Semi: Fire(); break;
                 case FireMode.Auto: Fire(); break;   // held-fire continues in _PhysicsProcess
                 case FireMode.Burst: _burstLeft = Gun?.BurstCount ?? 3; break;
-                case FireMode.Safety: break;
             }
         }
 
