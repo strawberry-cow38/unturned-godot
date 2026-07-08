@@ -11,6 +11,9 @@ boot_splash/bg_color=Color(0, 0, 0, 1)
 [display]
 window/size/viewport_width=2560
 window/size/viewport_height=1440
+window/size/mode=2
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [dotnet]
 project/assembly_name="UnturnedGodot"

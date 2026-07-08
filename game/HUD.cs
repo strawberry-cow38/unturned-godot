@@ -11,13 +11,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            var cross = new Label { Text = "+" };
-            cross.AddThemeFontSizeOverride("font_size", 34);
-            cross.SetAnchorsPreset(Control.LayoutPreset.Center);
-            cross.HorizontalAlignment = HorizontalAlignment.Center;
-            cross.VerticalAlignment = VerticalAlignment.Center;
-            cross.Position -= new Vector2(10, 20);
-            AddChild(cross);
+            // crosshair removed (master 2026-07-08) — no reticle
 
             _info = new Label();
             _info.AddThemeFontSizeOverride("font_size", 22);

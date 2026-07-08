@@ -169,8 +169,13 @@ namespace UnturnedGodot
                     _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.6f, 0.6f) }, MaterialOverride = flashMat });
                     // tracer: the Military_30 mag fires tracers (Tracer 48 = the Trail_0 effect). A brief bright streak
                     // down the barrel (+Y = aim), shown with the flash. Thin box from the muzzle extending downrange.
-                    var tracerMat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, BlendMode = BaseMaterial3D.BlendModeEnum.Add, AlbedoColor = new Color(1f, 0.9f, 0.5f) };
-                    _muzzleFlash.AddChild(new MeshInstance3D { Name = "Tracer", Mesh = new BoxMesh { Size = new Vector3(0.03f, 14f, 0.03f) }, MaterialOverride = tracerMat, Position = new Vector3(0f, 7f, 0f) });
+                    // tracer = the real Trail_0 effect (Military_30's Tracer 48): renderMode=Stretch, LengthScale 128,
+                    // NO rotation module — a stretched billboard using the "Bullet" sprite. Ported as a long thin quad
+                    // down the barrel (+Y) textured with the real 32x32 Bullet sprite (additive), shown with the flash.
+                    var tracerMat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, BlendMode = BaseMaterial3D.BlendModeEnum.Add, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    var bulletTex = LoadTex("res://content/bullet.png");
+                    if (bulletTex != null) tracerMat.AlbedoTexture = bulletTex; else tracerMat.AlbedoColor = new Color(1f, 0.9f, 0.5f);
+                    _muzzleFlash.AddChild(new MeshInstance3D { Name = "Tracer", Mesh = new QuadMesh { Size = new Vector2(0.12f, 12f) }, MaterialOverride = tracerMat, Position = new Vector3(0f, 6f, 0f) });
 
                     // real gun sounds — the Eaglefire's Shoot/Reload AudioClips from the bundle (-> ogg). Non-3D
                     // AudioStreamPlayers output to the Master bus, so they're audible even though the gun lives in

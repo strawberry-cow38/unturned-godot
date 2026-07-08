@@ -113,6 +113,17 @@ namespace UnturnedGodot
             GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax}");
         }
 
+        // Q toggles between the two ported guns: reload the GunDef + rebuild the per-gun viewmodel.
+        void SwitchWeapon()
+        {
+            string next = _gunName == "eaglefire" ? "maplestrike" : "eaglefire";
+            LoadGun($"res://content/{next}.dat");   // sets Gun + _gunName + Ammo
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { GunName = _gunName };
+            AddChild(_viewmodel);
+            GD.Print($"[gun] switched to {_gunName}");
+        }
+
         public override void _Ready()
         {
             CollisionLayer = 1 << 3;   // player bit
@@ -149,6 +160,8 @@ namespace UnturnedGodot
                 StartReload();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
                 CycleFiremode();
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Q })
+                SwitchWeapon();   // toggle Eaglefire <-> Maplestrike
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
                 Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
                     ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
