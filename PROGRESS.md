@@ -193,5 +193,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       my caddy tunnel: **https://catboy.cowtools.uk/unturned/UnturnedGodot-win64.zip** (public HTTP 200).
       Sent master the link + controls (WASD/mouse/LMB, single-player survival vs the character-model horde).
       The whole slice is now a downloadable playable game.
-- [ ] NEXT: auto-update LAUNCHER (small .NET exe → checks version.txt on the tunnel → pulls+runs the build,
-      like struggle-game/colony); then skeleton animation (out of T-pose); skin texture; real Zombie AI/UseableGun.
+- [x] **DIFFERENTIAL LAUNCHER (git-pull, BH pattern)** (master: "do it how the blockheads launcher did it").
+      Scrapped the zip/hash approach. Pushed the repo to **github.com/strawberry-cow38/unturned-godot** (private).
+      Bootstrapping saga: the 4080 CAN'T push (its git cred-manager=wincredman needs a desktop TTY, dies over
+      ssh) — so `git bundle --all` (4.3MB) → chunk-transferred to cowtools (even 4MB drops on this link) →
+      cloned + `gh repo create`+push from cowtools (gh authed as strawberry-cow38 there). `launcher/` rewritten
+      to git-pull the repo → dotnet build game/UnturnedGodot.sln → godot --import → godot --path game. So a
+      build update = only the changed git objects (KB), never the full game. Built the 160KB framework-dependent
+      launcher exe on cowtools + sent master. Requires on the host: git + .NET 8 SDK + Godot 4.6.2 mono. Pushed ba670e5.
+      NOTE: 4080 repo (build workspace) diverges from GitHub now — git ops go through the cowtools clone (has gh auth).
+- [ ] NEXT: master tests the launcher (couldn't fully e2e it — clone needs their creds, run needs a display);
+      then skeleton animation (out of T-pose); skin texture on the character; real Zombie AI + UseableGun.
