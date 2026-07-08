@@ -46,8 +46,9 @@ namespace UnturnedGodot
             }
             _player.ScriptedInput = new UnityEngine.Vector2(0.5f, bd < 7f ? -0.7f : 0.15f);
 
-            // sync my state to the server, then apply the world it sends back
-            Client.SendState(new PlayerState { X = me.X, Y = me.Y, Z = me.Z, Yaw = _player.Rotation.Y });
+            // sync my state to the server (send the CAPSULE CENTER: body origin is at the feet, and the
+            // rendered capsule mesh is centered -- so +half-height keeps him on the ground, not sunk in it)
+            Client.SendState(new PlayerState { X = me.X, Y = me.Y + 0.9f, Z = me.Z, Yaw = _player.Rotation.Y });
             Client.Poll();
 
             // fire at the nearest zombie -> server hit-reg
