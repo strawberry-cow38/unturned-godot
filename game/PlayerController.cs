@@ -59,7 +59,7 @@ namespace UnturnedGodot
                 Vector3 f = (-GlobalTransform.Basis.Z * 5f + Vector3.Up * 8f + new Vector3(r.RandfRange(-16f, 16f), 0f, r.RandfRange(-16f, 16f))) * 0.64f;
                 _corpse.RagdollStart(f);
             }
-            if (_viewmodel != null) _viewmodel.Visible = false;   // no gun in the death-cam
+            _viewmodel?.SetShown(false);   // no gun in the death-cam
             if (_cam != null)
             {
                 _cam.TopLevel = true;   // hold the death-cam still in world space while the body flops
@@ -74,7 +74,7 @@ namespace UnturnedGodot
             GlobalPosition = Spawn;
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
-            if (_viewmodel != null) _viewmodel.Visible = true;
+            _viewmodel?.SetShown(true);
             if (_cam != null)
             {
                 _cam.TopLevel = false;
@@ -113,8 +113,8 @@ namespace UnturnedGodot
 
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
             AddChild(_cam);
-            _viewmodel = new Viewmodel();
-            _cam.AddChild(_viewmodel);
+            _viewmodel = new Viewmodel();   // self-contained: its own SubViewport camera at FOV 60, composited on top
+            AddChild(_viewmodel);
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
             foreach (var a in OS.GetCmdlineUserArgs()) if (a == "--pdie") _pdieTest = 2.0; // render-test: die at 2s

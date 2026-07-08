@@ -230,8 +230,8 @@ namespace UnturnedGodot
             AddChild(wall);
             var cam = new Camera3D { Current = true, Fov = 70f, Position = new Vector3(0f, 1.6f, 2f) };
             AddChild(cam);
-            _vm = new Viewmodel();
-            cam.AddChild(_vm);
+            _vm = new Viewmodel();   // self-contained: own SubViewport camera at FOV 60, composited on top
+            AddChild(_vm);
         }
 
         void BuildShowcase(string catalog, string picks)
