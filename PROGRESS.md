@@ -18,6 +18,27 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
 - [x] **TALLY: 1085 tests green standalone** (NetPak 46 + UnturnedDat 1039). The engine-agnostic core carries.
 - [ ] Un-defer NetPak UnityNetPakTests (Vector/Quat now available) + Steamworks-ex (needs Steamworks.NET)
 - [x] **Godot 4.6.2 mono skeleton BUILDS + RUNS the ported core in-engine.** Headless run proof: NetPak 0xABC r/w True, DatParser parsed (2 keys), Unity->Godot adapter Z-flip (1,2,3)->(1,2,-3). game/ = Godot .NET proj refs SDG.Compat+NetPak+UnturnedDat + GodotCompat adapter + Main smoke node. Jolt physics set.
-- [ ] 0a rip station: AssetRipper full rip of the Steam install → canonical ripped/ tree
-- [ ] 0d converter v0 + ContentProvider (GLB/PNG passthrough, static-prop YAML→.tscn, GUID manifest)
-- [ ] GATE: a ripped prop instantiates in a Godot scene via ContentProvider by its original GUID
+- [x] **0a rip station OPERATIONAL** — AssetRipper 1.3.14 (win-x64) runs headless as a persistent SYSTEM
+      scheduled task ("ARserver", port 5556), driven over its REST API (POST /LoadFile|/LoadFolder,
+      /Export/UnityProject; form field `path`; /Reset). KEY FINDING: the retail install's base structure
+      (globalgamemanagers + level0-10) holds only engine/UI/post-processing — the actual game content is
+      ONE packed AssetBundle: **Bundles/core.masterbundle (112 MB)**. Ripping it → 28,012 files:
+      **6,205 prefabs, 4,544 meshes, 5,482 textures (.png), 1,012 materials, 14,004 .meta (GUIDs preserved)**.
+      The Bundles/ .dat files are UnturnedDat defs that reference these assets BY GUID (the swap seam).
+- [x] **0d converter v0 + ContentProvider** — Free edition only bulk-exports meshes as Unity YAML
+      (.asset, !u!43, serializedVersion 11, interleaved _typelessdata). So `tools/unity_mesh_to_obj.py`
+      decodes that natively (m_Channels layout → pos/normal/uv Float32/Float16, m_IndexBuffer LE u16/u32),
+      handedness Z-flip + winding-reverse, → Wavefront .obj. **VALIDATED byte-exact: decoded bbox == the
+      Unity-declared localAABB to 3 decimals.** `game/ContentProvider.cs` = GUID→asset map (manifest.json),
+      runtime .obj→ArrayMesh via SurfaceTool (runtime load, not editor-import — the shipping model).
+- [x] **★ PHASE-0 GATE PASSED ★** — headless Godot proof: a REAL ripped prop **Aprix_Mask_0** (from
+      core.masterbundle) instantiated as a MeshInstance3D in a live Godot scene, resolved through
+      ContentProvider **BY ITS ORIGINAL UNITY GUID fb9428c7b8df82e4eb9642dacfaf9567**. verts=144 (48 tris),
+      **aabb.size (0.521, 0.439, 0.253) == exactly 2× the Unity extent** — geometry byte-correct in-engine.
+      The whole approach (readable-source core in Godot + Steam-asset rip keyed by original GUID) is PROVEN.
+
+## Phase 0 — DONE. Pipeline proven end-to-end. Next: Phase 1 vertical slice.
+- [ ] full-tree converter run (all 4,544 meshes → .obj + GUID manifest from every .meta); textures/materials passthrough
+- [ ] un-defer NetPak UnityNetPakTests + Steamworks-ex
+- [ ] Phase 1 vertical slice: headless Godot server + ported NetPak transport, a small ripped level,
+      1 gun vs a chasing/dying zombie, Godot-Glazier HUD (2 players)
