@@ -107,6 +107,15 @@ namespace UnturnedGodot
                     _sight = new Node3D { Name = "ViewHook" };   // the gun's aim point, from the real model
                     mi.AddChild(_sight);
                     _sight.Position = ViewHookLocal;
+
+                    // Modeled iron sights on the gun mesh frame (up = -z, barrel = +y). Front post at the muzzle +
+                    // a rear aperture ring on the receiver, both on the sight line so ADS lines them up. The eye
+                    // viewpoint (ViewHookLocal, behind at the same height) looks through the ring at the post.
+                    var ironMat = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.06f), Metallic = 0.5f, Roughness = 0.4f };
+                    var front = new MeshInstance3D { Name = "FrontSight", Mesh = new BoxMesh { Size = new Vector3(0.013f, 0.013f, 0.13f) }, MaterialOverride = ironMat, Position = new Vector3(0f, 0.5f, -0.15f) };
+                    mi.AddChild(front);
+                    var rear = new MeshInstance3D { Name = "RearSight", Mesh = new TorusMesh { InnerRadius = 0.028f, OuterRadius = 0.045f, RingSegments = 16 }, MaterialOverride = ironMat, Position = new Vector3(0f, -0.1f, -0.15f) };
+                    mi.AddChild(rear);
                 }
             }
 
