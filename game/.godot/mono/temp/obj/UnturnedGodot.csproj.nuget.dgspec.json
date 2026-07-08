@@ -207,7 +207,11 @@
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
-            "projectReferences": {}
+            "projectReferences": {
+              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
+                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              }
+            }
           }
         },
         "warningProperties": {

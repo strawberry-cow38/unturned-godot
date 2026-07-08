@@ -8,4 +8,9 @@
     <AssemblyName>UnturnedSim</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- UnityEngine.Vector2/3 shims for the movement model (same types the ported game code uses). -->
+    <ProjectReference Include="..\SDG.Compat\SDG.Compat.csproj" />
+  </ItemGroup>
+
 </Project>

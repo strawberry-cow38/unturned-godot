@@ -64,6 +64,15 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       tick numbers; `game/SimDriver.cs` drives it from Godot _PhysicsProcess on its OWN 50 Hz clock
       (decoupled from Godot's tick = same as the dedicated server). Movement/AI/combat/replication hang here.
       Godot project rebuild GREEN with UnturnedSim referenced.
-- [ ] NEXT: port the player movement/look/stance subset (PlayerMovement.cs → CharacterBody3D on SimRoot),
-      movement-trace test; then 1 gun end-to-end; then the direct-chase zombie; then Glazier HUD v0; then
-      the 2-player headless server (NetPak transport over SystemSockets + regenerated NetGen glue).
+- [x] **Player movement/stance ported** — faithful from PlayerMovement.cs: `PlayerMovementDef` (heights
+      2/1.2/0.8, speeds STAND 4.5 / SPRINT 7 / CROUCH 2.5 / PRONE 1.5, JUMP 7, GRAVITY 9.81×3=29.43,
+      terminal −100, EPlayerStance order) + `PlayerMovementSim` (engine-agnostic velocity integrator).
+      **11 movement tests GREEN** (stance speeds exact, diagonal clamp, jump apex in the Unturned band,
+      terminal velocity, forward dist = speed×time, determinism) → 18 UnturnedSim tests total.
+      `game/PlayerController.cs` = Godot CharacterBody3D (WASD/sprint/crouch/jump + mouse look) on Jolt;
+      project.godot physics set to **50 Hz** to match retail. FIDELITY: constants exact, trajectory is
+      "recognizably Unturned + tunable" (cross-engine PhysX→Jolt can't be byte-equal — accepted plan risk).
+      Godot build GREEN. (Visual proof pending a render harness.)
+- [ ] NEXT: 1 gun end-to-end (ItemGunAsset.dat → UseableGun raycast on RayMasks → damage → death); a
+      ~150×150m ripped-prop test level; the direct-chase zombie; Glazier HUD v0; 2-player headless server.
+      Also offered master a screenshot render harness (non-headless Godot on the 4080) to eyeball progress.

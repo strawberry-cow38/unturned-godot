@@ -71,6 +71,9 @@
         }
       },
       "UnturnedSim/1.0.0": {
+        "dependencies": {
+          "SDG.Compat": "1.0.0"
+        },
         "runtime": {
           "UnturnedSim.dll": {
             "assemblyVersion": "1.0.0",
