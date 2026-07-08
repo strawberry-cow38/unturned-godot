@@ -11,6 +11,7 @@ namespace UnturnedGodot
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
         Camera3D _cam;
+        Viewmodel _viewmodel;
         float _pitchDeg;
 
         [Export] public float MouseSensitivity = 0.12f;
@@ -58,6 +59,7 @@ namespace UnturnedGodot
                 Vector3 f = (-GlobalTransform.Basis.Z * 5f + Vector3.Up * 8f + new Vector3(r.RandfRange(-16f, 16f), 0f, r.RandfRange(-16f, 16f))) * 0.64f;
                 _corpse.RagdollStart(f);
             }
+            if (_viewmodel != null) _viewmodel.Visible = false;   // no gun in the death-cam
             if (_cam != null)
             {
                 _cam.TopLevel = true;   // hold the death-cam still in world space while the body flops
@@ -72,6 +74,7 @@ namespace UnturnedGodot
             GlobalPosition = Spawn;
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
+            if (_viewmodel != null) _viewmodel.Visible = true;
             if (_cam != null)
             {
                 _cam.TopLevel = false;
@@ -110,6 +113,8 @@ namespace UnturnedGodot
 
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
             AddChild(_cam);
+            _viewmodel = new Viewmodel();
+            _cam.AddChild(_viewmodel);
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
             foreach (var a in OS.GetCmdlineUserArgs()) if (a == "--pdie") _pdieTest = 2.0; // render-test: die at 2s
@@ -140,6 +145,7 @@ namespace UnturnedGodot
             float damage = Gun?.ZombieDamage ?? 34f;
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
+            _viewmodel?.Kick();
 
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition;

@@ -22,10 +22,11 @@ namespace UnturnedGodot
         int _rigMontageIdx = -1;
         const int MontageFramesPerClip = 55;
         bool _ragTest;                               // --anim=Ragdoll : trigger the death ragdoll mid-capture
+        bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (idle + fire kick)
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk";
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -33,6 +34,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
+                else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -74,6 +76,16 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 1100);
                 BuildRigTest(anim);
                 return; // frame strip captured in _Process
+            }
+
+            if (vm != null)
+            {
+                _rigDir = vm;                                   // reuse the frame-strip capture
+                _rigCaptureFrames = new[] { 8, 16, 22, 26, 34, 48 };  // idle, then a fire kick at f20
+                _vmTest = true;
+                GetWindow().Size = new Vector2I(1067, 600);
+                BuildViewmodelTest();
+                return;
             }
 
             if (!smoke)
@@ -194,6 +206,32 @@ namespace UnturnedGodot
             var cam = new Camera3D { Fov = 42f };
             AddChild(cam);
             cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
+        }
+
+        // --vm=DIR : render the first-person viewmodel through its own camera (the demo uses a separate cam,
+        // so the viewmodel never shows there). Floor + backdrop wall + FP camera + Viewmodel; kick at f20.
+        void BuildViewmodelTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -30f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            var floor = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) } };
+            floor.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.33f, 0.30f) };
+            AddChild(floor);
+            var wall = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(24f, 7f, 0.5f) }, Position = new Vector3(0f, 3.5f, -7f) };
+            wall.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.52f, 0.46f, 0.40f) };
+            AddChild(wall);
+            var cam = new Camera3D { Current = true, Fov = 70f, Position = new Vector3(0f, 1.6f, 2f) };
+            AddChild(cam);
+            _vm = new Viewmodel();
+            cam.AddChild(_vm);
         }
 
         void BuildShowcase(string catalog, string picks)
@@ -463,6 +501,7 @@ namespace UnturnedGodot
                 _frame++;
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
                 if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
+                if (_vmTest && _frame == 20) _vm?.Kick();   // fire recoil
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {
                     int want = Mathf.Min(_frame / MontageFramesPerClip, _rigList.Length - 1);
