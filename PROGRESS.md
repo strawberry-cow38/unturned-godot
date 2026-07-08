@@ -185,5 +185,13 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       HP/AMMO/KILLS/DEATHS HUD. Verified it boots + renders (assets load from res://). Created UnturnedGodot.sln
       (Godot .NET export needs it) + export_presets.cfg (Windows, embed_pck, embed .NET, content/ included).
       Exporting to build/UnturnedGodot.exe now.
-- [ ] NEXT: finish the export → zip → the auto-update launcher (struggle-game/colony pattern); then skeleton
-      animation (out of T-pose); skin texture; real Zombie AI + UseableGun.
+- [x] **★ PLAYABLE BUILD SHIPPED ★**. Godot-exported UnturnedGodot.exe (185MB, embed_pck + embedded .NET,
+      self-contained), verified it runs standalone (assets from the embedded pck). DISTRIBUTION saga: the
+      4080↔cowtools link drops on any transfer >few MB (MAC errors), cowtools disk tight (336M), no gh/remote.
+      Solved by SPLITTING the 67MB zip into 17×4MB chunks, transferring each in its own connection (survives
+      the drops) + reassembling byte-EXACT on cowtools (verified: 70584217==70584217, unzip -t OK). Hosted on
+      my caddy tunnel: **https://catboy.cowtools.uk/unturned/UnturnedGodot-win64.zip** (public HTTP 200).
+      Sent master the link + controls (WASD/mouse/LMB, single-player survival vs the character-model horde).
+      The whole slice is now a downloadable playable game.
+- [ ] NEXT: auto-update LAUNCHER (small .NET exe → checks version.txt on the tunnel → pulls+runs the build,
+      like struggle-game/colony); then skeleton animation (out of T-pose); skin texture; real Zombie AI/UseableGun.
