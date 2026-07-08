@@ -94,6 +94,14 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       shot harness (render named items big/clear via ContentProvider.FindGuidByName). Texture map v2 pairing
       re-confirmed correct-by-construction. (One outlier: a Crewman helmet reads messy — open shell + maybe
       a wrong-tinted atlas region; not chased yet.)
-- [ ] NEXT ("playable"): 1 gun end-to-end (ItemGunAsset.dat → UseableGun raycast on RayMasks → damage →
-      death) + a direct-chase zombie (ZombieController staged) + minimal HUD, on the SimRoot tick. Then
-      2-player headless server. Demonstrable via the harness's --write-movie (motion → mp4).
+- [x] **★ PLAYABLE SLICE WORKING ★** (master: "just get the playable slice working"). `game/` now has:
+      `PlayerController` (ported movement + mouse look + hitscan gun: raycast from camera vs the zombie
+      collision bit → Damage), `ZombieController` (direct-chase AI on 50 Hz, collision capsule, flash-red-on-
+      hit, topple-on-death, "zombies" group), `HUD` (crosshair + AMMO/KILLS), `DemoDirector` (scripts
+      aim+fire+horde-respawn for a recorded clip). `--play` = interactive (WASD/mouse/LMB); `--demo` =
+      recorded. Rendered an 8s clip on the 4080 GPU (--write-movie → mp4): a horde of green zombies chase,
+      get shot (→red→topple), KILLS + AMMO tick live. THE CORE LOOP RUNS. Sent master the clip.
+      Gaps (next): gun is a generic hitscan (not yet ItemGunAsset.dat-driven damage/ammo/spread); zombies
+      are capsules (no ripped mesh/anim yet); no melee-damage-to-player; single-player (no netcode yet).
+- [ ] NEXT: data-drive the gun from ItemGunAsset .dat (damage/rof/ammo/falloff) via UnturnedDat; zombie
+      ripped mesh + ported anim; player damage/death; then the 2-player headless server (NetPak transport).

@@ -18,11 +18,21 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null;
+            bool play = false, demo = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
+                else if (arg == "--demo") demo = true;
+                else if (arg == "--play") play = true;
+            }
+
+            if (play || demo)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildPlayable(catalog, demo);
+                return; // interactive, or demo records via --write-movie
             }
 
             if (shot != null)
@@ -164,6 +174,56 @@ namespace UnturnedGodot
                 cam.LookAt(new Vector3(0f, 1.0f, -0.3f), Vector3.Up);
 
                 GD.Print($"[SHOT] showcase: {n} props ({textured} textured){(picks != null ? " [picked]" : "")}");
+            }
+        }
+
+        // The playable vertical slice: ground + player (ported movement + hitscan gun) + chasing zombies +
+        // HUD. `--play` = interactive; `--demo` = a scripted DemoDirector drives it for a --write-movie clip.
+        void BuildPlayable(string catalog, bool demo)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.6f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(240, 240) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            var player = new PlayerController();
+            AddChild(player);                       // _Ready builds its camera + collider
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+
+            AddChild(new HUD { Player = player });
+
+            if (demo)
+            {
+                player.Camera.Current = false;
+                var overview = new Camera3D { Current = true, Fov = 62f };
+                AddChild(overview);
+                overview.Position = new Vector3(8f, 3.6f, 8f);
+                overview.LookAt(new Vector3(0, 1.0f, -4f), Vector3.Up);
+                AddChild(new DemoDirector { Player = player, SpawnRoot = this });
+                GD.Print("[PLAY] demo: player + scripted director vs chasing zombies (recording)");
+            }
+            else
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    var z = new ZombieController { Target = player };
+                    AddChild(z);
+                    z.GlobalPosition = new Vector3((i - 1.5f) * 3f, 0.2f, -14f);
+                }
+                GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }
         }
 
