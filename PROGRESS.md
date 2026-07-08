@@ -260,3 +260,15 @@ Mode (master 2026-07-08): keep moving autonomously, don't stop until commanded; 
       Unturned's own model geometry hides it in-game). Kept a small forward readability offset (AdsSightDepth
       -0.30), now HONESTLY labeled as a readability call, not source. x/y sight centering still source-exact from
       the real hook. Pushed 591b2c1. OPEN Q for master: accept the small offset, or go pure-source (the block)?
+- [ ] **VIEWMODEL — ADS distance root cause (2026-07-08, investigation)** (master: "whats diff between ours and source?").
+      Did the full camera-move restructure (arms un-parented from the camera -> siblings under the SubViewport;
+      camera slides to the View hook, gun holds a FIXED hip position + aims along world -Z; the RiggedCharacter aim
+      additive kept). SOURCE-PURE mechanically (no gun-push), BUT it exposed the real root cause: my hip arm pose
+      holds the gun too far BACK — measured the View hook at z=+0.32 (0.32 BEHIND the eye at hip; the stock pokes
+      past the face). So the camera has to pull back behind the breech to look "through" the rear sight -> you see
+      the receiver block, not down the sights. Real Unturned's hip/aim arm pose holds the gun forward + raised so
+      the sight comes to the eye. The pushed 591b2c1 (additive + a small forward "AdsSightDepth") looks clean
+      because that offset is really EYE RELIEF (the eye sits behind the rear sight) — the restructure PROVED a
+      viewing distance is genuinely needed, so it's not a hack. DECISION PENDING master: lock in the clean 591b2c1
+      (relabel the offset as eye-relief) vs invest in replicating Unturned's real hip/aim arm poses (bigger task).
+      Restructure code parked locally + on the 4080 (NOT pushed); GitHub stays at the clean 591b2c1.
