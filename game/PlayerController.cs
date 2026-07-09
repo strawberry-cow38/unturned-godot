@@ -104,6 +104,18 @@ namespace UnturnedGodot
                 }
         }
 
+        // PlayerLife.onLanded: landing faster than the fall-damage threshold (map default 22 m/s, and the port has
+        // normal gravity so totalGravityMultiplier > 0.67 always holds) deals damage = min(101, |verticalVelocity|),
+        // rounded. The DEFENSE/STRENGTH skill and clothing multipliers are 1.0 here (no skill/armor system yet), and
+        // leg-breaking (the source's breakLegs) is a separate mechanic the port doesn't model -- a later pass.
+        void CheckFallDamage(float verticalVel)
+        {
+            const float threshold = 22.0f;
+            if (verticalVel >= -threshold) return;             // a normal jump lands at ~7 m/s -> no damage
+            int dmg = Mathf.RoundToInt(Mathf.Min(101f, Mathf.Abs(verticalVel)));   // RoundAndClampToByte; damage <= 101
+            if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage"); TakeDamage(dmg); }
+        }
+
         StorageCrate _openCrate;
 
         // F: open the nearest storage crate within ~2.5 m -- loads its grid into the STORAGE page (7) so the existing
@@ -734,8 +746,10 @@ namespace UnturnedGodot
 
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, IsOnFloor(), (float)delta);
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);
+            bool wasAirborne = !IsOnFloor();                  // ground state going into this step
             Velocity = new Vector3(world.X, v.y, world.Z);
             MoveAndSlide();
+            if (wasAirborne && IsOnFloor()) CheckFallDamage(v.y);   // just touched down -> fall damage on a hard landing
         }
     }
 }

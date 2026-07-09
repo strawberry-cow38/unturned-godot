@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -52,6 +52,7 @@ namespace UnturnedGodot
                 else if (arg == "--invloot") invloot = true;
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--meleedemo") meleedemo = true;
+                else if (arg == "--falldemo") falldemo = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
@@ -89,6 +90,12 @@ namespace UnturnedGodot
             if (meleedemo)  // melee self-test: a zombie in reach, the player swings until it drops (log-verifiable)
             {
                 BuildMeleeDemo(gun);
+                return;
+            }
+
+            if (falldemo)   // fall-damage self-test: drop the player from height, expect damage on landing
+            {
+                BuildFallDemo(gun);
                 return;
             }
 
@@ -559,6 +566,23 @@ namespace UnturnedGodot
             GD.Print("[MELEE] demo: NORMAL zombie ~1.4m ahead (100 HP); swinging (45/hit, ~0.45s cd)");
         }
 
+        // Fall-damage self-test: drop the player from 40 m onto the ground plane. Expect PlayerLife.onLanded to fire
+        // on the landing frame (impact speed well over the 22 m/s threshold) and cut health. Log-verifiable headless.
+        void BuildFallDemo(string gunPath)
+        {
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(0, 40f, 0);   // 40 m up -> a hard landing
+
+            AddChild(new FallTestDriver { P = player });
+            GD.Print("[FALL] demo: player dropped from 40 m; expect fall damage on landing");
+        }
+
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
         // selectDemo also pops the selection panel for an item so it can be captured.
         void BuildInventoryDemo(string gunPath, bool selectDemo = false, bool equipDemo = false)
@@ -978,6 +1002,26 @@ namespace UnturnedGodot
                 GetTree().Quit();
             }
             if (_frames > 200) { GD.Print("[MELEE] timeout: no kill within 200 frames"); GetTree().Quit(); }
+        }
+    }
+
+    // Drives the fall-damage self-test: records starting health, then quits when the landing cuts it (the [fall] line
+    // reports the impact speed + damage) or after a timeout.
+    public partial class FallTestDriver : Node3D
+    {
+        public PlayerController P;
+        int _frames; float _startHp = -1f;
+
+        public override void _PhysicsProcess(double delta)
+        {
+            _frames++;
+            if (_startHp < 0f && P != null) _startHp = P.Health;
+            if (P != null && _startHp > 0f && P.Health < _startHp)
+            {
+                GD.Print($"[FALL] health {_startHp} -> {P.Health} after landing (frame {_frames})");
+                GetTree().Quit();
+            }
+            if (_frames > 300) { GD.Print($"[FALL] timeout: no fall damage, health={P?.Health}"); GetTree().Quit(); }
         }
     }
 }
