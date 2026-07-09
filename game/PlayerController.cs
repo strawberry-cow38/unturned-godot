@@ -212,15 +212,23 @@ namespace UnturnedGodot
             GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={Gun.Pellets} mode={_firemode}");
         }
 
-        // Q toggles between the two ported guns: reload the GunDef + rebuild the per-gun viewmodel.
-        void SwitchWeapon()
+        public string HeldGunName => _gunName;
+
+        // Hold a specific gun by its content name: reload the GunDef + rebuild the per-gun viewmodel. Used by Q-switch
+        // and by the inventory's Equip action (equipping a gun makes it the held weapon).
+        public void EquipHeldGun(string gunName)
         {
-            string next = _gunName switch { "eaglefire" => "maplestrike", "maplestrike" => "masterkey", _ => "eaglefire" };
-            LoadGun($"res://content/{next}.dat");   // sets Gun + _gunName + Ammo (eaglefire -> maplestrike -> masterkey)
+            LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
-            GD.Print($"[gun] switched to {_gunName}");
+            GD.Print($"[gun] holding {_gunName}");
+        }
+
+        // Q toggles between the three ported guns.
+        void SwitchWeapon()
+        {
+            EquipHeldGun(_gunName switch { "eaglefire" => "maplestrike", "maplestrike" => "masterkey", _ => "eaglefire" });
         }
 
         public override void _Ready()
@@ -280,6 +288,7 @@ namespace UnturnedGodot
 
         public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
         public void DemoSelect(byte page, byte x, byte y) { _invUI?.DebugSelect(page, x, y); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void DemoEquip(byte page, byte x, byte y) => _invUI?.DebugEquip(page, x, y);
 
         // seed the inventory with real items: wear the Alicepack (8x7) + Cargo Pants (6x3) so those pages open up,
         // put both guns in the hand slots, and scatter medical/food/water across pockets + backpack to show packing

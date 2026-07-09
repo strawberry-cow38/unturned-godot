@@ -211,7 +211,7 @@ namespace UnturnedGodot
             float by = 150;
             if (asset.IsConsumable)
             { AddActionButton(panel, "Use", new Vector2(228, by), UseSelected); by += 44; }
-            if (asset.type == EItemType.GUN && page >= PlayerInventory.SLOTS)
+            if (asset.type == EItemType.GUN)
             { AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
@@ -228,14 +228,21 @@ namespace UnturnedGodot
 
         void EquipSelected()
         {
-            // move the gun to the first empty hand slot (primary then secondary)
-            for (byte slot = 0; slot < PlayerInventory.SLOTS; slot++)
-                if (Inv.items[slot].getItemCount() == 0)
-                {
-                    if (Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0)) { CloseSelection(); Refresh(); }
-                    return;
-                }
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var asset = pg.getItem(idx).GetAsset();
+            if (asset?.gunName != null) Player?.EquipHeldGun(asset.gunName);   // equipping a gun makes it the held weapon
+            // holster a grid gun into the first empty hand slot; an already-slotted gun just stays put
+            if (_selPage >= PlayerInventory.SLOTS)
+                for (byte slot = 0; slot < PlayerInventory.SLOTS; slot++)
+                    if (Inv.items[slot].getItemCount() == 0) { Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0); break; }
+            CloseSelection();
+            Refresh();
         }
+
+        // demo/verify: select an item and immediately run its Equip (headless can't click the button)
+        public void DebugEquip(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; EquipSelected(); }
 
         void DropSelected()
         {
