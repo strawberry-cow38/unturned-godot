@@ -14,6 +14,7 @@ namespace UnturnedGodot
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
+        BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
@@ -325,6 +326,8 @@ namespace UnturnedGodot
             PopulateDemoInventory();
             _invUI = new InventoryUI { Inv = Inventory, Player = this };
             AddChild(_invUI);
+            _build = new BuildTool { Cam = _cam };
+            GetParent().AddChild(_build);   // structures live in the scene, not under the player
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
             foreach (var a in OS.GetCmdlineUserArgs()) if (a == "--pdie") _pdieTest = 2.0; // render-test: die at 2s
@@ -340,7 +343,10 @@ namespace UnturnedGodot
                 _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
-                StartFire();
+            {
+                if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
+                else StartFire();
+            }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
                 _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to aim down sights (Unturned default mode)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
@@ -353,6 +359,10 @@ namespace UnturnedGodot
                 TryPickup();      // pick up the nearest dropped world item
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
                 OpenNearestCrate();   // open the nearest storage crate
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
+                _build?.Toggle();     // toggle build mode
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
+                _build?.CycleType();  // cycle the structure type (floor/wall)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
                 if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate

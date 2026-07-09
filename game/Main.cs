@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -52,6 +52,7 @@ namespace UnturnedGodot
                 else if (arg == "--invloot") invloot = true;
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
+                else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
             }
@@ -95,6 +96,13 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDayNightDemo();
+                return;
+            }
+
+            if (buildmode)  // script a small structure (floor + walls) to show the build system
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildBuildDemo(gun);
                 return;
             }
 
@@ -710,6 +718,44 @@ namespace UnturnedGodot
             cam.Position = new Vector3(0f, 2.5f, 6f);
             cam.LookAt(new Vector3(0f, 1.4f, -4f), Vector3.Up);   // boxes + horizon/sky
             GD.Print("[DAYNIGHT] cycle demo");
+        }
+
+        // Scripts a small structure (floor tiles + walls) to show the build system, viewed from an overview.
+        void BuildBuildDemo(string gunPath)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f),
+                AmbientLightEnergy = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -55f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60, 60) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            var bt = new BuildTool();
+            AddChild(bt);
+            bt.Type = 0;   // 2x2 floor of tiles
+            bt.Spawn(new Vector3(-1.5f, 0.1f, -1.5f), 0); bt.Spawn(new Vector3(1.5f, 0.1f, -1.5f), 0);
+            bt.Spawn(new Vector3(-1.5f, 0.1f, 1.5f), 0);  bt.Spawn(new Vector3(1.5f, 0.1f, 1.5f), 0);
+            bt.Type = 1;   // three walls
+            bt.Spawn(new Vector3(-3f, 1.5f, 0f), 90f);
+            bt.Spawn(new Vector3(3f, 1.5f, 0f), 90f);
+            bt.Spawn(new Vector3(0f, 1.5f, -3f), 0f);
+
+            var overview = new Camera3D { Current = true, Fov = 60f };
+            AddChild(overview);
+            overview.Position = new Vector3(6f, 4.5f, 7f);
+            overview.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
+            GD.Print("[BUILD] scripted a small structure (floor + walls)");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).
