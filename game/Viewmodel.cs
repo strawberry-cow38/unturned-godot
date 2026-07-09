@@ -23,14 +23,14 @@ namespace UnturnedGodot
         // Y is the eye-alignment + the source -0.45 vertical drop (PlayerAnimator:1431, gun sits low).
         Vector3 _armsPos = new Vector3(0f, -1.75f, 0.12f);
         float _gunRoll = 0f;
-        float _recoil;
         double _t;
         // Source-accurate viewmodel-camera motion (PlayerAnimator): the walk BOB (viewmodelMovementOffset,
         // Rk4Spring2) + the per-shot recoil SHAKE (recoilViewmodelCameraOffset, Rk4Spring3), both applied to
         // the viewmodel camera's local position. Stiffness/damping are Inspector-serialized on the Player
         // prefab in the original (not in the scripts) -> tuned here; the motion + amplitudes are source-exact.
         Rk4Spring2 _bobSpring = new Rk4Spring2(900f, 60f);   // tracks the Sin(speed*t) target cleanly + eases stop
-        Rk4Spring3 _shakeSpring = new Rk4Spring3(550f, 40f); // snappy kick, settles ~0.2s (slight overshoot)
+        Rk4Spring3 _shakeSpring = new Rk4Spring3(550f, 40f); // positional kick, settles ~0.2s (slight overshoot)
+        Rk4Spring3 _recoilRotSpring = new Rk4Spring3(550f, 40f); // per-shot gun tilt (pitch/yaw/roll deg), springs back
         bool _moving;                       // player has movement input this frame (drives bob on/off)
         EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE -> bob speed + amplitude
         float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
@@ -215,17 +215,19 @@ namespace UnturnedGodot
             AddChild(_layer);
         }
 
-        // Fire: muzzle flash + casing + sound, plus the source per-shot recoil SHAKE — add a random offset in
-        // [shakeMin, shakeMax] per axis to the recoil viewmodel-camera spring (UseableGun.cs:921 -> AddRecoil
-        // ViewmodelCameraOffset), which springs back to rest. STAND stance = 1x (crouch 0.85 / prone 0.7 handled
-        // where fired). _recoil (kept) still drives the small muzzle-rise rotation flourish.
-        public void Kick(Vector3 shakeMin, Vector3 shakeMax)
+        // Fire: muzzle flash + casing + sound, plus BOTH source per-shot recoils on the viewmodel camera —
+        // the positional SHAKE (random [shakeMin,shakeMax] per axis -> _shakeSpring; UseableGun.cs:921/1036) and
+        // the rotational tilt (recoilPitch/recoilYaw degrees -> _recoilRotSpring; UseableGun.cs:1037, PlayerAnimator
+        // maps x=pitch, y=z=yaw). Both spring back to rest. STAND stance = 1x (crouch/prone scale handled at fire).
+        public void Kick(Vector3 shakeMin, Vector3 shakeMax, float recoilPitch, float recoilYaw)
         {
-            _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; EjectCasing(); _shootSnd?.Play();
+            _flash = 0.05f; EjectCasing(); _shootSnd?.Play();
             _shakeSpring.CurrentPosition += new Vector3(
                 _rng.RandfRange(Mathf.Min(shakeMin.X, shakeMax.X), Mathf.Max(shakeMin.X, shakeMax.X)),
                 _rng.RandfRange(Mathf.Min(shakeMin.Y, shakeMax.Y), Mathf.Max(shakeMin.Y, shakeMax.Y)),
                 _rng.RandfRange(Mathf.Min(shakeMin.Z, shakeMax.Z), Mathf.Max(shakeMin.Z, shakeMax.Z)));
+            // rotational recoil: gun tilts up (pitch) + yaws/rolls (PlayerAnimator maps x=pitch, y=z=yaw), springs back
+            _recoilRotSpring.CurrentPosition += new Vector3(recoilPitch, recoilYaw, recoilYaw);
         }
 
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
@@ -273,7 +275,6 @@ namespace UnturnedGodot
             if (_arms == null || _cam == null) return;
             _t += delta;
             _equipElapsed += (float)delta;
-            _recoil = Mathf.Max(0f, _recoil - (float)delta * 5f);
             _flash = Mathf.Max(0f, _flash - (float)delta);
             if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f;
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
@@ -296,6 +297,8 @@ namespace UnturnedGodot
             _bobSpring.Update((float)delta);
             _shakeSpring.TargetPosition = Vector3.Zero;   // recoil shake always springs back to rest
             _shakeSpring.Update((float)delta);
+            _recoilRotSpring.TargetPosition = Vector3.Zero;   // recoil rotation springs back too
+            _recoilRotSpring.Update((float)delta);
             // Bob + recoil shake as an ARMS offset. The source moves the viewmodel CAMERA; our arms are children
             // of that camera (rigid), so instead we move the arms by the NEGATIVE offset — the same on-screen sway
             // (camera fixed, arms move opposite). Godot arms-local == camera-local (scale 1). Source maps bob to
@@ -323,12 +326,18 @@ namespace UnturnedGodot
             if (_gun != null && _gun.GetParent() is Node3D att)
             {
                 Vector3 aim = -_cam.GlobalTransform.Basis.Z;   // viewmodel-forward
-                aim = aim.Rotated(_cam.GlobalTransform.Basis.X, Mathf.DegToRad(_recoil * 6f)).Normalized(); // muzzle rise
                 Vector3 x = Vector3.Up.Cross(aim);
                 if (x.LengthSquared() < 1e-5f) x = Vector3.Right;
                 x = x.Normalized();
                 var basis = new Basis(x, aim, x.Cross(aim).Normalized());   // barrel (+Y) -> aim
                 basis = basis.Rotated(aim, Mathf.DegToRad(_gunRoll));
+                // per-shot recoil tilt (source recoilViewmodelCameraRotation, spring-decayed): pitch up about the
+                // camera-right axis (same climb sign as the old muzzle-rise), yaw about camera-up, roll about the barrel.
+                Vector3 rr = _recoilRotSpring.CurrentPosition;   // (pitch, yaw, roll) degrees
+                Basis cb = _cam.GlobalTransform.Basis;
+                basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))    // pitch -> muzzle climb
+                             .Rotated(cb.Y, Mathf.DegToRad(rr.Y))    // yaw
+                             .Rotated(aim,  Mathf.DegToRad(rr.Z));   // roll
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
             }
 

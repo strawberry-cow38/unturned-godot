@@ -240,9 +240,13 @@ namespace UnturnedGodot
             Ammo--;
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
             if (Gun != null)
+            {
+                float rvPitch = _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY);   // vertical recoil -> muzzle climb
+                float rvYaw = _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX);     // horizontal recoil -> gun yaw
                 _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ),
-                                 new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ));
-            else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero);
+                                 new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ), rvPitch, rvYaw);
+            }
+            else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero, 0f, 0f);
             if (Gun != null)   // camera recoil: pitch up + random-sign yaw, scaled by Recover (source: aim gets kick*Recover)
             {
                 _recoilPitch += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;

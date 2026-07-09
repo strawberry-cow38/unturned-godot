@@ -511,7 +511,7 @@ namespace UnturnedGodot
                     // after un-ADS, fire a few HIP shots so the test also exercises recoil shake + case ejection
                     // (real Eaglefire Shake_Min/Max_* — Z-heavy back-punch)
                     if (_frame == 88 || _frame == 91 || _frame == 94)
-                        _vm.Kick(new Vector3(-0.0025f, 0.0025f, -0.01f), new Vector3(0.0025f, -0.0025f, -0.02f));
+                        _vm.Kick(new Vector3(-0.0025f, 0.0025f, -0.01f), new Vector3(0.0025f, -0.0025f, -0.02f), 3.5f, 1f);
                     // then a reload, so the test shows the real Gun_Reload arm anim (and its return to ready)
                     if (_frame == 100) _vm.SetReloading(true);
                     if (_frame == 150) _vm.SetReloading(false);
