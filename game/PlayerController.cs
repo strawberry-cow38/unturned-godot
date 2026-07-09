@@ -239,6 +239,7 @@ namespace UnturnedGodot
         FireMode _firemode = FireMode.Semi;
         public string FiremodeName => _firemode.ToString().ToUpper();   // for the HUD
         int _burstLeft;                               // rounds remaining in the current burst
+        float _burstCd;                               // cooldown after a burst before another can start (no full-auto burst)
 
         bool _dead;
         double _deathTimer;
@@ -508,7 +509,7 @@ namespace UnturnedGodot
             {
                 case FireMode.Semi: Fire(); break;
                 case FireMode.Auto: Fire(); break;   // held-fire continues in _PhysicsProcess
-                case FireMode.Burst: _burstLeft = Gun?.BurstCount ?? 3; break;
+                case FireMode.Burst: if (_burstCd <= 0f) _burstLeft = Gun?.BurstCount ?? 3; break;   // gated so holding/spamming can't full-auto
             }
         }
 
@@ -601,12 +602,12 @@ namespace UnturnedGodot
 
         // A simulated bullet (Unturned's BulletInfo): flies from the muzzle with a velocity, dropping under gravity,
         // stepped every physics tick; its tracer travels with it; it hits/despawns on contact or after its steps.
-        sealed class Bullet { public Vector3 Pos, Vel; public int StepsLeft; public float Gravity, Damage; public MeshInstance3D Tracer; }
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage; public MeshInstance3D Tracer; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage)
         {
-            var b = new Bullet { Pos = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, Tracer = MakeTracer() };
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, Tracer = MakeTracer() };
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
             _bullets.Add(b);
         }
@@ -669,9 +670,15 @@ namespace UnturnedGodot
         {
             if (b.Tracer == null) return;
             Vector3 axis = b.Vel.LengthSquared() > 1e-6f ? b.Vel.Normalized() : Vector3.Forward;
-            Vector3 center = b.Pos - axis * 2.5f;   // the 5m streak trails behind the bullet's leading point
+            // the streak trails from the MUZZLE (Origin) up to the bullet, capped at 5 m -- so it never extends behind
+            // the barrel toward the camera (master: tracer should come from the barrel, not the eye).
+            float len = Mathf.Min(5f, b.Pos.DistanceTo(b.Origin));
+            if (len < 0.02f) { b.Tracer.Visible = false; return; }
+            b.Tracer.Visible = true;
+            Vector3 back = b.Pos - axis * len;
             Vector3 up = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.99f ? Vector3.Right : Vector3.Up;
-            b.Tracer.LookAtFromPosition(center, b.Pos, up);   // box length (local -Z) aims at the bullet's head
+            b.Tracer.LookAtFromPosition((back + b.Pos) * 0.5f, b.Pos, up);   // centred between muzzle-side + head
+            b.Tracer.Scale = new Vector3(1f, 1f, len / 5f);                   // shrink the 5 m box to the trail length
         }
 
         // Flesh impact — the source Flesh_Dynamic effect (impact ID 5: a ~25-particle billboard blood spray,
@@ -768,6 +775,7 @@ namespace UnturnedGodot
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
             if (_meleeCd > 0f) _meleeCd -= (float)delta;
+            if (_burstCd > 0f) _burstCd -= (float)delta;
             if (_grenadeCd > 0f) _grenadeCd -= (float)delta;
             if (_reloading)
             {
@@ -777,7 +785,7 @@ namespace UnturnedGodot
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
             if (_fireCd <= 0f && !_reloading)
             {
-                if (_burstLeft > 0) { if (Fire()) _burstLeft--; else _burstLeft = 0; }
+                if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.4f; } else _burstLeft = 0; }
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
