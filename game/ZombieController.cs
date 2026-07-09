@@ -81,7 +81,10 @@ namespace UnturnedGodot
             shape.Position = new Vector3(0, low ? 0.4f : 0.9f, 0);
             AddChild(shape);
 
-            _rig = RiggedCharacter.Build("res://content/rig.json", _tint, false, "res://content/zombie_atlas.png");
+            // each zombie randomly wears one of the baked ZombieClothing outfits (real zombies randomise their
+            // shirt/pants from the map's LevelZombies table) so the horde isn't a uniform.
+            string atlas = $"res://content/zombie_atlas_{_rng.RandiRange(0, 5)}.png";
+            _rig = RiggedCharacter.Build("res://content/rig.json", _tint, false, atlas);
             if (_rig != null)
             {
                 // Zombie.cs: moveAnim="Move_"+move (the arms-out shamble, NOT the human walk), idleAnim="Idle_"+idle.
