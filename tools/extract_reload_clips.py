@@ -62,6 +62,11 @@ def convert(cl):
         sk["rot"] = [[k[0]] + qmul(K, k[1:5]) for k in sk["rot"]]
         if sk.get("pos"):
             sk["pos"] = [[k[0]] + qrot(K, k[1:4]) for k in sk["pos"]]
+    # Anchor the FIRST-PERSON root: the viewmodel ignores the reload clip's body/root TRANSLATION (that motion is
+    # for the 3rd-person body). Rifles' root already sits at 0; the masterkey parks it at Y=0.45 (+Z 0.21), which
+    # drags the whole viewmodel up during the reload -> zero the Skeleton position so only the arm bones animate.
+    if sk and sk.get("pos"):
+        sk["pos"] = [[k[0], 0.0, 0.0, 0.0] for k in sk["pos"]]
     length = 0.0
     for d in tracks.values():
         for arr in d.values():
