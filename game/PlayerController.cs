@@ -78,6 +78,47 @@ namespace UnturnedGodot
                 _invUI?.Refresh();
             }
         }
+
+        StorageCrate _openCrate;
+
+        // F: open the nearest storage crate within ~2.5 m -- loads its grid into the STORAGE page (7) so the existing
+        // dashboard + TryDrag handle it, and opens the dashboard.
+        public void OpenNearestCrate()
+        {
+            StorageCrate near = null; float best = 6.25f;   // 2.5 m, squared
+            foreach (var n in GetTree().GetNodesInGroup("crates"))
+                if (n is StorageCrate c)
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(c.GlobalPosition);
+                    if (d < best) { best = d; near = c; }
+                }
+            if (near == null) return;
+            _openCrate = near;
+            CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
+            GD.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
+            _invUI?.Open();
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+
+        // save the open crate's contents back and clear the STORAGE view (called when the dashboard closes)
+        void CloseCrate()
+        {
+            if (_openCrate == null) return;
+            CopyPage(Inventory.items[PlayerInventory.STORAGE], _openCrate.Storage, _openCrate.Width, _openCrate.Height);
+            var s = Inventory.items[PlayerInventory.STORAGE];
+            s.clear(); s.loadSize(0, 0);
+            _openCrate = null;
+        }
+
+        static void CopyPage(SDG.Unturned.Items from, SDG.Unturned.Items to, byte w, byte h)
+        {
+            to.clear(); to.loadSize(w, h);
+            for (byte i = 0; i < from.getItemCount(); i++)
+            {
+                var j = from.getItem(i);
+                to.addItem(j.x, j.y, j.rot, j.item);
+            }
+        }
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
@@ -310,8 +351,11 @@ namespace UnturnedGodot
                 SwitchWeapon();   // toggle Eaglefire <-> Maplestrike
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
                 TryPickup();      // pick up the nearest dropped world item
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
+                OpenNearestCrate();   // open the nearest storage crate
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
+                if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
                 _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
                 Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }

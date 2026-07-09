@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -50,6 +50,7 @@ namespace UnturnedGodot
                 else if (arg == "--invequip") { invdemo = true; invequip = true; }
                 else if (arg == "--invdrop") invdrop = true;
                 else if (arg == "--invloot") invloot = true;
+                else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
             }
@@ -79,6 +80,13 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildLootDemo(gun);
+                return;
+            }
+
+            if (invcrate)   // place a storage crate + open it -> dashboard shows the crate grid
+            {
+                GetWindow().Size = new Vector2I(2560, 1440);
+                BuildCrateDemo(gun);
                 return;
             }
 
@@ -612,6 +620,44 @@ namespace UnturnedGodot
             overview.Position = new Vector3(0f, 26f, 20f);
             overview.LookAt(new Vector3(0f, 0f, -3f), Vector3.Up);
             GD.Print("[LOOT] scattered loot around the world");
+        }
+
+        // Places a storage crate in front of the player, seeds it with loot, and opens it -> the dashboard shows the
+        // crate's grid alongside the inventory (for a --write-movie / screenshot).
+        void BuildCrateDemo(string gunPath)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f),
+                AmbientLightEnergy = 0.75f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60, 60) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);                    // _Ready builds the inventory + dashboard
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+
+            // a crate 1.2 m in front, seeded with loot
+            var crate = StorageCrate.Spawn(this, new Vector3(0f, 0f, -1.2f), 5, 4);
+            crate.Add(new SDG.Unturned.Item(4));      // Eaglefire
+            crate.Add(new SDG.Unturned.Item(15));     // Medkit
+            crate.Add(new SDG.Unturned.Item(95, 4));  // Bandage x4
+            crate.Add(new SDG.Unturned.Item(13, 3));  // Canned Beans x3
+
+            player.OpenNearestCrate();   // within 2.5 m -> loads the crate into STORAGE + opens the dashboard
+            GD.Print("[CRATE] opened a storage crate");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).

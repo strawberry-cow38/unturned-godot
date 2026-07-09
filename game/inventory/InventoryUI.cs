@@ -331,6 +331,7 @@ namespace UnturnedGodot
             y = AddSlot("SECONDARY", 1, y);
             (byte page, string name)[] grids =
             {
+                (PlayerInventory.STORAGE, "CRATE"),   // shown only when a storage crate is open (size > 0)
                 (2, "POCKETS"), (PlayerInventory.BACKPACK, "BACKPACK"), (PlayerInventory.VEST, "VEST"),
                 (PlayerInventory.SHIRT, "SHIRT"), (PlayerInventory.PANTS, "PANTS"),
             };
