@@ -16,6 +16,7 @@ namespace SDG.Unturned
     {
         public ushort id;
         public string itemName = "";
+        public string description = "";   // the real localized Description from the item's English.dat
         public byte size_x = 1;
         public byte size_y = 1;
         public EItemType type = EItemType.GENERIC;

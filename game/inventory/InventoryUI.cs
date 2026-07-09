@@ -195,10 +195,16 @@ namespace UnturnedGodot
             name.AddThemeFontSizeOverride("font_size", 19);
             panel.AddChild(name);
             var info = new Label { Text = $"{asset.rarity}  ·  {asset.type}  ·  {asset.size_x}x{asset.size_y}",
-                                   Position = new Vector2(228, 46), Size = new Vector2(258, 120) };
-            info.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            info.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
+                                   Position = new Vector2(228, 46), Size = new Vector2(258, 20) };
+            info.AddThemeColorOverride("font_color", rar.Lerp(new Color(0.6f, 0.6f, 0.62f), 0.5f));
+            info.AddThemeFontSizeOverride("font_size", 12);
             panel.AddChild(info);
+            // the real localized Description (from the item's English.dat)
+            var desc = new Label { Text = asset.description, Position = new Vector2(228, 72), Size = new Vector2(258, 70) };
+            desc.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            desc.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.8f));
+            desc.AddThemeFontSizeOverride("font_size", 13);
+            panel.AddChild(desc);
 
             // right-bottom: actions (Equip only for a gun going to a hand slot; Drop; Close)
             float by = 150;
