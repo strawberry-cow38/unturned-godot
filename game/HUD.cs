@@ -44,9 +44,9 @@ namespace UnturnedGodot
 
             // top-down: health, food, water, stamina (the always-visible vitals; virus/oxygen are situational)
             AddVital(lifeBox, 0, "hud_health.png",  CR, () => Player != null ? Player.Health / Mathf.Max(1f, Player.MaxHealth) : 1f);
-            AddVital(lifeBox, 1, "hud_food.png",    CO, () => 0.82f);   // food/water/stamina aren't simulated yet -> placeholders
-            AddVital(lifeBox, 2, "hud_water.png",   CB, () => 0.68f);
-            AddVital(lifeBox, 3, "hud_stamina.png", CY, () => 0.95f);
+            AddVital(lifeBox, 1, "hud_food.png",    CO, () => Player != null ? Player.Food    : 1f);
+            AddVital(lifeBox, 2, "hud_water.png",   CB, () => Player != null ? Player.Water   : 1f);
+            AddVital(lifeBox, 3, "hud_stamina.png", CY, () => Player != null ? Player.Stamina : 1f);
 
             // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.

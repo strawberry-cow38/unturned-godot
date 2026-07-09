@@ -24,6 +24,10 @@ namespace UnturnedGodot
         public int Deaths;
         public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
         double _bleedTimer;
+        // Survival vitals (0..1), shown live on the HUD. Rates are config-driven in Unturned (modeConfigData); these
+        // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
+        // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
+        public float Stamina = 1f, Food = 1f, Water = 1f;
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // When set (e.g. by a recorded demo or a net-driven bot), overrides keyboard input: x=strafe, y=forward.
@@ -84,6 +88,7 @@ namespace UnturnedGodot
         {
             _dead = false;
             Health = MaxHealth;
+            Stamina = Food = Water = 1f; Bleeding = false;   // fresh vitals on respawn
             GlobalPosition = Spawn;
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
@@ -95,6 +100,24 @@ namespace UnturnedGodot
                 _cam.Rotation = Vector3.Zero;
                 _pitchDeg = 0f;
             }
+        }
+
+        // Survival sim driving the live HUD vitals. The mechanism is source-accurate (PlayerLife: stamina burns while
+        // sprinting + regens otherwise; health regenerates only while fed AND hydrated; you take damage when food or
+        // water bottoms out). The RATES are stand-ins -- Unturned's real ones live in server modeConfigData, not the
+        // binary -- so they're tuned to be visible, not eyeballed from the game.
+        void UpdateVitals(bool moving, float dt)
+        {
+            if (_dead) return;
+            bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
+            Stamina = Mathf.Clamp(Stamina + (sprinting ? -0.22f : 0.33f) * dt, 0f, 1f);
+            Food  = Mathf.Max(0f, Food  - 0.0050f * dt);
+            Water = Mathf.Max(0f, Water - 0.0070f * dt);
+            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth)
+                Health = Mathf.Min(MaxHealth, Health + 2f * dt);     // regen while fed + hydrated
+            else if (Food <= 0f || Water <= 0f)
+                Health = Mathf.Max(0f, Health - 1.5f * dt);          // starve / dehydrate
+            if (Health <= 0f) { Deaths++; Die(); }
         }
 
         public Camera3D Camera => _cam;
@@ -458,7 +481,7 @@ namespace UnturnedGodot
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
-            _move.Stance = Input.IsPhysicalKeyPressed(Key.Shift) ? EPlayerStance.SPRINT
+            _move.Stance = (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
                          : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH
                          : EPlayerStance.STAND;
 
@@ -474,6 +497,7 @@ namespace UnturnedGodot
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;
             _viewmodel?.SetLocomotion(moving, _move.Stance);
+            UpdateVitals(moving, (float)delta);
 
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, IsOnFloor(), (float)delta);
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);
