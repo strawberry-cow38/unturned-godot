@@ -274,6 +274,7 @@ namespace UnturnedGodot
             Basis cb = _cam.GlobalTransform.Basis;                          // camera: X=right, Y=up, -Z=forward
             Vector3 muzzle = from + cb.X * 0.12f - cb.Y * 0.12f + dir * 0.4f; // approx the held-rifle muzzle (right/down/fwd)
             SpawnTracer(muzzle, hit.Count > 0 ? hit["position"].AsVector3() : to);
+            SpawnMuzzleLight(muzzle);   // the source Muzzle_0 flash lights the world; our viewmodel flash can't reach it
             if (hit.Count == 0) return false;
             var collider = hit["collider"].As<GodotObject>();
             Vector3 point = hit["position"].AsVector3();
@@ -365,6 +366,23 @@ namespace UnturnedGodot
             mi.LookAtFromPosition((from + to) * 0.5f, to, up);   // box length (local Z) spans from->to
             var timer = GetTree().CreateTimer(0.08);   // brief flick, like the source tracer particle's short life
             timer.Timeout += () => { if (IsInstanceValid(mi)) mi.QueueFree(); };
+        }
+
+        // Brief world-space muzzle flash light. The source Muzzle_0 effect illuminates the environment on each shot;
+        // our viewmodel flash lives in an isolated SubViewport world, so it can't light the main scene. Warm Muzzle_0
+        // colour (Unity (0.941,0.756,0.152)), flashed a couple of frames at the muzzle so nearby surfaces/zombies pop.
+        void SpawnMuzzleLight(Vector3 pos)
+        {
+            var light = new OmniLight3D
+            {
+                OmniRange = 6f,
+                LightColor = new Color(0.941f, 0.756f, 0.152f),
+                LightEnergy = 3.5f,
+            };
+            GetTree().CurrentScene?.AddChild(light);
+            light.GlobalPosition = pos;
+            var timer = GetTree().CreateTimer(0.05);   // brief flash, in step with the muzzle sprite
+            timer.Timeout += () => { if (IsInstanceValid(light)) light.QueueFree(); };
         }
 
         public override void _Process(double delta)
