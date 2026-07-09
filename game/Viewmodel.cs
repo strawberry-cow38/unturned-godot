@@ -164,7 +164,9 @@ namespace UnturnedGodot
                     // core.masterbundle: a warm point light (Unity color (0.94,0.76,0.15), intensity 1.37 — NOT the old
                     // energy 5 that washed the frame) + a brief BILLBOARD star-flash sprite (the real 32x32 Muzzle_0
                     // texture, size ~0.5 per startSize, additive), flashed ~0.05s on fire.
-                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = new Vector3(0f, 0.75f, -0.04f), Visible = false };
+                    // sits on the barrel BORE axis just past the muzzle tip: gun model muzzle is at Y=0.731, bore
+                    // centre at (X=0, Z=-0.079) — the old Z=-0.04 was 0.039 off-axis, which read as the flash sitting low.
+                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = new Vector3(0f, 0.78f, -0.079f), Visible = false };
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
                     var flashMat = new StandardMaterial3D
                     {
@@ -177,15 +179,8 @@ namespace UnturnedGodot
                     var flashTex = LoadTex("res://content/muzzleflash.png");
                     if (flashTex != null) flashMat.AlbedoTexture = flashTex; else flashMat.AlbedoColor = new Color(1f, 0.85f, 0.4f);
                     _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.6f, 0.6f) }, MaterialOverride = flashMat });
-                    // tracer: the Military_30 mag fires tracers (Tracer 48 = the Trail_0 effect). A brief bright streak
-                    // down the barrel (+Y = aim), shown with the flash. Thin box from the muzzle extending downrange.
-                    // tracer = the real Trail_0 effect (Military_30's Tracer 48): renderMode=Stretch, LengthScale 128,
-                    // NO rotation module — a stretched billboard using the "Bullet" sprite. Ported as a long thin quad
-                    // down the barrel (+Y) textured with the real 32x32 Bullet sprite (additive), shown with the flash.
-                    var tracerMat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, BlendMode = BaseMaterial3D.BlendModeEnum.Add, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                    var bulletTex = LoadTex("res://content/bullet.png");
-                    if (bulletTex != null) tracerMat.AlbedoTexture = bulletTex; else tracerMat.AlbedoColor = new Color(1f, 0.9f, 0.5f);
-                    _muzzleFlash.AddChild(new MeshInstance3D { Name = "Tracer", Mesh = new QuadMesh { Size = new Vector2(0.12f, 12f) }, MaterialOverride = tracerMat, Position = new Vector3(0f, 6f, 0f) });
+                    // (the old muzzle-local tracer quad was removed — the Military_30's Trail_0 tracer is now drawn in
+                    //  the main world from muzzle->impact in PlayerController.SpawnTracer, so a viewmodel streak is redundant.)
 
                     // real gun sounds — the Eaglefire's Shoot/Reload AudioClips from the bundle (-> ogg). Non-3D
                     // AudioStreamPlayers output to the Master bus, so they're audible even though the gun lives in
