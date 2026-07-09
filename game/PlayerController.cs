@@ -232,8 +232,7 @@ namespace UnturnedGodot
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
-        float _recoilPitch, _recoilYaw;  // camera recoil offset (deg) -- smoothly lerps toward the target below
-        float _recoilTargetPitch, _recoilTargetYaw;  // where the kick pushes to; itself decays back to 0 (smooth both ways)
+        float _recoilPending, _recoilYawPending;  // un-applied recoil kick (deg); drains additively into the real aim and STAYS -- never auto-returns (master: additive, no recover-to-origin)
         readonly RandomNumberGenerator _rng = new();
         enum FireMode { Safety, Semi, Auto, Burst }   // EFiremode; the gun's available set comes from its .dat flags
         FireMode _firemode = FireMode.Semi;
@@ -571,10 +570,10 @@ namespace UnturnedGodot
                                  new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ), rvPitch, rvYaw);
             }
             else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero, 0f, 0f);
-            if (Gun != null)   // camera recoil: pitch up + random-sign yaw, scaled by Recover (source: aim gets kick*Recover)
+            if (Gun != null)   // additive recoil: each shot kicks the AIM up + random-sign yaw (scaled by Recover); it accumulates and STAYS -- player pulls back down (master)
             {
-                _recoilTargetPitch += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;
-                _recoilTargetYaw += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f);
+                _recoilPending += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;
+                _recoilYawPending += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f);
             }
 
             Vector3 from = _cam.GlobalPosition;
@@ -748,20 +747,24 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            // Camera recoil recovers toward 0 (PlayerLook decays it with Lerp rate 4) and rides on top of the
-            // mouse pitch each frame; while dead the death-cam owns the camera, so leave it alone.
-            // smoothly lerp TO the recoiled position (the kick target) and the target itself decays back to 0,
-            // so the view rises and recovers smoothly instead of snapping up on each shot (master).
-            _recoilPitch = Mathf.Lerp(_recoilPitch, _recoilTargetPitch, 22f * (float)delta);
-            _recoilYaw = Mathf.Lerp(_recoilYaw, _recoilTargetYaw, 22f * (float)delta);
-            _recoilTargetPitch = Mathf.Lerp(_recoilTargetPitch, 0f, 6f * (float)delta);
-            _recoilTargetYaw = Mathf.Lerp(_recoilTargetYaw, 0f, 6f * (float)delta);
+            // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
+            // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
+            if (_recoilPending != 0f || _recoilYawPending != 0f)
+            {
+                float step = Mathf.Min(1f, 18f * (float)delta);
+                float dp = _recoilPending * step;
+                _pitchDeg = Mathf.Clamp(_pitchDeg + dp, -89f, 89f);   // pitch folds into the actual aim -- stays put
+                _recoilPending -= dp;
+                float dy = _recoilYawPending * step;
+                RotateY(Mathf.DegToRad(dy));                          // yaw folds into the body -- stays put
+                _recoilYawPending -= dy;
+            }
             PainAlpha = Mathf.Max(0f, PainAlpha - (float)delta);                 // hurt flash fades at 1/s (PlayerUI line 1835)
             _flinch = _flinch.Slerp(Quaternion.Identity, 4f * (float)delta);     // flinch recovers to level at 4/s (PlayerLook line 1330)
             if (_cam != null && !_dead)
             {
                 // flinchLocalRotation * Euler(pitch, yaw) (PlayerLook line 1378) — the flinch left-multiplies the look
-                var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg + _recoilPitch), Mathf.DegToRad(_recoilYaw), 0f), EulerOrder.Yxz);
+                var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // recoil now lives in _pitchDeg/body-yaw (additive), not a separate offset
                 _cam.Basis = new Basis(_flinch) * look;
             }
         }

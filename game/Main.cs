@@ -130,8 +130,9 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (daynight)   // a fast day/night cycle over a reference scene (montage the render to see it)
+            if (daynight)   // a fast day/night cycle over a reference scene (--write-movie for the montage, --shot=P for one frame)
             {
+                _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDayNightDemo();
                 return;
