@@ -27,12 +27,13 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
+                else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
@@ -156,6 +157,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildPlayable(catalog, demo, gun);
                 return; // interactive, or demo records via --write-movie
+            }
+
+            if (bakeIcon != null)   // render an item model to a flat icon (ItemTool.captureIcon-style) -> --shot=OUT
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(256, 256);
+                BuildBakeIcon(bakeIcon);
+                return; // capture happens a few frames later in _Process
             }
 
             if (shot != null)
@@ -670,6 +679,60 @@ namespace UnturnedGodot
 
             AddChild(new GrenadeTestDriver { P = player, Zs = zs, ZThrow = zThrow });
             GD.Print("[GRENADE] explosion falloff self-test: zombies at r=4/6/7.5/9, blast r=8 dmg=175 (linear falloff)");
+        }
+
+        // Render an item's 3D model to a flat icon (ItemTool.captureIcon-style: ortho camera + flat unshaded albedo).
+        // Orient by the model's AABB -- camera along the SHORTEST extent, up = the MIDDLE extent, so the LONGEST lies
+        // horizontal (guns end up side-on, as in the real inventory). Magenta bg -> keyed to alpha after capture.
+        // spec = "MODEL.txt" or "MODEL.txt:ALBEDO.png".
+        void BuildBakeIcon(string spec)
+        {
+            string model = spec, albedo = null;
+            int colon = spec.IndexOf(':');
+            if (colon >= 0) { model = spec[..colon]; albedo = spec[(colon + 1)..]; }
+
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(1f, 0f, 1f),   // magenta key colour
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = Colors.White, AmbientLightEnergy = 1f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+
+            var mesh = ContentProvider.ParseObj($"res://content/{model}");
+            var mat = new StandardMaterial3D
+            {
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // ripped meshes are CW-wound; show both faces
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,   // runtime ImageTexture has no mipmaps -> Nearest (else samples black)
+                Metallic = 0f, Roughness = 0.6f,                   // matte so the dark albedo lights up (ItemTool renders lit, not flat)
+            };
+            if (albedo != null)
+            {
+                string p = ProjectSettings.GlobalizePath($"res://content/{albedo}");
+                if (System.IO.File.Exists(p))
+                {
+                    var img = Image.LoadFromFile(p);
+                    if (img != null) { mat.AlbedoTexture = ImageTexture.CreateFromImage(img); GD.Print($"[BAKE] tex OK {img.GetWidth()}x{img.GetHeight()}"); }
+                    else GD.Print("[BAKE] tex img NULL");
+                }
+                else GD.Print($"[BAKE] tex NOT FOUND: {p}");
+            }
+            if (mat.AlbedoTexture == null) mat.AlbedoColor = new Color(0f, 1f, 0f);   // GREEN = texture-load fallback
+            AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f });   // key from the camera side (+X)
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f });    // soft fill
+
+            var aabb = mesh.GetAabb();
+            Vector3 c = aabb.Position + aabb.Size * 0.5f, s = aabb.Size;
+            var ax = new (float e, Vector3 dir)[] { (s.X, Vector3.Right), (s.Y, Vector3.Up), (s.Z, Vector3.Back) };
+            System.Array.Sort(ax, (a, b) => a.e.CompareTo(b.e));   // [0]=shortest [1]=middle [2]=longest
+            var cam = new Camera3D { Projection = Camera3D.ProjectionType.Orthogonal, Size = ax[2].e * 1.18f };
+            AddChild(cam);
+            cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
+            cam.LookAt(c, -ax[1].dir);   // -middle axis = up (the model's height axis points "down" in mesh space)
+            cam.Current = true;
+            GD.Print($"[BAKE] {model} aabb={s} longest={ax[2].e:F2} orthoSize={cam.Size:F2}");
         }
 
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
