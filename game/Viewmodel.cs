@@ -11,6 +11,10 @@ namespace UnturnedGodot
     public partial class Viewmodel : Node3D
     {
         public const float SourceFov = 60f;   // PreferenceData.cs:93 Field_Of_View_Hip
+        // Live-tunable viewmodel FOV + a SINGLE uniform offset for ALL guns (master: remove the per-gun offsets + uniform
+        // them). Driven by the ESC pause-menu sliders; applied every frame in _Process so tweaks are instant.
+        public static float TuneFov = SourceFov;
+        public static Vector3 TuneOffset = Vector3.Zero;
 
         SubViewport _vp;
         DirectionalLight3D _vpLight;                 // the viewmodel's own sun -- synced to the world's each frame
@@ -82,8 +86,8 @@ namespace UnturnedGodot
         struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset; public Color AlbedoTint; public bool Ejects; }
         static GunVisual Visual(string name) => name switch
         {
-            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = new Vector3(0f, -0.18f, 0f), AlbedoTint = new Color(0.30f, 0.30f, 0.32f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
-            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = new Vector3(0f, -0.12f, 0f), AlbedoTint = Colors.White, Ejects = true },
+            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.30f, 0.30f, 0.32f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
+            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = Colors.White, Ejects = true },
             _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = Colors.White, Ejects = true },
         };
         Node3D _sight;
@@ -350,7 +354,9 @@ namespace UnturnedGodot
                 Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);   // aim hook, camera-local
                 hipPos -= mCam * _aimAlpha;                           // slide arms so the aim hook -> camera origin
             }
-            _arms.Position = hipPos + vmOffset;   // hip/ADS pose + bob + recoil shake (arms move opposite the source vm camera)
+            _arms.Position = hipPos + vmOffset + TuneOffset;   // + the live uniform tune offset (ESC sliders); per-gun offsets removed
+            if (_cam != null) _cam.Fov = TuneFov;              // live-tunable viewmodel FOV (ESC sliders); ADS doesn't change VM FOV
+
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 
             if (_gun != null && _gun.GetParent() is Node3D att)

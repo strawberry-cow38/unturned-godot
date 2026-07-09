@@ -484,6 +484,9 @@ namespace UnturnedGodot
             else
             {
                 if (!_noZombies) AddChild(new HordeSpawner { Target = player });
+                var pause = new PauseMenu();   // ESC -> live viewmodel FOV/offset tuning sliders
+                AddChild(pause);
+                player.PauseMenu = pause;
                 GD.Print(_noZombies ? "[PLAY] interactive: NO-ZOMBIE test environment"
                                     : "[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }

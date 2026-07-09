@@ -421,6 +421,8 @@ namespace UnturnedGodot
         }
         double _pdieTest = -1;
 
+        public PauseMenu PauseMenu;   // ESC viewmodel-tuning menu (set by BuildPlayable); null in demos
+
         public override void _UnhandledInput(InputEvent @event)
         {
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -461,8 +463,16 @@ namespace UnturnedGodot
                 Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
-                Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
-                    ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+            {
+                if (PauseMenu != null)   // ESC opens the viewmodel-tuning pause menu (frees the mouse for the sliders)
+                {
+                    PauseMenu.Toggle();
+                    Input.MouseMode = PauseMenu.IsOpen ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                }
+                else
+                    Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
+                        ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+            }
         }
 
         public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
