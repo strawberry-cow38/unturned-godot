@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -44,6 +44,14 @@ namespace UnturnedGodot
                 else if (arg == "--server") server = true;
                 else if (arg == "--client") client = true;
                 else if (arg == "--smoke") smoke = true;
+                else if (arg == "--hurtdemo") hurtdemo = true;
+            }
+
+            if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildHurtDemo(gun);
+                return;
             }
 
             if (server) { BuildServer(); return; }              // headless dedicated server
@@ -366,6 +374,46 @@ namespace UnturnedGodot
                 AddChild(new HordeSpawner { Target = player });
                 GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }
+        }
+
+        // First-person hurt-feedback demo: keep the player's own camera current and drop a zombie point-blank in front
+        // so it lands hits — the red flash (HUD overlay) and the camera flinch ride the FP view for a --write-movie clip.
+        void BuildHurtDemo(string gunPath)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.6f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(240, 240) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            CharacterModel.LoadBundled();
+
+            var player = new PlayerController();
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);                       // _Ready builds the FP camera (stays Current) + viewmodel
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+            AddChild(new HUD { Player = player });
+
+            // a normal zombie 1.2 m dead ahead (-Z): inside ATTACK_PLAYER_SQ, so it startles then bites on its cadence
+            var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
+            AddChild(z);
+            z.GlobalPosition = player.GlobalPosition + new Vector3(0f, 0.2f, -1.2f);
+            // face it at the player so TrySense fires -- otherwise the source's sneak-from-behind rule (a standing player
+            // behind the zombie's facing goes undetected) leaves it oblivious to a point-blank spawn
+            z.LookAt(new Vector3(player.GlobalPosition.X, z.GlobalPosition.Y, player.GlobalPosition.Z), Vector3.Up);
+            GD.Print("[HURT] first-person: zombie point-blank, recording flash + flinch");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).

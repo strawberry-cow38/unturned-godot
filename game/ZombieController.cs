@@ -261,7 +261,7 @@ namespace UnturnedGodot
                     {
                         _isAttacking = false;
                         float mult = Speciality == ESpeciality.CRAWLER ? 2f : Speciality == ESpeciality.SPRINTER ? 0.75f : 1f;
-                        player.TakeDamage(AttackDamage * mult);
+                        player.TakeDamage(AttackDamage * mult, GlobalPosition);   // pass my position so the hurt-flinch kicks away from me
                         player.Infect((AttackDamage * mult / 3f) / 100f);   // Zombie.askDamage: askInfect(b/3)
                     }
                 }

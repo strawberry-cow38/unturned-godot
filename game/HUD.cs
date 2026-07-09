@@ -24,6 +24,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<(ColorRect fill, System.Func<float> val)> _vitals = new();
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
+        ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
 
         public override void _Ready()
         {
@@ -33,6 +34,14 @@ namespace UnturnedGodot
             root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             root.MouseFilter = Control.MouseFilterEnum.Ignore;
             AddChild(root);
+
+            // hurt flash (PlayerUI colorOverlayImage): a red screen tint added first so it sits UNDER the vitals/status.
+            // The source draws it as COLOR_R with alpha = painAlpha; the tint is fully red the moment any pain exists, so
+            // only the alpha animates. Starts invisible (alpha 0) and is driven each frame from Player.PainAlpha.
+            _pain = new ColorRect { Color = new Color(CR.R, CR.G, CR.B, 0f) };
+            _pain.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _pain.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_pain);
 
             // lifeBox: bottom-left, right edge at 20% of the screen, sized to the 4 always-on vitals
             var lifeBox = new Control();
@@ -121,7 +130,10 @@ namespace UnturnedGodot
             foreach (var (box, on) in _status)
                 box.Visible = on();
             if (Player != null)
+            {
                 _ammo.Text = $"{Player.Ammo} / {(Player.Gun?.AmmoMax ?? Player.Ammo)}";
+                _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
+            }
         }
 
         static Texture2D LoadTex(string res)

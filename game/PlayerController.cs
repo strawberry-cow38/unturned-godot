@@ -14,6 +14,10 @@ namespace UnturnedGodot
         Viewmodel _viewmodel;
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
+        // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
+        // camera flinch (PlayerLook.flinchLocalRotation, an angular kick perpendicular to the hit that decays to level).
+        public float PainAlpha;                     // PlayerUI.pain: red overlay alpha, set on hit, fades at 1/s
+        Quaternion _flinch = Quaternion.Identity;   // PlayerLook.flinchLocalRotation: camera kick, recovers at 4/s
 
         [Export] public float MouseSensitivity = 0.12f;
         public int Ammo = 30;
@@ -75,11 +79,33 @@ namespace UnturnedGodot
         RiggedCharacter _corpse;
 
         // Zombie melee lands here; on death, drop a ragdoll corpse + third-person death-cam, then respawn.
-        public void TakeDamage(float amount)
+        // fromPos = the attacker's world position, used only to aim the camera flinch; null for sourceless damage
+        // (starvation/infection) which flashes but doesn't kick the camera.
+        public void TakeDamage(float amount, Vector3? fromPos = null)
         {
             if (_dead || Health <= 0f) return;
             Health -= amount;
             if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
+
+            // Hurt flash — PlayerLifeUI.onDamaged -> PlayerUI.pain: a red full-screen overlay whose alpha is
+            // Clamp(damage/40, 0, 1) * 0.75, but only for a real hit (source gates it on damage > 5).
+            if (amount > 5f) PainAlpha = Mathf.Clamp(amount / 40f, 0f, 1f) * 0.75f;
+
+            // Camera flinch — PlayerLook.FlinchFromDamage: rotate the view by Min(damage, 25) * 0.5 degrees around the
+            // axis Cross(up, hitDir) (perpendicular to where the hit came from), converted into camera-local space so a
+            // frontal hit pitches the view and a side hit rolls it. The kick accumulates and later recovers to level.
+            if (fromPos.HasValue && _cam != null)
+            {
+                Vector3 dir = GlobalPosition - fromPos.Value; dir.Y = 0f;   // horizontal hit direction (attacker -> me)
+                if (dir.LengthSquared() > 0.0001f)
+                {
+                    Vector3 worldAxis = Vector3.Up.Cross(dir.Normalized()).Normalized();
+                    Vector3 localAxis = (_cam.GlobalTransform.Basis.Inverse() * worldAxis).Normalized();   // InverseTransformDirection
+                    float deg = Mathf.Min(amount, 25f) * 0.5f;
+                    _flinch = (_flinch * new Quaternion(localAxis, Mathf.DegToRad(deg))).Normalized();
+                }
+            }
+
             if (Health <= 0f) { Deaths++; Die(); }
         }
 
@@ -124,6 +150,7 @@ namespace UnturnedGodot
                 _cam.Position = new Vector3(0f, 1.6f, 0f);
                 _cam.Rotation = Vector3.Zero;
                 _pitchDeg = 0f;
+                PainAlpha = 0f; _flinch = Quaternion.Identity;   // clear any lingering hurt feedback
             }
         }
 
@@ -481,8 +508,14 @@ namespace UnturnedGodot
             // mouse pitch each frame; while dead the death-cam owns the camera, so leave it alone.
             _recoilPitch = Mathf.Lerp(_recoilPitch, 0f, 4f * (float)delta);
             _recoilYaw = Mathf.Lerp(_recoilYaw, 0f, 4f * (float)delta);
+            PainAlpha = Mathf.Max(0f, PainAlpha - (float)delta);                 // hurt flash fades at 1/s (PlayerUI line 1835)
+            _flinch = _flinch.Slerp(Quaternion.Identity, 4f * (float)delta);     // flinch recovers to level at 4/s (PlayerLook line 1330)
             if (_cam != null && !_dead)
-                _cam.RotationDegrees = new Vector3(_pitchDeg + _recoilPitch, _recoilYaw, 0f);
+            {
+                // flinchLocalRotation * Euler(pitch, yaw) (PlayerLook line 1378) — the flinch left-multiplies the look
+                var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg + _recoilPitch), Mathf.DegToRad(_recoilYaw), 0f), EulerOrder.Yxz);
+                _cam.Basis = new Basis(_flinch) * look;
+            }
         }
 
         public override void _PhysicsProcess(double delta)
