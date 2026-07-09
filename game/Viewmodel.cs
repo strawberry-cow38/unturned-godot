@@ -71,12 +71,14 @@ namespace UnturnedGodot
         // gun's own AudioClips (the assault rifles share the Eaglefire's).
         // ViewOffset = a per-gun hip-pose nudge (camera/arms-local metres) so each gun sits right in first person —
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset; }
+        // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
+        // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset; public Color AlbedoTint; }
         static GunVisual Visual(string name) => name switch
         {
-            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = new Vector3(0f, -0.18f, 0f) },
-            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = new Vector3(0f, -0.12f, 0f) },
-            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero },
+            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = new Vector3(0f, -0.18f, 0f), AlbedoTint = new Color(0.30f, 0.30f, 0.32f) },
+            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = new Vector3(0f, -0.12f, 0f), AlbedoTint = Colors.White },
+            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = Colors.White },
         };
         Node3D _sight;
 
@@ -138,7 +140,7 @@ namespace UnturnedGodot
                     var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{gv.Gun}") };
                     var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.6f };
                     var tex = LoadTex($"res://content/{gv.Albedo}");
-                    if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
+                    if (tex != null) { mat.AlbedoTexture = tex; mat.AlbedoColor = gv.AlbedoTint; } else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
