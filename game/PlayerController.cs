@@ -263,6 +263,13 @@ namespace UnturnedGodot
             Vector3 to = from + dir * range;
             var query = PhysicsRayQueryParameters3D.Create(from, to, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
             var hit = space.IntersectRay(query);
+            // world tracer: a brief streak from ~muzzle to the impact point (or downrange on a miss). Both guns use
+            // the Military_30 mag, which fires tracers (Tracer 48 = Trail_0). Source emits a stretched "Bullet"
+            // billboard at the muzzle down the shot dir (UseableGun.cs:645); we draw muzzle->endpoint here because
+            // the viewmodel muzzle lives in a separate viewport world.
+            Basis cb = _cam.GlobalTransform.Basis;                          // camera: X=right, Y=up, -Z=forward
+            Vector3 muzzle = from + cb.X * 0.12f - cb.Y * 0.12f + dir * 0.4f; // approx the held-rifle muzzle (right/down/fwd)
+            SpawnTracer(muzzle, hit.Count > 0 ? hit["position"].AsVector3() : to);
             if (hit.Count == 0) return false;
             var collider = hit["collider"].As<GodotObject>();
             Vector3 point = hit["position"].AsVector3();
@@ -320,6 +327,40 @@ namespace UnturnedGodot
             ps.GlobalPosition = point;
             var timer = GetTree().CreateTimer(1.4);
             timer.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
+        }
+
+        static Texture2D _tracerTex;
+        static bool _tracerTexTried;
+        // Brief world-space tracer (the Military_30's Trail_0): a thin additive "Bullet"-textured box from ~muzzle
+        // to the impact point, shown for a couple of frames then freed. Source renders it as a stretch-billboard
+        // particle emitted at the muzzle down the shot direction (UseableGun.cs:645); a stretched box reads the same
+        // from the third-person demo cam. Both ported guns carry the tracer mag, so every shot leaves one.
+        void SpawnTracer(Vector3 from, Vector3 to)
+        {
+            float len = from.DistanceTo(to);
+            if (len < 0.5f) return;
+            if (!_tracerTexTried)
+            {
+                _tracerTexTried = true;
+                string p = ProjectSettings.GlobalizePath("res://content/bullet.png");
+                if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
+            }
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                AlbedoColor = new Color(1f, 0.9f, 0.55f),
+            };
+            if (_tracerTex != null) mat.AlbedoTexture = _tracerTex;
+            var mi = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, len) }, MaterialOverride = mat };
+            GetTree().CurrentScene?.AddChild(mi);
+            Vector3 axis = (to - from).Normalized();
+            Vector3 up = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.99f ? Vector3.Right : Vector3.Up;
+            mi.LookAtFromPosition((from + to) * 0.5f, to, up);   // box length (local Z) spans from->to
+            var timer = GetTree().CreateTimer(0.08);   // brief flick, like the source tracer particle's short life
+            timer.Timeout += () => { if (IsInstanceValid(mi)) mi.QueueFree(); };
         }
 
         public override void _Process(double delta)
