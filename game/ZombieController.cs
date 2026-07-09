@@ -25,6 +25,11 @@ namespace UnturnedGodot
         [Export] public float ImpactForce = 9f;
         Color _tint;                // per-speciality body colour (stand-in for the real ZombieClothing skins)
         float _nextSpit;            // ACID: next allowed spit time (Zombie specialUseDelay, Random 4-8 s)
+        // real zombie sounds (core.masterbundle Sounds/Zombies): roar on startle/attack/while-moving, occasional
+        // idle groan, spit on acid (Zombie.cs: askStartle/askAttack/OnUpdate groan-timer/askAcid).
+        static AudioStream[] _roars, _groans, _spits;
+        AudioStreamPlayer3D _audio;
+        float _nextGroan;
 
         public bool Dead { get; private set; }
 
@@ -57,6 +62,11 @@ namespace UnturnedGodot
             AddToGroup("zombies");
             CollisionLayer = 1 << 1;   // enemy bit the gun ray masks for
             CollisionMask = 1 << 0;    // collide with ground
+
+            LoadSounds();
+            _audio = new AudioStreamPlayer3D { MaxDistance = 45f, UnitSize = 5f };   // positional zombie audio
+            AddChild(_audio);
+            _nextGroan = 2f + GD.Randf() * 6f;   // stagger the first groan
 
             Speed = Speciality switch  // Zombie.updateStates seeker.Speed (non-slow-movement defaults)
             {
@@ -156,6 +166,14 @@ namespace UnturnedGodot
             _age += delta;
             if (!_homeSet) { _home = GlobalPosition; _homeSet = true; }   // remember the spawn point
 
+            // Zombie.OnUpdate groan timer: every ~4-8 s an idle zombie occasionally groans, a hunting one roars.
+            if (_age > _nextGroan)
+            {
+                _nextGroan = (float)_age + _rng.RandfRange(4f, 8f);
+                if (_hunt == EHunt.NONE) { if (_rng.Randf() > 0.8f) PlaySound(_groans); }
+                else PlaySound(_roars);
+            }
+
             // --- idle: wander back toward spawn if we chased the player off and lost them out here (Zombie
             // isLeaving), otherwise stand still; either way keep sensing for the player (AlertTool) ---
             if (_hunt == EHunt.NONE)
@@ -243,6 +261,7 @@ namespace UnturnedGodot
                     _isAttacking = true; swinging = true;
                     _lastAttack = (float)_age;             // askAttack: lastAttack = now
                     _rig?.PlayOnce("Attack_" + _atkId);
+                    if (_audio != null && !_audio.Playing) PlaySound(_roars);   // roar on the swing (Zombie.askAttack)
                 }
             }
             else _isAttacking = false;
@@ -251,7 +270,7 @@ namespace UnturnedGodot
             if (_rig != null)
             {
                 _rig.Tick(delta);
-                if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); }
+                if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); PlaySound(_roars); }
                 else if (!_isAttacking && !swinging) _rig.SetLocomotion(horiz.Length());
             }
             Vector3 faceDir = num3 > 4f && horiz.LengthSquared() > 1e-4f ? horiz : Flat(pp - me);
@@ -320,7 +339,7 @@ namespace UnturnedGodot
             if (_rig != null)
             {
                 _rig.Tick(dt);
-                if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); }
+                if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); PlaySound(_roars); }
                 else _rig.SetLocomotion(horiz.Length());
             }
             if (horiz.LengthSquared() > 1e-4f) LookAt(me + horiz, Vector3.Up);
@@ -352,6 +371,7 @@ namespace UnturnedGodot
         void SpitAcid(PlayerController player)
         {
             _rig?.PlayOnce("Attack_" + _atkId);   // rig has no dedicated Acid clip; reuse a lunge as the spit tell
+            PlaySound(_spits);                    // Zombie.askAcid: spit hiss
             Vector3 from = GlobalPosition + Vector3.Up * 1.3f;
             Vector3 to = (player.GlobalPosition + Vector3.Up) - from;
             float t = Mathf.Clamp(to.Length() / 18f, 0.35f, 1.6f);       // ~18 m/s glob; solve the lob time
@@ -375,6 +395,30 @@ namespace UnturnedGodot
             var tw = light.CreateTween();
             tw.TweenProperty(light, "light_energy", 0f, 0.4f);           // brief orange blast flash
             tw.TweenCallback(Callable.From(light.QueueFree));
+        }
+
+        static void LoadSounds()
+        {
+            if (_roars != null) return;
+            static AudioStream[] Load(string prefix, int n)
+            {
+                var a = new AudioStream[n];
+                for (int i = 0; i < n; i++)
+                    a[i] = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{prefix}_{i}.ogg"));
+                return a;
+            }
+            _roars = Load("zroar", 16);   // Sounds/Zombies/Roars (startle/attack/moving)
+            _groans = Load("zgroan", 5);  // Groans (occasional idle)
+            _spits = Load("zspit", 4);    // Spits (acid)
+        }
+
+        void PlaySound(AudioStream[] set)
+        {
+            if (set == null || set.Length == 0 || _audio == null || Dead) return;
+            var s = set[_rng.RandiRange(0, set.Length - 1)];
+            if (s == null) return;
+            _audio.Stream = s;
+            _audio.Play();
         }
 
         static Vector3 Flat(Vector3 v) { v.Y = 0f; return v.LengthSquared() > 1e-6f ? v.Normalized() : v; }
