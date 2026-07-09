@@ -12,10 +12,11 @@ for layer in ["sample_pants.png", "sample_shirt.png"]:   # pants first, shirt ov
     if os.path.exists(p):
         atlas.alpha_composite(Image.open(p).convert("RGBA"))
 
-# face decal onto the head UV rect u[0.63-1.0] v[0.00-0.19]. rig UVs are GL (v up) -> image y = (1-v)*H.
+# face decal onto the head-FRONT quad (the -Z head face = the port's forward): mesh UVs u[0.254-0.371]
+# v[0.563-0.625]. The atlas is sampled by the mesh UVs directly (image y from top = v*H, same as the shirt).
 face = Image.open(os.path.join(d, "face_19.png")).convert("RGBA")
-fx0, fx1 = int(0.63 * 128), 128
-fy0, fy1 = int((1 - 0.19) * 128), 128
+fx0, fx1 = int(0.254 * 128), int(0.371 * 128)    # x 32-47
+fy0, fy1 = int(0.563 * 128), int(0.625 * 128)    # y 72-80
 atlas.alpha_composite(face.resize((fx1 - fx0, fy1 - fy0), Image.NEAREST), (fx0, fy0))
 
 atlas.save(os.path.join(d, "zombie_atlas.png"))
