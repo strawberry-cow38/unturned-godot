@@ -36,6 +36,16 @@ namespace UnturnedGodot
         public float Stamina = 1f, Food = 1f, Water = 1f;
         public float Infection;   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount, 0f, 1f);
+
+        // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals.
+        public void Consume(ItemAsset a)
+        {
+            if (a == null) return;
+            if (a.useHealth > 0) Health = Mathf.Min(MaxHealth, Health + a.useHealth);
+            if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f);
+            if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f);
+            if (a.useStopsBleeding) { Bleeding = false; _bleedTimer = 0; }
+        }
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
@@ -232,7 +242,7 @@ namespace UnturnedGodot
             ItemCatalog.RegisterAll();
             Inventory = new PlayerInventory();
             PopulateDemoInventory();
-            _invUI = new InventoryUI { Inv = Inventory };
+            _invUI = new InventoryUI { Inv = Inventory, Player = this };
             AddChild(_invUI);
 
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;

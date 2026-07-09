@@ -48,6 +48,7 @@ namespace UnturnedGodot
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
+                else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
             }
 
             if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible
@@ -460,6 +461,27 @@ namespace UnturnedGodot
             Check("water gone from pockets", pk.getItem(3, 0) == null);
 
             GD.Print($"[DRAGTEST] RESULT {pass} passed, {fail} failed");
+        }
+
+        // Headless self-test of PlayerController.Consume (the consumable effects). Asserts the real .dat values land
+        // on the vitals: Medkit +75 hp + stops bleeding, Canned Beans +food, Bottled Water +water.
+        static void RunUseTest()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var p = new PlayerController { Health = 20f, Food = 0.1f, Water = 0.1f, Bleeding = true };
+            int pass = 0, fail = 0;
+            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[USETEST] PASS  {n}"); } else { fail++; GD.Print($"[USETEST] FAIL  {n}"); } }
+
+            p.Consume(SDG.Unturned.Assets.find(15));   // Medkit: +75 health, stop bleeding
+            Check("medkit -> health 20+75=95", Mathf.Abs(p.Health - 95f) < 0.01f);
+            Check("medkit -> bleeding cleared", !p.Bleeding);
+            p.Consume(SDG.Unturned.Assets.find(13));   // Canned Beans: +10 health, +55 food
+            Check("beans -> food 0.1+0.55=0.65", Mathf.Abs(p.Food - 0.65f) < 0.01f);
+            Check("beans -> health capped at 100", Mathf.Abs(p.Health - 100f) < 0.01f);   // 95+10 -> clamp 100
+            p.Consume(SDG.Unturned.Assets.find(14));   // Bottled Water: +55 water
+            Check("water -> water 0.1+0.55=0.65", Mathf.Abs(p.Water - 0.65f) < 0.01f);
+
+            GD.Print($"[USETEST] RESULT {pass} passed, {fail} failed");
         }
 
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.

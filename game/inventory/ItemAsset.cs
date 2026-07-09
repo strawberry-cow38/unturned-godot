@@ -27,6 +27,12 @@ namespace SDG.Unturned
         public byte width;
         public byte height;
 
+        // ItemConsumeableAsset effects applied on Use, then the item is consumed. Health is absolute (0-100);
+        // Food/Water are the .dat 0-100 values (the port's vitals are 0..1, so divided by 100 on apply).
+        public int useHealth, useFood, useWater;
+        public bool useStopsBleeding;   // Bleeding_Modifier = Heal
+        public bool IsConsumable => useHealth > 0 || useFood > 0 || useWater > 0 || useStopsBleeding;
+
         // ItemTool.getRarityColorUI: the exact per-rarity UI colours
         public static Godot.Color RarityColorUI(EItemRarity r) => r switch
         {

@@ -12,6 +12,7 @@ namespace UnturnedGodot
     public partial class InventoryUI : CanvasLayer
     {
         public PlayerInventory Inv;
+        public PlayerController Player;   // for Use -> apply consumable effects to the vitals
 
         const int CELL = 50;         // SleekItems cell size
         const int HEADER = 30;       // per-page header strip (source SizeOffset_Y = height*50 + 30)
@@ -206,8 +207,10 @@ namespace UnturnedGodot
             desc.AddThemeFontSizeOverride("font_size", 13);
             panel.AddChild(desc);
 
-            // right-bottom: actions (Equip only for a gun going to a hand slot; Drop; Close)
+            // right-bottom: actions (Use for a consumable; Equip for a gun in a grid; Drop; Close)
             float by = 150;
+            if (asset.IsConsumable)
+            { AddActionButton(panel, "Use", new Vector2(228, by), UseSelected); by += 44; }
             if (asset.type == EItemType.GUN && page >= PlayerInventory.SLOTS)
             { AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
@@ -239,6 +242,21 @@ namespace UnturnedGodot
             var pg = Inv.items[_selPage];
             byte idx = pg.getIndex(_selX, _selY);
             if (idx != byte.MaxValue) pg.removeItem(idx);
+            CloseSelection();
+            Refresh();
+        }
+
+        // Use a consumable: apply its effects to the player's vitals, then consume the item
+        void UseSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            Player?.Consume(jar.GetAsset());
+            var item = jar.item;
+            if (item != null && item.amount > 1) item.amount--;   // consume one from the stack
+            else pg.removeItem(idx);                              // or the whole item
             CloseSelection();
             Refresh();
         }
