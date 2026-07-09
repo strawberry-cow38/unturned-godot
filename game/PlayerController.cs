@@ -58,6 +58,7 @@ namespace UnturnedGodot
 
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
         float _fireCd;              // seconds until the gun can fire again
+        const float GunshotRadius = 48f;   // earshot of an unsuppressed shot (AlertTool noise); suppressors would cut it
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
@@ -330,6 +331,8 @@ namespace UnturnedGodot
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
                 SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage);
             }
+            // AlertTool point-noise: an (unsuppressed) gunshot pulls zombies within earshot over to investigate.
+            GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, GunshotRadius);
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
 

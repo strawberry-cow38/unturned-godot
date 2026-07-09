@@ -38,7 +38,11 @@ namespace UnturnedGodot
         bool _ragdoll;
 
         // AI state (Zombie.cs)
-        bool _hunting, _startled, _isAttacking;
+        enum EHunt { NONE, PLAYER, POINT }   // Zombie.EHuntType (+ NONE = idle, not hunting)
+        EHunt _hunt = EHunt.NONE;
+        Vector3 _huntPoint;         // POINT target: where a noise (gunshot) came from
+        float _lastHunted;          // when the current POINT alert fired (Zombie.lastHunted); ~3 s later -> give up
+        bool _startled, _isAttacking;
         EPath _path;
         double _age;                // local clock (Time.time analogue)
         float _lastAttack = -100f;  // last swing START (Zombie.lastAttack); the hit lands at +ATTACK_TIME/2
@@ -130,8 +134,8 @@ namespace UnturnedGodot
             if (Target is not PlayerController player) return;
             _age += delta;
 
-            // --- not hunting: idle in place and try to sense the player (AlertTool) ---
-            if (!_hunting)
+            // --- idle: stand still and try to sense the player (AlertTool) ---
+            if (_hunt == EHunt.NONE)
             {
                 Velocity = new Vector3(0, Velocity.Y - g * dt, 0);
                 MoveAndSlide();
@@ -141,11 +145,18 @@ namespace UnturnedGodot
                 return;
             }
 
-            // --- hunting: give up if the player died or broke away (Zombie.tick leave) ---
+            // --- POINT: investigate a noise; sight can still promote it to a full player hunt ---
+            if (_hunt == EHunt.POINT)
+            {
+                TrySense(player);                                   // may set _hunt = EHunt.PLAYER
+                if (_hunt == EHunt.POINT) { TickPoint(g, dt); return; }
+            }
+
+            // --- PLAYER hunt: give up if the player died or broke away (Zombie.tick leave) ---
             Vector3 me = GlobalPosition, pp = player.GlobalPosition;
             float num3 = HDistSq(pp, me);
             float num4 = Mathf.Abs(pp.Y - me.Y);
-            if (player.Health <= 0f || num3 > LEAVE_SQ) { _hunting = false; return; }
+            if (player.Health <= 0f || num3 > LEAVE_SQ) { _hunt = EHunt.NONE; return; }
 
             // --- pick the approach point for this path (Zombie.tick banded flanking) ---
             Vector3 pFwd = Flat(-player.GlobalTransform.Basis.Z);
@@ -244,7 +255,7 @@ namespace UnturnedGodot
         // Zombie.alert(player): latch onto the player and choose an approach path from their agro count.
         void Alert(PlayerController player)
         {
-            _hunting = true;
+            _hunt = EHunt.PLAYER;
             _startled = false;    // replay the startle roar on the first hunt tick
             if (Speciality == ESpeciality.FLANKER)
                 _path = _rng.Randf() < 0.5f ? EPath.LEFT_FLANK : EPath.RIGHT_FLANK;
@@ -253,6 +264,50 @@ namespace UnturnedGodot
             else
                 _path = _rng.Randf() < 0.5f ? EPath.LEFT : EPath.RIGHT;
             player.Agro++;
+        }
+
+        // Zombie.tick with huntType POINT + no player: shamble to the noise, then give up ~3 s after arriving.
+        void TickPoint(float g, float dt)
+        {
+            Vector3 me = GlobalPosition;
+            float num3 = HDistSq(_huntPoint, me);
+            bool arrived = num3 < 3f;                                      // Zombie isMoving = num3 > 3 (~1.73 m)
+            if (arrived && _age - _lastHunted > 3f) { _hunt = EHunt.NONE; return; }   // stop()
+
+            Vector3 to = _huntPoint - me; to.Y = 0f;
+            Vector3 horiz = (!arrived && to.LengthSquared() > 1e-4f) ? to.Normalized() * Speed : Vector3.Zero;
+            Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
+            MoveAndSlide();
+
+            if (_rig != null)
+            {
+                _rig.Tick(dt);
+                if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); }
+                else _rig.SetLocomotion(horiz.Length());
+            }
+            if (horiz.LengthSquared() > 1e-4f) LookAt(me + horiz, Vector3.Up);
+        }
+
+        // Zombie.alert(Vector3, isStartling): investigate a noise. Can't override an active player hunt; a closer
+        // noise just re-points the target (keeping the existing give-up clock); NONE -> POINT starts a fresh clock.
+        void AlertPoint(Vector3 point)
+        {
+            if (_hunt == EHunt.PLAYER) return;
+            if (_hunt == EHunt.NONE)
+            {
+                _hunt = EHunt.POINT; _startled = false;
+                _huntPoint = point; _lastHunted = (float)_age;
+            }
+            else if (HDistSq(point, GlobalPosition) < HDistSq(_huntPoint, GlobalPosition))
+                _huntPoint = point;
+        }
+
+        // Broadcast from PlayerController.Fire (AlertTool.alert point-noise): a gunshot within earshot pulls the
+        // zombie over to investigate where it came from -- and once there, normal sight tends to spot the player.
+        public void OnGunshot(Vector3 pos, float radius)
+        {
+            if (Dead) return;
+            if ((pos - GlobalPosition).LengthSquared() < radius * radius) AlertPoint(pos);
         }
 
         static Vector3 Flat(Vector3 v) { v.Y = 0f; return v.LengthSquared() > 1e-6f ? v.Normalized() : v; }
