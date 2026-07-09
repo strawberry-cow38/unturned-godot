@@ -152,7 +152,10 @@ namespace UnturnedGodot
                     _ejects = gv.Ejects;
                     _armsPos += gv.ViewOffset;   // per-gun hip-pose nudge (ADS re-aligns via the aim hook regardless)
                     var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{gv.Gun}") };
-                    var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.6f };
+                    // TextureFilter = Nearest: runtime ImageTexture (Image.LoadFromFile) has NO mipmaps, so the default
+                    // Linear-mipmap filter samples BLACK once the gun texture minifies -> the "guns render totally black"
+                    // bug (same root as the icon-render black-gun). Nearest samples mip 0 always, so the texture shows.
+                    var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.6f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     var tex = LoadTex($"res://content/{gv.Albedo}");
                     if (tex != null) { mat.AlbedoTexture = tex; mat.AlbedoColor = gv.AlbedoTint; } else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
