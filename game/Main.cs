@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -51,6 +51,7 @@ namespace UnturnedGodot
                 else if (arg == "--invdrop") invdrop = true;
                 else if (arg == "--invloot") invloot = true;
                 else if (arg == "--invcrate") invcrate = true;
+                else if (arg == "--meleedemo") meleedemo = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
@@ -82,6 +83,12 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildLootDemo(gun);
+                return;
+            }
+
+            if (meleedemo)  // melee self-test: a zombie in reach, the player swings until it drops (log-verifiable)
+            {
+                BuildMeleeDemo(gun);
                 return;
             }
 
@@ -530,6 +537,28 @@ namespace UnturnedGodot
             GD.Print($"[USETEST] RESULT {pass} passed, {fail} failed");
         }
 
+        // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every
+        // frame (cooldown gates it to ~0.45 s, 45 dmg). Log-verifiable headless -- expect three [melee] hits then a
+        // kill. Proximity-based, so unlike the fast-bullet raycast it registers reliably.
+        void BuildMeleeDemo(string gunPath)
+        {
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);                       // _Ready builds the FP camera used to aim the swing
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+
+            var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
+            AddChild(z);
+            z.GlobalPosition = player.GlobalPosition + new Vector3(0f, 0.2f, -1.4f);   // dead ahead, in reach
+
+            AddChild(new MeleeTestDriver { P = player });
+            GD.Print("[MELEE] demo: NORMAL zombie ~1.4m ahead (100 HP); swinging (45/hit, ~0.45s cd)");
+        }
+
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
         // selectDemo also pops the selection panel for an item so it can be captured.
         void BuildInventoryDemo(string gunPath, bool selectDemo = false, bool equipDemo = false)
@@ -928,6 +957,27 @@ namespace UnturnedGodot
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();
+        }
+    }
+
+    // Drives the melee self-test: after a few settle frames, swings every physics tick (the cooldown gates it to
+    // ~0.45 s). Quits when the zombie dies (Kills > 0) or after a timeout, so the run self-terminates for log-check.
+    public partial class MeleeTestDriver : Node3D
+    {
+        public PlayerController P;
+        int _frames; bool _done;
+
+        public override void _PhysicsProcess(double delta)
+        {
+            _frames++;
+            if (_frames > 5 && P != null) P.MeleeAttack();
+            if (!_done && P != null && P.Kills > 0)
+            {
+                _done = true;
+                GD.Print($"[MELEE] zombie killed by melee -- Kills={P.Kills} at frame {_frames}");
+                GetTree().Quit();
+            }
+            if (_frames > 200) { GD.Print("[MELEE] timeout: no kill within 200 frames"); GetTree().Quit(); }
         }
     }
 }

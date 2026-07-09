@@ -80,6 +80,30 @@ namespace UnturnedGodot
             }
         }
 
+        float _meleeCd;
+
+        // G: melee swing -- hit the nearest zombie in front within reach (proximity, not a raycast). Reuses the
+        // zombie damage path. Rounds out combat (Unturned lets you swing/punch when out of ammo or up close).
+        public void MeleeAttack()
+        {
+            if (_meleeCd > 0f || _cam == null) return;
+            _meleeCd = 0.45f;   // ~half-second between swings
+            Vector3 origin = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))
+                if (n is ZombieController z && !z.Dead)
+                {
+                    Vector3 to = z.GlobalPosition + Vector3.Up - origin;   // aim at the torso
+                    if (to.Length() < 2.2f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach
+                    {
+                        bool wd = z.Dead;
+                        z.DamageHit(45f, z.GlobalPosition + Vector3.Up, fwd);
+                        if (!wd && z.Dead) Kills++;
+                        GD.Print("[melee] hit a zombie");
+                        break;   // one target per swing
+                    }
+                }
+        }
+
         StorageCrate _openCrate;
 
         // F: open the nearest storage crate within ~2.5 m -- loads its grid into the STORAGE page (7) so the existing
@@ -363,6 +387,8 @@ namespace UnturnedGodot
                 _build?.Toggle();     // toggle build mode
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
                 _build?.CycleType();  // cycle the structure type (floor/wall)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
+                MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
                 if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
@@ -674,6 +700,7 @@ namespace UnturnedGodot
                 return;
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
+            if (_meleeCd > 0f) _meleeCd -= (float)delta;
             if (_reloading)
             {
                 _reloadTimer -= delta;
