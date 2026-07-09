@@ -31,6 +31,7 @@ namespace UnturnedGodot
         public int Deaths;
         public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
         double _bleedTimer;
+        public bool Broken;        // PlayerLife.isBroken: broken legs (from a hard fall) -- blocks sprint + jump until mended
         // Survival vitals (0..1), shown live on the HUD. Rates are config-driven in Unturned (modeConfigData); these
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
         // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
@@ -46,6 +47,7 @@ namespace UnturnedGodot
             if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f);
             if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f);
             if (a.useStopsBleeding) { Bleeding = false; _bleedTimer = 0; }
+            if (a.useHealBroken) Broken = false;   // Bones_Modifier Heal (Medkit/Splint) mends broken legs
         }
 
         // Drop an item into the world at pos, grounded by a downward cast (ItemManager.dropItem: snap to ground +
@@ -112,8 +114,9 @@ namespace UnturnedGodot
         {
             const float threshold = 22.0f;
             if (verticalVel >= -threshold) return;             // a normal jump lands at ~7 m/s -> no damage
+            Broken = true;                                     // any fall past the threshold breaks legs (shouldBreakLegs defaults true)
             int dmg = Mathf.RoundToInt(Mathf.Min(101f, Mathf.Abs(verticalVel)));   // RoundAndClampToByte; damage <= 101
-            if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage"); TakeDamage(dmg); }
+            if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
         }
 
         StorageCrate _openCrate;
@@ -264,7 +267,7 @@ namespace UnturnedGodot
         {
             _dead = false;
             Health = MaxHealth;
-            Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false;   // fresh vitals on respawn
+            Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;   // fresh vitals on respawn
             GlobalPosition = Spawn;
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
@@ -733,6 +736,7 @@ namespace UnturnedGodot
                            : (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
                            : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH
                            : EPlayerStance.STAND);
+            if (Broken && _move.Stance == EPlayerStance.SPRINT) _move.Stance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
 
             float forward, strafe;
             if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
@@ -741,7 +745,7 @@ namespace UnturnedGodot
                 forward = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
                 strafe  = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
-            bool jump = Input.IsPhysicalKeyPressed(Key.Space);
+            bool jump = Input.IsPhysicalKeyPressed(Key.Space) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310)
 
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;

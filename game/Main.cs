@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -54,6 +54,7 @@ namespace UnturnedGodot
                 else if (arg == "--meleedemo") meleedemo = true;
                 else if (arg == "--falldemo") falldemo = true;
                 else if (arg == "--pronetest") pronetest = true;
+                else if (arg == "--brokentest") brokentest = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
@@ -103,6 +104,12 @@ namespace UnturnedGodot
             if (pronetest)  // stance self-test: force each stance, check the stealth detection radius (incl. new PRONE)
             {
                 BuildProneTest(gun);
+                return;
+            }
+
+            if (brokentest) // broken-legs self-test: fall breaks legs -> blocks sprint -> Medkit mends -> sprint restored
+            {
+                BuildBrokenTest(gun);
                 return;
             }
 
@@ -607,6 +614,24 @@ namespace UnturnedGodot
             GD.Print("[PRONE] stance stealth-radius self-test: STAND/CROUCH/PRONE/SPRINT (stationary)");
         }
 
+        // Broken-legs self-test: drop the player 40 m (breaks legs on landing), confirm a forced SPRINT is demoted
+        // (radius 12 not 20), heal with a Medkit (Bones_Modifier Heal), confirm sprint works again (radius 20).
+        void BuildBrokenTest(string gunPath)
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();   // so Assets.find(15) resolves the Medkit (with useHealBroken)
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(0, 40f, 0);   // 40 m drop -> legs break on landing
+
+            AddChild(new BrokenTestDriver { P = player });
+            GD.Print("[BROKEN] self-test: 40m fall -> legs break -> sprint blocked -> Medkit mends -> sprint restored");
+        }
+
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
         // selectDemo also pops the selection panel for an item so it can be captured.
         void BuildInventoryDemo(string gunPath, bool selectDemo = false, bool equipDemo = false)
@@ -1071,6 +1096,42 @@ namespace UnturnedGodot
             if (_i >= _stances.Length) { GetTree().Quit(); return; }
             P.ScriptedStance = _stances[_i];
             _i++; _wait = 3;
+        }
+    }
+
+    // Drives the broken-legs self-test through its phases (see BuildBrokenTest).
+    public partial class BrokenTestDriver : Node3D
+    {
+        public PlayerController P;
+        int _phase, _wait, _frames;
+        void Chk(string n, bool ok) => GD.Print($"[BROKEN] {n} -> {(ok ? "PASS" : "FAIL")}");
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (P == null) return;
+            _frames++;
+            if (_wait > 0) { _wait--; return; }
+            switch (_phase)
+            {
+                case 0:   // wait for the 40 m drop to land + break legs
+                    if (P.Broken) { Chk($"fall broke legs (health={P.Health})", true); P.ScriptedStance = SDG.Unturned.EPlayerStance.SPRINT; _wait = 3; _phase = 1; }
+                    else if (_frames > 200) { Chk("fall broke legs (TIMEOUT)", false); GetTree().Quit(); }
+                    break;
+                case 1:   // broken + forcing SPRINT -> demoted to STAND (radius 12, not the SPRINT 20)
+                    Chk($"broken legs block sprint (radius {P.GetStealthDetectionRadius():F0})", Mathf.Abs(P.GetStealthDetectionRadius() - 12f) < 0.01f);
+                    P.ScriptedStance = null;
+                    P.Consume(SDG.Unturned.Assets.find(15));   // Medkit: Bones_Modifier Heal
+                    _wait = 2; _phase = 2;
+                    break;
+                case 2:   // mended
+                    Chk($"Medkit mended legs (Broken={P.Broken})", !P.Broken);
+                    P.ScriptedStance = SDG.Unturned.EPlayerStance.SPRINT; _wait = 3; _phase = 3;
+                    break;
+                case 3:   // no longer broken + SPRINT -> radius 20 (sprint restored)
+                    Chk($"sprint restored after heal (radius {P.GetStealthDetectionRadius():F0})", Mathf.Abs(P.GetStealthDetectionRadius() - 20f) < 0.01f);
+                    GetTree().Quit();
+                    break;
+            }
         }
     }
 }

@@ -15,18 +15,18 @@ namespace SDG.Unturned
             Add(253, "Alicepack",     2, 2, EItemType.BACKPACK, EItemRarity.EPIC,      8, 7, "Large sized military cargo backpack.");
             Add(209, "Cargo Pants",   2, 2, EItemType.PANTS,    EItemRarity.UNCOMMON,  6, 3, "High capacity synthetic pants for all weather.");
             // consumables also carry their real ItemConsumeableAsset effects (Health / Food / Water / Bleeding heal)
-            Add(15,  "Medkit",        2, 2, EItemType.MEDICAL,  EItemRarity.LEGENDARY, 0, 0, "A box of hospital medical equipment suited for healing a wide variety of injuries.", uh: 75, ub: true);
+            Add(15,  "Medkit",        2, 2, EItemType.MEDICAL,  EItemRarity.LEGENDARY, 0, 0, "A box of hospital medical equipment suited for healing a wide variety of injuries.", uh: 75, ub: true, hb: true);
             Add(95,  "Bandage",       1, 1, EItemType.MEDICAL,  EItemRarity.UNCOMMON,  0, 0, "Medium quality cloth for stopping bleeding, and recovering.", uh: 15, ub: true);
             Add(14,  "Bottled Water", 1, 1, EItemType.WATER,    EItemRarity.COMMON,    0, 0, "Overpriced tap water.", uw: 55);
             Add(13,  "Canned Beans",  1, 1, EItemType.FOOD,     EItemRarity.COMMON,    0, 0, "Very tactically packed for maximum taste.", uh: 10, uf: 55);
         }
 
         static void Add(ushort id, string name, byte sx, byte sy, EItemType type, EItemRarity rar, byte w, byte h, string desc,
-                        int uh = 0, int uf = 0, int uw = 0, bool ub = false, string gun = null)
+                        int uh = 0, int uf = 0, int uw = 0, bool ub = false, bool hb = false, string gun = null)
         {
             Assets.add(new ItemAsset { id = id, itemName = name, size_x = sx, size_y = sy, type = type, rarity = rar,
                                        width = w, height = h, description = desc,
-                                       useHealth = uh, useFood = uf, useWater = uw, useStopsBleeding = ub, gunName = gun });
+                                       useHealth = uh, useFood = uf, useWater = uw, useStopsBleeding = ub, useHealBroken = hb, gunName = gun });
         }
     }
 }
