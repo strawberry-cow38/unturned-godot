@@ -117,11 +117,15 @@ namespace UnturnedGodot
             _vp.AddChild(_cam);
             _vpLight = new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 10f), LightEnergy = 1.2f };
             _vp.AddChild(_vpLight);
+            // Fill lights from complementary angles -- the SubViewport's ambient wasn't reaching the guns, so faces
+            // missing the key light rendered black. These cover the other sides so the whole gun stays readable.
+            _vp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 165f, 0f), LightEnergy = 0.45f });
+            _vp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-65f, 55f, 0f), LightEnergy = 0.35f });
             _vpEnv = new Godot.Environment
             {
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.62f, 0.62f, 0.64f),
-                AmbientLightEnergy = 0.9f,
+                AmbientLightColor = new Color(0.72f, 0.72f, 0.74f),
+                AmbientLightEnergy = 1.0f,
             };
             _vp.AddChild(new WorldEnvironment { Environment = _vpEnv });
 
@@ -155,9 +159,12 @@ namespace UnturnedGodot
                     // TextureFilter = Nearest: runtime ImageTexture (Image.LoadFromFile) has NO mipmaps, so the default
                     // Linear-mipmap filter samples BLACK once the gun texture minifies -> the "guns render totally black"
                     // bug (same root as the icon-render black-gun). Nearest samples mip 0 always, so the texture shows.
-                    var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.6f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+                    // The gun's paint colours are BAKED into the albedo (tools/bake_gun_albedo.py: pure-black metal ->
+                    // visible gunmetal, white paintable -> the gun's paint colour) because the raw metal is pure black
+                    // and can't be shown by light/metallic/tint. So the material just shows the baked texture, matte.
+                    var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.85f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     var tex = LoadTex($"res://content/{gv.Albedo}");
-                    if (tex != null) { mat.AlbedoTexture = tex; mat.AlbedoColor = gv.AlbedoTint; } else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
+                    if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
