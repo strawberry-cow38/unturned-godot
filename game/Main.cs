@@ -385,7 +385,9 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true };
             AddChild(sun);
-            AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });   // a 5-minute day/night cycle
+            var dn = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f };   // a 5-minute day/night cycle
+            AddChild(dn);
+            AddChild(new RainOverlay { Cycle = dn, Raining = GD.Randf() < 0.35f });   // ~a third of runs start rainy
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -684,7 +686,9 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             var sun = new DirectionalLight3D { ShadowEnabled = true };
             AddChild(sun);
-            AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 5f, Time = 0.22f });   // fast; start near dawn
+            var cyc = new DayNightCycle { Sun = sun, Env = env, DayLength = 5f, Time = 0.5f };   // fast; start at noon
+            AddChild(cyc);
+            AddChild(new RainOverlay { Cycle = cyc, Raining = true });   // demo the rain too
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
