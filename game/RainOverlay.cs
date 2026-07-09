@@ -33,7 +33,7 @@ void fragment(){
         float rnd = hash(vec2(col, fi * 7.0));
         if(hash(vec2(col + 31.0, fi)) < 0.55) continue;    // gaps between drops
         float speed = 1.4 + fi * 0.9 + rnd * 0.6;
-        float y = fract(uv.y * (2.0 + fi) + time * speed + rnd);
+        float y = fract(uv.y * (2.0 + fi) - time * speed + rnd);   // -time so the dash falls DOWN (SCREEN_UV y=0 is top)
         float drop = smoothstep(0.0, 0.02, y) * (1.0 - smoothstep(0.02, 0.22, y));   // a falling dash
         a += lineMask * drop * (0.30 - fi * 0.06);
     }

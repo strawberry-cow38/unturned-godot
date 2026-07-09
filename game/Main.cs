@@ -201,11 +201,12 @@ namespace UnturnedGodot
 
             if (!smoke)
             {
-                // DEFAULT (the exported build): interactive single-player survival. Maximize to FILL the screen --
-                // setting a fixed 1280x720 Size while the project opens MAXIMIZED (window/size/mode=2) left the render
-                // boxed in a corner of the big window (the "tiny viewport" bug).
+                // DEFAULT (the exported build): a tiny main menu -> interactive single-player survival. Maximize to
+                // FILL the screen (a fixed Size while the project opens MAXIMIZED boxed the render into a corner).
                 GetWindow().Mode = Window.ModeEnum.Maximized;
-                BuildPlayable(null, false, null);
+                var menu = new MainMenu();
+                menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
+                AddChild(menu);
                 return;
             }
 
