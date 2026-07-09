@@ -217,7 +217,7 @@ namespace UnturnedGodot
 
         static RigData _shared;
         // Parse rig.json once, reuse the data for every character built (20 zombies shouldn't reparse 600KB).
-        public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false, string albedoTexPath = null)
+        public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false, string albedoTexPath = null, string faceTexPath = null)
         {
             if (_shared == null)
             {
@@ -225,12 +225,12 @@ namespace UnturnedGodot
                 if (f == null) { GD.PrintErr($"[rig] cannot open {resPath}"); return null; }
                 _shared = JsonSerializer.Deserialize<RigData>(f.GetAsText(), JsonOpts);
             }
-            return BuildFrom(_shared, tint, armsOnly, albedoTexPath);
+            return BuildFrom(_shared, tint, armsOnly, albedoTexPath, faceTexPath);
         }
 
         public MeshInstance3D Body { get; private set; }
 
-        public static RiggedCharacter BuildFrom(RigData rig, Color tint, bool armsOnly = false, string albedoTexPath = null)
+        public static RiggedCharacter BuildFrom(RigData rig, Color tint, bool armsOnly = false, string albedoTexPath = null, string faceTexPath = null)
         {
             var root = new RiggedCharacter();
 
@@ -313,6 +313,28 @@ namespace UnturnedGodot
             mi.MaterialOverride = bodyMat;
             root._bodyMat = bodyMat;
             root._bodyTint = tint;
+
+            // Unturned's face is a shader-painted decal, NOT in the mesh UV (the head-front UV0 is a skin-only
+            // sliver + there's no UV1). Reproduce it as a small quad on the head-front, textured with the real
+            // Faces/19 (transparent bg -> only the eyes+mouth show over the skin). Double-sided; symmetric so the
+            // mirror is invisible. Parented to the character root (follows position/turn; head-bob float is tiny).
+            if (faceTexPath != null && !armsOnly)
+            {
+                var fimg = Image.LoadFromFile(ProjectSettings.GlobalizePath(faceTexPath));
+                if (fimg != null)
+                {
+                    var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.20f, 0.20f) } };
+                    fq.MaterialOverride = new StandardMaterial3D
+                    {
+                        AlbedoTexture = ImageTexture.CreateFromImage(fimg),
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    };
+                    root.AddChild(fq);
+                    fq.Position = new Vector3(0f, 1.75f, -0.25f);   // head-front, character-local
+                }
+            }
 
             // ---- animations ----
             var ap = new AnimationPlayer { Name = "Anim" };
