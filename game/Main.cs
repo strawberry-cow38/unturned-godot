@@ -464,6 +464,7 @@ namespace UnturnedGodot
             // load the gun FIRST so the gun name is set before _Ready builds the per-gun viewmodel
             player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
             AddChild(player);                       // _Ready builds its camera + collider + viewmodel
+            player.LinkWorldLighting(sun, env);     // FP gun takes the world's day/night lighting
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
 
             AddChild(new HUD { Player = player });

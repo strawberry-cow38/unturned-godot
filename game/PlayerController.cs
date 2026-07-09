@@ -238,6 +238,11 @@ namespace UnturnedGodot
         enum FireMode { Safety, Semi, Auto, Burst }   // EFiremode; the gun's available set comes from its .dat flags
         FireMode _firemode = FireMode.Semi;
         public string FiremodeName => _firemode.ToString().ToUpper();   // for the HUD
+        // let the FP viewmodel take the world's lighting (day/night sun + ambient)
+        public void LinkWorldLighting(DirectionalLight3D sun, Godot.Environment env)
+        {
+            if (_viewmodel != null) { _viewmodel.WorldSun = sun; _viewmodel.WorldEnv = env; }
+        }
         int _burstLeft;                               // rounds remaining in the current burst
         float _burstCd;                               // cooldown after a burst before another can start (no full-auto burst)
 

@@ -13,6 +13,10 @@ namespace UnturnedGodot
         public const float SourceFov = 60f;   // PreferenceData.cs:93 Field_Of_View_Hip
 
         SubViewport _vp;
+        DirectionalLight3D _vpLight;                 // the viewmodel's own sun -- synced to the world's each frame
+        Godot.Environment _vpEnv;                    // the viewmodel's ambient -- synced to the world's
+        public DirectionalLight3D WorldSun;          // set by the game so the FP gun takes the world's day/night light
+        public Godot.Environment WorldEnv;
         Camera3D _cam;
         RiggedCharacter _arms;
         Node3D _gun;
@@ -107,16 +111,15 @@ namespace UnturnedGodot
 
             _cam = new Camera3D { Fov = SourceFov, Current = true };
             _vp.AddChild(_cam);
-            _vp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 10f), LightEnergy = 1.2f });
-            _vp.AddChild(new WorldEnvironment
+            _vpLight = new DirectionalLight3D { RotationDegrees = new Vector3(-40f, -25f, 10f), LightEnergy = 1.2f };
+            _vp.AddChild(_vpLight);
+            _vpEnv = new Godot.Environment
             {
-                Environment = new Godot.Environment
-                {
-                    AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                    AmbientLightColor = new Color(0.62f, 0.62f, 0.64f),
-                    AmbientLightEnergy = 0.9f,
-                }
-            });
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.62f, 0.62f, 0.64f),
+                AmbientLightEnergy = 0.9f,
+            };
+            _vp.AddChild(new WorldEnvironment { Environment = _vpEnv });
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
             if (_arms != null)
@@ -288,6 +291,18 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_arms == null || _cam == null) return;
+            // take in the world's lighting: sync the FP viewport's sun + ambient to the day/night cycle each frame
+            if (WorldSun != null && _vpLight != null)
+            {
+                _vpLight.RotationDegrees = WorldSun.RotationDegrees;
+                _vpLight.LightEnergy = Mathf.Max(0.25f, WorldSun.LightEnergy);   // keep the gun readable even at night
+                _vpLight.LightColor = WorldSun.LightColor;
+            }
+            if (WorldEnv != null && _vpEnv != null)
+            {
+                _vpEnv.AmbientLightColor = WorldEnv.AmbientLightColor;
+                _vpEnv.AmbientLightEnergy = WorldEnv.AmbientLightEnergy;
+            }
             _t += delta;
             _equipElapsed += (float)delta;
             _flash = Mathf.Max(0f, _flash - (float)delta);
