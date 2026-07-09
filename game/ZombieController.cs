@@ -64,16 +64,14 @@ namespace UnturnedGodot
                 ESpeciality.FLANKER => 6f,
                 _ => 5.5f,
             };
-            // per-speciality body tint (stand-in until the real ZombieClothing skins are extracted): burners read
-            // fiery orange, acid spitters toxic green, stalkers a cold teal, sprinters/crawlers off-shades.
+            // the tint now MULTIPLIES the baked ZombieClothing skin atlas (skin + shirt + pants + face) -> NORMAL
+            // zombies show natural; the visually-distinct specials get a colour accent (burner charred, acid toxic).
             _tint = Speciality switch
             {
-                ESpeciality.BURNER => new Color(0.85f, 0.34f, 0.14f),
-                ESpeciality.ACID => new Color(0.60f, 0.82f, 0.12f),
-                ESpeciality.FLANKER => new Color(0.42f, 0.63f, 0.56f),
-                ESpeciality.SPRINTER => new Color(0.58f, 0.66f, 0.34f),
-                ESpeciality.CRAWLER => new Color(0.40f, 0.52f, 0.38f),
-                _ => new Color(0.45f, 0.72f, 0.40f),
+                ESpeciality.BURNER => new Color(1.0f, 0.58f, 0.40f),    // charred / hot
+                ESpeciality.ACID => new Color(0.72f, 1.0f, 0.45f),     // toxic green
+                ESpeciality.FLANKER => new Color(0.75f, 0.88f, 0.92f), // pale, cold stalker
+                _ => Colors.White,                                     // NORMAL / SPRINTER / CRAWLER: natural
             };
             _rng.Randomize();
 
@@ -83,7 +81,7 @@ namespace UnturnedGodot
             shape.Position = new Vector3(0, low ? 0.4f : 0.9f, 0);
             AddChild(shape);
 
-            _rig = RiggedCharacter.Build("res://content/rig.json", _tint);
+            _rig = RiggedCharacter.Build("res://content/rig.json", _tint, false, "res://content/zombie_atlas.png");
             if (_rig != null)
             {
                 // Zombie.cs: moveAnim="Move_"+move (the arms-out shamble, NOT the human walk), idleAnim="Idle_"+idle.

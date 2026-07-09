@@ -217,7 +217,7 @@ namespace UnturnedGodot
 
         static RigData _shared;
         // Parse rig.json once, reuse the data for every character built (20 zombies shouldn't reparse 600KB).
-        public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false)
+        public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false, string albedoTexPath = null)
         {
             if (_shared == null)
             {
@@ -225,12 +225,12 @@ namespace UnturnedGodot
                 if (f == null) { GD.PrintErr($"[rig] cannot open {resPath}"); return null; }
                 _shared = JsonSerializer.Deserialize<RigData>(f.GetAsText(), JsonOpts);
             }
-            return BuildFrom(_shared, tint, armsOnly);
+            return BuildFrom(_shared, tint, armsOnly, albedoTexPath);
         }
 
         public MeshInstance3D Body { get; private set; }
 
-        public static RiggedCharacter BuildFrom(RigData rig, Color tint, bool armsOnly = false)
+        public static RiggedCharacter BuildFrom(RigData rig, Color tint, bool armsOnly = false, string albedoTexPath = null)
         {
             var root = new RiggedCharacter();
 
@@ -299,6 +299,17 @@ namespace UnturnedGodot
                 AlbedoColor = tint,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled, // skinned winding is doubled
             };
+            // optional baked skin atlas (ZombieClothing composite: skin + shirt + pants + face decal). The tint
+            // multiplies it, so a NORMAL zombie passes white for the natural look, specials an accent colour.
+            if (albedoTexPath != null)
+            {
+                var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(albedoTexPath));
+                if (img != null)
+                {
+                    bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                    bodyMat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // blocky Unturned pixels
+                }
+            }
             mi.MaterialOverride = bodyMat;
             root._bodyMat = bodyMat;
             root._bodyTint = tint;
