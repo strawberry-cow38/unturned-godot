@@ -13,8 +13,19 @@ namespace UnturnedGodot
     public partial class RiggedCharacter : Node3D
     {
         AnimationPlayer _ap;
+        StandardMaterial3D _bodyMat;   // body surface material, for the FLANKER_STALK ghost toggle
+        Color _bodyTint;               // solid-state albedo, restored when un-ghosting
         public Skeleton3D Skeleton { get; private set; }
         public string[] ClipNames { get; private set; } = Array.Empty<string>();
+
+        // FLANKER_STALK: swap the body to a faint translucent shimmer (Unturned's ZombieClothing.ghostMaterial) --
+        // NOT fully gone; a keen eye can still pick out the stalker. Restores the solid tint when off.
+        public void SetGhost(bool ghost)
+        {
+            if (_bodyMat == null) return;
+            _bodyMat.Transparency = ghost ? BaseMaterial3D.TransparencyEnum.Alpha : BaseMaterial3D.TransparencyEnum.Disabled;
+            _bodyMat.AlbedoColor = new Color(_bodyTint.R, _bodyTint.G, _bodyTint.B, ghost ? 0.2f : 1f);
+        }
 
         string _loco;
         double _oneShot;   // remaining time a one-shot (attack/startle) clip holds before locomotion resumes
@@ -283,11 +294,14 @@ namespace UnturnedGodot
             mi.Skeleton = mi.GetPathTo(skel);
             // Unturned's character body is a flat skin-tone colour (clothing is separate meshes); skin.png
             // turned out to be a cosmetic item-skin atlas, not the body. Flat tint per team.
-            mi.MaterialOverride = new StandardMaterial3D
+            var bodyMat = new StandardMaterial3D
             {
                 AlbedoColor = tint,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled, // skinned winding is doubled
             };
+            mi.MaterialOverride = bodyMat;
+            root._bodyMat = bodyMat;
+            root._bodyTint = tint;
 
             // ---- animations ----
             var ap = new AnimationPlayer { Name = "Anim" };

@@ -124,7 +124,7 @@ namespace UnturnedGodot
                 CollisionLayer = 0;   // corpse: bullets pass through the capsule to the ragdoll bones
                 if (_rig != null)
                 {
-                    _rig.Visible = true;   // an invisible stalker's corpse still shows
+                    _rig.SetGhost(false);   // a stalker's corpse turns solid
                     // Unturned RagdollTool spine pop: (dir + up*8 + randXZ +-16) * 32, one physics step.
                     Vector3 away = impact ? dir : (Target != null ? GlobalPosition - Target.GlobalPosition : -GlobalTransform.Basis.Z);
                     away = new Vector3(away.X, 0f, away.Z);
@@ -156,7 +156,7 @@ namespace UnturnedGodot
             // --- idle: stand still and try to sense the player (AlertTool) ---
             if (_hunt == EHunt.NONE)
             {
-                if (_rig != null) _rig.Visible = true;   // FLANKER back to FRIENDLY (visible) once it gives up
+                if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(false);   // FRIENDLY: solid again
                 Velocity = new Vector3(0, Velocity.Y - g * dt, 0);
                 MoveAndSlide();
                 _rig?.Tick(delta);
@@ -251,8 +251,8 @@ namespace UnturnedGodot
             if (faceDir.LengthSquared() > 1e-4f)
                 LookAt(me + faceDir, Vector3.Up);
 
-            // FLANKER_STALK: invisible while closing in, snapping into view only for the swing (updateVisibility)
-            if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.Visible = _isAttacking;
+            // FLANKER_STALK: a faint ghost while closing in, snapping fully solid only for the swing (updateVisibility)
+            if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(!_isAttacking);
         }
 
         // AlertTool.check + line-of-sight: sense the player only within their stealth radius, not behind the
@@ -299,7 +299,7 @@ namespace UnturnedGodot
         // Zombie.tick with huntType POINT + no player: shamble to the noise, then give up ~3 s after arriving.
         void TickPoint(float g, float dt)
         {
-            if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.Visible = false;   // stalking a noise
+            if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(true);   // ghost while stalking a noise
             Vector3 me = GlobalPosition;
             float num3 = HDistSq(_huntPoint, me);
             bool arrived = num3 < 3f;                                      // Zombie isMoving = num3 > 3 (~1.73 m)
