@@ -793,7 +793,7 @@ namespace UnturnedGodot
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
             if (_fireCd <= 0f && !_reloading)
             {
-                if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.4f; } else _burstLeft = 0; }
+                if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
