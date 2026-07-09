@@ -323,6 +323,11 @@ namespace UnturnedGodot
                 var fimg = Image.LoadFromFile(ProjectSettings.GlobalizePath(faceTexPath));
                 if (fimg != null)
                 {
+                    // Bone-attach to the Skull so the face TRACKS the head through animation + ragdoll (not a fixed
+                    // root child, which floats at rest-pose height). Skull rest = pos(0,1.32,0), basis maps
+                    // world=(localY,-localX,localZ); the head-front world (0,1.75,-0.25) -> bone-local (-0.43,0,-0.25).
+                    var att = new BoneAttachment3D { BoneName = "Skull" };
+                    skel.AddChild(att);
                     var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.38f, 0.38f) } };
                     fq.MaterialOverride = new StandardMaterial3D
                     {
@@ -331,9 +336,9 @@ namespace UnturnedGodot
                         TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     };
-                    root.AddChild(fq);
-                    fq.Position = new Vector3(0f, 1.75f, -0.25f);   // head-front, character-local
-                    fq.RotationDegrees = new Vector3(0f, 180f, 0f); // face the FRONT out (not the mirrored back face)
+                    att.AddChild(fq);
+                    fq.Position = new Vector3(-0.43f, 0f, -0.25f);
+                    fq.Basis = new Basis(new Vector3(0f, -1f, 0f), new Vector3(-1f, 0f, 0f), new Vector3(0f, 0f, -1f));
                 }
             }
 
