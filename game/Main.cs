@@ -154,7 +154,11 @@ namespace UnturnedGodot
 
             if (play || demo)
             {
-                GetWindow().Size = new Vector2I(1280, 720);
+                // Interactive play fills the screen (maximized). Setting a fixed Size while the project opens
+                // MAXIMIZED (window/size/mode=2) left the render boxed in a corner of the big window -- the "tiny
+                // viewport" bug. Demo uses a fixed windowed size so --write-movie records a known frame.
+                if (demo) { GetWindow().Mode = Window.ModeEnum.Windowed; GetWindow().Size = new Vector2I(1920, 1080); }
+                else GetWindow().Mode = Window.ModeEnum.Maximized;
                 BuildPlayable(catalog, demo, gun);
                 return; // interactive, or demo records via --write-movie
             }
@@ -195,8 +199,10 @@ namespace UnturnedGodot
 
             if (!smoke)
             {
-                // DEFAULT (the exported build): interactive single-player survival.
-                GetWindow().Size = new Vector2I(1280, 720);
+                // DEFAULT (the exported build): interactive single-player survival. Maximize to FILL the screen --
+                // setting a fixed 1280x720 Size while the project opens MAXIMIZED (window/size/mode=2) left the render
+                // boxed in a corner of the big window (the "tiny viewport" bug).
+                GetWindow().Mode = Window.ModeEnum.Maximized;
                 BuildPlayable(null, false, null);
                 return;
             }
