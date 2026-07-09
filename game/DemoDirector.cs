@@ -42,8 +42,13 @@ namespace UnturnedGodot
             float pitch = Mathf.RadToDeg(Mathf.Atan2(camTo.Y, new Vector2(camTo.X, camTo.Z).Length()));
             Player.Camera.RotationDegrees = new Vector3(pitch, 0f, 0f);
 
-            // fire at approaching zombies (gun self-limits to the real .dat firerate); deliberately let
-            // ones inside 2.5 m close to melee so the player TAKES damage -- demonstrates the survival loop.
+            // advance toward the horde (aimed at the nearest, so forward = into them) until melee range: this
+            // closes distance so the zombies SENSE the player by sight and commit to their flank paths -- the
+            // faithful trigger, not a magic aggro. Stop inside 3.5 m and let them swarm (shows melee + HP loss).
+            Player.ScriptedInput = new UnityEngine.Vector2(0f, best > 3.5f ? 1f : 0f);
+
+            // fire at approaching zombies (gun self-limits to the real .dat firerate); deliberately let ones
+            // inside 2.5 m close to melee so the player TAKES damage -- demonstrates the survival loop.
             if (best > 2.5f && best < 45f)
             {
                 if (Player.Ammo <= 0) Player.Ammo = Player.Gun?.AmmoMax ?? 30;
@@ -54,11 +59,20 @@ namespace UnturnedGodot
         void SpawnZombie()
         {
             _spawned++;
-            var z = new ZombieController { Target = Player, Speed = 3.4f + (_spawned % 4) * 0.5f };
+            var z = new ZombieController { Target = Player, Speciality = RollSpeciality() };
             SpawnRoot.AddChild(z);
             float spread = (GD.Randf() - 0.5f) * 2.2f;   // front arc (around -Z)
             float r = 8f + GD.Randf() * 6f;
             z.GlobalPosition = Player.GlobalPosition + new Vector3(Mathf.Sin(spread) * r, 0.2f, -Mathf.Cos(spread) * r);
+        }
+
+        ZombieController.ESpeciality RollSpeciality()
+        {
+            float roll = GD.Randf();
+            if (roll < 0.58f) return ZombieController.ESpeciality.NORMAL;
+            if (roll < 0.82f) return ZombieController.ESpeciality.FLANKER;   // extra flankers so the demo shows flanks
+            if (roll < 0.94f) return ZombieController.ESpeciality.SPRINTER;
+            return ZombieController.ESpeciality.CRAWLER;
         }
     }
 }

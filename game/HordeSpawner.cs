@@ -19,12 +19,25 @@ namespace UnturnedGodot
             _cd -= (float)delta;
             if (alive < MaxAlive && _cd <= 0f)
             {
-                var z = new ZombieController { Target = Target, Speed = 2.6f + GD.Randf() * 1.6f };
+                // speed comes from the speciality now; a horde is mostly normals with some flankers + a few
+                // sprinters/crawlers for variety (so the LEFT/RIGHT/FLANK approach mix is visible).
+                var z = new ZombieController { Target = Target, Speciality = RollSpeciality() };
                 AddChild(z);
-                float a = GD.Randf() * Mathf.Pi * 2f, r = 14f + GD.Randf() * 9f;
+                // ring them around the player -- some land inside standing detection (12 m), the rest wait to be
+                // sensed until the player moves/sprints toward them (faithful: zombies don't magically know you).
+                float a = GD.Randf() * Mathf.Pi * 2f, r = 10f + GD.Randf() * 10f;
                 z.GlobalPosition = Target.GlobalPosition + new Vector3(Mathf.Sin(a) * r, 0.2f, Mathf.Cos(a) * r);
                 _cd = 0.6f;
             }
+        }
+
+        ZombieController.ESpeciality RollSpeciality()
+        {
+            float roll = GD.Randf();
+            if (roll < 0.60f) return ZombieController.ESpeciality.NORMAL;
+            if (roll < 0.80f) return ZombieController.ESpeciality.FLANKER;
+            if (roll < 0.93f) return ZombieController.ESpeciality.SPRINTER;
+            return ZombieController.ESpeciality.CRAWLER;
         }
     }
 }

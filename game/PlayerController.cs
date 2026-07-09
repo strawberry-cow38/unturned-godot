@@ -30,6 +30,28 @@ namespace UnturnedGodot
         public float Stamina = 1f, Food = 1f, Water = 1f;
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
+        // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
+        // player -- it drives their approach path (every 3rd zombie RUSHes, the rest split left/right, so a
+        // horde fans out to surround). Moving/Stance feed the stealth detection radius below.
+        public int Agro;
+        public bool Moving { get; private set; }
+        public EPlayerStance Stance => _move.Stance;
+
+        // Port of PlayerStance.GetStealthDetectionRadius: the radius (m) within which a zombie can sense this
+        // player, by stance -- standing 12, crouched 6, sprinting 20 (this build has no prone), x1.1 while
+        // moving. AlertTool clamps it to [1, 64]. Crouch-walking is how you sneak past a horde.
+        public float GetStealthDetectionRadius()
+        {
+            float move = Moving ? 1.1f : 1f;                       // DETECT_MOVE
+            float r = _move.Stance switch
+            {
+                EPlayerStance.SPRINT => 20f * move,                // DETECT_SPRINT
+                EPlayerStance.CROUCH => 6f * move,                 // DETECT_CROUCH
+                _ => 12f * move,                                   // DETECT_STAND
+            };
+            return Mathf.Clamp(r, 1f, 64f);
+        }
+
         // When set (e.g. by a recorded demo or a net-driven bot), overrides keyboard input: x=strafe, y=forward.
         public UnityEngine.Vector2? ScriptedInput;
         public bool CaptureMouse = true;
@@ -496,6 +518,7 @@ namespace UnturnedGodot
 
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;
+            Moving = moving;                                  // exposed for zombie stealth detection
             _viewmodel?.SetLocomotion(moving, _move.Stance);
             UpdateVitals(moving, (float)delta);
 

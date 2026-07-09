@@ -1,31 +1,62 @@
 using Godot;
+using SDG.Unturned;   // EPlayerStance + PlayerMovementDef.GRAVITY
 
 namespace UnturnedGodot
 {
-    // Direct-chase zombie for the single-player playable build: chases the target, melees it in range, dies
-    // when shot, topples over. Body = the REAL ripped character mesh (green tint) when loaded, else a capsule.
+    // Source-accurate zombie AI ported from SDG.Unturned.Zombie. A zombie IDLES until it SENSES the player
+    // (AlertTool: within the player's stance-based stealth radius, not tucked behind the zombie's back while
+    // the player sneaks, and with line of sight), then HUNTS along an approach path chosen from the player's
+    // agro count -- every 3rd zombie RUSHes straight, the rest peel LEFT/RIGHT and flankers swing wide, so a
+    // horde fans out to surround you. In range it swings on a ~1 s cadence with the hit landing mid-swing. It
+    // gives up if the player dies or breaks 64 m. Body = the real ripped character mesh; death drops a physics
+    // ragdoll. Not yet ported: point-investigation of noises (gunshots) + wander-home on leave.
     public partial class ZombieController : CharacterBody3D
     {
+        public enum EPath { RUSH, LEFT, RIGHT, LEFT_FLANK, RIGHT_FLANK }   // Zombie.EZombiePath
+        public enum ESpeciality { NORMAL, SPRINTER, CRAWLER, FLANKER }     // Zombie.EZombieSpeciality (subset)
+
         public Node3D Target;
-        [Export] public float Speed = 3.2f;
-        [Export] public float MeleeRange = 1.4f;
+        public ESpeciality Speciality = ESpeciality.NORMAL;
+        [Export] public float Speed = 5.5f;         // overwritten from Speciality in _Ready (Zombie seeker.Speed)
         [Export] public float Health = 100f;
-        [Export] public float AttackDamage = 12f;
-        [Export] public float AttackInterval = 0.8f;
+        [Export] public float AttackDamage = 15f;   // LevelZombies.tables[type].damage (map data) x the mults below
+        [Export] public float ImpactForce = 9f;
 
         public bool Dead { get; private set; }
 
+        // Attack ranges (Zombie.GetHorizontalAttackRangeSquared / GetVerticalAttackRange, client + normal):
+        const float ATTACK_PLAYER_SQ = 2f;   // ATTACK_PLAYER; horizontal reach = sqrt(2) ~ 1.41 m
+        const float VERTICAL_ATTACK = 2.1f;
+        const float ATTACK_TIME = 0.5f;      // Attack_0 clip-length fallback (Zombie.attackTime); dmg at half
+        const float LEAVE_SQ = 4096f;        // 64 m: the player has broken away (Zombie.tick)
+
         Node3D _body;
         RiggedCharacter _rig;
-        bool _startled;
         StandardMaterial3D _capMat;
-        float _attackCd, _deadTimer;
+        readonly RandomNumberGenerator _rng = new();
+        int _atkId, _startleId;
+        bool _ragdoll;
+
+        // AI state (Zombie.cs)
+        bool _hunting, _startled, _isAttacking;
+        EPath _path;
+        double _age;                // local clock (Time.time analogue)
+        float _lastAttack = -100f;  // last swing START (Zombie.lastAttack); the hit lands at +ATTACK_TIME/2
 
         public override void _Ready()
         {
             AddToGroup("zombies");
             CollisionLayer = 1 << 1;   // enemy bit the gun ray masks for
             CollisionMask = 1 << 0;    // collide with ground
+
+            Speed = Speciality switch  // Zombie.updateStates seeker.Speed (non-slow-movement defaults)
+            {
+                ESpeciality.SPRINTER => 6.5f,
+                ESpeciality.CRAWLER => 3f,
+                ESpeciality.FLANKER => 6f,
+                _ => 5.5f,
+            };
+            _rng.Randomize();
 
             var shape = new CollisionShape3D { Shape = new CapsuleShape3D { Height = 1.8f, Radius = 0.4f } };
             shape.Position = new Vector3(0, 0.9f, 0);
@@ -34,36 +65,26 @@ namespace UnturnedGodot
             _rig = RiggedCharacter.Build("res://content/rig.json", new Color(0.45f, 0.72f, 0.40f));
             if (_rig != null)
             {
-                // Unturned zombies (Zombie.cs): moveAnim="Move_"+move, idleAnim="Idle_"+idle, per-zombie bytes.
-                // These are the arms-out shamble clips, NOT the human Move_Walk. Randomise for variety.
-                // Move_0..3 = normal upright shambles; Move_4/5 = the CRAWLER variant (separate zombie type).
-                // Normal zombies must NOT use the crawler moves -> restrict to 0..3.
-                var rng = new RandomNumberGenerator(); rng.Randomize();
-                _rig.WalkClip = "Move_" + rng.RandiRange(0, 3);
-                _rig.RunClip = _rig.WalkClip;                 // zombies don't run; shamble at any speed
-                _rig.IdleClip = "Idle_" + rng.RandiRange(0, 3);
-                _startleId = rng.RandiRange(0, 1);
-                _atkId = rng.RandiRange(0, 2);
+                // Zombie.cs: moveAnim="Move_"+move (the arms-out shamble, NOT the human walk), idleAnim="Idle_"+idle.
+                // Move_0..3 = upright shambles; Move_4/5 = the CRAWLER variant. Match the clip to the speciality.
+                bool crawler = Speciality == ESpeciality.CRAWLER;
+                _rig.WalkClip = crawler ? "Move_" + _rng.RandiRange(4, 5) : "Move_" + _rng.RandiRange(0, 3);
+                _rig.RunClip = _rig.WalkClip;             // zombies don't run; shamble at any speed
+                _rig.IdleClip = "Idle_" + _rng.RandiRange(0, 3);
+                _startleId = _rng.RandiRange(0, 1);
+                _atkId = _rng.RandiRange(0, 2);
                 _body = _rig;
                 _rig.Play(_rig.IdleClip);
             }
-            else if (CharacterModel.Loaded)
-            {
-                _body = CharacterModel.Build(new Color(0.55f, 0.95f, 0.55f));
-            }
+            else if (CharacterModel.Loaded) { _body = CharacterModel.Build(new Color(0.55f, 0.95f, 0.55f)); }
             else
             {
                 _capMat = new StandardMaterial3D { AlbedoColor = new Color(0.35f, 0.55f, 0.30f) };
                 var mi = new MeshInstance3D { Mesh = new CapsuleMesh { Height = 1.8f, Radius = 0.4f }, MaterialOverride = _capMat, Position = new Vector3(0, 0.9f, 0) };
-                _body = new Node3D();
-                _body.AddChild(mi);
+                _body = new Node3D(); _body.AddChild(mi);
             }
             AddChild(_body);
         }
-
-        bool _ragdoll;
-        int _atkId, _startleId;
-        [Export] public float ImpactForce = 9f;
 
         public void Damage(float amount) => ApplyDamage(amount, GlobalPosition, Vector3.Zero, false);
 
@@ -86,10 +107,9 @@ namespace UnturnedGodot
                     Vector3 away = impact ? dir : (Target != null ? GlobalPosition - Target.GlobalPosition : -GlobalTransform.Basis.Z);
                     away = new Vector3(away.X, 0f, away.Z);
                     away = away.LengthSquared() > 0.01f ? away.Normalized() : -GlobalTransform.Basis.Z;
-                    var r = new RandomNumberGenerator(); r.Randomize();
-                    Vector3 f = (away * 6f + Vector3.Up * 8f + new Vector3(r.RandfRange(-16f, 16f), 0f, r.RandfRange(-16f, 16f))) * 0.64f;
+                    Vector3 f = (away * 6f + Vector3.Up * 8f + new Vector3(_rng.RandfRange(-16f, 16f), 0f, _rng.RandfRange(-16f, 16f))) * 0.64f;
                     _rig.RagdollStart(f);
-                    if (impact) _rig.ApplyImpact(point, dir * ImpactForce);  // shove at the exact bone hit
+                    if (impact) _rig.ApplyImpact(point, dir * ImpactForce);   // shove at the exact bone hit
                     _ragdoll = true;
                 }
             }
@@ -97,46 +117,145 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            float g = SDG.Unturned.PlayerMovementDef.GRAVITY;
+            float g = PlayerMovementDef.GRAVITY;
+            float dt = (float)delta;
 
             if (Dead)
             {
-                if (_ragdoll) return;   // physics ragdoll drives the body now (no scripted topple)
-                _deadTimer += (float)delta;
-                _body.RotationDegrees = new Vector3(Mathf.Min(90f, _deadTimer * 220f), _body.RotationDegrees.Y, 0);
-                Velocity = new Vector3(0, Velocity.Y - g * (float)delta, 0);
+                if (_ragdoll) return;   // physics ragdoll drives the body now
+                Velocity = new Vector3(0, Velocity.Y - g * dt, 0);
                 MoveAndSlide();
                 return;
             }
-            if (Target == null) return;
+            if (Target is not PlayerController player) return;
+            _age += delta;
 
-            Vector3 to = Target.GlobalPosition - GlobalPosition;
-            to.Y = 0f;
-            float dist = to.Length();
-            Vector3 horiz = dist > MeleeRange && dist > 0.001f ? to.Normalized() * Speed : Vector3.Zero;
-            Velocity = new Vector3(horiz.X, Velocity.Y - g * (float)delta, horiz.Z);
-            MoveAndSlide();
-
-            if (_attackCd > 0f) _attackCd -= (float)delta;
-            bool attacked = false;
-            if (dist <= MeleeRange && _attackCd <= 0f && Target is PlayerController p)
+            // --- not hunting: idle in place and try to sense the player (AlertTool) ---
+            if (!_hunting)
             {
-                p.TakeDamage(AttackDamage);
-                _attackCd = AttackInterval;
-                attacked = true;
+                Velocity = new Vector3(0, Velocity.Y - g * dt, 0);
+                MoveAndSlide();
+                _rig?.Tick(delta);
+                _rig?.SetLocomotion(0f);
+                TrySense(player);
+                return;
             }
 
-            // animation state: startle on first aggro, attack swing on hit, else walk/idle by speed
+            // --- hunting: give up if the player died or broke away (Zombie.tick leave) ---
+            Vector3 me = GlobalPosition, pp = player.GlobalPosition;
+            float num3 = HDistSq(pp, me);
+            float num4 = Mathf.Abs(pp.Y - me.Y);
+            if (player.Health <= 0f || num3 > LEAVE_SQ) { _hunting = false; return; }
+
+            // --- pick the approach point for this path (Zombie.tick banded flanking) ---
+            Vector3 pFwd = Flat(-player.GlobalTransform.Basis.Z);
+            Vector3 pRight = Flat(player.GlobalTransform.Basis.X);
+            Vector3 zFwd = Flat(-GlobalTransform.Basis.Z);
+            Vector3 zRight = Flat(GlobalTransform.Basis.X);
+            bool inFront = num3 > 20f || (me - pp).Normalized().Dot(pFwd) > 0f;   // past 4.5 m, or ahead of the player
+            Vector3 tp = pp;
+            switch (_path)
+            {
+                case EPath.RUSH:  if (num3 > 4f) tp -= zFwd; break;
+                case EPath.LEFT:  if (num3 > 4f) tp -= zRight; break;
+                case EPath.RIGHT: if (num3 > 4f) tp += zRight; break;
+                case EPath.LEFT_FLANK:
+                    if (num3 > 100f) tp += pRight * 9f + pFwd * -4f;    // far: swing wide to the player's right
+                    else if (inFront) tp += pRight * 3f + pFwd * -3f;   // mid / in-view: ease onto the flank
+                    else if (num3 > 4f) tp -= pFwd;                     // behind + close: fall in behind
+                    break;
+                case EPath.RIGHT_FLANK:
+                    if (num3 > 100f) tp += pRight * -9f + pFwd * -4f;
+                    else if (inFront) tp += pRight * -3f + pFwd * -3f;
+                    else if (num3 > 4f) tp -= pFwd;
+                    break;
+            }
+
+            // --- steer toward the point until within reach, then plant and swing. In the source the seeker
+            // moves every tick regardless of the derived isMoving flag; only entering attack range stops it, so
+            // gating movement on isMoving (as a first pass did) leaves a dead zone short of the swing range. ---
+            Vector3 to = tp - me; to.Y = 0f;
+            bool inReach = num3 < ATTACK_PLAYER_SQ;
+            Vector3 horiz = (!inReach && to.LengthSquared() > 1e-4f) ? to.Normalized() * Speed : Vector3.Zero;
+            Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
+            MoveAndSlide();
+
+            // --- attack in range: ~1 s cadence, the hit lands mid-swing (Zombie.tick + askAttack) ---
+            bool swinging = false;
+            if (num3 < ATTACK_PLAYER_SQ && num4 < VERTICAL_ATTACK)
+            {
+                if (_isAttacking)
+                {
+                    if (_age - _lastAttack > ATTACK_TIME / 2f)
+                    {
+                        _isAttacking = false;
+                        float mult = Speciality == ESpeciality.CRAWLER ? 2f : Speciality == ESpeciality.SPRINTER ? 0.75f : 1f;
+                        player.TakeDamage(AttackDamage * mult);
+                    }
+                }
+                else if (_age - _lastAttack > 1f)
+                {
+                    _isAttacking = true; swinging = true;
+                    _lastAttack = (float)_age;             // askAttack: lastAttack = now
+                    _rig?.PlayOnce("Attack_" + _atkId);
+                }
+            }
+            else _isAttacking = false;
+
+            // --- animation + facing (CanTurn: face where we move while approaching, the player when close) ---
             if (_rig != null)
             {
                 _rig.Tick(delta);
                 if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); }
-                else if (attacked) _rig.PlayOnce("Attack_" + _atkId);
-                else _rig.SetLocomotion(horiz.Length());
+                else if (!_isAttacking && !swinging) _rig.SetLocomotion(horiz.Length());
             }
-
-            if (dist > 0.1f)
-                LookAt(new Vector3(Target.GlobalPosition.X, GlobalPosition.Y, Target.GlobalPosition.Z), Vector3.Up);
+            Vector3 faceDir = num3 > 4f && horiz.LengthSquared() > 1e-4f ? horiz : Flat(pp - me);
+            if (faceDir.LengthSquared() > 1e-4f)
+                LookAt(me + faceDir, Vector3.Up);
         }
+
+        // AlertTool.check + line-of-sight: sense the player only within their stealth radius, not behind the
+        // zombie's back while they sneak (anything but sprinting counts as sneaking), and with clear sight.
+        void TrySense(PlayerController player)
+        {
+            if (player.Health <= 0f) return;
+            Vector3 offset = GlobalPosition - player.GlobalPosition;   // player -> zombie
+            float radius = player.GetStealthDetectionRadius();
+            if (offset.LengthSquared() > radius * radius) return;
+            bool sneak = player.Stance != EPlayerStance.SPRINT;
+            Vector3 fwd = -GlobalTransform.Basis.Z;
+            if (offset.LengthSquared() > 1e-4f && sneak && fwd.Normalized().Dot(offset.Normalized()) > 0.5f) return;
+            if (!HasLineOfSight(player)) return;
+            Alert(player);
+        }
+
+        // AlertTool raycast: eye-height ray toward the player over 95 % of the gap; any world geometry blocks it.
+        bool HasLineOfSight(PlayerController player)
+        {
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = GlobalPosition + Vector3.Up * 1.0f;
+            Vector3 toP = (player.GlobalPosition + Vector3.Up * 1.0f) - from;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + toP * 0.95f);
+            q.CollisionMask = 1u << 0;   // world geometry only (ground/props) = BLOCK_VISION
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            return space.IntersectRay(q).Count == 0;
+        }
+
+        // Zombie.alert(player): latch onto the player and choose an approach path from their agro count.
+        void Alert(PlayerController player)
+        {
+            _hunting = true;
+            _startled = false;    // replay the startle roar on the first hunt tick
+            if (Speciality == ESpeciality.FLANKER)
+                _path = _rng.Randf() < 0.5f ? EPath.LEFT_FLANK : EPath.RIGHT_FLANK;
+            else if (player.Agro % 3 == 0)
+                _path = EPath.RUSH;
+            else
+                _path = _rng.Randf() < 0.5f ? EPath.LEFT : EPath.RIGHT;
+            player.Agro++;
+        }
+
+        static Vector3 Flat(Vector3 v) { v.Y = 0f; return v.LengthSquared() > 1e-6f ? v.Normalized() : v; }
+        static float HDistSq(Vector3 a, Vector3 b) { float dx = a.X - b.X, dz = a.Z - b.Z; return dx * dx + dz * dz; }
     }
 }
