@@ -28,6 +28,8 @@ namespace UnturnedGodot
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
         // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
         public float Stamina = 1f, Food = 1f, Water = 1f;
+        public float Infection;   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
+        public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount, 0f, 1f);
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
@@ -111,7 +113,7 @@ namespace UnturnedGodot
         {
             _dead = false;
             Health = MaxHealth;
-            Stamina = Food = Water = 1f; Bleeding = false;   // fresh vitals on respawn
+            Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false;   // fresh vitals on respawn
             GlobalPosition = Spawn;
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
@@ -136,10 +138,12 @@ namespace UnturnedGodot
             Stamina = Mathf.Clamp(Stamina + (sprinting ? -0.22f : 0.33f) * dt, 0f, 1f);
             Food  = Mathf.Max(0f, Food  - 0.0050f * dt);
             Water = Mathf.Max(0f, Water - 0.0070f * dt);
-            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth)
-                Health = Mathf.Min(MaxHealth, Health + 2f * dt);     // regen while fed + hydrated
-            else if (Food <= 0f || Water <= 0f)
-                Health = Mathf.Max(0f, Health - 1.5f * dt);          // starve / dehydrate
+            Infection = Mathf.Max(0f, Infection - 0.01f * dt);       // virus slowly clears if you stop getting bitten
+            bool sick = Infection > 0.75f;                           // heavy infection makes you ill (loses health)
+            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick)
+                Health = Mathf.Min(MaxHealth, Health + 2f * dt);     // regen while fed + hydrated (blocked while sick)
+            else if (Food <= 0f || Water <= 0f || sick)
+                Health = Mathf.Max(0f, Health - (sick ? 2f : 1.5f) * dt);   // starve / dehydrate / infection sickness
             if (Health <= 0f) { Deaths++; Die(); }
         }
 

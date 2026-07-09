@@ -52,7 +52,8 @@ namespace UnturnedGodot
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
             AddStatus(root, 0, "hud_bleeding.png", () => Player != null && Player.Bleeding);
             AddStatus(root, 1, "hud_broken.png",   () => false);
-            AddStatus(root, 2, "hud_starved.png",  () => false);
+            AddStatus(root, 2, "hud_starved.png",  () => Player != null && (Player.Food <= 0f || Player.Water <= 0f));
+            AddStatus(root, 3, "hud_virus.png",    () => Player != null && Player.Infection > 0.30f);
 
             // ammo count, bottom-right
             _ammo = new Label();

@@ -36,7 +36,7 @@ namespace UnturnedGodot
         // Attack ranges (Zombie.GetHorizontalAttackRangeSquared / GetVerticalAttackRange, client + normal):
         const float ATTACK_PLAYER_SQ = 2f;   // ATTACK_PLAYER; horizontal reach = sqrt(2) ~ 1.41 m
         const float VERTICAL_ATTACK = 2.1f;
-        const float ATTACK_TIME = 0.5f;      // Attack_0 clip-length fallback (Zombie.attackTime); dmg at half
+        const float ATTACK_TIME = 0.8f;      // Zombie.attackTime = Attack_0 clip length (0.8s); dmg lands at half (0.4s)
         const float LEAVE_SQ = 4096f;        // 64 m: the player has broken away (Zombie.tick)
 
         Node3D _body;
@@ -173,8 +173,13 @@ namespace UnturnedGodot
             if (_age > _nextGroan)
             {
                 _nextGroan = (float)_age + _rng.RandfRange(4f, 8f);
-                if (_hunt == EHunt.NONE) { if (_rng.Randf() > 0.8f) PlaySound(_groans); }
-                else PlaySound(_roars);
+                // Zombie.OnUpdate only groans/roars `if (isVisible)` -> a stalking (invisible) flanker stays silent.
+                bool silentStalker = Speciality == ESpeciality.FLANKER && _hunt != EHunt.NONE;
+                if (!silentStalker)
+                {
+                    if (_hunt == EHunt.NONE) { if (_rng.Randf() > 0.8f) PlaySound(_groans); }
+                    else PlaySound(_roars);
+                }
             }
 
             // --- idle: wander back toward spawn if we chased the player off and lost them out here (Zombie
@@ -257,6 +262,7 @@ namespace UnturnedGodot
                         _isAttacking = false;
                         float mult = Speciality == ESpeciality.CRAWLER ? 2f : Speciality == ESpeciality.SPRINTER ? 0.75f : 1f;
                         player.TakeDamage(AttackDamage * mult);
+                        player.Infect((AttackDamage * mult / 3f) / 100f);   // Zombie.askDamage: askInfect(b/3)
                     }
                 }
                 else if (_age - _lastAttack > 1f)
