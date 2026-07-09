@@ -323,7 +323,7 @@ namespace UnturnedGodot
                 var fimg = Image.LoadFromFile(ProjectSettings.GlobalizePath(faceTexPath));
                 if (fimg != null)
                 {
-                    var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.20f, 0.20f) } };
+                    var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.38f, 0.38f) } };
                     fq.MaterialOverride = new StandardMaterial3D
                     {
                         AlbedoTexture = ImageTexture.CreateFromImage(fimg),
