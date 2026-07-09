@@ -104,8 +104,11 @@ namespace UnturnedGodot
                 _rig.WalkClip = crawler ? "Move_" + _rng.RandiRange(4, 5) : "Move_" + _rng.RandiRange(0, 3);
                 _rig.RunClip = _rig.WalkClip;             // zombies don't run; shamble at any speed
                 _rig.IdleClip = "Idle_" + _rng.RandiRange(0, 3);
-                _startleId = _rng.RandiRange(0, 1);
-                _atkId = _rng.RandiRange(0, 2);
+                // per-speciality attack/startle anim ids (Zombie.cs sendZombieAttack/sendZombieStartle): the
+                // crawler crawls + strikes low (Attack_5), the sprinter has its own set (6-8), the rest 0-4.
+                if (Speciality == ESpeciality.CRAWLER) { _atkId = 5; _startleId = _rng.Randf() < 0.5f ? 3 : 6; }
+                else if (Speciality == ESpeciality.SPRINTER) { _atkId = _rng.RandiRange(6, 8); _startleId = _rng.RandiRange(4, 5); }
+                else { _atkId = _rng.RandiRange(0, 4); _startleId = _rng.RandiRange(0, 2); }
                 _body = _rig;
                 _rig.Play(_rig.IdleClip);
             }
