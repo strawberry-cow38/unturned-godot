@@ -12,6 +12,8 @@ namespace UnturnedGodot
         readonly PlayerMovementSim _move = new PlayerMovementSim();
         Camera3D _cam;
         Viewmodel _viewmodel;
+        public PlayerInventory Inventory;   // the ported 9-page inventory model
+        InventoryUI _invUI;                 // the dashboard (Tab to open)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
@@ -226,6 +228,13 @@ namespace UnturnedGodot
             AddChild(_viewmodel);
             _rng.Randomize();
 
+            // the ported inventory + its dashboard. Demo-populate it (real items) so there's something to show.
+            ItemCatalog.RegisterAll();
+            Inventory = new PlayerInventory();
+            PopulateDemoInventory();
+            _invUI = new InventoryUI { Inv = Inventory };
+            AddChild(_invUI);
+
             if (CaptureMouse) Input.MouseMode = Input.MouseModeEnum.Captured;
             foreach (var a in OS.GetCmdlineUserArgs()) if (a == "--pdie") _pdieTest = 2.0; // render-test: die at 2s
         }
@@ -249,9 +258,35 @@ namespace UnturnedGodot
                 CycleFiremode();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Q })
                 SwitchWeapon();   // toggle Eaglefire <-> Maplestrike
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
+            {
+                _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
+                Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
                 Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
                     ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+        }
+
+        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+
+        // seed the inventory with real items: wear the Alicepack (8x7) + Cargo Pants (6x3) so those pages open up,
+        // put both guns in the hand slots, and scatter medical/food/water across pockets + backpack to show packing
+        void PopulateDemoInventory()
+        {
+            Inventory.wearBackpack(new Item(253));   // Alicepack -> backpack slot + 8x7 storage
+            Inventory.wearPants(new Item(209));      // Cargo Pants -> pants slot + 6x3 storage
+            Inventory.equipToSlot(0, new Item(4));     // Eaglefire -> primary
+            Inventory.equipToSlot(1, new Item(363));   // Maplestrike -> secondary
+            Inventory.items[2].tryAddItem(new Item(15));            // Medkit in pockets
+            Inventory.items[2].tryAddItem(new Item(95, 3));         // Bandage x3
+            Inventory.items[2].tryAddItem(new Item(14));            // Bottled Water
+            var bag = Inventory.items[PlayerInventory.BACKPACK];
+            bag.tryAddItem(new Item(15));                           // Medkit
+            bag.tryAddItem(new Item(13, 5));                        // Canned Beans x5
+            bag.tryAddItem(new Item(14, 2));                        // Bottled Water x2
+            bag.tryAddItem(new Item(95, 6));                        // Bandage x6
+            Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13, 2));  // Canned Beans x2 in pants
         }
 
         // R to reload: block firing, then refill the magazine after the reload's duration. The reload takes the

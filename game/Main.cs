@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -45,12 +45,20 @@ namespace UnturnedGodot
                 else if (arg == "--client") client = true;
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
+                else if (arg == "--invdemo") invdemo = true;
             }
 
             if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildHurtDemo(gun);
+                return;
+            }
+
+            if (invdemo)    // open the inventory dashboard over the player, populated with real items
+            {
+                GetWindow().Size = new Vector2I(2560, 1440);   // match the movie size so the UI lays out full-frame
+                BuildInventoryDemo(gun);
                 return;
             }
 
@@ -414,6 +422,36 @@ namespace UnturnedGodot
             // behind the zombie's facing goes undetected) leaves it oblivious to a point-blank spawn
             z.LookAt(new Vector3(player.GlobalPosition.X, z.GlobalPosition.Y, player.GlobalPosition.Z), Vector3.Up);
             GD.Print("[HURT] first-person: zombie point-blank, recording flash + flinch");
+        }
+
+        // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
+        void BuildInventoryDemo(string gunPath)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.6f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(120, 120) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+            AddChild(new HUD { Player = player });
+            player.OpenInventory();
+            GD.Print("[INV] inventory dashboard open, real items populated");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).
