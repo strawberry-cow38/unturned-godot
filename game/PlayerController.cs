@@ -116,8 +116,8 @@ namespace UnturnedGodot
         // Q toggles between the two ported guns: reload the GunDef + rebuild the per-gun viewmodel.
         void SwitchWeapon()
         {
-            string next = _gunName == "eaglefire" ? "maplestrike" : "eaglefire";
-            LoadGun($"res://content/{next}.dat");   // sets Gun + _gunName + Ammo
+            string next = _gunName switch { "eaglefire" => "maplestrike", "maplestrike" => "masterkey", _ => "eaglefire" };
+            LoadGun($"res://content/{next}.dat");   // sets Gun + _gunName + Ammo (eaglefire -> maplestrike -> masterkey)
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -255,43 +255,42 @@ namespace UnturnedGodot
 
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition;
-            Vector3 dir = -_cam.GlobalTransform.Basis.Z;
-            // bullet spread: deviate within a cone (base Spread_Angle_Degrees, * Spread_Aim when aiming) —
-            // source: dir = aim * RandomForwardVectorInCone(spread), spread = base * Lerp(1, spreadAim, aimAlpha)
-            if (Gun != null && Gun.SpreadAngleDegrees > 0f)
-            {
-                float aimA = _viewmodel?.AimAlpha ?? 0f;
-                float spread = Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA);
-                if (spread > 0.0001f) dir = DeviateInCone(dir, spread);
-            }
-            Vector3 to = from + dir * range;
-            var query = PhysicsRayQueryParameters3D.Create(from, to, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
-            var hit = space.IntersectRay(query);
-            // world tracer: a brief streak from ~muzzle to the impact point (or downrange on a miss). Both guns use
-            // the Military_30 mag, which fires tracers (Tracer 48 = Trail_0). Source emits a stretched "Bullet"
-            // billboard at the muzzle down the shot dir (UseableGun.cs:645); we draw muzzle->endpoint here because
-            // the viewmodel muzzle lives in a separate viewport world.
+            Vector3 aim = -_cam.GlobalTransform.Basis.Z;                    // undeviated shot axis (shared muzzle)
             Basis cb = _cam.GlobalTransform.Basis;                          // camera: X=right, Y=up, -Z=forward
-            Vector3 muzzle = from + cb.X * 0.12f - cb.Y * 0.12f + dir * 0.4f; // approx the held-rifle muzzle (right/down/fwd)
-            SpawnTracer(muzzle, hit.Count > 0 ? hit["position"].AsVector3() : to);
-            SpawnMuzzleLight(muzzle);   // the source Muzzle_0 flash lights the world; our viewmodel flash can't reach it
-            if (hit.Count == 0) return false;
-            var collider = hit["collider"].As<GodotObject>();
-            Vector3 point = hit["position"].AsVector3();
-            SpawnFleshImpact(point, dir);   // blood burst — every hit here is flesh (enemy/ragdoll-bone layers)
-            if (collider is ZombieController z)
+            Vector3 muzzle = from + cb.X * 0.12f - cb.Y * 0.04f + aim * 0.4f; // approx the muzzle (right, just below eye, fwd)
+            SpawnMuzzleLight(muzzle);   // once per shot — the Muzzle_0 flash lights the world (our viewmodel flash can't)
+
+            // Pellets: fire `Pellets` rays per shot, each deviated within the spread cone. Source: the magazine's
+            // Pellets count (rifles = 1; shotgun shells Shells_2 = 8). Each pellet gets its own spread + tracer +
+            // impact -> the shotgun's spread pattern. Recoil/flash/ammo above are per-shot, not per-pellet.
+            float aimA = _viewmodel?.AimAlpha ?? 0f;
+            float spread = Gun != null && Gun.SpreadAngleDegrees > 0f
+                ? Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA) : 0f;
+            int pellets = Mathf.Max(1, Gun?.Pellets ?? 1);
+            bool killed = false;
+            for (int i = 0; i < pellets; i++)
             {
-                bool wasDead = z.Dead;
-                z.DamageHit(damage, point, dir);         // impact point -> death ragdoll shoved where hit
-                if (!wasDead && z.Dead) Kills++;
-                return true;
+                // source: dir = aim * RandomForwardVectorInCone(spread), spread = base * Lerp(1, spreadAim, aimAlpha)
+                Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
+                Vector3 to = from + dir * range;
+                var query = PhysicsRayQueryParameters3D.Create(from, to, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
+                var hit = space.IntersectRay(query);
+                SpawnTracer(muzzle, hit.Count > 0 ? hit["position"].AsVector3() : to);   // one tracer per pellet
+                if (hit.Count == 0) continue;
+                var collider = hit["collider"].As<GodotObject>();
+                Vector3 point = hit["position"].AsVector3();
+                SpawnFleshImpact(point, dir);   // blood burst — every hit here is flesh (enemy/ragdoll-bone layers)
+                if (collider is ZombieController z)
+                {
+                    bool wasDead = z.Dead;
+                    z.DamageHit(damage, point, dir);         // impact point -> death ragdoll shoved where hit
+                    if (!wasDead && z.Dead) Kills++;
+                    killed = true;
+                }
+                else if (collider is PhysicalBone3D pb)       // shooting a corpse -> tumble it
+                    pb.ApplyImpulse(dir * 7f, point - pb.GlobalPosition);
             }
-            if (collider is PhysicalBone3D pb)            // shooting a corpse -> tumble it
-            {
-                pb.ApplyImpulse(dir * 7f, point - pb.GlobalPosition);
-                return true;
-            }
-            return false;
+            return killed;
         }
 
         // Flesh impact — the source Flesh_Dynamic effect (impact ID 5: a ~25-particle billboard blood spray,
@@ -364,7 +363,7 @@ namespace UnturnedGodot
             Vector3 axis = (to - from).Normalized();
             Vector3 up = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.99f ? Vector3.Right : Vector3.Up;
             mi.LookAtFromPosition((from + to) * 0.5f, to, up);   // box length (local Z) spans from->to
-            var timer = GetTree().CreateTimer(0.08);   // brief flick, like the source tracer particle's short life
+            var timer = GetTree().CreateTimer(0.05);   // very brief — a static line held longer lags behind you when moving
             timer.Timeout += () => { if (IsInstanceValid(mi)) mi.QueueFree(); };
         }
 

@@ -66,11 +66,15 @@ namespace UnturnedGodot
         // (_Ready builds the gun). Aim hooks: Eaglefire SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206)+
         // Aim(0,-0.6,0.0918) -> port (0,-0.4688,-0.2098); Maplestrike Aim(0,-0.57,0.1111) -> port (0,-0.4388,-0.2291).
         public string GunName = "eaglefire";
-        struct GunVisual { public string Gun, Sight, Albedo; public Vector3 AimHook; }
+        // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
+        // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
+        // gun's own AudioClips (the assault rifles share the Eaglefire's).
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook; }
         static GunVisual Visual(string name) => name switch
         {
-            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Albedo = "maplestrike_albedo.png", AimHook = new Vector3(0f, -0.4388f, -0.2291f) },
-            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Albedo = "eaglefire_albedo.png",   AimHook = new Vector3(0f, -0.4688f, -0.2098f) },
+            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f) },
+            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f) },
+            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f) },
         };
         Node3D _sight;
 
@@ -141,7 +145,7 @@ namespace UnturnedGodot
                     // at localPos 0 / localRot identity / localScale 1. The sight's Model_0 origin therefore sits at
                     // SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206) = (0,0.1312,0.118) -> port (0,0.1312,-0.118).
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.06f, 0.07f), Metallic = 0.75f, Roughness = 0.35f };
-                    var ironMesh = ContentProvider.ParseObj($"res://content/{gv.Sight}");
+                    var ironMesh = gv.Sight != null ? ContentProvider.ParseObj($"res://content/{gv.Sight}") : null;
                     if (ironMesh != null)
                         mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = new Vector3(0f, 0.1312f, -0.118f) });
 
@@ -150,7 +154,7 @@ namespace UnturnedGodot
                     // (Instantiate(magazineAsset.magazine) at the Magazine hook, localPos 0 / identity); the mesh sits
                     // on the item root so its origin = MagazineHook(0,0.0166,-0.0238) -> port (0,0.0166,0.0238).
                     var magMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.07f, 0.07f, 0.08f), Metallic = 0.3f, Roughness = 0.6f };
-                    var magMesh = ContentProvider.ParseObj("res://content/eaglefire_mag.txt");
+                    var magMesh = gv.Mag != null ? ContentProvider.ParseObj($"res://content/{gv.Mag}") : null;
                     if (magMesh != null)
                         mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = new Vector3(0f, 0.0166f, 0.0238f) });
 
@@ -166,7 +170,7 @@ namespace UnturnedGodot
                     // texture, size ~0.5 per startSize, additive), flashed ~0.05s on fire.
                     // sits on the barrel BORE axis just past the muzzle tip: gun model muzzle is at Y=0.731, bore
                     // centre at (X=0, Z=-0.079) — the old Z=-0.04 was 0.039 off-axis, which read as the flash sitting low.
-                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = new Vector3(0f, 0.78f, -0.079f), Visible = false };
+                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = gv.MuzzleHook, Visible = false };
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
                     var flashMat = new StandardMaterial3D
                     {
@@ -185,9 +189,9 @@ namespace UnturnedGodot
                     // real gun sounds — the Eaglefire's Shoot/Reload AudioClips from the bundle (-> ogg). Non-3D
                     // AudioStreamPlayers output to the Master bus, so they're audible even though the gun lives in
                     // the viewmodel SubViewport (the player's own gun sound is non-positional anyway).
-                    _shootSnd = new AudioStreamPlayer { Stream = LoadOgg("res://content/eaglefire_shoot.ogg"), VolumeDb = -3f };
+                    _shootSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Shoot}"), VolumeDb = -3f };
                     mi.AddChild(_shootSnd);
-                    _reloadSnd = new AudioStreamPlayer { Stream = LoadOgg("res://content/eaglefire_reload.ogg"), VolumeDb = -3f };
+                    _reloadSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Reload}"), VolumeDb = -3f };
                     mi.AddChild(_reloadSnd);
                     _drySnd = new AudioStreamPlayer { Stream = LoadOgg("res://content/eaglefire_hammer.ogg"), VolumeDb = -3f };
                     mi.AddChild(_drySnd);

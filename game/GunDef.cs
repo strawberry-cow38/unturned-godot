@@ -15,6 +15,8 @@ namespace UnturnedGodot
         public float SpreadAim = 1f;   // spread multiplier while aiming (Eaglefire 0.05 = 5% of hip spread)
         public int Firerate;   // sim ticks between shots (lower = faster); cooldown = Firerate / 50 s
         public int AmmoMax;
+        public int Pellets = 1;   // rays fired per shot (source: the magazine's Pellets; shotgun shells = 8). Each
+                                  // pellet is deviated within the spread cone -> the shotgun spread pattern.
         // Per-shot camera recoil (degrees): X = horizontal (yaw, random sign), Y = vertical (pitch up). The aim
         // gets kick*Recover then recovers; the gun viewmodel gets the full kick (UseableGun.cs:1049/1188/1191).
         public float RecoilMinX, RecoilMaxX, RecoilMinY, RecoilMaxY;
@@ -39,6 +41,7 @@ namespace UnturnedGodot
                 Range = d.ParseFloat("Range", 100f),
                 Firerate = d.ParseInt32("Firerate", 8),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
+                Pellets = d.ParseInt32("Pellets", 1),   // staged into the shotgun's .dat from its Shells_2 mag (8)
                 SpreadAngleDegrees = d.ParseFloat("Spread_Angle_Degrees"),
                 SpreadAim = d.ParseFloat("Spread_Aim", 1f),
                 RecoilMinX = d.ParseFloat("Recoil_Min_X"),
