@@ -110,7 +110,14 @@ namespace UnturnedGodot
             Gun = GunDef.FromDatText(text);
             _gunName = System.IO.Path.GetFileNameWithoutExtension(datPath);
             Ammo = Gun.AmmoMax;
-            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax}");
+            // reset to a valid firemode for THIS gun — don't inherit the previous one (e.g. Auto carried onto the
+            // semi-only shotgun would let it hold-fire full-auto). Prefer Semi, then Auto/Burst, else Safety.
+            var modes = AvailableModes();
+            _firemode = System.Array.IndexOf(modes, FireMode.Semi) >= 0 ? FireMode.Semi
+                      : System.Array.IndexOf(modes, FireMode.Auto) >= 0 ? FireMode.Auto
+                      : modes[0];
+            _burstLeft = 0;
+            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={Gun.Pellets} mode={_firemode}");
         }
 
         // Q toggles between the two ported guns: reload the GunDef + rebuild the per-gun viewmodel.

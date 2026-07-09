@@ -69,12 +69,14 @@ namespace UnturnedGodot
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
         // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
         // gun's own AudioClips (the assault rifles share the Eaglefire's).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook; }
+        // ViewOffset = a per-gun hip-pose nudge (camera/arms-local metres) so each gun sits right in first person —
+        // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset; }
         static GunVisual Visual(string name) => name switch
         {
-            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f) },
-            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f) },
-            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f) },
+            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = new Vector3(0f, -0.18f, 0f) },
+            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = new Vector3(0f, -0.12f, 0f) },
+            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero },
         };
         Node3D _sight;
 
@@ -132,6 +134,7 @@ namespace UnturnedGodot
                     skel.AddChild(att);
                     att.BoneName = skel.GetBoneName(hb);
                     var gv = Visual(GunName);
+                    _armsPos += gv.ViewOffset;   // per-gun hip-pose nudge (ADS re-aligns via the aim hook regardless)
                     var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{gv.Gun}") };
                     var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.6f };
                     var tex = LoadTex($"res://content/{gv.Albedo}");
