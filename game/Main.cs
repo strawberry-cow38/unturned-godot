@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -49,6 +49,7 @@ namespace UnturnedGodot
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invequip") { invdemo = true; invequip = true; }
                 else if (arg == "--invdrop") invdrop = true;
+                else if (arg == "--invloot") invloot = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
             }
@@ -71,6 +72,13 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDropDemo(gun);
+                return;
+            }
+
+            if (invloot)    // scatter loot around the world (LootSpawner) + an overview
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildLootDemo(gun);
                 return;
             }
 
@@ -378,6 +386,7 @@ namespace UnturnedGodot
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
 
             AddChild(new HUD { Player = player });
+            AddChild(new LootSpawner());   // scatter loot to find in the world
 
             if (demo)
             {
@@ -568,6 +577,41 @@ namespace UnturnedGodot
 
             player.TryPickup();   // the Maplestrike at -1.4 is within reach -> [pickup]
             GD.Print("[DROP] dropped 5 world items; ran a pickup check");
+        }
+
+        // Scatters loot around the world (LootSpawner) and views it from a high overview for a screenshot.
+        void BuildLootDemo(string gunPath)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f),
+                AmbientLightEnergy = 0.75f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(120, 120) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+            player.Camera.Current = false;
+            AddChild(new LootSpawner());
+
+            var overview = new Camera3D { Current = true, Fov = 62f };
+            AddChild(overview);
+            overview.Position = new Vector3(0f, 26f, 20f);
+            overview.LookAt(new Vector3(0f, 0f, -3f), Vector3.Up);
+            GD.Print("[LOOT] scattered loot around the world");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).
