@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -53,6 +53,7 @@ namespace UnturnedGodot
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--meleedemo") meleedemo = true;
                 else if (arg == "--falldemo") falldemo = true;
+                else if (arg == "--pronetest") pronetest = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
@@ -96,6 +97,12 @@ namespace UnturnedGodot
             if (falldemo)   // fall-damage self-test: drop the player from height, expect damage on landing
             {
                 BuildFallDemo(gun);
+                return;
+            }
+
+            if (pronetest)  // stance self-test: force each stance, check the stealth detection radius (incl. new PRONE)
+            {
+                BuildProneTest(gun);
                 return;
             }
 
@@ -583,6 +590,23 @@ namespace UnturnedGodot
             GD.Print("[FALL] demo: player dropped from 40 m; expect fall damage on landing");
         }
 
+        // Stance self-test: force each stance via ScriptedStance and read GetStealthDetectionRadius (the value the
+        // zombie AI senses the player by). Verifies the new PRONE case (DETECT_PRONE=3) + regresses the others.
+        void BuildProneTest(string gunPath)
+        {
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+
+            AddChild(new PronetestDriver { P = player });
+            GD.Print("[PRONE] stance stealth-radius self-test: STAND/CROUCH/PRONE/SPRINT (stationary)");
+        }
+
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
         // selectDemo also pops the selection panel for an item so it can be captured.
         void BuildInventoryDemo(string gunPath, bool selectDemo = false, bool equipDemo = false)
@@ -1022,6 +1046,31 @@ namespace UnturnedGodot
                 GetTree().Quit();
             }
             if (_frames > 300) { GD.Print($"[FALL] timeout: no fall damage, health={P?.Health}"); GetTree().Quit(); }
+        }
+    }
+
+    // Drives the stance self-test: sets each stance via ScriptedStance (let it apply a few frames), then logs the
+    // resulting stealth detection radius against the source constants.
+    public partial class PronetestDriver : Node3D
+    {
+        public PlayerController P;
+        int _i, _wait;
+        readonly SDG.Unturned.EPlayerStance[] _stances =
+            { SDG.Unturned.EPlayerStance.STAND, SDG.Unturned.EPlayerStance.CROUCH, SDG.Unturned.EPlayerStance.PRONE, SDG.Unturned.EPlayerStance.SPRINT };
+        readonly float[] _expect = { 12f, 6f, 3f, 20f };
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (P == null) return;
+            if (_wait > 0) { _wait--; return; }
+            if (_i > 0)   // the stance set last visit has applied; read + check its radius
+            {
+                var st = _stances[_i - 1]; float r = P.GetStealthDetectionRadius(); float e = _expect[_i - 1];
+                GD.Print($"[PRONE] {st} radius={r:F1} expect={e:F1} {(Mathf.Abs(r - e) < 0.01f ? "PASS" : "FAIL")}");
+            }
+            if (_i >= _stances.Length) { GetTree().Quit(); return; }
+            P.ScriptedStance = _stances[_i];
+            _i++; _wait = 3;
         }
     }
 }

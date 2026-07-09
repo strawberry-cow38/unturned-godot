@@ -6,7 +6,7 @@ namespace UnturnedGodot
     // First-person player: ported PlayerMovementSim on Godot's 50 Hz physics tick + mouse look + a hitscan
     // gun (raycast from the camera vs the zombie collision layer). Movement CONSTANTS are exact; feel goes
     // through Jolt. Builds its own camera + capsule collider so it can be spawned from code.
-    // WASD move / Shift sprint / Ctrl crouch / Space jump / LMB fire / Esc release mouse.
+    // WASD move / Shift sprint / Ctrl crouch / Z prone / Space jump / LMB fire / G melee / R reload / Esc release mouse.
     public partial class PlayerController : CharacterBody3D
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
@@ -166,8 +166,8 @@ namespace UnturnedGodot
         public EPlayerStance Stance => _move.Stance;
 
         // Port of PlayerStance.GetStealthDetectionRadius: the radius (m) within which a zombie can sense this
-        // player, by stance -- standing 12, crouched 6, sprinting 20 (this build has no prone), x1.1 while
-        // moving. AlertTool clamps it to [1, 64]. Crouch-walking is how you sneak past a horde.
+        // player, by stance -- standing 12, crouched 6, sprinting 20, prone 3, x1.1 while moving. AlertTool
+        // clamps it to [1, 64]. Crouch-walking (or crawling prone) is how you sneak past a horde.
         public float GetStealthDetectionRadius()
         {
             float move = Moving ? 1.1f : 1f;                       // DETECT_MOVE
@@ -175,6 +175,7 @@ namespace UnturnedGodot
             {
                 EPlayerStance.SPRINT => 20f * move,                // DETECT_SPRINT
                 EPlayerStance.CROUCH => 6f * move,                 // DETECT_CROUCH
+                EPlayerStance.PRONE  => 3f * move,                 // DETECT_PRONE
                 _ => 12f * move,                                   // DETECT_STAND
             };
             return Mathf.Clamp(r, 1f, 64f);
@@ -182,6 +183,8 @@ namespace UnturnedGodot
 
         // When set (e.g. by a recorded demo or a net-driven bot), overrides keyboard input: x=strafe, y=forward.
         public UnityEngine.Vector2? ScriptedInput;
+        // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
+        public EPlayerStance? ScriptedStance;
         public bool CaptureMouse = true;
 
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
@@ -725,9 +728,11 @@ namespace UnturnedGodot
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
-            _move.Stance = (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
-                         : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH
-                         : EPlayerStance.STAND;
+            _move.Stance = ScriptedStance
+                         ?? (Input.IsPhysicalKeyPressed(Key.Z) ? EPlayerStance.PRONE        // hold Z to go prone (lowest profile)
+                           : (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
+                           : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH
+                           : EPlayerStance.STAND);
 
             float forward, strafe;
             if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
