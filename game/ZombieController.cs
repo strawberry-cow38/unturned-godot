@@ -13,7 +13,9 @@ namespace UnturnedGodot
     public partial class ZombieController : CharacterBody3D
     {
         public enum EPath { RUSH, LEFT, RIGHT, LEFT_FLANK, RIGHT_FLANK }   // Zombie.EZombiePath
-        public enum ESpeciality { NORMAL, SPRINTER, CRAWLER, FLANKER }     // Zombie.EZombieSpeciality (subset)
+        // Zombie.EZombieSpeciality survival roster: FLANKER = FLANKER_STALK (invisible while hunting), BURNER =
+        // fire-explodes on death, ACID = spits acid at range. (MEGA / SPIRIT / bosses = arena/beacon, later.)
+        public enum ESpeciality { NORMAL, SPRINTER, CRAWLER, FLANKER, BURNER, ACID }
 
         public Node3D Target;
         public ESpeciality Speciality = ESpeciality.NORMAL;
@@ -21,6 +23,8 @@ namespace UnturnedGodot
         [Export] public float Health = 100f;
         [Export] public float AttackDamage = 15f;   // LevelZombies.tables[type].damage (map data) x the mults below
         [Export] public float ImpactForce = 9f;
+        Color _tint;                // per-speciality body colour (stand-in for the real ZombieClothing skins)
+        float _nextSpit;            // ACID: next allowed spit time (Zombie specialUseDelay, Random 4-8 s)
 
         public bool Dead { get; private set; }
 
@@ -60,13 +64,26 @@ namespace UnturnedGodot
                 ESpeciality.FLANKER => 6f,
                 _ => 5.5f,
             };
+            // per-speciality body tint (stand-in until the real ZombieClothing skins are extracted): burners read
+            // fiery orange, acid spitters toxic green, stalkers a cold teal, sprinters/crawlers off-shades.
+            _tint = Speciality switch
+            {
+                ESpeciality.BURNER => new Color(0.85f, 0.34f, 0.14f),
+                ESpeciality.ACID => new Color(0.60f, 0.82f, 0.12f),
+                ESpeciality.FLANKER => new Color(0.42f, 0.63f, 0.56f),
+                ESpeciality.SPRINTER => new Color(0.58f, 0.66f, 0.34f),
+                ESpeciality.CRAWLER => new Color(0.40f, 0.52f, 0.38f),
+                _ => new Color(0.45f, 0.72f, 0.40f),
+            };
             _rng.Randomize();
 
-            var shape = new CollisionShape3D { Shape = new CapsuleShape3D { Height = 1.8f, Radius = 0.4f } };
-            shape.Position = new Vector3(0, 0.9f, 0);
+            // crawlers hug the ground (Move_4/5 crawl clips) -> a short low collider; everyone else stands tall.
+            bool low = Speciality == ESpeciality.CRAWLER;
+            var shape = new CollisionShape3D { Shape = new CapsuleShape3D { Height = low ? 0.8f : 1.8f, Radius = 0.4f } };
+            shape.Position = new Vector3(0, low ? 0.4f : 0.9f, 0);
             AddChild(shape);
 
-            _rig = RiggedCharacter.Build("res://content/rig.json", new Color(0.45f, 0.72f, 0.40f));
+            _rig = RiggedCharacter.Build("res://content/rig.json", _tint);
             if (_rig != null)
             {
                 // Zombie.cs: moveAnim="Move_"+move (the arms-out shamble, NOT the human walk), idleAnim="Idle_"+idle.
@@ -107,6 +124,7 @@ namespace UnturnedGodot
                 CollisionLayer = 0;   // corpse: bullets pass through the capsule to the ragdoll bones
                 if (_rig != null)
                 {
+                    _rig.Visible = true;   // an invisible stalker's corpse still shows
                     // Unturned RagdollTool spine pop: (dir + up*8 + randXZ +-16) * 32, one physics step.
                     Vector3 away = impact ? dir : (Target != null ? GlobalPosition - Target.GlobalPosition : -GlobalTransform.Basis.Z);
                     away = new Vector3(away.X, 0f, away.Z);
@@ -116,6 +134,7 @@ namespace UnturnedGodot
                     if (impact) _rig.ApplyImpact(point, dir * ImpactForce);   // shove at the exact bone hit
                     _ragdoll = true;
                 }
+                if (Speciality == ESpeciality.BURNER) FireExplosion();   // Zombie.askDamage: BURNER blows up on death
             }
         }
 
@@ -137,6 +156,7 @@ namespace UnturnedGodot
             // --- idle: stand still and try to sense the player (AlertTool) ---
             if (_hunt == EHunt.NONE)
             {
+                if (_rig != null) _rig.Visible = true;   // FLANKER back to FRIENDLY (visible) once it gives up
                 Velocity = new Vector3(0, Velocity.Y - g * dt, 0);
                 MoveAndSlide();
                 _rig?.Tick(delta);
@@ -191,6 +211,13 @@ namespace UnturnedGodot
             Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
             MoveAndSlide();
 
+            // --- ACID: spit a corrosive glob at the player from range (Zombie askSpit -> askAcid) ---
+            if (Speciality == ESpeciality.ACID && _age > _nextSpit && num3 > 16f && num3 < 900f && num4 < 6f)
+            {
+                _nextSpit = (float)_age + _rng.RandfRange(4f, 8f);   // specialUseDelay
+                SpitAcid(player);
+            }
+
             // --- attack in range: ~1 s cadence, the hit lands mid-swing (Zombie.tick + askAttack) ---
             bool swinging = false;
             if (num3 < ATTACK_PLAYER_SQ && num4 < VERTICAL_ATTACK)
@@ -223,6 +250,9 @@ namespace UnturnedGodot
             Vector3 faceDir = num3 > 4f && horiz.LengthSquared() > 1e-4f ? horiz : Flat(pp - me);
             if (faceDir.LengthSquared() > 1e-4f)
                 LookAt(me + faceDir, Vector3.Up);
+
+            // FLANKER_STALK: invisible while closing in, snapping into view only for the swing (updateVisibility)
+            if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.Visible = _isAttacking;
         }
 
         // AlertTool.check + line-of-sight: sense the player only within their stealth radius, not behind the
@@ -269,6 +299,7 @@ namespace UnturnedGodot
         // Zombie.tick with huntType POINT + no player: shamble to the noise, then give up ~3 s after arriving.
         void TickPoint(float g, float dt)
         {
+            if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.Visible = false;   // stalking a noise
             Vector3 me = GlobalPosition;
             float num3 = HDistSq(_huntPoint, me);
             bool arrived = num3 < 3f;                                      // Zombie isMoving = num3 > 3 (~1.73 m)
@@ -310,7 +341,71 @@ namespace UnturnedGodot
             if ((pos - GlobalPosition).LengthSquared() < radius * radius) AlertPoint(pos);
         }
 
+        // Zombie.askSpit -> askAcid: lob a corrosive glob at the player. Arced so gravity drops it onto the aim point.
+        void SpitAcid(PlayerController player)
+        {
+            _rig?.PlayOnce("Attack_" + _atkId);   // rig has no dedicated Acid clip; reuse a lunge as the spit tell
+            Vector3 from = GlobalPosition + Vector3.Up * 1.3f;
+            Vector3 to = (player.GlobalPosition + Vector3.Up) - from;
+            float t = Mathf.Clamp(to.Length() / 18f, 0.35f, 1.6f);       // ~18 m/s glob; solve the lob time
+            Vector3 vel = to / t + Vector3.Up * (0.5f * 9.81f * t);       // add the up-component gravity will cancel
+            var spit = new AcidSpit { Target = player, Velocity = vel, Damage = 18f };
+            GetParent().AddChild(spit);
+            spit.GlobalPosition = from;
+        }
+
+        // Zombie.askDamage: a BURNER detonates in a 4 m fire ball on death (EExplosionDamageType.ZOMBIE_FIRE, 40 dmg).
+        void FireExplosion()
+        {
+            if (Target is PlayerController tp)
+            {
+                float d = GlobalPosition.DistanceTo(tp.GlobalPosition);
+                if (d < 4f) tp.TakeDamage(40f * (1f - d / 4f));          // radial falloff over the 4 m radius
+            }
+            var light = new OmniLight3D { OmniRange = 7f, LightColor = new Color(1f, 0.55f, 0.18f), LightEnergy = 6f };
+            GetParent().AddChild(light);
+            light.GlobalPosition = GlobalPosition + Vector3.Up * 0.5f;
+            var tw = light.CreateTween();
+            tw.TweenProperty(light, "light_energy", 0f, 0.4f);           // brief orange blast flash
+            tw.TweenCallback(Callable.From(light.QueueFree));
+        }
+
         static Vector3 Flat(Vector3 v) { v.Y = 0f; return v.LengthSquared() > 1e-6f ? v.Normalized() : v; }
         static float HDistSq(Vector3 a, Vector3 b) { float dx = a.X - b.X, dz = a.Z - b.Z; return dx * dx + dz * dz; }
+    }
+
+    // A corrosive glob spat by an ACID zombie (Zombie.askAcid's Acid_Projectile): arcs under gravity, burns the
+    // player on contact, and splats out on the ground or after a few seconds.
+    public partial class AcidSpit : Node3D
+    {
+        public PlayerController Target;
+        public Vector3 Velocity;
+        public float Damage = 18f;
+        double _life = 4.0;
+
+        public override void _Ready()
+        {
+            var mesh = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.12f, Height = 0.24f } };
+            mesh.MaterialOverride = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(0.55f, 0.85f, 0.1f),
+                EmissionEnabled = true, Emission = new Color(0.5f, 0.9f, 0.1f), EmissionEnergyMultiplier = 2f,
+            };
+            AddChild(mesh);
+        }
+
+        public override void _PhysicsProcess(double delta)
+        {
+            float dt = (float)delta;
+            Velocity += new Vector3(0f, -9.81f, 0f) * dt;   // gravity arc
+            GlobalPosition += Velocity * dt;
+            _life -= delta;
+            if (Target != null && (Target.GlobalPosition + Vector3.Up).DistanceTo(GlobalPosition) < 0.8f)
+            {
+                Target.TakeDamage(Damage);
+                QueueFree(); return;
+            }
+            if (GlobalPosition.Y < 0.05f || _life <= 0.0) QueueFree();   // splat / expire
+        }
     }
 }

@@ -68,11 +68,14 @@ namespace UnturnedGodot
 
         ZombieController.ESpeciality RollSpeciality()
         {
+            // demo mix skewed to show every type off (flankers wink in/out, burners pop, acid arcs in)
             float roll = GD.Randf();
-            if (roll < 0.58f) return ZombieController.ESpeciality.NORMAL;
-            if (roll < 0.82f) return ZombieController.ESpeciality.FLANKER;   // extra flankers so the demo shows flanks
-            if (roll < 0.94f) return ZombieController.ESpeciality.SPRINTER;
-            return ZombieController.ESpeciality.CRAWLER;
+            if (roll < 0.38f) return ZombieController.ESpeciality.NORMAL;
+            if (roll < 0.56f) return ZombieController.ESpeciality.FLANKER;
+            if (roll < 0.68f) return ZombieController.ESpeciality.SPRINTER;
+            if (roll < 0.78f) return ZombieController.ESpeciality.CRAWLER;
+            if (roll < 0.89f) return ZombieController.ESpeciality.BURNER;
+            return ZombieController.ESpeciality.ACID;
         }
     }
 }

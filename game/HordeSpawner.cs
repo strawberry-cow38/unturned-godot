@@ -34,10 +34,12 @@ namespace UnturnedGodot
         ZombieController.ESpeciality RollSpeciality()
         {
             float roll = GD.Randf();
-            if (roll < 0.60f) return ZombieController.ESpeciality.NORMAL;
-            if (roll < 0.80f) return ZombieController.ESpeciality.FLANKER;
-            if (roll < 0.93f) return ZombieController.ESpeciality.SPRINTER;
-            return ZombieController.ESpeciality.CRAWLER;
+            if (roll < 0.46f) return ZombieController.ESpeciality.NORMAL;
+            if (roll < 0.63f) return ZombieController.ESpeciality.FLANKER;
+            if (roll < 0.75f) return ZombieController.ESpeciality.SPRINTER;
+            if (roll < 0.84f) return ZombieController.ESpeciality.CRAWLER;
+            if (roll < 0.93f) return ZombieController.ESpeciality.BURNER;
+            return ZombieController.ESpeciality.ACID;
         }
     }
 }
