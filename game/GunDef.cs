@@ -29,11 +29,17 @@ namespace UnturnedGodot
         // Firemodes (flags in the .dat): the Eaglefire has Safety + Semi + Bursts 3.
         public bool HasSafety, HasSemi, HasAuto;
         public int BurstCount;   // Bursts value; 0 = no burst mode
+        // Ballistics (ItemGunAsset.cs:679-733): bullets are simulated projectiles, not hitscan. MuzzleVelocity =
+        // Ballistic_Travel * 50 (TOCK_PER_SECOND); the bullet steps every 0.02s and drops under Physics.gravity
+        // (-9.81) * GravityMultiplier. No ballistic keys -> travel 10m/step, steps = ceil(range/10), gravMult 4.
+        public float MuzzleVelocity;      // m/s (Eaglefire 500, Masterkey 1500)
+        public int BallisticSteps;        // 0.02s steps before the bullet despawns (Eaglefire 20 = 0.4s to 200m)
+        public float GravityMultiplier;   // bullet gravity = -9.81 * this (Eaglefire 4 -> ~3m drop over 200m)
 
         public static GunDef FromDatText(string datText)
         {
             IDatDictionary d = new DatParser().Parse(datText);
-            return new GunDef
+            var g = new GunDef
             {
                 Id = d.GetString("ID"),
                 PlayerDamage = d.ParseFloat("Player_Damage"),
@@ -61,6 +67,38 @@ namespace UnturnedGodot
                 HasAuto = d.ContainsKey("Auto"),
                 BurstCount = d.ParseInt32("Bursts", 0),
             };
+            ComputeBallistics(g, d);
+            return g;
+        }
+
+        // Port of ItemGunAsset's ballistic setup (679-733): resolve steps/travel (from the .dat or the range), then
+        // muzzle velocity + the gravity multiplier (Ballistic_Drop -> a computed value, else Bullet_Gravity_Multiplier
+        // default 4). Bullets then simulate at 0.02s: pos += vel*0.02, vel.y += (-9.81*GravityMultiplier)*0.02.
+        static void ComputeBallistics(GunDef g, IDatDictionary d)
+        {
+            int steps = d.ParseInt32("Ballistic_Steps", 0);
+            float travel = d.ParseFloat("Ballistic_Travel", 0f);
+            bool hasSteps = d.ContainsKey("Ballistic_Steps") && steps > 0;
+            bool hasTravel = d.ContainsKey("Ballistic_Travel") && travel > 0.1f;
+            if (hasSteps && hasTravel) { /* both specified -> use as given */ }
+            else if (hasSteps) travel = g.Range / steps;
+            else if (hasTravel) steps = Godot.Mathf.CeilToInt(g.Range / travel);
+            else { travel = 10f; steps = Godot.Mathf.CeilToInt(g.Range / 10f); }
+            g.BallisticSteps = System.Math.Max(1, steps);
+            g.MuzzleVelocity = travel * 50f;   // TOCK_PER_SECOND = 50
+            if (d.ContainsKey("Ballistic_Drop"))
+            {
+                float drop = d.ParseFloat("Ballistic_Drop", 0f);
+                if (drop < 1e-6f) g.GravityMultiplier = 0f;
+                else
+                {
+                    float sum = 0f; Godot.Vector2 r = Godot.Vector2.Right;
+                    for (int l = 0; l < steps; l++) { sum += r.Y * travel; r.Y -= drop; r = r.Normalized(); }
+                    float t = steps * 0.02f;
+                    g.GravityMultiplier = (2f * sum / (t * t)) / -9.81f;
+                }
+            }
+            else g.GravityMultiplier = d.ParseFloat("Bullet_Gravity_Multiplier", 4f);
         }
     }
 }

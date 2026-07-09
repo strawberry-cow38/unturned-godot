@@ -241,8 +241,7 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null) return false;
-            float range = Gun?.Range ?? 200f;
-            float damage = Gun?.ZombieDamage ?? 34f;
+            float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
@@ -260,44 +259,105 @@ namespace UnturnedGodot
                 _recoilYaw += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f);
             }
 
-            var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition;
-            Vector3 aim = -_cam.GlobalTransform.Basis.Z;                    // undeviated shot axis (shared muzzle)
+            Vector3 aim = -_cam.GlobalTransform.Basis.Z;                    // undeviated shot axis
             Basis cb = _cam.GlobalTransform.Basis;                          // camera: X=right, Y=up, -Z=forward
-            Vector3 muzzle = from + cb.X * 0.12f - cb.Y * 0.04f + aim * 0.4f; // approx the muzzle (right, just below eye, fwd)
-            SpawnMuzzleLight(muzzle);   // once per shot — the Muzzle_0 flash lights the world (our viewmodel flash can't)
-
-            // Pellets: fire `Pellets` rays per shot, each deviated within the spread cone. Source: the magazine's
-            // Pellets count (rifles = 1; shotgun shells Shells_2 = 8). Each pellet gets its own spread + tracer +
-            // impact -> the shotgun's spread pattern. Recoil/flash/ammo above are per-shot, not per-pellet.
             float aimA = _viewmodel?.AimAlpha ?? 0f;
+            // muzzle: hip sits lower-right (where the barrel is); ADS pulls the gun onto the camera axis, so the
+            // muzzle centres (X offset -> 0) as you aim -> the bullet + tracer keep originating from the barrel.
+            Vector3 muzzle = from + cb.X * (0.12f * (1f - aimA)) - cb.Y * 0.035f + aim * 0.4f;
+            SpawnMuzzleLight(muzzle);   // once per shot — the Muzzle_0 flash lights the world
+
+            // Ballistics: each pellet is a SIMULATED PROJECTILE (travel + drop), not an instant ray. Velocity =
+            // dir * MuzzleVelocity; it steps every physics tick (0.02s) in StepBullets, dropping under gravity, its
+            // tracer flying with it, hits/damage landing when it arrives. (source: BulletInfo + UseableGun.cs:1539.)
             float spread = Gun != null && Gun.SpreadAngleDegrees > 0f
                 ? Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA) : 0f;
             int pellets = Mathf.Max(1, Gun?.Pellets ?? 1);
-            bool killed = false;
+            float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
+            int steps = Gun?.BallisticSteps ?? 20;
+            float gravity = -9.81f * (Gun?.GravityMultiplier ?? 4f);
             for (int i = 0; i < pellets; i++)
             {
-                // source: dir = aim * RandomForwardVectorInCone(spread), spread = base * Lerp(1, spreadAim, aimAlpha)
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
-                Vector3 to = from + dir * range;
-                var query = PhysicsRayQueryParameters3D.Create(from, to, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
-                var hit = space.IntersectRay(query);
-                SpawnTracer(muzzle, hit.Count > 0 ? hit["position"].AsVector3() : to);   // one tracer per pellet
-                if (hit.Count == 0) continue;
-                var collider = hit["collider"].As<GodotObject>();
-                Vector3 point = hit["position"].AsVector3();
-                SpawnFleshImpact(point, dir);   // blood burst — every hit here is flesh (enemy/ragdoll-bone layers)
-                if (collider is ZombieController z)
-                {
-                    bool wasDead = z.Dead;
-                    z.DamageHit(damage, point, dir);         // impact point -> death ragdoll shoved where hit
-                    if (!wasDead && z.Dead) Kills++;
-                    killed = true;
-                }
-                else if (collider is PhysicalBone3D pb)       // shooting a corpse -> tumble it
-                    pb.ApplyImpulse(dir * 7f, point - pb.GlobalPosition);
+                SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage);
             }
-            return killed;
+            return true;   // shot fired; the actual hits/kills land later in StepBullets
+        }
+
+        // A simulated bullet (Unturned's BulletInfo): flies from the muzzle with a velocity, dropping under gravity,
+        // stepped every physics tick; its tracer travels with it; it hits/despawns on contact or after its steps.
+        sealed class Bullet { public Vector3 Pos, Vel; public int StepsLeft; public float Gravity, Damage; public MeshInstance3D Tracer; }
+        readonly System.Collections.Generic.List<Bullet> _bullets = new();
+
+        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage)
+        {
+            var b = new Bullet { Pos = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, Tracer = MakeTracer() };
+            if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
+            _bullets.Add(b);
+        }
+
+        // Step every live bullet exactly like the source (UseableGun.cs:1539-1542): raycast this tick's segment for a
+        // hit, else advance pos += vel*0.02 and apply gravity vel.y += g*0.02. Called once per 50 Hz physics tick.
+        void StepBullets()
+        {
+            if (_bullets.Count == 0) return;
+            var space = GetWorld3D().DirectSpaceState;
+            for (int i = _bullets.Count - 1; i >= 0; i--)
+            {
+                var b = _bullets[i];
+                Vector3 next = b.Pos + b.Vel * 0.02f;
+                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
+                var hit = space.IntersectRay(query);
+                if (hit.Count > 0)
+                {
+                    Vector3 point = hit["position"].AsVector3();
+                    Vector3 hdir = b.Vel.Normalized();
+                    var collider = hit["collider"].As<GodotObject>();
+                    SpawnFleshImpact(point, hdir);
+                    if (collider is ZombieController z) { bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; }
+                    else if (collider is PhysicalBone3D pb) pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition);
+                    RemoveBullet(i);
+                    continue;
+                }
+                b.Pos = next;
+                b.Vel += new Vector3(0f, b.Gravity * 0.02f, 0f);
+                UpdateTracer(b);
+                if (--b.StepsLeft <= 0) RemoveBullet(i);
+            }
+        }
+
+        void RemoveBullet(int i) { _bullets[i].Tracer?.QueueFree(); _bullets.RemoveAt(i); }
+
+        // The traveling tracer: a thin additive "Bullet"-textured streak that rides with the bullet, oriented along
+        // its velocity (the Military_30's Trail_0). Made once per bullet; UpdateTracer re-places it each step.
+        MeshInstance3D MakeTracer()
+        {
+            if (!_tracerTexTried)
+            {
+                _tracerTexTried = true;
+                string p = ProjectSettings.GlobalizePath("res://content/bullet.png");
+                if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
+            }
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                AlbedoColor = new Color(1f, 0.9f, 0.55f),
+            };
+            if (_tracerTex != null) mat.AlbedoTexture = _tracerTex;
+            return new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, 5f) }, MaterialOverride = mat };
+        }
+
+        void UpdateTracer(Bullet b)
+        {
+            if (b.Tracer == null) return;
+            Vector3 axis = b.Vel.LengthSquared() > 1e-6f ? b.Vel.Normalized() : Vector3.Forward;
+            Vector3 center = b.Pos - axis * 2.5f;   // the 5m streak trails behind the bullet's leading point
+            Vector3 up = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.99f ? Vector3.Right : Vector3.Up;
+            b.Tracer.LookAtFromPosition(center, b.Pos, up);   // box length (local -Z) aims at the bullet's head
         }
 
         // Flesh impact — the source Flesh_Dynamic effect (impact ID 5: a ~25-particle billboard blood spray,
@@ -340,39 +400,8 @@ namespace UnturnedGodot
             timer.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
         }
 
-        static Texture2D _tracerTex;
+        static Texture2D _tracerTex;      // the "Bullet" sprite, loaded once (shared by MakeTracer)
         static bool _tracerTexTried;
-        // Brief world-space tracer (the Military_30's Trail_0): a thin additive "Bullet"-textured box from ~muzzle
-        // to the impact point, shown for a couple of frames then freed. Source renders it as a stretch-billboard
-        // particle emitted at the muzzle down the shot direction (UseableGun.cs:645); a stretched box reads the same
-        // from the third-person demo cam. Both ported guns carry the tracer mag, so every shot leaves one.
-        void SpawnTracer(Vector3 from, Vector3 to)
-        {
-            float len = from.DistanceTo(to);
-            if (len < 0.5f) return;
-            if (!_tracerTexTried)
-            {
-                _tracerTexTried = true;
-                string p = ProjectSettings.GlobalizePath("res://content/bullet.png");
-                if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
-            }
-            var mat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                AlbedoColor = new Color(1f, 0.9f, 0.55f),
-            };
-            if (_tracerTex != null) mat.AlbedoTexture = _tracerTex;
-            var mi = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, len) }, MaterialOverride = mat };
-            GetTree().CurrentScene?.AddChild(mi);
-            Vector3 axis = (to - from).Normalized();
-            Vector3 up = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.99f ? Vector3.Right : Vector3.Up;
-            mi.LookAtFromPosition((from + to) * 0.5f, to, up);   // box length (local Z) spans from->to
-            var timer = GetTree().CreateTimer(0.05);   // very brief — a static line held longer lags behind you when moving
-            timer.Timeout += () => { if (IsInstanceValid(mi)) mi.QueueFree(); };
-        }
 
         // Brief world-space muzzle flash light. The source Muzzle_0 effect illuminates the environment on each shot;
         // our viewmodel flash lives in an isolated SubViewport world, so it can't light the main scene. Warm Muzzle_0
@@ -404,6 +433,7 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
+            StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             if (_dead)
             {
                 _deathTimer -= delta;
