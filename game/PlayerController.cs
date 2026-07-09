@@ -238,7 +238,11 @@ namespace UnturnedGodot
             float damage = Gun?.ZombieDamage ?? 34f;
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
-            _viewmodel?.Kick();
+            // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
+            if (Gun != null)
+                _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ),
+                                 new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ));
+            else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero);
             if (Gun != null)   // camera recoil: pitch up + random-sign yaw, scaled by Recover (source: aim gets kick*Recover)
             {
                 _recoilPitch += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;
@@ -363,6 +367,10 @@ namespace UnturnedGodot
                 strafe  = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             bool jump = Input.IsPhysicalKeyPressed(Key.Space);
+
+            // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
+            bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;
+            _viewmodel?.SetLocomotion(moving, _move.Stance);
 
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, IsOnFloor(), (float)delta);
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);

@@ -19,6 +19,11 @@ namespace UnturnedGodot
         // gets kick*Recover then recovers; the gun viewmodel gets the full kick (UseableGun.cs:1049/1188/1191).
         public float RecoilMinX, RecoilMaxX, RecoilMinY, RecoilMaxY;
         public float RecoverX, RecoverY;
+        // Per-shot viewmodel-camera SHAKE (metres): each shot adds a random offset in [min,max] per axis to
+        // the recoil viewmodel-camera spring, which springs back to rest (UseableGun.cs:921 reads these into
+        // PlayerAnimator.AddRecoilViewmodelCameraOffset -> recoilViewmodelCameraOffset). Eaglefire's is Z-heavy
+        // (-0.01..-0.02): the gun punches back toward the camera each shot. Distinct from the aim recoil above.
+        public float ShakeMinX, ShakeMinY, ShakeMinZ, ShakeMaxX, ShakeMaxY, ShakeMaxZ;
         // Firemodes (flags in the .dat): the Eaglefire has Safety + Semi + Bursts 3.
         public bool HasSafety, HasSemi, HasAuto;
         public int BurstCount;   // Bursts value; 0 = no burst mode
@@ -42,6 +47,12 @@ namespace UnturnedGodot
                 RecoilMaxY = d.ParseFloat("Recoil_Max_Y"),
                 RecoverX = d.ParseFloat("Recover_X", 0.4f),
                 RecoverY = d.ParseFloat("Recover_Y", 0.4f),
+                ShakeMinX = d.ParseFloat("Shake_Min_X"),
+                ShakeMinY = d.ParseFloat("Shake_Min_Y"),
+                ShakeMinZ = d.ParseFloat("Shake_Min_Z"),
+                ShakeMaxX = d.ParseFloat("Shake_Max_X"),
+                ShakeMaxY = d.ParseFloat("Shake_Max_Y"),
+                ShakeMaxZ = d.ParseFloat("Shake_Max_Z"),
                 HasSafety = d.ContainsKey("Safety"),
                 HasSemi = d.ContainsKey("Semi"),
                 HasAuto = d.ContainsKey("Auto"),

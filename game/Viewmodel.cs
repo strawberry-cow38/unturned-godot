@@ -1,4 +1,5 @@
 using Godot;
+using SDG.Unturned;   // EPlayerStance (bob speed/amplitude are stance-driven)
 
 namespace UnturnedGodot
 {
@@ -24,6 +25,15 @@ namespace UnturnedGodot
         float _gunRoll = 0f;
         float _recoil;
         double _t;
+        // Source-accurate viewmodel-camera motion (PlayerAnimator): the walk BOB (viewmodelMovementOffset,
+        // Rk4Spring2) + the per-shot recoil SHAKE (recoilViewmodelCameraOffset, Rk4Spring3), both applied to
+        // the viewmodel camera's local position. Stiffness/damping are Inspector-serialized on the Player
+        // prefab in the original (not in the scripts) -> tuned here; the motion + amplitudes are source-exact.
+        Rk4Spring2 _bobSpring = new Rk4Spring2(900f, 60f);   // tracks the Sin(speed*t) target cleanly + eases stop
+        Rk4Spring3 _shakeSpring = new Rk4Spring3(550f, 40f); // snappy kick, settles ~0.2s (slight overshoot)
+        bool _moving;                       // player has movement input this frame (drives bob on/off)
+        EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE -> bob speed + amplitude
+        float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
         bool _reloading;      // true while the Gun_Reload clip plays (blocks ADS)
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
@@ -205,7 +215,22 @@ namespace UnturnedGodot
             AddChild(_layer);
         }
 
-        public void Kick() { _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; EjectCasing(); _shootSnd?.Play(); }
+        // Fire: muzzle flash + casing + sound, plus the source per-shot recoil SHAKE — add a random offset in
+        // [shakeMin, shakeMax] per axis to the recoil viewmodel-camera spring (UseableGun.cs:921 -> AddRecoil
+        // ViewmodelCameraOffset), which springs back to rest. STAND stance = 1x (crouch 0.85 / prone 0.7 handled
+        // where fired). _recoil (kept) still drives the small muzzle-rise rotation flourish.
+        public void Kick(Vector3 shakeMin, Vector3 shakeMax)
+        {
+            _recoil = Mathf.Min(1f, _recoil + 0.7f); _flash = 0.05f; EjectCasing(); _shootSnd?.Play();
+            _shakeSpring.CurrentPosition += new Vector3(
+                _rng.RandfRange(Mathf.Min(shakeMin.X, shakeMax.X), Mathf.Max(shakeMin.X, shakeMax.X)),
+                _rng.RandfRange(Mathf.Min(shakeMin.Y, shakeMax.Y), Mathf.Max(shakeMin.Y, shakeMax.Y)),
+                _rng.RandfRange(Mathf.Min(shakeMin.Z, shakeMax.Z), Mathf.Max(shakeMin.Z, shakeMax.Z)));
+        }
+
+        // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
+        // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
+        public void SetLocomotion(bool moving, EPlayerStance stance) { _moving = moving; _stance = stance; }
 
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
@@ -256,10 +281,33 @@ namespace UnturnedGodot
             _aimAlpha = AimEase(_aimT);
             _arms.AimBlend = _aimAlpha;
             _arms.Tick(delta);   // manual-advance the base anim, then layer the additive Aim_Start pose on top
-            float swayMult = Mathf.Lerp(1f, 0.1f, _aimAlpha);   // startAim: viewmodelSwayMultiplier 1 -> 0.1
-            var sway = new Vector3(Mathf.Sin((float)_t * 1.4f) * 0.004f, Mathf.Sin((float)_t * 2.2f) * 0.003f, 0f) * swayMult;
-            Vector3 hipPos = _armsPos + sway + new Vector3(0f, 0.01f, 0.05f) * _recoil;
-            _arms.Position = hipPos;
+            // ---- source viewmodel-camera motion (PlayerAnimator): walk bob + recoil shake ----
+            // blendedViewmodelSwayMultiplier eases toward the sway target (1 hip -> 0.1 aiming) at 16/s.
+            _blendedSway = Mathf.Lerp(_blendedSway, Mathf.Lerp(1f, 0.1f, _aimAlpha), 16f * (float)delta);
+            // stance-driven bob frequency (SPEED_*) + amplitude (BOB_*), scaled by the sway multiplier.
+            float bobSpeed = _stance switch { EPlayerStance.SPRINT => 10f, EPlayerStance.CROUCH => 6f, EPlayerStance.PRONE => 4f, _ => 8f };
+            float bobAmp = (_stance switch { EPlayerStance.SPRINT => 0.075f, EPlayerStance.CROUCH => 0.025f, EPlayerStance.PRONE => 0.0125f, _ => 0.05f }) * _blendedSway;
+            if (_moving)
+            {
+                float s = Mathf.Sin(bobSpeed * (float)_t) * bobAmp;   // horizontal sine; vertical = |horizontal| (double-freq dip)
+                _bobSpring.TargetPosition = new Vector2(s, Mathf.Abs(s));
+            }
+            else _bobSpring.TargetPosition = Vector2.Zero;
+            _bobSpring.Update((float)delta);
+            _shakeSpring.TargetPosition = Vector3.Zero;   // recoil shake always springs back to rest
+            _shakeSpring.Update((float)delta);
+            // Bob + recoil shake as an ARMS offset. The source moves the viewmodel CAMERA; our arms are children
+            // of that camera (rigid), so instead we move the arms by the NEGATIVE offset — the same on-screen sway
+            // (camera fixed, arms move opposite). Godot arms-local == camera-local (scale 1). Source maps bob to
+            // (horizontal, -vertical dip); the Eaglefire's negative shake Z becomes a +Z arms push = a back-punch
+            // toward the viewer on each shot.
+            Vector3 vmOffset = new Vector3(
+                -(_bobSpring.CurrentPosition.X - _shakeSpring.CurrentPosition.X),
+                 (_bobSpring.CurrentPosition.Y - _shakeSpring.CurrentPosition.Y),
+                -_shakeSpring.CurrentPosition.Z);
+
+            Vector3 hipPos = _armsPos;   // hip anchor; the ADS slide + bob/shake are added below
+            _arms.Position = hipPos;     // set the hip pose first so the ADS sight measurement reads its hip position
             // SOURCE-EXACT ADS (GetAimingViewmodelAlignment): bring the sight's real Aim hook onto the camera
             // ORIGIN — the source parks the viewmodel camera AT the aim hook (InverseTransformPoint into the cam's
             // space, scaled by aim progress). No forced depth: the sight sits at its natural eye relief, so its
@@ -267,8 +315,9 @@ namespace UnturnedGodot
             if (_aimAlpha > 0.0001f && _sight != null)
             {
                 Vector3 mCam = _cam.ToLocal(_sight.GlobalPosition);   // aim hook, camera-local
-                _arms.Position = hipPos - mCam * _aimAlpha;           // slide arms so the aim hook -> camera origin
+                hipPos -= mCam * _aimAlpha;                           // slide arms so the aim hook -> camera origin
             }
+            _arms.Position = hipPos + vmOffset;   // hip/ADS pose + bob + recoil shake (arms move opposite the source vm camera)
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 
             if (_gun != null && _gun.GetParent() is Node3D att)
