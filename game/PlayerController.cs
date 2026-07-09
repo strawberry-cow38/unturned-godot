@@ -467,15 +467,19 @@ namespace UnturnedGodot
             Inventory.wearPants(new Item(209));      // Cargo Pants -> pants slot + 6x3 storage
             Inventory.equipToSlot(0, new Item(4));     // Eaglefire -> primary
             Inventory.equipToSlot(1, new Item(363));   // Maplestrike -> secondary
+            // items DON'T stack (Unturned is grid-based): each is its own single (amount-1) grid item.
             Inventory.items[2].tryAddItem(new Item(15));            // Medkit in pockets
-            Inventory.items[2].tryAddItem(new Item(95, 3));         // Bandage x3
+            Inventory.items[2].tryAddItem(new Item(95));            // Bandage
+            Inventory.items[2].tryAddItem(new Item(95));            // Bandage (separate slot -- no stacking)
             Inventory.items[2].tryAddItem(new Item(14));            // Bottled Water
             var bag = Inventory.items[PlayerInventory.BACKPACK];
             bag.tryAddItem(new Item(15));                           // Medkit
-            bag.tryAddItem(new Item(13, 5));                        // Canned Beans x5
-            bag.tryAddItem(new Item(14, 2));                        // Bottled Water x2
-            bag.tryAddItem(new Item(95, 6));                        // Bandage x6
-            Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13, 2));  // Canned Beans x2 in pants
+            bag.tryAddItem(new Item(13));                           // Canned Beans
+            bag.tryAddItem(new Item(13));                           // Canned Beans (separate)
+            bag.tryAddItem(new Item(14));                           // Bottled Water
+            bag.tryAddItem(new Item(14));                           // Bottled Water (separate)
+            bag.tryAddItem(new Item(95));                           // Bandage
+            Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
         }
 
         // R to reload: block firing, then refill the magazine after the reload's duration. The reload takes the

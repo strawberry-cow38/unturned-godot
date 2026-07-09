@@ -103,7 +103,10 @@ namespace UnturnedGodot
                 bool crawler = Speciality == ESpeciality.CRAWLER;
                 _rig.WalkClip = crawler ? "Move_" + _rng.RandiRange(4, 5) : "Move_" + _rng.RandiRange(0, 3);
                 _rig.RunClip = _rig.WalkClip;             // zombies don't run; shamble at any speed
-                _rig.IdleClip = "Idle_" + _rng.RandiRange(0, 3);
+                // A crawler must NOT stand up to an upright Idle_0-3 when it stops (e.g. at the player, right after a
+                // bite -- master's report). Keep it low by reusing its own crawl move (Move_4/5) as the idle, so it
+                // writhes in place instead of standing. The rest use the upright idles.
+                _rig.IdleClip = crawler ? _rig.WalkClip : "Idle_" + _rng.RandiRange(0, 3);
                 // per-speciality attack/startle anim ids (Zombie.cs sendZombieAttack/sendZombieStartle): the
                 // crawler crawls + strikes low (Attack_5), the sprinter has its own set (6-8), the rest 0-4.
                 if (Speciality == ESpeciality.CRAWLER) { _atkId = 5; _startleId = _rng.Randf() < 0.5f ? 3 : 6; }

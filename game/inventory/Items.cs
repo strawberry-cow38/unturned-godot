@@ -72,9 +72,16 @@ namespace SDG.Unturned
             onStateUpdated?.Invoke();
         }
 
+        // Stacking is OFF by default: Unturned items don't stack in the grid -- each is its own slot. Left as an
+        // opt-in OPTION (set StackingEnabled = true) that merges same-id items into a single jar's amount instead.
+        public static bool StackingEnabled = false;
+
         public bool tryAddItem(Item item)
         {
             if (getItemCount() >= 200) return false;
+            if (StackingEnabled)
+                foreach (var j in items)
+                    if (j.item != null && j.item.id == item.id) { j.item.amount += item.amount; onStateUpdated?.Invoke(); return true; }
             ItemJar itemJar = new ItemJar(item);
             if (!tryFindSpace(itemJar.size_x, itemJar.size_y, out var x, out var y, out var rot)) return false;
             itemJar.x = x; itemJar.y = y; itemJar.rot = rot;

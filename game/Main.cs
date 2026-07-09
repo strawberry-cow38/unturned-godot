@@ -13,6 +13,7 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath;
+        bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         int _frame;
         string _rigDir;                              // --rig=DIR : capture a frame strip here
         int[] _rigCaptureFrames = { 4, 12, 20, 28, 36, 44 };
@@ -41,6 +42,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
                 else if (arg == "--play") play = true;
+                else if (arg == "--nozombies") _noZombies = true;   // no-zombie test environment
                 else if (arg == "--netdemo") netdemo = true;
                 else if (arg == "--server") server = true;
                 else if (arg == "--client") client = true;
@@ -478,8 +480,9 @@ namespace UnturnedGodot
             }
             else
             {
-                AddChild(new HordeSpawner { Target = player });
-                GD.Print("[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
+                if (!_noZombies) AddChild(new HordeSpawner { Target = player });
+                GD.Print(_noZombies ? "[PLAY] interactive: NO-ZOMBIE test environment"
+                                    : "[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }
         }
 
