@@ -22,6 +22,7 @@ namespace UnturnedGodot
         const float IconSz = 20f, IconX = 5f, BarX = 30f, BarH = 10f, RowH = 30f, TopPad = 5f;
 
         readonly System.Collections.Generic.List<(ColorRect fill, System.Func<float> val)> _vitals = new();
+        readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
 
         public override void _Ready()
@@ -46,6 +47,12 @@ namespace UnturnedGodot
             AddVital(lifeBox, 1, "hud_food.png",    CO, () => 0.82f);   // food/water/stamina aren't simulated yet -> placeholders
             AddVital(lifeBox, 2, "hud_water.png",   CB, () => 0.68f);
             AddVital(lifeBox, 3, "hud_stamina.png", CY, () => 0.95f);
+
+            // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown
+            // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
+            AddStatus(root, 0, "hud_bleeding.png", () => Player != null && Player.Bleeding);
+            AddStatus(root, 1, "hud_broken.png",   () => false);
+            AddStatus(root, 2, "hud_starved.png",  () => false);
 
             // ammo count, bottom-right
             _ammo = new Label();
@@ -82,10 +89,36 @@ namespace UnturnedGodot
             _vitals.Add((fill, val));
         }
 
+        // a 40x40 status box (SleekBoxIcon): dark background + centred icon, shown only on its condition
+        void AddStatus(Control root, int i, string icon, System.Func<bool> on)
+        {
+            var box = new Control();
+            Anchor(box, 8f + i * 46f, 132f, 40f, 40f);
+            var bg = new ColorRect { Color = new Color(0f, 0f, 0f, 0.5f) };
+            bg.SetAnchorsPreset(Control.LayoutPreset.FullRect); bg.MouseFilter = Control.MouseFilterEnum.Ignore;
+            box.AddChild(bg);
+            var ic = new TextureRect { Texture = LoadTex($"res://content/{icon}"), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+            ic.SetAnchorsPreset(Control.LayoutPreset.FullRect); ic.MouseFilter = Control.MouseFilterEnum.Ignore;
+            box.AddChild(ic);
+            box.Visible = false;
+            root.AddChild(box);
+            _status.Add((box, on));
+        }
+
+        // anchor a control to the screen bottom-left: `up` px above the bottom, at x, sized w x h
+        static void Anchor(Control c, float x, float up, float w, float h)
+        {
+            c.AnchorLeft = 0; c.AnchorRight = 0; c.AnchorTop = 1; c.AnchorBottom = 1;
+            c.OffsetLeft = x; c.OffsetRight = x + w; c.OffsetBottom = -up; c.OffsetTop = -up - h;
+            c.MouseFilter = Control.MouseFilterEnum.Ignore;
+        }
+
         public override void _Process(double delta)
         {
             foreach (var (fill, val) in _vitals)
                 fill.AnchorRight = Mathf.Clamp(val(), 0f, 1f);   // foreground.SizeScale_X = state
+            foreach (var (box, on) in _status)
+                box.Visible = on();
             if (Player != null)
                 _ammo.Text = $"{Player.Ammo} / {(Player.Gun?.AmmoMax ?? Player.Ammo)}";
         }

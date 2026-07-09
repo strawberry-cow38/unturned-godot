@@ -22,6 +22,8 @@ namespace UnturnedGodot
         public float Health = 100f;
         public float MaxHealth = 100f;
         public int Deaths;
+        public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
+        double _bleedTimer;
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // When set (e.g. by a recorded demo or a net-driven bot), overrides keyboard input: x=strafe, y=forward.
@@ -48,6 +50,7 @@ namespace UnturnedGodot
         {
             if (_dead || Health <= 0f) return;
             Health -= amount;
+            if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
             if (Health <= 0f) { Deaths++; Die(); }
         }
 
@@ -434,6 +437,7 @@ namespace UnturnedGodot
         {
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
+            if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
             if (_dead)
             {
                 _deathTimer -= delta;
