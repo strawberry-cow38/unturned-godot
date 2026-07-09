@@ -41,8 +41,16 @@ namespace UnturnedGodot
             {
                 Env.BackgroundColor = Grad(Sky);
                 Env.AmbientLightColor = Grad(Amb);
+                // depth fog tinted to the sky -- thin at noon, thick at dawn/dusk/night (extra when Overcast)
+                float noon = 1f - Mathf.Abs(Time - 0.5f) * 2f;             // 1 at noon, 0 at midnight
+                Env.FogEnabled = true;
+                Env.FogLightColor = Grad(Sky).Lerp(new Color(0.55f, 0.57f, 0.6f), 0.35f);
+                Env.FogDensity = Mathf.Lerp(0.012f, 0.0025f, noon) * (Overcast ? 2.4f : 1f);
+                Env.FogSkyAffect = 0.4f;
             }
         }
+
+        public bool Overcast;   // denser fog + greyer feel (a simple weather state)
 
         Color Grad(Color[] keys)
         {
