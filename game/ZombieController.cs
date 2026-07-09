@@ -50,6 +50,7 @@ namespace UnturnedGodot
         EPath _path;
         double _age;                // local clock (Time.time analogue)
         float _lastAttack = -100f;  // last swing START (Zombie.lastAttack); the hit lands at +ATTACK_TIME/2
+        Vector3 _home; bool _homeSet;   // spawn point, to wander back to on leave (Zombie isLeaving)
 
         public override void _Ready()
         {
@@ -153,15 +154,20 @@ namespace UnturnedGodot
             }
             if (Target is not PlayerController player) return;
             _age += delta;
+            if (!_homeSet) { _home = GlobalPosition; _homeSet = true; }   // remember the spawn point
 
-            // --- idle: stand still and try to sense the player (AlertTool) ---
+            // --- idle: wander back toward spawn if we chased the player off and lost them out here (Zombie
+            // isLeaving), otherwise stand still; either way keep sensing for the player (AlertTool) ---
             if (_hunt == EHunt.NONE)
             {
                 if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(false);   // FRIENDLY: solid again
-                Velocity = new Vector3(0, Velocity.Y - g * dt, 0);
+                Vector3 toHome = _home - GlobalPosition; toHome.Y = 0f;
+                bool goingHome = toHome.LengthSquared() > 4f;             // >2 m from spawn -> shamble back
+                Vector3 hv = goingHome ? toHome.Normalized() * (Speed * 0.5f) : Vector3.Zero;
+                Velocity = new Vector3(hv.X, Velocity.Y - g * dt, hv.Z);
                 MoveAndSlide();
-                _rig?.Tick(delta);
-                _rig?.SetLocomotion(0f);
+                if (_rig != null) { _rig.Tick(delta); _rig.SetLocomotion(hv.Length()); }
+                if (hv.LengthSquared() > 1e-4f) LookAt(GlobalPosition + hv, Vector3.Up);
                 TrySense(player);
                 return;
             }
