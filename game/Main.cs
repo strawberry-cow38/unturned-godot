@@ -687,9 +687,10 @@ namespace UnturnedGodot
         // spec = "MODEL.txt" or "MODEL.txt:ALBEDO.png".
         void BuildBakeIcon(string spec)
         {
-            string model = spec, albedo = null;
+            string modelsStr = spec, albedo = null;
             int colon = spec.IndexOf(':');
-            if (colon >= 0) { model = spec[..colon]; albedo = spec[(colon + 1)..]; }
+            if (colon >= 0) { modelsStr = spec[..colon]; albedo = spec[(colon + 1)..]; }
+            var models = modelsStr.Split('+', System.StringSplitOptions.RemoveEmptyEntries);   // gun+sight+mag = assembled
 
             var env = new Godot.Environment
             {
@@ -700,7 +701,6 @@ namespace UnturnedGodot
             };
             AddChild(new WorldEnvironment { Environment = env });
 
-            var mesh = ContentProvider.ParseObj($"res://content/{model}");
             var mat = new StandardMaterial3D
             {
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // ripped meshes are CW-wound; show both faces
@@ -719,11 +719,19 @@ namespace UnturnedGodot
                 else GD.Print($"[BAKE] tex NOT FOUND: {p}");
             }
             if (mat.AlbedoTexture == null) mat.AlbedoColor = new Color(0f, 1f, 0f);   // GREEN = texture-load fallback
-            AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+
+            Aabb aabb = default; bool firstMesh = true;
+            foreach (var m in models)   // combine gun + attachments (sight/mag) into one assembled icon
+            {
+                var mesh = ContentProvider.ParseObj($"res://content/{m}");
+                if (mesh == null) continue;
+                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+                var mb = mesh.GetAabb();
+                aabb = firstMesh ? mb : aabb.Merge(mb); firstMesh = false;
+            }
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f });   // key from the camera side (+X)
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f });    // soft fill
 
-            var aabb = mesh.GetAabb();
             Vector3 c = aabb.Position + aabb.Size * 0.5f, s = aabb.Size;
             var ax = new (float e, Vector3 dir)[] { (s.X, Vector3.Right), (s.Y, Vector3.Up), (s.Z, Vector3.Back) };
             System.Array.Sort(ax, (a, b) => a.e.CompareTo(b.e));   // [0]=shortest [1]=middle [2]=longest
@@ -732,7 +740,7 @@ namespace UnturnedGodot
             cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
             cam.LookAt(c, -ax[1].dir);   // -middle axis = up (the model's height axis points "down" in mesh space)
             cam.Current = true;
-            GD.Print($"[BAKE] {model} aabb={s} longest={ax[2].e:F2} orthoSize={cam.Size:F2}");
+            GD.Print($"[BAKE] {modelsStr} aabb={s} longest={ax[2].e:F2} orthoSize={cam.Size:F2}");
         }
 
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
