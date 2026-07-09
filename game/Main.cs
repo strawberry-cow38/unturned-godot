@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -51,6 +51,7 @@ namespace UnturnedGodot
                 else if (arg == "--invdrop") invdrop = true;
                 else if (arg == "--invloot") invloot = true;
                 else if (arg == "--invcrate") invcrate = true;
+                else if (arg == "--daynight") daynight = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
             }
@@ -87,6 +88,13 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(2560, 1440);
                 BuildCrateDemo(gun);
+                return;
+            }
+
+            if (daynight)   // a fast day/night cycle over a reference scene (montage the render to see it)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildDayNightDemo();
                 return;
             }
 
@@ -375,7 +383,9 @@ namespace UnturnedGodot
                 AmbientLightEnergy = 0.6f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true };
+            AddChild(sun);
+            AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });   // a 5-minute day/night cycle
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -658,6 +668,44 @@ namespace UnturnedGodot
 
             player.OpenNearestCrate();   // within 2.5 m -> loads the crate into STORAGE + opens the dashboard
             GD.Print("[CRATE] opened a storage crate");
+        }
+
+        // A reference scene under a fast day/night cycle -- montage the --write-movie to see dawn -> noon -> dusk -> night.
+        void BuildDayNightDemo()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f),
+                AmbientLightEnergy = 0.85f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            var sun = new DirectionalLight3D { ShadowEnabled = true };
+            AddChild(sun);
+            AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 5f, Time = 0.22f });   // fast; start near dawn
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            for (int i = 0; i < 5; i++)   // boxes to catch the light + cast shadows
+            {
+                var b = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1f, 1.5f, 1f) } };
+                b.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.62f, 0.56f, 0.5f) };
+                b.Position = new Vector3((i - 2) * 2.5f, 0.75f, -3f);
+                AddChild(b);
+            }
+
+            var cam = new Camera3D { Current = true, Fov = 62f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 2.5f, 6f);
+            cam.LookAt(new Vector3(0f, 1.4f, -4f), Vector3.Up);   // boxes + horizon/sky
+            GD.Print("[DAYNIGHT] cycle demo");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).
