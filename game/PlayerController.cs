@@ -244,7 +244,6 @@ namespace UnturnedGodot
             if (_viewmodel != null) { _viewmodel.WorldSun = sun; _viewmodel.WorldEnv = env; }
         }
         int _burstLeft;                               // rounds remaining in the current burst
-        float _burstCd;                               // cooldown after a burst before another can start (no full-auto burst)
 
         bool _dead;
         double _deathTimer;
@@ -514,7 +513,7 @@ namespace UnturnedGodot
             {
                 case FireMode.Semi: Fire(); break;
                 case FireMode.Auto: Fire(); break;   // held-fire continues in _PhysicsProcess
-                case FireMode.Burst: if (_burstCd <= 0f) _burstLeft = Gun?.BurstCount ?? 3; break;   // gated so holding/spamming can't full-auto
+                case FireMode.Burst: _burstLeft = Gun?.BurstCount ?? 3; break;   // trigger-pull queues a burst (source: hold = one burst, fireRate paces it)
             }
         }
 
@@ -780,7 +779,6 @@ namespace UnturnedGodot
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
             if (_meleeCd > 0f) _meleeCd -= (float)delta;
-            if (_burstCd > 0f) _burstCd -= (float)delta;
             if (_grenadeCd > 0f) _grenadeCd -= (float)delta;
             if (_reloading)
             {
@@ -790,7 +788,7 @@ namespace UnturnedGodot
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
             if (_fireCd <= 0f && !_reloading)
             {
-                if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.4f; } else _burstLeft = 0; }
+                if (_burstLeft > 0) { if (Fire()) _burstLeft--; else _burstLeft = 0; }
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
