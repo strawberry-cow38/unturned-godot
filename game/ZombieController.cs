@@ -109,9 +109,14 @@ namespace UnturnedGodot
                 _rig.IdleClip = crawler ? _rig.WalkClip : "Idle_" + _rng.RandiRange(0, 3);
                 // per-speciality attack/startle anim ids (Zombie.cs sendZombieAttack/sendZombieStartle): the
                 // crawler crawls + strikes low (Attack_5), the sprinter has its own set (6-8), the rest 0-4.
-                if (Speciality == ESpeciality.CRAWLER) { _atkId = 5; _startleId = _rng.Randf() < 0.5f ? 3 : 6; }
-                else if (Speciality == ESpeciality.SPRINTER) { _atkId = _rng.RandiRange(6, 8); _startleId = _rng.RandiRange(4, 5); }
-                else { _atkId = _rng.RandiRange(0, 4); _startleId = _rng.RandiRange(0, 2); }
+                // Clip poses VERIFIED by render grids (2026-07-09): Attack_0-4 upright / Attack_5 prone / Attack_6-8
+                // crouched; Startle_1-2 upright / Startle_0,3,4,5 crouched / Startle_6 prone. The extracted clip INDICES
+                // never matched the source attack-IDs, so my old map handed SPRINTERS the crouched Attack_6-8 + Startle_4-5
+                // -> they crouched on every swing and read as crawlers (master's bug). Correct rule: UPRIGHT clips for the
+                // standing zombies (normal + sprinter, distinct subsets), the LOW/PRONE clips for crawlers only.
+                if (Speciality == ESpeciality.CRAWLER) { _atkId = _rng.RandiRange(5, 8); _startleId = _rng.Randf() < 0.5f ? 3 : 6; }
+                else if (Speciality == ESpeciality.SPRINTER) { _atkId = _rng.RandiRange(3, 4); _startleId = _rng.RandiRange(1, 2); }
+                else { _atkId = _rng.RandiRange(0, 2); _startleId = _rng.RandiRange(1, 2); }
                 _body = _rig;
                 _rig.Play(_rig.IdleClip);
             }
