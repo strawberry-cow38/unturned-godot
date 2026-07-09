@@ -273,7 +273,8 @@ namespace UnturnedGodot
                     Vector3 worldAxis = Vector3.Up.Cross(dir.Normalized()).Normalized();
                     Vector3 localAxis = (_cam.GlobalTransform.Basis.Inverse() * worldAxis).Normalized();   // InverseTransformDirection
                     float deg = Mathf.Min(amount, 25f) * 0.5f;
-                    _flinch = (_flinch * new Quaternion(localAxis, Mathf.DegToRad(deg))).Normalized();
+                    if (localAxis.IsFinite())   // a degenerate cam basis could NaN the axis -> skip rather than poison _flinch
+                        _flinch = (_flinch * new Quaternion(localAxis, Mathf.DegToRad(deg))).Normalized();
                 }
             }
 
@@ -760,7 +761,10 @@ namespace UnturnedGodot
                 _recoilYawPending -= dy;
             }
             PainAlpha = Mathf.Max(0f, PainAlpha - (float)delta);                 // hurt flash fades at 1/s (PlayerUI line 1835)
-            _flinch = _flinch.Slerp(Quaternion.Identity, 4f * (float)delta);     // flinch recovers to level at 4/s (PlayerLook line 1330)
+            // flinch recovers to level at 4/s (PlayerLook line 1330). GUARD: a degenerate hit can leave _flinch NaN or
+            // denormalized, and Godot's Slerp/Basis assert IsNormalized -> that was the "Quaternion is not normalized" spam.
+            if (!_flinch.IsFinite() || _flinch.LengthSquared() < 1e-6f) _flinch = Quaternion.Identity;
+            _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
             if (_cam != null && !_dead)
             {
                 // flinchLocalRotation * Euler(pitch, yaw) (PlayerLook line 1378) — the flinch left-multiplies the look
