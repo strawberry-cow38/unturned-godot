@@ -46,6 +46,7 @@ namespace UnturnedGodot
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
                 else if (arg == "--invdemo") invdemo = true;
+                else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
             }
 
             if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible
@@ -422,6 +423,42 @@ namespace UnturnedGodot
             // behind the zombie's facing goes undetected) leaves it oblivious to a point-blank spawn
             z.LookAt(new Vector3(player.GlobalPosition.X, z.GlobalPosition.Y, player.GlobalPosition.Z), Vector3.Up);
             GD.Print("[HURT] first-person: zombie point-blank, recording flash + flinch");
+        }
+
+        // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
+        // rejection, and drop-onto-item swap, printing PASS/FAIL per case. Verifies the drag MODEL without the mouse.
+        static void RunDragTest()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var inv = new SDG.Unturned.PlayerInventory();
+            var pk = inv.items[2];                              // pockets 5x3
+            pk.tryAddItem(new SDG.Unturned.Item(15));          // Medkit 2x2 -> (0,0)
+            pk.tryAddItem(new SDG.Unturned.Item(14));          // Bottled Water 1x1 -> (2,0)
+            pk.tryAddItem(new SDG.Unturned.Item(95));          // Bandage 1x1 -> (3,0)
+            int pass = 0, fail = 0;
+            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[DRAGTEST] PASS  {n}"); } else { fail++; GD.Print($"[DRAGTEST] FAIL  {n}"); } }
+
+            // 1. move Water (2,0) -> empty (4,2)
+            Check("move-to-empty returns true", inv.TryDrag(2, 2, 0, 2, 4, 2, 0));
+            Check("water now at (4,2)", pk.getItem(4, 2)?.item.id == 14);
+            Check("old cell (2,0) freed", pk.getItem(2, 0) == null);
+
+            // 2. out-of-bounds target rejected, no change
+            Check("OOB move returns false", !inv.TryDrag(2, 4, 2, 2, 10, 10, 0));
+            Check("water still at (4,2)", pk.getItem(4, 2)?.item.id == 14);
+
+            // 3. drop Water (4,2) onto Bandage (3,0) -> swap
+            Check("swap returns true", inv.TryDrag(2, 4, 2, 2, 3, 0, 0));
+            Check("water swapped to (3,0)", pk.getItem(3, 0)?.item.id == 14);
+            Check("bandage swapped to (4,2)", pk.getItem(4, 2)?.item.id == 95);
+
+            // 4. cross-page move Water (3,0) -> backpack, after wearing a bag
+            inv.wearBackpack(new SDG.Unturned.Item(253));      // 8x7
+            Check("cross-page move returns true", inv.TryDrag(2, 3, 0, SDG.Unturned.PlayerInventory.BACKPACK, 5, 5, 0));
+            Check("water now in backpack (5,5)", inv.items[SDG.Unturned.PlayerInventory.BACKPACK].getItem(5, 5)?.item.id == 14);
+            Check("water gone from pockets", pk.getItem(3, 0) == null);
+
+            GD.Print($"[DRAGTEST] RESULT {pass} passed, {fail} failed");
         }
 
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.

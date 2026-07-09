@@ -24,6 +24,14 @@ namespace UnturnedGodot
         bool _open;
         float _storageW, _storageH;
 
+        // drag-drop: registered drop zones (a page + the Control whose global rect maps to its cells) and the live drag
+        readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
+        bool _dragging;
+        byte _dragPage, _dragX0, _dragY0, _dragRot;
+        ItemJar _dragJar;
+        Vector2 _grab;          // cursor offset within the grabbed item's top-left cell
+        Control _dragTile;      // the floating tile that follows the cursor
+
         public bool IsOpen => _open;
 
         public override void _Ready()
@@ -54,6 +62,87 @@ namespace UnturnedGodot
         public void Close() { _open = false; Visible = false; }
 
         public override void _Process(double delta) { if (_open) CenterDash(); }   // keep centred as the viewport settles
+
+        // --- drag-drop: pick an item up on left-press, drop it on a cell (TryDrag = the ported move/swap), R rotates ---
+        public override void _Input(InputEvent e)
+        {
+            if (!_open || Inv == null) return;
+            if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
+            {
+                if (mb.Pressed && !_dragging) StartDrag(mb.GlobalPosition);
+                else if (!mb.Pressed && _dragging) Drop(mb.GlobalPosition);
+                GetViewport().SetInputAsHandled();   // don't let the click reach the game (fire etc.)
+            }
+            else if (e is InputEventMouseMotion mm && _dragging)
+            {
+                _dragTile.GlobalPosition = mm.GlobalPosition - _grab;
+            }
+            else if (e is InputEventKey { Pressed: true, Keycode: Key.R } && _dragging)
+            {
+                _dragRot = (byte)(_dragRot ^ 1);   // toggle a 90-degree rotation of the held item
+                RebuildDragTile();
+                GetViewport().SetInputAsHandled();
+            }
+        }
+
+        void StartDrag(Vector2 global)
+        {
+            if (!PointToCell(global, out byte page, out byte cx, out byte cy, out Control ctl, out bool isSlot)) return;
+            var pg = Inv.items[page];
+            byte idx = pg.getIndex(cx, cy);
+            if (idx == byte.MaxValue) return;
+            _dragJar = pg.getItem(idx);
+            _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
+            Vector2 itemTopLeft = ctl.GlobalPosition + (isSlot ? Vector2.Zero : new Vector2(_dragJar.x * CELL, _dragJar.y * CELL));
+            _grab = global - itemTopLeft;
+            _dragging = true;
+            RebuildDragTile();
+        }
+
+        void RebuildDragTile()
+        {
+            _dragTile?.QueueFree();
+            bool rot = _dragRot % 2 == 1;
+            int w = (rot ? _dragJar.size_y : _dragJar.size_x) * CELL;
+            int h = (rot ? _dragJar.size_x : _dragJar.size_y) * CELL;
+            _dragTile = MakeTile(_dragJar, w, h);
+            _dragTile.Modulate = new Color(1f, 1f, 1f, 0.8f);
+            _dragTile.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _root.AddChild(_dragTile);   // on top of the dashboard
+            _dragTile.GlobalPosition = GetViewport().GetMousePosition() - _grab;
+        }
+
+        void Drop(Vector2 global)
+        {
+            // the held item's top-left lands where the cursor is minus the grab; +half a cell so it snaps to the nearest
+            Vector2 topLeft = global - _grab + new Vector2(CELL / 2f, CELL / 2f);
+            if (PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _))
+                if (Inv.TryDrag(_dragPage, _dragX0, _dragY0, page, x1, y1, _dragRot))
+                    Refresh();
+            _dragging = false;
+            _dragTile?.QueueFree(); _dragTile = null;
+        }
+
+        // map a screen point to (page, cellX, cellY) over a registered drop zone
+        bool PointToCell(Vector2 global, out byte page, out byte cx, out byte cy, out Control ctl, out bool isSlot)
+        {
+            foreach (var (p, c, slot) in _drop)
+            {
+                if (new Rect2(c.GlobalPosition, c.Size).HasPoint(global))
+                {
+                    page = p; ctl = c; isSlot = slot;
+                    if (slot) { cx = 0; cy = 0; }
+                    else
+                    {
+                        Vector2 local = global - c.GlobalPosition;
+                        cx = (byte)Mathf.FloorToInt(local.X / CELL);
+                        cy = (byte)Mathf.FloorToInt(local.Y / CELL);
+                    }
+                    return true;
+                }
+            }
+            page = cx = cy = 0; ctl = null; isSlot = false; return false;
+        }
 
         // left column: the equip slots (hat/glasses/mask/shirt/vest/backpack/pants), each showing the worn item
         void BuildClothingColumn()
@@ -104,6 +193,7 @@ namespace UnturnedGodot
 
             // storage side
             foreach (Node c in _storageCol.GetChildren()) c.QueueFree();
+            _drop.Clear();
             float y = 0;
             _storageW = 5 * CELL;
             y = AddSlot("PRIMARY", 0, y);
@@ -141,6 +231,7 @@ namespace UnturnedGodot
             var box = new Panel { Position = new Vector2(0, y), Size = new Vector2(5 * CELL, CELL) };
             StyleBox(box, new Color(0f, 0f, 0f, 0.45f));
             _storageCol.AddChild(box);
+            _drop.Add((page, box, true));
             if (pg.getItemCount() > 0)
             {
                 var tile = MakeTile(pg.getItem(0), 5 * CELL, CELL);
@@ -157,6 +248,7 @@ namespace UnturnedGodot
             var grid = new GridPanel { Cells = new Vector2I(page.width, page.height), Cell = CELL,
                                        Position = new Vector2(0, y), Size = new Vector2(page.width * CELL, page.height * CELL) };
             _storageCol.AddChild(grid);
+            _drop.Add((page.page, grid, false));
             for (byte i = 0; i < page.getItemCount(); i++)
             {
                 var jar = page.getItem(i);

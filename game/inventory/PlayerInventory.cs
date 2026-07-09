@@ -76,6 +76,46 @@ namespace SDG.Unturned
             return true;
         }
 
+        // Drag an item from (page0, x0,y0) to (page1, x1,y1) at rotation rot1. Faithful port of ReceiveDragItem
+        // (move onto empty space -> checkSpaceDrag, remove+add) and ReceiveSwapItem (drop onto another item -> swap,
+        // checkSpaceSwap both ways, remove both, re-add crossed). Hand-slot pages force rot 0. Returns true if it moved.
+        // (The source's equipment/canEquipInPage guards are omitted -- this port has no equipment system yet.)
+        public bool TryDrag(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
+        {
+            if (page0 >= (byte)(PAGES - 1) || page1 >= (byte)(PAGES - 1) || items[page0] == null || items[page1] == null) return false;
+            byte index = items[page0].getIndex(x0, y0);
+            if (index == byte.MaxValue) return false;
+            ItemJar item = items[page0].getItem(index);
+            if (item == null) return false;
+
+            byte destIndex = items[page1].getIndex(x1, y1);
+            ItemJar dest = destIndex == byte.MaxValue ? null : items[page1].getItem(destIndex);
+
+            if (dest == null || dest == item)
+            {
+                // MOVE onto empty space
+                if (!items[page1].checkSpaceDrag(x0, y0, item.rot, x1, y1, rot1, item.size_x, item.size_y, page0 == page1)) return false;
+                if (page1 < SLOTS) rot1 = 0;
+                items[page0].removeItem(index);
+                items[page1].addItem(x1, y1, rot1, item.item);
+                return true;
+            }
+
+            // SWAP with the item already there
+            byte rot0 = dest.rot;
+            if (!items[page0].checkSpaceSwap(x0, y0, item.size_x, item.size_y, item.rot, dest.size_x, dest.size_y, rot0)) return false;
+            if (!items[page1].checkSpaceSwap(x1, y1, dest.size_x, dest.size_y, dest.rot, item.size_x, item.size_y, rot1)) return false;
+            items[page0].removeItem(index);
+            byte b = destIndex;
+            if (page0 == page1 && b > index) b--;
+            items[page1].removeItem(b);
+            if (page0 < SLOTS) rot0 = 0;
+            if (page1 < SLOTS) rot1 = 0;
+            items[page0].addItem(x0, y0, rot0, dest.item);
+            items[page1].addItem(x1, y1, rot1, item.item);
+            return true;
+        }
+
         // total count of an item id across the player's own pages (0..PAGES-2), for HUD/ammo/craft checks later
         public int getItemCount(ushort id)
         {

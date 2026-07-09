@@ -174,6 +174,25 @@ namespace SDG.Unturned
             return true;
         }
 
+        // can newSize@newRot sit at (x,y) if oldSize@oldRot is removed from there? (drop-to-swap validity)
+        public bool checkSpaceSwap(byte x, byte y, byte oldSize_X, byte oldSize_Y, byte oldRot, byte newSize_X, byte newSize_Y, byte newRot)
+        {
+            if (page < PlayerInventory.SLOTS) return true;
+            if (oldRot % 2 == 1) { byte n = oldSize_X; oldSize_X = oldSize_Y; oldSize_Y = n; }
+            if (newRot % 2 == 1) { byte n = newSize_X; newSize_X = newSize_Y; newSize_Y = n; }
+            for (byte b = x; b < x + newSize_X; b++)
+                for (byte b2 = y; b2 < y + newSize_Y; b2++)
+                {
+                    if (b >= width || b2 >= height) return false;
+                    if (slots[b, b2])
+                    {
+                        int num3 = b - x, num4 = b2 - y;
+                        if (num3 < 0 || num4 < 0 || num3 >= oldSize_X || num4 >= oldSize_Y) return false;
+                    }
+                }
+            return true;
+        }
+
         // scan the grid row-major for the first free size_x by size_y block (rot 0), else the rotated fit (rot 1)
         public bool tryFindSpace(byte size_x, byte size_y, out byte x, out byte y, out byte rot)
         {
