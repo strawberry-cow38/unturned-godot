@@ -248,7 +248,13 @@ namespace UnturnedGodot
         {
             var pg = Inv.items[_selPage];
             byte idx = pg.getIndex(_selX, _selY);
-            if (idx != byte.MaxValue) pg.removeItem(idx);
+            if (idx != byte.MaxValue)
+            {
+                var item = pg.getItem(idx).item;
+                pg.removeItem(idx);
+                if (Player != null && item != null)   // spawn it in the world just in front of the player
+                    Player.DropWorldItem(item, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
+            }
             CloseSelection();
             Refresh();
         }

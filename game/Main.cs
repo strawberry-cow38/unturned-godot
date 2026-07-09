@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -48,6 +48,7 @@ namespace UnturnedGodot
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invequip") { invdemo = true; invequip = true; }
+                else if (arg == "--invdrop") invdrop = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
             }
@@ -63,6 +64,13 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(2560, 1440);   // match the movie size so the UI lays out full-frame
                 BuildInventoryDemo(gun, invsel, invequip);
+                return;
+            }
+
+            if (invdrop)    // drop items into the world + a pickup check
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildDropDemo(gun);
                 return;
             }
 
@@ -516,6 +524,50 @@ namespace UnturnedGodot
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();
             GD.Print("[INV] inventory dashboard open, real items populated");
+        }
+
+        // Drops a spread of items into the world (rarity markers + names) and runs a pickup check, viewed from an
+        // overview camera for a --write-movie / screenshot.
+        void BuildDropDemo(string gunPath)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f),
+                AmbientLightEnergy = 0.7f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60, 60) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+            player.Camera.Current = false;   // use an overview instead of the FP cam
+
+            // drop a spread of real items in front of the player
+            player.DropWorldItem(new SDG.Unturned.Item(15), new Vector3(-1.4f, 0.1f, -3.0f));   // Medkit
+            player.DropWorldItem(new SDG.Unturned.Item(95), new Vector3(-0.5f, 0.1f, -3.6f));   // Bandage
+            player.DropWorldItem(new SDG.Unturned.Item(14), new Vector3(0.5f, 0.1f, -3.2f));    // Bottled Water
+            player.DropWorldItem(new SDG.Unturned.Item(13), new Vector3(1.4f, 0.1f, -3.8f));    // Canned Beans
+            player.DropWorldItem(new SDG.Unturned.Item(363), new Vector3(0f, 0.1f, -1.4f));     // Maplestrike (within 2m)
+
+            var overview = new Camera3D { Current = true, Fov = 58f };
+            AddChild(overview);
+            overview.Position = new Vector3(0f, 3.4f, 1.6f);
+            overview.LookAt(new Vector3(0f, 0.3f, -3.0f), Vector3.Up);
+
+            player.TryPickup();   // the Maplestrike at -1.4 is within reach -> [pickup]
+            GD.Print("[DROP] dropped 5 world items; ran a pickup check");
         }
 
         // A few bundled ripped crates as cover/scenery (portable res:// assets).

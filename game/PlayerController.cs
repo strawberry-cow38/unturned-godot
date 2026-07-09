@@ -46,6 +46,38 @@ namespace UnturnedGodot
             if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f);
             if (a.useStopsBleeding) { Bleeding = false; _bleedTimer = 0; }
         }
+
+        // Drop an item into the world at pos, grounded by a downward cast (ItemManager.dropItem: snap to ground +
+        // a small +-0.125 spread). Spawns a WorldItem you can walk back over and pick up.
+        public void DropWorldItem(Item item, Vector3 pos)
+        {
+            var space = GetWorld3D().DirectSpaceState;
+            var q = PhysicsRayQueryParameters3D.Create(pos + Vector3.Up, pos + Vector3.Down * 2048f);
+            q.CollisionMask = 1u << 0;   // ground
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(q);
+            if (hit.Count > 0) pos = (Vector3)hit["position"];
+            pos += new Vector3(_rng.RandfRange(-0.125f, 0.125f), 0f, _rng.RandfRange(-0.125f, 0.125f));
+            WorldItem.Spawn(GetParent(), item, pos);
+        }
+
+        // E: pick up the nearest dropped item within ~2 m, adding it to the inventory (drops the world item if it fit).
+        public void TryPickup()
+        {
+            WorldItem nearest = null; float best = 4f;   // 2 m radius, squared
+            foreach (var n in GetTree().GetNodesInGroup("worlditems"))
+                if (n is WorldItem wi)
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(wi.GlobalPosition);
+                    if (d < best) { best = d; nearest = wi; }
+                }
+            if (nearest != null && Inventory.tryAddItem(nearest.Item))
+            {
+                GD.Print($"[pickup] {nearest.Item.GetAsset()?.itemName}");
+                nearest.QueueFree();
+                _invUI?.Refresh();
+            }
+        }
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
@@ -276,6 +308,8 @@ namespace UnturnedGodot
                 CycleFiremode();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Q })
                 SwitchWeapon();   // toggle Eaglefire <-> Maplestrike
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
+                TryPickup();      // pick up the nearest dropped world item
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
                 _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
