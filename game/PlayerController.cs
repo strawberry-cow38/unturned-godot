@@ -36,6 +36,7 @@ namespace UnturnedGodot
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
         // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
         public float Stamina = 1f, Food = 1f, Water = 1f;
+        float _staminaRegenDelay;   // seconds to wait after releasing sprint before stamina regenerates
         public float Infection;   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount, 0f, 1f);
 
@@ -231,10 +232,12 @@ namespace UnturnedGodot
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
-        float _recoilPitch, _recoilYaw;  // camera recoil offset (deg), decays back toward 0 (PlayerLook Lerp rate 4)
+        float _recoilPitch, _recoilYaw;  // camera recoil offset (deg) -- smoothly lerps toward the target below
+        float _recoilTargetPitch, _recoilTargetYaw;  // where the kick pushes to; itself decays back to 0 (smooth both ways)
         readonly RandomNumberGenerator _rng = new();
         enum FireMode { Safety, Semi, Auto, Burst }   // EFiremode; the gun's available set comes from its .dat flags
         FireMode _firemode = FireMode.Semi;
+        public string FiremodeName => _firemode.ToString().ToUpper();   // for the HUD
         int _burstLeft;                               // rounds remaining in the current burst
 
         bool _dead;
@@ -325,7 +328,8 @@ namespace UnturnedGodot
         {
             if (_dead) return;
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
-            Stamina = Mathf.Clamp(Stamina + (sprinting ? -0.22f : 0.33f) * dt, 0f, 1f);
+            if (sprinting) { Stamina = Mathf.Max(0f, Stamina - 0.22f * dt); _staminaRegenDelay = 1f; }   // hold regen 1s after releasing sprint
+            else { _staminaRegenDelay = Mathf.Max(0f, _staminaRegenDelay - dt); if (_staminaRegenDelay <= 0f) Stamina = Mathf.Min(1f, Stamina + 0.33f * dt); }
             Food  = Mathf.Max(0f, Food  - 0.0050f * dt);
             Water = Mathf.Max(0f, Water - 0.0070f * dt);
             Infection = Mathf.Max(0f, Infection - 0.01f * dt);       // virus slowly clears if you stop getting bitten
@@ -563,8 +567,8 @@ namespace UnturnedGodot
             else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero, 0f, 0f);
             if (Gun != null)   // camera recoil: pitch up + random-sign yaw, scaled by Recover (source: aim gets kick*Recover)
             {
-                _recoilPitch += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;
-                _recoilYaw += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f);
+                _recoilTargetPitch += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;
+                _recoilTargetYaw += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f);
             }
 
             Vector3 from = _cam.GlobalPosition;
@@ -734,8 +738,12 @@ namespace UnturnedGodot
         {
             // Camera recoil recovers toward 0 (PlayerLook decays it with Lerp rate 4) and rides on top of the
             // mouse pitch each frame; while dead the death-cam owns the camera, so leave it alone.
-            _recoilPitch = Mathf.Lerp(_recoilPitch, 0f, 4f * (float)delta);
-            _recoilYaw = Mathf.Lerp(_recoilYaw, 0f, 4f * (float)delta);
+            // smoothly lerp TO the recoiled position (the kick target) and the target itself decays back to 0,
+            // so the view rises and recovers smoothly instead of snapping up on each shot (master).
+            _recoilPitch = Mathf.Lerp(_recoilPitch, _recoilTargetPitch, 22f * (float)delta);
+            _recoilYaw = Mathf.Lerp(_recoilYaw, _recoilTargetYaw, 22f * (float)delta);
+            _recoilTargetPitch = Mathf.Lerp(_recoilTargetPitch, 0f, 6f * (float)delta);
+            _recoilTargetYaw = Mathf.Lerp(_recoilTargetYaw, 0f, 6f * (float)delta);
             PainAlpha = Mathf.Max(0f, PainAlpha - (float)delta);                 // hurt flash fades at 1/s (PlayerUI line 1835)
             _flinch = _flinch.Slerp(Quaternion.Identity, 4f * (float)delta);     // flinch recovers to level at 4/s (PlayerLook line 1330)
             if (_cam != null && !_dead)

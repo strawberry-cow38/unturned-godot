@@ -87,6 +87,17 @@ namespace UnturnedGodot
                 }
                 else if (_dragging) { Drop(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
             }
+            else if (e is InputEventMouseButton rmb && rmb.ButtonIndex == MouseButton.Right && rmb.Pressed)
+            {
+                // RIGHT-click opens the item action menu (master: RMB only, not a left-click)
+                CloseSelection();
+                if (PointToCell(rmb.GlobalPosition, out byte page, out byte cx, out byte cy, out _, out _))
+                {
+                    byte idx = Inv.items[page].getIndex(cx, cy);
+                    if (idx != byte.MaxValue) { var j = Inv.items[page].getItem(idx); OpenSelection(page, j.x, j.y); }
+                }
+                GetViewport().SetInputAsHandled();
+            }
             else if (e is InputEventMouseMotion mm && _dragging)
             {
                 _dragTile.GlobalPosition = mm.GlobalPosition - _grab;
@@ -134,7 +145,7 @@ namespace UnturnedGodot
             // the held item's top-left lands where the cursor is minus the grab; +half a cell so it snaps to the nearest
             Vector2 topLeft = global - _grab + new Vector2(CELL / 2f, CELL / 2f);
             if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _)) return;
-            if (page == sp && x1 == sx && y1 == sy) { OpenSelection(sp, sx, sy); return; }   // released in place -> select
+            if (page == sp && x1 == sx && y1 == sy) return;   // released in place -> no-op (the item menu is RMB now)
             if (Inv.TryDrag(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
         }
 

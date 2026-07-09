@@ -24,6 +24,7 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<(ColorRect fill, System.Func<float> val)> _vitals = new();
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
+        Label _fireMode;
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
 
         public override void _Ready()
@@ -72,6 +73,16 @@ namespace UnturnedGodot
             _ammo.HorizontalAlignment = HorizontalAlignment.Right;
             _ammo.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_ammo);
+
+            // fire mode, just ABOVE the ammo count
+            _fireMode = new Label();
+            _fireMode.AddThemeFontSizeOverride("font_size", 18);
+            _fireMode.AnchorLeft = 1; _fireMode.AnchorRight = 1; _fireMode.AnchorTop = 1; _fireMode.AnchorBottom = 1;
+            _fireMode.OffsetLeft = -190; _fireMode.OffsetRight = -22; _fireMode.OffsetTop = -80; _fireMode.OffsetBottom = -54;
+            _fireMode.HorizontalAlignment = HorizontalAlignment.Right;
+            _fireMode.Modulate = new Color(1f, 1f, 1f, 0.7f);
+            _fireMode.MouseFilter = Control.MouseFilterEnum.Ignore;
+            root.AddChild(_fireMode);
         }
 
         void AddVital(Control box, int i, string icon, Color color, System.Func<float> val)
@@ -132,6 +143,7 @@ namespace UnturnedGodot
             if (Player != null)
             {
                 _ammo.Text = $"{Player.Ammo} / {(Player.Gun?.AmmoMax ?? Player.Ammo)}";
+                _fireMode.Text = Player.FiremodeName;
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
             }
         }

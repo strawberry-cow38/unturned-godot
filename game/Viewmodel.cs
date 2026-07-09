@@ -44,6 +44,7 @@ namespace UnturnedGodot
         // arcing out to the right + tumbling under gravity, then despawning. Lives in the viewmodel viewport world.
         Node3D _ejectHook;
         BoxMesh _casingMesh;
+        bool _ejects = true;   // GunVisual.Ejects -- false for shotguns (masterkey): no per-shot shell eject
         StandardMaterial3D _casingMat;
         readonly System.Collections.Generic.List<Casing> _casings = new();
         readonly RandomNumberGenerator _rng = new();
@@ -74,12 +75,12 @@ namespace UnturnedGodot
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset; public Color AlbedoTint; }
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset; public Color AlbedoTint; public bool Ejects; }
         static GunVisual Visual(string name) => name switch
         {
-            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = new Vector3(0f, -0.18f, 0f), AlbedoTint = new Color(0.30f, 0.30f, 0.32f) },
-            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = new Vector3(0f, -0.12f, 0f), AlbedoTint = Colors.White },
-            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = Colors.White },
+            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = new Vector3(0f, -0.18f, 0f), AlbedoTint = new Color(0.30f, 0.30f, 0.32f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
+            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = new Vector3(0f, -0.12f, 0f), AlbedoTint = Colors.White, Ejects = true },
+            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = Colors.White, Ejects = true },
         };
         Node3D _sight;
 
@@ -141,6 +142,7 @@ namespace UnturnedGodot
                     skel.AddChild(att);
                     att.BoneName = skel.GetBoneName(hb);
                     var gv = Visual(GunName);
+                    _ejects = gv.Ejects;
                     _armsPos += gv.ViewOffset;   // per-gun hip-pose nudge (ADS re-aligns via the aim hook regardless)
                     var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{gv.Gun}") };
                     var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.6f };
@@ -211,7 +213,7 @@ namespace UnturnedGodot
                     // casing mesh/material: a small yellow rectangle cube standing in for the 5.56 brass.
                     _ejectHook = new Node3D { Name = "EjectHook", Position = new Vector3(0f, 0.0275f, -0.0814f) };
                     mi.AddChild(_ejectHook);
-                    _casingMesh = new BoxMesh { Size = new Vector3(0.009f, 0.009f, 0.028f) };
+                    _casingMesh = new BoxMesh { Size = new Vector3(0.0135f, 0.0135f, 0.042f) };   // +50% (master)
                     _casingMat = new StandardMaterial3D { AlbedoColor = new Color(0.96f, 0.79f, 0.15f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
                 }
             }
@@ -250,7 +252,7 @@ namespace UnturnedGodot
         // the gun. Non-vanilla for the Eaglefire (it has no Shell effect) — a visual feel add per master.
         void EjectCasing()
         {
-            if (_ejectHook == null || _casingMesh == null || _vp == null || _gun == null) return;
+            if (!_ejects || _ejectHook == null || _casingMesh == null || _vp == null || _gun == null) return;
             var node = new MeshInstance3D { Mesh = _casingMesh, MaterialOverride = _casingMat };
             _vp.AddChild(node);
             node.GlobalPosition = _ejectHook.GlobalPosition;
