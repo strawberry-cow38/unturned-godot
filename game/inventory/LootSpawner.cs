@@ -21,16 +21,28 @@ namespace UnturnedGodot
         public float Radius = 26f;
         readonly RandomNumberGenerator _rng = new();
 
+        public int Crates = 3;
+
         public override void _Ready()
         {
             _rng.Randomize();
             int total = 0; foreach (var e in Table) total += e.w;
+
+            // loose loot scattered on the ground
             for (int i = 0; i < Count; i++)
             {
-                ushort id = Roll(total);
                 float ang = _rng.Randf() * Mathf.Tau;
                 float r = 3f + Mathf.Sqrt(_rng.Randf()) * Radius;      // uniform-ish over a ring around the player
-                WorldItem.Spawn(this, new Item(id), new Vector3(Mathf.Cos(ang) * r, 0.1f, Mathf.Sin(ang) * r));
+                WorldItem.Spawn(this, new Item(Roll(total)), new Vector3(Mathf.Cos(ang) * r, 0.1f, Mathf.Sin(ang) * r));
+            }
+            // a few storage crates, each pre-filled with loot to find (F to open)
+            for (int c = 0; c < Crates; c++)
+            {
+                float ang = _rng.Randf() * Mathf.Tau;
+                float r = 8f + Mathf.Sqrt(_rng.Randf()) * (Radius - 4f);
+                var crate = StorageCrate.Spawn(this, new Vector3(Mathf.Cos(ang) * r, 0f, Mathf.Sin(ang) * r));
+                int n = _rng.RandiRange(2, 5);
+                for (int i = 0; i < n; i++) crate.Add(new Item(Roll(total)));
             }
         }
 
