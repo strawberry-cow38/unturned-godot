@@ -34,7 +34,8 @@ namespace UnturnedGodot
         bool _moving;                       // player has movement input this frame (drives bob on/off)
         EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE -> bob speed + amplitude
         float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
-        bool _reloading;      // true while the Gun_Reload clip plays (blocks ADS)
+        bool _reloading;      // true while the reload clip plays (blocks ADS)
+        string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
         AudioStreamPlayer _shootSnd, _reloadSnd, _drySnd;   // real Eaglefire Shoot/Reload/Hammer(dry-fire) sounds
@@ -123,6 +124,10 @@ namespace UnturnedGodot
                 _arms.Position = _armsPos;
                 _arms.SetClipLoop("Gun_Equip", false);   // equip plays ONCE and holds the ready pose
                 _arms.SetClipLoop("Gun_Reload", false);  // reload plays ONCE (the clip returns the hands to ready)
+                // per-gun reload clip ({Gun}_Reload, extracted from that gun's animations.prefab); fall back to Gun_Reload
+                string capGun = char.ToUpper(GunName[0]) + GunName.Substring(1);
+                _reloadClip = _arms.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
+                _arms.SetClipLoop(_reloadClip, false);
                 _arms.Play("Gun_Equip");                 // raise -> holds the two-handed rifle stance
                 _equipLen = _arms.ClipLength("Gun_Equip");
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
@@ -267,8 +272,12 @@ namespace UnturnedGodot
         public void SetReloading(bool on)
         {
             _reloading = on;
-            if (on) { _aiming = false; _arms?.Play("Gun_Reload"); _reloadSnd?.Play(); }   // real reload arm anim + sound
+            if (on) { _aiming = false; _arms?.Play(_reloadClip); _reloadSnd?.Play(); }   // per-gun reload arm anim + sound
         }
+
+        // Length (s) of the equipped gun's reload clip, so PlayerController times the ammo refill to the real anim
+        // (rifles 1.633s, the masterkey's break-action 2.467s). Falls back to the eaglefire length.
+        public float ReloadLength => _arms != null && _arms.ClipLength(_reloadClip) > 0f ? _arms.ClipLength(_reloadClip) : 1.633f;
 
         public float AimAlpha => _aimAlpha;   // 0 hip .. 1 ADS, for spread/accuracy
 

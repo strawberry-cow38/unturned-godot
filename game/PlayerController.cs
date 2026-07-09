@@ -182,8 +182,8 @@ namespace UnturnedGodot
             int max = Gun?.AmmoMax ?? 30;
             if (Ammo >= max) return;
             _reloading = true;
-            _reloadTimer = ReloadTime;
             _viewmodel?.SetReloading(true);
+            _reloadTimer = _viewmodel?.ReloadLength ?? ReloadTime;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s)
         }
 
         // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
