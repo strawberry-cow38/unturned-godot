@@ -269,6 +269,7 @@ namespace UnturnedGodot
         }
 
         public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void DemoSelect(byte page, byte x, byte y) { _invUI?.DebugSelect(page, x, y); Input.MouseMode = Input.MouseModeEnum.Visible; }
 
         // seed the inventory with real items: wear the Alicepack (8x7) + Cargo Pants (6x3) so those pages open up,
         // put both guns in the hand slots, and scatter medical/food/water across pockets + backpack to show packing

@@ -32,6 +32,10 @@ namespace UnturnedGodot
         Vector2 _grab;          // cursor offset within the grabbed item's top-left cell
         Control _dragTile;      // the floating tile that follows the cursor
 
+        // selection: clicking an item (press+release on its own cell, no drag) opens a description/actions panel
+        Control _selPanel;
+        byte _selPage, _selX, _selY;
+
         public bool IsOpen => _open;
 
         public override void _Ready()
@@ -60,6 +64,7 @@ namespace UnturnedGodot
         public void Toggle() { if (_open) Close(); else Open(); }
         public void Open() { _open = true; Visible = true; Refresh(); }
         public void Close() { _open = false; Visible = false; }
+        public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
 
         public override void _Process(double delta) { if (_open) CenterDash(); }   // keep centred as the viewport settles
 
@@ -69,9 +74,17 @@ namespace UnturnedGodot
             if (!_open || Inv == null) return;
             if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
-                if (mb.Pressed && !_dragging) StartDrag(mb.GlobalPosition);
-                else if (!mb.Pressed && _dragging) Drop(mb.GlobalPosition);
-                GetViewport().SetInputAsHandled();   // don't let the click reach the game (fire etc.)
+                if (mb.Pressed)
+                {
+                    // clicks inside an open selection panel belong to its buttons -- let them through
+                    if (_selPanel != null)
+                    {
+                        if (new Rect2(_selPanel.GlobalPosition, _selPanel.Size).HasPoint(mb.GlobalPosition)) return;
+                        CloseSelection();   // clicked outside -> dismiss, then fall through to grab
+                    }
+                    if (!_dragging) { StartDrag(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
+                }
+                else if (_dragging) { Drop(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
             }
             else if (e is InputEventMouseMotion mm && _dragging)
             {
@@ -114,13 +127,14 @@ namespace UnturnedGodot
 
         void Drop(Vector2 global)
         {
-            // the held item's top-left lands where the cursor is minus the grab; +half a cell so it snaps to the nearest
-            Vector2 topLeft = global - _grab + new Vector2(CELL / 2f, CELL / 2f);
-            if (PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _))
-                if (Inv.TryDrag(_dragPage, _dragX0, _dragY0, page, x1, y1, _dragRot))
-                    Refresh();
+            byte sp = _dragPage, sx = _dragX0, sy = _dragY0, srot = _dragRot;
             _dragging = false;
             _dragTile?.QueueFree(); _dragTile = null;
+            // the held item's top-left lands where the cursor is minus the grab; +half a cell so it snaps to the nearest
+            Vector2 topLeft = global - _grab + new Vector2(CELL / 2f, CELL / 2f);
+            if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _)) return;
+            if (page == sp && x1 == sx && y1 == sy) { OpenSelection(sp, sx, sy); return; }   // released in place -> select
+            if (Inv.TryDrag(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
         }
 
         // map a screen point to (page, cellX, cellY) over a registered drop zone
@@ -142,6 +156,85 @@ namespace UnturnedGodot
                 }
             }
             page = cx = cy = 0; ctl = null; isSlot = false; return false;
+        }
+
+        // --- selection panel (openSelection): the item's big tile + name/info + Equip/Drop actions ---
+        void OpenSelection(byte page, byte x, byte y)
+        {
+            CloseSelection();
+            var pg = Inv.items[page];
+            byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null) return;
+            _selPage = page; _selX = x; _selY = y;
+
+            var panel = new Panel { Size = new Vector2(500, 300) };
+            StyleBox(panel, new Color(0.05f, 0.05f, 0.06f, 0.98f));
+            _root.AddChild(panel);
+            _selPanel = panel;
+            Vector2 vp = GetViewport().GetVisibleRect().Size;
+            panel.Position = new Vector2(Mathf.Round((vp.X - 500) / 2f), Mathf.Round((vp.Y - 300) / 2f));
+
+            // left: the item's tile, fit into a 200x280 icon box
+            bool rot = jar.rot % 2 == 1;
+            int iw = (rot ? jar.size_y : jar.size_x) * CELL, ih = (rot ? jar.size_x : jar.size_y) * CELL;
+            float scale = Mathf.Min(Mathf.Min(200f / iw, 280f / ih), 2f);
+            var iconBox = new Control { Position = new Vector2(10, 10), Size = new Vector2(200, 280) };
+            panel.AddChild(iconBox);
+            var tile = MakeTile(jar, iw, ih);
+            tile.Scale = new Vector2(scale, scale);
+            tile.Position = new Vector2((200 - iw * scale) / 2f, (280 - ih * scale) / 2f);
+            iconBox.AddChild(tile);
+
+            // right-top: name (rarity-coloured) + info line
+            Color rar = ItemAsset.RarityColorUI(asset.rarity);
+            var name = new Label { Text = asset.itemName, Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
+            name.AddThemeColorOverride("font_color", rar);
+            name.AddThemeFontSizeOverride("font_size", 19);
+            panel.AddChild(name);
+            var info = new Label { Text = $"{asset.rarity}  ·  {asset.type}  ·  {asset.size_x}x{asset.size_y}",
+                                   Position = new Vector2(228, 46), Size = new Vector2(258, 120) };
+            info.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            info.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
+            panel.AddChild(info);
+
+            // right-bottom: actions (Equip only for a gun going to a hand slot; Drop; Close)
+            float by = 150;
+            if (asset.type == EItemType.GUN && page >= PlayerInventory.SLOTS)
+            { AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected); by += 44; }
+            AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
+            AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
+        }
+
+        void CloseSelection() { _selPanel?.QueueFree(); _selPanel = null; }
+
+        void AddActionButton(Control parent, string text, Vector2 pos, System.Action onClick)
+        {
+            var b = new Button { Text = text, Position = pos, Size = new Vector2(258, 36) };
+            b.Pressed += onClick;
+            parent.AddChild(b);
+        }
+
+        void EquipSelected()
+        {
+            // move the gun to the first empty hand slot (primary then secondary)
+            for (byte slot = 0; slot < PlayerInventory.SLOTS; slot++)
+                if (Inv.items[slot].getItemCount() == 0)
+                {
+                    if (Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0)) { CloseSelection(); Refresh(); }
+                    return;
+                }
+        }
+
+        void DropSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx != byte.MaxValue) pg.removeItem(idx);
+            CloseSelection();
+            Refresh();
         }
 
         // left column: the equip slots (hat/glasses/mask/shirt/vest/backpack/pants), each showing the worn item
@@ -176,6 +269,7 @@ namespace UnturnedGodot
         public void Refresh()
         {
             if (Inv == null || _storageCol == null) return;
+            CloseSelection();   // the panel points at a specific item; drop it when the layout rebuilds
 
             // worn clothing into the equip slots
             foreach (var (slot, lbl, worn) in _clothing)

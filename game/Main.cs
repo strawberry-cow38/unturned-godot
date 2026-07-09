@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -46,6 +46,7 @@ namespace UnturnedGodot
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
                 else if (arg == "--invdemo") invdemo = true;
+                else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
             }
 
@@ -59,7 +60,7 @@ namespace UnturnedGodot
             if (invdemo)    // open the inventory dashboard over the player, populated with real items
             {
                 GetWindow().Size = new Vector2I(2560, 1440);   // match the movie size so the UI lays out full-frame
-                BuildInventoryDemo(gun);
+                BuildInventoryDemo(gun, invsel);
                 return;
             }
 
@@ -462,7 +463,8 @@ namespace UnturnedGodot
         }
 
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
-        void BuildInventoryDemo(string gunPath)
+        // selectDemo also pops the selection panel for an item so it can be captured.
+        void BuildInventoryDemo(string gunPath, bool selectDemo = false)
         {
             var env = new Godot.Environment
             {
@@ -487,7 +489,8 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             AddChild(new HUD { Player = player });
-            player.OpenInventory();
+            if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
+            else player.OpenInventory();
             GD.Print("[INV] inventory dashboard open, real items populated");
         }
 
