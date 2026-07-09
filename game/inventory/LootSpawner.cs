@@ -7,6 +7,8 @@ namespace UnturnedGodot
     // ItemSpawnpoints that each reference a SpawnAsset (a weighted table of item ids / sub-tables, rolled per spawn).
     // We don't have map spawn data here, so this scatters N WorldItems around the player from a simple weighted table
     // (commoner items weigh more, like a spawn table's rarity spread) so there's loot to FIND in the world.
+    // NOTE: Unturned has NO lootable containers -- loot is always physical items on the ground/floor that you pick up.
+    // (Storage exists only as player-PLACED barricades -- crates/lockers -- which belong to the building system.)
     public partial class LootSpawner : Node3D
     {
         // (item id, weight) -- a small stand-in spawn table
@@ -21,28 +23,17 @@ namespace UnturnedGodot
         public float Radius = 26f;
         readonly RandomNumberGenerator _rng = new();
 
-        public int Crates = 3;
-
         public override void _Ready()
         {
             _rng.Randomize();
             int total = 0; foreach (var e in Table) total += e.w;
 
-            // loose loot scattered on the ground
+            // loot is loose items on the ground (Unturned's model -- no lootable containers)
             for (int i = 0; i < Count; i++)
             {
                 float ang = _rng.Randf() * Mathf.Tau;
                 float r = 3f + Mathf.Sqrt(_rng.Randf()) * Radius;      // uniform-ish over a ring around the player
                 WorldItem.Spawn(this, new Item(Roll(total)), new Vector3(Mathf.Cos(ang) * r, 0.1f, Mathf.Sin(ang) * r));
-            }
-            // a few storage crates, each pre-filled with loot to find (F to open)
-            for (int c = 0; c < Crates; c++)
-            {
-                float ang = _rng.Randf() * Mathf.Tau;
-                float r = 8f + Mathf.Sqrt(_rng.Randf()) * (Radius - 4f);
-                var crate = StorageCrate.Spawn(this, new Vector3(Mathf.Cos(ang) * r, 0f, Mathf.Sin(ang) * r));
-                int n = _rng.RandiRange(2, 5);
-                for (int i = 0; i < n; i++) crate.Add(new Item(Roll(total)));
             }
         }
 

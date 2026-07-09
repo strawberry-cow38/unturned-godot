@@ -26,15 +26,12 @@ namespace UnturnedGodot
             Storage = new Items(PlayerInventory.STORAGE);
             Storage.loadSize(Width, Height);
 
-            var box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.8f, 0.6f, 0.6f) } };
-            box.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.45f, 0.33f, 0.20f), Roughness = 0.85f };
-            box.Position = new Vector3(0, 0.3f, 0);
+            // a plain wooden crate (no pop-off lid -- that read as a Steam gamble/mystery box). Unturned's storage
+            // Crate is a simple wooden cube you deploy as a barricade.
+            var box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.75f, 0.75f, 0.75f) } };
+            box.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.52f, 0.37f, 0.21f), Roughness = 0.9f };
+            box.Position = new Vector3(0, 0.375f, 0);
             AddChild(box);
-
-            var lid = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.84f, 0.08f, 0.64f) } };
-            lid.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.35f, 0.25f, 0.15f) };
-            lid.Position = new Vector3(0, 0.62f, 0);
-            AddChild(lid);
 
             var label = new Label3D
             {
