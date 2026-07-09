@@ -333,6 +333,7 @@ namespace UnturnedGodot
                     };
                     root.AddChild(fq);
                     fq.Position = new Vector3(0f, 1.75f, -0.25f);   // head-front, character-local
+                    fq.RotationDegrees = new Vector3(0f, 180f, 0f); // face the FRONT out (not the mirrored back face)
                 }
             }
 
