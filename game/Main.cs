@@ -28,7 +28,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -55,6 +55,7 @@ namespace UnturnedGodot
                 else if (arg == "--falldemo") falldemo = true;
                 else if (arg == "--pronetest") pronetest = true;
                 else if (arg == "--brokentest") brokentest = true;
+                else if (arg == "--grenadetest") grenadetest = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
@@ -110,6 +111,12 @@ namespace UnturnedGodot
             if (brokentest) // broken-legs self-test: fall breaks legs -> blocks sprint -> Medkit mends -> sprint restored
             {
                 BuildBrokenTest(gun);
+                return;
+            }
+
+            if (grenadetest) // grenade explosion self-test: check the distance falloff on zombies at known ranges
+            {
+                BuildGrenadeTest(gun);
                 return;
             }
 
@@ -632,6 +639,39 @@ namespace UnturnedGodot
             GD.Print("[BROKEN] self-test: 40m fall -> legs break -> sprint blocked -> Medkit mends -> sprint restored");
         }
 
+        // Grenade explosion self-test: NORMAL zombies at increasing ranges from a blast point; detonate radius-8 /
+        // 175-damage and confirm each zombie's health matches the linear falloff 175*(1 - range/8). Player parked far
+        // away so the zombies stay idle (out of sense range) and take no self-damage.
+        void BuildGrenadeTest(string gunPath)
+        {
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            var player = new PlayerController { CaptureMouse = false };
+            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(100, 1f, 0);
+
+            var ranges = new float[] { 4f, 6f, 7.5f, 9f };
+            var zs = new ZombieController[ranges.Length];
+            for (int i = 0; i < ranges.Length; i++)
+            {
+                var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
+                AddChild(z);
+                z.GlobalPosition = new Vector3(ranges[i], 0f, 0f);
+                zs[i] = z;
+            }
+            // a separate zombie by the (parked) player, killed via an actual FUSED thrown grenade -- exercises the
+            // full Grenade fly+fuse+detonate chain, not just a direct Explode() call.
+            var zThrow = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
+            AddChild(zThrow);
+            zThrow.GlobalPosition = new Vector3(100f, 0f, -2f);
+
+            AddChild(new GrenadeTestDriver { P = player, Zs = zs, ZThrow = zThrow });
+            GD.Print("[GRENADE] explosion falloff self-test: zombies at r=4/6/7.5/9, blast r=8 dmg=175 (linear falloff)");
+        }
+
         // Opens the inventory dashboard over a player (populated with real items) for a --write-movie / screenshot.
         // selectDemo also pops the selection panel for an item so it can be captured.
         void BuildInventoryDemo(string gunPath, bool selectDemo = false, bool equipDemo = false)
@@ -1131,6 +1171,48 @@ namespace UnturnedGodot
                     Chk($"sprint restored after heal (radius {P.GetStealthDetectionRadius():F0})", Mathf.Abs(P.GetStealthDetectionRadius() - 20f) < 0.01f);
                     GetTree().Quit();
                     break;
+            }
+        }
+    }
+
+    // Drives the grenade explosion self-test: captures each zombie's range at detonation, blasts, then checks its
+    // health against the source linear falloff 175*(1 - range/8).
+    public partial class GrenadeTestDriver : Node3D
+    {
+        public PlayerController P;
+        public ZombieController[] Zs;
+        public ZombieController ZThrow;
+        int _frames;
+        float[] _rangeAtBlast;
+
+        public override void _PhysicsProcess(double delta)
+        {
+            _frames++;
+            if (_frames == 4)   // detonate directly at origin (the 4 falloff zombies)
+            {
+                _rangeAtBlast = new float[Zs.Length];
+                for (int i = 0; i < Zs.Length; i++) _rangeAtBlast[i] = Zs[i].GlobalPosition.DistanceTo(Vector3.Zero);
+                P.Explode(Vector3.Zero, 8f, 175f, 175f);
+            }
+            else if (_frames == 6)   // check the falloff, then arm a real FUSED grenade on ZThrow
+            {
+                for (int i = 0; i < Zs.Length; i++)
+                {
+                    float r = _rangeAtBlast[i];
+                    float expDmg = r > 8f ? 0f : 175f * (1f - r / 8f);
+                    float expHp = 100f - expDmg;
+                    float hp = Zs[i].Dead ? 0f : Zs[i].Health;
+                    bool ok = Mathf.Abs(hp - expHp) < 0.6f;
+                    GD.Print($"[GRENADE] range={r:F2} dmg~{expDmg:F1} -> health={hp:F1} expect~{expHp:F1} -> {(ok ? "PASS" : "FAIL")}");
+                }
+                var g = new Grenade { Thrower = P, Fuse = 0.2f, Vel = Vector3.Zero };   // point-blank, short fuse
+                P.GetParent().AddChild(g);
+                g.GlobalPosition = ZThrow.GlobalPosition + Vector3.Up * 0.2f;
+            }
+            else if (_frames == 20)   // by now the fuse fired -> ZThrow should be dead
+            {
+                GD.Print($"[GRENADE] fused throw killed point-blank zombie -> {(ZThrow.Dead ? "PASS" : "FAIL")}");
+                GetTree().Quit();
             }
         }
     }

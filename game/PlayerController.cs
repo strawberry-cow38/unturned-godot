@@ -6,7 +6,7 @@ namespace UnturnedGodot
     // First-person player: ported PlayerMovementSim on Godot's 50 Hz physics tick + mouse look + a hitscan
     // gun (raycast from the camera vs the zombie collision layer). Movement CONSTANTS are exact; feel goes
     // through Jolt. Builds its own camera + capsule collider so it can be spawned from code.
-    // WASD move / Shift sprint / Ctrl crouch / Z prone / Space jump / LMB fire / G melee / R reload / Esc release mouse.
+    // WASD move / Shift sprint / Ctrl crouch / Z prone / Space jump / LMB fire / G melee / H grenade / R reload / Esc release mouse.
     public partial class PlayerController : CharacterBody3D
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
@@ -117,6 +117,41 @@ namespace UnturnedGodot
             Broken = true;                                     // any fall past the threshold breaks legs (shouldBreakLegs defaults true)
             int dmg = Mathf.RoundToInt(Mathf.Min(101f, Mathf.Abs(verticalVel)));   // RoundAndClampToByte; damage <= 101
             if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
+        }
+
+        float _grenadeCd;
+
+        // DamageTool.explode (bounded): every zombie within radius takes zombieDamage * (1 - range/radius) -- LINEAR
+        // falloff (Zombie.cs:270); the thrower (player) within radius takes playerDamage * (1 - (range/radius)^2) --
+        // SQUARED falloff (Player.cs:1975). Out of radius = nothing. No LoS/armor/limb/buildable/vehicle damage yet.
+        public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage)
+        {
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))
+                if (n is ZombieController z && !z.Dead)
+                {
+                    float range = z.GlobalPosition.DistanceTo(point);
+                    if (range > radius) continue;
+                    float times = 1f - range / radius;
+                    bool wd = z.Dead;
+                    z.DamageHit(zombieDamage * times, z.GlobalPosition, (z.GlobalPosition - point).Normalized());
+                    if (!wd && z.Dead) Kills++;
+                }
+            float pr = GlobalPosition.DistanceTo(point);
+            if (pr <= radius) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t); }
+            GD.Print($"[explode] r={radius} at {point}");
+        }
+
+        // Throw a grenade from the muzzle (ItemThrowableAsset). Bounded first pass: a fixed throw arc, ~1 s between
+        // throws, no inventory consumption yet (like the generic melee).
+        public void ThrowGrenade()
+        {
+            if (_grenadeCd > 0f) return;
+            _grenadeCd = 1.0f;
+            Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
+            var g = new Grenade { Thrower = this, Vel = fwd * 16f + Vector3.Up * 5f + Velocity };   // arc forward + inherit motion
+            GetParent().AddChild(g);
+            g.GlobalPosition = (_cam?.GlobalPosition ?? GlobalPosition) + fwd * 0.5f;
+            GD.Print("[grenade] thrown");
         }
 
         StorageCrate _openCrate;
@@ -407,6 +442,8 @@ namespace UnturnedGodot
                 _build?.CycleType();  // cycle the structure type (floor/wall)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.G })
                 MeleeAttack();        // melee swing at a zombie in reach
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
+                ThrowGrenade();       // throw a grenade
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
                 if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
@@ -719,6 +756,7 @@ namespace UnturnedGodot
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
             if (_meleeCd > 0f) _meleeCd -= (float)delta;
+            if (_grenadeCd > 0f) _grenadeCd -= (float)delta;
             if (_reloading)
             {
                 _reloadTimer -= delta;
