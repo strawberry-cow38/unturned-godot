@@ -842,7 +842,22 @@ namespace UnturnedGodot
                 if (p.Length >= 2) g2m[p[0]] = p[1];
             }
             var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
-            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.60f, 0.55f, 0.47f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
+            StandardMaterial3D MatFor(string nm)
+            {
+                if (matCache.TryGetValue(nm, out var mm)) return mm;
+                mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                string tp = dir + nm + "_tex.png";
+                if (System.IO.File.Exists(tp))
+                {
+                    var img = new Image();
+                    if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mm.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+                    else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
+                }
+                else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
+                matCache[nm] = mm;
+                return mm;
+            }
             var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0;
@@ -852,10 +867,12 @@ namespace UnturnedGodot
                 if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
                 if (mesh == null) continue;
-                float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ey = F(p[5]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
+                float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
                 var gpos = new Vector3(px, py, -pz);
-                var basis = new Basis(Vector3.Up, Mathf.DegToRad(-ey)).Scaled(new Vector3(sx, sy, sz));   // yaw only (first pass; full euler TBD)
-                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Transform = new Transform3D(basis, gpos) });
+                // Unity Quaternion.Euler = Ry*Rx*Rz; under the (x,y,-z) flip -> Ry(-ey)*Rx(-ex)*Rz(ez)
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
+                var basis = rot.Scaled(new Vector3(sx, sy, sz));
+                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
                 cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;
