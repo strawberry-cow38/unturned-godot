@@ -12,12 +12,15 @@ namespace UnturnedGodot
 
         struct Spec
         {
-            public string Body, Wheel, Palette;   // Palette = paintable color palette (null -> solid Paint)
+            public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
             public Color Paint;
             public float WheelRadius, Mass, Engine, SteerDeg, Brake;
             public (float x, float y, float z, bool steer)[] Wheels;
-            public string[] Parts;   // extra detail meshes (root-relative, palette-shaded), placed at origin
+            public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
+
+        static StandardMaterial3D SolidMat(Color c) =>
+            new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
 
         // Unturned paintable shading: body samples the palette, paintable texels tinted by _PaintColor.
         static ShaderMaterial PaintMat(string palette, Color paint)
@@ -33,11 +36,17 @@ namespace UnturnedGodot
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
         {
-            Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", Palette = "jeep_palette.png", Paint = new Color(0.854f, 0.858f, 0.078f),
+            Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png", Paint = new Color(0.854f, 0.858f, 0.078f),
             WheelRadius = 0.6f, Mass = 900f, Engine = 600f, SteerDeg = 28f, Brake = 12f,
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
-            Parts = new[] { "jeep_seats.txt", "jeep_headlights.txt", "jeep_taillights.txt", "jeep_steer.txt" },
+            Parts = new (string, Color)[]
+            {
+                ("jeep_seats.txt", new Color(0.25f, 0.25f, 0.25f)),        // seats: dark grey (real _Color)
+                ("jeep_steer.txt", new Color(0.28f, 0.23f, 0.14f)),        // steering wheel: dark brown
+                ("jeep_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // headlights: cream
+                ("jeep_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // taillights: red
+            },
         };
 
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
@@ -69,7 +78,14 @@ namespace UnturnedGodot
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = aabb.Size }, Position = aabb.GetCenter() });
 
             var wheelMesh = ContentProvider.ParseObj($"res://content/{s.Wheel}");
-            var wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            Material wheelMat;
+            if (s.WheelTex != null)   // real wheel albedo (tyre + rim), nearest-sampled like the game
+            {
+                var wimg = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}"));
+                wheelMat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(wimg), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            }
+            else
+                wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             foreach (var (x, y, z, steer) in s.Wheels)
             {
                 var w = new VehicleWheel3D
@@ -83,9 +99,9 @@ namespace UnturnedGodot
                 v.AddChild(w);
             }
 
-            if (s.Parts != null)   // detail meshes (seats, headlights, taillights, steering wheel) at their real positions
-                foreach (var part in s.Parts)
-                    v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{part}"), MaterialOverride = bodyMat });
+            if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
+                foreach (var (txt, color) in s.Parts)
+                    v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = SolidMat(color) });
             return v;
         }
 
