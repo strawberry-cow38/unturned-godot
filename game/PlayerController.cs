@@ -428,9 +428,13 @@ namespace UnturnedGodot
 
         public override void _UnhandledInput(InputEvent @event)
         {
-            // while driving, only E (exit) / V (cam toggle) / L (headlights) / Escape are live -- no look, fire, aim, reload, etc.
-            if (_driving != null && !(@event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.V || dk.Keycode == Key.L || dk.Keycode == Key.Escape)))
-                return;
+            // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no look, fire, aim, reload, etc.
+            if (_driving != null)
+            {
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.V || dk.Keycode == Key.L || dk.Keycode == Key.Escape);
+                bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
+                if (!allowedKey && !allowedMouse) return;
+            }
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 RotateY(Mathf.DegToRad(-mm.Relative.X * MouseSensitivity));
@@ -439,11 +443,15 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
-                if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
+                if (_driving != null) _driving.Honk();                 // LMB while driving: horn
+                else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else StartFire();
             }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
-                _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to aim down sights (Unturned default mode)
+            {
+                if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
+                else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to aim down sights (Unturned default mode)
+            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
                 StartReload();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })

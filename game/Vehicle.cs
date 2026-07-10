@@ -28,6 +28,7 @@ namespace UnturnedGodot
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
+        AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
         public bool HeadlightsOn => _headlightsOn;
 
@@ -46,6 +47,7 @@ namespace UnturnedGodot
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
+            public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -88,7 +90,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
-            Fuel = 2000f, Health = 600f, Name = "Jeep",
+            Fuel = 2000f, Health = 600f, Name = "Jeep", Horn = "carhorn_04.ogg",
             SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source prefab Headlights (Z negated)
             TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source prefab Taillights (rear, Z negated)
             Wheels = new (float, float, float, bool)[]
@@ -111,7 +113,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
-            Fuel = 1000f, Health = 450f, Name = "Quad",
+            Fuel = 1000f, Health = 450f, Name = "Quad", Horn = "carhorn_01.ogg",
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
             Parts = new (string, Color)[]
@@ -130,7 +132,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
-            Fuel = 2250f, Health = 700f, Name = "Bus",
+            Fuel = 2250f, Health = 700f, Name = "Bus", Horn = "carhorn_04.ogg",
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -222,6 +224,13 @@ namespace UnturnedGodot
                 v.AddChild(v._taillights);
             }
 
+            if (s.Horn != null)   // horn: one-shot the .dat HornAudioClip (a shared CarHorn) on LMB
+            {
+                var hogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Horn}"));
+                v._hornAudio = new AudioStreamPlayer3D { Stream = hogg, UnitSize = 12f, MaxDistance = 90f, VolumeDb = 4f };
+                v.AddChild(v._hornAudio);
+            }
+
             if (s.Sound != null)   // EngineRPMSimple: a looping engine clip (the prefab AudioSource) whose pitch + volume ride the RPM
             {
                 var ogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
@@ -252,6 +261,13 @@ namespace UnturnedGodot
             EngineForce = 0f;
             Brake = _brakeForce;
             _steerTarget = 0f;
+        }
+
+        public void Honk()   // source tellHorn: one-shot the horn; 0.5s cooldown (canUseHorn) + needs battery charge
+        {
+            if (_hornCd > 0f || Battery <= 0f || _hornAudio == null) return;
+            _hornAudio.Play();
+            _hornCd = 0.5f;
         }
 
         public void ToggleHeadlights() => SetHeadlights(!_headlightsOn);   // source tellHeadlights
@@ -311,6 +327,7 @@ namespace UnturnedGodot
             }
             bool tailWant = EngineOn && Battery > 0f;   // source synchronizeTaillights: taillights on while isDriven && canTurnOnLights
             if (tailWant != _taillightsOn) SetTaillights(tailWant);
+            if (_hornCd > 0f) _hornCd -= (float)delta;
 
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);

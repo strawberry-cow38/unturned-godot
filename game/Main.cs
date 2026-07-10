@@ -1248,6 +1248,7 @@ namespace UnturnedGodot
                     float throttle = _frame > 30 ? 1f : 0f;
                     float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
                     _veh.Drive(throttle, steer, false);
+                    if (_frame == 45 || _frame == 80 || _frame == 115) _veh.Honk();   // DEMO: a few horn honks for the audio clip
                     if (_vehCam != null)   // chase cam: behind the jeep's heading (flattened), above -- shows the red taillights at night
                     {
                         var vt = _veh.GlobalTransform;
