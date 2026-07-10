@@ -27,10 +27,11 @@ namespace UnturnedGodot
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
         bool _vehTest; Vehicle _veh; Camera3D _vehCam;   // --vehicle=DIR : drop the jeep on a plane, chase cam, auto-drive
+        bool _driveTest; PlayerController _dtPlayer;      // --drivetest=DIR : player walks to a jeep, enters, drives (verifies enter/exit)
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -42,6 +43,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
                 else if (arg == "--attach") _vmAttach = true;
                 else if (arg.StartsWith("--vehicle=")) veh = arg["--vehicle=".Length..];
+                else if (arg.StartsWith("--drivetest=")) drivetest = arg["--drivetest=".Length..];
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -212,6 +214,16 @@ namespace UnturnedGodot
                 _vehTest = true;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildVehicleTest(gun ?? "jeep");   // --gun=quad to test the quad
+                return;
+            }
+
+            if (drivetest != null)
+            {
+                _rigDir = drivetest;
+                _rigCaptureFrames = new[] { 20, 45, 70, 100, 140, 180 };   // walk-up (FP) -> enter -> chase drive
+                _driveTest = true;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildDriveTest();
                 return;
             }
 
@@ -394,6 +406,37 @@ namespace UnturnedGodot
             AddChild(_vehCam);
         }
 
+        // --drivetest=DIR : a player beside a jeep; scripts entering + driving to verify enter/exit + the chase cam.
+        void BuildDriveTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            var ground = new StaticBody3D();
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.30f) };
+            ground.AddChild(gmesh);
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            var jeep = Vehicle.BuildByName("jeep");
+            jeep.GlobalPosition = new Vector3(3f, 1.2f, 0f);
+            jeep.AddToGroup("vehicles");
+            AddChild(jeep);
+
+            _dtPlayer = new PlayerController { CaptureMouse = false };
+            _dtPlayer.LoadGun("res://content/eaglefire.dat");
+            AddChild(_dtPlayer);
+            _dtPlayer.GlobalPosition = new Vector3(0.8f, 1.0f, 0f);   // right beside the jeep (within enter range)
+        }
+
         void BuildShowcase(string catalog, string picks)
         {
             // sky-ish background + ambient so unlit grey props read clearly
@@ -515,6 +558,11 @@ namespace UnturnedGodot
 
             AddChild(new HUD { Player = player });
             AddChild(new LootSpawner());   // scatter loot to find in the world
+
+            var jeep = Vehicle.BuildByName("jeep");   // a drivable jeep parked nearby -- walk up + press E to get in
+            jeep.GlobalPosition = new Vector3(7f, 1.5f, 4f);
+            jeep.AddToGroup("vehicles");
+            AddChild(jeep);
 
             if (demo)
             {
@@ -1201,6 +1249,11 @@ namespace UnturnedGodot
                         _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
                         _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
                     }
+                }
+                if (_driveTest && _dtPlayer != null)
+                {
+                    if (_frame == 25) _dtPlayer.EnterNearestVehicle();                                   // hop in
+                    if (_frame >= 30) _dtPlayer.ScriptedDrive = new Vector2(_frame > 110 ? 0.6f : 0f, 1f);  // drive forward, then steer
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {

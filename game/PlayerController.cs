@@ -17,6 +17,7 @@ namespace UnturnedGodot
         BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
+        Vehicle _driving; bool _driveFP;   // vehicle enter/exit: current vehicle being driven + cam mode (3rd / 1st person)
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
         // camera flinch (PlayerLook.flinchLocalRotation, an angular kick perpendicular to the hit that decays to level).
         public float PainAlpha;                     // PlayerUI.pain: red overlay alpha, set on hit, fades at 1/s
@@ -427,6 +428,9 @@ namespace UnturnedGodot
 
         public override void _UnhandledInput(InputEvent @event)
         {
+            // while driving, only E (exit) / V (cam toggle) / Escape are live -- no look, fire, aim, reload, etc.
+            if (_driving != null && !(@event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.V || dk.Keycode == Key.Escape)))
+                return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 RotateY(Mathf.DegToRad(-mm.Relative.X * MouseSensitivity));
@@ -443,11 +447,17 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
                 StartReload();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
-                CycleFiremode();
+            {
+                if (_driving != null) _driveFP = !_driveFP;   // V while driving: toggle 3rd / 1st person cam
+                else CycleFiremode();
+            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Q })
                 SwitchWeapon();   // toggle Eaglefire <-> Maplestrike
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
-                TryPickup();      // pick up the nearest dropped world item
+            {
+                if (_driving != null) ExitVehicle();                       // E while driving: hop out
+                else { var veh = NearestVehicle(); if (veh != null) EnterVehicle(veh); else TryPickup(); }   // near a vehicle: get in, else pick up
+            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
                 { if (!OpenNearestCrate()) _viewmodel?.PlayInspect(); }   // F: open a nearby crate, else inspect the gun
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
@@ -810,9 +820,78 @@ namespace UnturnedGodot
             }
         }
 
+        // --- Vehicle enter/exit (source: InteractableVehicle). E enters the nearest vehicle's driver seat / exits. ---
+        public bool IsDriving => _driving != null;
+
+        Vehicle NearestVehicle()
+        {
+            Vehicle best = null; float bestD = 4.0f * 4.0f;   // within ~4 m
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle v)
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(v.GlobalPosition);
+                    if (d < bestD) { bestD = d; best = v; }
+                }
+            return best;
+        }
+
+        void EnterVehicle(Vehicle v)
+        {
+            _driving = v;
+            _viewmodel?.SetShown(false);                       // no gun while driving
+            if (_cam != null) _cam.TopLevel = true;            // free the camera into world space
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = true;   // stop the player body fighting the vehicle
+            Visible = false;
+            Velocity = Vector3.Zero;
+        }
+
+        void ExitVehicle()
+        {
+            var v = _driving; _driving = null;
+            if (v != null) GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = false;
+            Visible = true;
+            _viewmodel?.SetShown(true);
+            if (_cam != null) { _cam.TopLevel = false; _cam.Position = new Vector3(0f, 1.6f, 0f); _cam.Rotation = Vector3.Zero; }
+            _pitchDeg = 0f;
+        }
+
+        public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
+        public void EnterNearestVehicle() { var v = NearestVehicle(); if (v != null) EnterVehicle(v); }
+
+        void DriveVehicle(float delta)
+        {
+            float throttle, steer;
+            if (ScriptedDrive.HasValue) { steer = ScriptedDrive.Value.X; throttle = ScriptedDrive.Value.Y; }
+            else
+            {
+                throttle = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
+                steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
+            }
+            _driving.Drive(throttle, steer, Input.IsPhysicalKeyPressed(Key.Space));
+            GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle
+            if (_cam == null) return;
+            var vt = _driving.GlobalTransform;
+            var fwd = -vt.Basis.Z; fwd.Y = 0f;
+            fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
+            if (_driveFP)   // first-person from the driver seat, looking along the heading
+            {
+                _cam.GlobalPosition = vt * new Vector3(-0.5f, 1.35f, 0.1f);
+                _cam.LookAt(_cam.GlobalPosition + fwd, Vector3.Up);
+            }
+            else            // third-person chase (Unturned default): behind + above, following the heading
+            {
+                _cam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
+                _cam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+            }
+        }
+
         public override void _PhysicsProcess(double delta)
         {
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
+            if (_driving != null) { DriveVehicle((float)delta); return; }   // driving: skip on-foot movement
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
             if (_dead)
