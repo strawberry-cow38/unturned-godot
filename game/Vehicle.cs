@@ -13,6 +13,7 @@ namespace UnturnedGodot
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
+        AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         public float EngineRpm => _engineRpm;
         public float EngineRpmNorm => Mathf.Clamp((_engineRpm - IdleRpm) / (MaxRpm - IdleRpm), 0f, 1f);
@@ -27,6 +28,8 @@ namespace UnturnedGodot
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
             public float ReverseGear, ShiftUpRpm;   // .dat ReverseGearRatio + GearShift_UpThresholdRPM
+            public string Sound;   // engine loop ogg basename (source: the prefab's AudioSource m_audioClip)
+            public float IdlePitch, MaxPitch, IdleVolume, MaxVolume;   // .dat EngineSound (EngineRPMSimple)
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -68,6 +71,7 @@ namespace UnturnedGodot
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -87,6 +91,7 @@ namespace UnturnedGodot
             WheelRadius = 0.45f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
+            Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
             Parts = new (string, Color)[]
@@ -104,6 +109,7 @@ namespace UnturnedGodot
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
+            Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -126,6 +132,7 @@ namespace UnturnedGodot
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
+            v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
@@ -167,6 +174,14 @@ namespace UnturnedGodot
             if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
                 foreach (var (txt, color) in s.Parts)
                     v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = SolidMat(color) });
+
+            if (s.Sound != null)   // EngineRPMSimple: a looping engine clip (the prefab AudioSource) whose pitch + volume ride the RPM
+            {
+                var ogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
+                ogg.Loop = true;
+                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume), Autoplay = true };
+                v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
+            }
             return v;
         }
 
@@ -202,6 +217,12 @@ namespace UnturnedGodot
             {
                 if (_engineRpm > _shiftUpRpm && _gear < _gears.Length) _gear++;
                 else if (_engineRpm < _shiftUpRpm * 0.45f && _gear > 1) _gear--;
+            }
+            if (_engineAudio != null)   // EngineRPMSimple: pitch + volume lerp idle->max across the RPM band
+            {
+                float n = EngineRpmNorm;
+                _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
+                _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n));
             }
         }
     }
