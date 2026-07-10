@@ -26,10 +26,11 @@ namespace UnturnedGodot
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam;   // --vehicle=DIR : drop the jeep on a plane, chase cam, auto-drive
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -40,6 +41,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
                 else if (arg == "--attach") _vmAttach = true;
+                else if (arg.StartsWith("--vehicle=")) veh = arg["--vehicle=".Length..];
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -203,6 +205,16 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (veh != null)
+            {
+                _rigDir = veh;
+                _rigCaptureFrames = new[] { 20, 45, 75, 105, 135, 165 };   // settle on wheels -> drive forward + steer
+                _vehTest = true;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildVehicleTest();
+                return;
+            }
+
             if (!smoke)
             {
                 // DEFAULT (the exported build): a tiny main menu -> interactive single-player survival. Maximize to
@@ -351,6 +363,35 @@ namespace UnturnedGodot
             _vm = new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
             if (_vmAttach) { _am = new AttachmentMenu(); AddChild(_am); _am.VM = _vm; }   // --attach: show the T menu over the gun
+        }
+
+        // --vehicle=DIR : drop the jeep onto a ground plane, chase cam, auto-drive after it settles.
+        void BuildVehicleTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D();
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.30f) };
+            ground.AddChild(gmesh);
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(ground);
+
+            _veh = Vehicle.BuildJeep();
+            _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
+            AddChild(_veh);
+
+            _vehCam = new Camera3D { Current = true, Fov = 60f };
+            AddChild(_vehCam);
         }
 
         void BuildShowcase(string catalog, string picks)
@@ -1145,6 +1186,19 @@ namespace UnturnedGodot
                     // then a reload, so the test shows the real Gun_Reload arm anim (and its return to ready)
                     if (_frame == 100) _vm.SetReloading(true);
                     if (_frame == 150) _vm.SetReloading(false);
+                }
+                if (_vehTest && _veh != null)
+                {
+                    // let it settle on the suspension first, then auto-drive: throttle forward, then a gentle steer
+                    float throttle = _frame > 35 ? 1f : 0f;
+                    float steer = _frame > 90 ? 0.6f : 0f;
+                    _veh.Drive(throttle, steer, false);
+                    if (_vehCam != null)   // chase cam: stay behind + above the jeep, look at it
+                    {
+                        var vp = _veh.GlobalPosition;
+                        _vehCam.GlobalPosition = vp + new Vector3(0f, 3.2f, 7.5f);
+                        _vehCam.LookAt(vp + new Vector3(0f, 0.7f, 0f), Vector3.Up);
+                    }
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {
