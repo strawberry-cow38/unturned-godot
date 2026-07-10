@@ -58,12 +58,9 @@ namespace UnturnedGodot
             }
         }
 
-        public void Toggle()
-        {
-            Visible = !Visible;
-            if (Visible) { VM?.EnterAttachView(); Refresh(); }
-            else VM?.ExitAttachView();
-        }
+        public void Open()  { if (Visible) return; Visible = true;  VM?.EnterAttachView(); Refresh(); }
+        public void Close() { if (!Visible) return; Visible = false; VM?.ExitAttachView(); }
+        public void Toggle() { if (Visible) Close(); else Open(); }
         public bool IsOpen => Visible;
     }
 }

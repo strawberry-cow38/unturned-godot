@@ -458,17 +458,26 @@ namespace UnturnedGodot
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 ThrowGrenade();       // throw a grenade
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.T })
+            else if (@event is InputEventKey { Keycode: Key.T, Echo: false } tKey)
             {
-                if (AttachMenu != null)   // T: open/close the weapon-attachment menu (frees the mouse while open)
+                if (AttachMenu != null)   // T (hold): show the weapon-attachment menu while held, release to close
                 {
-                    AttachMenu.VM = _viewmodel;
-                    AttachMenu.Toggle();
-                    Input.MouseMode = AttachMenu.IsOpen ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                    if (tKey.Pressed && !AttachMenu.IsOpen)
+                    {
+                        AttachMenu.VM = _viewmodel;
+                        AttachMenu.Open();
+                        Input.MouseMode = Input.MouseModeEnum.Visible;
+                    }
+                    else if (!tKey.Pressed && AttachMenu.IsOpen)
+                    {
+                        AttachMenu.Close();
+                        Input.MouseMode = Input.MouseModeEnum.Captured;
+                    }
                 }
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
+                if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the T attachment menu is up
                 if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
                 _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
                 Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
@@ -528,6 +537,7 @@ namespace UnturnedGodot
         // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
         void StartFire()
         {
+            if (_viewmodel != null && _viewmodel.InAttachView) return;   // no firing while the T attachment menu is up
             if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
             if (_firemode == FireMode.Safety) return;
             // dry-fire: trigger pulled on an empty chamber -> hammer click, no shot
@@ -581,7 +591,7 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null) return false;
-            if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting)) return false;   // no firing until equip finishes, or during inspect (source canFire gates)
+            if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
