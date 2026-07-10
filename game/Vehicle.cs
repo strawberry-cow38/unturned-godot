@@ -16,6 +16,7 @@ namespace UnturnedGodot
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         public bool Exploded => _exploded;
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
+        Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
         AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
@@ -95,6 +96,29 @@ namespace UnturnedGodot
             if (_fire != null) _fire.Emitting = true;
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
             if (_bodyMesh != null) _bodyMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred wreck
+            SpawnWheelDebris();
+        }
+
+        void SpawnWheelDebris()   // source canExplode: the wheels fly off when the vehicle blows up
+        {
+            if (_wNodes == null || _wheelMeshRef == null) return;
+            Node scene = GetTree()?.CurrentScene ?? GetParent();
+            if (scene == null) return;
+            var rng = new RandomNumberGenerator(); rng.Randomize();
+            for (int i = 0; i < _wNodes.Length; i++)
+            {
+                var pos = _wMeshes[i].GlobalPosition;
+                var rb = new RigidBody3D { Mass = 18f };
+                rb.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = _wheelR } });
+                rb.AddChild(new MeshInstance3D { Mesh = _wheelMeshRef, MaterialOverride = _wheelMatRef, Scale = _wMeshes[i].Scale });
+                scene.AddChild(rb);
+                rb.GlobalPosition = pos;
+                var outward = pos - GlobalPosition; outward.Y = 0f;
+                outward = outward.LengthSquared() > 0.01f ? outward.Normalized() : Vector3.Right;
+                rb.ApplyCentralImpulse(outward * 45f + Vector3.Up * 55f + new Vector3(rng.RandfRange(-15f, 15f), 0f, rng.RandfRange(-15f, 15f)));
+                rb.AngularVelocity = new Vector3(rng.RandfRange(-12f, 12f), rng.RandfRange(-12f, 12f), rng.RandfRange(-12f, 12f));
+                _wMeshes[i].Visible = false;   // hide the wheel still on the car
+            }
         }
 
         // Unturned paintable shading: body samples the palette, paintable texels tinted by _PaintColor.
@@ -224,6 +248,7 @@ namespace UnturnedGodot
             else
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             int nw = s.Wheels.Length;
+            v._wheelMeshRef = wheelMesh; v._wheelMatRef = wheelMat; v._wheelR = s.WheelRadius;   // for explosion debris
             v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw]; v._wRoll = new float[nw]; v._wSign = new float[nw];
             for (int i = 0; i < nw; i++)
             {
