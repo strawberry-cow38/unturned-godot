@@ -261,12 +261,37 @@ namespace UnturnedGodot
             },
         };
 
+        // Humvee.dat: Speed 14, steer 24->12, front-steered, faction DefaultPaints (military, like the jeep). Heavy 4x4, brake 40.
+        static readonly Spec _humvee = new()
+        {
+            Body = "humvee_body.txt", Wheel = "humvee_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "humvee_palette.png",
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // source .dat: Coalition / Desert / Forest / Russia
+            WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
+            BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
+            ForwardGears = new[] { 20f, 12.56f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 2000f, Health = 550f, Name = "Humvee", Horn = "carhorn_03.ogg",
+            SpotPos = new[] { new Vector3(-0.979f, 0.741f, -2.511f), new Vector3(0.979f, 0.741f, -2.511f) }, OmniPos = new Vector3(0f, 0.873f, -2.487f),
+            TailPos = new[] { new Vector3(-0.979f, 0.738f, 2.548f), new Vector3(0.979f, 0.738f, 2.548f) },
+            SteerPivot = new Vector3(-0.464f, 0.94f, -1.27f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("humvee_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
+                ("humvee_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("humvee_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
+                ("humvee_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
+            },
+        };
+
         public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
         public static Vehicle BuildSedan(int variant = 0) => Build(_sedan, variant);
         public static Vehicle BuildHatchback(int variant = 0) => Build(_hatchback, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildHumvee(int variant = 0) => Build(_humvee, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), _ => BuildJeep(variant) };
 
         static Vehicle Build(Spec s, int variant)
         {
