@@ -162,7 +162,9 @@ namespace UnturnedGodot
                     // The gun's paint colours are BAKED into the albedo (tools/bake_gun_albedo.py: pure-black metal ->
                     // visible gunmetal, white paintable -> the gun's paint colour) because the raw metal is pure black
                     // and can't be shown by light/metallic/tint. So the material just shows the baked texture, matte.
-                    var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, Roughness = 0.85f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+                    // Fully matte: Unturned guns are non-reflective. MetallicSpecular=0 kills the dielectric specular
+                    // highlight (the 3 viewmodel lights were kicking a "shiny" sheen off the body at Roughness 0.85).
+                    var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     var tex = LoadTex($"res://content/{gv.Albedo}");
                     if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
