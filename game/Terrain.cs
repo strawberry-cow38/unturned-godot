@@ -36,19 +36,31 @@ namespace UnturnedGodot
         const string TERRAIN_SHADER = @"
 shader_type spatial;
 uniform sampler2DArray albedos : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D domTex : filter_nearest;
+uniform sampler2D splat0 : filter_linear;
+uniform sampler2D splat1 : filter_linear;
 uniform float tileWorld = 16.0;
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
-    int layer = int(texture(domTex, UV).r * 255.0 + 0.5);
-    if (layer == 5) { ALBEDO = vec3(0.170, 0.310, 0.470); }
-    else { ALBEDO = texture(albedos, vec3(wpos.xz / tileWorld, float(layer))).rgb; }
+    vec4 w0 = texture(splat0, UV);
+    vec4 w1 = texture(splat1, UV);
+    vec2 tuv = wpos.xz / tileWorld;
+    vec3 c = vec3(0.0);
+    c += w0.r * texture(albedos, vec3(tuv, 0.0)).rgb;
+    c += w0.g * texture(albedos, vec3(tuv, 1.0)).rgb;
+    c += w0.b * texture(albedos, vec3(tuv, 2.0)).rgb;
+    c += w0.a * texture(albedos, vec3(tuv, 3.0)).rgb;
+    c += w1.r * texture(albedos, vec3(tuv, 4.0)).rgb;
+    c += w1.g * vec3(0.170, 0.310, 0.470);            // layer 5 (sand seabed) -> ocean blue until a real water plane
+    c += w1.b * texture(albedos, vec3(tuv, 6.0)).rgb;
+    c += w1.a * texture(albedos, vec3(tuv, 7.0)).rgb;
+    float wsum = w0.r + w0.g + w0.b + w0.a + w1.r + w1.g + w1.b + w1.a;
+    ALBEDO = c / max(wsum, 0.001);
     ROUGHNESS = 1.0;
 }
 ";
 
-        static ShaderMaterial BuildTerrainMaterial(byte[,] dom, int dw, int dh)
+        static ShaderMaterial BuildTerrainMaterial(Image splat0, Image splat1)
         {
             var imgs = new Godot.Collections.Array<Image>();
             for (int l = 0; l < SLAYERS; l++)
@@ -62,13 +74,10 @@ void fragment() {
             var arr = new Texture2DArray();
             if (arr.CreateFromImages(imgs) != Error.Ok) return null;
 
-            var buf = new byte[dw * dh];
-            for (int y = 0; y < dh; y++) for (int x = 0; x < dw; x++) buf[y * dw + x] = dom[x, y];
-            var domTex = ImageTexture.CreateFromImage(Image.CreateFromData(dw, dh, false, Image.Format.R8, buf));
-
             var mat = new ShaderMaterial { Shader = new Shader { Code = TERRAIN_SHADER } };
             mat.SetShaderParameter("albedos", arr);
-            mat.SetShaderParameter("domTex", domTex);
+            mat.SetShaderParameter("splat0", ImageTexture.CreateFromImage(splat0));
+            mat.SetShaderParameter("splat1", ImageTexture.CreateFromImage(splat1));
             mat.SetShaderParameter("tileWorld", 16f);
             return mat;
         }
@@ -156,6 +165,7 @@ void fragment() {
         {
             var tiles = new System.Collections.Generic.Dictionary<(int, int), float[,]>();
             var splats = new System.Collections.Generic.Dictionary<(int, int), byte[,]>();   // dominant splatmap layer per 256x256 texel
+            var splatRaw = new System.Collections.Generic.Dictionary<(int, int), byte[]>();   // raw 256x256x8 layer weights per tile, for the blend shader
             string splatDir = Path.Combine(Path.GetDirectoryName(heightmapsDir), "Splatmaps");
             int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
             foreach (var path in Directory.GetFiles(heightmapsDir, "Tile_*_Source.heightmap"))
@@ -173,7 +183,7 @@ void fragment() {
                 {
                     byte[] sd = File.ReadAllBytes(sp); var dm = new byte[SRES, SRES]; int sk = 0;
                     for (int sx = 0; sx < SRES; sx++) for (int sy = 0; sy < SRES; sy++) { byte bl = 0, bv = 0; for (byte L = 0; L < SLAYERS; L++) { byte w = sd[sk++]; if (w > bv) { bv = w; bl = L; } } dm[sx, sy] = bl; }
-                    splats[(cx, cy)] = dm;
+                    splats[(cx, cy)] = dm; splatRaw[(cx, cy)] = sd;
                 }
             }
             var terr = new Terrain { Name = "Terrain" };
@@ -194,6 +204,21 @@ void fragment() {
                 int ox = (kv.Key.Item1 - minX) * SRES, oy = (kv.Key.Item2 - minY) * SRES;
                 for (int sx = 0; sx < SRES; sx++) for (int sy = 0; sy < SRES; sy++) dom[ox + sy, oy + sx] = kv.Value[sx, sy];   // same y->worldX, x->worldZ transpose
             }
+
+            // bake the 8 raw layer weights into 2 RGBA8 textures (splat0 = layers 0-3, splat1 = 4-7) for the blend shader
+            byte[] sbuf0 = new byte[GWs * GHs * 4], sbuf1 = new byte[GWs * GHs * 4];
+            foreach (var kv in splatRaw)
+            {
+                int ox = (kv.Key.Item1 - minX) * SRES, oy = (kv.Key.Item2 - minY) * SRES; byte[] sd = kv.Value;
+                for (int sx = 0; sx < SRES; sx++) for (int sy = 0; sy < SRES; sy++)
+                {
+                    int di = ((oy + sx) * GWs + (ox + sy)) * 4, b = (sx * SRES + sy) * SLAYERS;   // merged pos, same y->X/x->Z transpose as dom
+                    sbuf0[di] = sd[b]; sbuf0[di + 1] = sd[b + 1]; sbuf0[di + 2] = sd[b + 2]; sbuf0[di + 3] = sd[b + 3];
+                    sbuf1[di] = sd[b + 4]; sbuf1[di + 1] = sd[b + 5]; sbuf1[di + 2] = sd[b + 6]; sbuf1[di + 3] = sd[b + 7];
+                }
+            }
+            var splat0Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf0);
+            var splat1Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf1);
 
             int nv = GW * GH;
             var verts = new Vector3[nv]; var norms = new Vector3[nv]; var uvs = new Vector2[nv]; var cols = new Color[nv];
@@ -226,8 +251,8 @@ void fragment() {
             var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
 
             var mi = new MeshInstance3D { Mesh = mesh };
-            var texMat = splats.Count > 0 ? BuildTerrainMaterial(dom, GWs, GHs) : null;   // real per-layer albedos when splatmaps exist
-            GD.Print(texMat != null ? "[TERRAIN] real per-layer albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
+            var texMat = splats.Count > 0 ? BuildTerrainMaterial(splat0Img, splat1Img) : null;   // real per-layer albedos, blended by per-texel splat weights
+            GD.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
             mi.MaterialOverride = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
             terr.AddChild(mi);
             if (withCollider)
