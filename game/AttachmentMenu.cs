@@ -11,6 +11,11 @@ namespace UnturnedGodot
         public Viewmodel VM;
         static readonly string[] Slots = { "Sight", "Tactical", "Grip", "Barrel", "Magazine" };
         readonly System.Collections.Generic.Dictionary<string, Button> _icons = new();
+        // real attachment options per slot (interim: clicking the slot cycles through them; the source jars-grid
+        // presentation is the next pass). null = detached. Only the eaglefire sight is wired so far.
+        static readonly System.Collections.Generic.Dictionary<string, string[]> _cycle =
+            new() { { "Sight", new[] { "eaglefire_iron_sights.txt", "red_dot_sight.txt", null } } };
+        readonly System.Collections.Generic.Dictionary<string, int> _cycleIdx = new();
 
         public override void _Ready()
         {
@@ -39,7 +44,20 @@ namespace UnturnedGodot
                 btn.AddThemeStyleboxOverride("hover", Box(0.24f, 0.30f, 0.40f, 0.80f));
                 btn.AddThemeStyleboxOverride("pressed", Box(0.30f, 0.46f, 0.62f, 0.90f));
                 string s = slot;
-                btn.Pressed += () => { if (VM != null && VM.SlotHasModel(s)) { VM.SetSlotAttached(s, !VM.SlotAttached(s)); Refresh(); } };
+                btn.Pressed += () =>
+                {
+                    if (VM == null) return;
+                    if (_cycle.TryGetValue(s, out var opts))          // slot with real options: cycle through them
+                    {
+                        int cur = _cycleIdx.TryGetValue(s, out var ci) ? ci : 0;
+                        int i = (cur + 1) % opts.Length;
+                        _cycleIdx[s] = i;
+                        VM.SetSlotMesh(s, opts[i]);
+                    }
+                    else if (VM.SlotHasModel(s))                       // other slots: just detach/re-attach the default
+                        VM.SetSlotAttached(s, !VM.SlotAttached(s));
+                    Refresh();
+                };
                 AddChild(btn);
                 _icons[slot] = btn;
             }

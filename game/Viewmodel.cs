@@ -356,6 +356,17 @@ namespace UnturnedGodot
         {
             if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
         }
+        // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to
+        // the same child-node position as the default, so swapping just the mesh mounts the new part on the same hook.
+        public void SetSlotMesh(string slot, string txtName)
+        {
+            if (!_attachMesh.TryGetValue(slot, out var n)) return;
+            var m = _gun?.GetNodeOrNull<MeshInstance3D>(n);
+            if (m == null) return;
+            if (string.IsNullOrEmpty(txtName)) { m.Visible = false; return; }
+            m.Mesh = ContentProvider.ParseObj($"res://content/{txtName}");
+            m.Visible = true;
+        }
 
         // Attachment hook positions on the gun (port frame, from the source prefab's Sight/Tactical/Barrel/Grip/Magazine
         // hooks: (x,y,z)->(-x,y,-z)). The T menu projects these through the viewmodel cam so the slot icons sit on the gun.
