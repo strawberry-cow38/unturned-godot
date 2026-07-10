@@ -570,6 +570,7 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null) return false;
+            if (_viewmodel != null && !_viewmodel.IsEquipComplete) return false;   // no firing until the equip (pull-out) anim finishes (source: canFire gates on IsEquipAnimationFinished)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
