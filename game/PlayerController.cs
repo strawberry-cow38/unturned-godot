@@ -777,6 +777,10 @@ namespace UnturnedGodot
             _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
             if (_cam != null && !_dead)
             {
+                // Eye height follows the stance (PlayerLook.heightLook: STAND/SPRINT 1.75 / CROUCH 1.2 / PRONE 0.35),
+                // lerped at 4/s like the source (PlayerLook.cs:1235) so crouching/proning drops the FP view.
+                float targetEye = Stance switch { EPlayerStance.CROUCH => 1.2f, EPlayerStance.PRONE => 0.35f, _ => 1.75f };
+                var cp = _cam.Position; cp.Y = Mathf.Lerp(cp.Y, targetEye, 4f * (float)delta); _cam.Position = cp;
                 // flinchLocalRotation * Euler(pitch, yaw) (PlayerLook line 1378) — the flinch left-multiplies the look
                 var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // recoil now lives in _pitchDeg/body-yaw (additive), not a separate offset
                 _cam.Basis = new Basis(_flinch) * look;
