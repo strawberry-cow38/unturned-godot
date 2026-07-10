@@ -28,6 +28,7 @@ namespace UnturnedGodot
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
         public bool EngineOn; public string DisplayName;
+        public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
@@ -364,6 +365,7 @@ namespace UnturnedGodot
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+            v.BodyExtents = s.BoxSize * 0.5f; v.BodyCenter = s.BoxCenter;   // for the zombie swipe-reach
 
             // front bumper trigger (source Bumper): a forward volume that roadkills characters (enemy layer bit 1) the
             // vehicle drives into. Trigger only -- the body's own mask ignores the enemy layer, so it plows through.

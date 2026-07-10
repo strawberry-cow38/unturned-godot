@@ -868,6 +868,7 @@ namespace UnturnedGodot
 
         // --- Vehicle enter/exit (source: InteractableVehicle). E enters the nearest vehicle's driver seat / exits. ---
         public bool IsDriving => _driving != null;
+        public Vehicle Driving => _driving;   // the vehicle being driven (for zombies to swipe at, source targetPassengerVehicle)
 
         Vehicle NearestVehicle()
         {

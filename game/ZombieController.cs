@@ -35,6 +35,7 @@ namespace UnturnedGodot
 
         // Attack ranges (Zombie.GetHorizontalAttackRangeSquared / GetVerticalAttackRange, client + normal):
         const float ATTACK_PLAYER_SQ = 2f;   // ATTACK_PLAYER; horizontal reach = sqrt(2) ~ 1.41 m
+        const float ATTACK_VEHICLE = 16f;     // Zombie.ATTACK_VEHICLE: swipe damage to the car a target player is driving (vs AttackDamage to a player)
         const float VERTICAL_ATTACK = 2.1f;
         const float ATTACK_TIME = 0.8f;      // Zombie.attackTime = Attack_0 clip length (0.8s); dmg lands at half (0.4s)
         const float LEAVE_SQ = 4096f;        // 64 m: the player has broken away (Zombie.tick)
@@ -259,18 +260,36 @@ namespace UnturnedGodot
                 SpitAcid(player);
             }
 
-            // --- attack in range: ~1 s cadence, the hit lands mid-swing (Zombie.tick + askAttack) ---
+            // --- attack in range: ~1 s cadence, the hit lands mid-swing (Zombie.tick + askAttack). If the target player is
+            // DRIVING, we swipe the VEHICLE instead (source Zombie targetPassengerVehicle -> VehicleManager.damage, flat
+            // ATTACK_VEHICLE per swing) and reach for the car's BODY surface, since it's big + blocks us short of centre. ---
+            Vehicle veh = player.IsDriving ? player.Driving : null;
+            if (veh != null && veh.Exploded) veh = null;
+            bool canAttack;
+            if (veh != null)
+            {
+                Vector3 lp = veh.GlobalTransform.AffineInverse() * GlobalPosition - veh.BodyCenter;   // zombie in the car's local frame, box-centred
+                Vector3 h = veh.BodyExtents;
+                Vector3 nearest = new Vector3(Mathf.Clamp(lp.X, -h.X, h.X), Mathf.Clamp(lp.Y, -h.Y, h.Y), Mathf.Clamp(lp.Z, -h.Z, h.Z));
+                canAttack = (lp - nearest).LengthSquared() < ATTACK_PLAYER_SQ;   // within arm's reach of the body surface
+            }
+            else canAttack = num3 < ATTACK_PLAYER_SQ && num4 < VERTICAL_ATTACK;
+
             bool swinging = false;
-            if (num3 < ATTACK_PLAYER_SQ && num4 < VERTICAL_ATTACK)
+            if (canAttack)
             {
                 if (_isAttacking)
                 {
                     if (_age - _lastAttack > ATTACK_TIME / 2f)
                     {
                         _isAttacking = false;
-                        float mult = Speciality == ESpeciality.CRAWLER ? 2f : Speciality == ESpeciality.SPRINTER ? 0.75f : 1f;
-                        player.TakeDamage(AttackDamage * mult, GlobalPosition);   // pass my position so the hurt-flinch kicks away from me
-                        player.Infect((AttackDamage * mult / 3f) / 100f);   // Zombie.askDamage: askInfect(b/3)
+                        if (veh != null) veh.TakeDamage(ATTACK_VEHICLE);   // source: no crawler/sprinter mult, no infect through the car
+                        else
+                        {
+                            float mult = Speciality == ESpeciality.CRAWLER ? 2f : Speciality == ESpeciality.SPRINTER ? 0.75f : 1f;
+                            player.TakeDamage(AttackDamage * mult, GlobalPosition);   // pass my position so the hurt-flinch kicks away from me
+                            player.Infect((AttackDamage * mult / 3f) / 100f);   // Zombie.askDamage: askInfect(b/3)
+                        }
                     }
                 }
                 else if (_age - _lastAttack > 1f)
