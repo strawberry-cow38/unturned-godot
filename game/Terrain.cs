@@ -51,7 +51,7 @@ void fragment() {
     c += w0.b * texture(albedos, vec3(tuv, 2.0)).rgb;
     c += w0.a * texture(albedos, vec3(tuv, 3.0)).rgb;
     c += w1.r * texture(albedos, vec3(tuv, 4.0)).rgb;
-    c += w1.g * vec3(0.170, 0.310, 0.470);            // layer 5 (sand seabed) -> ocean blue until a real water plane
+    c += w1.g * texture(albedos, vec3(tuv, 5.0)).rgb;  // layer 5 = real sand (seabed, shown through the translucent water plane)
     c += w1.b * texture(albedos, vec3(tuv, 6.0)).rgb;
     c += w1.a * texture(albedos, vec3(tuv, 7.0)).rgb;
     float wsum = w0.r + w0.g + w0.b + w0.a + w1.r + w1.g + w1.b + w1.a;
@@ -255,6 +255,20 @@ void fragment() {
             GD.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
             mi.MaterialOverride = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
             terr.AddChild(mi);
+
+            // translucent ocean surface at PEI's empirical sea level (~65% of the terrain is seabed below it; histogram p65)
+            {
+                float waterY = 8f;
+                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
+                water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
+                water.MaterialOverride = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(0.13f, 0.29f, 0.44f, 0.74f),
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    Roughness = 0.12f, Metallic = 0.15f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                };
+                terr.AddChild(water);
+            }
             if (withCollider)
             {
                 var body = new StaticBody3D { CollisionLayer = 1u << 0 };
