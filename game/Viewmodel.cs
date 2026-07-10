@@ -46,6 +46,8 @@ namespace UnturnedGodot
         string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
         string _inspectClip = null;          // per-gun inspect clip ({Gun}_Inspect); null if the gun ships no Inspect anim
         bool _inspecting; float _inspectTimer; Basis _inspectBoneStart; bool _inspectCapture;   // inspect: layer the hand-bone rotation delta onto the camera-locked gun so it tilts with the gesture
+        string _attachStartClip = null, _attachStopClip = null;   // per-gun attach-view pose clips ({Gun}_AttachStart/Stop)
+        bool _attachView, _attachCapture; Basis _attachBoneStart;   // T attachment view: hold the presented pose (gun follows the bone like inspect)
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
         AudioStreamPlayer _shootSnd, _reloadSnd, _drySnd;   // real Eaglefire Shoot/Reload/Hammer(dry-fire) sounds
@@ -145,6 +147,9 @@ namespace UnturnedGodot
                 // per-gun inspect clip ({Gun}_Inspect, from that gun's animations.prefab). null = gun has no Inspect anim.
                 _inspectClip = _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect" : null;
                 if (_inspectClip != null) _arms.SetClipLoop(_inspectClip, false);
+                _attachStartClip = _arms.ClipLength(capGun + "_AttachStart") > 0f ? capGun + "_AttachStart" : null;
+                _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
+                if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
                 _arms.Play("Gun_Equip");                 // raise -> holds the two-handed rifle stance
                 _equipLen = _arms.ClipLength("Gun_Equip");
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
@@ -323,6 +328,23 @@ namespace UnturnedGodot
             _arms?.SnapToEnd("Gun_Equip");   // snap the arms to the equip-END (the ready hold), no pull-out replay
         }
 
+        // T attachment view: present the gun in its source Attach_Start pose so the slot icons can sit on it; holds
+        // the pose while the menu is open (like inspect, but not timed). Exit snaps back to the ready hold.
+        public void EnterAttachView()
+        {
+            if (_attachView || _reloading || _inspecting) return;
+            _aiming = false;
+            if (_attachStartClip != null) _arms?.Play(_attachStartClip);
+            _attachView = true; _attachCapture = true;
+        }
+        public void ExitAttachView()
+        {
+            if (!_attachView) return;
+            _attachView = false;
+            _arms?.SnapToEnd("Gun_Equip");
+        }
+        public bool InAttachView => _attachView;
+
         // ---- weapon attachments (T menu). The gun's attachment models are children of _gun named per slot; right now
         // only Sight (iron sights) + Magazine ship a model, so detach/attach = toggling that model's visibility. The
         // default iron sights ARE the Sight attachment -- removable (and later replaceable), matching the source.
@@ -333,6 +355,26 @@ namespace UnturnedGodot
         public void SetSlotAttached(string slot, bool on)
         {
             if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
+        }
+
+        // Attachment hook positions on the gun (port frame, from the source prefab's Sight/Tactical/Barrel/Grip/Magazine
+        // hooks: (x,y,z)->(-x,y,-z)). The T menu projects these through the viewmodel cam so the slot icons sit on the gun.
+        static readonly System.Collections.Generic.Dictionary<string, Vector3> _hookLocal = new()
+        {
+            { "Sight",    new Vector3( 0f,      -0.2398f, -0.1386f) },
+            { "Tactical", new Vector3(-0.0601f,  0.3815f, -0.0851f) },
+            { "Barrel",   new Vector3( 0f,       0.7307f, -0.0818f) },
+            { "Grip",     new Vector3( 0f,       0.2595f, -0.0226f) },
+            { "Magazine", new Vector3( 0f,       0.0166f,  0.0238f) },
+        };
+        public bool TryGetSlotScreen(string slot, out Vector2 screen)
+        {
+            screen = Vector2.Zero;
+            if (_gun == null || _cam == null || !_hookLocal.TryGetValue(slot, out var local)) return false;
+            Vector3 world = _gun.GlobalTransform * local;
+            if (_cam.IsPositionBehind(world)) return false;
+            screen = _cam.UnprojectPosition(world);
+            return true;
         }
 
         // Length (s) of the equipped gun's reload clip, so PlayerController times the ammo refill to the real anim
@@ -433,6 +475,11 @@ namespace UnturnedGodot
                 {
                     if (_inspectCapture) { _inspectBoneStart = att.GlobalTransform.Basis; _inspectCapture = false; }
                     basis = (att.GlobalTransform.Basis * _inspectBoneStart.Inverse()) * basis;
+                }
+                if (_attachView)   // hold the attach-view presented pose (same bone-delta layering as inspect)
+                {
+                    if (_attachCapture) { _attachBoneStart = att.GlobalTransform.Basis; _attachCapture = false; }
+                    basis = (att.GlobalTransform.Basis * _attachBoneStart.Inverse()) * basis;
                 }
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
             }
