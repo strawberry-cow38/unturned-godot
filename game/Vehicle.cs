@@ -6,15 +6,16 @@ namespace UnturnedGodot
     // VehicleWheel3D 1:1). Meshes ripped by tools/extract_vehicle_mesh.py; params + real _PaintColor from the .dat.
     public partial class Vehicle : VehicleBody3D
     {
-        float _engineForce = 600f;
-        float _maxSteerDeg = 28f;
-        float _brakeForce = 12f;
+        float _engineForce = 600f;                  // acceleration feel (calibrated: Unity WheelCollider torque doesn't map 1:1)
+        float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
+        float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
+        float _brakeForce = 32f;                     // Brake -- source .dat value
 
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
             public Color Paint;
-            public float WheelRadius, Mass, Engine, SteerDeg, Brake;
+            public float WheelRadius, Mass, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -37,7 +38,7 @@ namespace UnturnedGodot
         static readonly Spec _jeep = new()
         {
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png", Paint = new Color(0.854f, 0.858f, 0.078f),
-            WheelRadius = 0.6f, Mass = 900f, Engine = 600f, SteerDeg = 28f, Brake = 12f,
+            WheelRadius = 0.6f, Mass = 900f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -53,7 +54,7 @@ namespace UnturnedGodot
         static readonly Spec _quad = new()
         {
             Body = "quad_body.txt", Wheel = "quad_wheel.txt", Paint = new Color(0.525f, 0.755f, 0.353f),
-            WheelRadius = 0.45f, Mass = 500f, Engine = 520f, SteerDeg = 32f, Brake = 10f,
+            WheelRadius = 0.45f, Mass = 500f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
         };
@@ -65,7 +66,8 @@ namespace UnturnedGodot
         static Vehicle Build(Spec s)
         {
             var v = new Vehicle { Mass = s.Mass };
-            v._engineForce = s.Engine; v._maxSteerDeg = s.SteerDeg; v._brakeForce = s.Brake;
+            v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
+            v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             // paintable palette shader (panels take the paint colour, exhaust/lights keep theirs); fallback = solid
@@ -105,11 +107,17 @@ namespace UnturnedGodot
             return v;
         }
 
-        // throttle/brake/steer in [-1,1]; drives the traction + steering wheels via VehicleBody3D.
+        // throttle/brake/steer in [-1,1]; applies the source .dat handling: hard Speed_Max/Min caps + speed-dependent
+        // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
         public void Drive(float throttle, float steer, bool braking)
         {
-            EngineForce = throttle * _engineForce;
-            Steering = Mathf.DegToRad(steer * _maxSteerDeg);
+            float speed = LinearVelocity.Length();   // m/s (horizontal-ish while driving)
+            float eng = throttle * _engineForce;
+            if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
+            if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
+            EngineForce = eng;
+            float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
+            Steering = Mathf.DegToRad(steer * Mathf.Lerp(_steerMax, _steerMin, t));   // 28deg at rest -> 14deg at full speed
             Brake = braking ? _brakeForce : 0f;
         }
     }
