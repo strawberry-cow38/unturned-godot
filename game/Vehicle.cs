@@ -12,19 +12,32 @@ namespace UnturnedGodot
 
         struct Spec
         {
-            public string Body, Wheel;
+            public string Body, Wheel, Palette;   // Palette = paintable color palette (null -> solid Paint)
             public Color Paint;
             public float WheelRadius, Mass, Engine, SteerDeg, Brake;
             public (float x, float y, float z, bool steer)[] Wheels;
+            public string[] Parts;   // extra detail meshes (root-relative, palette-shaded), placed at origin
+        }
+
+        // Unturned paintable shading: body samples the palette, paintable texels tinted by _PaintColor.
+        static ShaderMaterial PaintMat(string palette, Color paint)
+        {
+            var sh = new Shader { Code = System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/vehicle_paint.gdshader")) };
+            var m = new ShaderMaterial { Shader = sh };
+            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{palette}"));
+            m.SetShaderParameter("palette", ImageTexture.CreateFromImage(img));
+            m.SetShaderParameter("paint_color", new Vector3(paint.R, paint.G, paint.B));
+            return m;
         }
 
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
         {
-            Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", Paint = new Color(0.854f, 0.858f, 0.078f),
+            Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", Palette = "jeep_palette.png", Paint = new Color(0.854f, 0.858f, 0.078f),
             WheelRadius = 0.6f, Mass = 900f, Engine = 600f, SteerDeg = 28f, Brake = 12f,
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
+            Parts = new[] { "jeep_seats.txt", "jeep_headlights.txt", "jeep_taillights.txt", "jeep_steer.txt" },
         };
 
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
@@ -46,8 +59,10 @@ namespace UnturnedGodot
             v._engineForce = s.Engine; v._maxSteerDeg = s.SteerDeg; v._brakeForce = s.Brake;
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
-            // real default _PaintColor; double-sided since the low-poly bodies have a few backwards-wound faces
-            var bodyMat = new StandardMaterial3D { AlbedoColor = s.Paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            // paintable palette shader (panels take the paint colour, exhaust/lights keep theirs); fallback = solid
+            Material bodyMat = s.Palette != null
+                ? PaintMat(s.Palette, s.Paint)
+                : new StandardMaterial3D { AlbedoColor = s.Paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             v.AddChild(new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat });
 
             var aabb = bodyMesh.GetAabb();   // chassis collision hull from the body extent
@@ -67,6 +82,10 @@ namespace UnturnedGodot
                 w.AddChild(new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3(x < 0 ? -1f : 1f, 1f, 1f) });
                 v.AddChild(w);
             }
+
+            if (s.Parts != null)   // detail meshes (seats, headlights, taillights, steering wheel) at their real positions
+                foreach (var part in s.Parts)
+                    v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{part}"), MaterialOverride = bodyMat });
             return v;
         }
 
