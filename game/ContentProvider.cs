@@ -109,7 +109,7 @@ namespace UnturnedGodot
                 {
                     case "v":  verts.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
                     case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
-                    case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), float.Parse(t[2], ci))); break;
+                    case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;   // Unity vt is V-up (origin bottom-left); Godot samples V-down (top-left) -> flip V or the texture wraps upside-down
                     case "f":
                         for (int i = 1; i <= 3 && i < t.Length; i++)
                         {
