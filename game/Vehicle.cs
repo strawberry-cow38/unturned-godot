@@ -26,6 +26,9 @@ namespace UnturnedGodot
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
+        Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
+        const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
+        public bool HeadlightsOn => _headlightsOn;
 
         struct Spec
         {
@@ -40,6 +43,7 @@ namespace UnturnedGodot
             public float IdlePitch, MaxPitch, IdleVolume, MaxVolume;   // .dat EngineSound (EngineRPMSimple)
             public float Fuel, Health;   // .dat Fuel / Health capacities (HUD gauges)
             public string Name;   // display name (English.dat) for the HUD title
+            public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -83,6 +87,7 @@ namespace UnturnedGodot
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
             Fuel = 2000f, Health = 600f, Name = "Jeep",
+            SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source prefab Headlights (Z negated)
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -188,7 +193,21 @@ namespace UnturnedGodot
 
             if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
                 foreach (var (txt, color) in s.Parts)
-                    v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = SolidMat(color) });
+                {
+                    var pm = SolidMat(color);
+                    v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm });
+                    if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
+                }
+
+            if (s.SpotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
+            {
+                var warm = new Color(0.97f, 0.96f, 0.83f);
+                v._headlights = new Node3D { Visible = false };
+                foreach (var p in s.SpotPos)
+                    v._headlights.AddChild(new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f });
+                v._headlights.AddChild(new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f });   // dim soft fill (raised above the seats so it doesn't glare)
+                v.AddChild(v._headlights);
+            }
 
             if (s.Sound != null)   // EngineRPMSimple: a looping engine clip (the prefab AudioSource) whose pitch + volume ride the RPM
             {
@@ -213,6 +232,25 @@ namespace UnturnedGodot
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
             _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped)
             Brake = braking ? _brakeForce : 0f;
+        }
+
+        public void Park()   // driver left: cut the engine, hold the brake, straighten the wheels so it doesn't roll away
+        {
+            EngineForce = 0f;
+            Brake = _brakeForce;
+            _steerTarget = 0f;
+        }
+
+        public void ToggleHeadlights() => SetHeadlights(!_headlightsOn);   // source tellHeadlights
+        void SetHeadlights(bool on)
+        {
+            _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights
+            if (_headlights != null) _headlights.Visible = _headlightsOn;
+            if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
+            {
+                _headlightMat.EmissionEnabled = _headlightsOn;
+                if (_headlightsOn) { _headlightMat.Emission = new Color(0.97f, 0.96f, 0.83f); _headlightMat.EmissionEnergyMultiplier = 2f; }
+            }
         }
 
         public override void _PhysicsProcess(double delta)
@@ -242,6 +280,11 @@ namespace UnturnedGodot
             }
             if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
                 Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);
+            if (_headlightsOn)   // source: headlights burn the battery (EBatteryMode.Burn); die when it's empty
+            {
+                Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
+                if (Battery <= 0f) SetHeadlights(false);
+            }
 
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);

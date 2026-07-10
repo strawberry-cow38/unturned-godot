@@ -428,8 +428,8 @@ namespace UnturnedGodot
 
         public override void _UnhandledInput(InputEvent @event)
         {
-            // while driving, only E (exit) / V (cam toggle) / Escape are live -- no look, fire, aim, reload, etc.
-            if (_driving != null && !(@event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.V || dk.Keycode == Key.Escape)))
+            // while driving, only E (exit) / V (cam toggle) / L (headlights) / Escape are live -- no look, fire, aim, reload, etc.
+            if (_driving != null && !(@event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.V || dk.Keycode == Key.L || dk.Keycode == Key.Escape)))
                 return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
@@ -457,6 +457,10 @@ namespace UnturnedGodot
             {
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
                 else { var veh = NearestVehicle(); if (veh != null) EnterVehicle(veh); else TryPickup(); }   // near a vehicle: get in, else pick up
+            }
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
+            {
+                if (_driving != null) _driving.ToggleHeadlights();         // L while driving: toggle headlights
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
                 { if (!OpenNearestCrate()) _viewmodel?.PlayInspect(); }   // F: open a nearby crate, else inspect the gun
@@ -853,7 +857,7 @@ namespace UnturnedGodot
         void ExitVehicle()
         {
             var v = _driving; _driving = null;
-            if (v != null) v.EngineOn = false;                 // stop burning fuel
+            if (v != null) { v.EngineOn = false; v.Park(); }   // stop burning fuel + brake so it doesn't roll away
             if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             if (v != null) GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))

@@ -26,7 +26,7 @@ namespace UnturnedGodot
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant;   // --vehicle=DIR [--variant=N] : drop a vehicle, chase cam, auto-drive
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night;   // --vehicle=DIR [--variant=N] [--night] : drop a vehicle, chase cam, auto-drive
         bool _driveTest; PlayerController _dtPlayer;      // --drivetest=DIR : player walks to a jeep, enters, drives (verifies enter/exit)
 
         public override void _Ready()
@@ -45,6 +45,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--vehicle=")) veh = arg["--vehicle=".Length..];
                 else if (arg.StartsWith("--drivetest=")) drivetest = arg["--drivetest=".Length..];
                 else if (arg.StartsWith("--variant=")) _vehVariant = int.Parse(arg["--variant=".Length..]);
+                else if (arg == "--night") _night = true;   // dark env + headlights on (headlight demo)
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -384,13 +385,13 @@ namespace UnturnedGodot
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                BackgroundColor = _night ? new Color(0.02f, 0.02f, 0.05f) : new Color(0.42f, 0.55f, 0.72f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
-                AmbientLightEnergy = 0.9f,
+                AmbientLightColor = _night ? new Color(0.05f, 0.05f, 0.09f) : new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = _night ? 0.25f : 0.9f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = _night ? 0.06f : 1.1f, ShadowEnabled = true });
 
             var ground = new StaticBody3D();
             var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(400f, 400f) } };
@@ -409,6 +410,7 @@ namespace UnturnedGodot
             _veh.EngineOn = true;                      // engine running -> fuel gauge ticks down
             _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f;   // DEMO: varied levels to show the 3 gauges are independent (spawn = all full)
             AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD (no Player, so the on-foot HUD stays hidden)
+            if (_night) _veh.ToggleHeadlights();        // headlights on for the night demo
         }
 
         // --drivetest=DIR : a player beside a jeep; scripts entering + driving to verify enter/exit + the chase cam.
@@ -1242,17 +1244,25 @@ namespace UnturnedGodot
                 }
                 if (_vehTest && _veh != null)
                 {
-                    // settle, then auto-drive a course for the video: straight -> right curve -> left curve
-                    float throttle = _frame > 30 ? 1f : 0f;
+                    // settle, then auto-drive a course for the video: straight -> right curve -> left curve (parked for --night headlight demo)
+                    float throttle = _night ? 0f : (_frame > 30 ? 1f : 0f);
                     float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
-                    _veh.Drive(throttle, steer, false);
-                    if (_vehCam != null)   // chase cam: behind the jeep's heading (flattened), above, looking at it
+                    _veh.Drive(throttle, _night ? 0f : steer, _night);
+                    if (_vehCam != null)
                     {
                         var vt = _veh.GlobalTransform;
                         var fwd = -vt.Basis.Z; fwd.Y = 0f;
                         fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-                        _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
-                        _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+                        if (_night)   // front-3/4 elevated view: see the headlight beams project forward onto the ground
+                        {
+                            _vehCam.GlobalPosition = vt.Origin + fwd * 9f + vt.Basis.X * 4f + Vector3.Up * 3.5f;
+                            _vehCam.LookAt(vt.Origin + fwd * 2f + Vector3.Up * 0.5f, Vector3.Up);
+                        }
+                        else   // chase cam: behind the jeep's heading (flattened), above, looking at it
+                        {
+                            _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
+                            _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+                        }
                     }
                 }
                 if (_driveTest && _dtPlayer != null)
