@@ -405,6 +405,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
             CollisionLayer = 1 << 3;   // player bit
             CollisionMask = 1 << 0;    // walk on ground (bit 0)
 

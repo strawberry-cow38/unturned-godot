@@ -26,7 +26,7 @@ namespace UnturnedGodot
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill]
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain]
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
 
         public override void _Ready()
@@ -49,6 +49,7 @@ namespace UnturnedGodot
                 else if (arg == "--demo") _demo = true;      // scripted honk + damage->explosion (destruction demo); off = clean drive
                 else if (arg == "--crash") _crash = true;    // a wall ahead to ram (collision-damage demo)
                 else if (arg == "--roadkill") _roadkill = true;   // idle zombies ahead to run over (roadkill demo)
+                else if (arg == "--chain") _chain = true;         // a 2nd car + zombies beside _veh -> blow _veh -> chain reaction (source vehicle-explosion damage)
                 else if (arg == "--swarm") _swarm = true;         // with --drivetest: a horde mobs the parked car + swipes it (source targetPassengerVehicle)
                 else if (arg == "--drivethru") _drivethru = true; // with --drivetest: driving past distant zombies wakes them (source DRIVING stealth radius)
                 else if (arg == "--nade") _nade = true;           // with --drivetest: lob a grenade onto the parked jeep (source Grenade Vehicle_Damage)
@@ -426,6 +427,20 @@ namespace UnturnedGodot
                 {
                     var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> stands still
                     z.Position = new Vector3(i % 2 == 0 ? -0.6f : 0.6f, 0.9f, -12f - i * 3f);
+                    AddChild(z);
+                }
+            }
+
+            if (_chain)   // a 2nd jeep + a few zombies beside _veh: when _veh blows, the blast chains to the car (500) + wipes the zombies (200)
+            {
+                CharacterModel.LoadBundled();
+                var jeep2 = Vehicle.BuildByName("jeep");
+                jeep2.Position = _veh.Position + new Vector3(4f, 0f, 0f);   // ~4 m away, well inside the 8 m blast
+                AddChild(jeep2);
+                for (int i = 0; i < 3; i++)
+                {
+                    var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> stands still
+                    z.Position = _veh.Position + new Vector3(-2f + i * 1.2f, -0.3f, 2.5f);   // clustered near _veh
                     AddChild(z);
                 }
             }
@@ -1306,9 +1321,10 @@ namespace UnturnedGodot
                 if (_vehTest && _veh != null)
                 {
                     // settle, then auto-drive a course for the video: straight -> right curve -> left curve
-                    float throttle = _frame > 30 ? 1f : 0f;
+                    float throttle = (!_chain && _frame > 30) ? 1f : 0f;   // --chain: stay parked so the blast reaches the neighbours
                     float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
                     _veh.Drive(throttle, steer, false);
+                    if (_chain && _frame == 20) _veh.TakeDamage(9999f);   // detonate _veh -> ~4 s later it blows -> chains to the car + horde
                     if (_roadkill && _frame == 35) _veh.Honk();   // honk before reaching them -> verify the horn's noise alert (source tellHorn AlertTool.alert 32)
                     if (_demo && (_frame == 45 || _frame == 80 || _frame == 115)) _veh.Honk();   // --demo: a few horn honks
                     if (_demo && _frame >= 40 && _frame < 100 && _frame % 8 == 0) _veh.TakeDamage(90f);   // --demo: damage -> smoke -> explode

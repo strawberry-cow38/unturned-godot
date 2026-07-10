@@ -125,6 +125,33 @@ namespace UnturnedGodot
             _explosionAudio?.Play();
             if (_bodyMesh != null) _bodyMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred wreck
             SpawnWheelDebris();
+            ExplodeDamage();
+        }
+
+        // source InteractableVehicle explode: DamageTool.explode(pos, radius 8, playerDmg 200, zombieDmg 200, vehicleDmg 500).
+        // The 500 vehicle damage easily blows a neighbouring car too -> a staggered chain reaction; 200 wipes a nearby horde.
+        void ExplodeDamage()
+        {
+            const float R = 8f;
+            Vector3 p = GlobalPosition;
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))
+                if (n is ZombieController z && !z.Dead)
+                {
+                    float d = z.GlobalPosition.DistanceTo(p);
+                    if (d <= R) z.DamageHit(200f * (1f - d / R), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
+                }
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle v && v != this && !v.Exploded)
+                {
+                    float d = v.GlobalPosition.DistanceTo(p);
+                    if (d <= R) v.TakeDamage(500f * (1f - d / R));   // chain: 500 easily blows the next car too
+                }
+            foreach (var n in GetTree().GetNodesInGroup("players"))
+                if (n is PlayerController pl)
+                {
+                    float d = pl.GlobalPosition.DistanceTo(p);
+                    if (d <= R) pl.TakeDamage(200f * (1f - d / R));
+                }
         }
 
         void SpawnWheelDebris()   // source canExplode: the wheels fly off when the vehicle blows up
