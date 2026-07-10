@@ -34,7 +34,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -69,6 +69,7 @@ namespace UnturnedGodot
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
+                else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
@@ -107,6 +108,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;   // wire the general frame-6 capture (else --shot renders the movie forever + hangs)
                 BuildTerrainTest();
+                return;
+            }
+
+            if (objects)   // real PEI placed objects (Objects.dat) on the terrain, viewed over the densest cluster
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildObjectsTest();
                 return;
             }
 
@@ -806,6 +815,59 @@ namespace UnturnedGodot
             cam.Position = new Vector3(0f, 5200f, 1f);
             cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
             GD.Print("[TERRAIN] loaded the whole PEI island (merged, seamless)");
+        }
+
+        // --objects: PEI's real placed objects (Level/Objects.dat) instanced on the terrain. placements.txt = every
+        // object's guid+transform; guid_mesh.txt maps the top types to extracted object.prefab meshes.
+        void BuildObjectsTest()
+        {
+            float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.5f, 0.6f, 0.75f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.85f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
+            AddChild(Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: false));
+
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var g2m = new System.Collections.Generic.Dictionary<string, string>();
+            foreach (var line in System.IO.File.ReadLines(dir + "guid_mesh.txt"))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length >= 2) g2m[p[0]] = p[1];
+            }
+            var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(0.60f, 0.55f, 0.47f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
+            var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
+            Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0;
+            foreach (var line in System.IO.File.ReadLines(dir + "placements.txt"))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
+                if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
+                if (mesh == null) continue;
+                float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ey = F(p[5]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
+                var gpos = new Vector3(px, py, -pz);
+                var basis = new Basis(Vector3.Up, Mathf.DegToRad(-ey)).Scaled(new Vector3(sx, sy, sz));   // yaw only (first pass; full euler TBD)
+                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Transform = new Transform3D(basis, gpos) });
+                placed++;
+                var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
+                cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;
+                cellSum.TryGetValue(cell, out Vector3 cs); cellSum[cell] = cs + gpos;
+                if (cc + 1 > bestN) { bestN = cc + 1; bestCell = cell; }
+            }
+            var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
+            GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}");
+            var cam = new Camera3D { Current = true, Fov = 62f, Far = 16000f };
+            AddChild(cam);
+            cam.Position = focus + new Vector3(42f, 48f, 42f);
+            cam.LookAt(focus + new Vector3(0f, 4f, 0f), Vector3.Up);
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
