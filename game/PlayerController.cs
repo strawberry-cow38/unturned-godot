@@ -525,7 +525,7 @@ namespace UnturnedGodot
             {
                 case FireMode.Semi: Fire(); break;
                 case FireMode.Auto: Fire(); break;   // held-fire continues in _PhysicsProcess
-                case FireMode.Burst: if (_burstCd <= 0f) _burstLeft = Gun?.BurstCount ?? 3; break;   // + a cooldown gate (master)
+                case FireMode.Burst: if (_burstCd <= 0f && _burstLeft <= 0) _burstLeft = Gun?.BurstCount ?? 3; break;   // cooldown gate + can't start a new burst mid-burst (master)
             }
         }
 
