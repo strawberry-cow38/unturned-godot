@@ -10,6 +10,7 @@ namespace UnturnedGodot
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
+        float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
@@ -143,6 +144,7 @@ namespace UnturnedGodot
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            v._steerTurnSpeed = s.SteerMax * 5f;   // source SteeringAngleTurnSpeed default = SteerMax * 5 (deg/s)
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name;
@@ -206,9 +208,10 @@ namespace UnturnedGodot
             float eng = throttle * _engineForce;
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
-            EngineForce = eng;
+            EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
-            Steering = Mathf.DegToRad(-steer * Mathf.Lerp(_steerMax, _steerMin, t));   // NEGATE: Godot VehicleBody3D steers LEFT for positive, so D(+1)=right needs -ve. 28deg at rest -> 14deg at full speed
+            // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
+            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped)
             Brake = braking ? _brakeForce : 0f;
         }
 
@@ -239,6 +242,10 @@ namespace UnturnedGodot
             }
             if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
                 Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);
+
+            // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
+            _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
+            Steering = Mathf.DegToRad(_steerAngle);
         }
     }
 }
