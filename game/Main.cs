@@ -1253,7 +1253,7 @@ namespace UnturnedGodot
                 if (_driveTest && _dtPlayer != null)
                 {
                     if (_frame == 25) _dtPlayer.EnterNearestVehicle();                                   // hop in
-                    if (_frame >= 30) _dtPlayer.ScriptedDrive = new Vector2(_frame > 110 ? 0.6f : 0f, 1f);  // drive forward, then steer
+                    if (_frame >= 30) _dtPlayer.ScriptedDrive = new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // drive forward, then curve
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {

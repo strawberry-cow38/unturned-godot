@@ -859,6 +859,7 @@ namespace UnturnedGodot
         }
 
         public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
+        public bool DriveFP { set => _driveFP = value; }   // test hook: force first-person cam
         public void EnterNearestVehicle() { var v = NearestVehicle(); if (v != null) EnterVehicle(v); }
 
         void DriveVehicle(float delta)
@@ -876,10 +877,10 @@ namespace UnturnedGodot
             var vt = _driving.GlobalTransform;
             var fwd = -vt.Basis.Z; fwd.Y = 0f;
             fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-            if (_driveFP)   // first-person from the driver seat, looking along the heading
+            if (_driveFP)   // first-person from the driver's head, looking forward over the hood
             {
-                _cam.GlobalPosition = vt * new Vector3(-0.5f, 1.35f, 0.1f);
-                _cam.LookAt(_cam.GlobalPosition + fwd, Vector3.Up);
+                _cam.GlobalPosition = vt * new Vector3(-0.4f, 1.85f, 0.4f);
+                _cam.LookAt(vt * new Vector3(-0.4f, 1.25f, -3.5f), Vector3.Up);
             }
             else            // third-person chase (Unturned default): behind + above, following the heading
             {
