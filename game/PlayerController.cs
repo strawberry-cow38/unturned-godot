@@ -127,7 +127,7 @@ namespace UnturnedGodot
         // DamageTool.explode (bounded): every zombie within radius takes zombieDamage * (1 - range/radius) -- LINEAR
         // falloff (Zombie.cs:270); the thrower (player) within radius takes playerDamage * (1 - (range/radius)^2) --
         // SQUARED falloff (Player.cs:1975). Out of radius = nothing. No LoS/armor/limb/buildable/vehicle damage yet.
-        public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage)
+        public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage, float vehicleDamage)
         {
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
@@ -138,6 +138,13 @@ namespace UnturnedGodot
                     bool wd = z.Dead;
                     z.DamageHit(zombieDamage * times, z.GlobalPosition, (z.GlobalPosition - point).Normalized());
                     if (!wd && z.Dead) Kills++;
+                }
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))   // source DamageTool.explode also damages vehicles (Grenade.dat Vehicle_Damage 100)
+                if (n is Vehicle v && !v.Exploded)
+                {
+                    float range = v.GlobalPosition.DistanceTo(point);
+                    if (range > radius) continue;
+                    v.TakeDamage(vehicleDamage * (1f - range / radius));   // linear falloff (port's simplified explosion model)
                 }
             float pr = GlobalPosition.DistanceTo(point);
             if (pr <= radius) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t); }

@@ -11,7 +11,7 @@ namespace UnturnedGodot
     {
         public PlayerController Thrower;
         public Vector3 Vel;
-        public float Fuse = 2.5f, Radius = 8f, ZombieDamage = 175f, PlayerDamage = 175f;
+        public float Fuse = 2.5f, Radius = 8f, ZombieDamage = 175f, PlayerDamage = 175f, VehicleDamage = 100f;   // Grenade.dat Vehicle_Damage 100
         const float Gravity = 9.81f;
 
         public override void _Ready()
@@ -33,7 +33,7 @@ namespace UnturnedGodot
             GlobalPosition = next;
             if (Fuse <= 0f)
             {
-                if (IsInstanceValid(Thrower)) Thrower.Explode(GlobalPosition, Radius, ZombieDamage, PlayerDamage);
+                if (IsInstanceValid(Thrower)) Thrower.Explode(GlobalPosition, Radius, ZombieDamage, PlayerDamage, VehicleDamage);
                 QueueFree();
             }
         }

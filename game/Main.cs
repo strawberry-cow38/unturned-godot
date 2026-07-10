@@ -27,7 +27,7 @@ namespace UnturnedGodot
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill]
-        bool _driveTest, _swarm, _drivethru; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru] : enter/drive a jeep; --swarm = mob the parked car; --drivethru = a loud drive wakes distant zombies
+        bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
 
         public override void _Ready()
         {
@@ -51,6 +51,7 @@ namespace UnturnedGodot
                 else if (arg == "--roadkill") _roadkill = true;   // idle zombies ahead to run over (roadkill demo)
                 else if (arg == "--swarm") _swarm = true;         // with --drivetest: a horde mobs the parked car + swipes it (source targetPassengerVehicle)
                 else if (arg == "--drivethru") _drivethru = true; // with --drivetest: driving past distant zombies wakes them (source DRIVING stealth radius)
+                else if (arg == "--nade") _nade = true;           // with --drivetest: lob a grenade onto the parked jeep (source Grenade Vehicle_Damage)
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -494,6 +495,13 @@ namespace UnturnedGodot
                     z.GlobalPosition = new Vector3(3f + sx, 1.0f, sz);                        // ~12 m to the SIDE of the drive path, far ahead (well beyond the 12 m on-foot radius)
                     z.LookAt(new Vector3(3f + sx * 2f, z.GlobalPosition.Y, sz), Vector3.Up);  // face AWAY from the path -> on-foot facing-rule can't sense them; only the driving alert can
                 }
+            }
+
+            if (_nade)   // lob a grenade onto the PARKED jeep -> detonates on it -> health drops (source Grenade Vehicle_Damage 100)
+            {
+                var g = new Grenade { Thrower = _dtPlayer };
+                AddChild(g);
+                g.GlobalPosition = jeep.GlobalPosition + Vector3.Up * 0.6f;   // resting on the jeep; 2.5s fuse -> boom on the car
             }
         }
 
@@ -1315,7 +1323,7 @@ namespace UnturnedGodot
                 }
                 if (_driveTest && _dtPlayer != null)
                 {
-                    if (_frame == 25) _dtPlayer.EnterNearestVehicle();                                   // hop in
+                    if (_frame == 25 && !_nade) _dtPlayer.EnterNearestVehicle();                          // hop in (skip for --nade: keep the jeep parked to grenade it)
                     if (_frame >= 30) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : _drivethru ? new Vector2(0f, 1f) : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still; drivethru: straight full-throttle; else forward then curve
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
@@ -1462,7 +1470,7 @@ namespace UnturnedGodot
             {
                 _rangeAtBlast = new float[Zs.Length];
                 for (int i = 0; i < Zs.Length; i++) _rangeAtBlast[i] = Zs[i].GlobalPosition.DistanceTo(Vector3.Zero);
-                P.Explode(Vector3.Zero, 8f, 175f, 175f);
+                P.Explode(Vector3.Zero, 8f, 175f, 175f, 100f);
             }
             else if (_frames == 6)   // check the falloff, then arm a real FUSED grenade on ZThrow
             {
