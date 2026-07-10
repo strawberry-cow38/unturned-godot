@@ -44,6 +44,7 @@ namespace UnturnedGodot
         float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
         bool _reloading;      // true while the reload clip plays (blocks ADS)
         string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
+        string _inspectClip = null;          // per-gun inspect clip ({Gun}_Inspect); null if the gun ships no Inspect anim
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
         AudioStreamPlayer _shootSnd, _reloadSnd, _drySnd;   // real Eaglefire Shoot/Reload/Hammer(dry-fire) sounds
@@ -140,6 +141,9 @@ namespace UnturnedGodot
                 string capGun = char.ToUpper(GunName[0]) + GunName.Substring(1);
                 _reloadClip = _arms.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
                 _arms.SetClipLoop(_reloadClip, false);
+                // per-gun inspect clip ({Gun}_Inspect, from that gun's animations.prefab). null = gun has no Inspect anim.
+                _inspectClip = _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect" : null;
+                if (_inspectClip != null) _arms.SetClipLoop(_inspectClip, false);
                 _arms.Play("Gun_Equip");                 // raise -> holds the two-handed rifle stance
                 _equipLen = _arms.ClipLength("Gun_Equip");
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
@@ -294,6 +298,14 @@ namespace UnturnedGodot
         {
             _reloading = on;
             if (on) { _aiming = false; _arms?.Play(_reloadClip); _reloadSnd?.Play(); }   // per-gun reload arm anim + sound
+        }
+
+        // F to inspect: play the gun's OWN Inspect clip (per-gun, from its animations.prefab; ends back on the ready
+        // hold). Guns without an Inspect clip (_inspectClip == null) just don't inspect, matching the source's
+        // PlayerEquipment.canInspect gating on animator.checkExists("Inspect"). Blocked mid-reload.
+        public void PlayInspect()
+        {
+            if (_inspectClip != null && !_reloading) { _aiming = false; _arms?.Play(_inspectClip); }
         }
 
         // Length (s) of the equipped gun's reload clip, so PlayerController times the ammo refill to the real anim

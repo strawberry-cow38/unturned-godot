@@ -159,7 +159,7 @@ namespace UnturnedGodot
 
         // F: open the nearest storage crate within ~2.5 m -- loads its grid into the STORAGE page (7) so the existing
         // dashboard + TryDrag handle it, and opens the dashboard.
-        public void OpenNearestCrate()
+        public bool OpenNearestCrate()
         {
             StorageCrate near = null; float best = 6.25f;   // 2.5 m, squared
             foreach (var n in GetTree().GetNodesInGroup("crates"))
@@ -168,12 +168,13 @@ namespace UnturnedGodot
                     float d = GlobalPosition.DistanceSquaredTo(c.GlobalPosition);
                     if (d < best) { best = d; near = c; }
                 }
-            if (near == null) return;
+            if (near == null) return false;
             _openCrate = near;
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
             GD.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
             _invUI?.Open();
             Input.MouseMode = Input.MouseModeEnum.Visible;
+            return true;
         }
 
         // save the open crate's contents back and clear the STORAGE view (called when the dashboard closes)
@@ -447,7 +448,7 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
                 TryPickup();      // pick up the nearest dropped world item
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
-                OpenNearestCrate();   // open the nearest storage crate
+                { if (!OpenNearestCrate()) _viewmodel?.PlayInspect(); }   // F: open a nearby crate, else inspect the gun
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
