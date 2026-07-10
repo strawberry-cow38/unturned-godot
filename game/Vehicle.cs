@@ -41,6 +41,7 @@ namespace UnturnedGodot
         // character its front bumper touches. dmg = floor(baseDamage * speed); speed = clamp(fwdVel * mult, -10, 10),
         // ignored below the threshold. None of the stock vehicles override these in their .dat, so the defaults hold.
         const float BumperMult = 1f, BumperThreshold = 3f, BumperZombieDmg = 15f, BumperPlayerDmg = 10f, BumperSelfMult = 1f;
+        const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> zombies within earshot investigate
         public bool HeadlightsOn => _headlightsOn;
 
         struct Spec
@@ -495,6 +496,7 @@ namespace UnturnedGodot
             if (_hornCd > 0f || Battery <= 0f || _hornAudio == null) return;
             _hornAudio.Play();
             _hornCd = 0.5f;
+            GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, HornAlertRadius);   // source tellHorn AlertTool.alert(pos,32): the noise pulls nearby zombies to investigate (same broadcast the gunshot alert uses)
         }
 
         public void ToggleHeadlights() => SetHeadlights(!_headlightsOn);   // source tellHeadlights
