@@ -28,11 +28,12 @@ namespace UnturnedGodot
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain]
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
+        bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
 
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -63,6 +64,8 @@ namespace UnturnedGodot
                 else if (arg == "--client") client = true;
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
+                else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
+                else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invequip") { invdemo = true; invequip = true; }
@@ -84,6 +87,14 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildHurtDemo(gun);
+                return;
+            }
+
+            if (firetest)   // player fires away from a zombie 25 m off -> it should hear the shot (gunshot alert) UNLESS a suppressor is on
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _fireTest = true;
+                BuildFireTest(supp);
                 return;
             }
 
@@ -711,6 +722,47 @@ namespace UnturnedGodot
             GD.Print("[HURT] first-person: zombie point-blank, recording flash + flinch");
         }
 
+        // --firetest [--supp]: the player fires AWAY from a zombie 25 m off. The zombie is out of its 12 m stand-detect
+        // radius (won't sense the player), but inside the 48 m gunshot alert -> it should hear an UNsuppressed shot and
+        // print [ALERT]; with a suppressor attached the shot is silent (source UseableGun ~936) -> no [ALERT]. Behavioral
+        // proof of the suppressor effect (+ a reusable firing-mechanics harness).
+        void BuildFireTest(bool suppressed)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.6f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(240, 240) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            CharacterModel.LoadBundled();
+
+            var player = new PlayerController();
+            player.LoadGun("res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(0, 1.0f, 0);
+            player.RotationDegrees = new Vector3(0, 180f, 0);   // face +Z, AWAY from the zombie (only the shot NOISE should reach it, not the bullet)
+            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            _ftPlayer = player;
+            if (suppressed) player.SetSuppressor(true);
+
+            var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
+            AddChild(z);
+            z.GlobalPosition = new Vector3(0, 1.0f, -25f);
+            GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
+        }
+
         // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
         // rejection, and drop-onto-item swap, printing PASS/FAIL per case. Verifies the drag MODEL without the mouse.
         static void RunDragTest()
@@ -1293,6 +1345,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_fireTest && _ftPlayer != null) { _ftFrame++; if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter -- the _frame demo loop below is gated on _rigDir
             if (_rigDir != null)
             {
                 _frame++;
