@@ -26,7 +26,7 @@ namespace UnturnedGodot
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night;   // --vehicle=DIR [--variant=N] [--night] : drop a vehicle, chase cam, auto-drive
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo;   // --vehicle=DIR [--variant=N] [--night] [--demo] : drop a vehicle, chase cam, auto-drive
         bool _driveTest; PlayerController _dtPlayer;      // --drivetest=DIR : player walks to a jeep, enters, drives (verifies enter/exit)
 
         public override void _Ready()
@@ -46,6 +46,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--drivetest=")) drivetest = arg["--drivetest=".Length..];
                 else if (arg.StartsWith("--variant=")) _vehVariant = int.Parse(arg["--variant=".Length..]);
                 else if (arg == "--night") _night = true;   // dark env + headlights on (headlight demo)
+                else if (arg == "--demo") _demo = true;      // scripted honk + damage->explosion (destruction demo); off = clean drive
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -408,7 +409,7 @@ namespace UnturnedGodot
             AddChild(_vehCam);
 
             _veh.EngineOn = true;                      // engine running -> fuel gauge ticks down
-            _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f;   // DEMO: varied levels to show the 3 gauges are independent (spawn = all full)
+            if (_demo) { _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f; }   // --demo: varied gauge levels (else full/spawn)
             AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD (no Player, so the on-foot HUD stays hidden)
             if (_night) _veh.ToggleHeadlights();        // headlights on for the night demo
         }
@@ -1248,8 +1249,8 @@ namespace UnturnedGodot
                     float throttle = _frame > 30 ? 1f : 0f;
                     float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
                     _veh.Drive(throttle, steer, false);
-                    if (_frame == 45 || _frame == 80 || _frame == 115) _veh.Honk();   // DEMO: a few horn honks for the audio clip
-                    if (_frame >= 40 && _frame < 100 && _frame % 8 == 0) _veh.TakeDamage(90f);   // DEMO: damage the jeep -> smoke -> (4s later) explode
+                    if (_demo && (_frame == 45 || _frame == 80 || _frame == 115)) _veh.Honk();   // --demo: a few horn honks
+                    if (_demo && _frame >= 40 && _frame < 100 && _frame % 8 == 0) _veh.TakeDamage(90f);   // --demo: damage -> smoke -> explode
                     if (_vehCam != null)   // chase cam: behind the jeep's heading (flattened), above -- shows the red taillights at night
                     {
                         var vt = _veh.GlobalTransform;
