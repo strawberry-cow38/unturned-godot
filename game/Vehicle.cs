@@ -208,7 +208,7 @@ namespace UnturnedGodot
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = eng;
             float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
-            Steering = Mathf.DegToRad(steer * Mathf.Lerp(_steerMax, _steerMin, t));   // 28deg at rest -> 14deg at full speed
+            Steering = Mathf.DegToRad(-steer * Mathf.Lerp(_steerMax, _steerMin, t));   // NEGATE: Godot VehicleBody3D steers LEFT for positive, so D(+1)=right needs -ve. 28deg at rest -> 14deg at full speed
             Brake = braking ? _brakeForce : 0f;
         }
 

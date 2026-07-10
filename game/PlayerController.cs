@@ -808,7 +808,7 @@ namespace UnturnedGodot
             // denormalized, and Godot's Slerp/Basis assert IsNormalized -> that was the "Quaternion is not normalized" spam.
             if (!_flinch.IsFinite() || _flinch.LengthSquared() < 1e-6f) _flinch = Quaternion.Identity;
             _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
-            if (_cam != null && !_dead)
+            if (_cam != null && !_dead && _driving == null)   // while driving, DriveVehicle (in _PhysicsProcess) owns the cam -- don't clobber it with the FP eye/look
             {
                 // Eye height follows the stance (PlayerLook.heightLook: STAND/SPRINT 1.75 / CROUCH 1.2 / PRONE 0.35),
                 // lerped at 4/s like the source (PlayerLook.cs:1235) so crouching/proning drops the FP view.
@@ -883,15 +883,17 @@ namespace UnturnedGodot
             var vt = _driving.GlobalTransform;
             var fwd = -vt.Basis.Z; fwd.Y = 0f;
             fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
+            // Set the FULL global transform atomically (position + orientation). LookAt on a TopLevel child of the
+            // moving player updated position but NOT rotation through turns -> the car slid out of frame. GlobalTransform is reliable.
             if (_driveFP)   // first-person from the driver's head, looking forward over the hood
             {
-                _cam.GlobalPosition = vt * new Vector3(-0.4f, 1.85f, 0.4f);
-                _cam.LookAt(vt * new Vector3(-0.4f, 1.25f, -3.5f), Vector3.Up);
+                var eye = vt * new Vector3(-0.4f, 1.85f, 0.4f);
+                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * new Vector3(-0.4f, 1.25f, -3.5f), Vector3.Up);
             }
-            else            // third-person chase (Unturned default): behind + above, following the heading
+            else            // third-person chase (Unturned default): behind + above the car's heading, looking at it
             {
-                _cam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
-                _cam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+                var eye = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
+                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
             }
         }
 
