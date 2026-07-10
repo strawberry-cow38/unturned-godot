@@ -17,6 +17,7 @@ namespace UnturnedGodot
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
             public Color Paint;
             public float WheelRadius, Mass, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
+            public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -40,6 +41,7 @@ namespace UnturnedGodot
         {
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png", Paint = new Color(0.854f, 0.858f, 0.078f),
             WheelRadius = 0.6f, Mass = 900f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -54,10 +56,16 @@ namespace UnturnedGodot
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
         static readonly Spec _quad = new()
         {
-            Body = "quad_body.txt", Wheel = "quad_wheel.txt", Paint = new Color(0.525f, 0.755f, 0.353f),
+            Body = "quad_body.txt", Wheel = "quad_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "quad_palette.png", Paint = new Color(0.525f, 0.755f, 0.353f),
             WheelRadius = 0.45f, Mass = 500f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
+            BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("quad_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
+                ("quad_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
+            },
         };
 
         public static Vehicle BuildJeep() => Build(_jeep);
@@ -77,8 +85,8 @@ namespace UnturnedGodot
                 : new StandardMaterial3D { AlbedoColor = s.Paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             v.AddChild(new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat });
 
-            var aabb = bodyMesh.GetAabb();   // chassis collision hull from the body extent
-            v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = aabb.Size }, Position = aabb.GetCenter() });
+            // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
+            v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
 
             var wheelMesh = ContentProvider.ParseObj($"res://content/{s.Wheel}");
             Material wheelMat;
