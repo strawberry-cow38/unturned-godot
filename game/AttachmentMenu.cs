@@ -2,14 +2,14 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // T weapon-attachment menu (true to source): the gun presents in its real Attach_Start pose, and the attachment
-    // slots show as icons positioned OVER the gun's actual hook points (sight on top, barrel out front, grip / mag /
-    // tactical), projected through the viewmodel camera so they track the gun. Click a slot to detach / re-attach it.
-    // Chunk 2 = the presented pose + positioned slot icons for the current gun's models; the item-swap grid comes next.
+    // T weapon-attachment menu (true to source: UseableGun's isAttaching hook buttons). The gun presents in its real
+    // Attach_Start pose, and each attachment slot shows the game's own SleekButtonIcon sprite (Sight/Tactical/Grip/
+    // Barrel/Magazine, ripped from UI/Player/Icons/Useable/PlayerUseableGun) positioned OVER the gun's real hook point,
+    // projected through the viewmodel camera so it tracks the gun. Click a slot to detach / re-attach it.
     public partial class AttachmentMenu : CanvasLayer
     {
         public Viewmodel VM;
-        static readonly string[] Slots = { "Sight", "Tactical", "Barrel", "Grip", "Magazine" };
+        static readonly string[] Slots = { "Sight", "Tactical", "Grip", "Barrel", "Magazine" };
         readonly System.Collections.Generic.Dictionary<string, Button> _icons = new();
 
         public override void _Ready()
@@ -24,12 +24,41 @@ namespace UnturnedGodot
 
             foreach (var slot in Slots)
             {
-                var btn = new Button { Text = slot.Substring(0, 1), CustomMinimumSize = new Vector2(40, 40), Size = new Vector2(40, 40), Visible = false, TooltipText = slot };
+                var btn = new Button
+                {
+                    CustomMinimumSize = new Vector2(40, 40),
+                    Size = new Vector2(40, 40),
+                    Visible = false,
+                    TooltipText = slot,
+                    Icon = LoadIcon(slot),      // the real PlayerUseableGun slot sprite
+                    ExpandIcon = true,
+                };
+                btn.AddThemeConstantOverride("icon_max_width", 40);
+                // source SleekButtonIcon look: a dark semi-transparent box, brighter on hover/press
+                btn.AddThemeStyleboxOverride("normal", Box(0.10f, 0.10f, 0.12f, 0.55f));
+                btn.AddThemeStyleboxOverride("hover", Box(0.24f, 0.30f, 0.40f, 0.80f));
+                btn.AddThemeStyleboxOverride("pressed", Box(0.30f, 0.46f, 0.62f, 0.90f));
                 string s = slot;
                 btn.Pressed += () => { if (VM != null && VM.SlotHasModel(s)) { VM.SetSlotAttached(s, !VM.SlotAttached(s)); Refresh(); } };
                 AddChild(btn);
                 _icons[slot] = btn;
             }
+        }
+
+        static StyleBoxFlat Box(float r, float g, float b, float a)
+        {
+            var sb = new StyleBoxFlat { BgColor = new Color(r, g, b, a) };
+            sb.SetCornerRadiusAll(4);
+            sb.SetBorderWidthAll(1);
+            sb.BorderColor = new Color(0f, 0f, 0f, 0.6f);
+            return sb;
+        }
+
+        static Texture2D LoadIcon(string slot)
+        {
+            string p = ProjectSettings.GlobalizePath($"res://content/attach_{slot.ToLower()}.png");
+            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            return null;
         }
 
         // colour each icon by state: white = attached, red-ish = detached, faded = the gun has no model for that slot.

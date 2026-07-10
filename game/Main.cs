@@ -25,6 +25,7 @@ namespace UnturnedGodot
         bool _ragTest;                               // --anim=Ragdoll : trigger the death ragdoll mid-capture
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
+        bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
 
         public override void _Ready()
         {
@@ -38,6 +39,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
+                else if (arg == "--attach") _vmAttach = true;
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -197,6 +199,7 @@ namespace UnturnedGodot
                 _vmTest = true;
                 GetWindow().Size = new Vector2I(2560, 1440);
                 BuildViewmodelTest(gun ?? "eaglefire");   // --gun=<name> picks the gun (eaglefire | maplestrike)
+                if (_vmAttach) _rigCaptureFrames = new[] { 40, 50, 60, 70, 80, 90 };   // menu open (post-equip) for each frame
                 return;
             }
 
@@ -347,6 +350,7 @@ namespace UnturnedGodot
             AddChild(cam);
             _vm = new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
+            if (_vmAttach) { _am = new AttachmentMenu(); AddChild(_am); _am.VM = _vm; }   // --attach: show the T menu over the gun
         }
 
         void BuildShowcase(string catalog, string picks)
@@ -1124,7 +1128,12 @@ namespace UnturnedGodot
                 if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
                 // --vm ADS demo: the equip pull-out plays first (source gates aiming until it finishes), then a
                 // short settle, THEN ADS; release later so the clip shows the un-ADS back to hip. No recoil.
-                if (_vmTest && _vm != null)
+                if (_vmTest && _vmAttach && _vm != null)
+                {
+                    // --attach: once equipped, hold the T attachment menu open (no aim/fire) so the render shows the slot icons
+                    if (_am != null && _vm.IsEquipComplete && !_am.IsOpen && ++_vmSettle >= 8) _am.Open();
+                }
+                else if (_vmTest && _vm != null)
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
                     { _vm.SetAiming(true); _vmAimed = true; _vmAimStart = _frame; }
