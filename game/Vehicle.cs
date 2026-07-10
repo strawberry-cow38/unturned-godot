@@ -11,6 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
+        bool _parked;   // driver left: smoothly damp to a stop (no hard-brake wheel-lock judder), then hold
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
@@ -29,6 +30,7 @@ namespace UnturnedGodot
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
+        Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
         public bool HeadlightsOn => _headlightsOn;
 
@@ -48,6 +50,7 @@ namespace UnturnedGodot
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
+            public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -93,6 +96,7 @@ namespace UnturnedGodot
             Fuel = 2000f, Health = 600f, Name = "Jeep", Horn = "carhorn_04.ogg",
             SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source prefab Headlights (Z negated)
             TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source prefab Taillights (rear, Z negated)
+            SteerPivot = new Vector3(-0.464f, 1.018f, -0.922f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steering wheel centroid + disc normal (PCA)
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -200,7 +204,16 @@ namespace UnturnedGodot
                 foreach (var (txt, color) in s.Parts)
                 {
                     var pm = SolidMat(color);
-                    v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm });
+                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm };
+                    if (txt.Contains("steer") && s.SteerAxis != Vector3.Zero)   // wrap the steering wheel in a pivot at its centre so it can turn
+                    {
+                        v._steerPivot = new Node3D { Position = s.SteerPivot };
+                        mi.Position = -s.SteerPivot;   // baked world verts render in place once the pivot sits at the centre
+                        v._steerPivot.AddChild(mi);
+                        v.AddChild(v._steerPivot);
+                        v._steerAxis = s.SteerAxis.Normalized();
+                    }
+                    else v.AddChild(mi);
                     if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
                     if (txt.Contains("taillight")) v._taillightMat = pm;   // capture so the taillight glows red while driving
                 }
@@ -245,6 +258,7 @@ namespace UnturnedGodot
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
         public void Drive(float throttle, float steer, bool braking)
         {
+            _parked = false;
             float speed = LinearVelocity.Length();   // m/s (horizontal-ish while driving)
             float eng = throttle * _engineForce;
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
@@ -256,11 +270,12 @@ namespace UnturnedGodot
             Brake = braking ? _brakeForce : 0f;
         }
 
-        public void Park()   // driver left: cut the engine, hold the brake, straighten the wheels so it doesn't roll away
+        public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
         {
+            _parked = true;
             EngineForce = 0f;
-            Brake = _brakeForce;
             _steerTarget = 0f;
+            AngularVelocity = Vector3.Zero;
         }
 
         public void Honk()   // source tellHorn: one-shot the horn; 0.5s cooldown (canUseHorn) + needs battery charge
@@ -296,6 +311,12 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_wNodes == null) return;
+            if (_parked)   // smooth stop-and-hold after the driver leaves (avoids the hard-brake wheel-lock judder)
+            {
+                LinearVelocity = LinearVelocity.MoveToward(Vector3.Zero, 20f * (float)delta);
+                AngularVelocity = Vector3.Zero;
+                Brake = _brakeForce;
+            }
             for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
             {
                 _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
@@ -336,6 +357,7 @@ namespace UnturnedGodot
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
+            if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
         }
     }
 }
