@@ -670,8 +670,9 @@ namespace UnturnedGodot
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
                 SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage, vehDamage);
             }
-            // AlertTool point-noise: an (unsuppressed) gunshot pulls zombies within earshot over to investigate.
-            GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, GunshotRadius);
+            // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
+            // barrel skips the alert ENTIRELY (source UseableGun ~936: only alert if barrel==null || !isSilenced) -> stealth.
+            if (!(_viewmodel?.IsSuppressed ?? false)) GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, GunshotRadius);
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
 

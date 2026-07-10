@@ -199,6 +199,13 @@ namespace UnturnedGodot
                     if (magMesh != null)
                         mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = new Vector3(0f, 0.0166f, 0.0238f) });
 
+                    // Real Military Suppressor (Barrel attachment) — barrel.prefab Model_0 from core.masterbundle, converted
+                    // (x,y,z)->(-x,y,-z). HIDDEN by default (guns ship with no barrel); the T menu toggles it, and when on it
+                    // SILENCES the shot (source: a silenced barrel skips the zombie AlertTool.alert entirely, UseableGun ~936).
+                    // Mounted at the eaglefire Barrel hook (per-gun barrel hooks are still hardcoded, like the other slots).
+                    var barrelMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.05f, 0.05f, 0.055f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 0.85f };   // dark matte, like the gun body
+                    mi.AddChild(new MeshInstance3D { Name = "Barrel", Mesh = ContentProvider.ParseObj("res://content/suppressor.txt"), MaterialOverride = barrelMat, Position = new Vector3(0f, 0.7307f, -0.0818f), Visible = false });
+
                     // ADS anchor marker at the sight's real Aim hook (gv.AimHook, per-gun) — ADS slides the arms so this
                     // lands on the camera axis, i.e. you look straight through the aperture.
                     _sight = new Node3D { Name = "AimHook" };
@@ -349,9 +356,10 @@ namespace UnturnedGodot
         // only Sight (iron sights) + Magazine ship a model, so detach/attach = toggling that model's visibility. The
         // default iron sights ARE the Sight attachment -- removable (and later replaceable), matching the source.
         static readonly System.Collections.Generic.Dictionary<string, string> _attachMesh =
-            new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" } };
+            new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" }, { "Barrel", "Barrel" } };
         public bool SlotHasModel(string slot) => _attachMesh.TryGetValue(slot, out var n) && _gun?.GetNodeOrNull<MeshInstance3D>(n) != null;
         public bool SlotAttached(string slot) => _attachMesh.TryGetValue(slot, out var n) && (_gun?.GetNodeOrNull<MeshInstance3D>(n)?.Visible ?? false);
+        public bool IsSuppressed => SlotAttached("Barrel");   // the only Barrel attachment is the silenced suppressor, so attached = suppressed (source: silenced barrel fires no zombie alert)
         public void SetSlotAttached(string slot, bool on)
         {
             if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
