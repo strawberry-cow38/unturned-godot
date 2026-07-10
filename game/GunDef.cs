@@ -10,6 +10,7 @@ namespace UnturnedGodot
         public string Id;
         public float PlayerDamage;
         public float ZombieDamage;
+        public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage
         public float Range;
         public float SpreadAngleDegrees;
         public float SpreadAim = 1f;   // spread multiplier while aiming (Eaglefire 0.05 = 5% of hip spread)
@@ -44,6 +45,7 @@ namespace UnturnedGodot
                 Id = d.GetString("ID"),
                 PlayerDamage = d.ParseFloat("Player_Damage"),
                 ZombieDamage = d.ParseFloat("Zombie_Damage"),
+                VehicleDamage = d.ParseFloat("Vehicle_Damage", 40f),   // .dat Vehicle_Damage (all stock guns specify it; 40 = fallback)
                 Range = d.ParseFloat("Range", 100f),
                 Firerate = d.ParseInt32("Firerate", 8),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),

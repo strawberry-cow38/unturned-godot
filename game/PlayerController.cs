@@ -381,7 +381,7 @@ namespace UnturnedGodot
                       : System.Array.IndexOf(modes, FireMode.Auto) >= 0 ? FireMode.Auto
                       : modes[0];
             _burstLeft = 0;
-            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={Gun.Pellets} mode={_firemode}");
+            GD.Print($"[gun] {Gun.Id}: zombieDmg={Gun.ZombieDamage} vehicleDmg={Gun.VehicleDamage} range={Gun.Range} firerate={Gun.Firerate} mag={Gun.AmmoMax} pellets={Gun.Pellets} mode={_firemode}");
         }
 
         public string HeldGunName => _gunName;
@@ -629,6 +629,7 @@ namespace UnturnedGodot
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null) return false;
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
+            float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
@@ -667,7 +668,7 @@ namespace UnturnedGodot
             for (int i = 0; i < pellets; i++)
             {
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
-                SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage);
+                SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage, vehDamage);
             }
             // AlertTool point-noise: an (unsuppressed) gunshot pulls zombies within earshot over to investigate.
             GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, GunshotRadius);
@@ -676,12 +677,12 @@ namespace UnturnedGodot
 
         // A simulated bullet (Unturned's BulletInfo): flies from the muzzle with a velocity, dropping under gravity,
         // stepped every physics tick; its tracer travels with it; it hits/despawns on contact or after its steps.
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage; public MeshInstance3D Tracer; }
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage; public MeshInstance3D Tracer; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
-        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage)
+        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, Tracer = MakeTracer() };
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, Tracer = MakeTracer() };
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
             _bullets.Add(b);
         }
@@ -705,7 +706,7 @@ namespace UnturnedGodot
                     var collider = hit["collider"].As<GodotObject>();
                     if (collider is ZombieController z) { SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; }
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh) veh.TakeDamage(b.Damage);   // shoot a vehicle -> damage it (enough hits -> smoke -> explode)
+                    else if (collider is Vehicle veh) veh.TakeDamage(b.VehicleDamage);   // source Vehicle_Damage (eaglefire 35), NOT the zombie damage (99)
                     RemoveBullet(i);
                     continue;
                 }
