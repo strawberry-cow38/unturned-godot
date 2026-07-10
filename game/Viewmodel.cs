@@ -291,7 +291,7 @@ namespace UnturnedGodot
 
         // Hold RMB to aim (Unturned's default aiming mode). PlayerController drives this on RMB down/up.
         // Source gate: can't begin aiming until the equip pull-out is finished (IsEquipAnimationFinished).
-        public void SetAiming(bool on) { if (on && !EquipDone) return; _aiming = on; }
+        public void SetAiming(bool on) { if (on && !EquipDone) return; if (on && _inspecting) CancelInspect(); _aiming = on; }   // ADS mid-inspect cancels the inspect (snap to ready) then aims
 
         // Driven by PlayerController while reloading — the gun dips down as a simple reload gesture (the full
         // Gun_Reload clip is a TODO; it needs additive-layer integration like the aim pose). Can't ADS mid-reload.
@@ -320,7 +320,7 @@ namespace UnturnedGodot
         {
             if (!_inspecting) return;
             _inspecting = false;
-            _arms?.Play("Gun_Hold");
+            _arms?.SnapToEnd("Gun_Equip");   // snap the arms to the equip-END (the ready hold), no pull-out replay
         }
 
         // Length (s) of the equipped gun's reload clip, so PlayerController times the ammo refill to the real anim

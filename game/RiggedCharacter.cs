@@ -43,6 +43,17 @@ namespace UnturnedGodot
             { _ap.Play(name, -1, speed); }
         }
 
+        // Snap straight to a clip's END pose (Seek with update:true applies it this frame). Used to return to the
+        // ready hold instantly when an inspect is cancelled -- without replaying the equip pull-out from frame 0.
+        public void SnapToEnd(string name)
+        {
+            if (_ap != null && !string.IsNullOrEmpty(name) && _ap.HasAnimation(name))
+            {
+                _ap.Play(name);
+                _ap.Seek(_ap.GetAnimation(name).Length, true);
+            }
+        }
+
         // Length (seconds) of a clip, or 0 if absent. Used to gate ADS on the equip animation finishing.
         public float ClipLength(string name)
             => (_ap != null && _ap.HasAnimation(name)) ? (float)_ap.GetAnimation(name).Length : 0f;
