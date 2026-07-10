@@ -916,6 +916,7 @@ namespace UnturnedGodot
 
         void DriveVehicle(float delta)
         {
+            if (_driving.Exploded) { ExitVehicle(); TakeDamage(150f); return; }   // caught in the blast -> ejected + killed (source explode kills passengers)
             float throttle, steer;
             if (ScriptedDrive.HasValue) { steer = ScriptedDrive.Value.X; throttle = ScriptedDrive.Value.Y; }
             else
