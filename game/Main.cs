@@ -26,7 +26,7 @@ namespace UnturnedGodot
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam;   // --vehicle=DIR : drop the jeep on a plane, chase cam, auto-drive
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant;   // --vehicle=DIR [--variant=N] : drop a vehicle, chase cam, auto-drive
         bool _driveTest; PlayerController _dtPlayer;      // --drivetest=DIR : player walks to a jeep, enters, drives (verifies enter/exit)
 
         public override void _Ready()
@@ -44,6 +44,7 @@ namespace UnturnedGodot
                 else if (arg == "--attach") _vmAttach = true;
                 else if (arg.StartsWith("--vehicle=")) veh = arg["--vehicle=".Length..];
                 else if (arg.StartsWith("--drivetest=")) drivetest = arg["--drivetest=".Length..];
+                else if (arg.StartsWith("--variant=")) _vehVariant = int.Parse(arg["--variant=".Length..]);
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -398,7 +399,7 @@ namespace UnturnedGodot
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(ground);
 
-            _veh = Vehicle.BuildByName(type);
+            _veh = Vehicle.BuildByName(type, _vehVariant);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
             AddChild(_veh);
 

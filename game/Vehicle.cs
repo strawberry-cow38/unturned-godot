@@ -16,7 +16,8 @@ namespace UnturnedGodot
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
-            public Color Paint;
+            public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
+            public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public (float x, float y, float z, bool steer)[] Wheels;
@@ -37,10 +38,26 @@ namespace UnturnedGodot
             return m;
         }
 
+        // Curated natural car colours for RandomHueOrGrayscale vehicles -- the source's random-hue goes neon, so master
+        // wants a hand-picked natural set (white/black/silver/gunmetal/dark-red/navy/forest/tan/olive).
+        static readonly string[] CarColors = { "#ececec", "#242424", "#c2c2c2", "#4a4d50", "#7a1f1f", "#24365e", "#2e4a2e", "#a69884", "#6b6f52" };
+
+        // Source paint on spawn: unpainted -> white; List -> a random .dat DefaultPaintColor; the source's
+        // RandomHueOrGrayscale is swapped for a random pick from the curated CarColors (natural, not neon).
+        static Color SpawnPaint(Spec s, int variant)   // variant = the spawn's colour index (deterministic, per instance)
+        {
+            if (s.RandomHueGray)
+                return new Color(CarColors[variant % CarColors.Length]);
+            if (s.DefaultPaints != null && s.DefaultPaints.Length > 0)
+                return new Color(s.DefaultPaints[variant % s.DefaultPaints.Length]);
+            return Colors.White;   // no default paint -> unpainted white (e.g. the bus is #d4d4d4, near-white)
+        }
+
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
         {
-            Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png", Paint = new Color(0.854f, 0.858f, 0.078f),
+            Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png",
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // source .dat: Coalition / Desert / Forest / Russia
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             Wheels = new (float, float, float, bool)[]
@@ -57,7 +74,8 @@ namespace UnturnedGodot
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
         static readonly Spec _quad = new()
         {
-            Body = "quad_body.txt", Wheel = "quad_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "quad_palette.png", Paint = new Color(0.525f, 0.755f, 0.353f),
+            Body = "quad_body.txt", Wheel = "quad_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "quad_palette.png",
+            RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors list
             WheelRadius = 0.45f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
             Wheels = new (float, float, float, bool)[]
@@ -72,7 +90,8 @@ namespace UnturnedGodot
         // Bus.dat: Speed 12, steer 24->12, front-steered, torque 2.5. Long 4-wheeler, 10 seats.
         static readonly Spec _bus = new()
         {
-            Body = "bus_body.txt", Wheel = "bus_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "bus_palette.png", Paint = new Color(0.32f, 0.71f, 0.23f),
+            Body = "bus_body.txt", Wheel = "bus_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "bus_palette.png",
+            DefaultPaints = new[] { "#d4d4d4" },   // source .dat: single near-white default
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             Wheels = new (float, float, float, bool)[]
@@ -86,22 +105,22 @@ namespace UnturnedGodot
             },
         };
 
-        public static Vehicle BuildJeep() => Build(_jeep);
-        public static Vehicle BuildQuad() => Build(_quad);
-        public static Vehicle BuildBus() => Build(_bus);
-        public static Vehicle BuildByName(string name) => name switch { "quad" => BuildQuad(), "bus" => BuildBus(), _ => BuildJeep() };
+        public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
+        public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
+        public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), _ => BuildJeep(variant) };
 
-        static Vehicle Build(Spec s)
+        static Vehicle Build(Spec s, int variant)
         {
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
-            // paintable palette shader (panels take the paint colour, exhaust/lights keep theirs); fallback = solid
+            var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
             Material bodyMat = s.Palette != null
-                ? PaintMat(s.Palette, s.Paint)
-                : new StandardMaterial3D { AlbedoColor = s.Paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                ? PaintMat(s.Palette, paint)
+                : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             v.AddChild(new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat });
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
