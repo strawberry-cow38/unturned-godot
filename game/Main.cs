@@ -208,7 +208,7 @@ namespace UnturnedGodot
             if (veh != null)
             {
                 _rigDir = veh;
-                _rigCaptureFrames = new[] { 20, 45, 75, 105, 135, 165 };   // settle on wheels -> drive forward + steer
+                _rigCaptureFrames = new[] { 60, 130, 200, 270, 320, 360 };   // spread across the driving course (also keeps the movie running the full length)
                 _vehTest = true;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildVehicleTest(gun ?? "jeep");   // --gun=quad to test the quad
@@ -1189,15 +1189,17 @@ namespace UnturnedGodot
                 }
                 if (_vehTest && _veh != null)
                 {
-                    // let it settle on the suspension first, then auto-drive: throttle forward, then a gentle steer
-                    float throttle = _frame > 35 ? 1f : 0f;
-                    float steer = _frame > 90 ? 0.6f : 0f;
+                    // settle, then auto-drive a course for the video: straight -> right curve -> left curve
+                    float throttle = _frame > 30 ? 1f : 0f;
+                    float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
                     _veh.Drive(throttle, steer, false);
-                    if (_vehCam != null)   // chase cam: stay behind + above the jeep, look at it
+                    if (_vehCam != null)   // chase cam: behind the jeep's heading (flattened), above, looking at it
                     {
-                        var vp = _veh.GlobalPosition;
-                        _vehCam.GlobalPosition = vp + new Vector3(0f, 3.2f, 7.5f);
-                        _vehCam.LookAt(vp + new Vector3(0f, 0.7f, 0f), Vector3.Up);
+                        var vt = _veh.GlobalTransform;
+                        var fwd = -vt.Basis.Z; fwd.Y = 0f;
+                        fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
+                        _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
+                        _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
                     }
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
