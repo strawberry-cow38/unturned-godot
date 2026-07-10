@@ -14,7 +14,7 @@ namespace UnturnedGodot
         // real attachment options per slot (interim: clicking the slot cycles through them; the source jars-grid
         // presentation is the next pass). null = detached. Only the eaglefire sight is wired so far.
         static readonly System.Collections.Generic.Dictionary<string, string[]> _cycle =
-            new() { { "Sight", new[] { "eaglefire_iron_sights.txt", "red_dot_sight.txt", null } } };
+            new() { { "Sight", new[] { "eaglefire_iron_sights.txt", "red_dot_sight.txt", "red_halo_sight.txt", "red_kobra_sight.txt", null } } };
         readonly System.Collections.Generic.Dictionary<string, int> _cycleIdx = new();
 
         public override void _Ready()
