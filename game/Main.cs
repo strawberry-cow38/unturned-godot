@@ -33,7 +33,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -66,6 +66,7 @@ namespace UnturnedGodot
                 else if (arg == "--hurtdemo") hurtdemo = true;
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
+                else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invequip") { invdemo = true; invequip = true; }
@@ -95,6 +96,13 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _fireTest = true;
                 BuildFireTest(supp);
+                return;
+            }
+
+            if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildTerrainTest();
                 return;
             }
 
@@ -761,6 +769,31 @@ namespace UnturnedGodot
             AddChild(z);
             z.GlobalPosition = new Vector3(0, 1.0f, -25f);
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
+        }
+
+        // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces
+        // the flat test-plane). Aerial camera over the 1024 m tile so the real terrain shape is visible.
+        void BuildTerrainTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.5f, 0.6f, 0.75f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
+
+            string tile = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps\Tile_0_0_Source.heightmap";
+            AddChild(Terrain.LoadTile(tile, 0, 0));
+
+            var cam = new Camera3D { Current = true, Fov = 62f, Far = 6000f };
+            AddChild(cam);
+            cam.Position = new Vector3(512f, 380f, 120f);
+            cam.LookAt(new Vector3(512f, 0f, -512f), Vector3.Up);   // aerial view of the 1024 m tile (centre ~(512,0,-512))
+            GD.Print("[TERRAIN] loaded PEI Landscape Tile_0_0");
         }
 
         // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
