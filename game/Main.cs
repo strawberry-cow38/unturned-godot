@@ -105,6 +105,7 @@ namespace UnturnedGodot
             if (terrain)   // load a real Unturned map's terrain (PEI Landscape heightmap tile) -> a Godot mesh, replacing the flat test-plane
             {
                 GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;   // wire the general frame-6 capture (else --shot renders the movie forever + hangs)
                 BuildTerrainTest();
                 return;
             }

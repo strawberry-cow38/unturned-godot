@@ -18,14 +18,16 @@ namespace UnturnedGodot
         // the PEI splatmap layout (layer 5 = ocean/water dominant, 2 = grass/ground, 3 = the road network, 0/7 = forest).
         static Color LayerColor(byte l) => l switch
         {
-            0 => new Color(0.22f, 0.31f, 0.15f),   // forest / tree
-            1 => new Color(0.72f, 0.66f, 0.46f),   // sand / beach
-            2 => new Color(0.36f, 0.44f, 0.23f),   // grass / ground
-            3 => new Color(0.53f, 0.45f, 0.32f),   // road (PEI dirt roads = tan/brown)
-            4 => new Color(0.46f, 0.45f, 0.43f),   // rock / gravel
-            5 => new Color(0.19f, 0.33f, 0.50f),   // water / ocean
-            6 => new Color(0.66f, 0.60f, 0.42f),   // dirt / path
-            _ => new Color(0.26f, 0.35f, 0.18f),   // 7: bush / dense foliage
+            // source-accurate: avg colour of each layer's REAL albedo (extracted from core.masterbundle via UnityPy).
+            // Layer->material mapping read from PEI Level.hierarchy (see reference_unturned_world memory).
+            0 => new Color(0.545f, 0.325f, 0.224f),   // PEI_Dirt_01
+            1 => new Color(0.690f, 0.627f, 0.404f),   // PEI_Farm_Wheat_00 (crop field)
+            2 => new Color(0.220f, 0.443f, 0.224f),   // PEI_Grass_00
+            3 => new Color(0.494f, 0.314f, 0.247f),   // PEI_Gravel_00
+            4 => new Color(0.290f, 0.294f, 0.290f),   // Russia_Road_00 (paved, shared)
+            5 => new Color(0.170f, 0.310f, 0.470f),   // PEI_Sand_01 (real avg sand=0.69,0.55,0.36) but shown OCEAN BLUE: layer 5 is mostly underwater seabed; real water plane at seaLevel*256 is TODO, then this reverts to sand
+            6 => new Color(0.714f, 0.714f, 0.714f),   // Yukon_Snow_00 (shared)
+            _ => new Color(0.553f, 0.306f, 0.184f),   // 7: PEI_Stone_01
         };
 
         // Merged-map height grid + placement, stashed so gameplay can sample the ground height at a world XZ (spawns etc.).
@@ -160,7 +162,7 @@ namespace UnturnedGodot
                     float wy = g[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f;
                     verts[i] = new Vector3(baseX + x * UNIT, wy, -(baseZ + y * UNIT));
                     uvs[i] = new Vector2(x / (float)(GW - 1), y / (float)(GH - 1));
-                    cols[i] = splats.Count > 0 ? LayerColor(dom[System.Math.Min(x, GWs - 1), System.Math.Min(y, GHs - 1)])   // real splatmap material layout (grass/road/water/forest)
+                    cols[i] = splats.Count > 0 ? LayerColor(dom[System.Math.Min(x, GWs - 1), System.Math.Min(y, GHs - 1)])   // real splatmap material layout (grass/dirt/sand/forest)
                                                : (wy < 0f ? new Color(0.20f, 0.36f, 0.55f) : (wy < 30f ? new Color(0.74f, 0.68f, 0.48f) : new Color(0.34f, 0.42f, 0.26f)));   // height fallback
                     float hl = g[System.Math.Max(0, x - 1), y], hr = g[System.Math.Min(GW - 1, x + 1), y];
                     float hd = g[x, System.Math.Max(0, y - 1)], hu = g[x, System.Math.Min(GH - 1, y + 1)];
