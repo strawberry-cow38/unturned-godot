@@ -18,6 +18,13 @@ namespace UnturnedGodot
         public float EngineRpm => _engineRpm;
         public float EngineRpmNorm => Mathf.Clamp((_engineRpm - IdleRpm) / (MaxRpm - IdleRpm), 0f, 1f);
         public int Gear => _gear;
+        // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
+        public float Fuel, FuelMax, Health, HealthMax, Battery;
+        public bool EngineOn; public string DisplayName;
+        const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
+        public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
+        public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
+        public float BatteryNorm => Battery / BatteryMax;
 
         struct Spec
         {
@@ -30,6 +37,8 @@ namespace UnturnedGodot
             public float ReverseGear, ShiftUpRpm;   // .dat ReverseGearRatio + GearShift_UpThresholdRPM
             public string Sound;   // engine loop ogg basename (source: the prefab's AudioSource m_audioClip)
             public float IdlePitch, MaxPitch, IdleVolume, MaxVolume;   // .dat EngineSound (EngineRPMSimple)
+            public float Fuel, Health;   // .dat Fuel / Health capacities (HUD gauges)
+            public string Name;   // display name (English.dat) for the HUD title
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -72,6 +81,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
+            Fuel = 2000f, Health = 600f, Name = "Jeep",
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -92,6 +102,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
+            Fuel = 1000f, Health = 450f, Name = "Quad",
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
             Parts = new (string, Color)[]
@@ -110,6 +121,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
+            Fuel = 2250f, Health = 700f, Name = "Bus",
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -133,6 +145,7 @@ namespace UnturnedGodot
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
+            v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name;
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
@@ -224,6 +237,8 @@ namespace UnturnedGodot
                 _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
                 _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n));
             }
+            if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
+                Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);
         }
     }
 }

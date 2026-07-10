@@ -27,6 +27,11 @@ namespace UnturnedGodot
         Label _fireMode;
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
 
+        // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
+        public Vehicle Vehicle;   // bound driven vehicle; the box is visible while this is non-null
+        Control _vehBox; Label _vehTitle; ColorRect _vehFuel, _vehHealth, _vehBattery;
+        readonly System.Collections.Generic.List<Control> _playerOnly = new();   // on-foot HUD, hidden when Player == null (vehicle-only render)
+
         public override void _Ready()
         {
             Layer = 10;   // draw over the viewmodel composite (CanvasLayer 5)
@@ -43,6 +48,7 @@ namespace UnturnedGodot
             _pain.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _pain.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_pain);
+            _playerOnly.Add(_pain);
 
             // lifeBox: bottom-left, right edge at 20% of the screen, sized to the 4 always-on vitals
             var lifeBox = new Control();
@@ -51,6 +57,7 @@ namespace UnturnedGodot
             lifeBox.OffsetTop = -(TopPad + 4f * RowH); lifeBox.OffsetBottom = -6f;
             lifeBox.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(lifeBox);
+            _playerOnly.Add(lifeBox);
 
             // top-down: health, food, water, stamina (the always-visible vitals; virus/oxygen are situational)
             AddVital(lifeBox, 0, "hud_health.png",  CR, () => Player != null ? Player.Health / Mathf.Max(1f, Player.MaxHealth) : 1f);
@@ -83,6 +90,50 @@ namespace UnturnedGodot
             _fireMode.Modulate = new Color(1f, 1f, 1f, 0.7f);
             _fireMode.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_fireMode);
+            _playerOnly.Add(_fireMode);
+            _playerOnly.Add(_ammo);
+
+            // vehicle status box (PlayerUI messageBox on VEHICLE_ENTER): 300-wide dark box, bottom-centre, 80px above the
+            // screen bottom. Rows pack from y=45 at 30px: Fuel (COLOR_Y), Health (COLOR_R), Battery (COLOR_Y, Stamina icon).
+            _vehBox = new Control();
+            _vehBox.AnchorLeft = 0.5f; _vehBox.AnchorRight = 0.5f; _vehBox.AnchorTop = 1f; _vehBox.AnchorBottom = 1f;
+            _vehBox.OffsetLeft = -150f; _vehBox.OffsetRight = 150f; _vehBox.OffsetTop = -210f; _vehBox.OffsetBottom = -80f;
+            _vehBox.MouseFilter = Control.MouseFilterEnum.Ignore; _vehBox.Visible = false;
+            root.AddChild(_vehBox);
+
+            var vbg = new ColorRect { Color = new Color(0.08f, 0.08f, 0.08f, 0.9f) };   // ESleekTint.BACKGROUND (dark box)
+            vbg.SetAnchorsPreset(Control.LayoutPreset.FullRect); vbg.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _vehBox.AddChild(vbg);
+
+            _vehTitle = new Label();
+            _vehTitle.AddThemeFontSizeOverride("font_size", 18);
+            _vehTitle.AnchorRight = 1f; _vehTitle.OffsetLeft = 5; _vehTitle.OffsetRight = -5; _vehTitle.OffsetTop = 5; _vehTitle.OffsetBottom = 45;
+            _vehTitle.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _vehBox.AddChild(_vehTitle);
+
+            _vehFuel = AddVehBar(45, "icon_fuel.png", CY);        // fuel = COLOR_Y (yellow)
+            _vehHealth = AddVehBar(75, "icon_health.png", CR);    // health = COLOR_R (red)
+            _vehBattery = AddVehBar(105, "icon_stamina.png", CY); // battery = COLOR_Y, "Stamina" icon (source)
+        }
+
+        // one messageBox row: a 20x20 icon at x=5 and a SleekProgress bar at x=30 (right edge box-10, 5px below the icon top)
+        ColorRect AddVehBar(float y, string icon, Color color)
+        {
+            var ic = new TextureRect { Texture = LoadTex($"res://content/{icon}"), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+            ic.OffsetLeft = IconX; ic.OffsetRight = IconX + IconSz; ic.OffsetTop = y; ic.OffsetBottom = y + IconSz;
+            ic.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _vehBox.AddChild(ic);
+
+            var bg = new ColorRect { Color = new Color(color.R, color.G, color.B, 0.5f) };   // SleekProgress background (colour @ 0.5 alpha)
+            bg.AnchorLeft = 0; bg.AnchorRight = 1; bg.OffsetLeft = BarX; bg.OffsetRight = -10; bg.OffsetTop = y + 5; bg.OffsetBottom = y + 5 + BarH;
+            bg.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _vehBox.AddChild(bg);
+
+            var fill = new ColorRect { Color = color };   // foreground, width = state fraction
+            fill.AnchorLeft = 0; fill.AnchorRight = 1f; fill.AnchorTop = 0; fill.AnchorBottom = 1;
+            fill.MouseFilter = Control.MouseFilterEnum.Ignore;
+            bg.AddChild(fill);
+            return fill;
         }
 
         void AddVital(Control box, int i, string icon, Color color, System.Func<float> val)
@@ -136,6 +187,8 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            foreach (var c in _playerOnly) c.Visible = Player != null;   // hide the on-foot HUD in a vehicle-only view
+
             foreach (var (fill, val) in _vitals)
                 fill.AnchorRight = Mathf.Clamp(val(), 0f, 1f);   // foreground.SizeScale_X = state
             foreach (var (box, on) in _status)
@@ -145,6 +198,15 @@ namespace UnturnedGodot
                 _ammo.Text = $"{Player.Ammo} / {(Player.Gun?.AmmoMax ?? Player.Ammo)}";
                 _fireMode.Text = Player.FiremodeName;
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
+            }
+
+            _vehBox.Visible = Vehicle != null;   // messageBox: shown while in a vehicle
+            if (Vehicle != null)
+            {
+                _vehFuel.AnchorRight = Mathf.Clamp(Vehicle.FuelNorm, 0f, 1f);
+                _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
+                _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
+                _vehTitle.Text = Vehicle.DisplayName;
             }
         }
 

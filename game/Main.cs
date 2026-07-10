@@ -405,6 +405,10 @@ namespace UnturnedGodot
 
             _vehCam = new Camera3D { Current = true, Fov = 60f };
             AddChild(_vehCam);
+
+            _veh.EngineOn = true;                      // engine running -> fuel gauge ticks down
+            _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f;   // DEMO: varied levels to show the 3 gauges are independent (spawn = all full)
+            AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD (no Player, so the on-foot HUD stays hidden)
         }
 
         // --drivetest=DIR : a player beside a jeep; scripts entering + driving to verify enter/exit + the chase cam.
@@ -557,7 +561,7 @@ namespace UnturnedGodot
             player.LinkWorldLighting(sun, env);     // FP gun takes the world's day/night lighting
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
 
-            AddChild(new HUD { Player = player });
+            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             AddChild(new LootSpawner());   // scatter loot to find in the world
 
             var jeep = Vehicle.BuildByName("jeep");   // a drivable jeep parked nearby -- walk up + press E to get in
@@ -617,7 +621,7 @@ namespace UnturnedGodot
             player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
             AddChild(player);                       // _Ready builds the FP camera (stays Current) + viewmodel
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
-            AddChild(new HUD { Player = player });
+            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
 
             // a normal zombie 1.2 m dead ahead (-Z): inside ATTACK_PLAYER_SQ, so it startles then bites on its cadence
             var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
@@ -881,7 +885,7 @@ namespace UnturnedGodot
             player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
-            AddChild(new HUD { Player = player });
+            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();

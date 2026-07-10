@@ -835,9 +835,13 @@ namespace UnturnedGodot
             return best;
         }
 
+        public HUD Hud;   // set by the scene builder; the vehicle status box binds to the driven vehicle on enter/exit
+
         void EnterVehicle(Vehicle v)
         {
             _driving = v;
+            v.EngineOn = true;                                 // start burning fuel (source: engine on)
+            if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
             _viewmodel?.SetShown(false);                       // no gun while driving
             if (_cam != null) _cam.TopLevel = true;            // free the camera into world space
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
@@ -849,6 +853,8 @@ namespace UnturnedGodot
         void ExitVehicle()
         {
             var v = _driving; _driving = null;
+            if (v != null) v.EngineOn = false;                 // stop burning fuel
+            if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
             if (v != null) GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f;
             foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
                 if (c is CollisionShape3D cs) cs.Disabled = false;
