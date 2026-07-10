@@ -27,7 +27,7 @@ namespace UnturnedGodot
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill]
-        bool _driveTest, _swarm; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm] : player walks to a jeep, enters, drives (verifies enter/exit); --swarm = zombies mob the car
+        bool _driveTest, _swarm, _drivethru; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru] : enter/drive a jeep; --swarm = mob the parked car; --drivethru = a loud drive wakes distant zombies
 
         public override void _Ready()
         {
@@ -50,6 +50,7 @@ namespace UnturnedGodot
                 else if (arg == "--crash") _crash = true;    // a wall ahead to ram (collision-damage demo)
                 else if (arg == "--roadkill") _roadkill = true;   // idle zombies ahead to run over (roadkill demo)
                 else if (arg == "--swarm") _swarm = true;         // with --drivetest: a horde mobs the parked car + swipes it (source targetPassengerVehicle)
+                else if (arg == "--drivethru") _drivethru = true; // with --drivetest: driving past distant zombies wakes them (source DRIVING stealth radius)
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -479,6 +480,19 @@ namespace UnturnedGodot
                     AddChild(z);
                     z.GlobalPosition = pc + new Vector3(Mathf.Sin(ang) * 6f, 0f, -Mathf.Cos(ang) * 6f);   // ~6 m out (inside the 12 m stand-detect radius)
                     z.LookAt(new Vector3(pc.X, z.GlobalPosition.Y, pc.Z), Vector3.Up);                    // FACE the player so TrySense fires (sneak facing-rule)
+                }
+            }
+
+            if (_drivethru)   // DRIVING-detection: drive PAST zombies out of on-foot range + facing away -> only the loud car (up to 48 m at speed) can wake them (source DRIVING stealth radius)
+            {
+                CharacterModel.LoadBundled();
+                var hud = new HUD { Player = _dtPlayer }; AddChild(hud); _dtPlayer.Hud = hud;
+                foreach (var (sx, sz) in new (float x, float z)[] { (12f, -16f), (-12f, -24f), (12f, -34f), (-12f, -44f) })
+                {
+                    var z = new ZombieController { Target = _dtPlayer, Speciality = ZombieController.ESpeciality.NORMAL };
+                    AddChild(z);
+                    z.GlobalPosition = new Vector3(3f + sx, 1.0f, sz);                        // ~12 m to the SIDE of the drive path, far ahead (well beyond the 12 m on-foot radius)
+                    z.LookAt(new Vector3(3f + sx * 2f, z.GlobalPosition.Y, sz), Vector3.Up);  // face AWAY from the path -> on-foot facing-rule can't sense them; only the driving alert can
                 }
             }
         }
@@ -1302,7 +1316,7 @@ namespace UnturnedGodot
                 if (_driveTest && _dtPlayer != null)
                 {
                     if (_frame == 25) _dtPlayer.EnterNearestVehicle();                                   // hop in
-                    if (_frame >= 30) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still + get mobbed; else drive forward, then curve
+                    if (_frame >= 30) _dtPlayer.ScriptedDrive = _swarm ? Vector2.Zero : _drivethru ? new Vector2(0f, 1f) : new Vector2(_frame > 130 ? 0.5f : 0f, 1f);  // swarm: sit still; drivethru: straight full-throttle; else forward then curve
                 }
                 if (_rigList.Length > 1)   // montage: switch clip every window
                 {

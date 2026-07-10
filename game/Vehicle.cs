@@ -493,6 +493,13 @@ namespace UnturnedGodot
             AngularVelocity = Vector3.Zero;
         }
 
+        public float ForwardSpeedPct()   // source GetReplicatedForwardSpeedPercentageOfTargetSpeed: forward speed / top speed (0..1) for the DRIVING stealth radius
+        {
+            if (_speedMax <= 0f) return 0f;
+            float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);   // signed: reversing clamps to 0 (quiet)
+            return Mathf.Clamp(fwd / _speedMax, 0f, 1f);
+        }
+
         public void Honk()   // source tellHorn: one-shot the horn; 0.5s cooldown (canUseHorn) + needs battery charge
         {
             if (_hornCd > 0f || Battery <= 0f || _hornAudio == null) return;

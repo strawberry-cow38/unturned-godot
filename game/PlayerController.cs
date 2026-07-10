@@ -212,6 +212,7 @@ namespace UnturnedGodot
         // clamps it to [1, 64]. Crouch-walking (or crawling prone) is how you sneak past a horde.
         public float GetStealthDetectionRadius()
         {
+            if (IsDriving) return Mathf.Clamp(48f * _driving.ForwardSpeedPct(), 1f, 64f);   // source DRIVING: DETECT_FORWARD(48) * fwd-speed% -> loud at speed, ~silent when parked
             float move = Moving ? 1.1f : 1f;                       // DETECT_MOVE
             float r = _move.Stance switch
             {

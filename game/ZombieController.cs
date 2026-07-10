@@ -325,7 +325,7 @@ namespace UnturnedGodot
             Vector3 offset = GlobalPosition - player.GlobalPosition;   // player -> zombie
             float radius = player.GetStealthDetectionRadius();
             if (offset.LengthSquared() > radius * radius) return;
-            bool sneak = player.Stance != EPlayerStance.SPRINT;
+            bool sneak = player.Stance != EPlayerStance.SPRINT && !player.IsDriving;   // driving isn't sneaking -> omnidirectional (source AlertTool sneak flag: stance != SPRINT && != DRIVING)
             Vector3 fwd = -GlobalTransform.Basis.Z;
             if (offset.LengthSquared() > 1e-4f && sneak && fwd.Normalized().Dot(offset.Normalized()) > 0.5f) return;
             if (!HasLineOfSight(player)) return;
@@ -340,7 +340,9 @@ namespace UnturnedGodot
             Vector3 toP = (player.GlobalPosition + Vector3.Up * 1.0f) - from;
             var q = PhysicsRayQueryParameters3D.Create(from, from + toP * 0.95f);
             q.CollisionMask = 1u << 0;   // world geometry only (ground/props) = BLOCK_VISION
-            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            if (player.IsDriving && player.Driving != null) exclude.Add(player.Driving.GetRid());   // source BLOCK_VISION excludes vehicles -> a car doesn't hide its own driver
+            q.Exclude = exclude;
             return space.IntersectRay(q).Count == 0;
         }
 
