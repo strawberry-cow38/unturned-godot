@@ -12,6 +12,7 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
         bool _parked;   // driver left: smoothly damp to a stop (no hard-brake wheel-lock judder), then hold
+        float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio;   // damage/explosion (source askDamage/explode)
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         public bool Exploded => _exploded;
@@ -432,6 +433,11 @@ namespace UnturnedGodot
             bool tailWant = EngineOn && Battery > 0f;   // source synchronizeTaillights: taillights on while isDriven && canTurnOnLights
             if (tailWant != _taillightsOn) SetTaillights(tailWant);
             if (_hornCd > 0f) _hornCd -= (float)delta;
+            // collision/ram damage (source isVulnerableToBumper): a sudden horizontal deceleration = a crash. Horizontal only, so the spawn drop doesn't count.
+            float curSpeed = new Vector2(LinearVelocity.X, LinearVelocity.Z).Length();
+            float decel = _prevSpeed - curSpeed;
+            if (!_parked && !_exploded && _prevSpeed > 5f && decel > 200f * (float)delta) TakeDamage(decel * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
+            _prevSpeed = curSpeed;
             if (_smoke != null) _smoke.Emitting = _exploded || Health < SmokeHealth;   // source: smoke while damaged (< SMOKE_1 threshold 200)
             if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // source EXPLODE: 4s after health 0
 

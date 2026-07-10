@@ -26,7 +26,7 @@ namespace UnturnedGodot
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo;   // --vehicle=DIR [--variant=N] [--night] [--demo] : drop a vehicle, chase cam, auto-drive
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash]
         bool _driveTest; PlayerController _dtPlayer;      // --drivetest=DIR : player walks to a jeep, enters, drives (verifies enter/exit)
 
         public override void _Ready()
@@ -47,6 +47,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--variant=")) _vehVariant = int.Parse(arg["--variant=".Length..]);
                 else if (arg == "--night") _night = true;   // dark env + headlights on (headlight demo)
                 else if (arg == "--demo") _demo = true;      // scripted honk + damage->explosion (destruction demo); off = clean drive
+                else if (arg == "--crash") _crash = true;    // a wall ahead to ram (collision-damage demo)
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -400,6 +401,16 @@ namespace UnturnedGodot
             ground.AddChild(gmesh);
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(ground);
+
+            if (_crash)   // a concrete wall 14m dead ahead to ram (collision-damage demo)
+            {
+                var wall = new StaticBody3D { CollisionLayer = 1 << 0 };
+                var wsz = new Vector3(12f, 4f, 1f);
+                wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = wsz } });
+                wall.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = wsz }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.55f, 0.57f) } });
+                wall.Position = new Vector3(0f, 2f, -22f);   // far enough that the jeep builds up a good ramming speed
+                AddChild(wall);
+            }
 
             _veh = Vehicle.BuildByName(type, _vehVariant);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
