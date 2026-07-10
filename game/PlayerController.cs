@@ -687,16 +687,16 @@ namespace UnturnedGodot
             {
                 var b = _bullets[i];
                 Vector3 next = b.Pos + b.Vel * 0.02f;
-                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 1) | (1u << 4)); // enemy + ragdoll bones
+                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 1) | (1u << 4) | (1u << 5)); // enemy + ragdoll bones + vehicle
                 var hit = space.IntersectRay(query);
                 if (hit.Count > 0)
                 {
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
-                    SpawnFleshImpact(point, hdir);
-                    if (collider is ZombieController z) { bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; }
-                    else if (collider is PhysicalBone3D pb) pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition);
+                    if (collider is ZombieController z) { SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; }
+                    else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
+                    else if (collider is Vehicle veh) veh.TakeDamage(b.Damage);   // shoot a vehicle -> damage it (enough hits -> smoke -> explode)
                     RemoveBullet(i);
                     continue;
                 }

@@ -195,6 +195,7 @@ namespace UnturnedGodot
         static Vehicle Build(Spec s, int variant)
         {
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
+            v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
             v._steerTurnSpeed = s.SteerMax * 5f;   // source SteeringAngleTurnSpeed default = SteerMax * 5 (deg/s)
