@@ -312,11 +312,15 @@ namespace UnturnedGodot
                 if (_engineRpm > _shiftUpRpm && _gear < _gears.Length) _gear++;
                 else if (_engineRpm < _shiftUpRpm * 0.45f && _gear > 1) _gear--;
             }
-            if (_engineAudio != null)   // EngineRPMSimple: pitch + volume lerp idle->max across the RPM band
+            if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
             {
-                float n = EngineRpmNorm;
-                _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
-                _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n));
+                if (EngineOn)
+                {
+                    float n = EngineRpmNorm;
+                    _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
+                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n));
+                }
+                else _engineAudio.VolumeDb = -80f;   // engine off -> kill the noise
             }
             if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
                 Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);

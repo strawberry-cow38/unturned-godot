@@ -17,7 +17,8 @@ namespace UnturnedGodot
         BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
-        Vehicle _driving; bool _driveFP;   // vehicle enter/exit: current vehicle being driven + cam mode (3rd / 1st person)
+        Vehicle _driving; bool _fp;   // vehicle being driven + camera mode: _fp false = 3rd person (default), true = 1st; H toggles (on foot + driving)
+        RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
         // camera flinch (PlayerLook.flinchLocalRotation, an angular kick perpendicular to the hit that decays to level).
         public float PainAlpha;                     // PlayerUI.pain: red overlay alpha, set on hit, fades at 1/s
@@ -405,6 +406,9 @@ namespace UnturnedGodot
 
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
             AddChild(_cam);
+
+            _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
+            if (_body != null) { _body.Visible = false; CallDeferred(Node.MethodName.AddSibling, _body); }
             _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
             AddChild(_viewmodel);
             _rng.Randomize();
@@ -431,7 +435,7 @@ namespace UnturnedGodot
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no look, fire, aim, reload, etc.
             if (_driving != null)
             {
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.V || dk.Keycode == Key.L || dk.Keycode == Key.Escape);
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Escape);
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 if (!allowedKey && !allowedMouse) return;
             }
@@ -456,9 +460,10 @@ namespace UnturnedGodot
                 StartReload();
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
             {
-                if (_driving != null) _driveFP = !_driveFP;   // V while driving: toggle 3rd / 1st person cam
-                else CycleFiremode();
+                if (_driving == null) CycleFiremode();   // V on foot: cycle firemode (cam toggle moved to H)
             }
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
+                _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Q })
                 SwitchWeapon();   // toggle Eaglefire <-> Maplestrike
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
@@ -820,16 +825,45 @@ namespace UnturnedGodot
             // denormalized, and Godot's Slerp/Basis assert IsNormalized -> that was the "Quaternion is not normalized" spam.
             if (!_flinch.IsFinite() || _flinch.LengthSquared() < 1e-6f) _flinch = Quaternion.Identity;
             _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
-            if (_cam != null && !_dead && _driving == null)   // while driving, DriveVehicle (in _PhysicsProcess) owns the cam -- don't clobber it with the FP eye/look
+            if (_cam != null && !_dead && _driving == null)   // while driving, DriveVehicle (in _PhysicsProcess) owns the cam
             {
-                // Eye height follows the stance (PlayerLook.heightLook: STAND/SPRINT 1.75 / CROUCH 1.2 / PRONE 0.35),
-                // lerped at 4/s like the source (PlayerLook.cs:1235) so crouching/proning drops the FP view.
-                float targetEye = Stance switch { EPlayerStance.CROUCH => 1.2f, EPlayerStance.PRONE => 0.35f, _ => 1.75f };
-                var cp = _cam.Position; cp.Y = Mathf.Lerp(cp.Y, targetEye, 4f * (float)delta); _cam.Position = cp;
-                // flinchLocalRotation * Euler(pitch, yaw) (PlayerLook line 1378) — the flinch left-multiplies the look
-                var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // recoil now lives in _pitchDeg/body-yaw (additive), not a separate offset
-                _cam.Basis = new Basis(_flinch) * look;
+                if (_fp)
+                {
+                    // FP: eye height follows the stance (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
+                    float targetEye = Stance switch { EPlayerStance.CROUCH => 1.2f, EPlayerStance.PRONE => 0.35f, _ => 1.75f };
+                    var cp = _cam.Position; cp.X = 0f; cp.Z = 0f; cp.Y = Mathf.Lerp(cp.Y, targetEye, 4f * (float)delta); _cam.Position = cp;
+                    var look = Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f), EulerOrder.Yxz);   // flinch left-multiplies the look
+                    _cam.Basis = new Basis(_flinch) * look;
+                }
+                else
+                {
+                    // 3rd person on foot: chase behind + above (child of the player, so it follows the body yaw); mouse Y orbits a bit
+                    _cam.Position = new Vector3(0f, 1.9f, 3.4f);
+                    _cam.Rotation = new Vector3(Mathf.DegToRad(Mathf.Clamp(_pitchDeg * 0.5f, -40f, 25f) - 6f), 0f, 0f);
+                }
             }
+            UpdateBody(delta);
+        }
+
+        // live 3rd-person body: shown when !_fp; stands at the player (facing the body yaw, animated by ground speed) or sits in the driver seat
+        void UpdateBody(double delta)
+        {
+            if (_viewmodel != null) _viewmodel.SetShown(_fp && _driving == null && !_dead);   // FP gun arms: first-person on foot only
+            if (_body == null) return;
+            _body.Visible = !_fp && !_dead;   // dead -> the corpse ragdoll handles the body
+            if (_fp || _dead) { return; }
+            if (_driving != null)   // in the driver seat (best-effort idle pose)
+            {
+                _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, new Vector3(-0.5f, 0.05f, -0.12f));
+                _body.SetLocomotion(0f);
+            }
+            else   // on foot: at the player's feet, facing the body yaw, locomotion by horizontal speed
+            {
+                _body.GlobalPosition = GlobalPosition;
+                _body.Rotation = new Vector3(0f, Rotation.Y, 0f);
+                _body.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length());
+            }
+            _body.Tick(delta);
         }
 
         // --- Vehicle enter/exit (source: InteractableVehicle). E enters the nearest vehicle's driver seat / exits. ---
@@ -877,7 +911,7 @@ namespace UnturnedGodot
         }
 
         public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
-        public bool DriveFP { set => _driveFP = value; }   // test hook: force first-person cam
+        public bool DriveFP { set => _fp = value; }   // test hook: force first-person cam
         public void EnterNearestVehicle() { var v = NearestVehicle(); if (v != null) EnterVehicle(v); }
 
         void DriveVehicle(float delta)
@@ -897,7 +931,7 @@ namespace UnturnedGodot
             fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
             // Set the FULL global transform atomically (position + orientation). LookAt on a TopLevel child of the
             // moving player updated position but NOT rotation through turns -> the car slid out of frame. GlobalTransform is reliable.
-            if (_driveFP)   // first-person from the driver's head, looking forward over the hood
+            if (_fp)   // first-person from the driver's head, looking forward over the hood
             {
                 var eye = vt * new Vector3(-0.4f, 1.85f, 0.4f);
                 _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * new Vector3(-0.4f, 1.25f, -3.5f), Vector3.Up);
