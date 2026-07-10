@@ -786,13 +786,12 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
-            string tile = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps\Tile_0_0_Source.heightmap";
-            AddChild(Terrain.LoadTile(tile, 0, 0));
+            AddChild(Terrain.LoadMap(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: false));
 
-            var cam = new Camera3D { Current = true, Fov = 62f, Far = 6000f };
+            var cam = new Camera3D { Current = true, Fov = 62f, Far = 14000f };
             AddChild(cam);
-            cam.Position = new Vector3(512f, 380f, 120f);
-            cam.LookAt(new Vector3(512f, 0f, -512f), Vector3.Up);   // aerial view of the 1024 m tile (centre ~(512,0,-512))
+            cam.Position = new Vector3(0f, 2800f, 2600f);
+            cam.LookAt(Vector3.Zero, Vector3.Up);   // aerial view of the whole PEI island (~4x4 km of Landscape tiles)
             GD.Print("[TERRAIN] loaded PEI Landscape Tile_0_0");
         }
 

@@ -13,8 +13,8 @@ namespace UnturnedGodot
         const int RES = 257;
         const float TILE_SIZE = 1024f, TILE_HEIGHT = 2048f, UNIT = 4f;
 
-        // Build one landscape tile's mesh + trimesh collider from its .heightmap file, placed at its coord.
-        public static Node3D LoadTile(string heightmapPath, int coordX, int coordY)
+        // Build one landscape tile's mesh (+ optional trimesh collider) from its .heightmap file, placed at its coord.
+        public static Node3D LoadTile(string heightmapPath, int coordX, int coordY, bool withCollider = true)
         {
             byte[] data = File.ReadAllBytes(heightmapPath);
             var h = new float[RES, RES];
@@ -46,14 +46,17 @@ namespace UnturnedGodot
 
             var node = new Node3D { Name = $"Tile_{coordX}_{coordY}" };
             node.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });
-            var body = new StaticBody3D { CollisionLayer = 1u << 0 };
-            body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
-            node.AddChild(body);
+            if (withCollider)
+            {
+                var body = new StaticBody3D { CollisionLayer = 1u << 0 };
+                body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
+                node.AddChild(body);
+            }
             return node;
         }
 
         // Load every Tile_*_Source.heightmap in a map's Landscape/Heightmaps folder into one Terrain node (the whole island).
-        public static Terrain LoadMap(string heightmapsDir)
+        public static Terrain LoadMap(string heightmapsDir, bool withCollider = true)
         {
             var t = new Terrain { Name = "Terrain" };
             foreach (var path in Directory.GetFiles(heightmapsDir, "Tile_*_Source.heightmap"))
@@ -61,7 +64,7 @@ namespace UnturnedGodot
                 // "Tile_<cx>_<cy>_Source.heightmap"
                 string[] parts = Path.GetFileNameWithoutExtension(path).Split('_');
                 if (parts.Length >= 3 && int.TryParse(parts[1], out int cx) && int.TryParse(parts[2], out int cy))
-                    t.AddChild(LoadTile(path, cx, cy));
+                    t.AddChild(LoadTile(path, cx, cy, withCollider));
             }
             return t;
         }
