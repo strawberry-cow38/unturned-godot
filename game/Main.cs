@@ -211,7 +211,7 @@ namespace UnturnedGodot
                 _rigCaptureFrames = new[] { 20, 45, 75, 105, 135, 165 };   // settle on wheels -> drive forward + steer
                 _vehTest = true;
                 GetWindow().Size = new Vector2I(1280, 720);
-                BuildVehicleTest();
+                BuildVehicleTest(gun ?? "jeep");   // --gun=quad to test the quad
                 return;
             }
 
@@ -366,7 +366,7 @@ namespace UnturnedGodot
         }
 
         // --vehicle=DIR : drop the jeep onto a ground plane, chase cam, auto-drive after it settles.
-        void BuildVehicleTest()
+        void BuildVehicleTest(string type)
         {
             var env = new Godot.Environment
             {
@@ -386,7 +386,7 @@ namespace UnturnedGodot
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
             AddChild(ground);
 
-            _veh = Vehicle.BuildJeep();
+            _veh = Vehicle.BuildByName(type);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
             AddChild(_veh);
 
