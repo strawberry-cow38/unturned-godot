@@ -98,14 +98,16 @@ namespace UnturnedGodot
             }
 
             int nv = GW * GH;
-            var verts = new Vector3[nv]; var norms = new Vector3[nv]; var uvs = new Vector2[nv];
+            var verts = new Vector3[nv]; var norms = new Vector3[nv]; var uvs = new Vector2[nv]; var cols = new Color[nv];
             float baseX = minX * TILE_SIZE, baseZ = minY * TILE_SIZE;
             for (int x = 0; x < GW; x++)
                 for (int y = 0; y < GH; y++)
                 {
                     int i = x * GH + y;
-                    verts[i] = new Vector3(baseX + x * UNIT, g[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f, -(baseZ + y * UNIT));
+                    float wy = g[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f;
+                    verts[i] = new Vector3(baseX + x * UNIT, wy, -(baseZ + y * UNIT));
                     uvs[i] = new Vector2(x / (float)(GW - 1), y / (float)(GH - 1));
+                    cols[i] = wy < 0f ? new Color(0.20f, 0.36f, 0.55f) : (wy < 30f ? new Color(0.74f, 0.68f, 0.48f) : new Color(0.34f, 0.42f, 0.26f));   // water / sand / land — stand-in coloring until splatmaps (also makes the coastline visible for the orientation check)
                     float hl = g[System.Math.Max(0, x - 1), y], hr = g[System.Math.Min(GW - 1, x + 1), y];
                     float hd = g[x, System.Math.Max(0, y - 1)], hu = g[x, System.Math.Min(GH - 1, y + 1)];
                     norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
@@ -121,10 +123,10 @@ namespace UnturnedGodot
 
             var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
             arr[(int)Mesh.ArrayType.Vertex] = verts; arr[(int)Mesh.ArrayType.Normal] = norms;
-            arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Index] = idx;
+            arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Color] = cols; arr[(int)Mesh.ArrayType.Index] = idx;
             var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
 
-            terr.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f } });
+            terr.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f } });
             if (withCollider)
             {
                 var body = new StaticBody3D { CollisionLayer = 1u << 0 };

@@ -788,10 +788,10 @@ namespace UnturnedGodot
 
             AddChild(Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: false));
 
-            var cam = new Camera3D { Current = true, Fov = 62f, Far = 14000f };
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
-            cam.Position = new Vector3(0f, 2800f, 2600f);
-            cam.LookAt(Vector3.Zero, Vector3.Up);   // aerial view of the whole PEI island (~4x4 km of Landscape tiles)
+            cam.Position = new Vector3(0f, 5200f, 1f);
+            cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
             GD.Print("[TERRAIN] loaded the whole PEI island (merged, seamless)");
         }
 
