@@ -29,7 +29,7 @@ namespace UnturnedGodot
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain]
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
-        bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : player walking on real PEI terrain
+        bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
 
         public override void _Ready()
         {
@@ -55,6 +55,7 @@ namespace UnturnedGodot
                 else if (arg == "--swarm") _swarm = true;         // with --drivetest: a horde mobs the parked car + swipes it (source targetPassengerVehicle)
                 else if (arg == "--drivethru") _drivethru = true; // with --drivetest: driving past distant zombies wakes them (source DRIVING stealth radius)
                 else if (arg == "--nade") _nade = true;           // with --drivetest: lob a grenade onto the parked jeep (source Grenade Vehicle_Damage)
+                else if (arg == "--horde") _peiHorde = true;       // with --peiplay: a zombie ring converges on the jeep -> vehicle<->zombie combat on real PEI
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -857,6 +858,21 @@ namespace UnturnedGodot
             jeep.GlobalPosition = new Vector3(jjx, terr.SampleHeight(jjx, sz) + 1.5f, sz);
 
             GD.Print($"[PEIPLAY] grass spawn ({sx:0},{sz:0}) groundY {gy:0}, inland-margin {bestMargin}m, layer {terr.SampleDominantLayer(sx, sz)} + jeep beside");
+
+            if (_peiHorde)   // a zombie field the jeep drives into -> the loud engine aggros them (source 48*speed), roadkill + swarm on real PEI
+            {
+                const int N = 18;
+                for (int i = 0; i < N; i++)
+                {
+                    float ang = i * 2.39996f;                          // golden-angle scatter -> even disc fill
+                    float r = 9f + 26f * (i / (float)N);               // 9..35 m filled disc around the spawn (jeep plows through the forward slice)
+                    float zx = sx + r * Mathf.Cos(ang), zz = sz + r * Mathf.Sin(ang);
+                    var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
+                    AddChild(z);                                       // in the tree first, else GlobalPosition no-ops
+                    z.GlobalPosition = new Vector3(zx, terr.SampleHeight(zx, zz) + 1.5f, zz);
+                }
+                GD.Print($"[PEIPLAY] +{N} zombies scattered around the jeep (loud drive aggros -> roadkill + swarm)");
+            }
         }
 
         // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
@@ -1442,7 +1458,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter -- the _frame demo loop below is gated on _rigDir
-            if (_peiPlay && _peiPlayer != null) { _peiFrame++; if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f); }   // let both settle onto PEI, hop in the jeep, drive forward
+            if (_peiPlay && _peiPlayer != null) { _peiFrame++; if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f); }   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
             if (_rigDir != null)
             {
                 _frame++;
@@ -1509,7 +1525,7 @@ namespace UnturnedGodot
                 return;
             }
             if (_shotPath == null) return;
-            if (_peiPlay) { if (_peiFrame < 160) return; }   // peiplay: let the drop (~25f) + enter (50f) + drive (55f+) play out, jeep well underway
+            if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
             img.SavePng(_shotPath);
