@@ -11,12 +11,13 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
+        public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
 
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
             public Color Paint;
-            public float WheelRadius, Mass, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
+            public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
@@ -40,7 +41,7 @@ namespace UnturnedGodot
         static readonly Spec _jeep = new()
         {
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png", Paint = new Color(0.854f, 0.858f, 0.078f),
-            WheelRadius = 0.6f, Mass = 900f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
+            WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
@@ -57,7 +58,7 @@ namespace UnturnedGodot
         static readonly Spec _quad = new()
         {
             Body = "quad_body.txt", Wheel = "quad_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "quad_palette.png", Paint = new Color(0.525f, 0.755f, 0.353f),
-            WheelRadius = 0.45f, Mass = 500f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
+            WheelRadius = 0.45f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
@@ -68,13 +69,31 @@ namespace UnturnedGodot
             },
         };
 
+        // Bus.dat: Speed 12, steer 24->12, front-steered, torque 2.5. Long 4-wheeler, 10 seats.
+        static readonly Spec _bus = new()
+        {
+            Body = "bus_body.txt", Wheel = "bus_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "bus_palette.png", Paint = new Color(0.32f, 0.71f, 0.23f),
+            WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
+            BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
+            Wheels = new (float, float, float, bool)[]
+            { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("bus_seats.txt", new Color(0.25f, 0.25f, 0.25f)),         // 10 grey seats
+                ("bus_steer.txt", new Color(0.28f, 0.23f, 0.14f)),         // steering wheel brown
+                ("bus_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),    // cream
+                ("bus_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),    // red
+            },
+        };
+
         public static Vehicle BuildJeep() => Build(_jeep);
         public static Vehicle BuildQuad() => Build(_quad);
-        public static Vehicle BuildByName(string name) => name == "quad" ? BuildQuad() : BuildJeep();
+        public static Vehicle BuildBus() => Build(_bus);
+        public static Vehicle BuildByName(string name) => name switch { "quad" => BuildQuad(), "bus" => BuildBus(), _ => BuildJeep() };
 
         static Vehicle Build(Spec s)
         {
-            var v = new Vehicle { Mass = s.Mass };
+            var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
 
