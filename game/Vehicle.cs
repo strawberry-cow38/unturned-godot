@@ -213,10 +213,35 @@ namespace UnturnedGodot
             },
         };
 
+        // Sedan.dat: Speed 16.5 (fastest so far), steer 28->14, front-steered, RandomHueOrGrayscale. 4-seat road car, ~6m long.
+        static readonly Spec _sedan = new()
+        {
+            Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
+            RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
+            WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
+            ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 1500f, Health = 600f, Name = "Sedan", Horn = "carhorn_02.ogg",
+            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.969f), new Vector3(0.765f, 0.708f, -2.969f) }, OmniPos = new Vector3(0f, 0.841f, -2.945f),   // prefab Headlights (Z neg)
+            TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.841f), new Vector3(0.979f, 0.688f, 2.841f) },   // prefab Taillights (rear, Z neg)
+            SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steer centroid + disc normal (PCA)
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.62f, true), (1.30f, 0.25f, -1.62f, true), (-1.30f, 0.25f, 1.38f, false), (1.30f, 0.25f, 1.38f, false) },   // X +-1.30, front Z -1.62, rear 1.38
+            Parts = new (string, Color)[]
+            {
+                ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),        // 4 grey seats
+                ("sedan_steer.txt", new Color(0.28f, 0.23f, 0.14f)),        // steering wheel brown
+                ("sedan_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
+                ("sedan_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
+            },
+        };
+
         public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildSedan(int variant = 0) => Build(_sedan, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), _ => BuildJeep(variant) };
 
         static Vehicle Build(Spec s, int variant)
         {
