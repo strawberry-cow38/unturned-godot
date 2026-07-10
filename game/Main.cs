@@ -487,6 +487,9 @@ namespace UnturnedGodot
                 var pause = new PauseMenu();   // ESC -> live viewmodel FOV/offset tuning sliders
                 AddChild(pause);
                 player.PauseMenu = pause;
+                var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
+                AddChild(attach);
+                player.AttachMenu = attach;
                 GD.Print(_noZombies ? "[PLAY] interactive: NO-ZOMBIE test environment"
                                     : "[PLAY] interactive: WASD move / mouse look / LMB fire / Space jump");
             }

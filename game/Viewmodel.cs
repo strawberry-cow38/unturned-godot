@@ -323,6 +323,18 @@ namespace UnturnedGodot
             _arms?.SnapToEnd("Gun_Equip");   // snap the arms to the equip-END (the ready hold), no pull-out replay
         }
 
+        // ---- weapon attachments (T menu). The gun's attachment models are children of _gun named per slot; right now
+        // only Sight (iron sights) + Magazine ship a model, so detach/attach = toggling that model's visibility. The
+        // default iron sights ARE the Sight attachment -- removable (and later replaceable), matching the source.
+        static readonly System.Collections.Generic.Dictionary<string, string> _attachMesh =
+            new() { { "Sight", "IronSights" }, { "Magazine", "Magazine" } };
+        public bool SlotHasModel(string slot) => _attachMesh.TryGetValue(slot, out var n) && _gun?.GetNodeOrNull<MeshInstance3D>(n) != null;
+        public bool SlotAttached(string slot) => _attachMesh.TryGetValue(slot, out var n) && (_gun?.GetNodeOrNull<MeshInstance3D>(n)?.Visible ?? false);
+        public void SetSlotAttached(string slot, bool on)
+        {
+            if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
+        }
+
         // Length (s) of the equipped gun's reload clip, so PlayerController times the ammo refill to the real anim
         // (rifles 1.633s, the masterkey's break-action 2.467s). Falls back to the eaglefire length.
         public float ReloadLength => _arms != null && _arms.ClipLength(_reloadClip) > 0f ? _arms.ClipLength(_reloadClip) : 1.633f;

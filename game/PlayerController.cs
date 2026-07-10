@@ -423,6 +423,7 @@ namespace UnturnedGodot
         double _pdieTest = -1;
 
         public PauseMenu PauseMenu;   // ESC viewmodel-tuning menu (set by BuildPlayable); null in demos
+        public AttachmentMenu AttachMenu;   // T weapon-attachment menu (set by BuildPlayable); null in demos
 
         public override void _UnhandledInput(InputEvent @event)
         {
@@ -457,6 +458,15 @@ namespace UnturnedGodot
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 ThrowGrenade();       // throw a grenade
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.T })
+            {
+                if (AttachMenu != null)   // T: open/close the weapon-attachment menu (frees the mouse while open)
+                {
+                    AttachMenu.VM = _viewmodel;
+                    AttachMenu.Toggle();
+                    Input.MouseMode = AttachMenu.IsOpen ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                }
+            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
                 if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
