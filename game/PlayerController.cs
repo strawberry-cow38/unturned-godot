@@ -518,6 +518,7 @@ namespace UnturnedGodot
         // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
         void StartFire()
         {
+            if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
             if (_firemode == FireMode.Safety) return;
             // dry-fire: trigger pulled on an empty chamber -> hammer click, no shot
             if (Ammo <= 0 && !_reloading && _fireCd <= 0f) { _viewmodel?.PlayDryFire(); return; }
@@ -570,7 +571,7 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null) return false;
-            if (_viewmodel != null && !_viewmodel.IsEquipComplete) return false;   // no firing until the equip (pull-out) anim finishes (source: canFire gates on IsEquipAnimationFinished)
+            if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting)) return false;   // no firing until equip finishes, or during inspect (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             _fireCd = Gun != null ? Gun.Firerate / 50f : 0.1f;   // Firerate = sim ticks between shots
             Ammo--;

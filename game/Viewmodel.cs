@@ -312,6 +312,17 @@ namespace UnturnedGodot
             _inspectTimer = _arms != null && _arms.ClipLength(_inspectClip) > 0f ? _arms.ClipLength(_inspectClip) : 3.3f;
         }
 
+        public bool IsInspecting => _inspecting;
+
+        // Firing mid-inspect cancels it: drop _inspecting (the gun basis reverts to the camera-lock = shoot pose
+        // instantly) and snap the arms to the ready hold so the hands match the gun again.
+        public void CancelInspect()
+        {
+            if (!_inspecting) return;
+            _inspecting = false;
+            _arms?.Play("Gun_Hold");
+        }
+
         // Length (s) of the equipped gun's reload clip, so PlayerController times the ammo refill to the real anim
         // (rifles 1.633s, the masterkey's break-action 2.467s). Falls back to the eaglefire length.
         public float ReloadLength => _arms != null && _arms.ClipLength(_reloadClip) > 0f ? _arms.ClipLength(_reloadClip) : 1.633f;
