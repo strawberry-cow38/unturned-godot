@@ -32,7 +32,7 @@ namespace UnturnedGodot
                 for (int y = 0; y < RES; y++)
                 {
                     st.SetUV(new Vector2(x / (float)(RES - 1), y / (float)(RES - 1)));
-                    st.AddVertex(new Vector3(coordX * TILE_SIZE + x * UNIT, h[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f, -(coordY * TILE_SIZE + y * UNIT)));
+                    st.AddVertex(new Vector3(coordX * TILE_SIZE + y * UNIT, h[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f, -(coordY * TILE_SIZE + x * UNIT)));   // y-index = world X, x-index = world Z
                 }
             for (int x = 0; x < RES - 1; x++)
                 for (int y = 0; y < RES - 1; y++)
@@ -67,6 +67,71 @@ namespace UnturnedGodot
                     t.AddChild(LoadTile(path, cx, cy, withCollider));
             }
             return t;
+        }
+
+        // Whole-map terrain as ONE SEAMLESS mesh: stitch all tiles into a global (tw*256+1)x(th*256+1) height grid so
+        // adjacent tiles SHARE their edge vertices (no per-tile-mesh seams), then one ArrayMesh via bulk arrays (fast --
+        // SurfaceTool per-vertex would be far too slow at ~1M verts) with heightfield-gradient normals.
+        public static Terrain LoadMapMerged(string heightmapsDir, bool withCollider = true)
+        {
+            var tiles = new System.Collections.Generic.Dictionary<(int, int), float[,]>();
+            int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
+            foreach (var path in Directory.GetFiles(heightmapsDir, "Tile_*_Source.heightmap"))
+            {
+                string[] p = Path.GetFileNameWithoutExtension(path).Split('_');
+                if (p.Length < 3 || !int.TryParse(p[1], out int cx) || !int.TryParse(p[2], out int cy)) continue;
+                byte[] d = File.ReadAllBytes(path);
+                var hh = new float[RES, RES]; int k = 0;
+                for (int x = 0; x < RES; x++) for (int y = 0; y < RES; y++) { hh[x, y] = (ushort)((d[k] << 8) | d[k + 1]) / (float)ushort.MaxValue; k += 2; }
+                tiles[(cx, cy)] = hh;
+                minX = System.Math.Min(minX, cx); minY = System.Math.Min(minY, cy); maxX = System.Math.Max(maxX, cx); maxY = System.Math.Max(maxY, cy);
+            }
+            var terr = new Terrain { Name = "Terrain" };
+            if (tiles.Count == 0) return terr;
+
+            int GW = (maxX - minX + 1) * 256 + 1, GH = (maxY - minY + 1) * 256 + 1;
+            var g = new float[GW, GH];
+            foreach (var kv in tiles)
+            {
+                int ox = (kv.Key.Item1 - minX) * 256, oy = (kv.Key.Item2 - minY) * 256;
+                for (int x = 0; x < RES; x++) for (int y = 0; y < RES; y++) g[ox + y, oy + x] = kv.Value[x, y];   // heightmap y-index = world X, x-index = world Z (verified: adjacent tiles' edges only match swapped) -> shared edges coincide, seamless
+            }
+
+            int nv = GW * GH;
+            var verts = new Vector3[nv]; var norms = new Vector3[nv]; var uvs = new Vector2[nv];
+            float baseX = minX * TILE_SIZE, baseZ = minY * TILE_SIZE;
+            for (int x = 0; x < GW; x++)
+                for (int y = 0; y < GH; y++)
+                {
+                    int i = x * GH + y;
+                    verts[i] = new Vector3(baseX + x * UNIT, g[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f, -(baseZ + y * UNIT));
+                    uvs[i] = new Vector2(x / (float)(GW - 1), y / (float)(GH - 1));
+                    float hl = g[System.Math.Max(0, x - 1), y], hr = g[System.Math.Min(GW - 1, x + 1), y];
+                    float hd = g[x, System.Math.Max(0, y - 1)], hu = g[x, System.Math.Min(GH - 1, y + 1)];
+                    norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
+                }
+            var idx = new int[(GW - 1) * (GH - 1) * 6]; int t = 0;
+            for (int x = 0; x < GW - 1; x++)
+                for (int y = 0; y < GH - 1; y++)
+                {
+                    int i00 = x * GH + y, i10 = (x + 1) * GH + y, i01 = x * GH + (y + 1), i11 = (x + 1) * GH + (y + 1);
+                    idx[t++] = i00; idx[t++] = i01; idx[t++] = i10;
+                    idx[t++] = i10; idx[t++] = i01; idx[t++] = i11;
+                }
+
+            var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
+            arr[(int)Mesh.ArrayType.Vertex] = verts; arr[(int)Mesh.ArrayType.Normal] = norms;
+            arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Index] = idx;
+            var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+
+            terr.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f } });
+            if (withCollider)
+            {
+                var body = new StaticBody3D { CollisionLayer = 1u << 0 };
+                body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
+                terr.AddChild(body);
+            }
+            return terr;
         }
     }
 }

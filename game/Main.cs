@@ -786,13 +786,13 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
-            AddChild(Terrain.LoadMap(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: false));
+            AddChild(Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: false));
 
             var cam = new Camera3D { Current = true, Fov = 62f, Far = 14000f };
             AddChild(cam);
             cam.Position = new Vector3(0f, 2800f, 2600f);
             cam.LookAt(Vector3.Zero, Vector3.Up);   // aerial view of the whole PEI island (~4x4 km of Landscape tiles)
-            GD.Print("[TERRAIN] loaded PEI Landscape Tile_0_0");
+            GD.Print("[TERRAIN] loaded the whole PEI island (merged, seamless)");
         }
 
         // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
