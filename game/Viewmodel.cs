@@ -45,6 +45,7 @@ namespace UnturnedGodot
         bool _reloading;      // true while the reload clip plays (blocks ADS)
         string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
         string _inspectClip = null;          // per-gun inspect clip ({Gun}_Inspect); null if the gun ships no Inspect anim
+        bool _inspecting; float _inspectTimer; Basis _inspectBoneStart; bool _inspectCapture;   // inspect: layer the hand-bone rotation delta onto the camera-locked gun so it tilts with the gesture
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
         AudioStreamPlayer _shootSnd, _reloadSnd, _drySnd;   // real Eaglefire Shoot/Reload/Hammer(dry-fire) sounds
@@ -305,7 +306,10 @@ namespace UnturnedGodot
         // PlayerEquipment.canInspect gating on animator.checkExists("Inspect"). Blocked mid-reload.
         public void PlayInspect()
         {
-            if (_inspectClip != null && !_reloading) { _aiming = false; _arms?.Play(_inspectClip); }
+            if (_inspectClip == null || _reloading || _inspecting) return;
+            _aiming = false; _arms?.Play(_inspectClip);
+            _inspecting = true; _inspectCapture = true;
+            _inspectTimer = _arms != null && _arms.ClipLength(_inspectClip) > 0f ? _arms.ClipLength(_inspectClip) : 3.3f;
         }
 
         // Length (s) of the equipped gun's reload clip, so PlayerController times the ammo refill to the real anim
@@ -383,6 +387,7 @@ namespace UnturnedGodot
 
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 
+            if (_inspecting) { _inspectTimer -= (float)delta; if (_inspectTimer <= 0f) _inspecting = false; }
             if (_gun != null && _gun.GetParent() is Node3D att)
             {
                 Vector3 aim = -_cam.GlobalTransform.Basis.Z;   // viewmodel-forward
@@ -398,6 +403,14 @@ namespace UnturnedGodot
                 basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))    // pitch -> muzzle climb
                              .Rotated(cb.Y, Mathf.DegToRad(rr.Y))    // yaw
                              .Rotated(aim,  Mathf.DegToRad(rr.Z));   // roll
+                // inspect (source-accurate): the source animates the gun via the Inspect clip, so follow the hand
+                // bone's rotation delta since inspect start -- the gun tilts/turns with the gesture instead of the
+                // camera-lock pinning the barrel forward. bone.now * (bone.start.inv) == the animation's rotation.
+                if (_inspecting)
+                {
+                    if (_inspectCapture) { _inspectBoneStart = att.GlobalTransform.Basis; _inspectCapture = false; }
+                    basis = (att.GlobalTransform.Basis * _inspectBoneStart.Inverse()) * basis;
+                }
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
             }
 
