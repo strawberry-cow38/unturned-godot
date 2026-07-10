@@ -27,6 +27,7 @@ namespace UnturnedGodot
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
+        Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
         public bool HeadlightsOn => _headlightsOn;
 
@@ -44,6 +45,7 @@ namespace UnturnedGodot
             public float Fuel, Health;   // .dat Fuel / Health capacities (HUD gauges)
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
+            public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -88,6 +90,7 @@ namespace UnturnedGodot
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
             Fuel = 2000f, Health = 600f, Name = "Jeep",
             SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source prefab Headlights (Z negated)
+            TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source prefab Taillights (rear, Z negated)
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -197,6 +200,7 @@ namespace UnturnedGodot
                     var pm = SolidMat(color);
                     v.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm });
                     if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
+                    if (txt.Contains("taillight")) v._taillightMat = pm;   // capture so the taillight glows red while driving
                 }
 
             if (s.SpotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
@@ -207,6 +211,15 @@ namespace UnturnedGodot
                     v._headlights.AddChild(new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f });
                 v._headlights.AddChild(new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f });   // dim soft fill (raised above the seats so it doesn't glare)
                 v.AddChild(v._headlights);
+            }
+
+            if (s.TailPos != null)   // running taillights: dim red spots at the rear (aim +Z, backward), on while driving
+            {
+                var red = new Color(0.996f, 0f, 0f);
+                v._taillights = new Node3D { Visible = false };
+                foreach (var p in s.TailPos)
+                    v._taillights.AddChild(new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 6f, SpotAngle = 35f, LightColor = red, LightEnergy = 3f });
+                v.AddChild(v._taillights);
             }
 
             if (s.Sound != null)   // EngineRPMSimple: a looping engine clip (the prefab AudioSource) whose pitch + volume ride the RPM
@@ -253,6 +266,17 @@ namespace UnturnedGodot
             }
         }
 
+        void SetTaillights(bool on)   // running taillights: red glow while driven (source: emission = colour*2)
+        {
+            _taillightsOn = on;
+            if (_taillights != null) _taillights.Visible = on;
+            if (_taillightMat != null)
+            {
+                _taillightMat.EmissionEnabled = on;
+                if (on) { _taillightMat.Emission = new Color(0.56f, 0.13f, 0.13f); _taillightMat.EmissionEnergyMultiplier = 2f; }
+            }
+        }
+
         public override void _PhysicsProcess(double delta)
         {
             if (_wNodes == null) return;
@@ -285,6 +309,8 @@ namespace UnturnedGodot
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
                 if (Battery <= 0f) SetHeadlights(false);
             }
+            bool tailWant = EngineOn && Battery > 0f;   // source synchronizeTaillights: taillights on while isDriven && canTurnOnLights
+            if (tailWant != _taillightsOn) SetTaillights(tailWant);
 
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);

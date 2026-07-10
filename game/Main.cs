@@ -1244,25 +1244,17 @@ namespace UnturnedGodot
                 }
                 if (_vehTest && _veh != null)
                 {
-                    // settle, then auto-drive a course for the video: straight -> right curve -> left curve (parked for --night headlight demo)
-                    float throttle = _night ? 0f : (_frame > 30 ? 1f : 0f);
+                    // settle, then auto-drive a course for the video: straight -> right curve -> left curve
+                    float throttle = _frame > 30 ? 1f : 0f;
                     float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
-                    _veh.Drive(throttle, _night ? 0f : steer, _night);
-                    if (_vehCam != null)
+                    _veh.Drive(throttle, steer, false);
+                    if (_vehCam != null)   // chase cam: behind the jeep's heading (flattened), above -- shows the red taillights at night
                     {
                         var vt = _veh.GlobalTransform;
                         var fwd = -vt.Basis.Z; fwd.Y = 0f;
                         fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-                        if (_night)   // front-3/4 elevated view: see the headlight beams project forward onto the ground
-                        {
-                            _vehCam.GlobalPosition = vt.Origin + fwd * 9f + vt.Basis.X * 4f + Vector3.Up * 3.5f;
-                            _vehCam.LookAt(vt.Origin + fwd * 2f + Vector3.Up * 0.5f, Vector3.Up);
-                        }
-                        else   // chase cam: behind the jeep's heading (flattened), above, looking at it
-                        {
-                            _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
-                            _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
-                        }
+                        _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
+                        _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
                     }
                 }
                 if (_driveTest && _dtPlayer != null)
