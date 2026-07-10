@@ -10,6 +10,7 @@ namespace UnturnedGodot
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
+        VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
 
         struct Spec
         {
@@ -88,8 +89,11 @@ namespace UnturnedGodot
             }
             else
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            foreach (var (x, y, z, steer) in s.Wheels)
+            int nw = s.Wheels.Length;
+            v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw]; v._wRoll = new float[nw]; v._wSign = new float[nw];
+            for (int i = 0; i < nw; i++)
             {
+                var (x, y, z, steer) = s.Wheels[i];
                 var w = new VehicleWheel3D
                 {
                     Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = true,
@@ -97,8 +101,10 @@ namespace UnturnedGodot
                     SuspensionStiffness = 30f, DampingCompression = 2.4f, DampingRelaxation = 3.0f, WheelFrictionSlip = 3.5f,
                 };
                 // left wheels: flip the mesh so the tread faces outward
-                w.AddChild(new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3(x < 0 ? -1f : 1f, 1f, 1f) });
+                var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3(x < 0 ? -1f : 1f, 1f, 1f) };
+                w.AddChild(mi);
                 v.AddChild(w);
+                v._wNodes[i] = w; v._wMeshes[i] = mi; v._wSign[i] = x < 0 ? -1f : 1f;
             }
 
             if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
@@ -119,6 +125,16 @@ namespace UnturnedGodot
             float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
             Steering = Mathf.DegToRad(steer * Mathf.Lerp(_steerMax, _steerMin, t));   // 28deg at rest -> 14deg at full speed
             Brake = braking ? _brakeForce : 0f;
+        }
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (_wNodes == null) return;
+            for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
+            {
+                _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
+                _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
+            }
         }
     }
 }
