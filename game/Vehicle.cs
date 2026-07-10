@@ -12,6 +12,11 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
+        float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
+        const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
+        public float EngineRpm => _engineRpm;
+        public float EngineRpmNorm => Mathf.Clamp((_engineRpm - IdleRpm) / (MaxRpm - IdleRpm), 0f, 1f);
+        public int Gear => _gear;
 
         struct Spec
         {
@@ -20,6 +25,8 @@ namespace UnturnedGodot
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
+            public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
+            public float ReverseGear, ShiftUpRpm;   // .dat ReverseGearRatio + GearShift_UpThresholdRPM
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
@@ -60,6 +67,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // source .dat: Coalition / Desert / Forest / Russia
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
+            ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Wheels = new (float, float, float, bool)[]
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
@@ -78,6 +86,7 @@ namespace UnturnedGodot
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors list
             WheelRadius = 0.45f, Engine = 520f, SteerMax = 32f, SteerMin = 16f, SpeedMax = 13.5f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
+            ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
             Parts = new (string, Color)[]
@@ -94,6 +103,7 @@ namespace UnturnedGodot
             DefaultPaints = new[] { "#d4d4d4" },   // source .dat: single near-white default
             WheelRadius = 0.6f, Engine = 780f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = -6f, Brake = 24f,
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
+            ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -115,6 +125,7 @@ namespace UnturnedGodot
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
@@ -180,6 +191,17 @@ namespace UnturnedGodot
             {
                 _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
                 _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
+            }
+            // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
+            float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
+            float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
+            float ratio = (_gears != null && _gear >= 1 && _gear <= _gears.Length) ? _gears[_gear - 1] : 20f;
+            float target = Mathf.Clamp(avgWheelRpm * ratio, IdleRpm, MaxRpm);
+            _engineRpm = Mathf.Lerp(_engineRpm, target, Mathf.Min(1f, 8f * (float)delta));
+            if (_gears != null && _gears.Length > 0)   // auto gearbox: up past the shift-up RPM, down well below it
+            {
+                if (_engineRpm > _shiftUpRpm && _gear < _gears.Length) _gear++;
+                else if (_engineRpm < _shiftUpRpm * 0.45f && _gear > 1) _gear--;
             }
         }
     }
