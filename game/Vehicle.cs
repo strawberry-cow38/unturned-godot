@@ -37,6 +37,10 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
+        // Bumper roadkill (source Bumper.OnTriggerEnter + VehicleAsset ParseFloat defaults): a moving vehicle damages a
+        // character its front bumper touches. dmg = floor(baseDamage * speed); speed = clamp(fwdVel * mult, -10, 10),
+        // ignored below the threshold. None of the stock vehicles override these in their .dat, so the defaults hold.
+        const float BumperMult = 1f, BumperThreshold = 3f, BumperZombieDmg = 15f, BumperPlayerDmg = 10f, BumperSelfMult = 1f;
         public bool HeadlightsOn => _headlightsOn;
 
         struct Spec
@@ -79,6 +83,26 @@ namespace UnturnedGodot
                 InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
                 ScaleAmountMin = 0.4f, ScaleAmountMax = 1.3f, Color = c, Mesh = new QuadMesh { Size = new Vector2(0.7f, 0.7f), Material = mat },
             };
+        }
+
+        // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
+        // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
+        void OnBumperHit(Node3D body)
+        {
+            if (_exploded || _parked) return;
+            if (body is ZombieController z && !z.Dead)
+            {
+                float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);       // signed forward speed (front = -Z)
+                float speed = Mathf.Clamp(fwd * BumperMult, -10f, 10f);
+                if (speed < BumperThreshold) return;                            // too slow to hurt (source threshold gate)
+                float dmg = Mathf.Floor(BumperZombieDmg * speed);               // source DamageTool: floor(damage * times)
+                z.DamageHit(dmg, z.GlobalPosition, -GlobalTransform.Basis.Z);   // knock the ragdoll forward
+                TakeDamage(2f * BumperSelfMult);                                // source takeCrashDamage(2)
+                GD.Print($"[ROADKILL] speed={speed:0.0} dmg={dmg} -> zombie HP {z.Health:0}");
+            }
+            // NOTE: source Bumper also roadkills Players ("Player" tag -> BumperPlayerDamage) and Animals (Animal on the
+            // "Agent" tag -> BumperAnimalDamage) the same way. No player/animal targets share a scene in the port yet,
+            // so only the zombie path is wired + tested here; add those branches when those entities co-exist.
         }
 
         public void TakeDamage(float amount)   // source askDamage: reduce health; at 0 the EXPLODE timer starts
@@ -339,6 +363,14 @@ namespace UnturnedGodot
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+
+            // front bumper trigger (source Bumper): a forward volume that roadkills characters (enemy layer bit 1) the
+            // vehicle drives into. Trigger only -- the body's own mask ignores the enemy layer, so it plows through.
+            var bumper = new Area3D { CollisionLayer = 0, CollisionMask = 1u << 1 };
+            float frontZ = s.BoxCenter.Z - s.BoxSize.Z * 0.5f;   // front face (forward = -Z)
+            bumper.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(s.BoxSize.X, s.BoxSize.Y, 0.8f) }, Position = new Vector3(s.BoxCenter.X, s.BoxCenter.Y, frontZ - 0.2f) });
+            v.AddChild(bumper);
+            bumper.BodyEntered += v.OnBumperHit;
 
             var wheelMesh = ContentProvider.ParseObj($"res://content/{s.Wheel}");
             Material wheelMat;

@@ -26,7 +26,7 @@ namespace UnturnedGodot
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash]
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill]
         bool _driveTest; PlayerController _dtPlayer;      // --drivetest=DIR : player walks to a jeep, enters, drives (verifies enter/exit)
 
         public override void _Ready()
@@ -48,6 +48,7 @@ namespace UnturnedGodot
                 else if (arg == "--night") _night = true;   // dark env + headlights on (headlight demo)
                 else if (arg == "--demo") _demo = true;      // scripted honk + damage->explosion (destruction demo); off = clean drive
                 else if (arg == "--crash") _crash = true;    // a wall ahead to ram (collision-damage demo)
+                else if (arg == "--roadkill") _roadkill = true;   // idle zombies ahead to run over (roadkill demo)
                 else if (arg.StartsWith("--pick=")) picks = arg["--pick=".Length..];
                 else if (arg.StartsWith("--gun=")) gun = arg["--gun=".Length..];
                 else if (arg == "--demo") demo = true;
@@ -415,6 +416,16 @@ namespace UnturnedGodot
             _veh = Vehicle.BuildByName(type, _vehVariant);
             _veh.Position = new Vector3(0f, 1.2f, 0f);   // drop onto the plane so the suspension settles
             AddChild(_veh);
+
+            if (_roadkill)   // idle zombies straight ahead (-Z) in the auto-drive path to run over
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> stands still
+                    z.Position = new Vector3(i % 2 == 0 ? -0.6f : 0.6f, 0.9f, -12f - i * 3f);
+                    AddChild(z);
+                }
+            }
 
             _vehCam = new Camera3D { Current = true, Fov = 60f };
             AddChild(_vehCam);
