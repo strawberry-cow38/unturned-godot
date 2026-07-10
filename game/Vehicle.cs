@@ -12,7 +12,7 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
         bool _parked;   // driver left: smoothly damp to a stop (no hard-brake wheel-lock judder), then hold
-        float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh;   // damage/explosion (source askDamage/explode)
+        float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio;   // damage/explosion (source askDamage/explode)
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         public bool Exploded => _exploded;
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
@@ -95,6 +95,7 @@ namespace UnturnedGodot
             EngineOn = false;
             if (_fire != null) _fire.Emitting = true;
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
+            _explosionAudio?.Play();
             if (_bodyMesh != null) _bodyMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred wreck
             SpawnWheelDebris();
         }
@@ -326,6 +327,8 @@ namespace UnturnedGodot
             v.AddChild(v._smoke); v.AddChild(v._fire);
             v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
             v.AddChild(v._fireLight);
+            v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
+            v.AddChild(v._explosionAudio);
             return v;
         }
 
