@@ -12,6 +12,9 @@ namespace UnturnedGodot
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
         bool _parked;   // driver left: smoothly damp to a stop (no hard-brake wheel-lock judder), then hold
+        float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh;   // damage/explosion (source askDamage/explode)
+        const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
+        public bool Exploded => _exploded;
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
@@ -57,6 +60,42 @@ namespace UnturnedGodot
 
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+
+        // billboarded smoke/fire particle burst (damage smoke = grey rising; explosion fire = orange emissive)
+        static CpuParticles3D MakeSmoke(Color c, float life, float vel, int amount, bool fire)
+        {
+            var mat = new StandardMaterial3D
+            {
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, VertexColorUseAsAlbedo = true,
+                AlbedoColor = new Color(1f, 1f, 1f, fire ? 0.9f : 0.5f),
+            };
+            if (fire) { mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 3f; }
+            return new CpuParticles3D
+            {
+                Emitting = false, Amount = amount, Lifetime = life, Direction = Vector3.Up, Spread = 25f,
+                InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
+                ScaleAmountMin = 0.4f, ScaleAmountMax = 1.3f, Color = c, Mesh = new QuadMesh { Size = new Vector2(0.7f, 0.7f), Material = mat },
+            };
+        }
+
+        public void TakeDamage(float amount)   // source askDamage: reduce health; at 0 the EXPLODE timer starts
+        {
+            if (_exploded || amount <= 0f) return;
+            Health = Mathf.Max(0f, Health - amount);
+            if (Health <= 0f && _deadTimer < 0f) _deadTimer = ExplodeDelay;
+        }
+
+        void Explode()   // source explode: launch up + spin, fire on, char the body, disable
+        {
+            _exploded = true;
+            ApplyCentralImpulse(Vector3.Up * 6000f);          // source min/maxExplosionForce (default straight up), calibrated for the Godot mass
+            ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
+            EngineOn = false;
+            if (_fire != null) _fire.Emitting = true;
+            if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
+            if (_bodyMesh != null) _bodyMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred wreck
+        }
 
         // Unturned paintable shading: body samples the palette, paintable texels tinted by _PaintColor.
         static ShaderMaterial PaintMat(string palette, Color paint)
@@ -168,7 +207,8 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            v.AddChild(new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat });
+            v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
+            v.AddChild(v._bodyMesh);
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
@@ -251,6 +291,15 @@ namespace UnturnedGodot
                 v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume), Autoplay = true };
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
+
+            // damage smoke + explosion fire from the engine bay (source: smoke_0/1 at health thresholds, fire + Fire light on explode)
+            var firePos = new Vector3(0f, 1.24f, -1.70f);   // source Fire node (0,1.238,1.703), Z negated
+            v._smoke = MakeSmoke(new Color(0.13f, 0.13f, 0.13f), 2.4f, 2.6f, 26, false);
+            v._fire = MakeSmoke(new Color(1f, 0.55f, 0.12f), 0.7f, 4.5f, 30, true);
+            v._smoke.Position = firePos; v._fire.Position = firePos;
+            v.AddChild(v._smoke); v.AddChild(v._fire);
+            v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
+            v.AddChild(v._fireLight);
             return v;
         }
 
@@ -258,6 +307,7 @@ namespace UnturnedGodot
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
         public void Drive(float throttle, float steer, bool braking)
         {
+            if (_exploded) { EngineForce = 0f; Steering = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
             float speed = LinearVelocity.Length();   // m/s (horizontal-ish while driving)
             float eng = throttle * _engineForce;
@@ -353,6 +403,8 @@ namespace UnturnedGodot
             bool tailWant = EngineOn && Battery > 0f;   // source synchronizeTaillights: taillights on while isDriven && canTurnOnLights
             if (tailWant != _taillightsOn) SetTaillights(tailWant);
             if (_hornCd > 0f) _hornCd -= (float)delta;
+            if (_smoke != null) _smoke.Emitting = _exploded || Health < SmokeHealth;   // source: smoke while damaged (< SMOKE_1 threshold 200)
+            if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // source EXPLODE: 4s after health 0
 
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
