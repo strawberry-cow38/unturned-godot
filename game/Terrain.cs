@@ -28,6 +28,16 @@ namespace UnturnedGodot
             _ => new Color(0.26f, 0.35f, 0.18f),   // 7: bush / dense foliage
         };
 
+        // Merged-map height grid + placement, stashed so gameplay can sample the ground height at a world XZ (spawns etc.).
+        float[,] _grid; int _gw, _gh; float _bx, _bz;
+        public float SampleHeight(float worldX, float worldZ)
+        {
+            if (_grid == null) return 0f;
+            int gx = Mathf.Clamp(Mathf.RoundToInt((worldX - _bx) / UNIT), 0, _gw - 1);
+            int gy = Mathf.Clamp(Mathf.RoundToInt((-worldZ - _bz) / UNIT), 0, _gh - 1);   // world Z is negated
+            return _grid[gx, gy] * TILE_HEIGHT - TILE_HEIGHT / 2f;
+        }
+
         // Build one landscape tile's mesh (+ optional trimesh collider) from its .heightmap file, placed at its coord.
         public static Node3D LoadTile(string heightmapPath, int coordX, int coordY, bool withCollider = true)
         {
@@ -167,6 +177,7 @@ namespace UnturnedGodot
                 body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
                 terr.AddChild(body);
             }
+            terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = baseX; terr._bz = baseZ;   // for SampleHeight (spawns)
             return terr;
         }
     }

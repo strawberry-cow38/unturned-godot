@@ -29,11 +29,12 @@ namespace UnturnedGodot
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain]
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
+        bool _peiPlay; PlayerController _peiPlayer; int _peiFrame;   // --peiplay : player walking on real PEI terrain
 
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -67,6 +68,7 @@ namespace UnturnedGodot
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
+                else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
                 else if (arg == "--invequip") { invdemo = true; invequip = true; }
@@ -103,6 +105,14 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildTerrainTest();
+                return;
+            }
+
+            if (peiplay)   // drop the player onto real PEI terrain (colliders on) + walk -> the whole session's work on an actual map
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _peiPlay = true;
+                BuildPeiPlay();
                 return;
             }
 
@@ -795,6 +805,35 @@ namespace UnturnedGodot
             GD.Print("[TERRAIN] loaded the whole PEI island (merged, seamless)");
         }
 
+        // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
+        void BuildPeiPlay()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.5f, 0.6f, 0.75f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
+                AmbientLightEnergy = 0.75f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
+
+            var terr = Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: true);
+            AddChild(terr);
+
+            CharacterModel.LoadBundled();
+            var player = new PlayerController();
+            player.LoadGun("res://content/eaglefire.dat");
+            AddChild(player);
+            float sx = 0f, sz = -350f;                       // a spot north of centre (likely land); adjust if it lands in water
+            float gy = terr.SampleHeight(sx, sz);
+            player.GlobalPosition = new Vector3(sx, gy + 3f, sz);   // drop 3 m onto the real ground
+            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            _peiPlayer = player;
+            GD.Print($"[PEIPLAY] spawned on PEI at ({sx}, groundY {gy:0} +3, {sz})");
+        }
+
         // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
         // rejection, and drop-onto-item swap, printing PASS/FAIL per case. Verifies the drag MODEL without the mouse.
         static void RunDragTest()
@@ -1378,6 +1417,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter -- the _frame demo loop below is gated on _rigDir
+            if (_peiPlay && _peiPlayer != null) { _peiFrame++; if (_peiFrame >= 45) _peiPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f); }   // let it drop, then walk forward on PEI
             if (_rigDir != null)
             {
                 _frame++;
