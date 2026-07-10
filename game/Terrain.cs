@@ -30,6 +30,49 @@ namespace UnturnedGodot
             _ => new Color(0.553f, 0.306f, 0.184f),   // 7: PEI_Stone_01
         };
 
+        // Real per-layer albedo textures (extracted from core.masterbundle), dominant-layer selected + world-tiled.
+        // UV samples the dominant-layer index map; the chosen albedo tiles by world XZ at the source scale (texW*0.25 = 16u).
+        // Layer 5 (sand seabed) -> ocean blue until a real water plane exists.
+        const string TERRAIN_SHADER = @"
+shader_type spatial;
+uniform sampler2DArray albedos : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D domTex : filter_nearest;
+uniform float tileWorld = 16.0;
+varying vec3 wpos;
+void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+    int layer = int(texture(domTex, UV).r * 255.0 + 0.5);
+    if (layer == 5) { ALBEDO = vec3(0.170, 0.310, 0.470); }
+    else { ALBEDO = texture(albedos, vec3(wpos.xz / tileWorld, float(layer))).rgb; }
+    ROUGHNESS = 1.0;
+}
+";
+
+        static ShaderMaterial BuildTerrainMaterial(byte[,] dom, int dw, int dh)
+        {
+            var imgs = new Godot.Collections.Array<Image>();
+            for (int l = 0; l < SLAYERS; l++)
+            {
+                var img = new Image();
+                if (img.Load(ProjectSettings.GlobalizePath($"res://content/terrain/layer{l}.png")) != Error.Ok) { GD.Print($"[TERRAIN] texture load FAILED: layer{l}"); return null; }
+                img.Convert(Image.Format.Rgba8);
+                img.GenerateMipmaps();
+                imgs.Add(img);
+            }
+            var arr = new Texture2DArray();
+            if (arr.CreateFromImages(imgs) != Error.Ok) return null;
+
+            var buf = new byte[dw * dh];
+            for (int y = 0; y < dh; y++) for (int x = 0; x < dw; x++) buf[y * dw + x] = dom[x, y];
+            var domTex = ImageTexture.CreateFromImage(Image.CreateFromData(dw, dh, false, Image.Format.R8, buf));
+
+            var mat = new ShaderMaterial { Shader = new Shader { Code = TERRAIN_SHADER } };
+            mat.SetShaderParameter("albedos", arr);
+            mat.SetShaderParameter("domTex", domTex);
+            mat.SetShaderParameter("tileWorld", 16f);
+            return mat;
+        }
+
         // Merged-map height grid + placement, stashed so gameplay can sample the ground height at a world XZ (spawns etc.).
         float[,] _grid; int _gw, _gh; float _bx, _bz;
         byte[,] _dom; int _dw, _dh;   // dominant splatmap layer per texel -> SampleDominantLayer (grassy-spawn picking)
@@ -182,7 +225,11 @@ namespace UnturnedGodot
             arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Color] = cols; arr[(int)Mesh.ArrayType.Index] = idx;
             var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
 
-            terr.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f } });
+            var mi = new MeshInstance3D { Mesh = mesh };
+            var texMat = splats.Count > 0 ? BuildTerrainMaterial(dom, GWs, GHs) : null;   // real per-layer albedos when splatmaps exist
+            GD.Print(texMat != null ? "[TERRAIN] real per-layer albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
+            mi.MaterialOverride = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
+            terr.AddChild(mi);
             if (withCollider)
             {
                 var body = new StaticBody3D { CollisionLayer = 1u << 0 };
