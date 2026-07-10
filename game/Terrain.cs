@@ -11,7 +11,22 @@ namespace UnturnedGodot
     public partial class Terrain : Node3D
     {
         const int RES = 257;
+        const int SRES = 256, SLAYERS = 8;   // Landscape SPLATMAP_RESOLUTION + SPLATMAP_LAYERS (per-texel layer weights, 1 byte each)
         const float TILE_SIZE = 1024f, TILE_HEIGHT = 2048f, UNIT = 4f;
+
+        // The 8 shared terrain material layers, colored as a stand-in until real splatmap texture blending. Inferred from
+        // the PEI splatmap layout (layer 5 = ocean/water dominant, 2 = grass/ground, 3 = the road network, 0/7 = forest).
+        static Color LayerColor(byte l) => l switch
+        {
+            0 => new Color(0.22f, 0.31f, 0.15f),   // forest / tree
+            1 => new Color(0.72f, 0.66f, 0.46f),   // sand / beach
+            2 => new Color(0.36f, 0.44f, 0.23f),   // grass / ground
+            3 => new Color(0.53f, 0.45f, 0.32f),   // road (PEI dirt roads = tan/brown)
+            4 => new Color(0.46f, 0.45f, 0.43f),   // rock / gravel
+            5 => new Color(0.19f, 0.33f, 0.50f),   // water / ocean
+            6 => new Color(0.66f, 0.60f, 0.42f),   // dirt / path
+            _ => new Color(0.26f, 0.35f, 0.18f),   // 7: bush / dense foliage
+        };
 
         // Build one landscape tile's mesh (+ optional trimesh collider) from its .heightmap file, placed at its coord.
         public static Node3D LoadTile(string heightmapPath, int coordX, int coordY, bool withCollider = true)
@@ -75,6 +90,8 @@ namespace UnturnedGodot
         public static Terrain LoadMapMerged(string heightmapsDir, bool withCollider = true)
         {
             var tiles = new System.Collections.Generic.Dictionary<(int, int), float[,]>();
+            var splats = new System.Collections.Generic.Dictionary<(int, int), byte[,]>();   // dominant splatmap layer per 256x256 texel
+            string splatDir = Path.Combine(Path.GetDirectoryName(heightmapsDir), "Splatmaps");
             int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
             foreach (var path in Directory.GetFiles(heightmapsDir, "Tile_*_Source.heightmap"))
             {
@@ -85,6 +102,14 @@ namespace UnturnedGodot
                 for (int x = 0; x < RES; x++) for (int y = 0; y < RES; y++) { hh[x, y] = (ushort)((d[k] << 8) | d[k + 1]) / (float)ushort.MaxValue; k += 2; }
                 tiles[(cx, cy)] = hh;
                 minX = System.Math.Min(minX, cx); minY = System.Math.Min(minY, cy); maxX = System.Math.Max(maxX, cx); maxY = System.Math.Max(maxY, cy);
+                // matching splatmap -> the winning (dominant) layer per texel (256x256x8 bytes, weight = raw/255; source readSplatmap)
+                string sp = Path.Combine(splatDir, $"Tile_{cx}_{cy}_Source.splatmap");
+                if (File.Exists(sp))
+                {
+                    byte[] sd = File.ReadAllBytes(sp); var dm = new byte[SRES, SRES]; int sk = 0;
+                    for (int sx = 0; sx < SRES; sx++) for (int sy = 0; sy < SRES; sy++) { byte bl = 0, bv = 0; for (byte L = 0; L < SLAYERS; L++) { byte w = sd[sk++]; if (w > bv) { bv = w; bl = L; } } dm[sx, sy] = bl; }
+                    splats[(cx, cy)] = dm;
+                }
             }
             var terr = new Terrain { Name = "Terrain" };
             if (tiles.Count == 0) return terr;
@@ -97,6 +122,14 @@ namespace UnturnedGodot
                 for (int x = 0; x < RES; x++) for (int y = 0; y < RES; y++) g[ox + y, oy + x] = kv.Value[x, y];   // heightmap y-index = world X, x-index = world Z (verified: adjacent tiles' edges only match swapped) -> shared edges coincide, seamless
             }
 
+            int GWs = (maxX - minX + 1) * SRES, GHs = (maxY - minY + 1) * SRES;   // global splatmap grid (256/tile, no shared edge)
+            var dom = new byte[GWs, GHs];
+            foreach (var kv in splats)
+            {
+                int ox = (kv.Key.Item1 - minX) * SRES, oy = (kv.Key.Item2 - minY) * SRES;
+                for (int sx = 0; sx < SRES; sx++) for (int sy = 0; sy < SRES; sy++) dom[ox + sy, oy + sx] = kv.Value[sx, sy];   // same y->worldX, x->worldZ transpose
+            }
+
             int nv = GW * GH;
             var verts = new Vector3[nv]; var norms = new Vector3[nv]; var uvs = new Vector2[nv]; var cols = new Color[nv];
             float baseX = minX * TILE_SIZE, baseZ = minY * TILE_SIZE;
@@ -107,7 +140,8 @@ namespace UnturnedGodot
                     float wy = g[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f;
                     verts[i] = new Vector3(baseX + x * UNIT, wy, -(baseZ + y * UNIT));
                     uvs[i] = new Vector2(x / (float)(GW - 1), y / (float)(GH - 1));
-                    cols[i] = wy < 0f ? new Color(0.20f, 0.36f, 0.55f) : (wy < 30f ? new Color(0.74f, 0.68f, 0.48f) : new Color(0.34f, 0.42f, 0.26f));   // water / sand / land — stand-in coloring until splatmaps (also makes the coastline visible for the orientation check)
+                    cols[i] = splats.Count > 0 ? LayerColor(dom[System.Math.Min(x, GWs - 1), System.Math.Min(y, GHs - 1)])   // real splatmap material layout (grass/road/water/forest)
+                                               : (wy < 0f ? new Color(0.20f, 0.36f, 0.55f) : (wy < 30f ? new Color(0.74f, 0.68f, 0.48f) : new Color(0.34f, 0.42f, 0.26f)));   // height fallback
                     float hl = g[System.Math.Max(0, x - 1), y], hr = g[System.Math.Min(GW - 1, x + 1), y];
                     float hd = g[x, System.Math.Max(0, y - 1)], hu = g[x, System.Math.Min(GH - 1, y + 1)];
                     norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
