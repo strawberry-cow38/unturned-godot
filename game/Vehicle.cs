@@ -24,7 +24,9 @@ namespace UnturnedGodot
         {
             var v = new Vehicle { Mass = 900f };
 
-            var bodyMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.45f, 0.30f), Metallic = 0f, Roughness = 0.9f };
+            // Jeep.dat Material_MilitaryPaintable _PaintColor (the real default olive-yellow). Double-sided: the
+            // low-poly body mesh has a couple of inconsistently-wound faces, so cull-disabled avoids inside-out gaps.
+            var bodyMat = new StandardMaterial3D { AlbedoColor = new Color(0.854f, 0.858f, 0.078f), Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var body = new MeshInstance3D { Name = "Body", Mesh = ContentProvider.ParseObj("res://content/jeep_body.txt"), MaterialOverride = bodyMat };
             v.AddChild(body);
 

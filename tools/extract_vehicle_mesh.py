@@ -65,7 +65,10 @@ if not found:
 mo, M, vc = max(found, key=lambda t: t[2])
 R = M[:3, :3]                       # world rotation+scale (root-cancelled); translation dropped -> centered
 Rn = np.linalg.inv(R).T
-print(f"{mesh_name}: {len(found)} candidate(s), picked vcount={vc}")
+# faces stay outward iff we reverse winding ONLY when the full position map (R then Z-negate) is a reflection.
+# a node with negative scale is already a reflection, so blindly reversing would turn it inside-out.
+rev = np.linalg.det(np.diag([1.0, 1.0, -1.0]) @ R) < 0
+print(f"{mesh_name}: {len(found)} candidate(s), picked vcount={vc}, det={np.linalg.det(R):.3f}, reverse_winding={rev}")
 
 txt = mo.read().export()
 V, N, T, F = [], [], [], []
@@ -83,7 +86,7 @@ for line in txt.splitlines():
     elif p[0] == "vt":
         T.append((p[1], p[2]))
     elif p[0] == "f":
-        F.append(list(reversed(p[1:])))
+        F.append(list(reversed(p[1:])) if rev else list(p[1:]))
 
 L = ["g Model_0"]
 L += ["v %.6f %.6f %.6f" % v for v in V]
