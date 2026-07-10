@@ -30,6 +30,7 @@ namespace UnturnedGodot
 
         // Merged-map height grid + placement, stashed so gameplay can sample the ground height at a world XZ (spawns etc.).
         float[,] _grid; int _gw, _gh; float _bx, _bz;
+        byte[,] _dom; int _dw, _dh;   // dominant splatmap layer per texel -> SampleDominantLayer (grassy-spawn picking)
         public float SampleHeight(float worldX, float worldZ)
         {
             if (_grid == null) return 0f;
@@ -37,6 +38,15 @@ namespace UnturnedGodot
             int gy = Mathf.Clamp(Mathf.RoundToInt((-worldZ - _bz) / UNIT), 0, _gh - 1);   // world Z is negated
             return _grid[gx, gy] * TILE_HEIGHT - TILE_HEIGHT / 2f;
         }
+        // dominant splatmap layer at a world point (2=grass, 0/7=forest, 1=sand, 3=road, 4=rock, 5=water, 6=dirt); 255 = no splats
+        public byte SampleDominantLayer(float worldX, float worldZ)
+        {
+            if (_dom == null) return 255;
+            int gx = Mathf.Clamp(Mathf.RoundToInt((worldX - _bx) / UNIT), 0, _dw - 1);
+            int gy = Mathf.Clamp(Mathf.RoundToInt((-worldZ - _bz) / UNIT), 0, _dh - 1);
+            return _dom[gx, gy];
+        }
+        public static bool IsWater(byte layer) => layer == 5;   // splat layer 5 = ocean; every other layer is drivable land
 
         // Build one landscape tile's mesh (+ optional trimesh collider) from its .heightmap file, placed at its coord.
         public static Node3D LoadTile(string heightmapPath, int coordX, int coordY, bool withCollider = true)
@@ -178,6 +188,7 @@ namespace UnturnedGodot
                 terr.AddChild(body);
             }
             terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = baseX; terr._bz = baseZ;   // for SampleHeight (spawns)
+            terr._dom = dom; terr._dw = GWs; terr._dh = GHs;   // for SampleDominantLayer (grassy-spawn picking)
             return terr;
         }
     }

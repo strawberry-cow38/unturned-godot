@@ -112,6 +112,7 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _peiPlay = true;
+                _shotPath = shot;   // captured at a LATE frame (below) so the drop+enter+drive plays out first
                 BuildPeiPlay();
                 return;
             }
@@ -826,12 +827,36 @@ namespace UnturnedGodot
             var player = new PlayerController();
             player.LoadGun("res://content/eaglefire.dat");
             AddChild(player);
-            float sx = 0f, sz = -350f;                       // a spot north of centre (likely land); adjust if it lands in water
+            // auto-pick a grassy, well-inland spawn so the jeep drives on real green PEI land, not the coastal water-splat
+            float sx = 0f, sz = -350f; int bestMargin = -1; float bestDist = float.MaxValue;
+            for (float cz = -1800f; cz <= 1800f; cz += 50f)
+                for (float cx = -1800f; cx <= 1800f; cx += 50f)
+                {
+                    if (terr.SampleDominantLayer(cx, cz) != 2) continue;   // grass underfoot
+                    int margin = 0;
+                    for (int r = 32; r <= 160; r += 32)   // how far land extends in all 8 directions (driving room)
+                    {
+                        bool ring = true;
+                        for (int a = 0; a < 8 && ring; a++)
+                            if (Terrain.IsWater(terr.SampleDominantLayer(cx + r * Mathf.Cos(a * Mathf.Pi / 4f), cz + r * Mathf.Sin(a * Mathf.Pi / 4f)))) ring = false;
+                        if (!ring) break;
+                        margin = r;
+                    }
+                    float dist = Mathf.Sqrt(cx * cx + cz * cz);
+                    if (margin > bestMargin || (margin == bestMargin && dist < bestDist)) { bestMargin = margin; bestDist = dist; sx = cx; sz = cz; }
+                }
             float gy = terr.SampleHeight(sx, sz);
             player.GlobalPosition = new Vector3(sx, gy + 3f, sz);   // drop 3 m onto the real ground
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _peiPlayer = player;
-            GD.Print($"[PEIPLAY] spawned on PEI at ({sx}, groundY {gy:0} +3, {sz})");
+
+            // a jeep right beside the player, dropped onto the terrain -> hop in + drive PEI
+            var jeep = Vehicle.BuildByName("jeep");   // auto-joins the "vehicles" group in Build
+            AddChild(jeep);                            // in the tree FIRST, else GlobalPosition no-ops (!is_inside_tree)
+            float jjx = sx + 2.2f;
+            jeep.GlobalPosition = new Vector3(jjx, terr.SampleHeight(jjx, sz) + 1.5f, sz);
+
+            GD.Print($"[PEIPLAY] grass spawn ({sx:0},{sz:0}) groundY {gy:0}, inland-margin {bestMargin}m, layer {terr.SampleDominantLayer(sx, sz)} + jeep beside");
         }
 
         // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
@@ -1417,7 +1442,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter -- the _frame demo loop below is gated on _rigDir
-            if (_peiPlay && _peiPlayer != null) { _peiFrame++; if (_peiFrame >= 45) _peiPlayer.ScriptedInput = new UnityEngine.Vector2(0f, 1f); }   // let it drop, then walk forward on PEI
+            if (_peiPlay && _peiPlayer != null) { _peiFrame++; if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f); }   // let both settle onto PEI, hop in the jeep, drive forward
             if (_rigDir != null)
             {
                 _frame++;
@@ -1484,7 +1509,8 @@ namespace UnturnedGodot
                 return;
             }
             if (_shotPath == null) return;
-            if (++_frame < 6) return; // let the renderer settle
+            if (_peiPlay) { if (_peiFrame < 160) return; }   // peiplay: let the drop (~25f) + enter (50f) + drive (55f+) play out, jeep well underway
+            else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
