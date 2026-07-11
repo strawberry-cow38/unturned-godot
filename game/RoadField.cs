@@ -35,6 +35,16 @@ namespace UnturnedGodot
             return new StandardMaterial3D { AlbedoColor = concrete ? new Color(0.34f, 0.34f, 0.35f) : new Color(0.45f, 0.37f, 0.28f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
         }
 
+        // Terrain normal from the height gradient (smoothed over e units) so the road banks WITH the slope
+        // instead of staying flat -> even edges on cross-slopes (src uses LevelGround.getNormal).
+        Vector3 SampleNormal(float x, float z)
+        {
+            const float e = 4f;
+            float hL = Terr.SampleHeight(x - e, z), hR = Terr.SampleHeight(x + e, z);
+            float hD = Terr.SampleHeight(x, z - e), hU = Terr.SampleHeight(x, z + e);
+            return new Vector3(hL - hR, 2f * e, hD - hU).Normalized();
+        }
+
         public void LoadFromEnvironment(string envDir)
         {
             var mats = ParseRoadsDat(Path.Combine(envDir, "Roads.dat"));
@@ -150,7 +160,7 @@ namespace UnturnedGodot
                     Vector3 dir = (SplinePos(r, seg, Mathf.Min(t + 0.02f, 1f)) - SplinePos(r, seg, Mathf.Max(t - 0.02f, 0f)));
                     dir.Y = 0f;
                     dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Forward;
-                    Vector3 normal = Vector3.Up;
+                    Vector3 normal = (Terr != null && !r.Joints[seg].IgnoreTerrain) ? SampleNormal(pos.X, pos.Z) : Vector3.Up;
                     Vector3 side = dir.Cross(normal).Normalized();
                     // src buildMesh: raise pos.y so BOTH edges clear the terrain -> road sits PROUD on slopes (doesn't sink into hills).
                     if (Terr != null && !r.Joints[seg].IgnoreTerrain)
