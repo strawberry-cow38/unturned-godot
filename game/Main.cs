@@ -895,10 +895,12 @@ namespace UnturnedGodot
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}");
 
             // aerial over the busiest cluster so the full populated PEI (all ~360 types) reads at once, no gaps
-            var cam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
+            Vector3 sumAll = Vector3.Zero; foreach (var v in cellSum.Values) sumAll += v;
+            var ctr = placed > 0 ? sumAll / placed : Vector3.Zero;
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 20000f };
             AddChild(cam);
-            cam.Position = focus + new Vector3(0f, 210f, 210f);
-            cam.LookAt(focus + new Vector3(0f, 4f, 0f), Vector3.Up);
+            cam.Position = new Vector3(ctr.X, 2200f, ctr.Z + 1f);
+            cam.LookAt(new Vector3(ctr.X, 0f, ctr.Z), new Vector3(0f, 0f, -1f));   // straight down, screen-up = world -Z (north), to match the game chart
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
