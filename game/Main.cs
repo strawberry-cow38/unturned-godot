@@ -13,6 +13,7 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath;
+        Vector3 _zAim; bool _zHave;   // first PEI zombie's position, for the UG_ZAERIAL demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         int _frame;
         string _rigDir;                              // --rig=DIR : capture a frame strip here
@@ -986,6 +987,7 @@ namespace UnturnedGodot
                         float dist = Mathf.Sqrt(cx * cx + cz * cz);
                         if (margin > bestMargin || (margin == bestMargin && dist < bestDist)) { bestMargin = margin; bestDist = dist; sx = cx; sz = cz; }
                     }
+                if (System.Environment.GetEnvironmentVariable("UG_TOWNSPAWN") == "1") { sx = focus.X; sz = focus.Z; }   // demo: spawn in the busiest town (near zombies) instead of open grass
                 CharacterModel.LoadBundled();
                 var player = new PlayerController { CaptureMouse = true };
                 player.LoadGun("res://content/eaglefire.dat");
@@ -997,6 +999,51 @@ namespace UnturnedGodot
                 var jeep = Vehicle.BuildByName("jeep");
                 AddChild(jeep);
                 jeep.GlobalPosition = new Vector3(sx + 2.2f, terr.SampleHeight(sx + 2.2f, sz) + 1.5f, sz);
+
+                // ZOMBIE SPAWNS: PEI's navmesh regions from Environment/Bounds.dat (source LevelNavigation: River =
+                // u8 version, u8 count, then count x [center Vector3][size Vector3]). Drop a few zombies per region on
+                // LAND at terrain height; the radius-gated AI keeps far ones idle until you approach (source-accurate sensing).
+                {
+                    string bpath = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Environment\Bounds.dat";
+                    int nz = 0;
+                    if (System.IO.File.Exists(bpath))
+                    {
+                        var bd = System.IO.File.ReadAllBytes(bpath); int o = 0;
+                        byte bver = bd[o++];
+                        if (bver > 0)
+                        {
+                            byte bcount = bd[o++];
+                            var rng = new RandomNumberGenerator { Seed = 90210 };
+                            for (int bi = 0; bi < bcount; bi++)
+                            {
+                                float cx = System.BitConverter.ToSingle(bd, o); o += 8;   // center.x (skip center.y)
+                                float cz = System.BitConverter.ToSingle(bd, o); o += 4;   // center.z
+                                float bsx = System.BitConverter.ToSingle(bd, o); o += 8;  // size.x (skip size.y)
+                                float bsz = System.BitConverter.ToSingle(bd, o); o += 4;  // size.z
+                                for (int k = 0; k < 4; k++)
+                                {
+                                    float wx = cx + rng.RandfRange(-bsx * 0.5f, bsx * 0.5f);
+                                    float gz = -(cz + rng.RandfRange(-bsz * 0.5f, bsz * 0.5f));   // Unity Z -> port negate-Z
+                                    if (Terrain.IsWater(terr.SampleDominantLayer(wx, gz))) continue;   // no zombies in the ocean
+                                    var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
+                                    AddChild(z);
+                                    z.GlobalPosition = new Vector3(wx, terr.SampleHeight(wx, gz) + 1f, gz);
+                                    if (!_zHave) { _zAim = z.GlobalPosition; _zHave = true; }   // remember the first zombie so the demo cam can look at it
+                                    nz++;
+                                }
+                            }
+                        }
+                    }
+                    GD.Print($"[zombies] spawned {nz} across PEI's navmesh regions");
+                }
+                if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
+                {
+                    var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
+                    AddChild(acam);
+                    var ctr = _zHave ? _zAim : player.GlobalPosition;   // look at a real zombie if one spawned
+                    acam.Position = ctr + new Vector3(0f, 22f, 20f);
+                    acam.LookAt(ctr, Vector3.Up);
+                }
                 GetWindow().Mode = Window.ModeEnum.Maximized;
                 GD.Print($"[PEI] playable: spawned on grass ({sx:0},{sz:0}); WASD move, E enter jeep, drive PEI");
             }
