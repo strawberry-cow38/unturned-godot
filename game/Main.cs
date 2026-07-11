@@ -970,29 +970,55 @@ namespace UnturnedGodot
             if (_peiPlayable)
             {
                 // menu "Drive PEI": drop the player + jeep on open grass with REAL controls (WASD + mouse look, E to enter/drive the jeep)
-                float sx = 0f, sz = -350f; int bestMargin = -1; float bestDist = float.MaxValue;
-                for (float cz = -1800f; cz <= 1800f; cz += 50f)
-                    for (float cx = -1800f; cx <= 1800f; cx += 50f)
+                float sx = 0f, sz = -350f, spawnYaw = 0f;
+                // player spawn: PEI's REAL regular spawn points (Spawns/Players.dat = u8 ver, u8 count, per point Vector3 + u8 angle*2 + bool isAlt if v>3;
+                // source LevelPlayers.getSpawn picks a random NON-alt spawn). Falls back to the inland-grass scan if the file's missing.
+                bool gotSpawn = false;
+                {
+                    string ppath = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Spawns\Players.dat";
+                    if (System.IO.File.Exists(ppath))
                     {
-                        if (terr.SampleDominantLayer(cx, cz) != 2) continue;
-                        int margin = 0;
-                        for (int r = 32; r <= 160; r += 32)
+                        var pd = System.IO.File.ReadAllBytes(ppath); int pp = 0;
+                        byte pver = pd[pp++]; byte pcount = pd[pp++];
+                        var regs = new System.Collections.Generic.List<(float x, float z, float yaw)>();
+                        for (int i = 0; i < pcount; i++)
                         {
-                            bool ring = true;
-                            for (int a = 0; a < 8 && ring; a++)
-                                if (Terrain.IsWater(terr.SampleDominantLayer(cx + r * Mathf.Cos(a * Mathf.Pi / 4f), cz + r * Mathf.Sin(a * Mathf.Pi / 4f)))) ring = false;
-                            if (!ring) break;
-                            margin = r;
+                            float px = System.BitConverter.ToSingle(pd, pp); pp += 8;   // point.x (skip point.y)
+                            float pz = System.BitConverter.ToSingle(pd, pp); pp += 4;   // point.z
+                            float pang = pd[pp++] * 2f;
+                            bool isAlt = pver > 3 && pd[pp++] != 0;
+                            if (!isAlt) regs.Add((px, -pz, -pang));   // regular spawn -> port negate-Z, negate yaw
                         }
-                        float dist = Mathf.Sqrt(cx * cx + cz * cz);
-                        if (margin > bestMargin || (margin == bestMargin && dist < bestDist)) { bestMargin = margin; bestDist = dist; sx = cx; sz = cz; }
+                        if (regs.Count > 0) { var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)]; sx = pick.x; sz = pick.z; spawnYaw = pick.yaw; gotSpawn = true; }
                     }
+                }
+                if (!gotSpawn)   // fallback: most-inland grass
+                {
+                    int bestMargin = -1; float bestDist = float.MaxValue;
+                    for (float cz = -1800f; cz <= 1800f; cz += 50f)
+                        for (float cx = -1800f; cx <= 1800f; cx += 50f)
+                        {
+                            if (terr.SampleDominantLayer(cx, cz) != 2) continue;
+                            int margin = 0;
+                            for (int r = 32; r <= 160; r += 32)
+                            {
+                                bool ring = true;
+                                for (int a = 0; a < 8 && ring; a++)
+                                    if (Terrain.IsWater(terr.SampleDominantLayer(cx + r * Mathf.Cos(a * Mathf.Pi / 4f), cz + r * Mathf.Sin(a * Mathf.Pi / 4f)))) ring = false;
+                                if (!ring) break;
+                                margin = r;
+                            }
+                            float dist = Mathf.Sqrt(cx * cx + cz * cz);
+                            if (margin > bestMargin || (margin == bestMargin && dist < bestDist)) { bestMargin = margin; bestDist = dist; sx = cx; sz = cz; }
+                        }
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_TOWNSPAWN") == "1") { sx = focus.X; sz = focus.Z; }   // demo: spawn in the busiest town (near zombies) instead of open grass
                 CharacterModel.LoadBundled();
                 var player = new PlayerController { CaptureMouse = true };
                 player.LoadGun("res://content/eaglefire.dat");
                 AddChild(player);
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
+                player.RotationDegrees = new Vector3(0f, spawnYaw, 0f);   // face the spawn point's angle
                 player.Spawn = player.GlobalPosition;   // respawn on this above-ground point, NOT the default (0,1,0) which is underground on PEI
                 if (System.Environment.GetEnvironmentVariable("UG_OOBTEST") == "1") player.GlobalPosition = new Vector3(sx, -2000f, sz);   // test hook: drop below the map -> should trip the OOB kill
                 { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
