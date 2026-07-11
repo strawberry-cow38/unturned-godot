@@ -15,6 +15,7 @@ namespace UnturnedGodot
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio;   // damage/explosion (source askDamage/explode)
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
+        const float FootBrakeScale = 15f, HandbrakeScale = 35f;   // Godot Brake calibration (the raw .dat Brake value was FAR too weak); S foot-brake vs Space handbrake bite -- tune to feel
         public bool Exploded => _exploded;
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
@@ -422,7 +423,9 @@ namespace UnturnedGodot
                 {
                     Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = true,
                     WheelRadius = s.WheelRadius, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
-                    SuspensionStiffness = 30f, DampingCompression = 2.4f, DampingRelaxation = 3.0f, WheelFrictionSlip = 3.5f,
+                    // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
+                    // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
+                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = 6.0f,
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3(x < 0 ? -1f : 1f, 1f, 1f) };
@@ -493,24 +496,29 @@ namespace UnturnedGodot
             v.AddChild(v._fireLight);
             v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
             v.AddChild(v._explosionAudio);
+            v.Brake = s.Brake * HandbrakeScale;   // parking brake ENGAGED on spawn so the car doesn't roll off (released once driven)
             return v;
         }
 
         // throttle/brake/steer in [-1,1]; applies the source .dat handling: hard Speed_Max/Min caps + speed-dependent
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
-        public void Drive(float throttle, float steer, bool braking)
+        public void Drive(float throttle, float steer, bool handbrake)
         {
-            if (_exploded) { EngineForce = 0f; Steering = 0f; return; }   // a wrecked vehicle can't be driven
+            if (_exploded) { EngineForce = 0f; Steering = 0f; Brake = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
             float speed = LinearVelocity.Length();   // m/s (horizontal-ish while driving)
-            float eng = throttle * _engineForce;
+            float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);   // signed forward speed (front = -Z)
+            // S while rolling FORWARD (or W while rolling backward) = a foot BRAKE, not an instant reverse -- real pedal feel
+            bool footBrake = (throttle < 0f && fwd > 0.6f) || (throttle > 0f && fwd < -0.6f);
+            float eng = footBrake ? 0f : throttle * _engineForce;
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
             _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped)
-            Brake = braking ? _brakeForce : 0f;
+            // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
+            Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : 0f);
         }
 
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
@@ -566,7 +574,7 @@ namespace UnturnedGodot
             {
                 LinearVelocity = LinearVelocity.MoveToward(Vector3.Zero, 20f * (float)delta);
                 AngularVelocity = Vector3.Zero;
-                Brake = _brakeForce;
+                Brake = _brakeForce * HandbrakeScale;   // hold with the full parking brake so it can't creep
             }
             for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
             {
