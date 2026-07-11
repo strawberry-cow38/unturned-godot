@@ -936,9 +936,9 @@ namespace UnturnedGodot
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
                 if (mesh == null) continue;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
-                var gpos = new Vector3(px, py, pz);
-                // RAW Unity coords (no Z-flip, un-mirrored): apply Unity Quaternion.Euler (ZXY) directly = Ry(ey)*Rx(ex)*Rz(ez)
-                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
+                var gpos = new Vector3(px, py, -pz);
+                // negate-Z LAYOUT (keeps the map orientation) with a RAW mesh (un-mirrored geometry): rotation = old C_z-conjugated euler
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
                 placed++;
