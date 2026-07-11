@@ -1131,6 +1131,7 @@ namespace UnturnedGodot
                         }
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_TOWNSPAWN") == "1") { sx = focus.X; sz = focus.Z; }   // demo: spawn in the busiest town (near zombies) instead of open grass
+                if (System.Environment.GetEnvironmentVariable("UG_LHSPAWN") == "1") { sx = 247.452f; sz = -792.643f; }   // demo: spawn at the PEI lighthouse (prop-orientation check)
                 CharacterModel.LoadBundled();
                 var player = new PlayerController { CaptureMouse = true };
                 player.LoadGun("res://content/eaglefire.dat");
@@ -1232,6 +1233,14 @@ namespace UnturnedGodot
                     var ctr = _vHave ? _vAim : player.GlobalPosition;   // prefer a real vehicle; else the spawn town
                     acam.Position = ctr + (_vHave ? new Vector3(0f, 9f, 11f) : new Vector3(0f, 50f, 44f));
                     acam.LookAt(ctr, Vector3.Up);
+                }
+                if (System.Environment.GetEnvironmentVariable("UG_LHSPAWN") == "1")   // demo cam: frame the lighthouse (prop-orientation check)
+                {
+                    var lcam = new Camera3D { Current = true, Fov = 55f, Far = 20000f };
+                    AddChild(lcam);
+                    var lb = player.GlobalPosition;   // spawned at the lighthouse base
+                    lcam.Position = lb + new Vector3(46f, 30f, 46f);
+                    lcam.LookAt(lb + new Vector3(0f, 22f, 0f), Vector3.Up);
                 }
                 GetWindow().Mode = Window.ModeEnum.Maximized;
                 GD.Print($"[PEI] playable: spawned on grass ({sx:0},{sz:0}); WASD move, E enter jeep, drive PEI");
