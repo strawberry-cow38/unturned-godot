@@ -832,7 +832,8 @@ namespace UnturnedGodot
             };
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
-            AddChild(Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: false));
+            var terr = Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: true);
+            AddChild(terr);
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var g2m = new System.Collections.Generic.Dictionary<string, string>();
@@ -881,10 +882,18 @@ namespace UnturnedGodot
             }
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}");
-            var cam = new Camera3D { Current = true, Fov = 62f, Far = 16000f };
-            AddChild(cam);
-            cam.Position = focus + new Vector3(42f, 48f, 42f);
-            cam.LookAt(focus + new Vector3(0f, 4f, 0f), Vector3.Up);
+
+            // drop the jeep + player at the busiest cluster so you can drive around POPULATED PEI (player chase cam follows)
+            CharacterModel.LoadBundled();
+            var player = new PlayerController();
+            player.LoadGun("res://content/eaglefire.dat");
+            AddChild(player);
+            player.GlobalPosition = new Vector3(focus.X, terr.SampleHeight(focus.X, focus.Z) + 3f, focus.Z);
+            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            _peiPlayer = player; _peiPlay = true;
+            var jeep = Vehicle.BuildByName("jeep");
+            AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(focus.X + 2.2f, terr.SampleHeight(focus.X + 2.2f, focus.Z) + 1.5f, focus.Z);
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
