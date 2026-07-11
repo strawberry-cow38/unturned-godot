@@ -30,8 +30,6 @@ namespace UnturnedGodot
             { 4, ("pig",  "Animal_Pig_tex.png",  0.22f) },
             { 6, ("cow",  "Animal_Cow_tex.png",  0.52f) },
         };
-        // stationary animals loop an IN-PLACE clip (graze/idle/glance) so the herd looks alive; Walk/Run wait for wander
-        static readonly string[] Ambient = { "Idle", "Eat", "Glance_0", "Idle", "Eat", "Glance_1" };
 
         public void LoadFromPei(string peiRoot)
         {
@@ -98,18 +96,20 @@ namespace UnturnedGodot
                 if (!Kinds.TryGetValue(id, out var def)) continue;
                 var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
                 if (rc == null) continue;
-                AddChild(rc);
-                rc.RotationDegrees = new Vector3(0, (h >> 8) % 360u, 0);
-                rc.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z) + def.foot, p.Z);
-                rc.Play(Ambient[(int)((h >> 16) % (uint)Ambient.Length)]);   // natural in-place ambient loop per animal
-                _live[idx] = rc;
+                var agent = new AnimalAgent { Terr = Terr, Foot = def.foot, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu };
+                AddChild(agent);
+                agent.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z) + def.foot, p.Z);
+                agent.AddChild(rc);
+                agent.Rig = rc;
+                agent.Begin();                                       // idle -> wander loop (see AnimalAgent)
+                _live[idx] = agent;
             }
             if (!_animCam && _live.Count > 0 && System.Environment.GetEnvironmentVariable("UG_ANIMALSPAWN") == "1")   // demo: frame the first live animal
             {
                 _animCam = true;
                 Vector3 ap = Vector3.Zero; foreach (var v in _live.Values) { ap = ((Node3D)v).GlobalPosition; break; }
-                var acam = new Camera3D { Current = true, Fov = 50f, Far = 10000f };
-                AddChild(acam); acam.Position = ap + new Vector3(3.5f, 2.0f, 3.5f);
+                var acam = new Camera3D { Current = true, Fov = 60f, Far = 10000f };
+                AddChild(acam); acam.Position = ap + new Vector3(9f, 7f, 9f);   // wide enough to keep the wander range in frame
                 acam.LookAt(ap + new Vector3(0f, 0.5f, 0f), Vector3.Up);
             }
         }
