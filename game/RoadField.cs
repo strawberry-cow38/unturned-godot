@@ -48,6 +48,7 @@ namespace UnturnedGodot
                 if (mesh == null) continue;
                 var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = RoadMaterial3D(r.Material, mats[r.Material].Concrete) };
                 AddChild(mi);
+                mi.CreateTrimeshCollision();   // solid road surface -> walk/drive on it (StaticBody + concave shape)
                 built++;
             }
             GD.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {mats.Count} materials)");
@@ -151,7 +152,15 @@ namespace UnturnedGodot
                     dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Forward;
                     Vector3 normal = Vector3.Up;
                     Vector3 side = dir.Cross(normal).Normalized();
-                    pos.Y += offset;
+                    // src buildMesh: raise pos.y so BOTH edges clear the terrain -> road sits PROUD on slopes (doesn't sink into hills).
+                    if (Terr != null && !r.Joints[seg].IgnoreTerrain)
+                    {
+                        Vector3 lft = pos + side * halfWidth; float lo = Terr.SampleHeight(lft.X, lft.Z) - pos.Y; if (lo > 0f) pos.Y += lo;
+                        Vector3 rgt = pos - side * halfWidth; float ro = Terr.SampleHeight(rgt.X, rgt.Z) - pos.Y; if (ro > 0f) pos.Y += ro;
+                    }
+                    // + halfVerticalSize: lift the road so its beveled outer edge sits AT the terrain and the full
+                    // vertical thickness is above ground (visible), instead of the bevel sinking into the terrain.
+                    pos.Y += offset + halfVerticalSize;
 
                     var cs = new Vector3[4];
                     cs[0] = pos + side * (halfWidth + verticalSize) - normal * halfVerticalSize;
