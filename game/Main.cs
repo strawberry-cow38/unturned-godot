@@ -895,7 +895,6 @@ namespace UnturnedGodot
                 var gpos = new Vector3(px, py, -pz);
                 // Unity Quaternion.Euler = Ry*Rx*Rz; under the (x,y,-z) flip -> Ry(-ey)*Rx(-ex)*Rz(ez)
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
-                if (p[0] == "329682e42ea141ea8d033278e88d763c") rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-90f)) * rot;   // Road_Turn_0: master-reported -90 (its mesh is authored 90 off from the straight pieces)
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
                 placed++;

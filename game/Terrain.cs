@@ -256,9 +256,9 @@ void fragment() {
             mi.MaterialOverride = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
             terr.AddChild(mi);
 
-            // translucent ocean surface at PEI's empirical sea level (~65% of the terrain is seabed below it; histogram p65)
+            // translucent ocean surface at PEI's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18, v12 = 0.1)
             {
-                float waterY = 8f;
+                float waterY = 0.1f * 256f;   // = 25.6 world-Y; Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
                 var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
                 water.MaterialOverride = new StandardMaterial3D
