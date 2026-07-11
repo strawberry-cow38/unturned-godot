@@ -956,13 +956,39 @@ namespace UnturnedGodot
             int conv = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ROTCONV"), out var rc) ? rc : 0;
             var Y = new Vector3(0, 1, 0); var X = new Vector3(1, 0, 0); var Z = new Vector3(0, 0, 1);
             float D(float d) => Mathf.DegToRad(d);
-            Basis rot = conv switch
+            Basis ConvBasis(float px, float py, float pz)
             {
-                1 => new Basis(Y, D(180f - ey)) * new Basis(X, D(ex)) * new Basis(Z, D(ez)),    // shipped: +ex pitch, 180-ey yaw
-                2 => new Basis(Y, D(ey)) * new Basis(X, D(ex)) * new Basis(Z, D(ez)),     // all positive (R_u)
-                3 => new Basis(Y, D(ey)) * new Basis(X, D(-ex)) * new Basis(Z, D(-ez)),   // +ey, -ex, -ez
-                _ => new Basis(Y, D(-ey)) * new Basis(X, D(-ex)) * new Basis(Z, D(ez)),   // 0 = current (produces the upside-down)
-            };
+                Basis Ru = new Basis(Y, D(py)) * new Basis(X, D(px)) * new Basis(Z, D(pz));   // Unity ZXY euler
+                switch (conv)
+                {
+                    case 1: return new Basis(Y, D(180f - py)) * new Basis(X, D(px)) * new Basis(Z, D(pz)); // shipped (roll-buggy)
+                    case 2: return Ru;                                                                      // all positive
+                    case 3: return new Basis(Y, D(py)) * new Basis(X, D(-px)) * new Basis(Z, D(-pz));
+                    case 5: return new Basis(new Vector3(Ru.X.X, Ru.X.Y, -Ru.X.Z), new Vector3(Ru.Y.X, Ru.Y.Y, -Ru.Y.Z), new Vector3(Ru.Z.X, Ru.Z.Y, -Ru.Z.Z)); // C*Ru (raw-mesh reflection)
+                    case 7: { var qu = new Quaternion(Y, D(py)) * new Quaternion(X, D(px)) * new Quaternion(Z, D(pz)); return new Basis(new Quaternion(qu.X, qu.Y, -qu.Z, -qu.W)); } // Unity quat -> ToGodot
+                    case 8: return new Basis(Y, D(180f - py)) * new Basis(X, D(px)) * new Basis(Z, D(-pz)); // conv1 but NEGATE roll (mesh frame flips pitch+roll) -- =conv1 at ez=0
+                    case 9: return new Basis(Y, D(180f - py)) * new Basis(X, D(-px)) * new Basis(Z, D(-pz)); // rigorous negate-Z conj + 180 yaw: -pitch, -roll
+                    default: return new Basis(Y, D(-py)) * new Basis(X, D(-px)) * new Basis(Z, D(pz)); // 0 = old upside-down
+                }
+            }
+            if (System.Environment.GetEnvironmentVariable("UG_CLOCKS") != null)   // clock-row: the 4 Alberton bank clocks (c0 correct + 3 rolled) side-by-side to hunt the roll-safe conv
+            {
+                var clocks = new[] { new[] { 270f, 0f, 0f }, new[] { 45f, 270f, 90f }, new[] { 45f, 90f, 270f }, new[] { 325f, 270f, 90f } };
+                for (int i = 0; i < clocks.Length; i++)
+                {
+                    var e = clocks[i];
+                    var root = new Node3D { Transform = new Transform3D(ConvBasis(e[0], e[1], e[2]), new Vector3(i * 3f, 0f, 0f)) };
+                    AddChild(root);
+                    root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+                    foreach (var (ax, col) in new[] { (X, new Color(1f, 0.2f, 0.2f)), (Y, new Color(0.2f, 1f, 0.2f)), (Z, new Color(0.3f, 0.5f, 1f)) })
+                        root.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.06f, 0.06f, 0.06f) + ax.Abs() * 1.4f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = col }, Position = ax * 0.7f });
+                }
+                var ccam = new Camera3D { Current = true, Fov = 60f, Far = 10000f };
+                AddChild(ccam); ccam.Position = new Vector3(4.5f, 2.5f, 8f); ccam.LookAt(new Vector3(4.5f, 0f, 0f), Vector3.Up);
+                GD.Print($"[CLOCKROW] conv={conv} (leftmost=c0 correct, next 3 = rolled)");
+                return;
+            }
+            var rot = ConvBasis(ex, ey, ez);
             var xf = new Transform3D(rot, Vector3.Zero);
             AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Transform = xf });
             foreach (var (ax, col) in new[] { (X, new Color(1f, 0.15f, 0.15f)), (Y, new Color(0.15f, 1f, 0.15f)), (Z, new Color(0.2f, 0.4f, 1f)) })
@@ -974,6 +1000,22 @@ namespace UnturnedGodot
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 10000f };
             AddChild(cam); cam.Position = c + new Vector3(r * 1.1f, r * 0.6f, r * 1.1f); cam.LookAt(c, Vector3.Up);
             GD.Print($"[ROTTEST] {name} conv={conv} euler=({ex},{ey},{ez}) tAABB={taabb.Size} center={c}");
+        }
+
+        // active holiday (src HolidayUtil schedule + -Holiday override -> UG_HOLIDAY). Gates the ~285 in-season
+        // Christmas/Halloween props placed on PEI so they don't show year-round.
+        static string ActiveHoliday()
+        {
+            var o = System.Environment.GetEnvironmentVariable("UG_HOLIDAY");
+            if (!string.IsNullOrEmpty(o)) return o.ToUpperInvariant();
+            var n = System.DateTime.Now;
+            if ((n.Month == 12 && n.Day >= 7) || (n.Month == 1 && n.Day <= 2)) return "CHRISTMAS";
+            if ((n.Month == 10 && n.Day >= 20) || (n.Month == 11 && n.Day <= 1)) return "HALLOWEEN";
+            if (n.Month == 2 && n.Day == 14) return "VALENTINES";
+            if (n.Month == 4 && n.Day == 1) return "APRIL_FOOLS";
+            if (n.Month == 6) return "PRIDE_MONTH";
+            if (n.Month == 7 && n.Day == 7) return "UNTURNED_ANNIVERSARY";
+            return "NONE";
         }
 
         // --objects: PEI's real placed objects (Level/Objects.dat) instanced on the terrain. placements.txt = every
@@ -1047,10 +1089,19 @@ namespace UnturnedGodot
             var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0;
+            // holiday gate: PEI's Objects.dat has ~285 Christmas/Halloween props placed that only show in-season
+            // (src: ObjectAsset.holidayRestriction + HolidayUtil schedule). Skip any whose holiday != the active one.
+            var holidayOf = new System.Collections.Generic.Dictionary<string, string>();
+            string hpath = dir + "holiday_props.txt";
+            if (System.IO.File.Exists(hpath))
+                foreach (var hl in System.IO.File.ReadLines(hpath)) { var q = hl.Split(' ', System.StringSplitOptions.RemoveEmptyEntries); if (q.Length >= 2) holidayOf[q[0]] = q[1]; }
+            string activeHoliday = ActiveHoliday();
+            int holidaySkipped = 0;
             foreach (var line in System.IO.File.ReadLines(dir + _mapPlace))
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
+                if (holidayOf.TryGetValue(p[0], out var ph) && ph != activeHoliday) { holidaySkipped++; continue; }   // out-of-season holiday prop
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
                 if (mesh == null) continue;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
@@ -1082,7 +1133,7 @@ namespace UnturnedGodot
                 if (cc + 1 > bestN) { bestN = cc + 1; bestCell = cell; }
             }
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
-            GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}");
+            GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped} (active={activeHoliday})");
 
             // aerial over the busiest cluster so the full populated PEI (all ~360 types) reads at once, no gaps
             if (_peiPlayable)
