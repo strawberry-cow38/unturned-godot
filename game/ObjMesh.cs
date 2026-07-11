@@ -67,9 +67,9 @@ namespace UnturnedGodot
                         ti[i] = (s.Length > 1 && s[1].Length > 0) ? int.Parse(s[1]) - 1 : -1;
                         ni[i] = (s.Length > 2 && s[2].Length > 0) ? int.Parse(s[2]) - 1 : -1;
                     }
-                    for (int i = 1; i + 1 < n; i++)   // fan triangulate (reversed winding for reflected convs)
-                    {
-                        foreach (int k in (CONV == 1 ? new[] { 0, i, i + 1 } : new[] { 0, i + 1, i }))
+                    for (int i = 1; i + 1 < n; i++)   // fan triangulate; ALWAYS reverse winding: Unity(LH) verts in Godot(RH) face
+                    {                                 // inward with the orig order -> reverse so faces point OUT (fixes "inside out"; verts unchanged = no re-mirror)
+                        foreach (int k in new[] { 0, i + 1, i })
                         {
                             outV.Add(pos[vi[k]]);
                             outN.Add(ni[k] >= 0 && ni[k] < nrm.Count ? nrm[ni[k]] : Vector3.Up);
