@@ -25,6 +25,7 @@ namespace UnturnedGodot
                 var sp = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (sp.Length < 2 || !int.TryParse(sp[1], out int parts)) continue;
                 string name = sp[0];
+                bool isTree = name.StartsWith("Birch") || name.StartsWith("Maple") || name.StartsWith("Pine");   // only trees cast shadows
                 string binPath = dir + name + ".bin";
                 if (!File.Exists(binPath)) continue;
                 var xf = ReadInstances(binPath);
@@ -37,7 +38,8 @@ namespace UnturnedGodot
                     if (mesh == null) continue;
                     var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = xf.Count };
                     for (int k = 0; k < xf.Count; k++) mm.SetInstanceTransform(k, xf[k]);
-                    AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = MakeMat(dir + name + "_" + i + "_tex.png") });
+                    AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = MakeMat(dir + name + "_" + i + "_tex.png"),
+                        CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off });
                 }
                 total += xf.Count; types++;
                 GD.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");

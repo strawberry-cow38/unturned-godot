@@ -72,7 +72,8 @@ namespace UnturnedGodot
                     new Vector3(-z0, -z1, z2));
                 mm.SetInstanceTransform(i, new Transform3D(basis, new Vector3(px, py, -pz)));
             }
-            AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat });
+            AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });   // foliage never casts shadows (source: Cast_Shadows false)
             GD.Print($"[foliage] {nm}: {count} instances (MultiMesh, 1 draw call)");
         }
     }
