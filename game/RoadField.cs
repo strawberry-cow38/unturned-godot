@@ -130,86 +130,101 @@ namespace UnturnedGodot
 
         ArrayMesh BuildRoadMesh(RoadData r, RoadMat mat, float texHeight)
         {
-            // RoadMaterial.cs: the 'width' field is MISLEADINGLY named -- it's already the HALF-width of the flat
-            // section (HalfWidth=width). Likewise 'depth' IS the half-vertical-size (HalfVerticalSize=depth). Do NOT halve.
+            // src Road.buildMesh: HalfWidth=width (field IS the half-width), HalfVerticalSize=depth, verticalSize=2*depth,
+            // VerticalOffset=offset. Keep position.y AT terrain height (+ per-joint offset); the SURFACE verts go UP by
+            // halfVerticalSize while the outer TAPER verts go DOWN by halfVerticalSize -> the taper sinks BELOW the
+            // ground so there's never a gap to see under. verticalOffset is applied per-vert along the normal, NOT as a lift.
             float halfWidth = mat.Width;
             float halfVerticalSize = mat.Depth;
             float verticalSize = halfVerticalSize * 2f;
-            float offset = mat.Offset;
-            int segCount = r.IsLoop ? r.Joints.Count : r.Joints.Count - 1;
+            float verticalOffset = mat.Offset;
+            bool loop = r.IsLoop;
+            int jc = r.Joints.Count;
+            int segs = loop ? jc : jc - 1;
 
-            var rowV = new List<Vector3[]>();   // per cross-section: 4 verts
-            var rowUV = new List<float>();       // per cross-section: V coord (distance)
-            float invRepeat = mat.Height != 0f ? mat.Height / texHeight : 1f / texHeight;  // src: UV repeats every texture.height/mat.height world units
-            float distance = 0f;
-            Vector3 prev = Vector3.Zero;
-            bool first = true;
-
-            for (int seg = 0; seg < segCount; seg++)
+            // src updateSamples: arc-length step every 5 world units, carried continuously across joints, + a final sample.
+            var samples = new List<(int idx, float t)>();
+            float carry = 0f;
+            for (int index = 0; index < segs; index++)
             {
-                var a = r.Joints[seg].Vertex;
-                var b = r.Joints[seg == r.Joints.Count - 1 ? 0 : seg + 1].Vertex;
-                int steps = Mathf.Max(2, (int)(a.DistanceTo(b) / 2f));   // ~1 sample / 2 world units
-                for (int st = 0; st <= steps; st++)
+                float length = Mathf.Max(SegLength(r, index), 0.001f);
+                float step;
+                for (step = carry; step < length; step += 5f) samples.Add((index, step / length));
+                carry = step - length;
+            }
+            if (loop) samples.Add((0, 0f)); else samples.Add((jc - 2, 1f));
+            if (samples.Count < 2) return null;
+
+            float invRepeat = mat.Height != 0f ? mat.Height / texHeight : 1f / texHeight;   // src: UV repeats every texture.height/mat.height world units
+
+            var ringV = new List<Vector3[]>();
+            var ringN = new List<Vector3>();
+            var ringVd = new List<float>();   // UV v = accumulated distance * invRepeat
+            float distance = 0f;
+            Vector3 prevC = Vector3.Zero;
+            Vector3 fC = Vector3.Zero, fS = Vector3.Right, fN = Vector3.Up, fD = Vector3.Forward;   // first sample frame (start cap)
+            Vector3 lC = Vector3.Zero, lS = Vector3.Right, lN = Vector3.Up, lD = Vector3.Forward;   // last sample frame (end cap)
+
+            for (int s = 0; s < samples.Count; s++)
+            {
+                int index = samples[s].idx; float t = samples[s].t;
+                bool ign = r.Joints[index].IgnoreTerrain;
+                Vector3 pos = SplinePos(r, index, t);
+                if (Terr != null && !ign) pos.Y = Terr.SampleHeight(pos.X, pos.Z);
+                Vector3 dir = SplinePos(r, index, Mathf.Min(t + 0.02f, 1f)) - SplinePos(r, index, Mathf.Max(t - 0.02f, 0f));
+                dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Forward;
+                Vector3 normal = (Terr != null && !ign) ? SampleNormal(pos.X, pos.Z) : Vector3.Up;
+                Vector3 side = dir.Cross(normal).Normalized();
+                // src: raise pos.y so both edges clear the terrain (prevents sinking into the uphill side)
+                if (Terr != null && !ign)
                 {
-                    if (seg > 0 && st == 0) continue;   // skip dup at shared joints
-                    float t = (float)st / steps;
-                    Vector3 pos = SplinePos(r, seg, t);
-                    if (Terr != null && !r.Joints[seg].IgnoreTerrain) pos.Y = Terr.SampleHeight(pos.X, pos.Z);
-
-                    Vector3 dir = (SplinePos(r, seg, Mathf.Min(t + 0.02f, 1f)) - SplinePos(r, seg, Mathf.Max(t - 0.02f, 0f)));
-                    dir.Y = 0f;
-                    dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Forward;
-                    Vector3 normal = (Terr != null && !r.Joints[seg].IgnoreTerrain) ? SampleNormal(pos.X, pos.Z) : Vector3.Up;
-                    Vector3 side = dir.Cross(normal).Normalized();
-                    // src buildMesh: raise pos.y so BOTH edges clear the terrain -> road sits PROUD on slopes (doesn't sink into hills).
-                    if (Terr != null && !r.Joints[seg].IgnoreTerrain)
-                    {
-                        Vector3 lft = pos + side * halfWidth; float lo = Terr.SampleHeight(lft.X, lft.Z) - pos.Y; if (lo > 0f) pos.Y += lo;
-                        Vector3 rgt = pos - side * halfWidth; float ro = Terr.SampleHeight(rgt.X, rgt.Z) - pos.Y; if (ro > 0f) pos.Y += ro;
-                    }
-                    // + halfVerticalSize: lift the road so its beveled outer edge sits AT the terrain and the full
-                    // vertical thickness is above ground (visible), instead of the bevel sinking into the terrain.
-                    pos.Y += offset + halfVerticalSize;
-
-                    var cs = new Vector3[4];
-                    cs[0] = pos + side * (halfWidth + verticalSize) - normal * halfVerticalSize;
-                    cs[1] = pos + side * halfWidth + normal * halfVerticalSize;
-                    cs[2] = pos - side * halfWidth + normal * halfVerticalSize;
-                    cs[3] = pos - side * (halfWidth + verticalSize) - normal * halfVerticalSize;
-
-                    if (!first) distance += pos.DistanceTo(prev);
-                    prev = pos; first = false;
-                    rowV.Add(cs);
-                    rowUV.Add(distance * invRepeat);
+                    Vector3 l = pos + side * halfWidth; float lo = Terr.SampleHeight(l.X, l.Z) - pos.Y; if (lo > 0f) pos.Y += lo;
+                    Vector3 rr = pos - side * halfWidth; float ro = Terr.SampleHeight(rr.X, rr.Z) - pos.Y; if (ro > 0f) pos.Y += ro;
                 }
+                // src: per-joint offset lerped along the segment (added to y)
+                float jo = index < jc - 1 ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[index + 1].Offset, t)
+                         : loop ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[0].Offset, t) : r.Joints[index].Offset;
+                pos.Y += jo;
+
+                var cs = new Vector3[4];
+                cs[0] = pos + side * (halfWidth + verticalSize) - normal * halfVerticalSize + normal * verticalOffset;   // outer-left taper (down)
+                cs[1] = pos + side * halfWidth + normal * halfVerticalSize + normal * verticalOffset;                    // road surface left (up)
+                cs[2] = pos - side * halfWidth + normal * halfVerticalSize + normal * verticalOffset;                    // road surface right (up)
+                cs[3] = pos - side * (halfWidth + verticalSize) - normal * halfVerticalSize + normal * verticalOffset;   // outer-right taper (down)
+
+                if (s > 0) distance += pos.DistanceTo(prevC);
+                prevC = pos;
+                ringV.Add(cs); ringN.Add(normal); ringVd.Add(distance * invRepeat);
+                if (s == 0) { fC = pos; fS = side; fN = normal; fD = dir; }
+                lC = pos; lS = side; lN = normal; lD = dir;
             }
 
-            if (rowV.Count < 2) return null;
+            // assemble rings with src end caps: [startCap] s0..sN [endCap] (loop = just the sample rings, last==first closes it)
+            var rings = new List<Vector3[]>();
+            var rn = new List<Vector3>();
+            var rv = new List<float>();
+            if (!loop) { rings.Add(Cap(fC, fS, fN, fD, -1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(fN); rv.Add(ringVd[0]); }
+            for (int i = 0; i < ringV.Count; i++) { rings.Add(ringV[i]); rn.Add(ringN[i]); rv.Add(ringVd[i]); }
+            if (!loop) { rings.Add(Cap(lC, lS, lN, lD, 1f, halfWidth, verticalSize, halfVerticalSize, verticalOffset)); rn.Add(lN); rv.Add(ringVd[ringVd.Count - 1]); }
+            if (rings.Count < 2) return null;
 
             var verts = new List<Vector3>();
             var norms = new List<Vector3>();
             var uvs = new List<Vector2>();
             var idx = new List<int>();
-            float[] uCoord = { 0f, 0.05f, 0.95f, 1f };   // across the strip (taper edges ~ road surface 0-1)
-            for (int i = 0; i < rowV.Count; i++)
-            {
-                for (int k = 0; k < 4; k++)
-                {
-                    verts.Add(rowV[i][k]);
-                    norms.Add(Vector3.Up);
-                    uvs.Add(new Vector2(uCoord[k], rowUV[i]));
-                }
-            }
-            for (int i = 0; i + 1 < rowV.Count; i++)
+            float[] uC = { 0f, 0f, 1f, 1f };   // src: outer/inner-left share u=0, inner/outer-right share u=1
+            for (int i = 0; i < rings.Count; i++)
+                for (int k = 0; k < 4; k++) { verts.Add(rings[i][k]); norms.Add(rn[i]); uvs.Add(new Vector2(uC[k], rv[i])); }
+            // src triangle stitch: 6 tris per ring pair = the 3 quads (left-taper, road, right-taper)
+            for (int i = 0; i + 1 < rings.Count; i++)
             {
                 int a = i * 4, b = (i + 1) * 4;
-                for (int q = 0; q < 3; q++)   // 3 quads: left-taper, road, right-taper
-                {
-                    int a0 = a + q, a1 = a + q + 1, b0 = b + q, b1 = b + q + 1;
-                    idx.Add(a0); idx.Add(a1); idx.Add(b1);
-                    idx.Add(a0); idx.Add(b1); idx.Add(b0);
-                }
+                idx.Add(b + 1); idx.Add(a + 1); idx.Add(b + 0);
+                idx.Add(a + 0); idx.Add(b + 0); idx.Add(a + 1);
+                idx.Add(b + 2); idx.Add(a + 2); idx.Add(b + 1);
+                idx.Add(a + 1); idx.Add(b + 1); idx.Add(a + 2);
+                idx.Add(b + 3); idx.Add(a + 3); idx.Add(b + 2);
+                idx.Add(a + 2); idx.Add(b + 2); idx.Add(a + 3);
             }
 
             var arr = new Godot.Collections.Array();
@@ -221,6 +236,29 @@ namespace UnturnedGodot
             var m = new ArrayMesh();
             m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             return m;
+        }
+
+        // src end cap: 4 verts all at the LOW taper level (-normal*halfVerticalSize), shoved fore/aft by
+        // direction*verticalSize*2 -> stitching it to the first/last ring makes the ramp-down at each road end.
+        static Vector3[] Cap(Vector3 p, Vector3 side, Vector3 normal, Vector3 dir, float sign,
+                             float halfWidth, float verticalSize, float halfVerticalSize, float verticalOffset)
+        {
+            Vector3 lo = -normal * halfVerticalSize + normal * verticalOffset + dir * (verticalSize * 2f * sign);
+            return new[]
+            {
+                p + side * (halfWidth + verticalSize) + lo,
+                p + side * halfWidth + lo,
+                p - side * halfWidth + lo,
+                p - side * (halfWidth + verticalSize) + lo,
+            };
+        }
+
+        // bezier arc-length estimate for a segment (matches src getLengthEstimate closely enough for sample stepping)
+        float SegLength(RoadData r, int index)
+        {
+            Vector3 prev = SplinePos(r, index, 0f); float len = 0f;
+            for (int i = 1; i <= 16; i++) { Vector3 p = SplinePos(r, index, i / 16f); len += p.DistanceTo(prev); prev = p; }
+            return len;
         }
     }
 }

@@ -85,9 +85,17 @@ void fragment() {
         public float SampleHeight(float worldX, float worldZ)
         {
             if (_grid == null) return 0f;
-            int gx = Mathf.Clamp(Mathf.RoundToInt((worldX - _bx) / UNIT), 0, _gw - 1);
-            int gy = Mathf.Clamp(Mathf.RoundToInt((-worldZ - _bz) / UNIT), 0, _gh - 1);   // world Z is negated
-            return _grid[gx, gy] * TILE_HEIGHT - TILE_HEIGHT / 2f;
+            // bilinear across the 4 surrounding grid verts so callers (roads etc.) follow the SMOOTH terrain
+            // instead of a nearest-neighbour stepped height -- that RoundToInt stepping WAS the road's jagged edges.
+            float fx = (worldX - _bx) / UNIT;
+            float fy = (-worldZ - _bz) / UNIT;   // world Z is negated
+            int xi = Mathf.FloorToInt(fx), yi = Mathf.FloorToInt(fy);
+            float tx = fx - xi, ty = fy - yi;
+            int x0 = Mathf.Clamp(xi, 0, _gw - 1), x1 = Mathf.Clamp(xi + 1, 0, _gw - 1);
+            int y0 = Mathf.Clamp(yi, 0, _gh - 1), y1 = Mathf.Clamp(yi + 1, 0, _gh - 1);
+            float h0 = Mathf.Lerp(_grid[x0, y0], _grid[x1, y0], tx);
+            float h1 = Mathf.Lerp(_grid[x0, y1], _grid[x1, y1], tx);
+            return Mathf.Lerp(h0, h1, ty) * TILE_HEIGHT - TILE_HEIGHT / 2f;
         }
         // dominant splatmap layer at a world point (2=grass, 0/7=forest, 1=sand, 3=road, 4=rock, 5=water, 6=dirt); 255 = no splats
         public byte SampleDominantLayer(float worldX, float worldZ)
