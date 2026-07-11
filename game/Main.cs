@@ -899,6 +899,7 @@ namespace UnturnedGodot
                 if (p.Length >= 2) g2m[p[0]] = p[1];
             }
             var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
+            var folCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();   // separate tree-leaf meshes (own leaf material)
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
             StandardMaterial3D MatFor(string nm)
             {
@@ -941,6 +942,14 @@ namespace UnturnedGodot
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
+                // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
+                if (!folCache.TryGetValue(name, out var fmesh))
+                {
+                    string fp = dir + name + "_foliage.obj";
+                    fmesh = System.IO.File.Exists(fp) ? ObjMesh.Load(fp) : null;
+                    folCache[name] = fmesh;
+                }
+                if (fmesh != null) AddChild(new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos) });
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
                 cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;
