@@ -323,7 +323,7 @@ namespace UnturnedGodot
                 GetWindow().Mode = Window.ModeEnum.Maximized;
                 var menu = new MainMenu();
                 menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
-                menu.OnDrivePEI = () => { menu.QueueFree(); _peiPlayable = true; BuildObjectsTest(); };
+                menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; _peiPlayable = true; BuildObjectsTest(); };
                 AddChild(menu);
                 return;
             }
@@ -1092,6 +1092,7 @@ namespace UnturnedGodot
                 // ZOMBIE SPAWNS: PEI's REAL zombie spawn points (Spawns/Animals.dat = 1456 points; legacy filename that
                 // LevelZombies reads), region-streamed around the player like Unturned's region loader -- see ZombieField.
                 // Replaces the old Environment/Bounds.dat navmesh approximation (52 zombies) with the map's actual horde design.
+                if (!_noZombies)   // "Drive PEI — No Zombies" menu button / --nozombies flag
                 {
                     var zf = new ZombieField { Player = player, Terr = terr };
                     zf.LoadFromPei(_mapRoot);
