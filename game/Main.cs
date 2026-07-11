@@ -37,7 +37,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -45,6 +45,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
+                else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
@@ -164,6 +165,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildAnimRig(animrig);
+                return;
+            }
+
+            if (rottest != null)   // place ONE prop under a candidate placement-rotation convention -> find the upright one
+            {
+                GetWindow().Size = new Vector2I(900, 900);
+                _shotPath = shot;
+                BuildRotTest(rottest);
                 return;
             }
 
@@ -924,6 +933,49 @@ namespace UnturnedGodot
             GD.Print($"[ANIMRIG] {name} body aabb size={aabb.Size} center={c} bones={rc.Skeleton?.GetBoneCount()}");
         }
 
+        // --rottest=NAME: place one prop under a candidate placement-rotation convention (UG_ROTCONV 0-3) with a chosen
+        // euler (UG_EULER="ex,ey,ez", default = the PEI lighthouse's 270,194,0) + RGB axes, to hunt the upside-down.
+        void BuildRotTest(string name)
+        {
+            float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.32f, 0.36f, 0.44f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.75f, 0.75f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var mesh = ObjMesh.Load(dir + name + ".obj");
+            if (mesh == null) { GD.PrintErr($"[ROTTEST] no mesh {name}"); GetTree().Quit(); return; }
+            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            string tp = dir + name + "_tex.png";
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            var es = (System.Environment.GetEnvironmentVariable("UG_EULER") ?? "270,194,0").Split(',');
+            float ex = F(es[0]), ey = F(es[1]), ez = F(es[2]);
+            int conv = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ROTCONV"), out var rc) ? rc : 0;
+            var Y = new Vector3(0, 1, 0); var X = new Vector3(1, 0, 0); var Z = new Vector3(0, 0, 1);
+            float D(float d) => Mathf.DegToRad(d);
+            Basis rot = conv switch
+            {
+                1 => new Basis(Y, D(-ey)) * new Basis(X, D(ex)) * new Basis(Z, D(ez)),    // +ex (fix pitch, keep -ey yaw)
+                2 => new Basis(Y, D(ey)) * new Basis(X, D(ex)) * new Basis(Z, D(ez)),     // all positive (R_u)
+                3 => new Basis(Y, D(ey)) * new Basis(X, D(-ex)) * new Basis(Z, D(-ez)),   // +ey, -ex, -ez
+                _ => new Basis(Y, D(-ey)) * new Basis(X, D(-ex)) * new Basis(Z, D(ez)),   // 0 = current (produces the upside-down)
+            };
+            var xf = new Transform3D(rot, Vector3.Zero);
+            AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Transform = xf });
+            foreach (var (ax, col) in new[] { (X, new Color(1f, 0.15f, 0.15f)), (Y, new Color(0.15f, 1f, 0.15f)), (Z, new Color(0.2f, 0.4f, 1f)) })
+            {
+                var bar = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.5f, 0.5f, 0.5f) + ax.Abs() * 20f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = col } };
+                bar.Position = ax * 10f; AddChild(bar);
+            }
+            var taabb = xf * mesh.GetAabb(); var c = taabb.GetCenter(); float r = Mathf.Max(taabb.Size.X, Mathf.Max(taabb.Size.Y, taabb.Size.Z)); if (r < 0.01f) r = 5f;
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 10000f };
+            AddChild(cam); cam.Position = c + new Vector3(r * 1.1f, r * 0.6f, r * 1.1f); cam.LookAt(c, Vector3.Up);
+            GD.Print($"[ROTTEST] {name} conv={conv} euler=({ex},{ey},{ez}) tAABB={taabb.Size} center={c}");
+        }
+
         // --objects: PEI's real placed objects (Level/Objects.dat) instanced on the terrain. placements.txt = every
         // object's guid+transform; guid_mesh.txt maps the top types to extracted object.prefab meshes.
         void BuildObjectsTest()
@@ -1004,7 +1056,10 @@ namespace UnturnedGodot
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
                 var gpos = new Vector3(px, py, -pz);
                 // negate-Z LAYOUT (keeps the map orientation) with a RAW mesh (un-mirrored geometry): rotation = old C_z-conjugated euler
-                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
+                // raw (un-mirrored) mesh convention: pitch is +ex, NOT -ex. The -ex was left over from the old negate-Z-verts
+                // convention -> it inverted the pitch, flipping tilted props (e.g. the lighthouse, ex=270) upside-down into the
+                // ground. +ex matches Unity's rotation for the raw mesh; yaw (-ey) unchanged so the approved map layout holds.
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
