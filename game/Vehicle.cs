@@ -186,7 +186,8 @@ namespace UnturnedGodot
             var m = new ShaderMaterial { Shader = sh };
             var img = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{palette}"));
             m.SetShaderParameter("palette", ImageTexture.CreateFromImage(img));
-            m.SetShaderParameter("paint_color", new Vector3(paint.R, paint.G, paint.B));
+            var lin = paint.SrgbToLinear();   // ALBEDO is linear; the palette texels already come through source_color (sRGB->linear), but the raw paint Vector3 did not -> #437c44 rendered as a washed-out light green. Convert so it shows true deep forest (master: "our render is diff")
+            m.SetShaderParameter("paint_color", new Vector3(lin.R, lin.G, lin.B));
             return m;
         }
 

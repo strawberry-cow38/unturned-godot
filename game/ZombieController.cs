@@ -136,6 +136,14 @@ namespace UnturnedGodot
         // Gun hit: carries the impact point + bullet direction so the death ragdoll gets shoved there.
         public void DamageHit(float amount, Vector3 point, Vector3 dir) => ApplyDamage(amount, point, dir, true);
 
+        // Approximate the source SKULL-limb headshot (info.limb == ELimb.SKULL) from the hit height: the top ~18% of the
+        // zombie's collider is its head. Crawlers stand 0.8m, everyone else 1.8m.
+        public bool IsHeadshot(Vector3 worldPoint)
+        {
+            float h = Speciality == ESpeciality.CRAWLER ? 0.8f : 1.8f;
+            return worldPoint.Y - GlobalPosition.Y > h * 0.82f;
+        }
+
         void ApplyDamage(float amount, Vector3 point, Vector3 dir, bool impact)
         {
             if (Dead) return;
