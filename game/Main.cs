@@ -1063,6 +1063,18 @@ namespace UnturnedGodot
             StandardMaterial3D MatFor(string nm)
             {
                 if (matCache.TryGetValue(nm, out var mm)) return mm;
+                if (nm.StartsWith("Glass"))   // Glass_0/Glass_1 have NO albedo texture (src uses a shader-based transparent material) -> the brown fallback made them opaque. Give glass a proper see-through look.
+                {
+                    mm = new StandardMaterial3D
+                    {
+                        AlbedoColor = new Color(0.62f, 0.73f, 0.78f, 0.26f),   // light blue-grey, mostly see-through
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        Metallic = 0f, Roughness = 0.06f,                       // smooth + glossy like glass
+                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                    };
+                    matCache[nm] = mm;
+                    return mm;
+                }
                 mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 string tp = dir + nm + "_tex.png";
                 if (System.IO.File.Exists(tp))
