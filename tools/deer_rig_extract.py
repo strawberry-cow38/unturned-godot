@@ -75,9 +75,10 @@ bindposes=[mat_of(bp) for bp in mesh.m_BindPose]
 
 # ---------- bone hierarchy from m_Bones fathers ----------
 bone_pid=[pp.path_id for pp in smr.m_Bones]
-father_pid=[]
+father_pid=[]; bone_name=[]
 for pp in smr.m_Bones:
     t=pp.read(); fp=getattr(t,'m_Father',None); father_pid.append(getattr(fp,'path_id',0) if fp else 0)
+    bone_name.append(t.m_GameObject.read().m_Name)   # REAL bone name (clips reference bones by this)
 pid2i={pid:i for i,pid in enumerate(bone_pid)}
 parent_orig=[pid2i.get(father_pid[j],-1) for j in range(NB)]
 # topological sort (roots first)
@@ -96,7 +97,7 @@ for new,orig in enumerate(order):
     par=parent_orig[orig]
     loc=gu[orig] if par==-1 else matmul(mat_inv_affine(gu[par]),gu[orig])
     t,q,sc=decompose(zflip(loc))
-    bones.append({'name':'%s_b%d'%(NAME,orig),'parent':(remap[par] if par>=0 else -1),'pos':t,'rot':q,'scale':sc})
+    bones.append({'name':bone_name[orig],'parent':(remap[par] if par>=0 else -1),'pos':t,'rot':q,'scale':sc})
 # skin binds stay in ORIGINAL blend-index order j; skin[j].bone = skeleton index of orig bone j
 skin=[]
 for j in range(NB):
