@@ -1123,6 +1123,12 @@ namespace UnturnedGodot
                     }
                     GD.Print($"[vehicles] spawned {nv} at PEI's car spawns (Police/Fire/Ambulance real meshes; jeep for Civilian/Military/Farm)");
                 }
+                // LOOT: PEI's 2470 item spawn points (Spawns/Jars.dat), region/distance-streamed around the player (LootField).
+                {
+                    var loot = new LootField { Player = player, Terr = terr };
+                    loot.LoadFromPei(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI");
+                    AddChild(loot);
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };

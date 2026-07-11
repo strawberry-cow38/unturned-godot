@@ -10,12 +10,14 @@ namespace UnturnedGodot
     public partial class WorldItem : Node3D
     {
         public Item Item;
+        public Color? FallbackColor;   // unknown-id loot (no registered asset): tint by its spawn TABLE instead of white
+        public string FallbackName;    // ...and label by the table name (e.g. "Military Canada", "Food")
         double _t;
         MeshInstance3D _box;
 
-        public static WorldItem Spawn(Node parent, Item item, Vector3 pos)
+        public static WorldItem Spawn(Node parent, Item item, Vector3 pos, Color? fallbackColor = null, string fallbackName = null)
         {
-            var wi = new WorldItem { Item = item };
+            var wi = new WorldItem { Item = item, FallbackColor = fallbackColor, FallbackName = fallbackName };
             parent.AddChild(wi);
             wi.GlobalPosition = pos;
             return wi;
@@ -25,7 +27,10 @@ namespace UnturnedGodot
         {
             AddToGroup("worlditems");
             var asset = Item?.GetAsset();
-            Color rar = asset != null ? ItemAsset.RarityColorUI(asset.rarity) : Colors.White;
+            Color rar; string nm;
+            if (asset != null) { rar = ItemAsset.RarityColorUI(asset.rarity); nm = asset.itemName; }
+            else if (FallbackColor.HasValue) { rar = FallbackColor.Value; nm = FallbackName ?? "?"; }
+            else { rar = Colors.White; nm = "?"; }
 
             _box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.28f, 0.28f, 0.28f) } };
             _box.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(rar.R, rar.G, rar.B), Roughness = 0.55f };
@@ -34,7 +39,7 @@ namespace UnturnedGodot
 
             var label = new Label3D
             {
-                Text = asset?.itemName ?? "?",
+                Text = nm,
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
                 Modulate = rar.Lerp(Colors.White, 0.35f),
                 PixelSize = 0.007f,
