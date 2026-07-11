@@ -109,6 +109,9 @@ def extract_combined(prefab):
     Vs, Ns, Ts, Fs, used = [], [], [], [], []
     for gp in lod0_gos(prefab, gomap):
         M, mp = gomap[gp]
+        M = M.copy(); M[0, 3] = -M[0, 3]   # HALF POSITION SWAP (master 2026-07-11): meshes are already mirrored, but each part's
+        #                                    X offset is not -- so multi-part props (fences: Section_0 X=-1 / Section_1 X=+1) come out
+        #                                    L/R-swapped. Negating the part's world-X translation swaps them back (single-part parts at X=0 unaffected).
         if not mp or mp not in by_id: continue
         nm = mesh_name(mp)
         if "dead" in nm.lower(): continue
