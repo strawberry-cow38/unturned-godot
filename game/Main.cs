@@ -958,7 +958,7 @@ namespace UnturnedGodot
             float D(float d) => Mathf.DegToRad(d);
             Basis rot = conv switch
             {
-                1 => new Basis(Y, D(-ey)) * new Basis(X, D(ex)) * new Basis(Z, D(ez)),    // +ex (fix pitch, keep -ey yaw)
+                1 => new Basis(Y, D(180f - ey)) * new Basis(X, D(ex)) * new Basis(Z, D(ez)),    // shipped: +ex pitch, 180-ey yaw
                 2 => new Basis(Y, D(ey)) * new Basis(X, D(ex)) * new Basis(Z, D(ez)),     // all positive (R_u)
                 3 => new Basis(Y, D(ey)) * new Basis(X, D(-ex)) * new Basis(Z, D(-ez)),   // +ey, -ex, -ez
                 _ => new Basis(Y, D(-ey)) * new Basis(X, D(-ex)) * new Basis(Z, D(ez)),   // 0 = current (produces the upside-down)
@@ -1058,8 +1058,8 @@ namespace UnturnedGodot
                 // negate-Z LAYOUT (keeps the map orientation) with a RAW mesh (un-mirrored geometry): rotation = old C_z-conjugated euler
                 // raw (un-mirrored) mesh convention: pitch is +ex, NOT -ex. The -ex was left over from the old negate-Z-verts
                 // convention -> it inverted the pitch, flipping tilted props (e.g. the lighthouse, ex=270) upside-down into the
-                // ground. +ex matches Unity's rotation for the raw mesh; yaw (-ey) unchanged so the approved map layout holds.
-                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
+                // ground. +ex matches Unity's rotation for the raw mesh; yaw = 180-ey: the raw mesh in the negate-Z layout faces 180 off (only visible on asymmetric props like town buildings, hidden on the symmetric lighthouse), so +180 corrects every prop's facing.
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
