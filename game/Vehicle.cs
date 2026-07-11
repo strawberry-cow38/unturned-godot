@@ -13,7 +13,7 @@ namespace UnturnedGodot
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
         bool _parked;   // driver left: smoothly damp to a stop (no hard-brake wheel-lock judder), then hold
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
-        float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio;   // damage/explosion (source askDamage/explode)
+        float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 15f, HandbrakeScale = 35f;   // Godot Brake calibration (the raw .dat Brake value was FAR too weak); S foot-brake vs Space handbrake bite -- tune to feel
         public bool Exploded => _exploded;
@@ -490,6 +490,7 @@ namespace UnturnedGodot
 
             // damage smoke + explosion fire from the engine bay (source: smoke_0/1 at health thresholds, fire + Fire light on explode)
             var firePos = new Vector3(0f, 1.24f, -1.70f);   // source Fire node (0,1.238,1.703), Z negated
+            v._firePos = firePos;   // remembered so the explosion plume can emit from the engine bay in world-space
             v._smoke = MakeSmoke(new Color(0.13f, 0.13f, 0.13f), 2.4f, 2.6f, 26, false);
             v._fire = MakeSmoke(new Color(1f, 0.55f, 0.12f), 0.7f, 4.5f, 30, true);
             v._smoke.Position = firePos; v._fire.Position = firePos;
@@ -620,10 +621,11 @@ namespace UnturnedGodot
             if (!_parked && !_exploded && _prevSpeed > 5f && decel > 200f * (float)delta) TakeDamage(decel * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
             _prevSpeed = curSpeed;
             if (_smoke != null) _smoke.Emitting = _exploded || Health < SmokeHealth;   // source: smoke while damaged (< SMOKE_1 threshold 200)
-            if (_exploded)   // master: the explosion smoke/fire always rises STRAIGHT UP -- go world-space so it doesn't tilt with the tumbling wreck
+            if (_exploded)   // master: explosion smoke/fire emits from the ENGINE bay (like the hurt smoke) but rises STRAIGHT UP -- world-space so the plume doesn't tilt with the tumbling wreck
             {
-                if (_smoke != null) { _smoke.TopLevel = true; _smoke.GlobalPosition = GlobalPosition + Vector3.Up * 0.4f; _smoke.Rotation = Vector3.Zero; }
-                if (_fire  != null) { _fire.TopLevel  = true; _fire.GlobalPosition  = GlobalPosition + Vector3.Up * 0.4f; _fire.Rotation  = Vector3.Zero; }
+                var enginePos = ToGlobal(_firePos);   // engine-bay world position (rides the wreck); plume forced world-up via Rotation=0
+                if (_smoke != null) { _smoke.TopLevel = true; _smoke.GlobalPosition = enginePos; _smoke.Rotation = Vector3.Zero; }
+                if (_fire  != null) { _fire.TopLevel  = true; _fire.GlobalPosition  = enginePos; _fire.Rotation  = Vector3.Zero; }
             }
             if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // source EXPLODE: 4s after health 0
 
