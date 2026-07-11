@@ -852,7 +852,18 @@ namespace UnturnedGodot
                 if (System.IO.File.Exists(tp))
                 {
                     var img = new Image();
-                    if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mm.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+                    if (img.Load(tp) == Error.Ok)
+                    {
+                        // leaf/foliage cutout: if the albedo carries real transparency (>1% of texels), alpha-scissor it
+                        if (img.GetFormat() == Image.Format.Rgba8)
+                        {
+                            var data = img.GetData(); int tr = 0;
+                            for (int i = 3; i < data.Length; i += 4) if (data[i] < 200) tr++;
+                            if (tr > data.Length / 400) { mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mm.AlphaScissorThreshold = 0.5f; }
+                        }
+                        img.GenerateMipmaps();
+                        mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                    }
                     else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
                 }
                 else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
