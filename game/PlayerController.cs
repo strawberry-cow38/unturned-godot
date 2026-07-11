@@ -296,6 +296,7 @@ namespace UnturnedGodot
         {
             _dead = true;
             _deathTimer = 3.5;
+            _burstLeft = 0;   // death cancels any in-progress burst (no resume after respawn)
             Velocity = Vector3.Zero;
 
             _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
@@ -565,6 +566,7 @@ namespace UnturnedGodot
             if (_reloading || _dead) return;
             int max = Gun?.AmmoMax ?? 30;
             if (Ammo >= max) return;
+            _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
             _viewmodel?.SetReloading(true);
             _reloadTimer = _viewmodel?.ReloadLength ?? ReloadTime;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s)
@@ -899,6 +901,7 @@ namespace UnturnedGodot
         void EnterVehicle(Vehicle v)
         {
             _driving = v;
+            _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             v.EngineOn = true;                                 // start burning fuel (source: engine on)
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
             _viewmodel?.SetShown(false);                       // no gun while driving
