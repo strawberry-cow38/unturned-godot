@@ -1210,6 +1210,7 @@ namespace UnturnedGodot
                 player.Spawn = player.GlobalPosition;   // respawn on this above-ground point, NOT the default (0,1,0) which is underground on PEI
                 if (System.Environment.GetEnvironmentVariable("UG_OOBTEST") == "1") player.GlobalPosition = new Vector3(sx, -2000f, sz);   // test hook: drop below the map -> should trip the OOB kill
                 { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+                AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
                 { var pause = new PauseMenu(); AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
                 { var attach = new AttachmentMenu(); AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
                 var jeep = Vehicle.BuildByName("jeep");
