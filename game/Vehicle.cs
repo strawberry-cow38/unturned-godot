@@ -135,6 +135,7 @@ namespace UnturnedGodot
         {
             const float R = 8f;
             Vector3 p = GlobalPosition;
+            PlayerController.Local?.FlinchFromExplosion(p, 32f, 45f);   // big vehicle blast -> strong camera shake (src Bomb_0-like: radius 32 / mag 45)
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {

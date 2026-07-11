@@ -148,7 +148,25 @@ namespace UnturnedGodot
                 }
             float pr = GlobalPosition.DistanceTo(point);
             if (pr <= radius) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t); }
+            Local?.FlinchFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
             GD.Print($"[explode] r={radius} at {point}");
+        }
+
+        // Explosion camera shake -- src: EffectManager.cs:1615 -> PlayerLook.FlinchFromExplosion. A flinch rotation toward the
+        // blast (axis = Cross(up, dir-from-blast-to-cam), in cam-local space) with EXPONENTIAL distance falloff 1-(dist/radius)^2;
+        // magnitude in degrees from the explosion EffectAsset's CameraShake (real Bomb_* values: radius 6-32, mag 2-45).
+        public static PlayerController Local;   // the interactive player (set in _Ready); explosions shake THIS camera
+        public void FlinchFromExplosion(Vector3 point, float radius, float magnitudeDegrees)
+        {
+            if (_cam == null) return;
+            Vector3 rel = _cam.GlobalPosition - point;
+            float dist = rel.Length();
+            if (dist <= 0f || dist >= radius) return;                                   // outside the shake radius -> nothing
+            Vector3 worldAxis = Vector3.Up.Cross(rel / dist).Normalized();
+            Vector3 localAxis = (_cam.GlobalTransform.Basis.Inverse() * worldAxis).Normalized();
+            float deg = magnitudeDegrees * (1f - (dist / radius) * (dist / radius));     // src exponential falloff
+            if (localAxis.IsFinite() && Mathf.Abs(deg) > 0.01f)
+                _flinch = (_flinch * new Quaternion(localAxis, Mathf.DegToRad(deg))).Normalized();   // rides the existing _flinch spring
         }
 
         // Throw a grenade from the muzzle (ItemThrowableAsset). Bounded first pass: a fixed throw arc, ~1 s between
@@ -416,6 +434,7 @@ namespace UnturnedGodot
 
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
             AddChild(_cam);
+            if (CaptureMouse) Local = this;   // the interactive (mouse-captured) player -> explosions shake this camera
 
             _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
             if (_body != null) { _body.Visible = false; CallDeferred(Node.MethodName.AddSibling, _body); }
