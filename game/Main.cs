@@ -1262,6 +1262,7 @@ namespace UnturnedGodot
                 cam.Position = new Vector3(ctr.X, 2200f, ctr.Z + 1f);
                 cam.LookAt(new Vector3(ctr.X, 0f, ctr.Z), new Vector3(0f, 0f, -1f));   // straight down, screen-up = world -Z (north), to match the game chart
             }
+            NearestFilter.Apply(this);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
