@@ -89,7 +89,7 @@ void fragment() {
         {
             if (_grid == null) return 0f;
             int gx = Mathf.Clamp(Mathf.RoundToInt((worldX - _bx) / UNIT), 0, _gw - 1);
-            int gy = Mathf.Clamp(Mathf.RoundToInt((-worldZ - _bz) / UNIT), 0, _gh - 1);   // world Z is negated
+            int gy = Mathf.Clamp(Mathf.RoundToInt((worldZ - _bz) / UNIT), 0, _gh - 1);   // raw Z
             return _grid[gx, gy] * TILE_HEIGHT - TILE_HEIGHT / 2f;
         }
         // dominant splatmap layer at a world point (2=grass, 0/7=forest, 1=sand, 3=road, 4=rock, 5=water, 6=dirt); 255 = no splats
@@ -97,7 +97,7 @@ void fragment() {
         {
             if (_dom == null) return 255;
             int gx = Mathf.Clamp(Mathf.RoundToInt((worldX - _bx) / UNIT), 0, _dw - 1);
-            int gy = Mathf.Clamp(Mathf.RoundToInt((-worldZ - _bz) / UNIT), 0, _dh - 1);
+            int gy = Mathf.Clamp(Mathf.RoundToInt((worldZ - _bz) / UNIT), 0, _dh - 1);   // raw Z
             return _dom[gx, gy];
         }
         public static bool IsWater(byte layer) => layer == 5;   // splat layer 5 = ocean; every other layer is drivable land
@@ -228,21 +228,21 @@ void fragment() {
                 {
                     int i = x * GH + y;
                     float wy = g[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f;
-                    verts[i] = new Vector3(baseX + x * UNIT, wy, -(baseZ + y * UNIT));
+                    verts[i] = new Vector3(baseX + x * UNIT, wy, baseZ + y * UNIT);   // RAW Z (un-mirrored, matches raw object placement)
                     uvs[i] = new Vector2(x / (float)(GW - 1), y / (float)(GH - 1));
                     cols[i] = splats.Count > 0 ? LayerColor(dom[System.Math.Min(x, GWs - 1), System.Math.Min(y, GHs - 1)])   // real splatmap material layout (grass/dirt/sand/forest)
                                                : (wy < 0f ? new Color(0.20f, 0.36f, 0.55f) : (wy < 30f ? new Color(0.74f, 0.68f, 0.48f) : new Color(0.34f, 0.42f, 0.26f)));   // height fallback
                     float hl = g[System.Math.Max(0, x - 1), y], hr = g[System.Math.Min(GW - 1, x + 1), y];
                     float hd = g[x, System.Math.Max(0, y - 1)], hu = g[x, System.Math.Min(GH - 1, y + 1)];
-                    norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
+                    norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, -(hu - hd) * TILE_HEIGHT).Normalized();   // Z-grad flipped for raw Z
                 }
             var idx = new int[(GW - 1) * (GH - 1) * 6]; int t = 0;
             for (int x = 0; x < GW - 1; x++)
                 for (int y = 0; y < GH - 1; y++)
                 {
                     int i00 = x * GH + y, i10 = (x + 1) * GH + y, i01 = x * GH + (y + 1), i11 = (x + 1) * GH + (y + 1);
-                    idx[t++] = i00; idx[t++] = i01; idx[t++] = i10;
-                    idx[t++] = i10; idx[t++] = i01; idx[t++] = i11;
+                    idx[t++] = i00; idx[t++] = i10; idx[t++] = i01;   // reversed winding for raw Z (front-face stays up)
+                    idx[t++] = i10; idx[t++] = i11; idx[t++] = i01;
                 }
 
             var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
@@ -260,7 +260,7 @@ void fragment() {
             {
                 float waterY = 0.1f * 256f;   // = 25.6 world-Y; Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
                 var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
-                water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
+                water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, baseZ + GH * UNIT * 0.5f);
                 water.MaterialOverride = new StandardMaterial3D
                 {
                     AlbedoColor = new Color(0.13f, 0.29f, 0.44f, 0.74f),

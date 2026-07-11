@@ -11,6 +11,13 @@ namespace UnturnedGodot
     public static class ObjMesh
     {
         static float F(string s) => float.Parse(s, CultureInfo.InvariantCulture);
+        // diagnostic: UG_CONV env var switches the Unity->Godot mesh convention to hunt the mirror.
+        //   0 = negZ + reverse winding (current)   1 = raw Unity (no negate, orig winding)
+        //   2 = negX + reverse winding             3 = negZ + reverse winding + U-flip UV
+        // Unity(LH)->Godot(RH): use RAW geometry (CONV 1). negate-Z (old CONV 0) reflected every mesh -> chiral
+        // features (embossed text on signs) came out MIRRORED. Raw keeps chirality; CullMode.Disabled + explicit
+        // normals handle winding/lighting. Placement (Main.cs) + terrain (Terrain.cs) match this (no Z-negate).
+        static readonly int CONV = int.TryParse(System.Environment.GetEnvironmentVariable("UG_CONV"), out var _c) ? _c : 1;
 
         public static ArrayMesh Load(string globalPath)
         {
@@ -26,17 +33,27 @@ namespace UnturnedGodot
                 if (raw[0] == 'v' && raw[1] == ' ')
                 {
                     var p = raw.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                    pos.Add(new Vector3(F(p[1]), F(p[2]), -F(p[3])));
+                    pos.Add(CONV switch
+                    {
+                        1 => new Vector3(F(p[1]), F(p[2]), F(p[3])),     // raw Unity
+                        2 => new Vector3(-F(p[1]), F(p[2]), F(p[3])),    // negate X
+                        _ => new Vector3(F(p[1]), F(p[2]), -F(p[3])),    // negate Z (0,3)
+                    });
                 }
                 else if (raw[0] == 'v' && raw[1] == 'n')
                 {
                     var p = raw.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                    nrm.Add(new Vector3(F(p[1]), F(p[2]), -F(p[3])));
+                    nrm.Add(CONV switch
+                    {
+                        1 => new Vector3(F(p[1]), F(p[2]), F(p[3])),
+                        2 => new Vector3(-F(p[1]), F(p[2]), F(p[3])),
+                        _ => new Vector3(F(p[1]), F(p[2]), -F(p[3])),
+                    });
                 }
                 else if (raw[0] == 'v' && raw[1] == 't')
                 {
                     var p = raw.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                    uv.Add(new Vector2(F(p[1]), 1f - F(p[2])));   // Unity V-up -> Godot V-down
+                    uv.Add(CONV == 3 ? new Vector2(1f - F(p[1]), 1f - F(p[2])) : new Vector2(F(p[1]), 1f - F(p[2])));   // V-flip (Unity V-up->Godot V-down); CONV3 also U-flips
                 }
                 else if (raw[0] == 'f' && raw[1] == ' ')
                 {
@@ -50,9 +67,9 @@ namespace UnturnedGodot
                         ti[i] = (s.Length > 1 && s[1].Length > 0) ? int.Parse(s[1]) - 1 : -1;
                         ni[i] = (s.Length > 2 && s[2].Length > 0) ? int.Parse(s[2]) - 1 : -1;
                     }
-                    for (int i = 1; i + 1 < n; i++)   // fan triangulate, reversed winding (0, i+1, i)
+                    for (int i = 1; i + 1 < n; i++)   // fan triangulate (reversed winding for reflected convs)
                     {
-                        foreach (int k in new[] { 0, i + 1, i })
+                        foreach (int k in (CONV == 1 ? new[] { 0, i, i + 1 } : new[] { 0, i + 1, i }))
                         {
                             outV.Add(pos[vi[k]]);
                             outN.Add(ni[k] >= 0 && ni[k] < nrm.Count ? nrm[ni[k]] : Vector3.Up);

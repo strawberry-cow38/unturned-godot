@@ -34,12 +34,13 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
+                else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
@@ -136,6 +137,14 @@ namespace UnturnedGodot
                 _peiPlay = true;
                 _shotPath = shot;   // captured at a LATE frame (below) so the drop+enter+drive plays out first
                 BuildPeiPlay();
+                return;
+            }
+
+            if (proptest != null)   // diagnostic: one prop at identity + RGB axis refs (X=red,Y=green,Z=blue) + 3/4 cam
+            {
+                GetWindow().Size = new Vector2I(900, 900);
+                _shotPath = shot;
+                BuildPropTest(proptest);
                 return;
             }
 
@@ -829,6 +838,41 @@ namespace UnturnedGodot
             GD.Print("[TERRAIN] loaded the whole PEI island (merged, seamless)");
         }
 
+        // --proptest=NAME diagnostic: one prop at identity with RGB axis refs (X=red +right, Y=green +up, Z=blue +back)
+        // so I can read its orientation/chirality up close and spot a mirror vs the real game.
+        void BuildPropTest(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.32f, 0.36f, 0.44f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var mesh = ObjMesh.Load(dir + name + ".obj");
+            if (mesh == null) { GD.Print($"[PROPTEST] no mesh {name}"); GetTree().Quit(); return; }
+            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            string tp = dir + name + "_tex.png";
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+            AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
+            var aabb = mesh.GetAabb(); var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
+            if (r < 0.01f) r = 1f;
+            foreach (var (ax, col) in new[] { (Vector3.Right, new Color(1f, 0.15f, 0.15f)), (Vector3.Up, new Color(0.15f, 1f, 0.15f)), (Vector3.Back, new Color(0.2f, 0.4f, 1f)) })
+            {
+                var bar = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.06f, 0.06f, 0.06f) * r + ax.Abs() * r * 1.2f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = col } };
+                bar.Position = ax * r * 0.6f;
+                AddChild(bar);
+            }
+            var cam = new Camera3D { Current = true, Fov = 50f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
+            cam.LookAt(c, Vector3.Up);
+            GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
         // --objects: PEI's real placed objects (Level/Objects.dat) instanced on the terrain. placements.txt = every
         // object's guid+transform; guid_mesh.txt maps the top types to extracted object.prefab meshes.
         void BuildObjectsTest()
@@ -892,9 +936,9 @@ namespace UnturnedGodot
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
                 if (mesh == null) continue;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
-                var gpos = new Vector3(px, py, -pz);
-                // Unity Quaternion.Euler = Ry*Rx*Rz; under the (x,y,-z) flip -> Ry(-ey)*Rx(-ex)*Rz(ez)
-                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
+                var gpos = new Vector3(px, py, pz);
+                // RAW Unity coords (no Z-flip, un-mirrored): apply Unity Quaternion.Euler (ZXY) directly = Ry(ey)*Rx(ex)*Rz(ez)
+                var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
                 placed++;
