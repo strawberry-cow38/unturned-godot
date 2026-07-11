@@ -45,9 +45,8 @@ void fragment() {
     vec4 w0 = texture(splat0, UV);
     vec4 w1 = texture(splat1, UV);
     vec2 tuv = wpos.xz / tileWorld;
-    // winner-take-all: pick the DOMINANT splat layer per pixel -> HARD biome borders. The splat is still
-    // sampled bilinear so the border follows the smooth contour (not blocky 4u squares). Src does a linear
-    // weighted blend (Landscapes/LinearTransition/FirstPass SplatmapMix); this is the crisp classic override.
+    // winner-take-all: dominant splat layer per pixel = hard-edged distinct regions. Per master (+ ref shots)
+    // this matches the real game look. Splat sampled bilinear so borders follow the smooth contour (not blocky).
     float ws[8];
     ws[0] = w0.r; ws[1] = w0.g; ws[2] = w0.b; ws[3] = w0.a;
     ws[4] = w1.r; ws[5] = w1.g; ws[6] = w1.b; ws[7] = w1.a;
