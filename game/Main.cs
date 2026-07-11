@@ -1229,7 +1229,8 @@ namespace UnturnedGodot
 
                 // VEHICLE SPAWNS: Spawns/Vehicles.dat (source LevelVehicles River: u8 ver, [SteamID if 1<v<3], u8 tableCount,
                 // per table [color 3B, name str, tableID u16 if v>3, u8 tierCount, per tier: name str, chance f32, u8 spawnCount, per spawn u16],
-                // u16 pointCount, per point: u8 type, Vector3, u8 angle*2). Place a vehicle per LAND spawn (car tables 0-5); jeep placeholder for all.
+                // u16 pointCount, per point: u8 type, Vector3, u8 angle*2). type = table index: 0 Civilian, 1 Police, 2 Fire, 3 Military,
+                // 4 Medic, 5 Farm, 6-11 air/water/tank. LAND (0-5): Civilian=car pool, Police/Fire/Medic=static mesh, Military=humvee, Farm=jeep stand-in.
                 {
                     string vpath = _mapRoot + @"\Spawns\Vehicles.dat";
                     int nv = 0;
@@ -1274,9 +1275,15 @@ namespace UnturnedGodot
                                     nv++;
                                 }
                             }
-                            else   // Civilian / Military / Farm -> drivable jeep placeholder
+                            else   // drivable: Civilian -> real civilian-car pool, Military -> humvee, Farm -> jeep stand-in (no tractor mesh yet)
                             {
-                                var veh = Vehicle.BuildByName("jeep");
+                                vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
+                                {
+                                    0 => (i % 3) switch { 0 => "sedan", 1 => "hatchback", _ => "roadster" },   // Civilian rolls the civilian car pool
+                                    3 => "humvee",                                                              // Military_Canada
+                                    _ => "jeep",                                                                // Farm (5): jeep until a tractor is ported
+                                };
+                                var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
                                 AddChild(veh);
                                 veh.GlobalPosition = vpos;
                                 veh.RotationDegrees = new Vector3(0f, -ang, 0f);
@@ -1284,7 +1291,7 @@ namespace UnturnedGodot
                             }
                         }
                     }
-                    GD.Print($"[vehicles] spawned {nv} at PEI's car spawns (Police/Fire/Ambulance real meshes; jeep for Civilian/Military/Farm)");
+                    GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster, Military=humvee, Farm=jeep; Police/Fire/Ambulance=static mesh; air/water/tank skipped)");
                 }
                 // LOOT: PEI's 2470 item spawn points (Spawns/Jars.dat), region/distance-streamed around the player (LootField).
                 {
