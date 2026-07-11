@@ -894,17 +894,11 @@ namespace UnturnedGodot
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}");
 
-            // drop the jeep + player at the busiest cluster so you can drive around POPULATED PEI (player chase cam follows)
-            CharacterModel.LoadBundled();
-            var player = new PlayerController();
-            player.LoadGun("res://content/eaglefire.dat");
-            AddChild(player);
-            player.GlobalPosition = new Vector3(focus.X, terr.SampleHeight(focus.X, focus.Z) + 3f, focus.Z);
-            { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
-            _peiPlayer = player; _peiPlay = true;
-            var jeep = Vehicle.BuildByName("jeep");
-            AddChild(jeep);
-            jeep.GlobalPosition = new Vector3(focus.X + 2.2f, terr.SampleHeight(focus.X + 2.2f, focus.Z) + 1.5f, focus.Z);
+            // aerial over the busiest cluster so the full populated PEI (all ~360 types) reads at once, no gaps
+            var cam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
+            AddChild(cam);
+            cam.Position = focus + new Vector3(0f, 210f, 210f);
+            cam.LookAt(focus + new Vector3(0f, 4f, 0f), Vector3.Up);
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
