@@ -54,11 +54,16 @@ namespace UnturnedGodot
             {
                 if (r.Joints.Count < 2 || r.Material < 0 || r.Material >= mats.Count) continue;
                 float texH = r.Material < TexHeight.Length ? TexHeight[r.Material] : 256f;
-                var mesh = BuildRoadMesh(r, mats[r.Material], texH);
+                var mesh = BuildRoadMesh(r, mats[r.Material], texH, out var collShape);
                 if (mesh == null) continue;
                 var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = RoadMaterial3D(r.Material, mats[r.Material].Concrete) };
                 AddChild(mi);
-                mi.CreateTrimeshCollision();   // solid road surface -> walk/drive on it (StaticBody + concave shape)
+                if (collShape != null)   // flat top-ribbon collider (double-sided) -> clean walk/drive, nothing to snag on
+                {
+                    var body = new StaticBody3D();
+                    body.AddChild(new CollisionShape3D { Shape = collShape });
+                    AddChild(body);
+                }
                 built++;
             }
             GD.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {mats.Count} materials)");
@@ -128,8 +133,9 @@ namespace UnturnedGodot
             return Bezier(s.Vertex, s.Vertex + s.Tan1, e.Vertex + e.Tan0, e.Vertex, t);
         }
 
-        ArrayMesh BuildRoadMesh(RoadData r, RoadMat mat, float texHeight)
+        ArrayMesh BuildRoadMesh(RoadData r, RoadMat mat, float texHeight, out ConcavePolygonShape3D collision)
         {
+            collision = null;
             // src Road.buildMesh: HalfWidth=width (field IS the half-width), HalfVerticalSize=depth, verticalSize=2*depth,
             // VerticalOffset=offset. Keep position.y AT terrain height (+ per-joint offset); the SURFACE verts go UP by
             // halfVerticalSize while the outer TAPER verts go DOWN by halfVerticalSize -> the taper sinks BELOW the
@@ -215,17 +221,25 @@ namespace UnturnedGodot
             float[] uC = { 0f, 0f, 1f, 1f };   // src: outer/inner-left share u=0, inner/outer-right share u=1
             for (int i = 0; i < rings.Count; i++)
                 for (int k = 0; k < 4; k++) { verts.Add(rings[i][k]); norms.Add(rn[i]); uvs.Add(new Vector2(uC[k], rv[i])); }
-            // src triangle stitch: 6 tris per ring pair = the 3 quads (left-taper, road, right-taper)
+            // stitch 6 tris per ring pair = 3 quads (left-taper, road, right-taper). winding that lights the top from
+            // ABOVE and makes the trimesh collider face up (the src winding, flipped by our negate-Z verts, did neither).
             for (int i = 0; i + 1 < rings.Count; i++)
             {
                 int a = i * 4, b = (i + 1) * 4;
-                idx.Add(b + 1); idx.Add(a + 1); idx.Add(b + 0);
-                idx.Add(a + 0); idx.Add(b + 0); idx.Add(a + 1);
-                idx.Add(b + 2); idx.Add(a + 2); idx.Add(b + 1);
-                idx.Add(a + 1); idx.Add(b + 1); idx.Add(a + 2);
-                idx.Add(b + 3); idx.Add(a + 3); idx.Add(b + 2);
-                idx.Add(a + 2); idx.Add(b + 2); idx.Add(a + 3);
+                for (int q = 0; q < 3; q++)
+                {
+                    int a0 = a + q, a1 = a + q + 1, b0 = b + q, b1 = b + q + 1;
+                    idx.Add(a0); idx.Add(a1); idx.Add(b1);
+                    idx.Add(a0); idx.Add(b1); idx.Add(b0);
+                }
             }
+
+            // collision = the FULL road shell (top + side bevels + end ramps), double-sided so the player never falls
+            // through or gets pushed the wrong way. matches src (MeshCollider of the whole road mesh). the earlier
+            // "stuck" was the INVERTED winding facing collision downward, not the geometry -> fixed by the winding above.
+            var soup = new Vector3[idx.Count];
+            for (int i = 0; i < idx.Count; i++) soup[i] = verts[idx[i]];
+            collision = idx.Count >= 3 ? new ConcavePolygonShape3D { Data = soup, BackfaceCollision = true } : null;
 
             var arr = new Godot.Collections.Array();
             arr.Resize((int)Mesh.ArrayType.Max);
