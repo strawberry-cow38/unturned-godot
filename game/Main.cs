@@ -1307,6 +1307,12 @@ namespace UnturnedGodot
                     AddChild(ff);
                     ff.LoadGrass();
                 }
+                // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
+                {
+                    var rsf = new ResourceField();
+                    AddChild(rsf);
+                    rsf.LoadResources();
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
