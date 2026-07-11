@@ -3,30 +3,45 @@ using System.IO;
 
 namespace UnturnedGodot
 {
-    // PEI's baked FOLIAGE (Maps/PEI/Foliage.blob) placed as MultiMesh instances. Grass = blob asset 1
-    // (GUID c928fb99..., 612K instances). tools/foliage_fix.py bakes the FULL per-blade transform (basis+pos,
-    // 12 floats) -> content/foliage/grass.bin; mesh + PEI texture resolved by the container paths the real
-    // FoliageInstancedMeshInfoAsset references (Grass_00_Mesh.fbx + pei/grass_00.png) and ripped via UnityPy.
-    // Blob world coords match the objects (centered +-1024). NOTE: trees are NOT foliage -- PEI's blob is only
-    // grass + 4 flower types + 2 pebble types; trees live in the map's Resources (separate pipeline, TODO).
+    // PEI's baked FOLIAGE (Maps/PEI/Foliage.blob) as MultiMesh instances: grass + 4 flowers + 2 pebbles
+    // (blob assets 0-6). NOTE: trees are NOT foliage -- they're the map's Resources (separate pipeline).
+    // tools/foliage_all.py resolves each type's FoliageInstancedMeshInfoAsset (.asset, matched by the blob's
+    // 16-byte GUID) -> its mesh + texture by container path, and bakes the blob's FULL per-instance transform
+    // (9 basis + 3 pos = 12 floats) into content/foliage/<name>.bin. Unity(LH)->Godot(RH) = negate Z.
     public partial class FoliageField : Node3D
     {
+        static readonly string[] Types =
+            { "grass_00", "flowers_00", "flowers_01", "flowers_02", "flowers_03", "pebble_00", "pebble_sand_00" };
+
+        // pebble materials are textureless solid-colour rocks -- real _Color from the .mat (source-accurate).
+        static readonly System.Collections.Generic.Dictionary<string, Color> SolidColor = new()
+        {
+            { "pebble_00", new Color(0.456f, 0.456f, 0.456f) },
+            { "pebble_sand_00", new Color(0.506f, 0.506f, 0.506f) },
+        };
+
+        // kept the name LoadGrass() so the Main.cs call site is unchanged; it now loads every foliage type.
         public void LoadGrass()
         {
+            foreach (var nm in Types) LoadType(nm);
+        }
+
+        void LoadType(string nm)
+        {
             string dir = ProjectSettings.GlobalizePath("res://content/foliage/");
-            string binPath = dir + "grass.bin";
-            if (!File.Exists(binPath)) { GD.Print("[foliage] no grass.bin -- skipping"); return; }
-            var mesh = ObjMesh.Load(dir + "Grass_00.obj");
-            if (mesh == null) { GD.Print("[foliage] no Grass_00.obj -- skipping"); return; }
+            string binPath = dir + nm + ".bin", objPath = dir + nm + ".obj";
+            if (!File.Exists(binPath) || !File.Exists(objPath)) { GD.Print($"[foliage] skip {nm} (missing files)"); return; }
+            var mesh = ObjMesh.Load(objPath);
+            if (mesh == null) { GD.Print($"[foliage] skip {nm} (mesh load failed)"); return; }
 
             var mat = new StandardMaterial3D
             {
                 Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor,
                 AlphaScissorThreshold = 0.4f,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // grass blades are double-sided
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // billboards are double-sided
                 Roughness = 1f,
             };
-            string tp = dir + "Grass_00_Albedo.png";
+            string tp = dir + nm + "_tex.png";
             if (File.Exists(tp))
             {
                 var img = new Image();
@@ -37,17 +52,16 @@ namespace UnturnedGodot
                     mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;   // NN like the rest of the port
                 }
             }
-            else mat.AlbedoColor = new Color(0.36f, 0.55f, 0.25f);
+            else mat.AlbedoColor = SolidColor.TryGetValue(nm, out var c) ? c : new Color(0.5f, 0.5f, 0.5f);
 
             using var br = new BinaryReader(File.OpenRead(binPath));
             int count = br.ReadInt32();
+            if (count <= 0) { GD.Print($"[foliage] {nm}: 0 instances"); return; }
             var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = count };
             for (int i = 0; i < count; i++)
             {
-                // 12 floats = the blob's BAKED transform: Unity basis columns X(x0,x1,x2) Y(y0,y1,y2) Z(z0,z1,z2)
-                // then position. The bake stamps each blade with a random Y-spin (0-360 deg) + uniform scale
-                // (0.8-1.2) per the FoliageInstancedMeshInfoAsset, so we must keep it -- identity looked stiff.
-                // Unity(LH) -> Godot(RH) = negate Z: basisX=(x0,x1,-x2) basisY=(y0,y1,-y2) basisZ=(-z0,-z1,z2), pos.z=-pz.
+                // 12 floats: Unity basis cols X(x0,x1,x2) Y(y0,y1,y2) Z(z0,z1,z2) then pos. Blob bakes per-instance
+                // random Y-spin + scale. Unity(LH)->Godot(RH) = negate Z on each axis' z-component + on pos.z.
                 float x0 = br.ReadSingle(), x1 = br.ReadSingle(), x2 = br.ReadSingle();
                 float y0 = br.ReadSingle(), y1 = br.ReadSingle(), y2 = br.ReadSingle();
                 float z0 = br.ReadSingle(), z1 = br.ReadSingle(), z2 = br.ReadSingle();
@@ -59,7 +73,7 @@ namespace UnturnedGodot
                 mm.SetInstanceTransform(i, new Transform3D(basis, new Vector3(px, py, -pz)));
             }
             AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat });
-            GD.Print($"[foliage] placed {count} grass instances (MultiMesh, 1 draw call)");
+            GD.Print($"[foliage] {nm}: {count} instances (MultiMesh, 1 draw call)");
         }
     }
 }
