@@ -7,6 +7,7 @@ namespace UnturnedGodot
     public partial class MainMenu : CanvasLayer
     {
         public System.Action<bool> OnPlay;
+        public System.Action OnDrivePEI;
 
         public override void _Ready()
         {
@@ -32,6 +33,7 @@ namespace UnturnedGodot
             box.AddChild(sub);
             box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 24) });   // spacer
 
+            AddButton(box, "Drive PEI", () => OnDrivePEI?.Invoke());
             AddButton(box, "Play", () => OnPlay?.Invoke(false));
             AddButton(box, "Play — No Zombies", () => OnPlay?.Invoke(true));
             AddButton(box, "Quit", () => GetTree().Quit());

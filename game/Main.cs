@@ -30,11 +30,12 @@ namespace UnturnedGodot
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
+        bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
 
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -70,6 +71,7 @@ namespace UnturnedGodot
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
+                else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
@@ -115,6 +117,15 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
+                BuildObjectsTest();
+                return;
+            }
+
+            if (peidrive)  // playable PEI (also reached from the main menu's "Drive PEI" button)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                _peiPlayable = true;
                 BuildObjectsTest();
                 return;
             }
@@ -284,6 +295,7 @@ namespace UnturnedGodot
                 GetWindow().Mode = Window.ModeEnum.Maximized;
                 var menu = new MainMenu();
                 menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
+                menu.OnDrivePEI = () => { menu.QueueFree(); _peiPlayable = true; BuildObjectsTest(); };
                 AddChild(menu);
                 return;
             }
@@ -883,6 +895,7 @@ namespace UnturnedGodot
                 var gpos = new Vector3(px, py, -pz);
                 // Unity Quaternion.Euler = Ry*Rx*Rz; under the (x,y,-z) flip -> Ry(-ey)*Rx(-ex)*Rz(ez)
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(ez));
+                if (p[0] == "329682e42ea141ea8d033278e88d763c") rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(-90f)) * rot;   // Road_Turn_0: master-reported -90 (its mesh is authored 90 off from the straight pieces)
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos) });
                 placed++;
@@ -895,12 +908,47 @@ namespace UnturnedGodot
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}");
 
             // aerial over the busiest cluster so the full populated PEI (all ~360 types) reads at once, no gaps
-            Vector3 sumAll = Vector3.Zero; foreach (var v in cellSum.Values) sumAll += v;
-            var ctr = placed > 0 ? sumAll / placed : Vector3.Zero;
-            var cam = new Camera3D { Current = true, Fov = 55f, Far = 20000f };
-            AddChild(cam);
-            cam.Position = new Vector3(ctr.X, 2200f, ctr.Z + 1f);
-            cam.LookAt(new Vector3(ctr.X, 0f, ctr.Z), new Vector3(0f, 0f, -1f));   // straight down, screen-up = world -Z (north), to match the game chart
+            if (_peiPlayable)
+            {
+                // menu "Drive PEI": drop the player + jeep on open grass with REAL controls (WASD + mouse look, E to enter/drive the jeep)
+                float sx = 0f, sz = -350f; int bestMargin = -1; float bestDist = float.MaxValue;
+                for (float cz = -1800f; cz <= 1800f; cz += 50f)
+                    for (float cx = -1800f; cx <= 1800f; cx += 50f)
+                    {
+                        if (terr.SampleDominantLayer(cx, cz) != 2) continue;
+                        int margin = 0;
+                        for (int r = 32; r <= 160; r += 32)
+                        {
+                            bool ring = true;
+                            for (int a = 0; a < 8 && ring; a++)
+                                if (Terrain.IsWater(terr.SampleDominantLayer(cx + r * Mathf.Cos(a * Mathf.Pi / 4f), cz + r * Mathf.Sin(a * Mathf.Pi / 4f)))) ring = false;
+                            if (!ring) break;
+                            margin = r;
+                        }
+                        float dist = Mathf.Sqrt(cx * cx + cz * cz);
+                        if (margin > bestMargin || (margin == bestMargin && dist < bestDist)) { bestMargin = margin; bestDist = dist; sx = cx; sz = cz; }
+                    }
+                CharacterModel.LoadBundled();
+                var player = new PlayerController { CaptureMouse = true };
+                player.LoadGun("res://content/eaglefire.dat");
+                AddChild(player);
+                player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
+                { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+                var jeep = Vehicle.BuildByName("jeep");
+                AddChild(jeep);
+                jeep.GlobalPosition = new Vector3(sx + 2.2f, terr.SampleHeight(sx + 2.2f, sz) + 1.5f, sz);
+                GetWindow().Mode = Window.ModeEnum.Maximized;
+                GD.Print($"[PEI] playable: spawned on grass ({sx:0},{sz:0}); WASD move, E enter jeep, drive PEI");
+            }
+            else
+            {
+                Vector3 sumAll = Vector3.Zero; foreach (var v in cellSum.Values) sumAll += v;
+                var ctr = placed > 0 ? sumAll / placed : Vector3.Zero;
+                var cam = new Camera3D { Current = true, Fov = 55f, Far = 20000f };
+                AddChild(cam);
+                cam.Position = new Vector3(ctr.X, 2200f, ctr.Z + 1f);
+                cam.LookAt(new Vector3(ctr.X, 0f, ctr.Z), new Vector3(0f, 0f, -1f));   // straight down, screen-up = world -Z (north), to match the game chart
+            }
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
