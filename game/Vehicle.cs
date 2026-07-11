@@ -165,9 +165,10 @@ namespace UnturnedGodot
             for (int i = 0; i < _wNodes.Length; i++)
             {
                 var pos = _wMeshes[i].GlobalPosition;
-                var rb = new RigidBody3D { Mass = 18f };
+                var mat = (StandardMaterial3D)_wheelMatRef.Duplicate();   // per-debris material so the 10s fade doesn't touch the car's own wheels
+                var rb = new WheelDebris { Mass = 18f, Mat = mat };       // lives ~10s, fades its last second, then despawns (master)
                 rb.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = _wheelR } });
-                rb.AddChild(new MeshInstance3D { Mesh = _wheelMeshRef, MaterialOverride = _wheelMatRef, Scale = _wMeshes[i].Scale });
+                rb.AddChild(new MeshInstance3D { Mesh = _wheelMeshRef, MaterialOverride = mat, Scale = _wMeshes[i].Scale });
                 scene.AddChild(rb);
                 rb.GlobalPosition = pos;
                 var outward = pos - GlobalPosition; outward.Y = 0f;
@@ -619,6 +620,11 @@ namespace UnturnedGodot
             if (!_parked && !_exploded && _prevSpeed > 5f && decel > 200f * (float)delta) TakeDamage(decel * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
             _prevSpeed = curSpeed;
             if (_smoke != null) _smoke.Emitting = _exploded || Health < SmokeHealth;   // source: smoke while damaged (< SMOKE_1 threshold 200)
+            if (_exploded)   // master: the explosion smoke/fire always rises STRAIGHT UP -- go world-space so it doesn't tilt with the tumbling wreck
+            {
+                if (_smoke != null) { _smoke.TopLevel = true; _smoke.GlobalPosition = GlobalPosition + Vector3.Up * 0.4f; _smoke.Rotation = Vector3.Zero; }
+                if (_fire  != null) { _fire.TopLevel  = true; _fire.GlobalPosition  = GlobalPosition + Vector3.Up * 0.4f; _fire.Rotation  = Vector3.Zero; }
+            }
             if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // source EXPLODE: 4s after health 0
 
             // steering smoothing (source: AnimatedSteeringAngle = MoveTowards(target, SteeringAngleTurnSpeed*dt)) -- no instant snap
