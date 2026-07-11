@@ -78,7 +78,7 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // leaves are double-sided billboards
                 Roughness = 1f,
             };
-            if (unshaded) mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;   // no directional flat-shading on non-tree foliage
+            _ = unshaded;   // (kept for signature compat) resources are LIT + receive shadows per master; grass/flowers get up-normals instead
             if (File.Exists(texPath))
             {
                 var img = new Image();

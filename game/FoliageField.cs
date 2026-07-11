@@ -40,7 +40,8 @@ namespace UnturnedGodot
                 AlphaScissorThreshold = 0.4f,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // billboards are double-sided
                 Roughness = 1f,
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,   // master: no ugly directional sun-shading/flat-shadows on foliage
+                // foliage is LIT + receives shadows (master), but the mesh normals are baked straight UP (tools set vn=0,1,0)
+                // so the flat billboards are lit like ground -- no ugly per-face directional darkness.
             };
             string tp = dir + nm + "_tex.png";
             if (File.Exists(tp))
