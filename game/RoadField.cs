@@ -20,6 +20,21 @@ namespace UnturnedGodot
         // Unity (x,y,z) -> Godot (x,y,-z), the port's negate-Z layout (matches props/terrain).
         static Vector3 G(float x, float y, float z) => new Vector3(x, y, -z);
 
+        // road_N.png heights (Roads.unity3d container order: Highway_0/1, Racetrack, Road, Tracks, Trail, White/Yellow) for UV repeat.
+        static readonly float[] TexHeight = { 128, 128, 256, 2, 256, 64, 256, 256, 256, 256 };
+
+        Material RoadMaterial3D(int index, bool concrete)
+        {
+            string p = ProjectSettings.GlobalizePath($"res://content/roads/road_{index}.png");
+            if (System.IO.File.Exists(p))
+            {
+                var img = new Image();
+                if (img.Load(p) == Error.Ok)
+                    return new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img), TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            }
+            return new StandardMaterial3D { AlbedoColor = concrete ? new Color(0.34f, 0.34f, 0.35f) : new Color(0.45f, 0.37f, 0.28f), Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+        }
+
         public void LoadFromEnvironment(string envDir)
         {
             var mats = ParseRoadsDat(Path.Combine(envDir, "Roads.dat"));
@@ -28,19 +43,10 @@ namespace UnturnedGodot
             foreach (var r in roads)
             {
                 if (r.Joints.Count < 2 || r.Material < 0 || r.Material >= mats.Count) continue;
-                var mesh = BuildRoadMesh(r, mats[r.Material]);
+                float texH = r.Material < TexHeight.Length ? TexHeight[r.Material] : 256f;
+                var mesh = BuildRoadMesh(r, mats[r.Material], texH);
                 if (mesh == null) continue;
-                bool concrete = mats[r.Material].Concrete;
-                var mi = new MeshInstance3D
-                {
-                    Mesh = mesh,
-                    MaterialOverride = new StandardMaterial3D
-                    {
-                        AlbedoColor = concrete ? new Color(0.34f, 0.34f, 0.35f) : new Color(0.45f, 0.37f, 0.28f),
-                        Roughness = 1f,
-                        CullMode = BaseMaterial3D.CullModeEnum.Disabled
-                    }
-                };
+                var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = RoadMaterial3D(r.Material, mats[r.Material].Concrete) };
                 AddChild(mi);
                 built++;
             }
@@ -111,7 +117,7 @@ namespace UnturnedGodot
             return Bezier(s.Vertex, s.Vertex + s.Tan1, e.Vertex + e.Tan0, e.Vertex, t);
         }
 
-        ArrayMesh BuildRoadMesh(RoadData r, RoadMat mat)
+        ArrayMesh BuildRoadMesh(RoadData r, RoadMat mat, float texHeight)
         {
             // RoadMaterial.cs: the 'width' field is MISLEADINGLY named -- it's already the HALF-width of the flat
             // section (HalfWidth=width). Likewise 'depth' IS the half-vertical-size (HalfVerticalSize=depth). Do NOT halve.
@@ -123,7 +129,7 @@ namespace UnturnedGodot
 
             var rowV = new List<Vector3[]>();   // per cross-section: 4 verts
             var rowUV = new List<float>();       // per cross-section: V coord (distance)
-            float invRepeat = mat.Height != 0f ? mat.Height / 256f : 1f / 256f;  // src UV = texture.height/mat.height; assume 256px tex
+            float invRepeat = mat.Height != 0f ? mat.Height / texHeight : 1f / texHeight;  // src: UV repeats every texture.height/mat.height world units
             float distance = 0f;
             Vector3 prev = Vector3.Zero;
             bool first = true;
