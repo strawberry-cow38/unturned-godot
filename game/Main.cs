@@ -991,6 +991,8 @@ namespace UnturnedGodot
                 player.LoadGun("res://content/eaglefire.dat");
                 AddChild(player);
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
+                player.Spawn = player.GlobalPosition;   // respawn on this above-ground point, NOT the default (0,1,0) which is underground on PEI
+                if (System.Environment.GetEnvironmentVariable("UG_OOBTEST") == "1") player.GlobalPosition = new Vector3(sx, -2000f, sz);   // test hook: drop below the map -> should trip the OOB kill
                 { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
                 var jeep = Vehicle.BuildByName("jeep");
                 AddChild(jeep);
@@ -1050,6 +1052,7 @@ namespace UnturnedGodot
                 }
             float gy = terr.SampleHeight(sx, sz);
             player.GlobalPosition = new Vector3(sx, gy + 3f, sz);   // drop 3 m onto the real ground
+            player.Spawn = player.GlobalPosition;   // respawn above ground, NOT the default (0,1,0) which is underground on PEI
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _peiPlayer = player;
 
