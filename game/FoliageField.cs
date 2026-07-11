@@ -58,24 +58,34 @@ namespace UnturnedGodot
             using var br = new BinaryReader(File.OpenRead(binPath));
             int count = br.ReadInt32();
             if (count <= 0) { GD.Print($"[foliage] {nm}: 0 instances"); return; }
-            var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = count };
+            // Bucket into spatial CELLS -> one MultiMesh per cell, each with a distance cutoff, so foliage far from
+            // the camera stops rendering (master: cull grass far from the player). Trees aren't foliage, untouched.
+            const float Cell = 96f, CullRange = 170f;
+            var byCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<Transform3D>>();
             for (int i = 0; i < count; i++)
             {
-                // 12 floats: Unity basis cols X(x0,x1,x2) Y(y0,y1,y2) Z(z0,z1,z2) then pos. Blob bakes per-instance
-                // random Y-spin + scale. Unity(LH)->Godot(RH) = negate Z on each axis' z-component + on pos.z.
+                // 12 floats: Unity basis cols X/Y/Z then pos. Unity(LH)->Godot(RH) = negate Z on each axis' z + pos.z.
                 float x0 = br.ReadSingle(), x1 = br.ReadSingle(), x2 = br.ReadSingle();
                 float y0 = br.ReadSingle(), y1 = br.ReadSingle(), y2 = br.ReadSingle();
                 float z0 = br.ReadSingle(), z1 = br.ReadSingle(), z2 = br.ReadSingle();
                 float px = br.ReadSingle(), py = br.ReadSingle(), pz = br.ReadSingle();
-                var basis = new Basis(
-                    new Vector3(x0, x1, -x2),
-                    new Vector3(y0, y1, -y2),
-                    new Vector3(-z0, -z1, z2));
-                mm.SetInstanceTransform(i, new Transform3D(basis, new Vector3(px, py, -pz)));
+                var basis = new Basis(new Vector3(x0, x1, -x2), new Vector3(y0, y1, -y2), new Vector3(-z0, -z1, z2));
+                var pos = new Vector3(px, py, -pz);
+                var key = ((int)Mathf.Floor(pos.X / Cell), (int)Mathf.Floor(pos.Z / Cell));
+                if (!byCell.TryGetValue(key, out var lst)) { lst = new System.Collections.Generic.List<Transform3D>(); byCell[key] = lst; }
+                lst.Add(new Transform3D(basis, pos));
             }
-            AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });   // foliage never casts shadows (source: Cast_Shadows false)
-            GD.Print($"[foliage] {nm}: {count} instances (MultiMesh, 1 draw call)");
+            foreach (var kv in byCell)
+            {
+                var lst = kv.Value;
+                var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
+                for (int k = 0; k < lst.Count; k++) mm.SetInstanceTransform(k, lst[k]);
+                AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    VisibilityRangeEnd = CullRange,   // cell culls when the camera is beyond CullRange from it
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+            }
+            GD.Print($"[foliage] {nm}: {count} instances in {byCell.Count} cells (culled beyond {CullRange}m)");
         }
     }
 }
