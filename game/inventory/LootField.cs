@@ -16,7 +16,7 @@ namespace UnturnedGodot
         public Node3D Player;
         public Terrain Terr;
 
-        struct Pt { public byte Type; public float X, Z; }              // world X, Z already negate-Z'd
+        struct Pt { public byte Type; public float X, Y, Z; }           // world X, Z (negate-Z'd); Y = authored spawn height
         readonly List<Pt> _pts = new();
         readonly Dictionary<int, WorldItem> _live = new();             // point index -> live drop
         readonly HashSet<int> _taken = new();                          // picked up: don't respawn
@@ -82,9 +82,9 @@ namespace UnturnedGodot
                     {
                         byte type = b[o++];
                         float px = System.BitConverter.ToSingle(b, o); o += 4;
-                        o += 4;                                     // skip point.y (we sit on the port's terrain)
+                        float py = System.BitConverter.ToSingle(b, o); o += 4;   // authored spawn height (floors/shelves/ground)
                         float pz = System.BitConverter.ToSingle(b, o); o += 4;
-                        _pts.Add(new Pt { Type = type, X = px, Z = -pz });   // negate-Z
+                        _pts.Add(new Pt { Type = type, X = px, Y = py, Z = -pz });   // negate-Z (Y preserved)
                     }
                 }
         }
@@ -132,7 +132,8 @@ namespace UnturnedGodot
                 if (_live.Count >= MaxLive) break;
                 int id = Roll(idx, p.Type);
                 var item = id >= 0 ? new Item((ushort)id) : null;
-                var pos = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z) + 0.05f, p.Z);
+                float gy = Mathf.Max(p.Y, Terr.SampleHeight(p.X, p.Z));   // authored height (floors/shelves); never below the port's terrain
+                var pos = new Vector3(p.X, gy + 0.05f, p.Z);
                 _live[idx] = WorldItem.Spawn(this, item, pos, _tblColor[p.Type], _tblName[p.Type]);
             }
         }
