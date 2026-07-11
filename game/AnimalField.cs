@@ -22,12 +22,13 @@ namespace UnturnedGodot
         const float SpawnR = 130f, DespawnR = 165f;
         const int MaxLive = 36;
 
-        // animal id -> (rig json name, body tint, foot offset so the feet sit on the terrain)
-        static readonly Dictionary<ushort, (string rig, Color tint, float foot)> Kinds = new()
+        // animal id -> (rig json name, real _MainTex from the bundle, foot offset so the feet sit on the terrain).
+        // Cow = a 32x32 B&W Holstein texture; deer/pig = small palettes -> the accurate animal colours (white tint = show as-is).
+        static readonly Dictionary<ushort, (string rig, string tex, float foot)> Kinds = new()
         {
-            { 1, ("deer", new Color(0.50f, 0.35f, 0.22f), 0.70f) },
-            { 4, ("pig",  new Color(0.82f, 0.58f, 0.58f), 0.22f) },
-            { 6, ("cow",  new Color(0.56f, 0.47f, 0.40f), 0.52f) },
+            { 1, ("deer", "Animal_Deer_tex.png", 0.70f) },
+            { 4, ("pig",  "Animal_Pig_tex.png",  0.22f) },
+            { 6, ("cow",  "Animal_Cow_tex.png",  0.52f) },
         };
 
         public void LoadFromPei(string peiRoot)
@@ -93,7 +94,7 @@ namespace UnturnedGodot
                 uint h = Hash((uint)idx + 0x51ed2701u);
                 ushort id = ids[(int)(h % (uint)ids.Length)];        // deterministic deer/pig/cow pick
                 if (!Kinds.TryGetValue(id, out var def)) continue;
-                var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", def.tint, false, null, null);
+                var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
                 if (rc == null) continue;
                 AddChild(rc);
                 rc.RotationDegrees = new Vector3(0, (h >> 8) % 360u, 0);
