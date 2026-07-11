@@ -1132,6 +1132,9 @@ namespace UnturnedGodot
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_TOWNSPAWN") == "1") { sx = focus.X; sz = focus.Z; }   // demo: spawn in the busiest town (near zombies) instead of open grass
                 if (System.Environment.GetEnvironmentVariable("UG_LHSPAWN") == "1") { sx = 247.452f; sz = -792.643f; }   // demo: spawn at the PEI lighthouse (prop-orientation check)
+                { var _ox = System.Environment.GetEnvironmentVariable("UG_SPAWNX"); var _oz = System.Environment.GetEnvironmentVariable("UG_SPAWNZ");   // spawn at arbitrary godot XZ (e.g. a named location node) for town orbits
+                  if (_ox != null && float.TryParse(_ox, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _px)) sx = _px;
+                  if (_oz != null && float.TryParse(_oz, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _pz)) sz = _pz; }
                 CharacterModel.LoadBundled();
                 var player = new PlayerController { CaptureMouse = true };
                 player.LoadGun("res://content/eaglefire.dat");
@@ -1240,7 +1243,7 @@ namespace UnturnedGodot
                     AddChild(lcam);
                     var lb = player.GlobalPosition;   // spawned at the lighthouse base
                     if (System.Environment.GetEnvironmentVariable("UG_ORBIT") == "1")   // orbit the prop (showcase video) instead of a static frame
-                        AddChild(new OrbitCam { Cam = lcam, Center = lb + new Vector3(0f, 20f, 0f), Radius = 58f, VOffset = 10f, DegPerFrame = 2f });
+                        AddChild(new OrbitCam { Cam = lcam, Center = lb });   // radius/height/center-lift via UG_ORBITR/UG_ORBITH/UG_ORBITCY
                     else
                     {
                         lcam.Position = lb + new Vector3(46f, 30f, 46f);
