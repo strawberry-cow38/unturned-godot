@@ -1301,6 +1301,12 @@ namespace UnturnedGodot
                     rf.LoadFromEnvironment(_mapRoot + @"\Environment");
                     AddChild(rf);
                 }
+                // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
+                {
+                    var ff = new FoliageField();
+                    AddChild(ff);
+                    ff.LoadGrass();
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
