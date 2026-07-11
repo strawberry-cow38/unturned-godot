@@ -495,6 +495,11 @@ namespace UnturnedGodot
                 MeleeAttack();        // melee swing at a zombie in reach
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 ThrowGrenade();       // throw a grenade
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.P, Echo: false })
+            {
+                WorldItem.ShowLabels = !WorldItem.ShowLabels;                       // P: toggle ALL item ESP name tags
+                GetTree().CallGroup("esp_labels", "set_visible", WorldItem.ShowLabels);
+            }
             else if (@event is InputEventKey { Keycode: Key.T, Echo: false } tKey)
             {
                 if (AttachMenu != null)   // T (hold): show the weapon-attachment menu while held, release to close

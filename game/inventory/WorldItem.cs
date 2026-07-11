@@ -12,6 +12,7 @@ namespace UnturnedGodot
         public Item Item;
         public Color? FallbackColor;   // unknown-id loot (no registered asset): tint by its spawn TABLE instead of white
         public string FallbackName;    // ...and label by the table name (e.g. "Military Canada", "Food")
+        public static bool ShowLabels; // P toggles ALL item ESP name tags on/off (off by default; see PlayerController Key.P)
         double _t;
         MeshInstance3D _box;
 
@@ -47,8 +48,10 @@ namespace UnturnedGodot
                 NoDepthTest = true,
                 FontSize = 64,
                 OutlineSize = 10,
+                Visible = ShowLabels,   // ESP name tag -- hidden until P toggles it on
             };
             AddChild(label);
+            label.AddToGroup("esp_labels");   // PlayerController Key.P flips visibility on the whole group
         }
 
         public override void _Process(double delta)
