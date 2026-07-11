@@ -1239,8 +1239,13 @@ namespace UnturnedGodot
                     var lcam = new Camera3D { Current = true, Fov = 55f, Far = 20000f };
                     AddChild(lcam);
                     var lb = player.GlobalPosition;   // spawned at the lighthouse base
-                    lcam.Position = lb + new Vector3(46f, 30f, 46f);
-                    lcam.LookAt(lb + new Vector3(0f, 22f, 0f), Vector3.Up);
+                    if (System.Environment.GetEnvironmentVariable("UG_ORBIT") == "1")   // orbit the prop (showcase video) instead of a static frame
+                        AddChild(new OrbitCam { Cam = lcam, Center = lb + new Vector3(0f, 20f, 0f), Radius = 58f, VOffset = 10f, DegPerFrame = 2f });
+                    else
+                    {
+                        lcam.Position = lb + new Vector3(46f, 30f, 46f);
+                        lcam.LookAt(lb + new Vector3(0f, 22f, 0f), Vector3.Up);
+                    }
                 }
                 GetWindow().Mode = Window.ModeEnum.Maximized;
                 GD.Print($"[PEI] playable: spawned on grass ({sx:0},{sz:0}); WASD move, E enter jeep, drive PEI");
