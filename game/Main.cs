@@ -900,6 +900,7 @@ namespace UnturnedGodot
             }
             var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
             var folCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();   // separate tree-leaf meshes (own leaf material)
+            var shapeCache = new System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D>();   // one trimesh collider per unique prop mesh, shared across instances
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
             StandardMaterial3D MatFor(string nm)
             {
@@ -950,6 +951,11 @@ namespace UnturnedGodot
                     folCache[name] = fmesh;
                 }
                 if (fmesh != null) AddChild(new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos) });
+                if (_peiPlayable)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
+                {
+                    if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
+                    if (shp != null) { var body = new StaticBody3D { Transform = new Transform3D(basis, gpos) }; body.AddChild(new CollisionShape3D { Shape = shp }); AddChild(body); }
+                }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
                 cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;
