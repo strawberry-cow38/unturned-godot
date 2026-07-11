@@ -1162,6 +1162,12 @@ namespace UnturnedGodot
                     loot.LoadFromPei(_mapRoot);
                     AddChild(loot);
                 }
+                // WILDLIFE: Spawns/Fauna.dat animal points (deer/pig/cow), streamed as rigged RiggedCharacters (AnimalField).
+                {
+                    var animals = new AnimalField { Player = player, Terr = terr };
+                    animals.LoadFromPei(_mapRoot);
+                    AddChild(animals);
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };

@@ -226,17 +226,18 @@ namespace UnturnedGodot
 
         static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
-        static RigData _shared;
+        static readonly System.Collections.Generic.Dictionary<string, RigData> _rigCache = new();   // per-path (player/deer/pig/cow rigs coexist)
         // Parse rig.json once, reuse the data for every character built (20 zombies shouldn't reparse 600KB).
         public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false, string albedoTexPath = null, string faceTexPath = null)
         {
-            if (_shared == null)
+            if (!_rigCache.TryGetValue(resPath, out var rigData))
             {
                 using var f = FileAccess.Open(resPath, FileAccess.ModeFlags.Read);
                 if (f == null) { GD.PrintErr($"[rig] cannot open {resPath}"); return null; }
-                _shared = JsonSerializer.Deserialize<RigData>(f.GetAsText(), JsonOpts);
+                rigData = JsonSerializer.Deserialize<RigData>(f.GetAsText(), JsonOpts);
+                _rigCache[resPath] = rigData;
             }
-            return BuildFrom(_shared, tint, armsOnly, albedoTexPath, faceTexPath);
+            return BuildFrom(rigData, tint, armsOnly, albedoTexPath, faceTexPath);
         }
 
         public MeshInstance3D Body { get; private set; }
