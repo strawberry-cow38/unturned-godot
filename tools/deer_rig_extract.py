@@ -159,8 +159,37 @@ faces=[]
 for k in range(0,len(tris),3):
     a,b,c=tris[k],tris[k+1],tris[k+2]; faces.extend([a,c,b])
 
+# ---------- animation clips (legacy Animation component; bind-pose Skeleton already carries the -90X so NO root-neutralise) ----------
+def X(v): return v.X if hasattr(v,'X') else v.x
+def Y(v): return v.Y if hasattr(v,'Y') else v.y
+def Z(v): return v.Z if hasattr(v,'Z') else v.z
+def W(v): return v.W if hasattr(v,'W') else v.w
+def find_anim(t, depth=0):
+    if t is None or depth>9: return None
+    go=t.m_GameObject.read()
+    for c in cl(go):
+        if tn(rd(c))=="Animation": return rd(c)
+    for ch in getattr(t,"m_Children",[]):
+        r=find_anim(ch.read(),depth+1)
+        if r: return r
+    return None
+animobj=find_anim(gtf(obj.read())); anims={}
+for pp in (getattr(animobj,'m_Animations',[]) or []):
+    try: clip=pp.read()
+    except Exception: continue
+    tracks={}
+    for rcu in clip.m_RotationCurves:
+        tracks.setdefault(rcu.path.split('/')[-1],{})['rot']=[[k.time,-X(k.value),-Y(k.value),Z(k.value),W(k.value)] for k in rcu.curve.m_Curve]
+    for pcu in clip.m_PositionCurves:
+        tracks.setdefault(pcu.path.split('/')[-1],{})['pos']=[[k.time,X(k.value),Y(k.value),-Z(k.value)] for k in pcu.curve.m_Curve]
+    for scu in clip.m_ScaleCurves:
+        tracks.setdefault(scu.path.split('/')[-1],{})['scale']=[[k.time,X(k.value),Y(k.value),Z(k.value)] for k in scu.curve.m_Curve]
+    length=max([arr[-1][0] for d in tracks.values() for arr in d.values() if arr]+[0.0])
+    anims[clip.m_Name]={'fps':float(getattr(clip,'m_SampleRate',30.0)),'length':length,'loop':(clip.m_Name!='Startle'),'tracks':tracks}
+print("  clips:", {k:round(v['length'],2) for k,v in anims.items()})
+
 rig={'vcount':VC,'positions':positions,'normals':normals,'uvs':uvs,'skin_index':sk_idx,'skin_weight':sk_w,
-     'faces':faces,'bones':bones,'skin':skin,'anims':{},'ragdoll':{},'arms':None}
+     'faces':faces,'bones':bones,'skin':skin,'anims':anims,'ragdoll':{},'arms':None}
 open(os.path.join(OUT,'%s_rig.json'%NAME),'w').write(json.dumps(rig))
 print("wrote %s_rig.json: %d verts, %d bones, %d skin binds, %d tris"%(NAME,VC,len(bones),len(skin),len(faces)//3))
 print("bone tree:",[(b['name'],b['parent']) for b in bones])

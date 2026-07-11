@@ -30,6 +30,8 @@ namespace UnturnedGodot
             { 4, ("pig",  "Animal_Pig_tex.png",  0.22f) },
             { 6, ("cow",  "Animal_Cow_tex.png",  0.52f) },
         };
+        // stationary animals loop an IN-PLACE clip (graze/idle/glance) so the herd looks alive; Walk/Run wait for wander
+        static readonly string[] Ambient = { "Idle", "Eat", "Glance_0", "Idle", "Eat", "Glance_1" };
 
         public void LoadFromPei(string peiRoot)
         {
@@ -99,6 +101,7 @@ namespace UnturnedGodot
                 AddChild(rc);
                 rc.RotationDegrees = new Vector3(0, (h >> 8) % 360u, 0);
                 rc.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z) + def.foot, p.Z);
+                rc.Play(Ambient[(int)((h >> 16) % (uint)Ambient.Length)]);   // natural in-place ambient loop per animal
                 _live[idx] = rc;
             }
             if (!_animCam && _live.Count > 0 && System.Environment.GetEnvironmentVariable("UG_ANIMALSPAWN") == "1")   // demo: frame the first live animal
