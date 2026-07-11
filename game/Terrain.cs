@@ -45,17 +45,15 @@ void fragment() {
     vec4 w0 = texture(splat0, UV);
     vec4 w1 = texture(splat1, UV);
     vec2 tuv = wpos.xz / tileWorld;
-    vec3 c = vec3(0.0);
-    c += w0.r * texture(albedos, vec3(tuv, 0.0)).rgb;
-    c += w0.g * texture(albedos, vec3(tuv, 1.0)).rgb;
-    c += w0.b * texture(albedos, vec3(tuv, 2.0)).rgb;
-    c += w0.a * texture(albedos, vec3(tuv, 3.0)).rgb;
-    c += w1.r * texture(albedos, vec3(tuv, 4.0)).rgb;
-    c += w1.g * texture(albedos, vec3(tuv, 5.0)).rgb;  // layer 5 = real sand (seabed, shown through the translucent water plane)
-    c += w1.b * texture(albedos, vec3(tuv, 6.0)).rgb;
-    c += w1.a * texture(albedos, vec3(tuv, 7.0)).rgb;
-    float wsum = w0.r + w0.g + w0.b + w0.a + w1.r + w1.g + w1.b + w1.a;
-    ALBEDO = c / max(wsum, 0.001);
+    // winner-take-all: pick the DOMINANT splat layer per pixel -> HARD biome borders. The splat is still
+    // sampled bilinear so the border follows the smooth contour (not blocky 4u squares). Src does a linear
+    // weighted blend (Landscapes/LinearTransition/FirstPass SplatmapMix); this is the crisp classic override.
+    float ws[8];
+    ws[0] = w0.r; ws[1] = w0.g; ws[2] = w0.b; ws[3] = w0.a;
+    ws[4] = w1.r; ws[5] = w1.g; ws[6] = w1.b; ws[7] = w1.a;
+    int best = 0; float bw = ws[0];
+    for (int i = 1; i < 8; i++) { if (ws[i] > bw) { bw = ws[i]; best = i; } }
+    ALBEDO = texture(albedos, vec3(tuv, float(best))).rgb;
     ROUGHNESS = 1.0;
 }
 ";
