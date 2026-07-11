@@ -113,9 +113,11 @@ namespace UnturnedGodot
 
         ArrayMesh BuildRoadMesh(RoadData r, RoadMat mat)
         {
-            float halfWidth = mat.Width * 0.5f;
-            float depth = mat.Depth;
-            float halfDepth = depth * 0.5f;
+            // RoadMaterial.cs: the 'width' field is MISLEADINGLY named -- it's already the HALF-width of the flat
+            // section (HalfWidth=width). Likewise 'depth' IS the half-vertical-size (HalfVerticalSize=depth). Do NOT halve.
+            float halfWidth = mat.Width;
+            float halfVerticalSize = mat.Depth;
+            float verticalSize = halfVerticalSize * 2f;
             float offset = mat.Offset;
             int segCount = r.IsLoop ? r.Joints.Count : r.Joints.Count - 1;
 
@@ -146,10 +148,10 @@ namespace UnturnedGodot
                     pos.Y += offset;
 
                     var cs = new Vector3[4];
-                    cs[0] = pos + side * (halfWidth + depth) - normal * halfDepth;
-                    cs[1] = pos + side * halfWidth + normal * halfDepth;
-                    cs[2] = pos - side * halfWidth + normal * halfDepth;
-                    cs[3] = pos - side * (halfWidth + depth) - normal * halfDepth;
+                    cs[0] = pos + side * (halfWidth + verticalSize) - normal * halfVerticalSize;
+                    cs[1] = pos + side * halfWidth + normal * halfVerticalSize;
+                    cs[2] = pos - side * halfWidth + normal * halfVerticalSize;
+                    cs[3] = pos - side * (halfWidth + verticalSize) - normal * halfVerticalSize;
 
                     if (!first) distance += pos.DistanceTo(prev);
                     prev = pos; first = false;
