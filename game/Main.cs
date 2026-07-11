@@ -904,6 +904,10 @@ namespace UnturnedGodot
                 },
                 AmbientLightSource = Godot.Environment.AmbientSource.Sky,    // natural sky-tinted fill (replaces the flat grey ambient)
                 AmbientLightEnergy = 0.9f,
+                FogEnabled = true,                                          // subtle distance haze -> far terrain/ocean fades (Unturned-like)
+                FogLightColor = new Color(0.78f, 0.84f, 0.90f),             // pale, matches the hazy horizon
+                FogDensity = 0.0006f,
+                FogSkyAffect = 0f,                                          // keep the sky gradient crisp; only fog the geometry
             };
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true, SkyMode = DirectionalLight3D.SkyModeEnum.LightAndSky });
