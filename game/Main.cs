@@ -1229,6 +1229,12 @@ namespace UnturnedGodot
                     animals.LoadFromPei(_mapRoot);
                     AddChild(animals);
                 }
+                // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
+                {
+                    var rf = new RoadField { Terr = terr };
+                    rf.LoadFromEnvironment(_mapRoot + @"\Environment");
+                    AddChild(rf);
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
