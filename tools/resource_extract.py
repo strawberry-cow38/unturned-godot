@@ -76,15 +76,23 @@ def collect(tr, M, out):
         ch = by_id.get(c["m_PathID"])
         if ch: collect(ch, Ml, out)
 def bake_one(mesh, M, path):
-    s = mesh.read().export(); V, VT, F = [], [], []
+    s = mesh.read().export(); V, VT, VN, F = [], [], [], []
+    R = M[:3, :3]   # rotation(+uniform scale); for normals we renormalize after, so this is correct for tree TRS
     for ln in s.splitlines():
-        if ln.startswith("v "):
-            _, a, b, c = ln.split()[:4]; w = M @ np.array([float(a), float(b), float(c), 1.0]); V.append((w[0], w[1], w[2]))
-        elif ln.startswith("vt "): pp = ln.split(); VT.append((pp[1], pp[2]))
-        elif ln.startswith("f "): F.append(ln.split()[1:])
+        t = ln.split()
+        if not t: continue
+        if t[0] == "v":
+            w = M @ np.array([float(t[1]), float(t[2]), float(t[3]), 1.0]); V.append((w[0], w[1], w[2]))
+        elif t[0] == "vt": VT.append((t[1], t[2]))
+        elif t[0] == "vn":
+            n = R @ np.array([float(t[1]), float(t[2]), float(t[3])])
+            L = (n[0]*n[0] + n[1]*n[1] + n[2]*n[2]) ** 0.5 or 1.0
+            VN.append((n[0]/L, n[1]/L, n[2]/L))
+        elif t[0] == "f": F.append(t[1:])
     with open(path, "w") as f:
         for (x, y, z) in V: f.write(f"v {x} {y} {z}\n")
         for (u, v) in VT: f.write(f"vt {u} {v}\n")
+        for (a, b, c) in VN: f.write(f"vn {a} {b} {c}\n")   # <-- the missing lines that broke the editor importer
         for face in F: f.write("f " + " ".join(face) + "\n")
     return len(V)
 
