@@ -425,10 +425,11 @@ namespace UnturnedGodot
                 var w = new VehicleWheel3D
                 {
                     Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = true,
-                    WheelRadius = s.WheelRadius, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
-                    // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
-                    // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
-                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = 6.0f,
+                    WheelRadius = s.WheelRadius, WheelRestLength = 0.32f, SuspensionTravel = 0.25f,
+                    // MUCH stiffer + higher max force so 900kg holds ride height instead of squatting onto the wheels (master
+                    // reported 2x); longer rest length lifts the stance + un-tucks the wheels from the fenders; heavy damping
+                    // keeps the stiff spring from bouncing; higher friction slip = more TRACTION (was sliding/understeering).
+                    SuspensionStiffness = 140f, SuspensionMaxForce = 24000f, DampingCompression = 4.8f, DampingRelaxation = 5.2f, WheelFrictionSlip = 6.0f,
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3(x < 0 ? -1f : 1f, 1f, 1f) };
