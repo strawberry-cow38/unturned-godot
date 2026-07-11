@@ -890,14 +890,23 @@ namespace UnturnedGodot
             float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
             var env = new Godot.Environment
             {
-                BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.5f, 0.6f, 0.75f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
-                AmbientLightEnergy = 0.85f,
+                BackgroundMode = Godot.Environment.BGMode.Sky,
+                Sky = new Sky
+                {
+                    SkyMaterial = new ProceduralSkyMaterial
+                    {
+                        SkyTopColor = new Color(0.30f, 0.50f, 0.78f),        // deep blue overhead
+                        SkyHorizonColor = new Color(0.75f, 0.83f, 0.90f),    // hazy pale-blue horizon
+                        GroundHorizonColor = new Color(0.75f, 0.83f, 0.90f),
+                        GroundBottomColor = new Color(0.56f, 0.59f, 0.55f),
+                        SunAngleMax = 24f, SunCurve = 0.12f,                 // soft sun disk at the directional light's heading
+                    },
+                },
+                AmbientLightSource = Godot.Environment.AmbientSource.Sky,    // natural sky-tinted fill (replaces the flat grey ambient)
+                AmbientLightEnergy = 0.9f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true, SkyMode = DirectionalLight3D.SkyModeEnum.LightAndSky });
             var terr = Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: true);
             AddChild(terr);
 
