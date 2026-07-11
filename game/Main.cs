@@ -15,6 +15,8 @@ namespace UnturnedGodot
         string _shotPath;
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
+        string _mapRoot = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI";   // --map=NAME switches the whole map (terrain + objects + spawns)
+        string _mapPlace = "placements.txt";   // per-map baked object placements in content/objects/ (non-PEI = placements_<key>.txt)
         int _frame;
         string _rigDir;                              // --rig=DIR : capture a frame strip here
         int[] _rigCaptureFrames = { 4, 12, 20, 28, 36, 44 };
@@ -74,6 +76,13 @@ namespace UnturnedGodot
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
+                else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
+                {
+                    string mn = arg["--map=".Length..];
+                    _mapRoot = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\" + mn;
+                    string key = System.Text.RegularExpressions.Regex.Replace(mn, "[^A-Za-z0-9]", "");
+                    _mapPlace = mn == "PEI" ? "placements.txt" : "placements_" + key + ".txt";
+                }
                 else if (arg == "--peiplay") peiplay = true;     // player standing/walking on real PEI terrain (with colliders)
                 else if (arg == "--invdemo") invdemo = true;
                 else if (arg == "--invsel") { invdemo = true; invsel = true; }
@@ -889,7 +898,7 @@ namespace UnturnedGodot
             };
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
-            var terr = Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: true);
+            var terr = Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: true);
             AddChild(terr);
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
@@ -932,7 +941,7 @@ namespace UnturnedGodot
             var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0;
-            foreach (var line in System.IO.File.ReadLines(dir + "placements.txt"))
+            foreach (var line in System.IO.File.ReadLines(dir + _mapPlace))
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
@@ -975,7 +984,7 @@ namespace UnturnedGodot
                 // source LevelPlayers.getSpawn picks a random NON-alt spawn). Falls back to the inland-grass scan if the file's missing.
                 bool gotSpawn = false;
                 {
-                    string ppath = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Spawns\Players.dat";
+                    string ppath = _mapRoot + @"\Spawns\Players.dat";
                     if (System.IO.File.Exists(ppath))
                     {
                         var pd = System.IO.File.ReadAllBytes(ppath); int pp = 0;
@@ -1031,7 +1040,7 @@ namespace UnturnedGodot
                 // Replaces the old Environment/Bounds.dat navmesh approximation (52 zombies) with the map's actual horde design.
                 {
                     var zf = new ZombieField { Player = player, Terr = terr };
-                    zf.LoadFromPei(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI");
+                    zf.LoadFromPei(_mapRoot);
                     AddChild(zf);
                 }
 
@@ -1039,7 +1048,7 @@ namespace UnturnedGodot
                 // per table [color 3B, name str, tableID u16 if v>3, u8 tierCount, per tier: name str, chance f32, u8 spawnCount, per spawn u16],
                 // u16 pointCount, per point: u8 type, Vector3, u8 angle*2). Place a vehicle per LAND spawn (car tables 0-5); jeep placeholder for all.
                 {
-                    string vpath = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Spawns\Vehicles.dat";
+                    string vpath = _mapRoot + @"\Spawns\Vehicles.dat";
                     int nv = 0;
                     if (System.IO.File.Exists(vpath))
                     {
@@ -1097,7 +1106,7 @@ namespace UnturnedGodot
                 // LOOT: PEI's 2470 item spawn points (Spawns/Jars.dat), region/distance-streamed around the player (LootField).
                 {
                     var loot = new LootField { Player = player, Terr = terr };
-                    loot.LoadFromPei(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI");
+                    loot.LoadFromPei(_mapRoot);
                     AddChild(loot);
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
