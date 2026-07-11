@@ -1036,12 +1036,53 @@ namespace UnturnedGodot
                     }
                     GD.Print($"[zombies] spawned {nz} across PEI's navmesh regions");
                 }
+
+                // VEHICLE SPAWNS: Spawns/Vehicles.dat (source LevelVehicles River: u8 ver, [SteamID if 1<v<3], u8 tableCount,
+                // per table [color 3B, name str, tableID u16 if v>3, u8 tierCount, per tier: name str, chance f32, u8 spawnCount, per spawn u16],
+                // u16 pointCount, per point: u8 type, Vector3, u8 angle*2). Place a vehicle per LAND spawn (car tables 0-5); jeep placeholder for all.
+                {
+                    string vpath = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Spawns\Vehicles.dat";
+                    int nv = 0;
+                    if (System.IO.File.Exists(vpath))
+                    {
+                        var vd = System.IO.File.ReadAllBytes(vpath); int vp = 0;
+                        byte U8() => vd[vp++];
+                        ushort U16() { var v = System.BitConverter.ToUInt16(vd, vp); vp += 2; return v; }
+                        float F32() { var v = System.BitConverter.ToSingle(vd, vp); vp += 4; return v; }
+                        void RStr() { int n = U8(); vp += n; }
+                        byte ver = U8();
+                        if (ver > 1 && ver < 3) vp += 8;   // SteamID
+                        byte tcount = U8();
+                        for (int t = 0; t < tcount; t++)
+                        {
+                            vp += 3; RStr();                 // color + table name
+                            if (ver > 3) vp += 2;            // tableID
+                            byte tiers = U8();
+                            for (int ti = 0; ti < tiers; ti++) { RStr(); vp += 4; byte sc = U8(); vp += sc * 2; }
+                        }
+                        ushort pcount = U16();
+                        for (int i = 0; i < pcount; i++)
+                        {
+                            byte type = U8();
+                            float px = F32(); vp += 4; float pz = F32();   // point.x, skip point.y, point.z
+                            float ang = U8() * 2f;
+                            if (type > 5) continue;          // skip air/boat/tank (6-11) until those models exist
+                            float gz = -pz;                  // Unity Z -> port negate-Z
+                            var veh = Vehicle.BuildByName("jeep");
+                            AddChild(veh);
+                            veh.GlobalPosition = new Vector3(px, terr.SampleHeight(px, gz) + 1.2f, gz);
+                            veh.RotationDegrees = new Vector3(0f, -ang, 0f);   // yaw (negate for the port's negate-Z convention)
+                            nv++;
+                        }
+                    }
+                    GD.Print($"[vehicles] spawned {nv} at PEI's car spawns (jeep placeholder for all types)");
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
                     AddChild(acam);
-                    var ctr = _zHave ? _zAim : player.GlobalPosition;   // look at a real zombie if one spawned
-                    acam.Position = ctr + new Vector3(0f, 22f, 20f);
+                    var ctr = player.GlobalPosition;   // overview of the spawn town: buildings + vehicles + zombies
+                    acam.Position = ctr + new Vector3(0f, 50f, 44f);
                     acam.LookAt(ctr, Vector3.Up);
                 }
                 GetWindow().Mode = Window.ModeEnum.Maximized;
