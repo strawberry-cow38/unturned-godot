@@ -1,0 +1,1937 @@
+2	Work Jeans	Pants	Common	2	2	Denim construction pants.
+3	Orange Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+4	Eaglefire	Gun	Rare	4	2	American assault rifle chambered in Military ammunition.
+5	Eaglefire Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+6	Military Magazine	Magazine	Rare	1	2	Low caliber military grade magazine. Designed to fit 30 rounds.
+7	Military Suppressor	Barrel	Epic	2	1	Military grade suppressor. Makes gunshots much quieter.
+8	Vertical Grip	Grip	Rare	1	2	Military grade vertical grip. Reduces vertical recoil.
+9	Red Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+10	Police Vest	Vest	Rare	2	2	Bullet resistant law enforcement gear.
+11	Red Bandana	Mask	Common	1	1	Tablecloth for your neck.
+13	Canned Beans	Food	Common	1	1	Very tactically packed for maximum taste.
+14	Bottled Water	Water	Common	1	1	Overpriced tap water.
+15	Medkit	Medical	Legendary	2	2	A box of hospital medical equipment suited for healing a wide variety of injuries.
+16	Camp Axe	Melee	Common	2	3	Simple logging axe.
+17	Military Drum	Magazine	Epic	2	2	Low caliber military grade drum. Designed to fit 100 rounds.
+18	Timberwolf	Gun	Legendary	5	2	Canadian sniper rifle chambered in Timberwolf ammunition.
+19	Timberwolf Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+20	Timberwolf Magazine	Magazine	Legendary	1	1	High caliber military grade <color=legendary>Timberwolf</color> magazine. Designed to fit 6 rounds.
+21	8x Scope	Sight	Rare	2	1	Rail mounted 8x zoom scope.
+22	Cross Scope	Sight	Uncommon	2	1	Rail mounted optic with electronic aiming cross.
+23	Tuxedo_Bottom_Gold	Pants	Common	2	2	
+24	Tuxedo_Top_Gold	Shirt	Common	3	2	
+25	Bowtie_Gold	Mask	Common	1	1	
+26	Monocle_Gold	Glasses	Common	1	1	
+27	Tophat	Hat	Common	2	2	British head embellishment.
+28	Portable Gas Can	Fuel	Uncommon	2	2	Sizeable can of gasoline.
+29	Maple Fortification	Barricade	Uncommon	1	2	Maple planks ideal for fortifying windows.
+30	Maple Barricade	Barricade	Uncommon	1	2	Maple shield ideal for barricading open spaces.
+31	Maple Floor	Structure	Uncommon	2	2	Maple floor. Beware of termites.
+32	Maple Doorway	Structure	Uncommon	2	1	Maple doorway. Beware of termites.
+33	Maple Wall	Structure	Uncommon	2	1	Maple wall. Beware of termites.
+34	Maple Window	Structure	Uncommon	2	1	Maple window. Beware of termites.
+35	Maple Roof	Structure	Uncommon	2	2	Maple roof. Beware of termites.
+36	Maple Pillar	Structure	Uncommon	1	2	Maple pillar. Beware of termites.
+37	Birch Log	Supply	Common	2	1	Recently cut, high quality birch.
+38	Birch Stick	Supply	Common	1	1	Recently cut, high quality birch.
+39	Maple Log	Supply	Uncommon	2	1	Recently cut, high quality maple.
+40	Maple Stick	Supply	Uncommon	1	1	Recently cut, high quality maple.
+41	Pine Log	Supply	Rare	2	1	Recently cut, high quality pine.
+42	Pine Stick	Supply	Rare	1	1	Recently cut, high quality pine.
+43	Low Caliber Military Ammunition Crate	Supply	Rare	2	2	Low caliber military grade ammunition crate. Designed to fit 40 rounds.
+44	Low Caliber Civilian Ammunition Box	Supply	Uncommon	2	2	Low caliber civilian grade ammunition box. Designed to fit 40 rounds.
+45	Birch Barricade	Barricade	Common	1	2	Birch shield ideal for barricading open spaces.
+46	Pine Barricade	Barricade	Rare	1	2	Pine shield ideal for barricading open spaces.
+47	Birch Fortification	Barricade	Common	1	2	Birch planks ideal for fortifying windows.
+48	Pine Fortification	Barricade	Rare	1	2	Pine planks ideal for fortifying windows.
+49	Birch Doorway	Structure	Common	2	1	Birch doorway. Beware of termites.
+50	Pine Doorway	Structure	Rare	2	1	Pine doorway. Beware of termites.
+51	Birch Floor	Structure	Common	2	2	Birch floor. Beware of termites.
+52	Pine Floor	Structure	Rare	2	2	Pine floor. Beware of termites.
+53	Birch Pillar	Structure	Common	1	2	Birch pillar. Beware of termites.
+54	Pine Pillar	Structure	Rare	1	2	Pine pillar. Beware of termites.
+55	Birch Roof	Structure	Common	2	2	Birch roof. Beware of termites.
+56	Pine Roof	Structure	Rare	2	2	Pine roof. Beware of termites.
+57	Birch Wall	Structure	Common	2	1	Birch wall. Beware of termites.
+58	Pine Wall	Structure	Rare	2	1	Pine wall. Beware of termites.
+59	Birch Window	Structure	Common	2	1	Birch window. Beware of termites.
+60	Pine Window	Structure	Rare	2	1	Pine window. Beware of termites.
+61	Maple Plank	Supply	Uncommon	1	2	Recently cut, high quality maple.
+62	Birch Plank	Supply	Common	1	2	Recently cut, high quality birch.
+63	Pine Plank	Supply	Rare	1	2	Recently cut, high quality pine.
+64	Rope	Supply	Common	1	1	Tough, strong hemp.
+65	Wire	Supply	Common	1	1	Extremely conductive wire, also sharp at the ends.
+66	Cloth	Supply	Common	1	1	Thick, warm fabric and thread.
+67	Metal Scrap	Supply	Common	1	1	Random assortment of metallic materials.
+68	Metal Sheet	Supply	Uncommon	2	2	Refined metal pounded into a sheet.
+69	Tape	Supply	Common	1	1	Sticky combination of ducts and ducks.
+70	Glue	Water	Common	1	1	Super strong liquidy binding substance.
+71	Nails	Supply	Common	1	1	Bang these into anything and it will stay that way.
+72	Metal Can	Supply	Common	1	1	Formerly used for storing preserved food.
+73	Raw Explosives	Supply	Uncommon	2	1	Highly explosive materials for use in explosives.
+74	Bricks	Supply	Common	1	1	Strong, reliable ceramic blocks.
+75	Chemicals	Water	Common	1	1	Bottle containing a potent mix of uranium and plutonium.
+76	Blowtorch	Melee	Uncommon	1	2	Staple mechanic tool for repairing vehicles.
+77	Canned Tomato Soup	Food	Common	1	1	Carefully sealed tomato paste.
+78	Canned Chicken Soup	Food	Common	1	1	Carefully sealed chicken and noodles.
+79	Canned Tuna	Food	Common	1	1	Carefully sealed tuna fish.
+80	Canned Cola	Water	Common	1	1	Water saturated with sugar.
+81	MRE	Food	Rare	1	2	Meal ready to eat.
+82	Chips	Food	Common	1	2	Extra crispy.
+83	Chocolate Bar	Food	Common	1	1	Contains the recommended daily dose of healthy nutritions.
+84	Candy Bar	Food	Common	1	1	Sugar compressed into a chewy bar.
+85	Granola Bar	Food	Common	1	1	Healthy mix of granola and dried fruit.
+86	Energy Bar	Food	Common	1	1	Questionable blend of chemicals and food.
+87	Canned Pasta	Food	Common	1	1	All kinds of noodles and tubes ready for making that sort of food.
+88	Canned Bacon	Food	Common	1	1	Greasy and somehow cooked.
+89	Canned Beef	Food	Common	1	1	Tender and somehow cooked.
+90	Canned Sardines	Food	Common	1	1	Carefully sealed sardine fish.
+91	Apple Juice	Water	Common	1	1	Tasty apple juice extract.
+92	Grape Juice	Water	Common	1	1	Tasty grape juice extract.
+93	Bottled Energy	Water	Uncommon	1	1	Questionable blend of chemicals and water.
+94	Bottled Coconut	Water	Uncommon	1	1	Water from the center of the coconut.
+95	Bandage	Medical	Uncommon	1	1	Medium quality cloth for stopping bleeding, and recovering.
+96	Splint	Medical	Uncommon	1	2	Brace designed to set a bone after fracturing.
+97	1911	Gun	Uncommon	2	2	American pistol chambered in 1911 ammunition.
+98	1911 Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>1911</color> magazine. Designed to fit 7 rounds.
+99	Cobra	Gun	Rare	2	2	Austrian pistol chambered in Cobra ammunition.
+100	Cobra Magazine	Magazine	Rare	1	1	Low caliber civilian grade <color=rare>Cobra</color> magazine. Designed to fit 20 rounds.
+101	Schofield	Gun	Uncommon	5	2	Russian battle rifle chambered in Schofield ammunition.
+102	Schofield Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+103	Schofield Clip	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Schofield</color> clip. Designed to fit 5 rounds.
+104	Fire Axe	Melee	Common	2	3	High power axe used by firefighters.
+105	Baseball Bat	Melee	Common	2	3	Tool for playing America's favorite sport.
+106	Hockey Stick	Melee	Common	2	3	Tool for playing Canada's favorite sport.
+107	Ace	Gun	Uncommon	2	2	American revolver chambered in Ace ammunition.
+108	Ace Clip	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Ace</color> clip. Designed to fit 6 rounds.
+109	Hawkhound	Gun	Uncommon	5	2	Canadian hunting rifle chambered in Hawkhound ammunition.
+110	Hawkhound Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+111	Hawkhound Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Hawkhound</color> magazine. Designed to fit 8 rounds.
+112	Bluntforce	Gun	Rare	5	2	American shotgun chambered in 12 Gauge Shells.
+113	12 Gauge Shells	Magazine	Rare	1	1	Civilian grade <color=rare>Bluntforce</color> shells.
+114	Bluntforce Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+115	Raw Ameberries	Water	Common	1	1	Very suspicious looking.
+116	PDW	Gun	Legendary	3	2	American carbine chambered in Military ammunition. Internally suppressed.
+117	Honeybadger_Barrel	Barrel	Common	2	1	
+118	PDW Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+119	Low Caliber Ranger Ammunition Box	Supply	Rare	2	2	Low caliber ranger grade ammunition box. Designed to fit 40 rounds.
+120	Kitchen Knife	Melee	Common	1	2	Cooking knife for chopping food.
+121	Military Knife	Melee	Rare	1	2	Military grade combat knife with serrated back edge for cutting tough objects.
+122	Zubeknakov	Gun	Epic	4	2	Russian assault rifle chambered in Ranger ammunition.
+123	Ranger Magazine	Magazine	Rare	1	2	Low caliber ranger grade magazine. Designed to fit 35 rounds.
+124	Zubeknakov Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+125	Ranger Drum	Magazine	Epic	2	2	Low caliber ranger grade drum. Designed to fit 75 rounds.
+126	Nykorev	Gun	Epic	5	2	Russian machine gun chambered in Nykorev ammunition.
+127	Nykorev Box	Magazine	Epic	2	2	Low caliber ranger grade <color=epic>Nykorev</color> box. Designed to fit 200 rounds.
+128	Nykorev Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+129	Snayperskya	Gun	Rare	5	2	Russian sharpshooter rifle chambered in Snayperskya ammunition.
+130	Snayperskya Magazine	Magazine	Rare	1	1	Low caliber ranger grade <color=rare>Snayperskya</color> magazine. Designed to fit 7 rounds.
+131	Snayperskya Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+132	Dragonfang	Gun	Epic	5	2	American machine gun chambered in Dragonfang ammunition.
+133	Dragonfang Box	Magazine	Epic	2	2	High caliber military grade <color=epic>Dragonfang</color> box. Designed to fit 150 rounds.
+134	Dragonfang Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+135	Golf Club	Melee	Common	2	3	Versatile iron used for striking golf balls.
+136	Sledgehammer	Melee	Uncommon	2	3	Construction tool for heavy duty work.
+137	Butcher Knife	Melee	Common	1	2	Meat knife for cutting meat.
+138	Hammer	Melee	Common	1	2	Construction tool for work around the house.
+139	Pocketknife	Melee	Uncommon	1	2	Fold out knife equipped with everything from a flamethrower to a comb.
+140	Butterfly Knife	Melee	Rare	1	2	Blade concealed between two rotating handles.
+141	Saw	Melee	Common	2	1	Construction tool for cutting lumber.
+142	Rake	Melee	Common	2	3	Yard tool for cleaning up leaves.
+143	Bipod	Grip	Epic	1	2	Military grade bipod. Reduces recoil and spread when prone.
+144	Ranger Suppressor	Barrel	Epic	2	1	Ranger grade suppressor. Makes gunshots much quieter.
+145	Horizontal Grip	Grip	Rare	2	1	Military grade horizontal grip. Reduces horizontal recoil.
+146	Dot Sight	Sight	Uncommon	2	1	Rail mounted sight with electronic aiming point.
+147	Halo Sight	Sight	Uncommon	2	1	Rail mounted sight with electronic aiming halo.
+148	Chevron Scope	Sight	Uncommon	2	1	Rail mounted optic with electronic aiming chevron.
+149	Military Barrel	Barrel	Rare	2	1	Military grade barrel. Increases accuracy.
+150	Military Muzzle	Barrel	Rare	1	1	Military grade muzzle. Hides muzzle flash, tracers and reduces recoil.
+151	Tactical Laser	Tactical	Rare	1	1	Side mounted tactical laser. Increases accuracy.
+152	Tactical Light	Tactical	Rare	1	1	Side mounted tactical light.
+153	7x Scope	Sight	Rare	2	1	Rail mounted 7x zoom scope.
+154	Orange Shirt	Shirt	Common	3	2	Moderate weather shirt.
+155	Orange T-Shirt	Shirt	Common	3	2	Warm weather tee.
+156	Orange Parka	Shirt	Common	3	2	Cold weather parka.
+157	Purple Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+158	Purple Shirt	Shirt	Common	3	2	Moderate weather shirt.
+159	Purple T-Shirt	Shirt	Common	3	2	Warm weather tee.
+160	Purple Parka	Shirt	Common	3	2	Cold weather parka.
+161	Green Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+162	Green Parka	Shirt	Common	3	2	Cold weather parka.
+163	Green Shirt	Shirt	Common	3	2	Moderate weather shirt.
+164	Green T-Shirt	Shirt	Common	3	2	Warm weather tee.
+165	Red Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+166	Red Parka	Shirt	Common	3	2	Cold weather parka.
+167	Red Shirt	Shirt	Common	3	2	Moderate weather shirt.
+168	Red T-Shirt	Shirt	Common	3	2	Warm weather tee.
+169	Yellow Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+170	Yellow Parka	Shirt	Common	3	2	Cold weather parka.
+171	Yellow Shirt	Shirt	Common	3	2	Moderate weather shirt.
+172	Yellow T-Shirt	Shirt	Common	3	2	Warm weather tee.
+173	Blue Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+174	Blue Parka	Shirt	Common	3	2	Cold weather parka.
+175	Blue Shirt	Shirt	Common	3	2	Moderate weather shirt.
+176	Blue T-Shirt	Shirt	Common	3	2	Warm weather tee.
+177	White Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+178	White Parka	Shirt	Common	3	2	Cold weather parka.
+179	White Shirt	Shirt	Common	3	2	Moderate weather shirt.
+180	White T-Shirt	Shirt	Common	3	2	Warm weather tee.
+181	Black Hoodie	Shirt	Common	3	2	Chilly weather hoodie.
+182	Black Parka	Shirt	Common	3	2	Cold weather parka.
+183	Black Shirt	Shirt	Common	3	2	Moderate weather shirt.
+184	Black T-Shirt	Shirt	Common	3	2	Warm weather tee.
+185	Black Bandana	Mask	Common	1	1	Tablecloth for your neck.
+186	Blue Bandana	Mask	Common	1	1	Tablecloth for your neck.
+187	Green Bandana	Mask	Common	1	1	Tablecloth for your neck.
+188	Orange Bandana	Mask	Common	1	1	Tablecloth for your neck.
+189	Purple Bandana	Mask	Common	1	1	Tablecloth for your neck.
+190	White Bandana	Mask	Common	1	1	Tablecloth for your neck.
+191	Yellow Bandana	Mask	Common	1	1	Tablecloth for your neck.
+192	Black Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+193	Blue Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+194	Green Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+195	Orange Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+196	Purple Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+197	Red Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+198	White Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+199	Yellow Toque	Hat	Common	2	2	Warm Canadian hat for the stormy winters.
+200	Black Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+201	Blue Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+202	Green Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+203	Orange Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+204	Purple Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+205	White Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+206	Yellow Daypack	Backpack	Common	2	2	Medium sized synthetic backpack.
+207	Outfit Jeans	Pants	Common	2	2	Denim day-to-day pants.
+208	Cowboy Jeans	Pants	Common	2	2	Denim wild west pants.
+209	Cargo Pants	Pants	Uncommon	2	2	High capacity synthetic pants for all weather.
+211	Plaid Shirt	Shirt	Uncommon	3	2	Perfect for cutting lumber in the wilderness.
+212	Khaki Pants	Pants	Common	2	2	British pants for maximum uniform.
+213	Corduroy Pants	Pants	Common	2	2	Also known for associating with bears.
+214	Trouser Pants	Pants	Common	2	2	Grey pants for any occasion.
+215	Black Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+216	Blue Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+217	Green Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+218	Orange Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+219	Purple Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+220	Red Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+221	White Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+222	Yellow Sweatervest	Vest	Common	2	2	Intellectual outer clothing.
+223	Police Top	Shirt	Uncommon	3	2	Law enforcement uniform shirt.
+224	Police Bottom	Pants	Uncommon	2	2	Law enforcement uniform pants.
+225	Police Cap	Hat	Uncommon	2	2	Law enforcement uniform cap.
+226	Khaki Shorts	Pants	Common	2	2	British shorts for maximum uniform.
+227	Cargo Shorts	Pants	Common	2	2	High capacity synthetic shorts for all weather.
+228	Corduroy Shorts	Pants	Common	2	2	Also known for associating with bears.
+229	Trouser Shorts	Pants	Common	2	2	Grey shorts for any occasion.
+230	Chef Top	Shirt	Uncommon	3	2	Cooking uniform shirt.
+231	Chef Bottom	Pants	Uncommon	2	2	Cooking uniform pants.
+232	Construction Top	Shirt	Uncommon	3	2	Construction uniform shirt.
+233	Firefighter Top	Shirt	Uncommon	3	2	Firefighting uniform shirt.
+234	Firefighter Bottom	Pants	Uncommon	2	2	Firefighting uniform pants.
+235	Ghillie Top	Shirt	Epic	3	2	Military foliage stealth shirt.
+236	Ghillie Bottom	Pants	Epic	2	2	Military foliage stealth pants.
+237	Ghillie Hood	Hat	Epic	2	2	Military foliage stealth hood.
+238	Ghillie Vest	Vest	Epic	2	2	Military foliage stealth vest.
+239	Chef Hat	Hat	Uncommon	2	2	Cooking uniform hat.
+240	Construction Helmet	Hat	Common	2	2	Construction headwear to prevent injury.
+241	Firefighter Helmet	Hat	Uncommon	2	2	Firefighting uniform hat.
+242	Farmer Top	Shirt	Uncommon	3	2	Trusty overalls for farming.
+243	Farmer Bottom	Pants	Uncommon	2	2	Trusty overalls for farming.
+244	Straw Hat	Hat	Uncommon	2	2	Trusty straw hat for farming.
+245	Black Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+246	Blue Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+247	Green Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+248	Orange Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+249	Purple Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+250	Red Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+251	White Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+252	Yellow Travelpack	Backpack	Common	2	2	Medium sized synthetic travel bag.
+253	Alicepack	Backpack	Epic	2	2	Large sized military cargo backpack.
+254	Fragmentation Grenade	Throwable	Rare	1	1	Military grade throwable fragmentation explosive.
+255	Blue Flare	Throwable	Common	1	1	Road flare for quickly lighting up an area.
+256	Green Flare	Throwable	Common	1	1	Road flare for quickly lighting up an area.
+257	Orange Flare	Throwable	Common	1	1	Road flare for quickly lighting up an area.
+258	Purple Flare	Throwable	Common	1	1	Road flare for quickly lighting up an area.
+259	Red Flare	Throwable	Common	1	1	Road flare for quickly lighting up an area.
+260	Yellow Flare	Throwable	Common	1	1	Road flare for quickly lighting up an area.
+261	Black Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+262	Blue Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+263	Green Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+264	Orange Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+265	Purple Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+266	Red Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+267	White Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+268	Yellow Smoke	Throwable	Uncommon	1	1	Military grade throwable smokescreen.
+269	Vaccine	Medical	Rare	1	2	Mixture of formulas to cure any illness.
+270	Raw Jazzberries	Water	Common	1	1	Very suspicious looking.
+271	Raw Rainberries	Water	Common	1	1	Very suspicious looking.
+272	Raw Viriberries	Water	Common	1	1	Very suspicious looking.
+273	Raw Gloomberries	Water	Common	1	1	Very suspicious looking.
+274	Raw Mayberries	Water	Common	1	1	Very suspicious looking.
+275	Raw Crimberries	Water	Common	1	1	Very suspicious looking.
+276	Flashlight	Melee	Common	1	2	Portable handheld lamp for nighttime exploration.
+277	Carjack	Tool	Uncommon	2	1	Tool for flipping cars out of stuck places. Not to be confused with robbery.
+278	Festive_Hat	Hat	Common	2	2	
+279	Festive_Top	Shirt	Common	3	2	
+280	Festive_Bottom	Pants	Common	2	2	
+281	Maple Door	Barricade	Uncommon	1	2	Maple door ideal for keeping out unwanted visitors.
+282	Birch Door	Barricade	Common	1	2	Birch door ideal for keeping out unwanted visitors.
+283	Pine Door	Barricade	Rare	1	2	Pine door ideal for keeping out unwanted visitors.
+284	Jail Door	Barricade	Epic	2	2	Jail door ideal for keeping in unwanted visitors.
+285	Metal Bar	Supply	Rare	1	1	Reinforced metal for strong cores.
+286	Vault Door	Barricade	Epic	2	2	Vault door ideal for keeping out unwanted robbers.
+287	Bars Fortification	Barricade	Epic	2	1	Metal bars ideal for fortifying windows.
+288	Black Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+289	Blue Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+290	Green Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+291	Orange Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+292	Purple Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+293	Red Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+294	White Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+295	Yellow Bedroll	Barricade	Common	2	1	Warm bed perfect for a campsite.
+296	16x Scope	Sight	Epic	2	1	Rail mounted 16x zoom scope.
+297	Grizzly	Gun	Legendary	5	2	American sniper rifle chambered in Grizzly ammunition.
+298	Grizzly Magazine	Magazine	Legendary	1	1	High caliber military grade <color=legendary>Grizzly</color> magazine. Designed to fit 5 rounds.
+299	Grizzly Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+300	Shadowstalker	Gun	Legendary	5	2	Prototype railgun chambered in Rail ammunition.
+301	Rail	Magazine	Legendary	1	1	Prototype grade <color=legendary>Shadowstalker</color> rail.
+302	Shadowstalker Scope	Sight	Legendary	2	1	Rail mounted Shadowstalker zoom scope.
+303	Prisoner Top	Shirt	Uncommon	3	2	Prison uniform shirt.
+304	Prisoner Bottom	Pants	Uncommon	2	2	Prison uniform pants.
+305	RCMP Bottom	Pants	Uncommon	2	2	Royal Canadian mountain police uniform pants.
+306	RCMP Top	Shirt	Uncommon	3	2	Royal Canadian mountain police uniform shirt.
+307	Forest Military Top	Shirt	Rare	3	2	Military uniform shirt.
+308	Forest Military Bottom	Pants	Rare	2	2	Military uniform pants.
+309	Forest Military Helmet	Hat	Rare	2	2	Military headwear to prevent injury.
+310	Forest Military Vest	Vest	Rare	2	2	Bullet proof military gear.
+311	Medic Top	Shirt	Uncommon	3	2	Medic uniform shirt.
+312	Medic Bottom	Pants	Uncommon	2	2	Medic uniform pants.
+313	RCMP Hat	Hat	Uncommon	2	2	Royal Canadian mountain police uniform hat.
+314	Grocer Top	Shirt	Uncommon	3	2	Trusty overalls for managing groceries.
+315	Grocer Bottom	Pants	Uncommon	2	2	Trusty overalls for managing groceries.
+316	Maple Stairs	Structure	Uncommon	2	2	Maple stairs. Beware of termites.
+317	Pine Stairs	Structure	Rare	2	2	Pine stairs. Beware of termites.
+318	Birch Stairs	Structure	Common	2	2	Birch stairs. Beware of termites.
+319	Maple Hole	Structure	Uncommon	2	2	Maple hole. Beware of termites.
+320	Pine Hole	Structure	Rare	2	2	Pine hole. Beware of termites.
+321	Birch Hole	Structure	Common	2	2	Birch hole. Beware of termites.
+322	Maple Ramp	Structure	Uncommon	2	2	Maple ramp. Beware of termites.
+323	Birch Ramp	Structure	Common	2	2	Birch ramp. Beware of termites.
+324	Pine Ramp	Structure	Rare	2	2	Pine ramp. Beware of termites.
+325	Maple Ladder	Barricade	Uncommon	1	2	Maple ladder ideal for keeping out unwanted visitors.
+326	Birch Ladder	Barricade	Common	1	2	Birch ladder ideal for keeping out unwanted visitors.
+327	Pine Ladder	Barricade	Rare	1	2	Pine ladder ideal for keeping out unwanted visitors.
+328	Locker	Storage	Epic	2	2	Locker for storing items.
+329	Carrot	Food	Common	1	1	Orange vegetable.
+330	Carrot Seed	Farm	Common	1	1	Ready for planting and eating.
+331	Planter	Barricade	Rare	2	1	Planting box perfect for raising crops of flowers.
+332	Fertilizer	Grower	Uncommon	1	2	Carefully disguised cow poop.
+333	Binoculars	Optic	Uncommon	2	1	Long range optics for keeping an eye out.
+334	Military Nightvision	Glasses	Epic	2	1	Brightness enhancing military grade goggles.
+335	Corn	Food	Common	1	2	Yellow vegetable.
+336	Corn Seed	Farm	Common	1	1	Ready for planting and eating.
+337	Canteen	Refill	Uncommon	2	2	Sizeable container of liquid.
+338	Lettuce	Food	Common	1	1	Green vegetable.
+339	Lettuce Seed	Farm	Common	1	1	Ready for planting and eating.
+340	Tomato	Food	Common	1	1	Red vegetable.
+341	Tomato Seed	Farm	Common	1	1	Ready for planting and eating.
+342	Potato	Food	Common	1	1	Brown vegetable.
+343	Potato Seed	Farm	Common	1	1	Ready for planting and eating.
+344	Wheat	Food	Common	1	2	Golden grass.
+345	Wheat Seed	Farm	Common	1	1	Ready for planting and eating.
+346	Crossbow	Gun	Uncommon	4	2	Crossbow chambered in Arrows.
+347	Arrow	Magazine	Uncommon	2	1	Hard to snap.
+348	Maple Arrow	Magazine	Common	2	1	Easy to snap.
+349	Crossbow Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+350	Crossbow_Barrel	Barrel	Common	2	1	
+351	Birch Arrow	Magazine	Common	2	1	Easy to snap.
+352	Pine Arrow	Magazine	Common	2	1	Easy to snap.
+353	Maple Bow	Gun	Common	4	2	Maple bow chambered in Arrows.
+354	Bow_Barrel	Barrel	Common	2	1	
+355	Birch Bow	Gun	Common	4	2	Birch bow chambered in Arrows.
+356	Pine Bow	Gun	Common	4	2	Pine bow chambered in Arrows.
+357	Compound Bow	Gun	Uncommon	4	2	Compound bow chambered in Arrows.
+358	Compound Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+359	Maple Torch	Barricade	Uncommon	1	2	Maple torch to provide a little bit of light.
+360	Birch Torch	Barricade	Common	1	2	Birch torch to provide a little bit of light.
+361	Pine Torch	Barricade	Rare	1	2	Pine torch to provide a little bit of light.
+362	Campfire	Barricade	Uncommon	2	1	Simple heat source for basic cooking. Don't step on it!
+363	Maplestrike	Gun	Epic	4	2	Canadian assault rifle chambered in Military ammunition.
+364	Maplestrike Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+365	Sandbag	Barricade	Uncommon	1	1	Sand bags for blocking bullets.
+366	Maple Crate	Storage	Uncommon	2	2	Maple crate for storing items.
+367	Birch Crate	Storage	Common	2	2	Birch crate for storing items.
+368	Pine Crate	Storage	Rare	2	2	Pine crate for storing items.
+369	Metal Floor	Structure	Epic	2	2	Metal floor. Beware of robotic termites.
+370	Metal Doorway	Structure	Epic	2	1	Metal doorway. Beware of robotic termites.
+371	Metal Wall	Structure	Epic	2	1	Metal wall. Beware of robotic termites.
+372	Metal Window	Structure	Epic	2	1	Metal window. Beware of robotic termites.
+373	Metal Roof	Structure	Epic	2	2	Metal roof. Beware of robotic termites.
+374	Metal Pillar	Structure	Epic	1	2	Metal pillar. Beware of robotic termites.
+375	Metal Stairs	Structure	Epic	2	2	Metal stairs. Beware of robotic termites.
+376	Metal Hole	Structure	Epic	2	2	Metal hole. Beware of robotic termites.
+377	Metal Ramp	Structure	Epic	2	2	Metal ramp. Beware of robotic termites.
+378	Metal Door	Barricade	Epic	1	2	Metal door ideal for keeping out unwanted visitors.
+379	Metal Ladder	Barricade	Epic	1	2	Metal ladder ideal for keeping out unwanted visitors.
+380	Masterkey	Gun	Uncommon	4	2	American shotgun chambered in 20 Gauge Shells.
+381	20 Gauge Shells	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>Masterkey</color> shells.
+382	Caltrop	Trap	Uncommon	1	1	Spiky trap.
+383	Maple Spikes	Trap	Uncommon	1	2	Spiky trap.
+384	Birch Spikes	Trap	Common	1	2	Spiky trap.
+385	Pine Spikes	Trap	Rare	1	2	Spiky trap.
+386	Barbed Wire	Trap	Uncommon	2	1	Spiky trap.
+387	Adrenaline	Medical	Rare	1	2	Suspicious concoction capable of increasing energy.
+388	Morphine	Medical	Rare	1	2	Powerful painkiller capable of forgetting even broken bones.
+389	Antibiotics	Medical	Rare	1	1	Magic pills for preventing disease and improving health.
+390	Painkillers	Medical	Uncommon	1	1	Magic pills for eliminating pain.
+391	Vitamins	Medical	Common	1	1	Various essential rocks and minerals.
+392	Purification Tablets	Medical	Common	1	1	Various purifying rocks and minerals.
+393	Rag	Medical	Common	1	1	Low quality cloth for stopping bleeding.
+394	Dressing	Medical	Rare	1	1	High quality cloth for stopping bleeding and starting a speedy recovery.
+395	Bloodbag	Medical	Epic	1	2	Bag of some A, B, AB, and O blood.
+396	Refined Ameberries	Water	Common	1	1	Slightly less suspicious looking.
+397	Refined Jazzberries	Water	Common	1	1	Slightly less suspicious looking.
+398	Refined Rainberries	Water	Common	1	1	Slightly less suspicious looking.
+399	Refined Viriberries	Water	Common	1	1	Slightly less suspicious looking.
+400	Refined Gloomberries	Water	Common	1	1	Slightly less suspicious looking.
+401	Refined Mayberries	Water	Common	1	1	Slightly less suspicious looking.
+402	Refined Crimberries	Water	Common	1	1	Slightly less suspicious looking.
+403	Suturekit	Medical	Epic	2	2	A bag of field medical equipment for emergency situations.
+404	Cough Syrup	Medical	Common	1	1	Foul tasting slop.
+405	Mechanic Top	Shirt	Uncommon	3	2	Repairing uniform shirt.
+406	Mechanic Bottom	Pants	Uncommon	2	2	Repairing uniform pants.
+407	Engineer Top	Shirt	Uncommon	3	2	Trusty overalls for driving trains.
+408	Engineer Bottom	Pants	Uncommon	2	2	Trusty overalls for driving trains.
+409	Aviators_Pilot	Glasses	Common	2	1	
+410	Black Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+411	Blue Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+412	Green Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+413	Orange Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+414	Purple Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+415	Red Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+416	White Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+417	Yellow Poncho	Vest	Common	2	2	Comfortable fuzzy blanket.
+418	Headphones	Mask	Common	2	1	
+419	Jacket_Pilot	Shirt	Common	3	2	
+420	Jacket_Biker	Shirt	Common	3	2	
+421	Suit Top	Shirt	Common	3	2	Boring tuxedo shirt.
+422	Suit Bottom	Pants	Common	2	2	Boring tuxedo pants.
+423	Engineer Hat	Hat	Uncommon	2	2	Trusty cap for driving trains.
+424	Fedora	Hat	Common	2	2	Hipster head embellishment.
+425	Black Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+426	Blue Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+427	Green Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+428	Orange Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+429	Purple Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+430	Red Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+431	White Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+432	Yellow Cap	Hat	Common	2	2	Shade providing American hat for watching sports.
+433	Forest Beret	Hat	Uncommon	2	2	Bill's.
+434	Black Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+435	Blue Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+436	Green Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+437	Orange Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+438	Purple Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+439	Red Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+440	White Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+441	Yellow Balaclava	Mask	Common	2	2	Sneakybeaky ninja hood.
+442	Maple Rampart	Structure	Uncommon	2	1	Maple rampart. Beware of termites.
+443	Maple Post	Structure	Uncommon	1	2	Maple post. Beware of termites.
+444	Birch Rampart	Structure	Common	2	1	Birch rampart. Beware of termites.
+445	Pine Rampart	Structure	Rare	2	1	Pine rampart. Beware of termites.
+446	Metal Rampart	Structure	Epic	2	1	Metal rampart. Beware of robotic termites.
+447	Birch Post	Structure	Common	1	2	Birch post. Beware of termites.
+448	Pine Post	Structure	Rare	1	2	Pine post. Beware of termites.
+449	Metal Post	Structure	Epic	1	2	Metal post. Beware of robotic termites.
+450	Maple Garage	Structure	Uncommon	2	1	Maple garage. Beware of termites.
+451	Maple Gate	Barricade	Uncommon	2	1	Maple gate ideal for keeping out unwanted visitors.
+452	Birch Garage	Structure	Common	2	1	Birch garage. Beware of termites.
+453	Pine Garage	Structure	Rare	2	1	Pine garage. Beware of termites.
+454	Metal Garage	Structure	Epic	2	1	Metal garage. Beware of robotic termites.
+455	Birch Gate	Barricade	Common	2	1	Birch gate ideal for keeping out unwanted visitors.
+456	Pine Gate	Barricade	Rare	2	1	Pine gate ideal for keeping out unwanted visitors.
+457	Metal Gate	Barricade	Epic	2	1	Metal gate ideal for keeping out unwanted visitors.
+458	Portable Generator	Generator	Rare	2	2	Electricity generator covering a small radius powered by fuel.
+459	Spotlight	Barricade	Rare	2	2	Electricity powered wide angle light.
+460	Bread	Food	Uncommon	1	1	Perfect blanket for tasty food.
+461	Tuna Sandwich	Food	Rare	1	1	Tasty tuna in a blanket of bread.
+462	Milk Box	Water	Uncommon	1	2	Cow milk perfect for cookies.
+463	Orange Juice	Water	Uncommon	1	2	Tasty orange juice extract.
+464	Cheese	Food	Uncommon	1	1	Fills you with determination!
+465	Canned Soda	Water	Common	1	1	Water saturated with sugar.
+466	Grilled Cheese Sandwich	Food	Rare	1	1	Tasty grilled cheese in a blanket of bread.
+467	BLT Sandwich	Food	Rare	1	1	Bacon, lettuce, and tomato in a blanket of bread.
+468	Ham Sandwich	Food	Rare	1	1	Tasty ham and cheese in a blanket of bread.
+469	Canned Ham	Food	Common	1	1	Pink and somehow cooked.
+470	Eggs	Food	Uncommon	2	1	Chicken eggs ready for the frying pan.
+471	Cake	Food	Epic	2	2	So delicious and moist.
+472	Bottled Cola	Water	Uncommon	1	1	Water saturated with sugar.
+473	Bottled Soda	Water	Uncommon	1	1	Water saturated with sugar.
+474	Maple Rifle	Gun	Common	5	2	Maple rifle chambered in Rifle ammunition.
+475	Rifle Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+476	Makeshift Scope	Sight	Common	2	1	Rail mounted 6x zoom scope.
+477	Makeshift Muffler	Barrel	Common	2	1	Makeshift suppressor. Makes gunshots a bit quieter.
+478	Rifle Clip	Magazine	Common	1	1	Low caliber makeshift <color=common>Rifle</color> clip. Designed to fit 5 rounds.
+479	Birch Rifle	Gun	Common	5	2	Birch rifle chambered in Rifle ammunition.
+480	Pine Rifle	Gun	Common	5	2	Pine rifle chambered in Rifle ammunition.
+481	Maple Bottle	Refill	Common	2	2	Sizeable container of liquid.
+482	Birch Bottle	Refill	Common	2	2	Sizeable container of liquid.
+483	Pine Bottle	Refill	Common	2	2	Sizeable container of liquid.
+484	Sportshot	Gun	Uncommon	5	2	American target shooting rifle chambered in Sportshot ammunition.
+485	Sportshot Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Sportshot</color> magazine. Designed to fit 10 rounds.
+486	Sportshot Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+487	Makeshift Bat	Melee	Common	2	3	A wicked melee weapon.
+488	Desert Falcon	Gun	Epic	2	2	American cannon chambered in Desert Falcon ammunition.
+489	Desert Falcon Magazine	Magazine	Epic	1	1	High caliber military grade <color=epic>Desert Falcon</color> magazine. Designed to fit 7 rounds.
+490	Chainsaw	Melee	Uncommon	3	2	Tree chewing machine of death.
+491	Aviators_Gold	Glasses	Common	2	1	
+492	3D	Glasses	Common	2	1	
+493	Key_0	Key	Common	1	1	
+494	Mystery_Box_0	Box	Common	1	1	
+495	Fez	Hat	Common	2	2	
+496	Crown	Hat	Common	2	2	
+497	Obi	Hat	Common	2	2	
+498	Antlers	Mask	Common	2	1	
+499	Paper	Hat	Common	2	2	
+500	Headress	Hat	Common	2	2	
+501	Viking	Hat	Common	2	2	
+502	Eyepatch	Glasses	Common	2	1	
+503	Fishing Rod	Fisher	Uncommon	3	1	Long-range fish generator. Suitable for most fishing conditions.
+504	Raw Trout	Food	Uncommon	2	1	Rather smelly and fishy.
+505	Raw Salmon	Food	Uncommon	2	1	Rather smelly and fishy.
+506	Birch Rod	Fisher	Common	3	1	Long-range fish generator. Finicky and imprecise.
+507	Maple Rod	Fisher	Common	3	1	Long-range fish generator. Finicky and slow to respond.
+508	Pine Rod	Fisher	Common	3	1	Long-range fish generator. Finicky and prone to overcorrecting.
+509	Fishing Hat	Hat	Uncommon	2	2	Naturally waterproof, perfect for fishing in the rain.
+510	Fishing Top	Shirt	Uncommon	3	2	Naturally waterproof, perfect for fishing in the rain.
+511	Fishing Bottom	Pants	Uncommon	2	2	Naturally waterproof, perfect for fishing in the rain.
+512	Cooked Trout	Food	Uncommon	2	1	Rather smelly and fishy.
+513	Cooked Salmon	Food	Uncommon	2	1	Rather smelly and fishy.
+514	Raw Venison	Food	Common	2	2	Fine texture, rich and gamey.
+515	Cooked Venison	Food	Common	2	2	Fine texture, rich and gamey.
+516	Leather	Supply	Common	1	1	Durable material perfect for clothing.
+517	Leather Top	Shirt	Common	3	2	Durable crafted shirt.
+518	Leather Bottom	Pants	Common	2	2	Durable crafted pants.
+519	Rocket Launcher	Gun	Legendary	4	2	Russian rocket launcher chambered in Rockets.
+520	Rocket	Magazine	Legendary	2	1	Ranger grade <color=legendary>Launcher</color> rocket.
+521	Rocket Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+522	Tee_Twitch	Shirt	Common	3	2	
+523	Tee_Spark_Emission	Shirt	Common	3	2	
+524	Tee_Blaze_Emission	Shirt	Common	3	2	
+525	Tee_Spark	Shirt	Common	3	2	
+526	Tee_Blaze	Shirt	Common	3	2	
+527	Mystery_Box_1	Box	Common	1	1	
+528	Tuxedo_Top_White	Shirt	Common	3	2	
+529	Tuxedo_Bottom_White	Pants	Common	2	2	
+530	Fedora_White	Hat	Common	2	2	
+531	Rose	Vest	Common	1	1	
+532	Tie_Rainbow	Vest	Common	1	2	
+533	Tie_Rainbow_Emission	Vest	Common	1	2	
+534	Bowtie_Rainbow	Mask	Common	1	1	
+535	Bowtie_Rainbow_Emission	Mask	Common	1	1	
+536	Shirt_Turtle	Shirt	Common	3	2	
+537	Shirt_Banana	Shirt	Common	3	2	
+538	Jeans_Designer_Pro	Pants	Common	2	2	
+539	Shirt_Wave	Shirt	Common	3	2	
+540	Shirt_Fish	Shirt	Common	3	2	
+541	Shirt_Heart	Shirt	Common	3	2	
+542	Shirt_Snow	Shirt	Common	3	2	
+543	Shirt_Tornado	Shirt	Common	3	2	
+544	Shirt_Flower	Shirt	Common	3	2	
+545	Pirate	Hat	Common	3	2	
+546	Pirate_Top	Shirt	Common	3	2	
+547	Pirate_Bottom	Pants	Common	2	2	
+548	Designer Jeans	Pants	Common	2	2	Highly fashionable denim.
+549	Jeans_Outfit_Pro	Pants	Common	2	2	
+550	Jeans_Work_Pro	Pants	Common	2	2	
+551	Trouser_Pants_Pro	Pants	Common	2	2	
+552	Tie_Gold	Vest	Common	1	2	
+553	Suit_Top_Gold	Shirt	Common	3	2	
+554	Suit_Bottom_Gold	Pants	Common	2	2	
+555	Tophat_Gold	Hat	Common	2	2	
+556	Corduroy_Pants_Pro	Pants	Common	2	2	
+557	Khaki_Pants_Pro	Pants	Common	2	2	
+558	Astronaut_Top	Shirt	Common	3	2	
+559	Astronaut_Bottom	Pants	Common	2	2	
+560	Astronaut	Hat	Common	2	2	
+561	Magic_Hat	Hat	Common	2	2	
+562	Magic_Cape	Backpack	Common	2	2	
+563	Magic_Top	Shirt	Common	3	2	
+564	Magic_Bottom	Pants	Common	2	2	
+565	Corduroy_Shorts_Pro	Pants	Common	2	2	
+566	Khaki_Shorts_Pro	Pants	Common	2	2	
+567	Trouser_Shorts_Pro	Pants	Common	2	2	
+568	Shades	Glasses	Common	2	1	
+569	Ushanka	Hat	Common	2	2	
+570	Earbuds	Mask	Common	1	1	
+571	Raw Hanuberries	Water	Common	1	1	Very suspicious looking.
+572	Refined Hanuberries	Water	Common	1	1	Slightly less suspicious looking.
+573	Hanuberry Pie	Food	Epic	2	2	Baked to perfection.
+574	Hanuberry Seed	Farm	Common	1	1	Ready for planting and eating.
+577	Mystery_Box_2	Box	Common	1	1	
+578	Mystery_Box_3	Box	Common	1	1	
+579	Pumpkin	Hat	Common	2	2	
+580	Halloween_Cape	Backpack	Common	2	2	
+581	Halloween_Top	Shirt	Common	3	2	
+582	Halloween_Bottom	Pants	Common	2	2	
+583	Mystery_Box_4	Box	Common	1	1	
+584	Mummy	Hat	Common	2	2	
+585	Mummy_Top	Shirt	Common	3	2	
+586	Mummy_Bottom	Pants	Common	2	2	
+587	Skeleton_Top	Shirt	Common	3	2	
+588	Skeleton_Bottom	Pants	Common	2	2	
+589	Bandana_Web	Mask	Common	1	1	
+590	Mystery_Box_5	Box	Common	1	1	
+591	Snowman	Mask	Common	2	2	
+592	Snowman_Top	Shirt	Common	3	2	
+593	Snowman_Bottom	Pants	Common	2	2	
+594	Carrot	Glasses	Common	2	1	
+595	Reindeer	Glasses	Common	2	1	
+596	Holiday_Sweater	Shirt	Common	3	2	
+597	Holiday_Scarf	Vest	Common	2	2	
+598	Mystery_Box_6	Box	Common	1	1	
+599	Sombrero	Hat	Common	2	2	
+600	Conical	Hat	Common	2	2	
+601	Jester	Hat	Common	2	2	
+602	News	Hat	Common	2	2	
+603	Windup	Backpack	Common	2	2	
+604	Bucket	Mask	Common	2	2	
+605	Detective	Hat	Common	2	2	
+606	Parrot	Vest	Common	1	1	
+607	Detective_Top	Shirt	Common	3	2	
+608	Detective_Bottom	Pants	Common	2	2	
+609	Educated	Hat	Common	2	2	
+610	Tee_Admin	Shirt	Common	3	2	
+611	Swashbuckler_Hat	Hat	Common	2	2	
+612	Swashbuckler_Bottom	Pants	Common	2	2	
+613	Swashbuckler_Top	Shirt	Common	3	2	
+615	Cyborg	Glasses	Common	1	1	
+616	Plague_Hat	Hat	Common	2	2	
+617	Plague_Mask	Mask	Common	2	2	
+619	Plague_Top	Shirt	Common	3	2	
+620	Plague_Bottom	Pants	Common	2	2	
+621	Queen_Guard_Hat	Hat	Common	2	2	
+622	Queen_Guard_Top	Shirt	Common	3	2	
+623	Queen_Guard_Bottom	Pants	Common	2	2	
+624	Jersey_America	Shirt	Common	3	2	
+625	Jersey_Australia	Shirt	Common	3	2	
+626	Jersey_Brazil	Shirt	Common	3	2	
+627	Jersey_Canada	Shirt	Common	3	2	
+628	Jersey_China	Shirt	Common	3	2	
+629	Jersey_France	Shirt	Common	3	2	
+630	Jersey_Germany	Shirt	Common	3	2	
+631	Jersey_Kingdom	Shirt	Common	3	2	
+632	Jersey_Poland	Shirt	Common	3	2	
+633	Jersey_Russia	Shirt	Common	3	2	
+634	Jersey_Sweden	Shirt	Common	3	2	
+635	Jersey_Thailand	Shirt	Common	3	2	
+636	Jersey_Norway	Shirt	Common	3	2	
+637	Jersey_Turkey	Shirt	Common	3	2	
+638	Jersey_Denmark	Shirt	Common	3	2	
+639	HMD	Glasses	Common	2	1	
+640	Tee_Boom	Shirt	Common	3	2	
+641	Jersey_Netherlands	Shirt	Common	3	2	
+642	Jersey_Ukraine	Shirt	Common	3	2	
+643	Jersey_Argentina	Shirt	Common	3	2	
+644	Jersey_Philippines	Shirt	Common	3	2	
+645	Jersey_Chile	Shirt	Common	3	2	
+646	Jersey_Spain	Shirt	Common	3	2	
+647	Jersey_Italy	Shirt	Common	3	2	
+648	Jersey_Japan	Shirt	Common	3	2	
+649	Jersey_Korea	Shirt	Common	3	2	
+650	Jersey_Romania	Shirt	Common	3	2	
+651	Jersey_Mexico	Shirt	Common	3	2	
+652	Jersey_Czech	Shirt	Common	3	2	
+653	Jersey_Indonesia	Shirt	Common	3	2	
+654	Jersey_Portugal	Shirt	Common	3	2	
+655	Jersey_Finland	Shirt	Common	3	2	
+656	Jersey_Pirate	Shirt	Common	3	2	
+657	Spartan_Hat	Hat	Common	1	2	
+658	Spartan_Vest	Vest	Common	2	2	
+659	Spartan_Top	Shirt	Common	3	2	
+660	Spartan_Bottom	Pants	Common	2	2	
+661	Mystery_Box_7	Box	Common	1	1	
+662	Epaulettes	Vest	Common	2	1	
+663	Hoodie_Nelson	Shirt	Common	3	2	
+664	Plaid_Blue_Dark_Shirt	Shirt	Common	3	2	
+665	Plaid_Blue_Light_Shirt	Shirt	Common	3	2	
+666	Plaid_Green_Shirt	Shirt	Common	3	2	
+667	Plaid_Orange_Shirt	Shirt	Common	3	2	
+668	Plaid_Purple_Dark_Shirt	Shirt	Common	3	2	
+669	Plaid_Purple_Light_Shirt	Shirt	Common	3	2	
+670	Plaid_Red_Shirt	Shirt	Common	3	2	
+671	Hoodie_Bulldozer	Shirt	Common	3	2	
+672	Hoodie_Elephant	Shirt	Common	3	2	
+673	Hoodie_Feather	Shirt	Common	3	2	
+674	Hoodie_Hourglass	Shirt	Common	3	2	
+675	Hoodie_Lucky	Shirt	Common	3	2	
+676	Hoodie_Power	Shirt	Common	3	2	
+677	Hoodie_Squid	Shirt	Common	3	2	
+678	Hoodie_Yield	Shirt	Common	3	2	
+679	Rocket_Pants	Pants	Common	2	2	
+680	Bandito	Glasses	Common	2	1	
+681	Snake	Vest	Common	1	1	
+682	Navy	Hat	Common	3	2	
+683	Navy_Top	Shirt	Common	3	2	
+684	Navy_Bottom	Pants	Common	2	2	
+685	Bowler	Hat	Common	2	2	
+686	Explorer_Hat	Hat	Common	2	2	
+687	Explorer_Top	Shirt	Common	3	2	
+688	Explorer_Bottom	Pants	Common	2	2	
+689	Sheriff	Vest	Common	1	1	
+690	Sneak	Hat	Common	2	2	
+691	Sneak_Top	Shirt	Common	3	2	
+692	Sneak_Bottom	Pants	Common	2	2	
+693	Mystery_Box_8	Box	Common	1	1	
+694	Robot	Hat	Common	2	2	
+695	Robot_Top	Shirt	Common	3	2	
+696	Robot_Bottom	Pants	Common	2	2	
+697	Shirt_Blueberry	Shirt	Common	3	2	
+698	Mystery_Box_9	Box	Common	1	1	
+699	Anniversary_0_Rainbow	Hat	Common	2	2	
+700	Anniversary_1_Rainbow	Hat	Common	2	2	
+701	Anniversary_0_Blue	Hat	Common	2	2	
+702	Anniversary_0_Green	Hat	Common	2	2	
+703	Anniversary_0_Orange	Hat	Common	2	2	
+704	Anniversary_0_Purple	Hat	Common	2	2	
+705	Anniversary_0_Red	Hat	Common	2	2	
+706	Anniversary_0_Yellow	Hat	Common	2	2	
+707	Anniversary_1_Blue	Hat	Common	2	2	
+708	Anniversary_1_Green	Hat	Common	2	2	
+709	Anniversary_1_Orange	Hat	Common	2	2	
+710	Anniversary_1_Purple	Hat	Common	2	2	
+711	Anniversary_1_Red	Hat	Common	2	2	
+712	Anniversary_1_Yellow	Hat	Common	2	2	
+713	Anniversary_0_Silver	Hat	Common	2	2	
+714	Anniversary_1_Silver	Hat	Common	2	2	
+715	Anniversary_0_Gold	Hat	Common	2	2	
+716	Anniversary_1_Gold	Hat	Common	2	2	
+717	Samurai_Top	Shirt	Common	3	2	
+718	Samurai_Bottom	Pants	Common	2	2	
+719	Samurai_Hat	Hat	Common	2	2	
+720	Samurai_Vest	Vest	Common	2	2	
+721	Samurai_Mask	Mask	Common	2	2	
+722	Chain	Vest	Common	2	2	
+723	Ushanka_Vintage	Hat	Common	2	2	
+724	Trenchcoat_Vintage_Top	Shirt	Common	3	2	
+725	Mystery_Box_10	Box	Common	1	1	
+726	Mystery_Box_11	Box	Common	1	1	
+727	Medic_Glasses	Glasses	Common	2	1	
+728	Beret_Bug_Report	Hat	Common	2	2	
+729	Bolt	Mask	Common	2	1	
+730	Scientist_Mad_Glasses	Glasses	Common	2	1	
+731	Scientist_Mad_Top	Shirt	Common	3	2	
+732	Vampire_Cape	Backpack	Common	2	2	
+733	Vampire_Cowl	Vest	Common	2	2	
+734	Vampire_Top	Shirt	Common	3	2	
+735	Necromancer_Top	Shirt	Common	3	2	
+736	Necromancer_Bottom	Pants	Common	2	2	
+737	Necromancer_Mask	Mask	Common	2	2	
+738	Beret_Orange	Hat	Common	2	2	
+739	Beret_White	Hat	Common	2	2	
+740	BattlEye_Mask	Mask	Common	2	2	
+741	Elf_Hat	Hat	Common	2	2	
+742	Elf_Top	Shirt	Common	3	2	
+743	Gingerbread_Top	Shirt	Common	3	2	
+744	Gingerbread_Bottom	Pants	Common	2	2	
+745	Gingerbread_Mask	Mask	Common	2	2	
+746	Toy_Soldier_Top	Shirt	Common	3	2	
+747	Toy_Soldier_Bottom	Pants	Common	2	2	
+748	Toy_Soldier_Hat	Hat	Common	2	2	
+749	Nutcracker_Top	Shirt	Common	3	2	
+750	Nutcracker_Bottom	Pants	Common	2	2	
+751	Nutcracker_Hat	Hat	Common	2	2	
+752	Key_Workshop_00	Key	Common	1	1	
+753	Crate_Workshop_00	Box	Common	1	1	
+754	MA_WC_Top	Shirt	Common	3	2	
+755	MA_WC_Bottom	Pants	Common	2	2	
+756	Kukui_Nuts	Vest	Common	2	2	
+757	Grass_Skirt	Pants	Common	2	2	
+758	Shuttershades	Glasses	Common	2	1	
+759	Tiki_Angry	Mask	Common	2	2	
+760	Tiki_Happy	Mask	Common	2	2	
+761	Rose_Tinted	Glasses	Common	2	1	
+762	Lei	Hat	Common	2	1	
+763	Tourist_Hat_Camo	Hat	Common	2	2	
+764	Pineapple	Hat	Common	2	2	
+765	Ear_Flower	Mask	Common	1	1	
+766	Garland	Vest	Common	2	2	
+767	Mystery_Box_12	Box	Common	1	1	
+768	Tee_Hawaii_0	Shirt	Common	3	2	
+769	Tee_Hawaii_1	Shirt	Common	3	2	
+770	Screenshot_Contest_Top	Shirt	Common	3	2	
+771	Blueknight_Bottom	Pants	Common	2	2	
+772	Blueknight_Top	Shirt	Common	3	2	
+773	Blueknight_Helmet	Hat	Common	2	2	
+774	Blueknight_Shoulders	Vest	Common	2	1	
+775	Blueknight_Cape	Backpack	Common	2	2	
+776	Skater_Bottom	Pants	Common	2	2	
+777	Skater_Top	Shirt	Common	3	2	
+778	Skater_Beanie	Hat	Common	2	2	
+779	Skater_Skateboard	Backpack	Common	2	2	
+780	Key_Workshop_01	Key	Common	1	1	
+781	Crate_Workshop_01	Box	Common	1	1	
+782	Key_Workshop_02	Key	Common	1	1	
+783	Crate_Workshop_02	Box	Common	1	1	
+784	Key_Workshop_03	Key	Common	1	1	
+785	Crate_Workshop_03	Box	Common	1	1	
+787	Davy Jones Locker	Backpack	Epic	2	2	Legend says it contains Davy's heart...
+788	Squid Captains Hat	Hat	Rare	2	2	A large pirate hat worn by the Squid Captain.
+789	Squid Captain Head	Mask	Common	2	2	The captain of the dead sea.
+790	Squid Captain bottoms	Pants	Common	2	2	Tattered old pants, stained by seawater.
+791	Squid_Shirt	Shirt	Common	3	2	
+792	Monster Hunter Bandoiler	Vest	Rare	2	2	A leather bandoiler worn by the Monster Hunter.
+793	VampireHunter_Hat	Hat	Rare	2	2	
+794	VampireHunter_Pants	Pants	Common	2	2	
+795	VampireHunter_Shirt	Shirt	Common	3	2	
+796	VampireHunter_Vest	Vest	Rare	2	2	
+797	HeadlessCape	Backpack	Epic	2	2	
+798	HeadlessHood	Hat	Legendary	2	2	
+799	HeadlessPants	Pants	Rare	2	2	
+800	HeadlessShirt	Shirt	Rare	3	2	
+801	HeadlessShoulders	Vest	Epic	2	2	
+802	PotionHead	Hat	Rare	2	2	
+803	SpiderFriend	Vest	Rare	2	2	
+804	Tee_RocketMod	Shirt	Common	3	2	
+805	Backpack_Aprix_1	Backpack	Common	2	2	
+806	Bandana_Aprix_1	Mask	Common	1	1	
+807	Hat_Aprix	Hat	Common	2	2	
+808	Aprix_Bottom	Pants	Common	2	2	
+809	Aprix_Top	Shirt	Common	3	2	
+810	Vest_Aprix_1	Vest	Common	2	2	
+811	Backpack_Bandit	Backpack	Common	2	2	
+812	Balaclava_Bandit	Mask	Common	2	2	
+813	Hat_Gray_5	Hat	Common	2	2	
+814	Gray_Bottom_4	Pants	Common	2	2	
+815	Gray_Top_4	Shirt	Common	3	2	
+816	Bullet_Belt	Vest	Common	2	2	
+817	Eskimo_Bottoms	Pants	Common	2	2	
+818	Eskimo_Hat	Hat	Common	2	2	
+819	Eskimo_Top	Shirt	Common	3	2	
+820	SnowShoes	Backpack	Common	2	2	
+821	Yeti_Bottom	Pants	Common	2	2	
+822	Yeti_Top	Shirt	Common	3	2	
+823	Yeti	Mask	Common	2	2	
+824	ChristmasSnowGlobeHat	Hat	Common	2	2	
+825	ChristmasGingerbreadHouseHat	Hat	Common	2	2	
+826	ChristmasIceCubeHat	Hat	Common	2	2	
+827	Snow_Sled	Backpack	Common	2	2	
+828	Seal_Pup	Vest	Common	2	2	
+829	Mistletoe	Vest	Common	2	2	
+830	Reindeer_Beanie	Hat	Common	2	2	
+831	Mystery_Box_13	Box	Common	1	1	
+832	Minotaur_Horns	Mask	Common	2	2	
+833	Medusa	Hat	Common	2	2	
+834	Olive_Leaf_Crown	Hat	Common	2	1	
+835	Toga_Top	Shirt	Common	3	2	
+836	Hermes_Helmet	Hat	Common	2	2	
+837	Wings	Backpack	Common	3	2	
+838	Pegasus_Horn	Glasses	Common	1	1	
+839	Fleece_Cape	Backpack	Common	2	2	
+840	Kratos_Shoulder	Vest	Common	1	1	
+841	Artemis_Shield	Backpack	Common	2	2	
+842	Harp	Backpack	Common	2	2	
+843	Zeus_Hair	Hat	Common	2	2	
+844	Scrap	Key	Common	1	1	
+845	Stat_Tracker_Total_Kills	Key	Common	1	1	
+846	Stat_Tracker_Player_Kills	Key	Common	1	1	
+847	Ireland_Revolution_Hat	Hat	Common	2	2	
+848	Ireland_Revolution_Top	Shirt	Common	3	2	
+849	Ireland_Revolution_Bottom	Pants	Common	2	2	
+850	Ireland_Knight_Helmet	Hat	Common	2	2	
+851	Ireland_Knight_Shoulder_Pad	Vest	Common	2	1	
+852	Ireland_Knight_Top	Shirt	Common	3	2	
+853	Ireland_Knight_Bottom	Pants	Common	2	2	
+854	Irish_Luck_Top	Shirt	Common	3	2	
+855	Irish_Luck_Bottom	Pants	Common	2	2	
+856	Irish_Luck_Hat	Hat	Common	2	2	
+857	Corinthian_Helmet	Hat	Common	2	2	
+858	AthensAprix_Quiver	Backpack	Common	2	2	
+859	AthensRomanCloak	Backpack	Common	2	2	
+860	AthensAprix_Hood	Hat	Common	2	2	
+861	AthensRomanHelmet	Hat	Common	2	2	
+862	AthensAprix_Mask	Mask	Common	2	2	
+863	AthensAprix_Bottoms	Pants	Common	2	2	
+864	AthensRomanBottom	Pants	Common	2	2	
+865	AthensAprix_Top	Shirt	Common	3	2	
+866	AthensRomanTop	Shirt	Common	3	2	
+867	AthensAprix_Vest	Vest	Common	2	2	
+868	AthensRomanChestplate	Vest	Common	3	2	
+869	Carpat_Lastman_Shirt	Shirt	Common	3	2	
+870	Carpat_Lastman_Pants	Pants	Common	2	2	
+871	Carpat_Lastman_Backpack	Backpack	Common	2	2	
+872	Carpat_Lastman_Hat	Hat	Common	2	2	
+873	Carpat_Traditional_Shirt	Shirt	Common	3	2	
+874	Carpat_Traditional_Pants	Pants	Common	2	2	
+875	Carpat_Traditional_Vest	Vest	Common	2	2	
+876	Carpat_Traditional_Hat	Hat	Common	2	2	
+877	FranceHistorical_Crown	Hat	Common	2	2	
+878	FranceHistorical_Crusader_Bottom	Pants	Common	2	2	
+879	FranceHistorical_Crusader_Top	Shirt	Common	3	2	
+880	FranceHistorical_Helmet_Crusader	Hat	Common	2	2	
+881	FranceHistorical_Helmet_Poilus	Hat	Common	2	2	
+882	FranceHistorical_Shield	Backpack	Common	2	2	
+883	FranceMime_Baguette	Backpack	Common	2	2	
+884	FranceMime_Beret	Hat	Common	2	2	
+885	FranceMime_Bottom	Pants	Common	2	2	
+886	FranceMime_Scarf	Vest	Common	2	2	
+887	FranceMime_Top	Shirt	Common	3	2	
+888	FranceRULA_Bottom	Pants	Common	2	2	
+889	FranceRULA_Harness	Vest	Common	2	2	
+890	FranceRULA_Helmet	Hat	Common	2	2	
+891	FranceRULA_Top	Shirt	Common	3	2	
+892	Small One Way Plate	Barricade	Rare	1	1	Glass pane ideal for spying on suspicious visitors.
+893	Small Bullet Resistant Plate	Barricade	Rare	1	1	Glass pane ideal for looking at and keeping out unwanted visitors.
+894	Small Weak Plate	Barricade	Uncommon	1	1	Glass pane ideal for looking at unwanted visitors.
+895	Cowboy_Backpack_0	Backpack	Common	2	2	
+896	Cowboy_Hat_0	Hat	Common	2	2	
+897	Militia_Hat	Hat	Common	2	2	
+898	Cowboy_Belt_0	Vest	Common	2	1	
+899	Militia_Vest	Vest	Common	2	1	
+900	Militia_Bandana	Mask	Common	2	2	
+901	Cowboy_Shirt_0	Shirt	Common	3	2	
+902	Cowboy_Bottoms_0	Pants	Common	2	2	
+903	Militia_Jacket	Shirt	Common	3	2	
+904	Militia_Bottoms	Pants	Common	2	2	
+905	Dango_CargoSalamander	Backpack	Common	2	2	
+906	Dango_DJ	Hat	Common	2	2	
+907	Dango_DragonHorns	Glasses	Common	2	1	
+908	Dango_DualKatanas	Backpack	Common	2	2	
+909	Dango_Glasses	Glasses	Common	2	1	
+910	Dango_HannyaMask	Mask	Common	2	2	
+911	Dango_Headband	Hat	Common	2	1	
+912	Dango_NinjaVest	Vest	Common	2	1	
+913	Dango_Pants	Pants	Common	2	2	
+914	Dango_ScrollCloak	Backpack	Common	2	2	
+915	Dango_Shirt	Shirt	Common	3	2	
+916	Dango_SushiChefHat	Hat	Common	2	2	
+917	Dango_TV	Hat	Common	2	2	
+918	DangoBox	Box	Common	1	1	
+919	Jersey_Rainbow	Shirt	Common	3	2	
+920	HalloSkullBottom	Pants	Common	2	2	
+921	HalloSkullHat	Hat	Common	2	2	
+922	HalloSkullMask	Mask	Common	2	2	
+923	HalloSkullTop	Shirt	Common	3	2	
+924	HalloSkullVest	Vest	Common	2	2	
+925	VolcanoKnightArmor	Vest	Common	2	2	
+926	VolcanoKnightBottom	Pants	Common	2	2	
+927	VolcanoKnightCape	Backpack	Common	2	2	
+928	VolcanoKnightHelmet	Hat	Common	2	2	
+929	VolcanoKnightTop	Shirt	Common	3	2	
+930	Cali_Mercenary_Bottom	Pants	Common	2	2	
+931	Cali_Mercenary_Heavy_Helmet	Hat	Common	2	2	
+932	Cali_Mercenary_Heavy_Rig	Vest	Common	2	1	
+933	Cali_Mercenary_Top	Shirt	Common	3	2	
+934	Cali_Journalist_Bottom	Pants	Common	2	2	
+935	Cali_Journalist_Glasses	Glasses	Common	2	2	
+936	Cali_Journalist_Hat	Hat	Common	2	2	
+937	Cali_Journalist_Shirt	Shirt	Common	3	2	
+938	Cali_Messenger_Bag	Backpack	Common	2	2	
+939	Cali_Tape_Recorder	Vest	Common	2	1	
+940	Cali_Mercenary_Heavy_Mask	Mask	Common	2	2	
+941	CJ_Selfvester_Bandolier	Vest	Common	2	1	
+942	CJ_Selfvester_Cranberry_Bandana	Hat	Common	2	2	
+943	CJ_Selfvester_Tundra_Bottom	Pants	Common	2	2	
+944	CJ_Selfvester_Tundra_Top	Shirt	Common	3	2	
+945	EI_Explorer_Hat	Hat	Common	2	2	
+946	EI_Make_Make	Mask	Common	2	2	
+947	EI_Moai_Head	Mask	Common	2	2	
+948	EI_Stormbrand	Mask	Common	2	2	
+949	EI_Tribal_Markings	Shirt	Common	3	2	
+950	EI_Explorer_Gear	Vest	Common	2	1	
+951	EI_Stormbrand_Armor	Vest	Common	2	1	
+952	EI_Shark_Tooth_Necklace	Vest	Common	2	1	
+953	EI_King_Crab	Hat	Common	2	2	
+954	EI_Edible_Arrangement	Hat	Common	2	2	
+955	EI_Feather_Crown	Hat	Common	2	2	
+956	EI_Acoustic_Sash	Backpack	Common	2	2	
+957	EI_Fishbowl	Mask	Common	2	2	
+958	EI_Diving_Helmet	Mask	Common	2	2	
+959	EI_Box	Box	Common	1	1	
+960	DL_Volatile_Jaw	Mask	Common	1	1	
+961	DL_Volatile_Chest	Vest	Common	1	1	
+962	PaintPalette_Contest_Top	Shirt	Common	3	2	
+963	BattlEye_Halo	Mask	Common	2	1	
+964	Elver_Box	Box	Common	1	1	
+965	Elver_Beanie	Hat	Common	2	2	
+966	Elver_Biker_Hat	Hat	Common	2	2	
+967	Elver_Fishing	Vest	Common	2	2	
+968	Elver_Fur	Vest	Common	2	1	
+969	Elver_Piston	Backpack	Common	2	2	
+970	Elver_Prop	Hat	Common	2	2	
+971	Elver_Raccoon	Hat	Common	2	2	
+972	Elver_Racing_Bottom	Pants	Common	2	2	
+973	Elver_Racing_Top	Shirt	Common	3	2	
+974	Elver_Resp	Mask	Common	2	2	
+975	Elver_RZZ	Glasses	Common	2	1	
+976	Elver_Tank_Hat	Hat	Common	2	2	
+977	Elver_Wings	Backpack	Common	2	2	
+978	Elver_Wolf	Hat	Common	2	2	
+979	Elver_Pant_Green	Pants	Common	1	1	
+980	Elver_Pant_Orange	Pants	Common	1	1	
+981	Elver_Pant_Purple	Pants	Common	1	1	
+982	Elver_Pant_Red	Pants	Common	1	1	
+983	Elver_Pant_Yellow	Pants	Common	1	1	
+984	Elver_Ski_Blue	Glasses	Common	2	1	
+985	Elver_Ski_Green	Glasses	Common	2	1	
+986	Elver_Ski_Orange	Glasses	Common	2	1	
+987	Elver_Ski_Purple	Glasses	Common	2	1	
+988	Elver_Ski_Sky	Glasses	Common	2	1	
+989	Elver_Ski_Yellow	Glasses	Common	2	1	
+990	Elver_Top_0	Shirt	Common	3	2	
+991	Elver_Top_1	Shirt	Common	3	2	
+992	Stat_Tracker_Removal_Tool	Key	Common	1	1	
+993	Ragdoll_Effect_Removal_Tool	Key	Common	1	1	
+1000	Matamorez	Gun	Legendary	5	2	Russian assault rifle chambered in Matamorez ammunition.
+1001	Matamorez Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1002	Matamorez_Barrel	Barrel	Common	2	1	
+1003	Matamorez Magazine	Magazine	Epic	1	1	High caliber ranger grade <color=legendary>Matamorez</color> magazine. Designed to fit 17 rounds.
+1004	Kobra Sight	Sight	Uncommon	2	1	Rail mounted sight with electronic aiming crosshair.
+1005	Matamorez Box	Magazine	Legendary	1	2	High caliber ranger grade <color=legendary>Matamorez</color> box. Designed to fit 36 rounds.
+1006	Cobra Box	Magazine	Epic	1	2	Low caliber civilian grade <color=rare>Cobra</color> box. Designed to fit 40 rounds.
+1007	Adaptive Chambering	Tactical	Epic	1	1	Firing chamber upgrade. Increases firerate.
+1008	Rangefinder	Tactical	Epic	1	1	Side mounted distance laser.
+1009	Desert Beret	Hat	Uncommon	2	2	Bill's.
+1010	Desert Military Helmet	Hat	Rare	2	2	Military headwear to prevent injury.
+1011	Desert Military Top	Shirt	Rare	3	2	Military uniform shirt.
+1012	Desert Military Bottom	Pants	Rare	2	2	Military uniform pants.
+1013	Desert Military Vest	Vest	Rare	2	2	Bullet proof military gear.
+1014	Leather Pack	Backpack	Common	2	2	Durable crafted backpack.
+1015	Biohazard Top	Shirt	Rare	3	2	Protection against scientific research.
+1016	Biohazard Bottom	Pants	Rare	2	2	Protection against scientific research.
+1017	Biohazard Hood	Mask	Rare	2	2	Yeah science!
+1018	Sabertooth	Gun	Rare	5	2	American sharpshooter rifle chambered in Sabertooth ammunition.
+1019	Sabertooth Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1020	Sabertooth Magazine	Magazine	Rare	1	1	Low caliber military grade <color=rare>Sabertooth</color> magazine. Designed to fit 10 rounds.
+1021	Avenger	Gun	Rare	2	2	Italian pistol chambered in Avenger ammunition.
+1022	Avenger Magazine	Magazine	Rare	1	1	Low caliber military grade <color=rare>Avenger</color> magazine. Designed to fit 13 rounds.
+1023	Baton	Melee	Common	3	2	Law enforcement tool used for self defense.
+1024	Peacemaker	Gun	Rare	3	2	Belgian carbine chambered in Peacemaker ammunition.
+1025	Peacemaker Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1026	Peacemaker Magazine	Magazine	Rare	2	1	Low caliber military grade <color=rare>Peacemaker</color> magazine. Designed to fit 50 rounds.
+1027	Viper	Gun	Rare	3	2	German carbine chambered in Viper ammunition.
+1028	Viper Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1029	Viper Magazine	Magazine	Rare	1	2	Low caliber civilian grade <color=rare>Viper</color> magazine. Designed to fit 25 rounds.
+1030	Frying Pan	Melee	Common	2	3	Cooking implement, also used as a weapon by cavalry.
+1031	Shovel	Melee	Common	2	3	Perfect for whacking zombies.
+1032	Crowbar	Melee	Common	1	2	Construction tool for prying apart objects and fighting crabs.
+1033	Paddle	Melee	Common	2	3	If only one of these boats wasn't full of holes!
+1034	Pitchfork	Melee	Common	2	3	Battered from years of stacking hay, but ready to fend off some zombies!
+1035	Machete	Melee	Rare	1	3	High quality bushwhacking tool.
+1036	Katana	Melee	Epic	1	3	Incredibly sharp traditional Japanese weapon.
+1037	Heartbreaker	Gun	Epic	4	2	Belgian assault rifle chambered in Military ammunition.
+1038	Heartbreaker Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1039	Kryzkarek	Gun	Uncommon	2	2	Russian pistol chambered in Kryzkarek ammunition.
+1040	Kryzkarek Magazine	Magazine	Uncommon	1	1	Civilian grade <color=uncommon>Kryzkarek</color> magazine. Designed to fit 12 rounds.
+1041	Yuri	Gun	Rare	3	2	Russian carbine chambered in Ranger ammunition.
+1042	Yuri Magazine	Magazine	Rare	2	1	Low caliber ranger grade <color=rare>Yuri</color> magazine. Designed to fit 64 rounds.
+1043	Yuri Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1044	Civilian Nightvision	Glasses	Rare	2	1	Brightness enhancing civilian grade goggles.
+1045	Pumpkin Seed	Farm	Common	1	1	Ready for planting and eating.
+1046	Pumpkin	Food	Common	1	1	Orange vegetable.
+1047	Pumpkin Pie	Food	Epic	2	2	Various PI/3.14 related jokes go here.
+1048	Hockey Mask	Mask	Common	2	2	Protective gear for playing Canada's favorite sport.
+1049	Jack-o-Lantern	Barricade	Rare	1	1	Halloween torch to provide a little bit of light.
+1050	Safezone Radiator	Barricade	Legendary	2	2	Electricity powered item/zombie spawn blocker.
+1051	$5 Note	Supply	Common	1	1	Five dollars of currency.
+1052	$10 Note	Supply	Common	1	1	Ten dollars of currency.
+1053	$20 Note	Supply	Common	1	1	Twenty dollars of currency.
+1054	$50 Note	Supply	Common	1	1	Fifty dollars of currency.
+1055	$100 Note	Supply	Common	1	1	One hundred dollars of currency.
+1056	Loonie	Supply	Common	1	1	One dollar of currency.
+1057	Toonie	Supply	Common	1	1	Two dollars of currency.
+1058	Large Maple Plate	Barricade	Uncommon	2	2	Maple plate. Beware of termites.
+1059	Small Maple Plate	Barricade	Uncommon	1	1	Maple plate. Beware of termites.
+1060	Large Maple Frame	Barricade	Uncommon	2	2	Maple frame. Beware of termites.
+1061	Small Maple Frame	Barricade	Uncommon	1	1	Maple frame. Beware of termites.
+1062	Maple Siding	Barricade	Uncommon	1	1	Maple siding. Beware of termites.
+1063	Maple Pipe	Barricade	Uncommon	1	2	Maple pipe. Beware of termites.
+1064	Large Birch Plate	Barricade	Common	2	2	Birch plate. Beware of termites.
+1065	Small Birch Plate	Barricade	Common	1	1	Birch plate. Beware of termites.
+1066	Large Birch Frame	Barricade	Common	2	2	Birch frame. Beware of termites.
+1067	Small Birch Frame	Barricade	Common	1	1	Birch frame. Beware of termites.
+1068	Birch Siding	Barricade	Common	1	1	Birch siding. Beware of termites.
+1069	Birch Pipe	Barricade	Common	1	2	Birch pipe. Beware of termites.
+1070	Large Pine Plate	Barricade	Rare	2	2	Pine plate. Beware of termites.
+1071	Small Pine Plate	Barricade	Rare	1	1	Pine plate. Beware of termites.
+1072	Large Pine Frame	Barricade	Rare	2	2	Pine frame. Beware of termites.
+1073	Small Pine Frame	Barricade	Rare	1	1	Pine frame. Beware of termites.
+1074	Pine Siding	Barricade	Rare	1	1	Pine siding. Beware of termites.
+1075	Pine Pipe	Barricade	Rare	1	2	Pine pipe. Beware of termites.
+1076	Jazzberry Pie	Food	Epic	2	2	Baked to perfection.
+1077	Rainberry Pie	Food	Epic	2	2	Baked to perfection.
+1078	Viriberry Pie	Food	Epic	2	2	Baked to perfection.
+1079	Ameberry Pie	Food	Epic	2	2	Baked to perfection.
+1080	Gloomberry Pie	Food	Epic	2	2	Baked to perfection.
+1081	Mayberry Pie	Food	Epic	2	2	Baked to perfection.
+1082	Crimberry Pie	Food	Epic	2	2	Baked to perfection.
+1083	Maple Doorframe	Barricade	Uncommon	2	1	Maple doorframe. Beware of termites.
+1084	Maple Garageframe	Barricade	Uncommon	2	1	Maple garageframe. Beware of termites.
+1085	Birch Doorframe	Barricade	Common	2	1	Birch doorframe. Beware of termites.
+1086	Birch Garageframe	Barricade	Common	2	1	Birch garageframe. Beware of termites.
+1087	Pine Doorframe	Barricade	Rare	2	1	Pine doorframe. Beware of termites.
+1088	Pine Garageframe	Barricade	Rare	2	1	Pine garageframe. Beware of termites.
+1089	Metal Doorframe	Barricade	Epic	2	1	Metal doorframe. Beware of robotic termites.
+1090	Metal Garageframe	Barricade	Epic	2	1	Metal garageframe. Beware of robotic termites.
+1091	Large Metal Plate	Barricade	Epic	2	2	Metal plate. Beware of robotic termites.
+1092	Small Metal Plate	Barricade	Epic	1	1	Metal plate. Beware of robotic termites.
+1093	Metal Siding	Barricade	Epic	1	1	Metal siding. Beware of robotic termites.
+1094	Metal Pipe	Barricade	Epic	1	2	Metal pipe. Beware of robotic termites.
+1095	Maple Sign	Barricade	Uncommon	2	2	Maple sign coupled with colorful markers.
+1096	Birch Sign	Barricade	Common	2	2	Birch sign coupled with colorful markers.
+1097	Pine Sign	Barricade	Rare	2	2	Pine sign coupled with colorful markers.
+1098	Metal Sign	Barricade	Epic	2	2	Metal sign coupled with colorful markers.
+1099	4 Seater Makeshift Vehicle	Barricade	Rare	4	2	Empty frame ready to be built upon.
+1100	Sticky Grenade	Throwable	Epic	1	1	Military grade throwable sticky explosive.
+1101	Landmine	Trap	Epic	1	1	Explosive trap.
+1102	Claymore	Trap	Epic	1	1	Explosive trap.
+1103	Black Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1104	Jazzberry Seed	Farm	Common	1	1	Ready for planting and eating.
+1105	Rainberry Seed	Farm	Common	1	1	Ready for planting and eating.
+1106	Viriberry Seed	Farm	Common	1	1	Ready for planting and eating.
+1107	Ameberry Seed	Farm	Common	1	1	Ready for planting and eating.
+1108	Gloomberry Seed	Farm	Common	1	1	Ready for planting and eating.
+1109	Mayberry Seed	Farm	Common	1	1	Ready for planting and eating.
+1110	Crimberry Seed	Farm	Common	1	1	Ready for planting and eating.
+1111	6 Seater Makeshift Vehicle	Barricade	Epic	5	2	Empty frame ready to be built upon.
+1112	1 Seater Makeshift Vehicle	Barricade	Uncommon	3	2	Empty frame ready to be built upon.
+1113	Snare	Trap	Rare	2	1	Spikey trap.
+1114	Maple Jerrycan	Fuel	Common	2	2	Sizeable jerrycan of gasoline.
+1115	Birch Jerrycan	Fuel	Common	2	2	Sizeable jerrycan of gasoline.
+1116	Pine Jerrycan	Fuel	Common	2	2	Sizeable jerrycan of gasoline.
+1117	Pork	Food	Common	2	2	Extra greasy!
+1118	Bacon	Food	Common	2	2	Extra greasy!
+1119	Barbed Wire Fence	Trap	Epic	2	1	Spiky trap.
+1120	Raw Beef	Food	Common	2	2	Lean and juicy.
+1121	Cooked Beef	Food	Common	2	2	Lean and juicy.
+1122	Blue Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1123	Green Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1124	Orange Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1125	Purple Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1126	Red Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1127	White Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1128	Yellow Umbrella	Cloud	Uncommon	2	2	Drift softly down from the heavens.
+1129	Heatstim	Medical	Uncommon	2	2	Compounds that when combined produce steady warmth.
+1130	Ornamental Barbed Wire	Trap	Uncommon	2	1	Spiky, well-lit trap.
+1131	Ornamental Barbed Wire Fence	Trap	Epic	2	1	Spiky, well-lit trap.
+1132	Snowball	Throwable	Rare	1	1	Snow grade throwable explosive.
+1133	Black Scarf	Vest	Common	2	2	Warm neck protection.
+1134	Blue Scarf	Vest	Common	2	2	Warm neck protection.
+1135	Green Scarf	Vest	Common	2	2	Warm neck protection.
+1136	Orange Scarf	Vest	Common	2	2	Warm neck protection.
+1137	Purple Scarf	Vest	Common	2	2	Warm neck protection.
+1138	Red Scarf	Vest	Common	2	2	Warm neck protection.
+1139	White Scarf	Vest	Common	2	2	Warm neck protection.
+1140	Yellow Scarf	Vest	Common	2	2	Warm neck protection.
+1141	Beret_Crimson	Hat	Common	2	2	
+1142	Beret_Gold	Hat	Common	2	2	
+1143	Sawed-Off	Gun	Uncommon	3	2	American shotgun chambered in 20 Gauge Shells.
+1144	Large Birch Plate	Barricade	Common	2	2	Birch plate. Beware of termites.
+1145	Large Birch Plate	Barricade	Common	2	2	Birch plate. Beware of termites.
+1146	Large Maple Plate	Barricade	Uncommon	2	2	Maple plate. Beware of termites.
+1147	Large Maple Plate	Barricade	Uncommon	2	2	Maple plate. Beware of termites.
+1148	Large Pine Plate	Barricade	Rare	2	2	Pine plate. Beware of termites.
+1149	Large Pine Plate	Barricade	Rare	2	2	Pine plate. Beware of termites.
+1150	Small Birch Plate	Barricade	Common	1	1	Birch plate. Beware of termites.
+1151	Small Birch Plate	Barricade	Common	1	1	Birch plate. Beware of termites.
+1152	Small Maple Plate	Barricade	Uncommon	1	1	Maple plate. Beware of termites.
+1153	Small Maple Plate	Barricade	Uncommon	1	1	Maple plate. Beware of termites.
+1154	Small Pine Plate	Barricade	Rare	1	1	Pine plate. Beware of termites.
+1155	Small Pine Plate	Barricade	Rare	1	1	Pine plate. Beware of termites.
+1156	Thief Top	Shirt	Uncommon	3	2	Thieves guild shirt.
+1157	Thief Bottom	Pants	Uncommon	2	2	Thieves guild pants.
+1158	Claim Flag	Barricade	Legendary	2	2	Protect an area from other players building.
+1159	Maple Syrup	Water	Uncommon	1	1	Sap from the maple tree.
+1160	Pancake	Food	Rare	1	1	Warm batter cake coated in maple syrup.
+1161	Waffle	Food	Rare	1	1	Warm dough in a pattern coated with maple syrup.
+1162	Dough	Food	Common	1	1	Soft baking ingredient.
+1163	Doughnut	Food	Rare	1	1	Warm dough in a torus glazed with maple syrup.
+1164	Pepperoni Pizza	Food	Epic	2	2	Topped with cheese, tomato sauce, and pepperoni.
+1165	Nailgun	Gun	Uncommon	2	2	Construction tool chambered in Nailgun ammunition.
+1166	Nailgun Magazine	Magazine	Uncommon	1	2	Construction grade <color=uncommon>Nailgun</color> magazine. Designed to fit 20 nails.
+1167	Nailgun_Barrel	Barrel	Common	2	1	
+1168	Civilian Vest	Vest	Rare	2	2	Bulky, reinforced with steel plates.
+1169	Spec Ops Vest	Vest	Legendary	2	2	Bullet proof tactical gear.
+1170	Spec Ops Rucksack	Backpack	Legendary	2	2	Medium sized tactical backpack.
+1171	Spec Ops Top	Shirt	Legendary	3	2	Tactical uniform shirt.
+1172	Spec Ops Bottom	Pants	Legendary	2	2	Tactical uniform pants.
+1173	Makeshift Armor	Vest	Common	2	2	Bullet proof crafted vest.
+1174	Scythe	Melee	Uncommon	3	2	Gardening tool for trimming grass.
+1175	Chart	Map	Uncommon	1	1	Printed map of the surrounding area.
+1176	GPS	Map	Epic	1	1	Satellite view of the surrounding area.
+1177	Military Tracer Magazine	Magazine	Epic	1	2	Low caliber military grade tracer magazine. Designed to fit 20 rounds.
+1178	Diving Tank	Backpack	Rare	1	2	Packed full of oxygen.
+1179	Wetsuit Top	Shirt	Rare	3	2	Protection against the underwater environment.
+1180	Wetsuit Bottom	Pants	Rare	2	2	Protection against the underwater environment.
+1181	Snorkel	Glasses	Rare	2	2	Draws oxygen from the diving tank by wireless network communication.
+1182	Black Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1183	Blue Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1184	Green Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1185	Orange Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1186	Purple Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1187	Red Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1188	White Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1189	Yellow Dufflebag	Backpack	Common	2	2	Medium sized synthetic gym bag.
+1190	Ranger Muzzle	Barrel	Rare	1	1	Ranger grade muzzle. Hides muzzle flash, tracers and reduces recoil.
+1191	Ranger Barrel	Barrel	Rare	2	1	Ranger grade barrel. Increases accuracy.
+1192	High Caliber Military Ammunition Crate	Supply	Epic	2	2	High caliber military grade ammunition crate. Designed to fit 20 rounds.
+1193	High Caliber Ranger Ammunition Box	Supply	Epic	2	2	High caliber ranger grade ammunition box. Designed to fit 20 rounds.
+1194	Horde Beacon	Beacon	Legendary	2	2	Emits signals that draw in a zombie horde.
+1195	Handcuffs	Arrest_Start	Uncommon	1	1	Lock up a surrendering prisoner.
+1196	Handcuffs Key	Arrest_End	Uncommon	1	1	Unlock a handcuffed prisoner.
+1197	Cable Tie	Arrest_Start	Common	1	1	Lock up a surrendering prisoner.
+1198	Pickaxe	Melee	Common	2	3	Simple mining axe.
+1199	Headlamp	Glasses	Uncommon	2	1	Head mounted flashlight.
+1200	Military Fragmentation Magazine	Magazine	Legendary	1	2	Low caliber military grade fragmentation magazine. Designed to fit 20 rounds.
+1201	Military Nightvision Scope	Sight	Legendary	2	1	Rail mounted 6x zoom nightvision scope.
+1202	Maple Rifle Rack	Storage	Uncommon	2	1	Maple rack for storing rifles.
+1203	Birch Rifle Rack	Storage	Common	2	1	Birch rack for storing rifles.
+1204	Pine Rifle Rack	Storage	Rare	2	1	Pine rack for storing rifles.
+1205	Maple Trophy Case	Storage	Uncommon	2	2	Maple case for storing trophies.
+1206	Birch Trophy Case	Storage	Common	2	2	Birch case for storing trophies.
+1207	Pine Trophy Case	Storage	Rare	2	2	Pine case for storing trophies.
+1208	Rain Barrel	Barricade	Uncommon	2	2	Collects rain water which can be retrieved with a canteen.
+1209	Explosive Arrow	Magazine	Epic	2	1	Explodes on impact.
+1210	Brick Doorway	Structure	Epic	2	1	Zombies can huff and puff, but they aren't getting in.
+1211	Brick Garage	Structure	Epic	2	1	Zombies can huff and puff, but they aren't getting in.
+1212	Brick Pillar	Structure	Epic	1	2	Zombies can huff and puff, but they aren't getting in.
+1213	Brick Post	Structure	Epic	1	2	Zombies can huff and puff, but they aren't getting in.
+1214	Brick Rampart	Structure	Epic	2	1	Zombies can huff and puff, but they aren't getting in.
+1215	Brick Wall	Structure	Epic	2	1	Zombies can huff and puff, but they aren't getting in.
+1216	Brick Window	Structure	Epic	2	1	Zombies can huff and puff, but they aren't getting in.
+1217	Brick Doorframe	Barricade	Rare	2	1	The zombies can huff and puff, but they aren't getting in.
+1218	Brick Garageframe	Barricade	Rare	2	1	The zombies can huff and puff, but they aren't getting in.
+1219	Pump Jack	Oil_Pump	Rare	3	3	Drills for oil which can be retrieved with a gas can.
+1220	Metal Rifle Rack	Storage	Epic	2	1	Metal rack for storing rifles.
+1221	Metal Trophy Case	Storage	Epic	2	2	Metal case for storing trophies.
+1222	Cagelight	Barricade	Rare	1	1	Electricity powered large area light.
+1223	Maple Shutter	Barricade	Uncommon	1	2	Maple shutter ideal for keeping out unwanted visitors.
+1224	Birch Shutter	Barricade	Common	1	2	Birch shutter ideal for keeping out unwanted visitors.
+1225	Pine Shutter	Barricade	Rare	1	2	Pine shutter ideal for keeping out unwanted visitors.
+1226	Metal Shutter	Barricade	Epic	1	2	Metal shutter ideal for keeping out unwanted visitors.
+1227	Tanktrap	Barricade	Rare	1	1	Difficult for traffic to get around.
+1228	Water Tank	Tank	Epic	3	3	Safely stores water.
+1229	Fuel Tank	Tank	Epic	3	3	Safely stores gas.
+1230	Industrial Generator	Generator	Epic	3	3	Electricity generator covering a large radius powered by fuel.
+1231	Maple Flag	Barricade	Uncommon	2	2	Maple flag coupled with colorful markers.
+1232	Birch Flag	Barricade	Common	2	2	Birch flag coupled with colorful markers.
+1233	Pine Flag	Barricade	Rare	2	2	Pine flag coupled with colorful markers.
+1234	Metal Flag	Barricade	Epic	2	2	Metal flag coupled with colorful markers.
+1235	Maple Doubledoor	Barricade	Uncommon	1	2	Maple doubledoor ideal for keeping out unwanted visitors.
+1236	Birch Doubledoor	Barricade	Common	1	2	Birch doubledoor ideal for keeping out unwanted visitors.
+1237	Pine Doubledoor	Barricade	Rare	1	2	Pine doubledoor ideal for keeping out unwanted visitors.
+1238	Metal Doubledoor	Barricade	Epic	1	2	Metal doubledoor ideal for keeping out unwanted visitors.
+1239	Large Slippery Plate	Barricade	Epic	2	2	Slippery plate. Beware of slippery robotic termites.
+1240	Detonator	Detonator	Rare	2	2	Tool for detonating explosives remotely.
+1241	Demolition Charge	Charge	Epic	1	1	Remotely detonated imprecise explosive.
+1242	Makeshift Grenade	Throwable	Common	1	1	A wicked throwable explosive.
+1243	Cot	Barricade	Common	2	1	Warm bed perfect for a home.
+1244	Neutral Sentry	Sentry	Epic	2	2	Covers an area by automatically peppering threats with gunfire.
+1245	Maple Counter	Storage	Uncommon	2	2	Maple counter cupboard for storing items.
+1246	Birch Counter	Storage	Common	2	2	Birch counter cupboard for storing items.
+1247	Pine Counter	Storage	Rare	2	2	Pine counter cupboard for storing items.
+1248	Metal Counter	Storage	Rare	2	2	Metal counter cupboard for storing items.
+1249	Fridge	Storage	Rare	2	2	Metal counter for food and drinks.
+1250	Electric Stove	Barricade	Rare	2	2	Powered heat source for baking food.
+1251	Maple Counter Sink	Storage	Uncommon	2	2	Maple counter sink for storing items.
+1252	Birch Counter Sink	Storage	Common	2	2	Birch counter sink for storing items.
+1253	Pine Counter Sink	Storage	Rare	2	2	Pine counter sink for storing items.
+1254	Metal Counter Sink	Storage	Rare	2	2	Metal counter sink for storing items.
+1255	Lamp	Barricade	Rare	2	2	Electricity powered wide angle light.
+1256	Couch	Barricade	Common	2	1	Comfy spot to hangout and unwind.
+1257	Maple Library	Library	Uncommon	2	2	Learn from the experiences of other survivors.
+1258	Birch Library	Library	Common	2	2	Learn from the experiences of other survivors.
+1259	Pine Library	Library	Rare	2	2	Learn from the experiences of other survivors.
+1260	Metal Library	Library	Epic	2	2	Learn from the experiences of other survivors.
+1261	Oxygenator	Barricade	Epic	2	2	Electricity powered oxygen converter.
+1262	Triangular Maple Floor	Structure	Uncommon	2	2	Maple triangular floor. Beware of termites.
+1263	Triangular Birch Floor	Structure	Common	2	2	Birch triangular floor. Beware of termites.
+1264	Triangular Pine Floor	Structure	Rare	2	2	Pine triangular floor. Beware of termites.
+1265	Triangular Metal Floor	Structure	Epic	2	2	Metal triangular floor. Beware of robotic termites.
+1266	Triangular Maple Roof	Structure	Uncommon	2	2	Maple triangular roof. Beware of termites.
+1267	Triangular Birch Roof	Structure	Common	2	2	Birch triangular roof. Beware of termites.
+1268	Triangular Pine Roof	Structure	Rare	2	2	Pine triangular roof. Beware of termites.
+1269	Triangular Metal Roof	Structure	Epic	2	2	Metal triangular roof. Beware of robotic termites.
+1270	Gasmask	Mask	Rare	2	2	Blocks out dangerous radiation when fitted with a working filter.
+1271	Filter	Filter	Rare	1	1	Filters out radiation when attached to a gasmask.
+1272	Blue Flare Sconce	Barricade	Common	1	2	Mounted road flare to provide a little bit of light.
+1273	Green Flare Sconce	Barricade	Common	1	2	Mounted road flare to provide a little bit of light.
+1274	Orange Flare Sconce	Barricade	Common	1	2	Mounted road flare to provide a little bit of light.
+1275	Purple Flare Sconce	Barricade	Common	1	2	Mounted road flare to provide a little bit of light.
+1276	Red Flare Sconce	Barricade	Common	1	2	Mounted road flare to provide a little bit of light.
+1277	Yellow Flare Sconce	Barricade	Common	1	2	Mounted road flare to provide a little bit of light.
+1278	Maple Wardrobe	Storage	Uncommon	2	2	Maple wardrobe for storing items.
+1279	Birch Wardrobe	Storage	Common	2	2	Birch wardrobe for storing items.
+1280	Pine Wardrobe	Storage	Rare	2	2	Pine wardrobe for storing items.
+1281	Metal Wardrobe	Storage	Epic	2	2	Metal wardrobe for storing items.
+1282	Patio Umbrella	Barricade	Common	1	2	Enjoy a nice day in the shade, or keep dry from the rain!
+1283	Cooler	Storage	Rare	2	1	Metal storage for cold drinks.
+1284	Maple Rectangular Table	Barricade	Uncommon	2	1	Maple table for fine dining.
+1285	Birch Rectangular Table	Barricade	Common	2	1	Birch table for fine dining.
+1286	Pine Rectangular Table	Barricade	Rare	2	1	Pine table for fine dining.
+1287	Metal Rectangular Table	Barricade	Epic	2	1	Metal table for fine dining.
+1288	Maple Circular Table	Barricade	Uncommon	2	1	Maple table for fine dining.
+1289	Birch Circular Table	Barricade	Common	2	1	Birch table for fine dining.
+1290	Pine Circular Table	Barricade	Rare	2	1	Pine table for fine dining.
+1291	Metal Circular Table	Barricade	Epic	2	1	Metal table for fine dining.
+1292	Maple Square Table	Barricade	Uncommon	2	1	Maple table for fine dining.
+1293	Birch Square Table	Barricade	Common	2	1	Birch table for fine dining.
+1294	Pine Square Table	Barricade	Rare	2	1	Pine table for fine dining.
+1295	Metal Square Table	Barricade	Epic	2	1	Metal table for fine dining.
+1296	Beach Chair	Barricade	Common	2	1	Comfy spot to relax in the shade.
+1297	Weak Glass	Barricade	Uncommon	2	2	Glass pane ideal for looking at unwanted visitors.
+1298	Bulletproof Glass	Barricade	Rare	2	2	Glass pane ideal for looking at and keeping out unwanted visitors.
+1299	One Way Glass	Barricade	Rare	2	2	Glass pane ideal for spying on suspicious visitors.
+1300	Tank Cannon	Gun	Legendary	1	1	Tank rocket launcher chambered in Missiles.
+1301	Tank_Scope	Sight	Common	1	1	
+1302	Missile	Magazine	Legendary	3	1	Military grade <color=legendary>Tank</color> missile.
+1303	Blue Couch	Barricade	Common	2	1	Comfy spot to hangout and unwind.
+1304	Green Couch	Barricade	Common	2	1	Comfy spot to hangout and unwind.
+1305	Orange Couch	Barricade	Common	2	1	Comfy spot to hangout and unwind.
+1306	Purple Couch	Barricade	Common	2	1	Comfy spot to hangout and unwind.
+1307	Red Couch	Barricade	Common	2	1	Comfy spot to hangout and unwind.
+1308	Yellow Couch	Barricade	Common	2	1	Comfy spot to hangout and unwind.
+1309	Blue Cot	Barricade	Common	2	1	Warm bed perfect for a home.
+1310	Green Cot	Barricade	Common	2	1	Warm bed perfect for a home.
+1311	Orange Cot	Barricade	Common	2	1	Warm bed perfect for a home.
+1312	Purple Cot	Barricade	Common	2	1	Warm bed perfect for a home.
+1313	Red Cot	Barricade	Common	2	1	Warm bed perfect for a home.
+1314	Yellow Cot	Barricade	Common	2	1	Warm bed perfect for a home.
+1315	Blue Beach Chair	Barricade	Common	2	1	Comfy spot to relax in the shade.
+1316	Green Beach Chair	Barricade	Common	2	1	Comfy spot to relax in the shade.
+1317	Orange Beach Chair	Barricade	Common	2	1	Comfy spot to relax in the shade.
+1318	Purple Beach Chair	Barricade	Common	2	1	Comfy spot to relax in the shade.
+1319	Red Beach Chair	Barricade	Common	2	1	Comfy spot to relax in the shade.
+1320	Yellow Beach Chair	Barricade	Common	2	1	Comfy spot to relax in the shade.
+1321	Blue Patio Umbrella	Barricade	Common	1	2	Enjoy a nice day in the shade, or keep dry from the rain!
+1322	Green Patio Umbrella	Barricade	Common	1	2	Enjoy a nice day in the shade, or keep dry from the rain!
+1323	Orange Patio Umbrella	Barricade	Common	1	2	Enjoy a nice day in the shade, or keep dry from the rain!
+1324	Purple Patio Umbrella	Barricade	Common	1	2	Enjoy a nice day in the shade, or keep dry from the rain!
+1325	Red Patio Umbrella	Barricade	Common	1	2	Enjoy a nice day in the shade, or keep dry from the rain!
+1326	Yellow Patio Umbrella	Barricade	Common	1	2	Enjoy a nice day in the shade, or keep dry from the rain!
+1327	Book	Barricade	Common	1	1	Keep track of important information.
+1328	Note	Barricade	Common	1	1	Keep track of important information.
+1329	Maple Hatch	Barricade	Uncommon	1	1	Maple trapdoor ideal for keeping out unwanted visitors.
+1330	Birch Hatch	Barricade	Common	1	1	Birch trapdoor ideal for keeping out unwanted visitors.
+1331	Pine Hatch	Barricade	Rare	1	1	Pine trapdoor ideal for keeping out unwanted visitors.
+1332	Metal Hatch	Barricade	Epic	1	1	Metal trapdoor ideal for keeping out unwanted visitors.
+1333	Military Top	Shirt	Rare	3	2	Military uniform shirt.
+1334	Military Bottom	Pants	Rare	2	2	Military uniform pants.
+1335	Military Helmet	Hat	Rare	2	2	Military headwear to prevent injury.
+1336	Military Vest	Vest	Rare	2	2	Bullet proof military gear.
+1337	Paintball Gun	Gun	Uncommon	3	2	Painting tool chambered in Paintballs.
+1338	Paintballgun_Barrel	Barrel	Common	2	1	
+1339	Blue Paintball Hopper	Magazine	Uncommon	2	1	Painting grade <color=uncommon>Paintball Gun</color> magazine. Designed to fit 35 paintballs.
+1340	Green Paintball Hopper	Magazine	Uncommon	2	1	Painting grade <color=uncommon>Paintball Gun</color> magazine. Designed to fit 35 paintballs.
+1341	Orange Paintball Hopper	Magazine	Uncommon	2	1	Painting grade <color=uncommon>Paintball Gun</color> magazine. Designed to fit 35 paintballs.
+1342	Purple Paintball Hopper	Magazine	Uncommon	2	1	Painting grade <color=uncommon>Paintball Gun</color> magazine. Designed to fit 35 paintballs.
+1343	Red Paintball Hopper	Magazine	Uncommon	2	1	Painting grade <color=uncommon>Paintball Gun</color> magazine. Designed to fit 35 paintballs.
+1344	Yellow Paintball Hopper	Magazine	Uncommon	2	1	Painting grade <color=uncommon>Paintball Gun</color> magazine. Designed to fit 35 paintballs.
+1345	Plot	Barricade	Rare	2	1	Planting area perfect for raising crops of food.
+1346	Flashbang	Throwable	Rare	1	1	Military grade throwable device for disorienting senses.
+1347	Raw Minnow	Food	Common	1	1	Rather smelly and fishy.
+1348	Cooked Minnow	Food	Common	1	1	Rather smelly and fishy.
+1349	Raw Goldfish	Food	Common	1	1	Rather smelly and fishy.
+1350	Cooked Goldfish	Food	Common	1	1	Rather smelly and fishy.
+1351	Raw Bass	Food	Uncommon	3	1	Rather smelly and fishy.
+1352	Cooked Bass	Food	Uncommon	3	1	Rather smelly and fishy.
+1353	Stealy Wheely Automobiley	Vehicle_Lockpick_Tool	Uncommon	2	1	Tool for unlocking cars.
+1354	Ghillie Top	Shirt	Epic	3	2	Military foliage stealth shirt.
+1355	Ghillie Bottom	Pants	Epic	2	2	Military foliage stealth pants.
+1356	Ghillie Hood	Hat	Epic	2	2	Military foliage stealth hood.
+1357	Ghillie Vest	Vest	Epic	2	2	Military foliage stealth vest.
+1358	Pilot Top	Shirt	Uncommon	3	2	Airliner pilot uniform shirt.
+1359	Pilot Cap	Hat	Uncommon	2	2	Airliner pilot uniform cap.
+1360	Teklowvka	Gun	Rare	2	2	Swedish pistol chambered in Teklowvka ammunition.
+1361	Teklowvka Magazine	Magazine	Rare	1	1	Low caliber ranger grade <color=rare>Teklowvka</color> magazine. Designed to fit 15 rounds.
+1362	Augewehr	Gun	Epic	4	2	Austrian assault rifle chambered in Ranger and Military ammunition.
+1363	Augewehr Scope	Sight	Epic	2	1	Rail mounted 4x zoom scope.
+1364	Hell's Fury	Gun	Legendary	5	3	Russian minigun chambered in Hell's Fury ammunition.
+1365	Hell's Fury Drum	Magazine	Legendary	2	2	Low caliber ranger and military grade <color=legendary>Hell's Fury</color> drum. Designed to fit 250 rounds.
+1366	Vonya	Gun	Rare	4	2	Russian shotgun chambered in Vonya ammunition.
+1367	Vonya Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1368	Vonya Magazine	Magazine	Rare	1	1	Ranger grade <color=rare>Vonya</color> magazine. Designed to fit 7 shells.
+1369	Bulldog	Gun	Rare	3	2	Israeli carbine chambered in Bulldog ammunition.
+1370	Bulldog Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1371	Bulldog Magazine	Magazine	Rare	1	2	Low caliber ranger grade <color=rare>Bulldog</color> magazine. Designed to fit 45 rounds.
+1372	Friendly Sentry	Sentry	Epic	2	2	Covers an area by automatically peppering obviously dangerous threats with gunfire.
+1373	Hostile Sentry	Sentry	Epic	2	2	Covers an area by automatically peppering even slightly dangerous threats with gunfire.
+1374	Carepackage	Storage	Epic	1	1	
+1375	Fusilaut	Gun	Epic	4	2	French assault rifle chambered in Ranger and Military ammunition.
+1376	Fusilaut Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1377	Nightraider	Gun	Epic	4	2	German assault rifle chambered in Ranger and Military ammunition.
+1378	Nightraider Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1379	Calling Card	Gun	Rare	3	2	Russian carbine chambered in Calling Card ammunition.
+1380	Calling Card Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1381	Calling Card Magazine	Magazine	Rare	2	2	Low caliber ranger grade <color=rare>Calling Card</color> magazine. Designed to fit 71 rounds.
+1382	Ekho	Gun	Legendary	5	2	Russian sniper rifle chambered in Ekho ammunition.
+1383	Ekho Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1384	Ekho Magazine	Magazine	Legendary	1	1	High caliber ranger grade <color=legendary>Ekho</color> magazine. Designed to fit 7 rounds.
+1385	Mafia Fedora	Hat	Uncommon	2	2	Mobster head embellishment.
+1386	Mafia Tuxedo Top	Shirt	Uncommon	3	2	Mobster tuxedo, very few bloodstains.
+1387	Mafia Tuxedo Bottom	Pants	Uncommon	2	2	Mobster tuxedo, very few bloodstains.
+1388	Beret	Hat	Uncommon	2	2	Bill's.
+1389	Spec Ops Beret	Hat	Legendary	2	2	Bill's.
+1390	Pool Cue	Melee	Common	1	3	Cool off with a game of pool between hits!
+1391	Tracksuit Top	Shirt	Common	3	2	Keep warm while exercising.
+1392	Tracksuit Bottom	Pants	Uncommon	2	2	Keep warm while exercising.
+1393	Precision Charge	Charge	Epic	1	1	Remotely detonated precise explosive.
+1394	HMG	Gun	Epic	1	1	Heavy machine gun chambered in HMG ammunition.
+1395	HMG Box	Magazine	Epic	2	2	Military grade <color=epic>HMG</color> box. Designed to fit 50 rounds.
+1396	Ghillie Netting	Barricade	Epic	1	1	Military foliage stealth cover.
+1397	Ghillie Netting	Barricade	Epic	1	1	Military foliage stealth cover.
+1398	Trout Sandwich	Food	Rare	1	1	Tasty trout in a blanket of bread.
+1399	Salmon Sandwich	Food	Rare	1	1	Tasty salmon in a blanket of bread.
+1400	Minnow Sandwich	Food	Rare	1	1	Tasty minnow in a blanket of bread.
+1401	Goldfish Sandwich	Food	Rare	1	1	Tasty goldfish in a blanket of bread.
+1402	Venison Sandwich	Food	Rare	1	1	Tasty venison in a blanket of bread.
+1403	Bass Sandwich	Food	Rare	1	1	Tasty bass in a blanket of bread.
+1404	Beef Sandwich	Food	Rare	1	1	Tasty beef in a blanket of bread.
+1405	Cheese Steak Sandwich	Food	Rare	1	1	Tasty cheese steak in a blanket of bread.
+1406	BLT Sandwich	Food	Rare	1	1	Bacon, lettuce, and tomato in a blanket of bread.
+1407	Beef Sandwich	Food	Rare	1	1	Tasty beef in a blanket of bread.
+1408	Cloth Mannequin	Barricade	Uncommon	2	2	Cloth mannequin for storing clothes.
+1409	Metal Mannequin	Barricade	Epic	2	2	Metal mannequin for storing clothes.
+1410	Maple Plaque	Storage	Uncommon	2	1	Maple plaque for storing trophies.
+1411	Birch Plaque	Storage	Common	2	1	Birch plaque for storing trophies.
+1412	Pine Plaque	Storage	Rare	2	1	Pine plaque for storing trophies.
+1413	Metal Plaque	Storage	Epic	2	1	Metal plaque for storing trophies.
+1414	Maple Ramp Wall	Structure	Uncommon	2	1	Maple ramp wall. Beware of termites.
+1415	Birch Ramp Wall	Structure	Common	2	1	Birch ramp wall. Beware of termites.
+1416	Pine Ramp Wall	Structure	Rare	2	1	Pine ramp wall. Beware of termites.
+1417	Metal Ramp Wall	Structure	Epic	2	1	Metal ramp wall. Beware of robotic termites.
+1418	Brick Ramp Wall	Structure	Epic	2	1	Zombies can huff and puff, but they aren't getting in.
+1419	Coalition Bottom	Pants	Uncommon	2	2	Coalition uniform pants.
+1420	Ensign Coalition Top	Shirt	Uncommon	3	2	Coalition Ensign rank uniform shirt.
+1421	Lieutenant Coalition Top	Shirt	Rare	3	2	Coalition Lieutenant rank uniform shirt.
+1422	Major Coalition Top	Shirt	Epic	3	2	Coalition Major rank uniform shirt.
+1423	Commander Coalition Top	Shirt	Legendary	3	2	Coalition Commander rank uniform shirt.
+1424	Captain Coalition Top	Shirt	Legendary	3	2	Coalition Captain rank uniform shirt.
+1425	Coalition Vest	Vest	Rare	2	2	Bullet proof coalition gear.
+1426	Coalition Cap	Hat	Uncommon	2	2	Coalition Ensign rank uniform hat.
+1427	Coalition Helmet	Hat	Rare	2	2	Coalition Lieutenant rank uniform hat.
+1428	Coalition Beret	Hat	Epic	2	2	Coalition Major rank uniform hat.
+1429	Coalition Captain Hat	Hat	Legendary	2	2	Coalition Captain rank uniform hat.
+1430	Upgraded Cake Blueprint	Supply	Common	2	1	Guide to hiding a <color=uncommon>Stealy Wheely Automobiley</color> in a <color=epic>Cake</color>.
+1431	Upgraded Cake	Food	Epic	2	2	So delicious and moist. There's a note attached <i> remember not to eat this one </i>!
+1432	Upgraded Fishing Rod	Fisher	Epic	3	1	Long-range fish generator. Reinforced to catch stronger, more powerful fish.
+1433	Upgraded Fishing Rod Blueprint	Supply	Common	2	1	Guide to reinforcing a <color=uncommon>Fishing Rod</color> for catching larger fish.
+1434	Raw Giant Squid	Food	Legendary	4	2	Quite slippery!
+1435	Cooked Giant Squid	Food	Legendary	2	2	Quite slippery!
+1436	Quadbarrel	Gun	Epic	3	2	American shotgun chambered in 12 Gauge Shells.
+1437	Quadbarrel Blueprint	Supply	Common	2	1	Guide to converting a <color=uncommon>Masterkey</color> to 12 Gauge with 4 barrels.
+1438	Bayonet	Tactical	Rare	3	1	Side mounted sword.
+1439	Bayonet Blueprint	Supply	Common	2	1	Guide to creating a tactical <color=rare>Bayonet</color> attachable to guns.
+1440	Industrial Gas Can	Fuel	Rare	3	3	Extra large can of gasoline.
+1441	Shadowstalker Mk. II	Gun	Mythical	5	2	Prototype railgun chambered in <color=mythical>Shadowstalker Mk. II</color> ammunition.
+1442	Shadowstalker Mk. II Scope	Sight	Mythical	1	1	Rail mounted Shadowstalker Mk. II zoom scope.
+1443	Shadowstalker Mk. II Drum	Magazine	Mythical	1	1	Prototype grade <color=mythical>Shadowstalker Mk. II</color> ammunition.
+1444	Bluntforce_Muffler	Barrel	Common	2	1	
+1445	Walkie Talkie	Tool	Rare	1	2	Communicate by voice regardless of distance.
+1446	Earpiece	Mask	Rare	1	1	Listen to radio communications without a Walkie Talkie.
+1447	Scalar	Gun	Rare	3	2	American carbine chambered in Scalar ammunition.
+1448	Scalar Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1449	Scalar Magazine	Magazine	Rare	1	2	Low caliber military grade <color=rare>Scalar</color> magazine. Designed to fit 30 rounds.
+1450	Vehicle Battery	Vehicle_Repair_Tool	Uncommon	2	2	Vehicle electrical power source.
+1451	Tire	Tire	Uncommon	2	2	Replacement for destroyed wheels.
+1452	Whole Coconut	Supply	Common	1	1	Brown drupe.
+1453	Split Coconut	Food	Common	1	1	Brown drupe.
+1454	Black Trunks	Pants	Common	2	2	Beach shorts.
+1455	Blue Trunks	Pants	Common	2	2	Beach shorts.
+1456	Green Trunks	Pants	Common	2	2	Beach shorts.
+1457	Orange Trunks	Pants	Common	2	2	Beach shorts.
+1458	Purple Trunks	Pants	Common	2	2	Beach shorts.
+1459	Red Trunks	Pants	Common	2	2	Beach shorts.
+1460	White Trunks	Pants	Common	2	2	Beach shorts.
+1461	Yellow Trunks	Pants	Common	2	2	Beach shorts.
+1462	Coastguard Top	Shirt	Uncommon	3	2	Coastguard uniform shirt.
+1463	Coastguard Bottom	Pants	Uncommon	2	2	Coastguard uniform pants.
+1464	Blindfold	Glasses	Uncommon	2	1	Block out your vision.
+1466	Boombox	Barricade	Common	2	2	Play tunes to keep up morale.
+1467	Maple Placard	Barricade	Uncommon	2	2	Maple placard coupled with colorful markers.
+1468	Birch Placard	Barricade	Common	2	2	Birch placard coupled with colorful markers.
+1469	Pine Placard	Barricade	Rare	2	2	Pine placard coupled with colorful markers.
+1470	Metal Placard	Barricade	Epic	2	2	Metal placard coupled with colorful markers.
+1471	HMG	Gun	Epic	1	1	Heavy machine gun chambered in HMG ammunition.
+1472	Fighter Pilot Helmet	Hat	Rare	2	2	Standard issue to pilot a fighter jet.
+1473	Fighter Pilot Top	Shirt	Rare	3	2	Standard issue to pilot a fighter jet.
+1474	Fighter Pilot Bottom	Pants	Rare	2	2	Standard issue to pilot a fighter jet.
+1475	Jackhammer	Melee	Uncommon	3	2	Boulder chewing machine of death.
+1476	Luger	Gun	Uncommon	2	2	German pistol chambered in Luger ammunition.
+1477	Maschinengewehr	Gun	Epic	3	2	German submachine gun chambered in Maschinengewehr ammunition.
+1478	Maschinengewehr Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1479	Maschinengewehr Magazine	Magazine	Epic	1	2	Low caliber ranger grade <color=epic>Maschinengewehr</color> magazine. Designed to fit 32 rounds.
+1480	Determinator	Gun	Uncommon	2	2	American revolving shotgun chambered in 12 Gauge Shells.
+1481	Empire	Gun	Rare	3	2	German submachine gun chambered in Empire ammunition.
+1482	Empire Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1483	Empire Magazine	Magazine	Rare	1	2	Low caliber military grade <color=rare>Empire</color> magazine. Designed to fit 27 rounds.
+1484	Devil's Bane	Gun	Epic	4	2	American shotgun chambered in Devil's Bane ammunition.
+1485	Devil's Bane Magazine	Magazine	Epic	2	2	Military grade <color=epic>Bane</color> magazine. Designed to fit 21 shells.
+1486	Devil's Bane Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1487	Luger Magazine	Magazine	Uncommon	1	1	Low caliber civilian grade <color=uncommon>Luger</color> magazine. Designed to fit 9 rounds.
+1488	Swissgewehr	Gun	Rare	4	2	Swiss assault rifle chambered in Military ammunition.
+1489	Swissgewehr Iron Sights	Sight	Common	1	1	Rail mounted iron sights.
+1490	Swissgewehr Magazine	Magazine	Rare	1	2	Low caliber military grade magazine. Designed to fit 20 rounds.
+1491	Military Top	Shirt	Rare	3	2	Military uniform shirt.
+1492	Ghillie Top	Shirt	Epic	3	2	Military foliage stealth shirt.
+1493	Ghillie Bottom	Pants	Epic	2	2	Military foliage stealth pants.
+1494	Ghillie Hood	Hat	Epic	2	2	Military foliage stealth hood.
+1495	Ghillie Vest	Vest	Epic	2	2	Military foliage stealth vest.
+1496	Shark_Fin	Backpack	Common	2	2	
+1497	Ducky	Vest	Common	1	1	
+1498	Lederhosen Top	Shirt	Uncommon	3	2	Ready for a great Oktoberfest!
+1499	Lederhosen Bottom	Pants	Uncommon	2	2	Ready for a great Oktoberfest!
+1500	Ghillie Netting	Barricade	Epic	1	1	Military foliage stealth cover.
+1501	Tee_EA	Shirt	Common	3	2	
+1502	Beret_EA	Hat	Common	2	2	
+1503	Zweihander	Melee	Epic	1	4	Incredibly sharp traditional German weapon.
+1504	Pickelhaube	Hat	Rare	2	2	Vintage German military headwear to prevent injury.
+1505	Kaiser Top	Shirt	Rare	3	2	Vintage German military uniform shirt.
+1506	Kaiser Bottom	Pants	Rare	2	2	Vintage German military uniform pants.
+1507	Socketwrench	Tire	Uncommon	2	1	Tool for removing tires.
+1508	Compass	Compass	Epic	1	1	Check the magnetic direction.
+1509	Clock	Barricade	Rare	2	2	Displays the current time.
+1510	Chewing Gum	Food	Common	1	1	Minty fresh! Will leave your breath smelling hot hot hot.
+1511	Arctic Alicepack	Backpack	Epic	2	2	Large sized military cargo backpack.
+1512	Arctic Ghillie Top	Shirt	Epic	3	2	Military snow stealth shirt.
+1513	Arctic Ghillie Bottom	Pants	Epic	2	2	Military snow stealth pants.
+1514	Arctic Ghillie Vest	Vest	Epic	2	2	Military snow stealth vest.
+1515	Arctic Ghillie Hood	Hat	Epic	2	2	Military snow stealth hood.
+1516	Arctic Military Top	Shirt	Rare	3	2	Military uniform shirt.
+1517	Arctic Military Bottom	Pants	Rare	2	2	Military uniform pants.
+1518	Arctic Military Vest	Vest	Rare	2	2	Bullet proof military gear.
+1519	Arctic Military Helmet	Hat	Rare	2	2	Military headwear to prevent injury.
+1520	Impact Grenade	Throwable	Epic	1	1	Military grade throwable impact explosive.
+1521	Cobra_Jam	Gun	Rare	2	2	
+1522	CharacterMeshReplacementTest	Shirt	Epic	2	2	Replaces mesh with Character_Mesh_Override_# and material with Character_Material_Override.
+1523	Hoodie_Offbrand	Shirt	Common	3	2	
+1524	Ragdoll_Effect_Zero_Kelvin	Key	Common	1	1	
+1525	Spec Ops Helmet	Hat	Legendary	2	2	Military headwear to prevent injury.
+1526	BelgiumLilEBR_Shirt	Shirt	Common	3	2	
+1527	BelgiumLilEBR_Pants	Pants	Common	2	2	
+1528	BelgiumInfantry_Backpack	Backpack	Common	2	2	
+1529	BelgiumInfantry_Vest	Vest	Common	2	2	
+1530	BelgiumInfantry_Hat	Hat	Common	2	2	
+1531	BelgiumInfantry_Shirt	Shirt	Common	3	2	
+1532	BelgiumInfantry_Pants	Pants	Common	2	2	
+1533	BelgiumAcid_Canister	Backpack	Common	2	2	
+1534	BelgiumAcid_Vest	Vest	Common	2	2	
+1535	BelgiumAcid_Visor	Mask	Common	2	2	
+1536	BelgiumAcid_Shirt	Shirt	Common	3	2	
+1537	BelgiumAcid_Pants	Pants	Common	2	2	
+1543	BelgiumPoacher_Top	Shirt	Common	3	2	
+1544	BelgiumPoacher_Bottom	Pants	Common	2	2	
+1545	BelgiumPoacher_Hat	Hat	Common	2	2	
+1546	BelgiumPoacher_Ascot	Vest	Common	2	1	
+1547	BelgiumPoacher_Backpack	Backpack	Common	2	2	
+1553	Candyland_Cottontail_Ops_Tail	Backpack	Common	2	2	
+1554	Candyland_Ranger_Rootbeer_Rocket	Backpack	Common	2	2	
+1555	Candyland_Cottontail_Ops_Ears	Hat	Common	2	2	
+1556	Candyland_Cottontail_Ops_Helmet	Hat	Common	2	2	
+1557	Candyland_Ranger_Rootbeer_Hat	Hat	Common	2	2	
+1558	Candyland_Cottontail_Ops_Bandana	Mask	Common	2	2	
+1559	Candyland_Ranger_Rootbeer_Breather	Mask	Common	2	2	
+1560	Candyland_Cottontail_Ops_Bottom	Pants	Common	2	2	
+1561	Candyland_Ranger_Rootbeer_Bottom	Pants	Common	2	2	
+1562	Candyland_Cottontail_Ops_Top	Shirt	Common	3	2	
+1563	Candyland_Ranger_Rootbeer_Top	Shirt	Common	3	2	
+1564	Candyland_Cottontail_Ops_Vest	Vest	Common	2	2	
+1565	Candyland_Ranger_Rootbeer_Holsters	Vest	Common	2	2	
+1566	Rio_Guard_Hat	Hat	Common	2	2	
+1567	Rio_Vacc_Hat	Mask	Common	2	2	
+1568	Rio_Guard_Sash	Vest	Common	2	1	
+1569	Rio_Vacc_Vest	Vest	Common	2	2	
+1570	Rio_Guard_Top	Shirt	Common	3	2	
+1571	Rio_Vacc_Top	Shirt	Common	3	2	
+1572	Rio_Guard_Bottom	Pants	Common	2	2	
+1573	Rio_Vacc_Bottom	Pants	Common	2	2	
+1574	Rio_Tamer_Bird	Vest	Common	1	1	
+1575	Rio_Tamer_Vest	Vest	Common	2	2	
+1576	Rio_Tamer_Cage	Backpack	Common	2	2	
+1577	Rio_Tamer_Bottom	Pants	Common	2	2	
+1578	Rio_Tamer_Top	Shirt	Common	3	2	
+1579	ZhugeLiangBackpack	Backpack	Common	2	2	
+1580	ZhugeLiangBottom	Pants	Common	2	2	
+1581	ZhugeLiangHat	Hat	Common	2	2	
+1582	ZhugeLiangTop	Shirt	Common	3	2	
+1583	ZhugeLiangVest	Vest	Common	2	2	
+1584	LuBuBackpack	Backpack	Common	2	2	
+1585	LuBuBottom	Pants	Common	2	2	
+1586	LuBuHat	Hat	Common	2	2	
+1587	LuBuTop	Shirt	Common	3	2	
+1588	LuBuVest	Vest	Common	2	2	
+1589	GuanYuBackpack	Backpack	Common	2	2	
+1590	GuanYuBottom	Pants	Common	2	2	
+1591	GuanYuHat	Hat	Common	2	2	
+1592	GuanYuMask	Mask	Common	2	2	
+1593	GuanYuTop	Shirt	Common	3	2	
+1594	GuanYuVest	Vest	Common	2	2	
+1595	U4_Invitation	Key	Common	1	1	
+1596	DL_Carepackage	Storage	Epic	1	1	
+1597	Elver2_Bag_Duffle	Backpack	Common	2	2	
+1598	Elver2_Bowtie_Black	Vest	Common	1	2	
+1599	Elver2_Bowtie_Green	Vest	Common	1	2	
+1600	Elver2_Bowtie_Navy	Vest	Common	1	2	
+1601	Elver2_Bowtie_Plaid_0	Vest	Common	1	2	
+1602	Elver2_Bowtie_Plaid_1	Vest	Common	1	2	
+1603	Elver2_Bowtie_Red	Vest	Common	1	2	
+1604	Elver2_Bowtie_White	Vest	Common	1	2	
+1605	Elver2_Clown_Hair	Hat	Common	2	2	
+1606	Elver2_Feather	Hat	Common	2	2	
+1607	Elver2_Hair_Feline	Hat	Common	2	2	
+1608	Elver2_Headset	Mask	Common	2	2	
+1609	Elver2_Medal	Vest	Common	1	1	
+1610	Elver2_Nerd_Glasses	Glasses	Common	2	1	
+1611	Elver2_Octi_Pack	Backpack	Common	2	2	
+1612	Elver2_Operator_Cap	Hat	Common	2	2	
+1613	Elver2_Pilot	Mask	Common	2	1	
+1614	Elver2_Radio_Backpack	Backpack	Common	2	2	
+1615	Elver2_Runic_Cape	Backpack	Common	2	2	
+1616	Elver2_Shoulder_Falcon	Vest	Common	2	2	
+1617	Elver2_Skater_Bottom_Beige	Pants	Common	1	1	
+1618	Elver2_Skater_Bottom_Black	Pants	Common	1	1	
+1619	Elver2_Skater_Bottom_Green	Pants	Common	1	1	
+1620	Elver2_Skater_Bottom_Navy	Pants	Common	1	1	
+1621	Elver2_Skater_Bottom_White	Pants	Common	1	1	
+1622	Elver2_Skater_Top_Black	Shirt	Common	1	1	
+1623	Elver2_Skater_Top_Brown	Shirt	Common	1	1	
+1624	Elver2_Skater_Top_Gray	Shirt	Common	1	1	
+1625	Elver2_Skater_Top_Navy	Shirt	Common	1	1	
+1626	Elver2_Skater_Top_Pink	Shirt	Common	1	1	
+1627	Elver2_Skater_Top_Red	Shirt	Common	1	1	
+1628	Elver2_Tank_Hat	Hat	Common	2	2	
+1629	Elver2_Tie_Black	Vest	Common	1	2	
+1630	Elver2_Tie_Fish	Vest	Common	1	2	
+1631	Elver2_Tie_Green	Vest	Common	1	2	
+1632	Elver2_Tie_Navy	Vest	Common	1	2	
+1633	Elver2_Tie_Plaid_0	Vest	Common	1	2	
+1634	Elver2_Tie_Plaid_1	Vest	Common	1	2	
+1635	Elver2_Tie_Plaid_2	Vest	Common	1	2	
+1636	Elver2_Tie_Red	Vest	Common	1	2	
+1637	Elver2_Tie_Spotty	Vest	Common	1	2	
+1638	Elver2_Tie_White	Vest	Common	1	2	
+1639	Elver2_Box	Box	Common	1	1	
+1640	P9nda_Hat	Hat	Common	2	2	
+1641	Beret_Orange_Double	Hat	Common	2	2	
+1642	Beret_Orange_Triple	Hat	Common	2	2	
+1643	GA_ArcticFox	Vest	Common	2	2	
+1644	GA_FishingHat	Hat	Common	2	2	
+1645	GA_FishingPack	Backpack	Common	2	2	
+1646	GA_HunterBalaclava	Mask	Common	2	2	
+1647	GA_HunterBelt	Vest	Common	2	2	
+1648	GA_HunterBottom	Pants	Common	2	2	
+1649	GA_HunterShirt	Shirt	Common	2	2	
+1650	GA_HunterHood	Hat	Common	2	2	
+1651	GA_HunterPack	Backpack	Common	2	2	
+1652	Kuwait_DunemanPants	Pants	Common	1	1	
+1653	Kuwait_DunemanHat	Hat	Common	1	1	
+1654	Kuwait_DunemanShirt	Shirt	Common	1	1	
+1655	Kuwait_DunemanNecklace	Vest	Common	1	1	
+1656	Kuwait_FelineCollar	Mask	Common	1	1	
+1658	Kuwait_Boonie_Blue	Hat	Common	1	1	
+1659	Kuwait_Boonie_Olive	Hat	Common	1	1	
+1660	Kuwait_Boonie_Purple	Hat	Common	1	1	
+1661	Kuwait_Boonie_Tan	Hat	Common	1	1	
+1662	Kuwait_CamelShirt	Shirt	Common	1	1	
+1663	Kuwait_CaracalShirt	Shirt	Common	1	1	
+1664	Kuwait_DisguiseMask	Mask	Common	1	1	
+1665	Kuwait_LShirt_Blue	Shirt	Common	1	1	
+1666	Kuwait_LShirt_Olive	Shirt	Common	1	1	
+1667	Kuwait_LShirt_Purple	Shirt	Common	1	1	
+1668	Kuwait_LShirt_Tan	Shirt	Common	1	1	
+1669	Kuwait_Mask_Blue	Mask	Common	1	1	
+1670	Kuwait_Mask_Olive	Mask	Common	1	1	
+1671	Kuwait_Mask_Purple	Mask	Common	1	1	
+1672	Kuwait_Mask_Tan	Mask	Common	1	1	
+1673	Kuwait_PalmHoodie	Shirt	Common	1	1	
+1674	Kuwait_ReadingGlasses	Glasses	Common	2	1	
+1675	Kuwait_SweatPants_Blue	Pants	Common	1	1	
+1676	Kuwait_SweatPants_Olive	Pants	Common	1	1	
+1677	Kuwait_SweatPants_Purple	Pants	Common	1	1	
+1678	Kuwait_SweatPants_Tan	Pants	Common	1	1	
+1679	Kuwait_LettermanPants	Pants	Common	1	1	
+1680	Kuwait_LettermanGlasses	Glasses	Common	1	1	
+1681	Kuwait_LettermanHat	Hat	Common	1	1	
+1682	Kuwait_LettermanShirt	Shirt	Common	1	1	
+1683	Kuwait_FloralHair	Hat	Common	1	1	
+1684	Kuwait_ParachutePack	Backpack	Common	1	1	
+1685	Kuwait_Runman	Vest	Common	1	1	
+1686	Kuwait_SandstormCrusader	Hat	Common	1	1	
+1687	Kuwait_StrawHat	Hat	Common	1	1	
+1689	ChefZombiePlush	Vest	Common	1	1	
+1690	Butterfly	Backpack	Common	2	2	
+1691	Bounce Charge	Charge	Epic	1	1	Remotely detonated jumping explosive.
+1692	Christmas Tree	Barricade	Rare	2	2	Pocket-sized decorated pine tree.
+1693	Snow Shovel	Melee	Common	2	3	Perfect for scooping up snow piles.
+1694	Candy Cane Fragments	Supply	Rare	1	1	Festive fragments for decorations.
+1695	Present	Storage	Rare	1	1	A colorful box for storing gifts.
+1696	Present	Storage	Rare	2	1	A colorful box for storing gifts.
+1697	Present	Storage	Rare	2	1	A colorful box for storing gifts.
+1698	Present	Storage	Rare	2	2	A colorful box for storing gifts.
+1699	Present	Storage	Rare	1	2	A colorful box for storing gifts.
+1700	Festive Lights	Barricade	Rare	1	1	Assortment of colorful lights for the festive season.
+1701	Wreath	Barricade	Rare	1	1	A varied assortment of leaves constructed to form a ring.
+1702	Small Ice Castle	Barricade	Rare	1	1	A decorative fortress made of ice.
+1703	Large Ice Castle	Barricade	Rare	2	2	A decorative fortress made of ice.
+1704	Saw	Melee	Epic	3	2	Candy cane chewing machine of death.
+1705	Stocking	Storage	Rare	1	1	Large red sock used for storing gifts.
+1706	Gingerbread Cookie	Food	Rare	1	1	Small man suitable for consumption.
+1707	Ice Crystal	Supply	Rare	1	2	Shiny crystal made of frozen water.
+1708	Drumstick	Food	Rare	1	1	Not intended for musical purposes.
+1709	Arid_Arrowhead	Mask	Common	2	1	
+1710	Arid_Baseball_Cap	Hat	Common	2	2	
+1711	Arid_Fancy_Glasses	Glasses	Common	2	1	
+1712	Arid_Golf_Bag	Backpack	Common	2	2	
+1713	Arid_Hockey_Mask_Black	Mask	Common	2	2	
+1714	Arid_Monocular	Glasses	Common	2	1	
+1715	Arid_Box	Box	Common	1	1	
+1716	Arid_Ponyhair	Hat	Common	2	2	
+1717	Arid_Privateer_Top	Shirt	Common	3	2	
+1718	Arid_Responder_Rig	Vest	Common	2	2	
+1719	Arid_Skull_Bandana	Mask	Common	1	1	
+1720	Arid_Suit_Bottoms_0	Pants	Common	2	2	
+1721	Arid_Suit_Bottoms_1	Pants	Common	2	2	
+1722	Arid_Suit_Bottoms_2	Pants	Common	2	2	
+1723	Arid_Suit_Bottoms_3	Pants	Common	2	2	
+1724	Arid_Suit_Top_0	Shirt	Common	2	2	
+1725	Arid_Suit_Top_1	Shirt	Common	2	2	
+1726	Arid_Suit_Top_2	Shirt	Common	2	2	
+1727	Arid_Suit_Top_3	Shirt	Common	2	2	
+1728	Arid_Surplus_Jacket	Shirt	Common	3	2	
+1729	Arid_Tracksuit_Bottom	Pants	Common	2	2	
+1730	Arid_Vintage_Helmet	Hat	Common	2	2	
+1731	Arid_Welding_Goggles	Glasses	Common	2	1	
+1732	XMAS_Bow	Hat	Common	2	2	
+1733	XMAS_Took	Hat	Common	2	2	
+1734	XMAS_Bandolier	Vest	Common	2	2	
+1735	XMAS_Belt	Vest	Common	2	2	
+1736	BiohazardZombiePlush	Vest	Common	1	1	
+1737	Kuwait_Free_Camel_Jammies_Bottom	Pants	Common	1	1	
+1738	Kuwait_Free_Camel_Jammies_Top	Shirt	Common	1	1	
+1739	Kuwait_Free_Caracal_Jammies_Bottom	Pants	Common	1	1	
+1740	Kuwait_Free_Caracal_Jammies_Top	Shirt	Common	1	1	
+1741	Kuwait_Free_Fish_Jammies_Bottom	Pants	Common	1	1	
+1742	Kuwait_Free_Fish_Jammies_Top	Shirt	Common	1	1	
+1743	Kuwait_Free_Palm_Jammies_Bottom	Pants	Common	1	1	
+1744	Kuwait_Free_Palm_Jammies_Top	Shirt	Common	1	1	
+1745	Kuwait_Achievement_Dunce_Sticker	Glasses	Common	1	1	
+1746	Kuwait_Achievement_Nazar_Pin	Vest	Common	1	1	
+1747	Kuwait_Assorted_Artsie_Beret	Hat	Common	1	1	
+1748	Kuwait_Assorted_Bank_Heister	Mask	Common	1	1	
+1749	Kuwait_Assorted_Briefcase	Backpack	Common	1	1	
+1750	Kuwait_Assorted_Feline_Friend	Vest	Common	1	1	
+1751	Kuwait_Assorted_Range_Specs	Glasses	Common	1	1	
+1752	Kuwait_Assorted_Slick_Hair	Hat	Common	1	1	
+1753	Kuwait_Assorted_Ushanka	Hat	Common	1	1	
+1754	Kuwait_Free_Camel_Nightcap	Hat	Common	1	1	
+1755	Kuwait_Free_Caracal_Nightcap	Hat	Common	1	1	
+1756	Kuwait_Free_Fish_Nightcap	Hat	Common	1	1	
+1757	Kuwait_Free_Palm_Nightcap	Hat	Common	1	1	
+1758	Kuwait_Private_Eye_Bottom	Pants	Common	1	1	
+1759	Kuwait_Private_Eye_Top	Shirt	Common	1	1	
+1760	Kuwait_Private_Eye_Camera	Vest	Common	1	1	
+1761	Kuwait_Private_Eye_Hat	Hat	Common	1	1	
+1762	Kuwait_Private_Eye_Pipe	Mask	Common	1	1	
+1763	Monocle_Platinum	Glasses	Common	1	1	
+1764	Housing Planner	Tool	Uncommon	1	1	Using the latest and greatest PinePilot 3000 tech it is easier than ever to build your own home! Our advanced algorithms do the heavy lifting, leaving you to design the blueprints with our intuitive stylus-driven UI. <b>Bypasses workstation requirements.</b>
+1765	Cultist_Backpack	Backpack	Common	2	2	
+1766	Cultist_Hat	Hat	Common	2	2	
+1767	Cultist_Mask	Mask	Common	2	2	
+1768	Cultist_Pants	Pants	Common	2	2	
+1769	Cultist_Shirt	Shirt	Common	3	2	
+1770	Cultist_Vest	Vest	Common	2	2	
+1771	Turtle_Backpack	Backpack	Common	2	2	
+1772	Penguin_Companion	Vest	Common	1	1	
+1773	Crab_Companion	Vest	Common	1	1	
+1774	DemonHead	Hat	Common	2	2	
+1775	DemonHorns	Glasses	Common	2	3	
+1776	DemonPants	Pants	Common	2	2	
+1777	DemonShirt	Shirt	Common	3	2	
+1778	DemonTail	Backpack	Common	2	2	
+1779	PirateCaptainBeard	Mask	Common	2	2	
+1780	PirateCaptainCannon	Backpack	Common	2	2	
+1781	PirateCaptainCoat	Vest	Common	2	3	
+1782	PirateCaptainHat	Hat	Common	3	2	
+1783	PirateCaptainPants	Pants	Common	2	2	
+1784	PirateCaptainShirt	Shirt	Common	3	2	
+1785	PHCloak	Backpack	Common	2	4	
+1786	PHHat	Hat	Common	3	2	
+1787	PHMask	Mask	Common	2	2	
+1788	PHPants	Pants	Common	2	2	
+1789	PHShirt	Shirt	Common	3	2	
+1790	PHVest	Vest	Common	2	3	
+1791	Frost_Blindfold	Glasses	Common	1	1	
+1792	Frost_Facemask	Mask	Common	1	1	
+1793	Frost_Fanny	Vest	Common	1	1	
+1794	Frost_Fox	Hat	Common	1	1	
+1795	Frost_Guitar	Backpack	Common	1	1	
+1796	Frost_Jacket_Biker	Vest	Common	1	1	
+1797	Frost_Kitsune	Hat	Common	1	1	
+1798	Frost_Knot	Backpack	Common	1	1	
+1799	Frost_Miner	Hat	Common	1	1	
+1807	Frost_Overalls_Jeans	Pants	Common	1	1	
+1808	Frost_Overalls_Khaki	Pants	Common	1	1	
+1809	Frost_Pants_Spliced	Pants	Common	1	1	
+1810	Frost_Pengy	Vest	Common	1	1	
+1811	Frost_Shirt_Black	Shirt	Common	1	1	
+1812	Frost_Shirt_Blue	Shirt	Common	1	1	
+1813	Frost_Shirt_Penguin	Shirt	Common	1	1	
+1814	Frost_Shirt_Pink	Shirt	Common	1	1	
+1815	Frost_Shirt_White	Shirt	Common	1	1	
+1816	Frost_Shirt_Yellow	Shirt	Common	1	1	
+1817	Frost_Box	Box	Common	1	1	
+1818	Frost_Pixel	Glasses	Common	1	1	
+1819	Frost_Puffy	Vest	Common	1	1	
+1820	Frost_Scarf	Vest	Common	1	1	
+1821	Frost_Welder	Hat	Common	1	1	
+1822	Frost_Overalls_Black	Pants	Common	1	1	
+1823	Frost_Overalls_Corduroy	Pants	Common	1	1	
+1824	Frost_Overalls_Farmer	Pants	Common	1	1	
+1825	Arid_Scout_Bandana	Mask	Common	1	1	
+1826	Arid_Scout_Binoculars	Vest	Common	1	1	
+1827	Arid_Scout_Medbag	Backpack	Common	1	1	
+1828	Arid_Scout_Pants	Pants	Common	1	1	
+1829	Arid_Scout_Top	Shirt	Common	1	1	
+1830	Arid_Scout_Turban	Hat	Common	1	1	
+1831	Arid_Goggly_Hair	Hat	Common	1	1	
+1832	Arid_Oversized_Spectacles	Glasses	Common	1	1	
+1833	Arid_Tourist_Pack	Backpack	Common	1	1	
+1834	Arid_Tourist_Pockets	Vest	Common	1	1	
+1835	Arid_Tourist_Shorts	Pants	Common	1	1	
+1836	Arid_Tourist_Top	Shirt	Common	1	1	
+1838	Bounce Grenade	Throwable	Epic	1	1	Throwable jumping explosive.
+1839	Impact-Absorbing Boots	Pants	Rare	2	2	Cushions against long falls by absorbing impact into the springs.
+1840	Midnight Black Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1841	Brilliant White Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1842	Turquoise Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1843	Azure Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1844	Magenta Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1845	Hotrod Red Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1846	Cyan Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1847	Lime Green Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1848	Electric Yellow Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1849	Medium Purple Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1850	Dark Gray Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1851	Medium Gray Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1852	Light Gray Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1853	Dark Green Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1854	Crimson Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1855	Navy Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1856	Classic Black Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1857	Classic Blue Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1858	Classic Green Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1859	Classic Orange Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1860	Classic Purple Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1861	Classic Red Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1862	Classic White Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1863	Classic Yellow Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1864	Dark Brown Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1865	Medium Brown Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1866	Lavender Vehicle Spraypaint	Vehicle_Paint_Tool	Uncommon	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1867	Pike	Melee	Legendary	4	1	Medieval thrusting spear, not to be confused with the fish commonly known as pike or pickerel.
+1868	Ragdoll_Effect_Jaded	Key	Common	1	1	
+1869	Ragdoll_Effect_SoulCrystal_Green	Key	Common	1	1	
+1870	Ragdoll_Effect_SoulCrystal_Magenta	Key	Common	1	1	
+1871	Ragdoll_Effect_SoulCrystal_Red	Key	Common	1	1	
+1872	Ragdoll_Effect_SoulCrystal_Yellow	Key	Common	1	1	
+1873	Coalition Military Vehicle Spraypaint	Vehicle_Paint_Tool	Rare	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1874	Desert Military Vehicle Spraypaint	Vehicle_Paint_Tool	Rare	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1875	Forest Military Spraypaint	Vehicle_Paint_Tool	Rare	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1876	Olive Green Military Vehicle Spraypaint	Vehicle_Paint_Tool	Rare	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1877	Scorpion-7 Vehicle Spraypaint	Vehicle_Paint_Tool	Rare	1	2	Refreshes most vehicles with a beautiful new coat of paint.
+1900	Stacked Maple Logs	Barricade	Uncommon	3	2	Twelve stacked maple logs.
+1901	Stacked Birch Logs	Barricade	Common	3	2	Twelve stacked birch logs.
+1902	Stacked Pine Logs	Barricade	Rare	3	2	Twelve stacked pine logs.
+1903	Stacked Maple Planks	Barricade	Uncommon	3	2	Twelve stacked maple planks.
+1904	Stacked Birch Planks	Barricade	Common	3	2	Twelve stacked birch planks.
+1905	Stacked Pine Planks	Barricade	Rare	3	2	Twelve stacked pine planks.
+1906	Stacked Maple Sticks	Barricade	Uncommon	2	2	Twelve maple sticks bundled together.
+1907	Stacked Birch Sticks	Barricade	Common	2	2	Twelve birch sticks bundled together.
+1908	Stacked Pine Sticks	Barricade	Rare	2	2	Twelve pine sticks bundled together.
+1909	Stacked Metal Scraps	Barricade	Common	2	2	Ten stacked metal scraps.
+1910	Stacked Metal Sheets	Barricade	Uncommon	3	2	Five stacked metal sheets.
+1911	Stacked Metal Bars	Barricade	Rare	2	2	Ten metal bars bundled together.
+1912	Stacked Wires	Barricade	Common	2	2	Ten stacked wires.
+1913	Stacked Cloths	Barricade	Common	2	2	Ten stacked cloths.
+1914	Stacked Ropes	Barricade	Common	2	2	Ten stacked ropes.
+1915	Stacked Bricks	Barricade	Common	2	2	Ten stacked bricks.
+1916	Simple Workbench	Storage	Uncommon	2	2	General-purpose workstation for crafting and repairing most items.
+1917	Dye Vat	Barricade	Rare	2	2	Perfect for dyeing things.
+1918	Desk Lamp	Barricade	Rare	1	2	Small electric lamp for your desk or workbench.
+1919	Brick Oven	Barricade	Rare	2	2	Enclosed heat source for baking food.
+1920	Chemistry Lab	Storage	Epic	2	2	Specialized workstation for creating medicine and volatile conconctions.
+1921	Food Prep Station	Storage	Rare	2	2	Simple table for preparing food.
+1922	Spinning Wheel	Barricade	Rare	2	2	Clothing can be woven or repaired with this. Functionally identical to a <color=rare>Sewing Table</color>, just with a different look!
+1923	Loom	Barricade	Rare	2	2	Clothing can be woven or repaired with this. Functionally identical to a <color=rare>Sewing Table</color>, just with a different look!
+1924	Sewing Table	Storage	Rare	2	2	Clothing can be woven or repaired with this.
+1926	Clay	Supply	Common	1	1	Soft clay suitable for bricks and pottery.
+1927	Pottery Kiln	Barricade	Rare	2	2	Fire clay into bricks and pottery.
+1928	Ceramic Plate	Storage	Common	1	1	Ceramic plate for displaying food.
+1929	Baked Potato	Food	Rare	1	1	Cheese-loaded goodness.
+1930	Ceramic Bowl	Supply	Common	2	1	Currently lacks any soup or stew.
+1931	Vegetable Stew	Food	Epic	2	2	Simple stew of veggies with a rustic flavor. Reminds you of home.
+1932	Brown Cap Mushroom	Food	Common	1	1	Mushroom!
+1933	Brown Cap Mushroom Seed	Farm	Common	1	1	Ready for planting and eating.
+1934	Red Spotted Mushroom	Food	Common	1	1	Mushroom?
+1935	Red Spotted Mushroom Seed	Farm	Common	1	1	Ready for planting and eating.
+1936	Roasted Brown Cap Mushroom	Food	Common	1	1	Roasted to perfection... hopefully.
+1937	Roasted Red Spotted Mushroom	Food	Common	1	1	Roasted to perfection... hopefully.
+1938	Mushroom Stew	Food	Epic	2	2	Simple stew of mushrooms with a creamy, earthy flavor. Reminds you of nature.
+1939	Mushroom Pizza	Food	Epic	2	2	Topped with cheese, tomato sauce, and mushrooms.
+1940	Taro	Food	Common	1	1	Purple vegetable.
+1941	Taro Seed	Farm	Common	1	1	Ready for planting and eating.
+1942	Steamed Taro	Food	Common	2	2	Taro that has been heated to gelatinize the starch.
+1943	Poi	Food	Epic	2	2	A traditional Hawaiian food made by mashing steamed taro.
+1944	Rice	Food	Common	1	2	Golden-white grass.
+1945	Rice Seed	Farm	Common	1	1	Ready for planting and eating.
+1946	Cooked Rice	Food	Common	2	2	Rice cooked with plenty of water until soft.
+1947	Taro Rice Cake	Food	Epic	1	1	A soft and chewy rice cake made from taro and rice.
+1948	Sugarcane	Food	Common	1	2	Yellow-green grass.
+1949	Sugarcane Seed	Farm	Common	1	1	Ready for planting and eating.
+1950	Sugar	Supply	Common	1	1	Culinary ingredient with an enchanting sweetness.
+1951	Taro Mooncake	Food	Legendary	1	1	Tastes faintly of the moon, but mostly taro.
+1952	Raw Shrimp	Food	Common	1	1	Rather tiny and shrimpy.
+1953	Cooked Shrimp	Food	Common	1	1	Rather tiny and shrimpy.
+1954	Raw Goatfish	Food	Common	2	1	Rather smelly and fishy.
+1955	Cooked Goatfish	Food	Common	2	1	Rather smelly and fishy.
+1956	Raw Dolphinfish	Food	Rare	3	1	Rather smelly and fishy.
+1957	Cooked Dolphinfish	Food	Rare	3	1	Rather smelly and fishy.
+1958	Seaweed	Food	Common	1	1	It's always greener in somebody else's lake...
+1959	Raw Northern Pike	Food	Rare	3	1	Rather smelly and fishy, unlike a medieval pike.
+1960	Cooked Northern Pike	Food	Rare	3	1	Rather smelly and fishy, unlike a medieval pike.
+1961	Raw Tuna	Food	Epic	4	2	Rather smelly and fishy.
+1962	Cooked Tuna	Food	Epic	3	2	Rather smelly and fishy.
+1963	Raw Giant Trevally	Food	Epic	3	2	Rather smelly and fishy.
+1964	Cooked Giant Trevally	Food	Epic	3	2	Rather smelly and fishy.
+1965	Raw Lobster	Food	Rare	3	2	Rather shelly and snappy.
+1966	Cooked Lobster	Food	Rare	2	2	Less snappy than before.
+1967	Shrimp Sandwich	Food	Rare	1	1	Tasty shrimp in a blanket of bread.
+1968	Goatfish Sandwich	Food	Rare	1	1	Tasty goatfish in a blanket of bread.
+1969	Dolphinfish Sandwich	Food	Rare	1	1	Tasty dolphinfish in a blanket of bread.
+1970	Northern Pike Sandwich	Food	Rare	1	1	Tasty northern pike in a blanket of bread.
+1972	Giant Trevally Sandwich	Food	Rare	1	1	Tasty giant trevally in a blanket of bread.
+1973	Lobster Sandwich	Food	Rare	1	1	Tasty lobster in a blanket of bread.
+1974	Poke Bowl	Food	Epic	2	2	Poh-kay. Two syllables. Zero sharp objects.
+1975	Salmon Meunière	Food	Epic	2	2	Hearty and fragrant!
+1976	Stargazy Pie	Food	Epic	2	2	Even fish can chase the stars.
+1977	Lobster Roll	Food	Rare	2	1	Lobster and mayonnaise in a blanket of bread. Would it be considered a hotdog?
+1978	Seaweed Soup	Food	Epic	2	2	Simple soup of seaweed with a briny aroma. Reminds you of an ocean breeze.
+1979	Brick Floor	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1980	Triangular Brick Floor	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1981	Brick Hole	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1982	Triangular Brick Hole	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1983	Brick Ramp	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1984	Brick Roof	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1985	Triangular Brick Roof	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1986	Brick Stairs	Structure	Epic	2	2	Zombies can huff and puff, but they aren't getting in.
+1987	Triangular Birch Hole	Structure	Common	2	2	Birch triangular hole. Beware of termites.
+1988	Triangular Maple Hole	Structure	Uncommon	2	2	Maple triangular hole. Beware of termites.
+1989	Triangular Pine Hole	Structure	Rare	2	2	Pine triangular hole. Beware of termites.
+1990	Triangular Metal Hole	Structure	Epic	2	2	Metal triangular hole. Beware of robotic termites.
+1991	Dressing Blueprint	Supply	Common	2	1	Guide to producing <color=rare>Dressings</color> without the need for Chemical Mixing Capabilities.
+1992	Pike Blueprint	Supply	Common	2	1	Guide to assembling a medieval <color=legendary>Pike</color>, ideal for poking things from a distance.
+1993	Sewing Workstations Blueprint	Supply	Common	2	1	Guide with alternative designs for the <color=rare>Sewing Table</color>. Functionally identical, just with a different look!
+1994	Rain Jacket	Shirt	Uncommon	3	2	Rainy weather coat.
+1995	Rain Pants	Pants	Uncommon	2	2	Baggy rain pants and matching yellow wellies. Useful when dancing in a rainstorm!
+1996	Rain Hat	Hat	Uncommon	2	2	This sou'wester is perfect for singing in the rain.
