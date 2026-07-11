@@ -13,7 +13,6 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath;
-        Vector3 _zAim; bool _zHave;   // first PEI zombie's position, for the UG_ZAERIAL demo cam
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         int _frame;
@@ -1027,41 +1026,13 @@ namespace UnturnedGodot
                 AddChild(jeep);
                 jeep.GlobalPosition = new Vector3(sx + 2.2f, terr.SampleHeight(sx + 2.2f, sz) + 1.5f, sz);
 
-                // ZOMBIE SPAWNS: PEI's navmesh regions from Environment/Bounds.dat (source LevelNavigation: River =
-                // u8 version, u8 count, then count x [center Vector3][size Vector3]). Drop a few zombies per region on
-                // LAND at terrain height; the radius-gated AI keeps far ones idle until you approach (source-accurate sensing).
+                // ZOMBIE SPAWNS: PEI's REAL zombie spawn points (Spawns/Animals.dat = 1456 points; legacy filename that
+                // LevelZombies reads), region-streamed around the player like Unturned's region loader -- see ZombieField.
+                // Replaces the old Environment/Bounds.dat navmesh approximation (52 zombies) with the map's actual horde design.
                 {
-                    string bpath = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Environment\Bounds.dat";
-                    int nz = 0;
-                    if (System.IO.File.Exists(bpath))
-                    {
-                        var bd = System.IO.File.ReadAllBytes(bpath); int o = 0;
-                        byte bver = bd[o++];
-                        if (bver > 0)
-                        {
-                            byte bcount = bd[o++];
-                            var rng = new RandomNumberGenerator { Seed = 90210 };
-                            for (int bi = 0; bi < bcount; bi++)
-                            {
-                                float cx = System.BitConverter.ToSingle(bd, o); o += 8;   // center.x (skip center.y)
-                                float cz = System.BitConverter.ToSingle(bd, o); o += 4;   // center.z
-                                float bsx = System.BitConverter.ToSingle(bd, o); o += 8;  // size.x (skip size.y)
-                                float bsz = System.BitConverter.ToSingle(bd, o); o += 4;  // size.z
-                                for (int k = 0; k < 4; k++)
-                                {
-                                    float wx = cx + rng.RandfRange(-bsx * 0.5f, bsx * 0.5f);
-                                    float gz = -(cz + rng.RandfRange(-bsz * 0.5f, bsz * 0.5f));   // Unity Z -> port negate-Z
-                                    if (Terrain.IsWater(terr.SampleDominantLayer(wx, gz))) continue;   // no zombies in the ocean
-                                    var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
-                                    AddChild(z);
-                                    z.GlobalPosition = new Vector3(wx, terr.SampleHeight(wx, gz) + 1f, gz);
-                                    if (!_zHave) { _zAim = z.GlobalPosition; _zHave = true; }   // remember the first zombie so the demo cam can look at it
-                                    nz++;
-                                }
-                            }
-                        }
-                    }
-                    GD.Print($"[zombies] spawned {nz} across PEI's navmesh regions");
+                    var zf = new ZombieField { Player = player, Terr = terr };
+                    zf.LoadFromPei(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI");
+                    AddChild(zf);
                 }
 
                 // VEHICLE SPAWNS: Spawns/Vehicles.dat (source LevelVehicles River: u8 ver, [SteamID if 1<v<3], u8 tableCount,
