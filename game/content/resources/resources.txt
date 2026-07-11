@@ -1,26 +1,26 @@
-Birch_1 2
-Maple_1 2
-Maple_0 2
-Birch_0 2
-Bush_1 1
-Bush_0 1
-Pine_0 2
-Pine_1 2
-Cane_00 1
-Metal_2 2
-Mushroom_Red_0 1
-Mushroom_Brown_0 1
-Snow_Pile_00 1
-Bush_Mauve 1
-Bush_Indigo 1
-Bush_Jade 1
-Bush_Amber 1
-Bush_Russet 1
-Bush_Teal 1
-Bush_Vermillion 1
-Bush_Hanu 1
-Clay_1 1
-Clay_0 1
-Clay_2 1
-Clay_4 1
-Clay_3 1
+Birch_1 2 NONE
+Maple_1 2 NONE
+Maple_0 2 NONE
+Birch_0 2 NONE
+Bush_1 1 NONE
+Bush_0 1 NONE
+Pine_0 2 NONE
+Pine_1 2 NONE
+Cane_00 1 CHRISTMAS
+Metal_2 2 NONE
+Mushroom_Red_0 1 NONE
+Mushroom_Brown_0 1 NONE
+Snow_Pile_00 1 CHRISTMAS
+Bush_Mauve 1 NONE
+Bush_Indigo 1 NONE
+Bush_Jade 1 NONE
+Bush_Amber 1 NONE
+Bush_Russet 1 NONE
+Bush_Teal 1 NONE
+Bush_Vermillion 1 NONE
+Bush_Hanu 1 NONE
+Clay_1 1 NONE
+Clay_0 1 NONE
+Clay_2 1 NONE
+Clay_4 1 NONE
+Clay_3 1 NONE

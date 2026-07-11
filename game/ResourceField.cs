@@ -14,7 +14,7 @@ namespace UnturnedGodot
     // pos.z negated). Tree roots sit ~1.2 below origin, so origin-at-spawn-point sinks them (punch-list #8).
     public partial class ResourceField : Node3D
     {
-        public void LoadResources()
+        public void LoadResources(string activeHoliday)
         {
             string dir = ProjectSettings.GlobalizePath("res://content/resources/");
             string manifest = dir + "resources.txt";
@@ -25,6 +25,8 @@ namespace UnturnedGodot
                 var sp = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (sp.Length < 2 || !int.TryParse(sp[1], out int parts)) continue;
                 string name = sp[0];
+                string holiday = sp.Length >= 3 ? sp[2] : "NONE";   // Cane_00(candy cane)/Snow_Pile_00/Ornament_XMAS are CHRISTMAS-only
+                if (holiday != "NONE" && holiday != activeHoliday) continue;   // out-of-season resource (same gate as the objects)
                 bool isTree = name.StartsWith("Birch") || name.StartsWith("Maple") || name.StartsWith("Pine");   // only trees cast shadows
                 string binPath = dir + name + ".bin";
                 if (!File.Exists(binPath)) continue;

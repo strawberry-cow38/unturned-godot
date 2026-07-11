@@ -1311,7 +1311,7 @@ namespace UnturnedGodot
                 {
                     var rsf = new ResourceField();
                     AddChild(rsf);
-                    rsf.LoadResources();
+                    rsf.LoadResources(ActiveHoliday());   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
