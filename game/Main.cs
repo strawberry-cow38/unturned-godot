@@ -1280,8 +1280,8 @@ namespace UnturnedGodot
                                 vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
                                 {
                                     0 => (i % 3) switch { 0 => "sedan", 1 => "hatchback", _ => "roadster" },   // Civilian rolls the civilian car pool
-                                    3 => "humvee",                                                              // Military_Canada
-                                    _ => "jeep",                                                                // Farm (5): jeep until a tractor is ported
+                                    3 => (i % 2 == 0) ? "humvee" : "jeep",                                      // Military_Canada: humvee + jeep, both forest (master: jeep is military)
+                                    _ => "quad",                                                                // Farm (5): quad ATV stand-in until a tractor is ported
                                 };
                                 var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
                                 AddChild(veh);

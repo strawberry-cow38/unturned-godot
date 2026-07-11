@@ -16,7 +16,6 @@ namespace UnturnedGodot
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
-        const float SteerScale = 0.8f;   // master: turning was a little too sharp -- trim the .dat steer angles ~20%
         public bool Exploded => _exploded;
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
@@ -210,7 +209,7 @@ namespace UnturnedGodot
         static readonly Spec _jeep = new()
         {
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png",
-            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // source .dat: Coalition / Desert / Forest / Russia
+            DefaultPaints = new[] { "#437c44" },   // master: PEI/Canada military = FOREST fixed (src Jeep/Humvee.dat list all 4 factions + random-pick, but master wants forest)
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
@@ -322,7 +321,7 @@ namespace UnturnedGodot
         static readonly Spec _humvee = new()
         {
             Body = "humvee_body.txt", Wheel = "humvee_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "humvee_palette.png",
-            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // source .dat: Coalition / Desert / Forest / Russia
+            DefaultPaints = new[] { "#437c44" },   // master: PEI/Canada military = FOREST fixed (src Jeep/Humvee.dat list all 4 factions + random-pick, but master wants forest)
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
             ForwardGears = new[] { 20f, 12.56f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
@@ -526,7 +525,7 @@ namespace UnturnedGodot
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
-            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t) * SteerScale;   // smoothed toward in _PhysicsProcess (not snapped); SteerScale trims the .dat angle (master: too sharp)
+            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp -- master confirmed the raw angle is fine
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : 0f);
         }
@@ -582,7 +581,9 @@ namespace UnturnedGodot
             if (_wNodes == null) return;
             if (_parked)   // smooth stop-and-hold after the driver leaves (avoids the hard-brake wheel-lock judder)
             {
-                LinearVelocity = LinearVelocity.MoveToward(Vector3.Zero, 20f * (float)delta);
+                var lv = LinearVelocity;                                                                // damp only the HORIZONTAL roll and leave
+                var flat = new Vector3(lv.X, 0f, lv.Z).MoveToward(Vector3.Zero, 20f * (float)delta);    // the vertical to the suspension, so the car
+                LinearVelocity = new Vector3(flat.X, lv.Y, flat.Z);                                     // holds ride height instead of squatting/sinking (master)
                 AngularVelocity = Vector3.Zero;
                 Brake = _brakeForce * HandbrakeScale;   // hold with the full parking brake so it can't creep
             }

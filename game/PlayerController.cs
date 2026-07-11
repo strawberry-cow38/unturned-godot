@@ -912,7 +912,7 @@ namespace UnturnedGodot
         {
             Vehicle best = null; float bestD = 4.0f * 4.0f;   // within ~4 m
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle v)
+                if (n is Vehicle v && !v.Exploded)   // a wrecked car can't be entered (master); E near only a wreck falls through to pickup
                 {
                     float d = GlobalPosition.DistanceSquaredTo(v.GlobalPosition);
                     if (d < bestD) { bestD = d; best = v; }
