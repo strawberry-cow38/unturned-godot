@@ -15,7 +15,8 @@ namespace UnturnedGodot
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
-        const float FootBrakeScale = 15f, HandbrakeScale = 35f;   // Godot Brake calibration (the raw .dat Brake value was FAR too weak); S foot-brake vs Space handbrake bite -- tune to feel
+        const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
+        const float SteerScale = 0.8f;   // master: turning was a little too sharp -- trim the .dat steer angles ~20%
         public bool Exploded => _exploded;
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
@@ -436,6 +437,12 @@ namespace UnturnedGodot
                 v._wNodes[i] = w; v._wMeshes[i] = mi; v._wSign[i] = x < 0 ? -1f : 1f;
             }
 
+            // Drop the centre of mass to just below the axle line so the car stops rolling on turns and pitching onto its
+            // nose under braking (master). Godot's auto COM sat at the body-box centre (~0.6m up) -> top-heavy + tippy.
+            float comY = 0f; foreach (var wl in s.Wheels) comY += wl.y; comY = comY / s.Wheels.Length - 0.2f;
+            v.CenterOfMassMode = RigidBody3D.CenterOfMassModeEnum.Custom;
+            v.CenterOfMass = new Vector3(0f, comY, 0f);
+
             if (s.Parts != null)   // detail meshes with their real solid colours (seats grey, lights, steering brown)
                 foreach (var (txt, color) in s.Parts)
                 {
@@ -519,7 +526,7 @@ namespace UnturnedGodot
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
-            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped)
+            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t) * SteerScale;   // smoothed toward in _PhysicsProcess (not snapped); SteerScale trims the .dat angle (master: too sharp)
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : 0f);
         }
