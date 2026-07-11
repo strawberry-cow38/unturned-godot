@@ -14,6 +14,7 @@ namespace UnturnedGodot
 
         string _shotPath;
         Vector3 _zAim; bool _zHave;   // first PEI zombie's position, for the UG_ZAERIAL demo cam
+        Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         int _frame;
         string _rigDir;                              // --rig=DIR : capture a frame strip here
@@ -1094,21 +1095,40 @@ namespace UnturnedGodot
                             float ang = U8() * 2f;
                             if (type > 5) continue;          // skip air/boat/tank (6-11) until those models exist
                             float gz = -pz;                  // Unity Z -> port negate-Z
-                            var veh = Vehicle.BuildByName("jeep");
-                            AddChild(veh);
-                            veh.GlobalPosition = new Vector3(px, terr.SampleHeight(px, gz) + 1.2f, gz);
-                            veh.RotationDegrees = new Vector3(0f, -ang, 0f);   // yaw (negate for the port's negate-Z convention)
-                            nv++;
+                            var vpos = new Vector3(px, terr.SampleHeight(px, gz) + 1.2f, gz);
+                            var vyaw = new Basis(Vector3.Up, Mathf.DegToRad(-ang));   // spawn yaw (negate for negate-Z)
+                            string vn = type == 1 ? "Veh_Police" : type == 2 ? "Veh_Firetruck" : type == 4 ? "Veh_Ambulance" : null;
+                            if (vn != null)   // real static vehicle mesh (Police / Firetruck / Ambulance) + collider
+                            {
+                                if (!cache.TryGetValue(vn, out var vm)) { vm = ObjMesh.Load(dir + vn + ".obj"); cache[vn] = vm; }
+                                if (vm != null)
+                                {
+                                    var rpos = new Vector3(px, terr.SampleHeight(px, gz) - vm.GetAabb().Position.Y, gz);   // sit the mesh's bottom on the terrain
+                                    AddChild(new MeshInstance3D { Mesh = vm, MaterialOverride = MatFor(vn), Transform = new Transform3D(vyaw, rpos) });
+                                    if (!shapeCache.TryGetValue(vn, out var vs)) { vs = vm.CreateTrimeshShape(); shapeCache[vn] = vs; }
+                                    if (vs != null) { var vb = new StaticBody3D { Transform = new Transform3D(vyaw, rpos) }; vb.AddChild(new CollisionShape3D { Shape = vs }); AddChild(vb); }
+                                    if (!_vHave) { _vAim = rpos; _vHave = true; }
+                                    nv++;
+                                }
+                            }
+                            else   // Civilian / Military / Farm -> drivable jeep placeholder
+                            {
+                                var veh = Vehicle.BuildByName("jeep");
+                                AddChild(veh);
+                                veh.GlobalPosition = vpos;
+                                veh.RotationDegrees = new Vector3(0f, -ang, 0f);
+                                nv++;
+                            }
                         }
                     }
-                    GD.Print($"[vehicles] spawned {nv} at PEI's car spawns (jeep placeholder for all types)");
+                    GD.Print($"[vehicles] spawned {nv} at PEI's car spawns (Police/Fire/Ambulance real meshes; jeep for Civilian/Military/Farm)");
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
                     AddChild(acam);
-                    var ctr = player.GlobalPosition;   // overview of the spawn town: buildings + vehicles + zombies
-                    acam.Position = ctr + new Vector3(0f, 50f, 44f);
+                    var ctr = _vHave ? _vAim : player.GlobalPosition;   // prefer a real vehicle; else the spawn town
+                    acam.Position = ctr + (_vHave ? new Vector3(0f, 9f, 11f) : new Vector3(0f, 50f, 44f));
                     acam.LookAt(ctr, Vector3.Up);
                 }
                 GetWindow().Mode = Window.ModeEnum.Maximized;
