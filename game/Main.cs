@@ -37,13 +37,14 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
@@ -155,6 +156,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildPropTest(proptest);
+                return;
+            }
+
+            if (animrig != null)   // build a rigged animal from content/NAME_rig.json at its REST pose + 3/4 cam -> does it stand?
+            {
+                GetWindow().Size = new Vector2I(900, 900);
+                _shotPath = shot;
+                BuildAnimRig(animrig);
                 return;
             }
 
@@ -881,6 +890,37 @@ namespace UnturnedGodot
             cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
             cam.LookAt(c, Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --animrig=NAME: build a rigged animal from content/NAME_rig.json at its REST pose (no clips) + RGB axes + auto-framed
+        // 3/4 cam. Validates the skeleton/skin extraction -> does the deer STAND (vs the splayed raw bind-pose mesh)?
+        void BuildAnimRig(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.32f, 0.36f, 0.44f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.75f, 0.75f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+            var rc = RiggedCharacter.Build($"res://content/{name}_rig.json", new Color(0.52f, 0.36f, 0.22f), false, null, null);
+            if (rc == null) { GD.PrintErr($"[ANIMRIG] FAILED to build {name}"); GetTree().Quit(); return; }
+            AddChild(rc);
+            var aabb = rc.Body != null ? rc.Body.GetAabb() : new Aabb(Vector3.Zero, Vector3.One);
+            var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z)); if (r < 0.01f) r = 1.5f;
+            foreach (var (ax, col) in new[] { (Vector3.Right, new Color(1f, 0.15f, 0.15f)), (Vector3.Up, new Color(0.15f, 1f, 0.15f)), (Vector3.Back, new Color(0.2f, 0.4f, 1f)) })
+            {
+                var bar = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, 0.05f) * r + ax.Abs() * r * 1.1f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = col } };
+                bar.Position = ax * r * 0.55f;
+                AddChild(bar);
+            }
+            var cam = new Camera3D { Current = true, Fov = 50f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = c + new Vector3(r * 1.2f, r * 0.8f, r * 1.2f);
+            cam.LookAt(c, Vector3.Up);
+            GD.Print($"[ANIMRIG] {name} body aabb size={aabb.Size} center={c} bones={rc.Skeleton?.GetBoneCount()}");
         }
 
         // --objects: PEI's real placed objects (Level/Objects.dat) instanced on the terrain. placements.txt = every
