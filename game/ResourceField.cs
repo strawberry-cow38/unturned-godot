@@ -40,7 +40,7 @@ namespace UnturnedGodot
                     if (mesh == null) continue;
                     var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = xf.Count };
                     for (int k = 0; k < xf.Count; k++) mm.SetInstanceTransform(k, xf[k]);
-                    AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = MakeMat(dir + name + "_" + i + "_tex.png"),
+                    AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = MakeMat(dir + name + "_" + i + "_tex.png", !isTree),
                         CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off });
                 }
                 total += xf.Count; types++;
@@ -69,7 +69,7 @@ namespace UnturnedGodot
             return list;
         }
 
-        static StandardMaterial3D MakeMat(string texPath)
+        static StandardMaterial3D MakeMat(string texPath, bool unshaded)
         {
             var mat = new StandardMaterial3D
             {
@@ -78,6 +78,7 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // leaves are double-sided billboards
                 Roughness = 1f,
             };
+            if (unshaded) mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;   // no directional flat-shading on non-tree foliage
             if (File.Exists(texPath))
             {
                 var img = new Image();

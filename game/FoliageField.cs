@@ -40,6 +40,7 @@ namespace UnturnedGodot
                 AlphaScissorThreshold = 0.4f,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // billboards are double-sided
                 Roughness = 1f,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,   // master: no ugly directional sun-shading/flat-shadows on foliage
             };
             string tp = dir + nm + "_tex.png";
             if (File.Exists(tp))
