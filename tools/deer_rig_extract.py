@@ -73,36 +73,53 @@ def mat_of(bp):
     d=list(bp); return [[d[r*4+c] for c in range(4)] for r in range(4)]
 bindposes=[mat_of(bp) for bp in mesh.m_BindPose]
 
-# ---------- bone hierarchy from m_Bones fathers ----------
-bone_pid=[pp.path_id for pp in smr.m_Bones]
-father_pid=[]; bone_name=[]
+# ---------- FULL skeleton from the Transform hierarchy (Skeleton root + skinned bones) so clips parent correctly ----------
+def v3(v): return [v.X,v.Y,v.Z] if hasattr(v,'X') else [v.x,v.y,v.z]
+def q4(q): return [q.X,q.Y,q.Z,q.W] if hasattr(q,'X') else [q.x,q.y,q.z,q.w]
+def qmat(q):
+    x,y,z,w=q
+    return [[1-2*(y*y+z*z),2*(x*y-w*z),2*(x*z+w*y)],[2*(x*y+w*z),1-2*(x*x+z*z),2*(y*z-w*x)],[2*(x*z-w*y),2*(y*z+w*x),1-2*(x*x+y*y)]]
+def trsmat(pos,quat,scale):
+    R=qmat(quat)
+    return [[R[r][0]*scale[0],R[r][1]*scale[1],R[r][2]*scale[2],pos[r]] for r in range(3)]+[[0.0,0.0,0.0,1.0]]
+coll={}   # pid -> (name, father_pid, local4x4)
+def add_tf(t, pid):
+    if pid in coll: return
+    name=t.m_GameObject.read().m_Name
+    fp=getattr(t,'m_Father',None); fpid=getattr(fp,'path_id',0) if fp else 0
+    coll[pid]=(name, fpid, trsmat(v3(t.m_LocalPosition), q4(t.m_LocalRotation), v3(t.m_LocalScale)))
+    if name!='Skeleton' and fp and fpid:            # walk up to & including "Skeleton" (the clip-root); stop there
+        try: add_tf(fp.read(), fpid)
+        except Exception: pass
+skinned_pid=[]
 for pp in smr.m_Bones:
-    t=pp.read(); fp=getattr(t,'m_Father',None); father_pid.append(getattr(fp,'path_id',0) if fp else 0)
-    bone_name.append(t.m_GameObject.read().m_Name)   # REAL bone name (clips reference bones by this)
-pid2i={pid:i for i,pid in enumerate(bone_pid)}
-parent_orig=[pid2i.get(father_pid[j],-1) for j in range(NB)]
-# topological sort (roots first)
-order=[]; placed=set()
-while len(order)<NB:
-    for j in range(NB):
-        if j in placed: continue
-        if parent_orig[j]==-1 or parent_orig[j] in placed:
-            order.append(j); placed.add(j)
-remap={orig:new for new,orig in enumerate(order)}
-
-# ---------- skeleton rest from bindposes ----------
-gu=[mat_inv_affine(bindposes[j]) for j in range(NB)]  # global rest per orig bone
+    add_tf(pp.read(), pp.path_id); skinned_pid.append(pp.path_id)
+pids=list(coll.keys()); pidx={pid:i for i,pid in enumerate(pids)}
+parent_raw={pid: (pidx[coll[pid][1]] if coll[pid][1] in pidx else -1) for pid in pids}
+order=[]; placed=set()                              # topological (roots first)
+while len(order)<len(pids):
+    prog=False
+    for pid in pids:
+        if pid in placed: continue
+        pr=parent_raw[pid]
+        if pr==-1 or pids[pr] in placed:
+            order.append(pid); placed.add(pid); prog=True
+    if not prog:
+        for pid in pids:
+            if pid not in placed: order.append(pid); placed.add(pid)
+        break
+remap={pid:new for new,pid in enumerate(order)}
 bones=[]
-for new,orig in enumerate(order):
-    par=parent_orig[orig]
-    loc=gu[orig] if par==-1 else matmul(mat_inv_affine(gu[par]),gu[orig])
-    t,q,sc=decompose(zflip(loc))
-    bones.append({'name':bone_name[orig],'parent':(remap[par] if par>=0 else -1),'pos':t,'rot':q,'scale':sc})
-# skin binds stay in ORIGINAL blend-index order j; skin[j].bone = skeleton index of orig bone j
-skin=[]
+for pid in order:
+    name,fpid,lm=coll[pid]
+    t,q,sc=decompose(zflip(lm))                     # Transform LOCAL (zflipped) = Godot bone rest local
+    pr=parent_raw[pid]
+    bones.append({'name':name,'parent':(remap[pids[pr]] if pr>=0 else -1),'pos':t,'rot':q,'scale':sc})
+skin=[]                                             # blend index j -> j-th skinned bone's index in the full skeleton
 for j in range(NB):
     t,q,sc=decompose(zflip(bindposes[j]))
-    skin.append({'bone':remap[j],'pos':t,'rot':q,'scale':sc})
+    skin.append({'bone':remap[skinned_pid[j]],'pos':t,'rot':q,'scale':sc})
+print("  full skeleton:", len(bones), "bones:", [(b['name'], b['parent']) for b in bones])
 
 # ---------- geometry + skin from packed m_VertexData ----------
 vd=mesh.m_VertexData; data=bytes(vd.m_DataSize)
