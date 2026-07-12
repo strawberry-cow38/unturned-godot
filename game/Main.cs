@@ -1232,6 +1232,7 @@ namespace UnturnedGodot
                         float maxDim = Mathf.Max(ab.Size.X * sx, Mathf.Max(ab.Size.Y * sy, ab.Size.Z * sz));
                         bool losBlocker = maxDim >= 5f && MatFor(name).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
+                        body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         AddChild(body);
                     }
