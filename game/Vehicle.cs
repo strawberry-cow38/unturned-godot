@@ -745,7 +745,6 @@ namespace UnturnedGodot
         void DoHorn()   // the actual honk: a pitch-varied one-shot (master: slight variation per honk) + the zombie noise alert
         {
             if (_hornAudio == null) return;
-            _hornAudio.PitchScale = 1f + (GD.Randf() - 0.5f) * 0.14f;   // +-7% pitch per honk so they don't all sound identical (master)
             _hornAudio.Play();
             GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, HornAlertRadius);   // source tellHorn AlertTool.alert(pos,32): the noise pulls nearby zombies to investigate
         }
