@@ -922,7 +922,7 @@ namespace UnturnedGodot
             {
                 _body.GlobalPosition = GlobalPosition;
                 _body.Rotation = new Vector3(0f, Rotation.Y, 0f);
-                _body.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length());
+                _body.SetLocomotion(new Vector2(Velocity.X, Velocity.Z).Length(), Stance);   // crouch/prone anims by stance (master)
             }
             _body.Tick(delta);
         }

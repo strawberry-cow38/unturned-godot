@@ -78,6 +78,19 @@ namespace UnturnedGodot
             if (want != _loco || _ap.CurrentAnimation != want) { _loco = want; _ap.Play(want); }
         }
 
+        // Stance-aware locomotion for the player body (master: crouch/crawl states): CROUCH swaps in Idle_Crouch/Move_Crouch,
+        // PRONE swaps in Idle_Prone/Move_Prone (the crawl), everything else uses the standing Idle/Walk/Run clips.
+        public void SetLocomotion(float speed, SDG.Unturned.EPlayerStance stance)
+        {
+            string idle = IdleClip, walk = WalkClip, run = RunClip;
+            if (stance == SDG.Unturned.EPlayerStance.CROUCH) { idle = "Idle_Crouch"; walk = run = "Move_Crouch"; }
+            else if (stance == SDG.Unturned.EPlayerStance.PRONE) { idle = "Idle_Prone"; walk = run = "Move_Prone"; }
+            if (_ap == null || _oneShot > 0) return;
+            string want = speed < 0.2f ? idle : (speed < 4.5f ? walk : run);
+            if (!_ap.HasAnimation(want)) return;
+            if (want != _loco || _ap.CurrentAnimation != want) { _loco = want; _ap.Play(want); }
+        }
+
         // Play a one-shot (Attack_0 / Startle_0); locomotion resumes after it finishes.
         public void PlayOnce(string name)
         {
