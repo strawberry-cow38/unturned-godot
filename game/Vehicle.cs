@@ -14,7 +14,9 @@ namespace UnturnedGodot
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
-        float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
+        float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
+        CpuParticles3D _wheelDust;   // dust kicked up from the wheels while driving (surface-tinted, master)
+        MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
         public bool Exploded => _exploded;
@@ -729,6 +731,11 @@ namespace UnturnedGodot
             v._fire   = MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.7f, 4.5f, 30, true);     // explosion fire
             v._smoke.Position = firePos; v._smoke0.Position = firePos; v._fire.Position = firePos;
             v.AddChild(v._smoke); v.AddChild(v._smoke0); v.AddChild(v._fire);
+            v._wheelDust = MakeSmoke("veh_smoke_1.png", new Color(0.62f, 0.58f, 0.50f), 0.6f, 1.6f, 14, false);   // wheels kick up dust while driving (generic tan; per-surface tint = the surf-material system)
+            v._wheelDust.Direction = new Vector3(0f, 0.5f, 1f); v._wheelDust.Spread = 30f; v._wheelDust.Gravity = new Vector3(0f, -2.5f, 0f);
+            v._wheelDust.ScaleAmountMin = 0.15f; v._wheelDust.ScaleAmountMax = 0.5f;
+            v._wheelDust.Position = new Vector3(0f, 0.1f, s.BoxCenter.Z + s.BoxSize.Z * 0.35f);   // rear axle, low
+            v.AddChild(v._wheelDust);
             v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
             v.AddChild(v._fireLight);
             v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
@@ -957,6 +964,11 @@ namespace UnturnedGodot
             _prevSpeed = curSpeed;
             if (_smoke != null) _smoke.Emitting = _exploded || Health < SmokeHealth;         // source updateFires: smoke_1 at health < 200 (or exploded)
             if (_smoke0 != null) _smoke0.Emitting = _exploded || Health < HeavySmokeHealth;   // source updateFires: smoke_0 (heavy) at health < 100 (or exploded)
+            if (_wheelDust != null)   // dust while driving on the ground (surface-tint TODO with the surf-material system)
+            {
+                bool grounded = false; foreach (var w in _wNodes) if (w != null && w.IsInContact()) { grounded = true; break; }
+                _wheelDust.Emitting = !_exploded && grounded && new Vector2(LinearVelocity.X, LinearVelocity.Z).Length() > 3f;
+            }
             if (_exploded)   // master: explosion smoke/fire emits from the ENGINE bay (like the hurt smoke) but rises STRAIGHT UP -- world-space so the plume doesn't tilt with the tumbling wreck
             {
                 var enginePos = ToGlobal(_firePos);   // engine-bay world position (rides the wreck); plume forced world-up via Rotation=0
