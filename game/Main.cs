@@ -108,6 +108,7 @@ namespace UnturnedGodot
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
+                else if (arg == "--crafttest") { RunCraftTest(); GetTree().Quit(); return; }   // parse an item .dat's Blueprints -> print (crafting parser self-test)
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1642,6 +1643,20 @@ namespace UnturnedGodot
             Check("water -> water 0.1+0.55=0.65", Mathf.Abs(p.Water - 0.65f) < 0.01f);
 
             GD.Print($"[USETEST] RESULT {pass} passed, {fail} failed");
+        }
+
+        // Crafting parser self-test: parse a real item .dat's Blueprints list -> print each (operation, inputs,
+        // outputs, skill, station). Proves BlueprintDef reads the modern nested-GUID blueprint format end to end.
+        static void RunCraftTest()
+        {
+            string path = ProjectSettings.GlobalizePath("res://content/eaglefire.dat");
+            if (!System.IO.File.Exists(path)) { GD.Print($"[CRAFTTEST] no .dat at {path}"); return; }
+            string text = System.IO.File.ReadAllText(path);
+            SDG.Unturned.IDatDictionary d = new SDG.Unturned.DatParser().Parse(text);
+            var bps = BlueprintDef.ParseAll(d, "4");
+            GD.Print($"[CRAFTTEST] eaglefire.dat -> {bps.Count} blueprint(s):");
+            foreach (var bp in bps) GD.Print("[CRAFTTEST]   " + bp.ToString());
+            GD.Print($"[CRAFTTEST] RESULT {(bps.Count > 0 ? "PASS parsed blueprints" : "FAIL no blueprints parsed")}");
         }
 
         // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every
