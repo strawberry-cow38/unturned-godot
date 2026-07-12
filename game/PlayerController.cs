@@ -70,20 +70,43 @@ namespace UnturnedGodot
             WorldItem.Spawn(GetParent(), item, pos);
         }
 
-        // E: pick up the nearest dropped item within ~2 m, adding it to the inventory (drops the world item if it fit).
+        WorldItem _focusItem;   // the dropped item the player is currently LOOKING AT (glowing + named), pickup target for E
+
+        // Look-at interaction (master): cast the eye-ray from the camera forward, up to ~3.5 m, against item interaction
+        // spheres (bit 8) AND world geometry (bit 0). The CLOSEST hit wins -> a wall between you and the item blocks it
+        // (LOS-correct). The hit item gets a rarity glow outline + name billboard; a different/no item clears the old.
+        void UpdateLookFocus()
+        {
+            WorldItem hitItem = null;
+            if (!_dead && _driving == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            {
+                Vector3 from = _cam.GlobalPosition;
+                Vector3 to = from - _cam.GlobalTransform.Basis.Z * 3.5f;
+                var q = PhysicsRayQueryParameters3D.Create(from, to);
+                q.CollisionMask = WorldItem.InteractLayer | (1u << 0);   // interaction spheres + world (world blocks LOS)
+                q.CollideWithAreas = true; q.CollideWithBodies = true;
+                q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+                var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
+                if (hit.Count > 0 && hit["collider"].As<GodotObject>() is Node n && n.GetParent() is WorldItem wi)
+                    hitItem = wi;
+            }
+            if (hitItem != _focusItem)
+            {
+                if (IsInstanceValid(_focusItem)) _focusItem.SetFocused(false);
+                _focusItem = hitItem;
+                _focusItem?.SetFocused(true);
+            }
+        }
+
+        // E: pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
         public void TryPickup()
         {
-            WorldItem nearest = null; float best = 4f;   // 2 m radius, squared
-            foreach (var n in GetTree().GetNodesInGroup("worlditems"))
-                if (n is WorldItem wi)
-                {
-                    float d = GlobalPosition.DistanceSquaredTo(wi.GlobalPosition);
-                    if (d < best) { best = d; nearest = wi; }
-                }
-            if (nearest != null && Inventory.tryAddItem(nearest.Item))
+            var wi = _focusItem;
+            if (wi != null && IsInstanceValid(wi) && Inventory.tryAddItem(wi.Item))
             {
-                GD.Print($"[pickup] {nearest.Item.GetAsset()?.itemName}");
-                nearest.QueueFree();
+                GD.Print($"[pickup] {wi.Item.GetAsset()?.itemName}");
+                wi.QueueFree();
+                _focusItem = null;
                 _invUI?.Refresh();
             }
         }
@@ -538,7 +561,8 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
             {
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
-                else { var veh = NearestVehicle(); if (veh != null) EnterVehicle(veh); else TryPickup(); }   // near a vehicle: get in, else pick up
+                else if (_focusItem != null) TryPickup();                                                  // looking at an item: pick it up
+                else { var veh = NearestVehicle(); if (veh != null) EnterVehicle(veh); }                     // else near a vehicle: get in
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
             {
@@ -894,6 +918,7 @@ namespace UnturnedGodot
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
+            UpdateLookFocus();   // look-at item interaction (master): eye-ray -> focus the item you're aiming at (rarity glow + name)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)

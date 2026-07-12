@@ -5,24 +5,34 @@ using System.Globalization;
 
 namespace UnturnedGodot
 {
-    // A dropped item in the world -- now the item's REAL 3D model as a physics prop (master 2026-07-12), replacing the
-    // old rarity-tinted marker box. Extracted from core.masterbundle (tools/extract_items.py): every PEI loot-table item
-    // -> a combined .txt (Wavefront OBJ) mesh + primary albedo .png + best-fit AABB box, in content/items/, indexed by
-    // items_manifest.json. Spawns as a RigidBody3D: gravity + a best-fit BOX collider colliding with world+props (src
-    // ItemManager.spawnItem: Rigidbody drag 0.5 / angularDrag 0.1, dropped rotation Euler(-90,rand,rand), Discrete CCD).
-    // Still lives in the "worlditems" group for nearest-within-radius pickup + carries the ESP name label (P toggles) +
-    // the throttled LOS visual cull (a town full of loot must not raycast-per-item every frame -- master).
+    // A dropped item in the world -- the item's REAL 3D model as a physics prop (master 2026-07-12). Extracted from
+    // core.masterbundle (tools/extract_items.py): every PEI loot-table item -> a combined .txt (Wavefront OBJ) mesh +
+    // primary albedo/flat-colour + best-fit AABB box, in content/items/, indexed by items_manifest.json. Spawns as a
+    // RigidBody3D: gravity + src drag, a best-fit BOX collider colliding with world+props; FREEZES to static once it
+    // settles (the vehicle-style jitter kill -- metal scrap was buzzing on flat ground). Interaction is LOOK-AT (master):
+    // an interaction SPHERE (Area3D, bit 8) the player's eye-ray hits -> rarity-colour glow outline + name billboard ->
+    // E to pick up (PlayerController drives the focus).
     public partial class WorldItem : RigidBody3D
     {
         public Item Item;
         public Color? FallbackColor;   // unknown-id loot (no registered asset / no model): tint by its spawn TABLE
         public string FallbackName;    // ...and label by the table name (e.g. "Military Canada", "Food")
-        public static bool ShowLabels; // P toggles ALL item ESP name tags on/off (off by default; PlayerController Key.P)
-        public static bool NoDropRotation; // --itemtest UG_NOROT diagnostic: spawn at identity (no src drop pose) to read the raw model orientation
+        public static bool ShowLabels; // P force-shows ALL item name tags (else a tag shows only while looked-at)
+        public static bool NoDropRotation; // --itemtest UG_NOROT diagnostic: spawn at identity to read the raw model orientation
+
+        public const uint InteractLayer = 1u << 8;   // item interaction spheres -- the player's look-ray masks this (+ bit0 for LOS)
+        const float LabelH = 0.4f;                    // name tag floats this far above the item origin (world space)
 
         float _losTimer;    // throttle the LOS visibility check (staggered) -- NOT a raycast-per-item every frame
         bool _shown = true;
-        MeshInstance3D _mesh;
+        MeshInstance3D _mesh, _glow;
+        Label3D _label;
+        Color _rar;
+        bool _focused;
+
+        Vector3 _velAvg, _angAvg;   // low-pass velocity/spin for settle detection (jitter cancels in the running average)
+        float _settleT;
+        bool _settled;
 
         // ---- shared item-model cache: parse each id's mesh/tex/box ONCE, reuse across its many spawns/despawns ----
         class Model { public ArrayMesh Mesh; public Material Mat; public Color? FlatColor; public Vector3 Box; public Vector3 Center; public bool Ok; }
@@ -74,12 +84,12 @@ namespace UnturnedGodot
                                     AlbedoTexture = ImageTexture.CreateFromImage(img),
                                     TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps,   // blocky Unturned pixels, like the rest of the port
                                     Roughness = 0.8f,
-                                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // double-sided like all the port's ripped meshes (their winding is authored for it -> back-cull renders them inside-out)
+                                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // double-sided like all the port's ripped meshes (their winding is authored for it)
                                 };
                             }
                         }
                     }
-                    if (m.Mat == null && e.ContainsKey("color"))   // no albedo texture -> the material's flat _Color is its real look (rope/bricks/suppressor...)
+                    if (m.Mat == null && e.ContainsKey("color"))   // no albedo texture -> the material's flat _Color is its real look
                     {
                         var c = e["color"].AsGodotArray();
                         if (c.Count >= 3) m.FlatColor = new Color(c[0].AsSingle(), c[1].AsSingle(), c[2].AsSingle());
@@ -104,12 +114,12 @@ namespace UnturnedGodot
         {
             AddToGroup("worlditems");
             var asset = Item?.GetAsset();
-            Color rar; string nm;
-            if (asset != null) { rar = ItemAsset.RarityColorUI(asset.rarity); nm = asset.itemName; }
-            else if (FallbackColor.HasValue) { rar = FallbackColor.Value; nm = FallbackName ?? "?"; }
-            else { rar = Colors.White; nm = "?"; }
+            string nm;
+            if (asset != null) { _rar = ItemAsset.RarityColorUI(asset.rarity); nm = asset.itemName; }
+            else if (FallbackColor.HasValue) { _rar = FallbackColor.Value; nm = FallbackName ?? "?"; }
+            else { _rar = Colors.White; nm = "?"; }
 
-            // --- physics: gravity + src drag, sleeps at rest (a town full of loot must idle to ~0 cost) ---
+            // --- physics: gravity + src drag; freezes to static on settle (jitter kill, like vehicles) ---
             GravityScale = 1f;
             Mass = 1f;
             LinearDamp = 0.5f;                          // src Rigidbody.drag
@@ -124,50 +134,106 @@ namespace UnturnedGodot
 
             _mesh = new MeshInstance3D();
             var col = new CollisionShape3D();
+            Vector3 boxSize, boxCenter;
             if (model != null && model.Ok)
             {
                 _mesh.Mesh = model.Mesh;
-                _mesh.MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? new Color(rar.R, rar.G, rar.B), Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                col.Shape = new BoxShape3D { Size = model.Box };
-                col.Position = model.Center;            // mesh sits in model space; the best-fit box is offset to wrap it
+                _mesh.MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? _rar, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                boxSize = model.Box; boxCenter = model.Center;
             }
             else
             {
-                // unknown id / no extracted model -> the old rarity marker box (keeps unmapped/nested-table ids readable)
-                _mesh.Mesh = new BoxMesh { Size = new Vector3(0.24f, 0.24f, 0.24f) };
-                _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(rar.R, rar.G, rar.B), Roughness = 0.55f };
-                col.Shape = new BoxShape3D { Size = new Vector3(0.24f, 0.24f, 0.24f) };
+                _mesh.Mesh = new BoxMesh { Size = new Vector3(0.24f, 0.24f, 0.24f) };   // unknown id / no model -> rarity marker box
+                _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = _rar, Roughness = 0.55f };
+                boxSize = new Vector3(0.24f, 0.24f, 0.24f); boxCenter = Vector3.Zero;
             }
+            col.Shape = new BoxShape3D { Size = boxSize };
+            col.Position = boxCenter;                   // mesh sits in model space; the best-fit box is offset to wrap it
             AddChild(_mesh);
             AddChild(col);
 
-            // src ItemManager.spawnItem drop pose: lay the vertically-authored model flat + random yaw + jitter, then settle.
-            // src is Euler(-90 X,...) in UNITY; our mesh is Z-reflected (Unity->Godot), and a Z-reflection conjugates
-            // Rx(-90) -> Rx(+90), so +90 lands it flat RIGHT-SIDE-UP (else every item settles upside down -- master).
+            // rarity glow (look-at highlight): an enlarged translucent unshaded rarity shell around the item = a HAZY rarity
+            // aura (master). Double-sided + transparent so it's winding-independent (the ripped meshes are authored for
+            // double-sided, which breaks a front-cull inverted-hull outline -> it covered the item at some angles).
+            const float glowScale = 1.12f;
+            _glow = new MeshInstance3D
+            {
+                Mesh = _mesh.Mesh, Visible = false,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Scale = Vector3.One * glowScale,
+                Position = boxCenter * (1f - glowScale),   // scale about the item's CENTRE, not the model origin
+            };
+            _glow.MaterialOverride = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                AlbedoColor = new Color(_rar.R, _rar.G, _rar.B, 0.33f),   // see-through rarity haze -> the item shows through + a rarity halo around it
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                EmissionEnabled = true, Emission = new Color(_rar.R, _rar.G, _rar.B), EmissionEnergyMultiplier = 1.0f,
+            };
+            AddChild(_glow);
+
+            // interaction sphere (Area3D, bit 8) -- generous so the eye-ray finds it easily; the ray also masks bit0 for LOS
+            var area = new Area3D { CollisionLayer = InteractLayer, CollisionMask = 0, Monitoring = false, Monitorable = true };
+            float r = Mathf.Max(0.35f, Mathf.Max(boxSize.X, Mathf.Max(boxSize.Y, boxSize.Z)) * 0.5f + 0.2f);
+            area.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = r }, Position = boxCenter });
+            AddChild(area);
+
+            // src ItemManager.spawnItem drop pose: +90 X (Z-reflection of the src -90 X) lays the model flat right-side-up
             if (!NoDropRotation)
                 Rotation = new Vector3(
                     Mathf.DegToRad(90f + (float)GD.RandRange(-15.0, 15.0)),
                     Mathf.DegToRad((float)GD.RandRange(0.0, 360.0)),
                     Mathf.DegToRad((float)GD.RandRange(-15.0, 15.0)));
 
-            var label = new Label3D
+            _label = new Label3D
             {
                 Text = nm,
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                Modulate = rar.Lerp(Colors.White, 0.35f),
-                PixelSize = 0.007f,
-                Position = new Vector3(0, 0.4f, 0),
+                Modulate = _rar.Lerp(Colors.White, 0.35f),
+                PixelSize = 0.006f,
                 NoDepthTest = true,
                 FontSize = 64,
                 OutlineSize = 10,
-                Visible = ShowLabels,   // ESP name tag -- hidden until P toggles it on
+                Visible = ShowLabels,   // name tag -- shown while looked-at (SetFocused) or force-on via P
+                TopLevel = true,        // ignore the item's (rotated) transform -> float in WORLD space above the item
             };
-            AddChild(label);
-            label.AddToGroup("esp_labels");
+            AddChild(_label);
+            _label.AddToGroup("esp_labels");
+            _label.GlobalPosition = GlobalPosition + Vector3.Up * LabelH;
+        }
+
+        // look-at focus (PlayerController drives this): rarity glow outline + name billboard on the item you're aiming at
+        public void SetFocused(bool on)
+        {
+            if (_focused == on) return;
+            _focused = on;
+            if (_glow != null) _glow.Visible = on && _shown;
+            if (_label != null) _label.Visible = on || ShowLabels;
+        }
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (_settled) return;   // frozen static once it came to rest -> zero per-frame cost + no jitter
+            _velAvg = _velAvg.Lerp(LinearVelocity, 0.15f);
+            _angAvg = _angAvg.Lerp(AngularVelocity, 0.15f);
+            if (_velAvg.LengthSquared() < 0.02f && _angAvg.LengthSquared() < 0.05f)
+            {
+                _settleT += (float)delta;
+                if (_settleT > 0.25f)   // gated on the FILTERED velocity so the buzz can't keep the timer from completing (vehicle lesson)
+                {
+                    LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
+                    FreezeMode = FreezeModeEnum.Static; Freeze = true;
+                    _settled = true;
+                }
+            }
+            else _settleT = 0f;
         }
 
         public override void _Process(double delta)
         {
+            if (_label != null && _label.Visible)   // TopLevel label -> keep it floating above the item in world space (billboards to the cam)
+                _label.GlobalPosition = GlobalPosition + Vector3.Up * LabelH;
             _losTimer -= (float)delta;
             if (_losTimer <= 0f)   // recompute visibility ~4x/sec, STAGGERED per item (the raycast-storm was the town stutter, master)
             {
@@ -186,6 +252,7 @@ namespace UnturnedGodot
                 }
                 if (Visible != show) Visible = show;   // hide the whole prop when occluded/behind -- physics keeps running so it still settles
                 _shown = show;
+                if (!show && _glow != null && _glow.Visible) _glow.Visible = false;
             }
         }
     }

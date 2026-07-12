@@ -917,6 +917,7 @@ namespace UnturnedGodot
         // to eyeball the extracted mesh + primary albedo + best-fit box AND that they FALL + settle (gravity, no float).
         void BuildItemTest(string ids)
         {
+            SDG.Unturned.ItemCatalog.RegisterAll();   // so new Item(id).GetAsset() resolves the real name + rarity colour (glow/label)
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
@@ -935,18 +936,22 @@ namespace UnturnedGodot
             AddChild(ground);
 
             bool norot = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_NOROT"));
+            bool focus = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_FOCUS"));   // UG_FOCUS=1 -> highlight the middle item (look-at glow + name preview)
             WorldItem.NoDropRotation = norot;   // UG_NOROT=1 -> hold each item at IDENTITY (frozen) to read the raw model orientation
             var parts = ids.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
             const float span = 1.7f;
             float x0 = -(parts.Length - 1) * span * 0.5f;
+            var spawned = new System.Collections.Generic.List<WorldItem>();
             for (int i = 0; i < parts.Length; i++)
             {
                 if (!ushort.TryParse(parts[i].Trim(), out var id)) continue;
                 var wi = WorldItem.Spawn(this, new Item(id), new Vector3(x0 + i * span, norot ? 0.7f : 1.2f, 0f));   // drop from 1.2 m -> it must FALL to the plane (norot: hold at 0.7 for the shot)
                 if (norot) wi.Freeze = true;   // freeze at identity so physics doesn't settle it -> see the authored up-orientation
+                spawned.Add(wi);
                 AddChild(new Label3D { Text = id.ToString(), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 40, PixelSize = 0.006f,
                     Position = new Vector3(x0 + i * span, 1.85f, 0f), Modulate = new Color(1f, 1f, 0.6f) });
             }
+            if (focus && spawned.Count > 0) spawned[spawned.Count / 2].SetFocused(true);   // preview the look-at highlight on the middle item
 
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f };
             AddChild(cam);
