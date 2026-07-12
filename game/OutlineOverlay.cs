@@ -31,7 +31,7 @@ namespace UnturnedGodot
             _vp.AddChild(_vpCam);
 
             _mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/item_outline.gdshader") };
-            _mat.SetShaderParameter("thickness", 2.5f);
+            _mat.SetShaderParameter("thickness", 3.5f);   // master: a teeny bit thicker
             _mat.SetShaderParameter("outline_color", new Vector3(1f, 1f, 1f));
 
             var canvas = new CanvasLayer { Layer = 50 };   // over the 3D view, under the HUD? 50 keeps it above the game, below any 100+ overlays

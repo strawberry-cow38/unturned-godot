@@ -71,25 +71,45 @@ namespace UnturnedGodot
         }
 
         WorldItem _focusItem;   // the dropped item the player is currently LOOKING AT (glowing + named), pickup target for E
+        Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
+        MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
 
         // Look-at interaction (master): cast the eye-ray from the camera forward, up to ~3.5 m, against item interaction
         // spheres (bit 8) AND world geometry (bit 0). The CLOSEST hit wins -> a wall between you and the item blocks it
         // (LOS-correct). The hit item gets a rarity glow outline + name billboard; a different/no item clears the old.
+        const float LookReach = 2.6f, LookSphereR = 0.32f;   // the eye-ray reaches this far, ending in a sphere of this radius (master's LookAtRadius)
+
         void UpdateLookFocus()
         {
             WorldItem hitItem = null;
             if (!_dead && _driving == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
+                var space = GetWorld3D().DirectSpaceState;
                 Vector3 from = _cam.GlobalPosition;
-                Vector3 to = from - _cam.GlobalTransform.Basis.Z * 3.5f;
-                var q = PhysicsRayQueryParameters3D.Create(from, to);
-                q.CollisionMask = WorldItem.InteractLayer | (1u << 0);   // interaction spheres + world (world blocks LOS)
-                q.CollideWithAreas = true; q.CollideWithBodies = true;
-                q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
-                var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
-                if (hit.Count > 0 && hit["collider"].As<GodotObject>() is Node n && n.GetParent() is WorldItem wi)
-                    hitItem = wi;
+                Vector3 fwd = -_cam.GlobalTransform.Basis.Z;
+                // 1) LOS: ray forward -> the sphere sits where the ray ENDS (a wall shortens the reach so you can't grab through it)
+                var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * LookReach);
+                rq.CollisionMask = 1u << 0;   // world/terrain/buildings
+                rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+                var rhit = space.IntersectRay(rq);
+                _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
+                // 2) sphere at the ray end -> whichever ITEM box (bit 7) it overlaps, nearest to the sphere centre, is focusable
+                var sq = new PhysicsShapeQueryParameters3D
+                {
+                    Shape = new SphereShape3D { Radius = LookSphereR },
+                    Transform = new Transform3D(Basis.Identity, _lookEnd),
+                    CollisionMask = WorldItem.ItemHitLayer,
+                    Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+                };
+                float best = float.MaxValue;
+                foreach (var h in space.IntersectShape(sq, 8))
+                    if (h["collider"].As<GodotObject>() is WorldItem wi && IsInstanceValid(wi))
+                    {
+                        float d = wi.GlobalPosition.DistanceSquaredTo(_lookEnd);
+                        if (d < best) { best = d; hitItem = wi; }
+                    }
             }
+            if (_lookViz != null) { _lookViz.Visible = WorldItem.ShowLookSphere && !_dead && _driving == null; if (_lookViz.Visible) _lookViz.GlobalPosition = _lookEnd; }
             if (hitItem != _focusItem)
             {
                 if (IsInstanceValid(_focusItem)) _focusItem.SetFocused(false);
@@ -497,6 +517,13 @@ namespace UnturnedGodot
             _cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the items' silhouette meshes in the main view (only the offscreen mask cam does)
             AddChild(_cam);
             CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());   // screen-space look-at outline (deferred so the viewport/camera exist)
+            _lookViz = new MeshInstance3D   // the ONE look-END sphere (O toggles it); TopLevel so it sits in world space at the ray end
+            {
+                Mesh = new SphereMesh { Radius = LookSphereR, Height = LookSphereR * 2f, RadialSegments = 16, Rings = 10 },
+                TopLevel = true, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = new Color(0.3f, 0.8f, 1f, 0.25f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+            };
+            AddChild(_lookViz);
             if (CaptureMouse) Local = this;   // the interactive (mouse-captured) player -> explosions shake this camera
 
             _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
@@ -590,10 +617,7 @@ namespace UnturnedGodot
                 GetTree().CallGroup("esp_labels", "set_visible", WorldItem.ShowLabels);
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.O, Echo: false })
-            {
-                WorldItem.ShowInteractSphere = !WorldItem.ShowInteractSphere;       // O: toggle the LookAtRadius ball visualizer (master)
-                GetTree().CallGroup("interact_spheres", "set_visible", WorldItem.ShowInteractSphere);
-            }
+                WorldItem.ShowLookSphere = !WorldItem.ShowLookSphere;               // O: toggle the look-END sphere visualizer (master)
             else if (@event is InputEventKey { Keycode: Key.T, Echo: false } tKey)
             {
                 if (AttachMenu != null)   // T (hold): show the weapon-attachment menu while held, release to close

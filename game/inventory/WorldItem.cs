@@ -18,16 +18,16 @@ namespace UnturnedGodot
         public Color? FallbackColor;   // unknown-id loot (no registered asset / no model): tint by its spawn TABLE
         public string FallbackName;    // ...and label by the table name (e.g. "Military Canada", "Food")
         public static bool ShowLabels; // P force-shows ALL item name tags (else a tag shows only while looked-at)
-        public static bool ShowInteractSphere; // O toggles the LookAtRadius ball visualizer (master)
+        public static bool ShowLookSphere; // O toggles the player's look-END sphere visualizer (master's LookAtRadius)
         public static bool NoDropRotation; // --itemtest UG_NOROT diagnostic: spawn at identity to read the raw model orientation
         public static Color FocusColor = Colors.White;   // the currently-focused item's rarity colour -- OutlineOverlay tints the rim with it
 
-        public const uint InteractLayer = 1u << 8;   // item interaction spheres -- the player's look-ray masks this (+ bit0 for LOS)
+        public const uint ItemHitLayer = 1u << 7;     // the item's box collider layer -- the player's look-sphere tests against this
         const float LabelH = 0.4f;                    // name tag floats this far above the item origin (world space)
 
         float _losTimer;    // throttle the LOS visibility check (staggered) -- NOT a raycast-per-item every frame
         bool _shown = true;
-        MeshInstance3D _mesh, _glow, _sphereViz;
+        MeshInstance3D _mesh, _glow;
         Label3D _label;
         Color _rar;
         bool _focused;
@@ -164,28 +164,8 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
             };
             AddChild(_glow);
-
-            // interaction sphere (Area3D, bit 8) -- generous so the eye-ray finds it easily; the ray also masks bit0 for LOS
-            var area = new Area3D { CollisionLayer = InteractLayer, CollisionMask = 0, Monitoring = false, Monitorable = true };
-            float r = Mathf.Max(0.35f, Mathf.Max(boxSize.X, Mathf.Max(boxSize.Y, boxSize.Z)) * 0.5f + 0.2f);
-            area.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = r }, Position = boxCenter });
-            AddChild(area);
-
-            // O toggles a debug visualizer of that LookAtRadius ball (master)
-            _sphereViz = new MeshInstance3D
-            {
-                Mesh = new SphereMesh { Radius = r, Height = r * 2f, RadialSegments = 16, Rings = 10 },
-                Position = boxCenter, Visible = ShowInteractSphere,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                MaterialOverride = new StandardMaterial3D
-                {
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                    AlbedoColor = new Color(0.3f, 0.8f, 1f, 0.16f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                },
-            };
-            AddChild(_sphereViz);
-            _sphereViz.AddToGroup("interact_spheres");
+            // interaction = the player's look-ray ENDS in a sphere; if that sphere touches this item's BOX hitbox (the
+            // RigidBody collider on bit 7) it's pickupable (master's real LookAtRadius). No per-item sphere -- the box IS the hitbox.
 
             // src ItemManager.spawnItem drop pose: +90 X (Z-reflection of the src -90 X) lays the model flat right-side-up
             if (!NoDropRotation)

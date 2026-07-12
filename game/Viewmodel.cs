@@ -50,6 +50,8 @@ namespace UnturnedGodot
         bool _attachView, _attachCapture; Basis _attachBoneStart;   // T attachment view: hold the presented pose (gun follows the bone like inspect)
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
+        ShaderMaterial _flashMat;   // muzzle flash billboard material (roll uniform set per shot)
+        float _flashRoll;           // ACCUMULATED flash roll -- each shot rolls it L/R by an amount, remembering the last (master)
         AudioStreamPlayer _shootSnd, _reloadSnd, _drySnd;   // real Eaglefire Shoot/Reload/Hammer(dry-fire) sounds
         // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
         // is non-vanilla): a generic 5.56 casing (yellow rectangle cube) tossed from the gun's Eject hook each shot,
@@ -220,17 +222,12 @@ namespace UnturnedGodot
                     // centre at (X=0, Z=-0.079) — the old Z=-0.04 was 0.039 off-axis, which read as the flash sitting low.
                     _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = gv.MuzzleHook, Visible = false };
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
-                    var flashMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        BlendMode = BaseMaterial3D.BlendModeEnum.Add,
-                        BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
-                        CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                    };
+                    // shader billboard so the star can ROLL per shot (master); a StandardMaterial billboard cancels rotation
+                    _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
                     var flashTex = LoadTex("res://content/muzzleflash.png");
-                    if (flashTex != null) flashMat.AlbedoTexture = flashTex; else flashMat.AlbedoColor = new Color(1f, 0.85f, 0.4f);
-                    _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.6f, 0.6f) }, MaterialOverride = flashMat });
+                    if (flashTex != null) _flashMat.SetShaderParameter("tex", flashTex);
+                    _flashMat.SetShaderParameter("roll", 0f);
+                    _muzzleFlash.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(0.6f, 0.6f) }, MaterialOverride = _flashMat });
                     // (the old muzzle-local tracer quad was removed — the Military_30's Trail_0 tracer is now drawn in
                     //  the main world from muzzle->impact in PlayerController.SpawnTracer, so a viewmodel streak is redundant.)
 
@@ -269,6 +266,9 @@ namespace UnturnedGodot
         public void Kick(Vector3 shakeMin, Vector3 shakeMax, float recoilPitch, float recoilYaw)
         {
             _flash = 0.05f; EjectCasing(); _shootSnd?.Play();
+            // roll the muzzle flash L/R by a random amount each shot, accumulating from the last (master)
+            _flashRoll += (_rng.Randf() < 0.5f ? -1f : 1f) * _rng.RandfRange(0.35f, 1.0f);
+            _flashMat?.SetShaderParameter("roll", _flashRoll);
             _shakeSpring.CurrentPosition += new Vector3(
                 _rng.RandfRange(Mathf.Min(shakeMin.X, shakeMax.X), Mathf.Max(shakeMin.X, shakeMax.X)),
                 _rng.RandfRange(Mathf.Min(shakeMin.Y, shakeMax.Y), Mathf.Max(shakeMin.Y, shakeMax.Y)),

@@ -937,7 +937,7 @@ namespace UnturnedGodot
 
             bool norot = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_NOROT"));
             bool focus = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_FOCUS"));   // UG_FOCUS=1 -> highlight the middle item (look-at outline + name preview)
-            WorldItem.ShowInteractSphere = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_SPHERE"));   // UG_SPHERE=1 -> show the LookAtRadius balls
+            // (the look-END sphere is player-driven -- not shown in this static harness; UG_FOCUS previews the outline directly)
             WorldItem.NoDropRotation = norot;   // UG_NOROT=1 -> hold each item at IDENTITY (frozen) to read the raw model orientation
             var parts = ids.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
             const float span = 1.7f;
