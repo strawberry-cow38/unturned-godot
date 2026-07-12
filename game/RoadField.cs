@@ -181,22 +181,23 @@ namespace UnturnedGodot
                 dir = dir.LengthSquared() > 1e-6f ? dir.Normalized() : Vector3.Forward;
                 Vector3 normal = (Terr != null && !ign) ? SampleNormal(pos.X, pos.Z) : Vector3.Up;
                 Vector3 side = dir.Cross(normal).Normalized();
-                // src: raise pos.y so both edges clear the terrain (prevents sinking into the uphill side)
-                if (Terr != null && !ign)
-                {
-                    Vector3 l = pos + side * halfWidth; float lo = Terr.SampleHeight(l.X, l.Z) - pos.Y; if (lo > 0f) pos.Y += lo;
-                    Vector3 rr = pos - side * halfWidth; float ro = Terr.SampleHeight(rr.X, rr.Z) - pos.Y; if (ro > 0f) pos.Y += ro;
-                }
-                // src: per-joint offset lerped along the segment (added to y)
+                // per-joint offset lerped along the segment (added to y)
                 float jo = index < jc - 1 ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[index + 1].Offset, t)
                          : loop ? Mathf.Lerp(r.Joints[index].Offset, r.Joints[0].Offset, t) : r.Joints[index].Offset;
-                pos.Y += jo;
+                pos.Y += jo;   // keep the centre on the terrain (UV distance + end caps use it)
 
+                // BANK the surface to the terrain at EACH edge so it hugs the cross-slope, instead of lifting the whole strip to the
+                // highest edge (that floated the downhill side on a cross-slope) -- master "horizontal banking issue".
+                Vector3 lp = pos + side * halfWidth, rp = pos - side * halfWidth;   // left/right surface X-Z
+                float lY = ((Terr != null && !ign) ? Terr.SampleHeight(lp.X, lp.Z) : pos.Y - jo) + jo;
+                float rY = ((Terr != null && !ign) ? Terr.SampleHeight(rp.X, rp.Z) : pos.Y - jo) + jo;
+                Vector3 lSurf = new Vector3(lp.X, lY, lp.Z) + normal * (halfVerticalSize + verticalOffset);
+                Vector3 rSurf = new Vector3(rp.X, rY, rp.Z) + normal * (halfVerticalSize + verticalOffset);
                 var cs = new Vector3[4];
-                cs[0] = pos + side * (halfWidth + verticalSize) - normal * halfVerticalSize + normal * verticalOffset;   // outer-left taper (down)
-                cs[1] = pos + side * halfWidth + normal * halfVerticalSize + normal * verticalOffset;                    // road surface left (up)
-                cs[2] = pos - side * halfWidth + normal * halfVerticalSize + normal * verticalOffset;                    // road surface right (up)
-                cs[3] = pos - side * (halfWidth + verticalSize) - normal * halfVerticalSize + normal * verticalOffset;   // outer-right taper (down)
+                cs[1] = lSurf;                                                 // road surface left (at the terrain edge)
+                cs[2] = rSurf;                                                 // road surface right (at the terrain edge)
+                cs[0] = lSurf + side * verticalSize - normal * verticalSize;   // outer-left taper (out + down)
+                cs[3] = rSurf - side * verticalSize - normal * verticalSize;   // outer-right taper (out + down)
 
                 if (s > 0) distance += pos.DistanceTo(prevC);
                 prevC = pos;
