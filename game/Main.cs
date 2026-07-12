@@ -34,16 +34,18 @@ namespace UnturnedGodot
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
+        bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
 
         public override void _Ready()
         {
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
@@ -157,6 +159,15 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildPropTest(proptest);
+                return;
+            }
+
+            if (itemtest != null)   // drop a row of loot items as physics WorldItems -> validate real mesh/tex/scale/gravity
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                _itemTest = true;
+                BuildItemTest(itemtest);
                 return;
             }
 
@@ -899,6 +910,46 @@ namespace UnturnedGodot
             cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
             cam.LookAt(c, Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --itemtest=ID,ID,...: drop those loot items as real physics WorldItems from a small height onto a ground plane,
+        // to eyeball the extracted mesh + primary albedo + best-fit box AND that they FALL + settle (gravity, no float).
+        void BuildItemTest(string ids)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.40f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.75f, 0.75f, 0.76f), AmbientLightEnergy = 0.95f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+
+            // ground: a wide static box on the world layer (bit0) so the items rest on it + a matching visible slab
+            var ground = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(24f, 1f, 8f) }, Position = new Vector3(0, -0.5f, 0) });
+            ground.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(24f, 1f, 8f) }, Position = new Vector3(0, -0.5f, 0),
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.24f, 0.22f), Roughness = 1f } });
+            AddChild(ground);
+
+            var parts = ids.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
+            const float span = 1.7f;
+            float x0 = -(parts.Length - 1) * span * 0.5f;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (!ushort.TryParse(parts[i].Trim(), out var id)) continue;
+                WorldItem.Spawn(this, new Item(id), new Vector3(x0 + i * span, 1.2f, 0f));   // drop from 1.2 m -> it must FALL to the plane
+                AddChild(new Label3D { Text = id.ToString(), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 40, PixelSize = 0.006f,
+                    Position = new Vector3(x0 + i * span, 1.85f, 0f), Modulate = new Color(1f, 1f, 0.6f) });
+            }
+
+            var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f };
+            AddChild(cam);
+            float w = Mathf.Max(3f, parts.Length * span);
+            cam.Position = new Vector3(0f, 1.5f, w * 0.85f + 1.2f);
+            cam.LookAt(new Vector3(0f, 0.15f, 0f), Vector3.Up);
+            GD.Print($"[ITEMTEST] dropped {parts.Length} items: {ids}");
         }
 
         // --animrig=NAME: build a rigged animal from content/NAME_rig.json at its REST pose (no clips) + RGB axes + auto-framed
@@ -2120,6 +2171,7 @@ namespace UnturnedGodot
             }
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
+            else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
             img.SavePng(_shotPath);
