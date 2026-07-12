@@ -459,9 +459,9 @@ namespace UnturnedGodot
         // Tractor_0.dat: Speed 10 (slow), steer 24->12, front-steered, big-rear/small-front wheels, green, Health 700, CarHorn_03.
         static readonly Spec _tractor = new()
         {
-            Body = "tractor_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "tractor_palette.png",
+            Body = "tractor_body.txt", Wheel = "tractor_wheel_front.txt", WheelTex = "tractor_wheel_albedo.png", Palette = "tractor_palette.png",
             DefaultPaints = new[] { "#3f7d2f" },   // green tractor
-            WheelRadius = 0.6f, WheelRadii = new[] { 0.45f, 0.45f, 0.68f, 0.68f },   // small front, big rear (agricultural)
+            WheelRadius = 0.89f, WheelRadii = new[] { 0.89f, 0.89f, 1.04f, 1.04f },   // real tractor wheel model + sizes: small yellow front, big yellow rear (master: big yellow wheels, diff model)
             Engine = 620f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 10f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.5f, 1.8f, 4.78f), BoxCenter = new Vector3(0f, 0.72f, -0.12f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
@@ -471,7 +471,7 @@ namespace UnturnedGodot
             TailPos = new[] { new Vector3(0.70f, 1.08f, 2.45f), new Vector3(-0.70f, 1.08f, 2.45f) },
             SteerPivot = new Vector3(0f, 1.56f, -0.29f), SteerAxis = new Vector3(0f, 0.5f, 0.866f),   // upright tractor column
             Wheels = new (float, float, float, bool)[]
-            { (-0.90f, 0.45f, -1.54f, true), (0.90f, 0.45f, -1.54f, true), (-1.50f, 0.52f, 1.36f, false), (1.50f, 0.52f, 1.36f, false) },
+            { (-0.90f, 0.89f, -1.54f, true), (0.90f, 0.89f, -1.54f, true), (-1.50f, 1.00f, 1.36f, false), (1.50f, 1.00f, 1.36f, false) },   // axles raised to match the big wheel radii
             Parts = new (string, Color)[]
             {
                 ("tractor_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
@@ -767,9 +767,9 @@ namespace UnturnedGodot
             // (0.08 = a longer settle lag than 0.12 -- master wanted a bit more delay to cover edge cases)
             // nose-dive REBOUND (sustained, directional) survives the filter. So we wait for the suspension to normalize (angular avg settles) yet
             // never deadlock on the jitter -- fixes both "jitter is back" AND "freezes mid nose-dive with the back wheels up" (master).
-            bool settled = _angAvg.LengthSquared() < 0.03f && (_exploded ? _velAvg.LengthSquared() < 1.0f                                    // wreck: killed suspension, so DON'T require wheel contact -- freeze once it stops tumbling
-                                                                          : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
-                                                                                                       : (_handbraking && _velAvg.LengthSquared() < 0.06f)));   // handbrake WHILE driving: freeze only at ~zero, strong brake above
+            bool settled = _angAvg.LengthSquared() < 0.1f && (_exploded ? _velAvg.LengthSquared() < 1.0f                                     // wreck: killed suspension, so DON'T require wheel contact -- freeze once it stops tumbling
+                                                                         : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
+                                                                                                      : (_handbraking && _velAvg.LengthSquared() < 0.2f)));    // higher "settled" cutoffs so it freezes THROUGH the last residual jitter (master: up the jitter threshold)
             _settleTimer = settled ? _settleTimer + (float)delta : 0f;   // hard ~0.65s dwell (master) -- gated on the FILTERED velocity so the jitter can't reset it (no catch-22)
             bool wantHold = _settleTimer > 0.65f;
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic (kinematic vanished the car); wrecks collapse flush via the killed suspension
