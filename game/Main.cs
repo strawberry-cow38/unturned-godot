@@ -43,7 +43,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -83,6 +83,7 @@ namespace UnturnedGodot
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
                 else if (arg == "--supp") supp = true;           // with --firetest: attach the suppressor
                 else if (arg == "--terrain") terrain = true;     // load a real map's Landscape heightmap terrain (PEI Tile_0_0)
+                else if (arg == "--craftui") craftui = true;     // open the crafting menu over a stocked inventory (UI verify)
                 else if (arg == "--objects") objects = true;     // place PEI's real Level/Objects.dat objects (fences/props/rocks) on the terrain
                 else if (arg == "--peidrive") peidrive = true;    // playable PEI: terrain + all objects/trees + player+jeep with real controls (same as the menu's "Drive PEI")
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
@@ -135,6 +136,14 @@ namespace UnturnedGodot
                 _fireTest = true;
                 _shotPath = shot;   // --shot: capture at a late frame (below) with live impacts down-range
                 BuildFireTest(supp);
+                return;
+            }
+
+            if (craftui)   // open the crafting menu over a stocked inventory -> render the recipe list
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildCraftUI();
                 return;
             }
 
@@ -876,6 +885,20 @@ namespace UnturnedGodot
             AddChild(z);
             z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
+        }
+
+        // --craftui: open the crafting menu over a player with a stocked inventory so the recipe list renders.
+        void BuildCraftUI()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            BlueprintRegistry.Load();
+            var inv = new SDG.Unturned.PlayerInventory();
+            inv.tryAddItem(new SDG.Unturned.Item(67, 200));   // Metal Scrap x200
+            inv.tryAddItem(new SDG.Unturned.Item(76, 1));     // Blowtorch (tool)
+            var ui = new CraftingUI { Inv = inv };
+            AddChild(ui);
+            ui.Open();
+            GD.Print("[CRAFTUI] opened crafting menu over a stocked inventory");
         }
 
         // --terrain: load PEI's Landscape Tile_0_0 heightmap into a Godot terrain mesh (the first real WORLD step; replaces

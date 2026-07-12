@@ -153,5 +153,21 @@ namespace SDG.Unturned
                 }
             }
         }
+
+        // restore the most-damaged item of `id` to `quality` (RepairTargetItem crafting operation)
+        public void restoreQuality(ushort id, byte quality)
+        {
+            ItemJar best = null;
+            for (byte b = 0; b < (byte)(PAGES - 2); b++)
+            {
+                var page = items[b];
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var jar = page.getItem(i);
+                    if (jar?.item != null && jar.item.id == id && (best == null || jar.item.quality < best.item.quality)) best = jar;
+                }
+            }
+            if (best != null) best.item.quality = quality;
+        }
     }
 }
