@@ -219,6 +219,7 @@ namespace UnturnedGodot
             "Roadster" => new Vector3(-0.50f, -0.04f, 0.390f),
             "Bus" => new Vector3(-0.80f, -0.03f, -2.558f),
             "Quad" => new Vector3(0.00f, 0.26f, 0.557f),
+            "Ambulance" => new Vector3(-0.50f, 0.12f, -1.40f),
             _ => new Vector3(-0.50f, 0.10f, -0.024f),   // Jeep + fallback
         };
 
@@ -384,6 +385,27 @@ namespace UnturnedGodot
             },
         };
 
+        // Ambulance.dat: Speed 15.5, steer 28->14, front-steered 4-wheel van, white DefaultPaint, Health 600, CarHorn_03.
+        static readonly Spec _ambulance = new()
+        {
+            Body = "ambulance_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "ambulance_palette.png",
+            DefaultPaints = new[] { "#e8e8e8" },   // white ambulance
+            WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 15.5f, SpeedMin = -6.5f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 2.0f, 5.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),   // tall van (compound BoxCollider -> one encompassing box)
+            ForwardGears = new[] { 14f, 8f }, ReverseGear = 8f, ShiftUpRpm = 4500f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 2000f, Health = 600f, Name = "Ambulance", Horn = "carhorn_03.ogg",
+            SpotPos = new[] { new Vector3(-0.71f, 0.74f, -2.58f), new Vector3(0.71f, 0.74f, -2.58f) }, OmniPos = new Vector3(0f, 0.87f, -2.56f),
+            TailPos = new[] { new Vector3(-0.95f, 0.71f, 2.59f), new Vector3(0.95f, 0.71f, 2.59f) },
+            SteerPivot = new Vector3(-0.47f, 0.99f, -2.21f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("ambulance_steer.txt", new Color(0.15f, 0.15f, 0.15f)),   // steering wheel: dark
+            },
+        };
+
         public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
@@ -391,7 +413,8 @@ namespace UnturnedGodot
         public static Vehicle BuildHatchback(int variant = 0) => Build(_hatchback, variant);
         public static Vehicle BuildHumvee(int variant = 0) => Build(_humvee, variant);
         public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), _ => BuildJeep(variant) };
 
         static Vehicle Build(Spec s, int variant)
         {
