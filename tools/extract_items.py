@@ -87,12 +87,47 @@ def prefix_of(folder):
     p = folder.replace("\\", "/").lower().split("/bundles/items/")
     return "items/" + p[1] + "/item.prefab" if len(p) > 1 else None
 
+def comp_all(tt, name):
+    out = []
+    for comp in tt.get("m_Component", []):
+        c = comp.get("component", comp) if isinstance(comp, dict) else comp
+        co = by_id.get(c.get("m_PathID") if isinstance(c, dict) else None)
+        if co and co.type.name == name: out.append(co)
+    return out
+
+def lod0_gos(prefab):
+    """If the item has an LODGroup, return the SET of GameObject pathIDs whose renderer is in LOD0 (highest detail);
+    else None (no LODGroup -> take all meshes). Model_0/Model_1 are LOD0/LOD1, NOT skin surfaces -- rendering both
+    put LOD1 over LOD0 (candy bar's crude LOD1 = the pink rectangle, master)."""
+    result, has = set(), [False]
+    def walk(pid):
+        go = by_id.get(pid)
+        if not go: return
+        tt = go.read_typetree()
+        for lg in comp_all(tt, "LODGroup"):
+            has[0] = True
+            lods = lg.read_typetree().get("m_LODs", [])
+            if lods:
+                for r in lods[0].get("renderers", []):
+                    ro = by_id.get(r.get("renderer", {}).get("m_PathID"))
+                    if ro:
+                        gp = ro.read_typetree().get("m_GameObject", {}).get("m_PathID")
+                        if gp: result.add(gp)
+        tr = comp_of(tt, ("Transform", "RectTransform"))
+        if tr:
+            for ch in tr.read_typetree().get("m_Children", []):
+                ct = by_id.get(ch.get("m_PathID"))
+                if ct: walk(ct.read_typetree().get("m_GameObject", {}).get("m_PathID"))
+    walk(prefab.path_id)
+    return result if has[0] else None
+
 def extract(prefab):
     """returns (parts=[(mesh_obj, M, mat_obj, vcount)], root_local)"""
     ptt = prefab.read_typetree()
     root_tr = comp_of(ptt, ("Transform", "RectTransform"))
     root_trt = root_tr.read_typetree()
     root_local = trs(root_trt["m_LocalPosition"], root_trt["m_LocalRotation"], root_trt["m_LocalScale"])
+    lod0 = lod0_gos(prefab)   # only extract LOD0 meshes (skip LOD1+); None = no LODGroup, take all
     parts = []
     def walk(go_pid, parentM):
         go = by_id.get(go_pid)
@@ -110,7 +145,7 @@ def extract(prefab):
         for mc in (mf, smr):
             if not mc: continue
             mp = mc.read_typetree().get("m_Mesh", {}).get("m_PathID")
-            if mp and mp in by_id:
+            if mp and mp in by_id and (lod0 is None or go_pid in lod0):   # LOD0 only (skip LOD1 overlaps)
                 mat_obj = None
                 if renderer:
                     mats = renderer.read_typetree().get("m_Materials", [])
