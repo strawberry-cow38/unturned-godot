@@ -13,6 +13,7 @@ namespace UnturnedGodot
         bool _xHeld, _zHeld; EPlayerStance _baseStance = EPlayerStance.STAND;   // intertwined stance state machine: X = crouch key, Z = prone key (master)
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
+        Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
@@ -888,6 +889,8 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
+                GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)
@@ -1032,7 +1035,8 @@ namespace UnturnedGodot
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }
-            if (_driving != null) { DriveVehicle((float)delta); return; }   // driving: skip on-foot movement
+            if (_driving != null) { _interpReady = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
+            if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
             if (_dead)
@@ -1096,6 +1100,7 @@ namespace UnturnedGodot
             Velocity = new Vector3(world.X, v.y, world.Z);
             StepUp((float)delta);   // climb small curbs/thresholds so we don't snag (master)
             MoveAndSlide();
+            _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
             if (wasAirborne && IsOnFloor()) CheckFallDamage(v.y);   // just touched down -> fall damage on a hard landing
         }
     }
