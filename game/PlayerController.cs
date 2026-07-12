@@ -892,8 +892,6 @@ namespace UnturnedGodot
         {
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
-            if (_driving != null && _vehReady && !_dead)   // same render-interp for the DRIVING cam: position it from the INTERPOLATED vehicle transform (master)
-                PositionDriveCam(LerpTransform(_vehPrev, _vehCurr, (float)Engine.GetPhysicsInterpolationFraction()));
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)
@@ -1016,9 +1014,7 @@ namespace UnturnedGodot
             }
             _driving.Drive(throttle, steer, Input.IsPhysicalKeyPressed(Key.Space));
             GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle
-            // Snapshot the vehicle transform for RENDER INTERPOLATION -- the cam is positioned in _Process from the INTERPOLATED
-            // transform so the driving view is smooth at 60+ fps instead of stepping at the 50Hz physics rate (master).
-            _vehPrev = _vehReady ? _vehCurr : _driving.GlobalTransform; _vehCurr = _driving.GlobalTransform; _vehReady = true;
+            PositionDriveCam(_driving.GlobalTransform);   // cam steps WITH the vehicle mesh (same physics transform) so they stay in sync -- smoothing the cam alone jittered the car in 3rd-person (master); proper fix = built-in interp on the vehicle
         }
 
         void PositionDriveCam(Transform3D vt)   // FP / chase cam from the (interpolated) vehicle transform. Full global transform atomically
