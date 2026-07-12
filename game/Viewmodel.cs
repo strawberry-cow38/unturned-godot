@@ -119,7 +119,7 @@ namespace UnturnedGodot
                 d[c[0]] = new GunVisual
                 {
                     Gun = c[0] + "_gun.txt", Albedo = c[0] + "_albedo.png", Sight = null, Mag = null,
-                    Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg",
+                    Shoot = c[0] + "_shoot.ogg", Reload = c[0] + "_reload.ogg",   // real per-gun sounds (extracted from each gun's AudioClips)
                     MuzzleHook = V3(c[1]), AimHook = V3(c[2]), ViewOffset = Vector3.Zero,
                     AlbedoTint = new Color(1f, 1f, 1f), Ejects = c[3].Trim() == "1",
                 };

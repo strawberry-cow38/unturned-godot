@@ -98,7 +98,26 @@ if mr:
                     to.read().image.convert("RGBA").save(os.path.join(OUTDIR, gl + "_albedo.png"))
                     alb = "%s_albedo.png" % gl
 
-print("GUN", GUN, "verts", len(Vs), "tris", len(Fs), "albedo", alb)
+# per-gun sounds: shoot + reload AudioClips -> ogg (real gun audio instead of reusing eaglefire's)
+import subprocess
+FFMPEG = r"C:\claude-workspace\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
+_cont = {p.lower(): o for p, o in env.container.items()}
+snds = []
+for _snd in ("shoot", "reload"):
+    _co = _cont.get("assets/coremasterbundle/items/guns/" + gl + "/" + _snd + ".mp3")
+    if _co and _co.type.name == "AudioClip":
+        try:
+            for _nm, _wav in _co.read().samples.items():
+                _wp = os.path.join(OUTDIR, gl + "_" + _snd + ".wav")
+                open(_wp, "wb").write(_wav)
+                subprocess.run([FFMPEG, "-y", "-i", _wp, os.path.join(OUTDIR, gl + "_" + _snd + ".ogg")], capture_output=True)
+                os.remove(_wp)
+                snds.append(_snd)
+                break
+        except Exception as _e:
+            print("SND ERR", gl, _snd, _e)
+
+print("GUN", GUN, "verts", len(Vs), "tris", len(Fs), "albedo", alb, "sounds", snds)
 print("HOOKS", {k: hooks[k] for k in ("Model_0", "Sight", "Barrel", "Magazine", "Eject", "Grip", "Tactical") if k in hooks})
 
 # emit the Viewmodel GunVisual data line: name \t muzzle(x,y,z) \t aim(x,y,z) \t ejects(1/0)
