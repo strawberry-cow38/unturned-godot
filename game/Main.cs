@@ -1282,7 +1282,7 @@ namespace UnturnedGodot
                                 {
                                     0 => (i % 3) switch { 0 => "sedan", 1 => "hatchback", _ => "roadster" },   // Civilian rolls the civilian car pool
                                     2 => "firetruck",                                                           // Fire
-                                    3 => (i % 2 == 0) ? "humvee" : "jeep",                                      // Military_Canada: humvee + jeep, both forest (master: jeep is military)
+                                    3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },            // Military_Canada: humvee + jeep + ural truck, all forest
                                     4 => "ambulance",                                                           // Medic -> drivable ambulance
                                     5 => "tractor",                                                             // Farm -> drivable tractor
                                     _ => "quad",                                                                // fallback

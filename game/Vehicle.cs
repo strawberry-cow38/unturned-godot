@@ -223,6 +223,7 @@ namespace UnturnedGodot
             "Ambulance" => new Vector3(-0.50f, 0.12f, -1.40f),
             "Firetruck" => new Vector3(-0.50f, 0.29f, -2.40f),
             "Tractor" => new Vector3(0.00f, 0.69f, 1.10f),
+            "Ural" => new Vector3(-0.50f, 0.10f, -1.21f),
             _ => new Vector3(-0.50f, 0.10f, -0.024f),   // Jeep + fallback
         };
 
@@ -456,6 +457,31 @@ namespace UnturnedGodot
             },
         };
 
+        // Ural.dat: Speed 14.5, steer 48->24, 6-wheel military truck, forest DefaultPaint, Health 700, CarHorn_03.
+        static readonly Spec _ural = new()
+        {
+            Body = "ural_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "ural_palette.png",
+            DefaultPaints = new[] { "#437c44" },   // forest military
+            WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 2.0f, 6.6f), BoxCenter = new Vector3(0f, 1.0f, 0f),
+            ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
+            Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 2500f, Health = 700f, Name = "Ural", Horn = "carhorn_03.ogg",
+            SpotPos = new[] { new Vector3(-0.97f, 0.78f, -3.12f), new Vector3(0.97f, 0.78f, -3.12f) }, OmniPos = new Vector3(0f, 0.91f, -3.10f),
+            TailPos = new[] { new Vector3(-0.98f, 0.73f, 3.30f), new Vector3(0.98f, 0.73f, 3.30f) },
+            SteerPivot = new Vector3(-0.47f, 1.03f, -2.11f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            {
+                (-1.30f, 0.25f, -2.32f, true), (1.30f, 0.25f, -2.32f, true),    // front (steered)
+                (-1.30f, 0.25f, 0.80f, false), (1.30f, 0.25f, 0.80f, false),    // mid
+                (-1.30f, 0.25f, 2.20f, false), (1.30f, 0.25f, 2.20f, false),    // rear
+            },
+            Parts = new (string, Color)[]
+            {
+                ("ural_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+            },
+        };
+
         public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
@@ -466,7 +492,8 @@ namespace UnturnedGodot
         public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant);
         public static Vehicle BuildFiretruck(int variant = 0) => Build(_firetruck, variant);
         public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), _ => BuildJeep(variant) };
 
         static Vehicle Build(Spec s, int variant)
         {
