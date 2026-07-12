@@ -739,7 +739,7 @@ namespace UnturnedGodot
             float hSpeed2 = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).LengthSquared();
             bool wantHold = !_exploded && (_parked ? (_spawnGrace <= 0f && _exitDelay <= 0f && hSpeed2 < 1.0f)   // parked: freeze once settled (grace + exit-delay done, rolled to a stop)
                                                     : (_handbraking && hSpeed2 < 0.04f));                        // handbraking WHILE driving: freeze only at ~zero, strong brake above
-            if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; Freeze = true; }
+            if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic: kinematic fought the wheel forces + vanished the car (master)
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
             if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)
