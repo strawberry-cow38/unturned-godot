@@ -10,7 +10,7 @@ namespace UnturnedGodot
     public partial class PlayerController : CharacterBody3D
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
-        bool _crouched, _xHeld;   // X TOGGLES crouch (master: ctrl no longer crouches)
+        bool _crouched, _xHeld, _proned, _zHeld;   // X toggles crouch, Z toggles prone (master: ctrl / hold gone)
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
         Viewmodel _viewmodel;
@@ -274,6 +274,18 @@ namespace UnturnedGodot
             var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
             if (TestMove(GlobalTransform, motion) && !TestMove(raised, motion))
                 GlobalPosition += Vector3.Up * StepHeight;
+        }
+
+        bool HeadroomFor(float height)   // is there space to occupy a taller capsule? (blocks standing up under a ceiling -- master)
+        {
+            var q = new PhysicsShapeQueryParameters3D
+            {
+                Shape = new CapsuleShape3D { Height = height, Radius = 0.34f },
+                Transform = new Transform3D(Basis.Identity, GlobalPosition + Vector3.Up * (height / 2f)),
+                CollisionMask = CollisionMask,
+                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+            };
+            return GetWorld3D().DirectSpaceState.IntersectShape(q, 1).Count == 0;
         }
         public bool CaptureMouse = true;
 
@@ -1039,15 +1051,26 @@ namespace UnturnedGodot
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
-            bool xNow = Input.IsPhysicalKeyPressed(Key.X);   // X = TOGGLE crouch (master: ctrl no longer crouches)
+            bool xNow = Input.IsPhysicalKeyPressed(Key.X);   // X = toggle crouch, Z = toggle prone (master: ctrl / hold-to-stance gone)
             if (xNow && !_xHeld) _crouched = !_crouched;
             _xHeld = xNow;
-            _move.Stance = ScriptedStance
-                         ?? (Input.IsPhysicalKeyPressed(Key.Z) ? EPlayerStance.PRONE        // hold Z to go prone (lowest profile)
-                           : (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
-                           : _crouched ? EPlayerStance.CROUCH
-                           : EPlayerStance.STAND);
-            if (Broken && _move.Stance == EPlayerStance.SPRINT) _move.Stance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
+            bool zNow = Input.IsPhysicalKeyPressed(Key.Z);
+            if (zNow && !_zHeld) _proned = !_proned;
+            _zHeld = zNow;
+            var wantStance = ScriptedStance
+                           ?? (_proned ? EPlayerStance.PRONE
+                             : (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
+                             : _crouched ? EPlayerStance.CROUCH
+                             : EPlayerStance.STAND);
+            if (Broken && wantStance == EPlayerStance.SPRINT) wantStance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
+            // can't rise into a ceiling: if the target stance is TALLER than the current capsule and there's no headroom, stay low (master)
+            float wantH = PlayerMovementDef.HeightForStance(wantStance);
+            if (wantH > _capStance + 0.01f && _capStance > 0f && !HeadroomFor(wantH))
+            {
+                if (_capStance <= PlayerMovementDef.HEIGHT_PRONE + 0.01f) { _proned = true; wantStance = EPlayerStance.PRONE; }
+                else { _crouched = true; _proned = false; wantStance = EPlayerStance.CROUCH; }
+            }
+            _move.Stance = wantStance;
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
 
             float forward, strafe;
