@@ -113,20 +113,26 @@ namespace UnturnedGodot
         {
             var mat = new StandardMaterial3D
             {
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, VertexColorUseAsAlbedo = true,
                 AlbedoColor = new Color(1f, 1f, 1f, fire ? 0.95f : 0.7f),
                 BlendMode = fire ? BaseMaterial3D.BlendModeEnum.Add : BaseMaterial3D.BlendModeEnum.Mix,
             };
             string tp = ProjectSettings.GlobalizePath($"res://content/{texName}");
             if (System.IO.File.Exists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
-            if (fire) { mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 2.5f; }
-            return new CpuParticles3D
+            if (fire)   // veh_fire.png is a 4-frame flipbook (64x16 = 4x16^2) -> animate the frames, don't stretch all 4 onto one quad (master)
+            {
+                mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 2.5f;
+                mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = true;
+            }
+            var ps = new CpuParticles3D
             {
                 Emitting = false, Amount = amount, Lifetime = life, Direction = Vector3.Up, Spread = 25f,
                 InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
                 ScaleAmountMin = 0.4f, ScaleAmountMax = 1.3f, Color = c, Mesh = new QuadMesh { Size = new Vector2(0.7f, 0.7f), Material = mat },
             };
+            if (fire) { ps.AnimOffsetMax = 1f; ps.AnimSpeedMin = 5f; ps.AnimSpeedMax = 9f; }   // random start frame + flicker through the 4
+            return ps;
         }
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact

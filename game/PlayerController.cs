@@ -850,7 +850,7 @@ namespace UnturnedGodot
                     var collider = hit["collider"].As<GodotObject>();
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); }   // source Vehicle_Damage (35) + metal sparks
+                    else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car
                     else SpawnSurfaceImpact(point, hit["normal"].AsVector3(), collider is Node n && n.HasMeta(SurfMeta) ? (Surf)(int)n.GetMeta(SurfMeta) : Surf.Concrete);   // world/prop -> material impact (terrain=grass, untagged=concrete)
                     RemoveBullet(i);
                     continue;
@@ -887,7 +887,7 @@ namespace UnturnedGodot
 
         // Bullet impact: a projected bullet-hole DECAL (hard surfaces only) + a material-tinted dust/spark puff at the
         // hit, oriented to the surface normal. Metal = additive sparks; soft ground (grass/dirt/sand) = no decal.
-        void SpawnSurfaceImpact(Vector3 point, Vector3 normal, Surf surf)
+        void SpawnSurfaceImpact(Vector3 point, Vector3 normal, Surf surf, Node3D attachTo = null)
         {
             var scene = GetTree().CurrentScene;
             if (scene == null) return;
@@ -898,10 +898,10 @@ namespace UnturnedGodot
             if (hard && tex != null)
             {
                 var dec = new Decal { TextureAlbedo = tex, Size = new Vector3(0.16f, 0.3f, 0.16f), AlbedoMix = 1f, Modulate = metal ? new Color(0.72f, 0.72f, 0.75f) : Colors.White };
-                scene.AddChild(dec);
+                (attachTo ?? (Node)scene).AddChild(dec);   // vehicle hits: parent to the car so the hole FOLLOWS it (master); world hits: static in the scene
                 Vector3 t = Mathf.Abs(up.Dot(Vector3.Up)) < 0.95f ? Vector3.Up : Vector3.Right;
                 Vector3 right = up.Cross(t).Normalized();
-                dec.GlobalTransform = new Transform3D(new Basis(right, up, right.Cross(up)), point + up * 0.06f);   // +Y = normal -> projects DOWN into the surface
+                dec.GlobalTransform = new Transform3D(new Basis(right, up, right.Cross(up)), point + up * 0.06f);   // +Y = normal -> projects DOWN into the surface (local-to-parent once attached)
                 var t1 = GetTree().CreateTimer(18.0); t1.Timeout += () => { if (IsInstanceValid(dec)) dec.QueueFree(); };
             }
             var mat = new StandardMaterial3D
