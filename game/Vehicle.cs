@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
-        bool _parked, _handbraking; float _spawnGrace = 2.5f, _settleTimer = 0f;   // -> STATIC freeze once FULLY grounded + stopped for a settle dwell (levels out first); _spawnGrace lets a fresh car DROP to terrain first
+        bool _parked, _handbraking; float _spawnGrace = 2.5f;   // -> STATIC freeze once a MAJORITY of wheels are down + it's slow (source isKinematic); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
@@ -760,16 +760,14 @@ namespace UnturnedGodot
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
-            bool mostlyGrounded = groundedCount * 2 > _wNodes.Length;   // MAJORITY of wheels down = a natural rest: 3-of-4 on bumpy ground freezes, a car teetering on 1 wheel doesn't (master)
+            bool mostlyGrounded = groundedCount * 2 > _wNodes.Length;   // MAJORITY of wheels down = sitting level (not teetering on 1 wheel, not airborne) -- master
             float vel2 = LinearVelocity.LengthSquared();
-            float ang2 = AngularVelocity.LengthSquared();
-            // Settle = most wheels down + stopped (linear) + not rocking (angular ~ leveled out), held for a short dwell so it levels
-            // out first. Applies to parked-on-exit, the manual handbrake, AND wrecks (car corpses).
-            bool settling = mostlyGrounded && ang2 < 0.05f && (_exploded ? vel2 < 0.5f
-                                                                         : _parked ? (_spawnGrace <= 0f && vel2 < 0.5f)
-                                                                                   : (_handbraking && vel2 < 0.04f));
-            _settleTimer = settling ? _settleTimer + (float)delta : 0f;
-            bool wantHold = settling && _settleTimer > 0.4f;   // handbrake WHILE driving: freeze only at ~zero, strong brake above
+            // Freeze PROMPTLY once settled -- NO dwell + NO angular gate. Those were a catch-22: the brake's OWN jitter keeps velocity/spin
+            // above the threshold so a "settled for 0.4s" timer never completes -> it never freezes -> jitters forever (master "jitter is
+            // back"). Majority-grounded already means it's level; a fast/falling/tumbling car has high vel2; so the instant it's slow, freeze.
+            bool wantHold = mostlyGrounded && (_exploded ? vel2 < 1.0f
+                                                         : _parked ? (_spawnGrace <= 0f && vel2 < 1.0f)
+                                                                   : (_handbraking && vel2 < 0.05f));   // handbrake WHILE driving: freeze only at ~zero, strong brake above
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic: kinematic fought the wheel forces + vanished the car (master)
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
