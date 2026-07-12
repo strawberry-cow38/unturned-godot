@@ -24,7 +24,7 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         public float EngineRpm => _engineRpm;
-        public string GearLabel => LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}";   // gear read-out: R when reversing, else G<n>
+        public string GearLabel => LinearVelocity.LengthSquared() < 0.25f ? "N" : (LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}");   // N stopped / R reversing / G<n>
         public float EngineRpmNorm => Mathf.Clamp((_engineRpm - IdleRpm) / (MaxRpm - IdleRpm), 0f, 1f);
         public int Gear => _gear;
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
@@ -92,6 +92,9 @@ namespace UnturnedGodot
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
         // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
+        public void Wake() { Freeze = false; _parked = false; _exitDelay = 0f; }   // resume dynamic physics (rammed or re-driven)
+        void OnVehicleContact(Node body) { if (body is Vehicle v && v != this) v.Wake(); }   // ram a frozen parked car -> wake it so it gets shoved (master)
+
         void OnBumperHit(Node3D body)
         {
             if (_exploded || _parked) return;
@@ -523,6 +526,7 @@ namespace UnturnedGodot
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
+            v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
@@ -665,7 +669,8 @@ namespace UnturnedGodot
             float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);   // signed forward speed (front = -Z)
             // S while rolling FORWARD (or W while rolling backward) = a foot BRAKE, not an instant reverse -- real pedal feel
             bool footBrake = (throttle < 0f && fwd > 0.6f) || (throttle > 0f && fwd < -0.6f);
-            float eng = footBrake ? 0f : throttle * _engineForce;
+            bool neutral = handbrake && speed < 0.5f;   // near-stop + handbrake -> NEUTRAL: cut engine force so a slow reverse doesn't fight the brake + jitter (master)
+            float eng = (footBrake || neutral) ? 0f : throttle * _engineForce;
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
@@ -749,10 +754,10 @@ namespace UnturnedGodot
             float ratio = (_gears != null && _gear >= 1 && _gear <= _gears.Length) ? _gears[_gear - 1] : 20f;
             float target = Mathf.Clamp(avgWheelRpm * ratio, IdleRpm, MaxRpm);
             _engineRpm = Mathf.Lerp(_engineRpm, target, Mathf.Min(1f, 8f * (float)delta));
-            if (_gears != null && _gears.Length > 0)   // auto gearbox: up past the shift-up RPM, down well below it
+            if (_gears != null && _gears.Length > 0)   // gear from SPEED band -> guaranteed clean shifts (master: never left 1st; src RPM model never redlines in gear 1 so it never shifted). RPM still sawtooths per gear via the ratio.
             {
-                if (_engineRpm > _shiftUpRpm && _gear < _gears.Length) _gear++;
-                else if (_engineRpm < _shiftUpRpm * 0.45f && _gear > 1) _gear--;
+                float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
+                _gear = Mathf.Clamp(1 + (int)(Mathf.Clamp(fwd / _speedMax, 0f, 0.999f) * _gears.Length), 1, _gears.Length);
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
             {
