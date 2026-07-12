@@ -871,6 +871,7 @@ namespace UnturnedGodot
                         }
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), sf);
                     }
+                    if (Gun?.Action == "Rocket") { Explode(point, 9f, 250f, 200f, 300f); GD.Print("[rocket] launcher warhead detonated"); }   // rocket launcher: AoE blast on impact (vehicles hit hardest), reusing the grenade explode
                     RemoveBullet(i);
                     continue;
                 }
