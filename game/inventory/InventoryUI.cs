@@ -405,7 +405,20 @@ namespace UnturnedGodot
             return y + page.height * CELL + PAD;
         }
 
-        // one item tile: dark rarity-tinted background + rarity border + name + amount badge, clipped to its footprint
+        // real ground-truth item icons (the game's Extras/Icons, matched by id + downscaled) -> content/items/icons/<id>.png.
+        // SleekItem draws the rendered item ICON on the rarity tile, not a name -> load once, cache, fall back to the name label.
+        static readonly Dictionary<int, Texture2D> _iconCache = new();
+        static Texture2D Icon(int id)
+        {
+            if (_iconCache.TryGetValue(id, out var t)) return t;
+            t = null;
+            var p = ProjectSettings.GlobalizePath($"res://content/items/icons/{id}.png");
+            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) t = ImageTexture.CreateFromImage(img); }
+            _iconCache[id] = t;
+            return t;
+        }
+
+        // one item tile: dark rarity-tinted background + rarity border + real ICON (name fallback) + amount badge
         Control MakeTile(ItemJar jar, int w, int h)
         {
             var asset = jar.GetAsset();
@@ -417,15 +430,27 @@ namespace UnturnedGodot
             sb.SetBorderWidthAll(2);
             tile.AddThemeStyleboxOverride("panel", sb);
 
-            var lbl = new Label { Text = asset?.itemName ?? "?" };
-            lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            lbl.HorizontalAlignment = HorizontalAlignment.Center;
-            lbl.VerticalAlignment = VerticalAlignment.Center;
-            lbl.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            lbl.AddThemeColorOverride("font_color", rar.Lerp(Colors.White, 0.35f));
-            lbl.AddThemeFontSizeOverride("font_size", w <= CELL ? 9 : 12);
-            lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
-            tile.AddChild(lbl);
+            var tex = asset != null ? Icon(asset.id) : null;
+            if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)
+            {
+                var ic = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+                ic.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                ic.SetOffsetsPreset(Control.LayoutPreset.FullRect);
+                ic.MouseFilter = Control.MouseFilterEnum.Ignore;
+                tile.AddChild(ic);
+            }
+            else   // no icon on disk -> the old rarity-tinted name label
+            {
+                var lbl = new Label { Text = asset?.itemName ?? "?" };
+                lbl.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                lbl.HorizontalAlignment = HorizontalAlignment.Center;
+                lbl.VerticalAlignment = VerticalAlignment.Center;
+                lbl.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                lbl.AddThemeColorOverride("font_color", rar.Lerp(Colors.White, 0.35f));
+                lbl.AddThemeFontSizeOverride("font_size", w <= CELL ? 9 : 12);
+                lbl.MouseFilter = Control.MouseFilterEnum.Ignore;
+                tile.AddChild(lbl);
+            }
 
             if (jar.item != null && jar.item.amount > 1)
             {

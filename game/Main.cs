@@ -190,6 +190,7 @@ namespace UnturnedGodot
             if (invdemo)    // open the inventory dashboard over the player, populated with real items
             {
                 GetWindow().Size = new Vector2I(2560, 1440);   // match the movie size so the UI lays out full-frame
+                _shotPath = shot;   // --shot=OUT -> capture the dashboard at the settle frame + quit (else the demo runs forever)
                 BuildInventoryDemo(gun, invsel, invequip);
                 return;
             }
