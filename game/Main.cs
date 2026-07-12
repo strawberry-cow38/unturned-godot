@@ -1020,9 +1020,21 @@ namespace UnturnedGodot
 
         // --objects: PEI's real placed objects (Level/Objects.dat) instanced on the terrain. placements.txt = every
         // object's guid+transform; guid_mesh.txt maps the top types to extracted object.prefab meshes.
-        void BuildObjectsTest()
+        async void BuildObjectsTest()
         {
             float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            // Phased async load with a progress screen + per-category timing (master). Phase(name) records the PREVIOUS
+            // phase's elapsed ms, advances the bar, sets the label, and yields a frame so the overlay actually paints
+            // before the next (blocking) chunk of work runs.
+            var loading = new LoadingScreen(); AddChild(loading); loading.SetTotal(11);
+            var timings = new System.Collections.Generic.Dictionary<string, double>();
+            string curPhase = null; var phaseSw = System.Diagnostics.Stopwatch.StartNew();
+            async System.Threading.Tasks.Task Phase(string name)
+            {
+                if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading.Advance(); }
+                curPhase = name; loading.SetStatus(name + "…"); phaseSw.Restart();
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            }
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Sky,
@@ -1046,8 +1058,10 @@ namespace UnturnedGodot
             };
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true, SkyMode = DirectionalLight3D.SkyModeEnum.LightAndSky });
+            await Phase("Terrain");
             var terr = Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: true);
             AddChild(terr);
+            await Phase("Objects");
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var g2m = new System.Collections.Generic.Dictionary<string, string>();
@@ -1155,6 +1169,7 @@ namespace UnturnedGodot
             // aerial over the busiest cluster so the full populated PEI (all ~360 types) reads at once, no gaps
             if (_peiPlayable)
             {
+                await Phase("Player");
                 // menu "Drive PEI": drop the player + jeep on open grass with REAL controls (WASD + mouse look, E to enter/drive the jeep)
                 float sx = 0f, sz = -350f, spawnYaw = 0f;
                 // player spawn: PEI's REAL regular spawn points (Spawns/Players.dat = u8 ver, u8 count, per point Vector3 + u8 angle*2 + bool isAlt if v>3;
@@ -1225,6 +1240,7 @@ namespace UnturnedGodot
                 // Replaces the old Environment/Bounds.dat navmesh approximation (52 zombies) with the map's actual horde design.
                 if (!_noZombies)   // "Drive PEI — No Zombies" menu button / --nozombies flag
                 {
+                    await Phase("Zombies");
                     var zf = new ZombieField { Player = player, Terr = terr };
                     zf.LoadFromPei(_mapRoot);
                     AddChild(zf);
@@ -1235,6 +1251,7 @@ namespace UnturnedGodot
                 // u16 pointCount, per point: u8 type, Vector3, u8 angle*2). type = table index: 0 Civilian, 1 Police, 2 Fire, 3 Military,
                 // 4 Medic, 5 Farm, 6-11 air/water/tank. LAND (0-5): Civilian=car pool, Police/Fire/Medic=static mesh, Military=humvee, Farm=jeep stand-in.
                 {
+                    await Phase("Vehicles");
                     string vpath = _mapRoot + @"\Spawns\Vehicles.dat";
                     int nv = 0;
                     if (System.IO.File.Exists(vpath))
@@ -1302,30 +1319,35 @@ namespace UnturnedGodot
                 }
                 // LOOT: PEI's 2470 item spawn points (Spawns/Jars.dat), region/distance-streamed around the player (LootField).
                 {
+                    await Phase("Loot");
                     var loot = new LootField { Player = player, Terr = terr };
                     loot.LoadFromPei(_mapRoot);
                     AddChild(loot);
                 }
                 // WILDLIFE: Spawns/Fauna.dat animal points (deer/pig/cow), streamed as rigged RiggedCharacters (AnimalField).
                 {
+                    await Phase("Animals");
                     var animals = new AnimalField { Player = player, Terr = terr };
                     animals.LoadFromPei(_mapRoot);
                     AddChild(animals);
                 }
                 // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
                 {
+                    await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
                     rf.LoadFromEnvironment(_mapRoot + @"\Environment");
                     AddChild(rf);
                 }
                 // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
                 {
+                    await Phase("Foliage");
                     var ff = new FoliageField();
                     AddChild(ff);
                     ff.LoadGrass();
                 }
                 // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
                 {
+                    await Phase("Trees");
                     var rsf = new ResourceField();
                     AddChild(rsf);
                     rsf.LoadResources(ActiveHoliday());   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
@@ -1364,6 +1386,8 @@ namespace UnturnedGodot
                 cam.LookAt(new Vector3(ctr.X, 0f, ctr.Z), new Vector3(0f, 0f, -1f));   // straight down, screen-up = world -Z (north), to match the game chart
             }
             NearestFilter.Apply(this);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
+            if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading.Advance(); }   // record the final phase
+            loading.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
