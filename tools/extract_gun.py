@@ -99,23 +99,49 @@ if mr:
                     alb = "%s_albedo.png" % gl
 
 # per-gun sounds: shoot + reload AudioClips -> ogg (real gun audio instead of reusing eaglefire's)
-import subprocess
+import subprocess, glob, re as _re
 FFMPEG = r"C:\claude-workspace\ffmpeg\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
 _cont = {p.lower(): o for p, o in env.container.items()}
 snds = []
+
+def _save_ogg(clip_path, suffix):   # container AudioClip -> <gl>_<suffix>.ogg (via wav->ffmpeg)
+    _co = _cont.get(clip_path)
+    if not (_co and _co.type.name == "AudioClip"):
+        return False
+    try:
+        for _nm, _wav in _co.read().samples.items():
+            _wp = os.path.join(OUTDIR, gl + "_" + suffix + ".wav")
+            open(_wp, "wb").write(_wav)
+            subprocess.run([FFMPEG, "-y", "-i", _wp, os.path.join(OUTDIR, gl + "_" + suffix + ".ogg")], capture_output=True)
+            os.remove(_wp)
+            return True
+    except Exception as _e:
+        print("SND ERR", gl, suffix, _e)
+    return False
+
 for _snd in ("shoot", "reload"):
-    _co = _cont.get("assets/coremasterbundle/items/guns/" + gl + "/" + _snd + ".mp3")
-    if _co and _co.type.name == "AudioClip":
-        try:
-            for _nm, _wav in _co.read().samples.items():
-                _wp = os.path.join(OUTDIR, gl + "_" + _snd + ".wav")
-                open(_wp, "wb").write(_wav)
-                subprocess.run([FFMPEG, "-y", "-i", _wp, os.path.join(OUTDIR, gl + "_" + _snd + ".ogg")], capture_output=True)
-                os.remove(_wp)
-                snds.append(_snd)
+    if _save_ogg("assets/coremasterbundle/items/guns/" + gl + "/" + _snd + ".mp3", _snd):
+        snds.append(_snd)
+
+# FALLBACK 1 (bows/crossbow): no guns/<name>/shoot.mp3 -> the fire sound lives on the gun's DEFAULT Barrel.
+# Source: the gun .dat's "Barrel <id>" (Bow_Compound -> Barrel 354 = Bow_Barrel) -> items/barrels/<barrel>/shoot.mp3 (the string twang, NOT a gunshot).
+if "shoot" not in snds:
+    _gundat = os.path.join(r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\Items\Guns", GUN, GUN + ".dat")
+    _bid = None
+    if os.path.exists(_gundat):
+        _m = _re.search(r"^\s*Barrel\s+(\d+)", open(_gundat, encoding="utf-8-sig", errors="ignore").read(), _re.M)
+        if _m: _bid = _m.group(1)
+    if _bid:
+        for _bd in glob.glob(r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\Items\Barrels\*\*.dat"):
+            if _re.search(r"^\s*ID\s+" + _bid + r"\b", open(_bd, encoding="utf-8-sig", errors="ignore").read(), _re.M):
+                _bf = os.path.basename(os.path.dirname(_bd)).lower()
+                if _save_ogg("assets/coremasterbundle/items/barrels/" + _bf + "/shoot.mp3", "shoot"):
+                    snds.append("shoot(barrel:%s)" % _bf)
                 break
-        except Exception as _e:
-            print("SND ERR", gl, _snd, _e)
+
+# FALLBACK 2 (bows): no guns/<name>/reload.mp3 -> the bow's aim.mp3 is the string-DRAW sound (a bow's "reload").
+if "reload" not in snds and _save_ogg("assets/coremasterbundle/items/guns/" + gl + "/aim.mp3", "reload"):
+    snds.append("reload(aim/draw)")
 
 print("GUN", GUN, "verts", len(Vs), "tris", len(Fs), "albedo", alb, "sounds", snds)
 print("HOOKS", {k: hooks[k] for k in ("Model_0", "Sight", "Barrel", "Magazine", "Eject", "Grip", "Tactical") if k in hooks})
