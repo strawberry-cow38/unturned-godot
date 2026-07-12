@@ -1668,7 +1668,34 @@ namespace UnturnedGodot
                     else GD.Print($"[CRAFTTEST]     in {ing.Guid} -> UNRESOLVED");
                 }
             }
-            GD.Print($"[CRAFTTEST] RESULT parsed {bps.Count} bp, resolved {resolved}/{total} ingredient GUIDs -> item ids");
+            GD.Print($"[CRAFTTEST] resolved {resolved}/{total} ingredient GUIDs -> item ids");
+
+            // craft-LOGIC proof against a mock inventory, using eaglefire's real Repair blueprint (4 Metal Scrap + Blowtorch tool)
+            var repair = bps.Find(b => b.Operation == "RepairTargetItem");
+            bool logicOk = false;
+            if (repair != null)
+            {
+                var inv = new Crafting.DictInv(); inv.Add(67, 4); inv.Add(76, 1);   // Metal Scrap x4 + Blowtorch x1
+                bool can = Crafting.CanCraft(repair, inv, out string why);
+                Crafting.DoCraft(repair, inv);
+                GD.Print($"[CRAFTTEST] logic: CanCraft={can} ({why}); after craft scrap={inv.Count(67)}(exp 0) blowtorch={inv.Count(76)}(exp 1 tool-kept)");
+                var inv2 = new Crafting.DictInv(); inv2.Add(67, 2); inv2.Add(76, 1);
+                bool can2 = Crafting.CanCraft(repair, inv2, out string why2);
+                GD.Print($"[CRAFTTEST] logic: CanCraft(only 2 scrap)={can2}(exp false) ({why2})");
+                // outputs path: a synthetic Craft that turns 2 scrap -> 1 blowtorch
+                var scrapA = SDG.Unturned.Assets.find(67); var torchA = SDG.Unturned.Assets.find(76);
+                var inv3 = new Crafting.DictInv(); inv3.Add(67, 2);
+                if (scrapA != null && torchA != null)
+                {
+                    var synth = new BlueprintDef { Operation = "Craft", Name = "synthetic" };
+                    synth.Inputs.Add(new BlueprintDef.Ingredient { Guid = scrapA.guid, Amount = 2, Consume = true });
+                    synth.Outputs.Add(new BlueprintDef.Ingredient { Guid = torchA.guid, Amount = 1, Consume = true });
+                    Crafting.DoCraft(synth, inv3);
+                    GD.Print($"[CRAFTTEST] logic outputs: 2 scrap -> craft -> scrap={inv3.Count(67)}(exp 0) blowtorch={inv3.Count(76)}(exp 1 produced)");
+                }
+                logicOk = can && !can2 && inv.Count(67) == 0 && inv.Count(76) == 1 && inv3.Count(76) == 1;
+            }
+            GD.Print($"[CRAFTTEST] RESULT parse {bps.Count}bp, resolve {resolved}/{total}, craft-logic {(logicOk ? "PASS" : "FAIL")}");
         }
 
         // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every
