@@ -18,13 +18,14 @@ namespace UnturnedGodot
         public Color? FallbackColor;   // unknown-id loot (no registered asset / no model): tint by its spawn TABLE
         public string FallbackName;    // ...and label by the table name (e.g. "Military Canada", "Food")
         public static bool ShowLabels; // P toggles ALL item ESP name tags on/off (off by default; PlayerController Key.P)
+        public static bool NoDropRotation; // --itemtest UG_NOROT diagnostic: spawn at identity (no src drop pose) to read the raw model orientation
 
         float _losTimer;    // throttle the LOS visibility check (staggered) -- NOT a raycast-per-item every frame
         bool _shown = true;
         MeshInstance3D _mesh;
 
         // ---- shared item-model cache: parse each id's mesh/tex/box ONCE, reuse across its many spawns/despawns ----
-        class Model { public ArrayMesh Mesh; public Material Mat; public Vector3 Box; public Vector3 Center; public bool Ok; }
+        class Model { public ArrayMesh Mesh; public Material Mat; public Color? FlatColor; public Vector3 Box; public Vector3 Center; public bool Ok; }
         static readonly Dictionary<int, Model> _cache = new();
         static Godot.Collections.Dictionary _manifest;
         const string ItemsRoot = "res://content/items";
@@ -77,6 +78,11 @@ namespace UnturnedGodot
                             }
                         }
                     }
+                    if (m.Mat == null && e.ContainsKey("color"))   // no albedo texture -> the material's flat _Color is its real look (rope/bricks/suppressor...)
+                    {
+                        var c = e["color"].AsGodotArray();
+                        if (c.Count >= 3) m.FlatColor = new Color(c[0].AsSingle(), c[1].AsSingle(), c[2].AsSingle());
+                    }
                     m.Ok = true;
                 }
             }
@@ -120,7 +126,7 @@ namespace UnturnedGodot
             if (model != null && model.Ok)
             {
                 _mesh.Mesh = model.Mesh;
-                _mesh.MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = new Color(rar.R, rar.G, rar.B), Roughness = 0.7f };
+                _mesh.MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? new Color(rar.R, rar.G, rar.B), Roughness = 0.7f };
                 col.Shape = new BoxShape3D { Size = model.Box };
                 col.Position = model.Center;            // mesh sits in model space; the best-fit box is offset to wrap it
             }
@@ -134,11 +140,14 @@ namespace UnturnedGodot
             AddChild(_mesh);
             AddChild(col);
 
-            // src ItemManager.spawnItem drop pose: lay the model over (-90 X) + random yaw + slight jitter, then settle
-            Rotation = new Vector3(
-                Mathf.DegToRad(-90f + (float)GD.RandRange(-15.0, 15.0)),
-                Mathf.DegToRad((float)GD.RandRange(0.0, 360.0)),
-                Mathf.DegToRad((float)GD.RandRange(-15.0, 15.0)));
+            // src ItemManager.spawnItem drop pose: lay the vertically-authored model flat + random yaw + jitter, then settle.
+            // src is Euler(-90 X,...) in UNITY; our mesh is Z-reflected (Unity->Godot), and a Z-reflection conjugates
+            // Rx(-90) -> Rx(+90), so +90 lands it flat RIGHT-SIDE-UP (else every item settles upside down -- master).
+            if (!NoDropRotation)
+                Rotation = new Vector3(
+                    Mathf.DegToRad(90f + (float)GD.RandRange(-15.0, 15.0)),
+                    Mathf.DegToRad((float)GD.RandRange(0.0, 360.0)),
+                    Mathf.DegToRad((float)GD.RandRange(-15.0, 15.0)));
 
             var label = new Label3D
             {

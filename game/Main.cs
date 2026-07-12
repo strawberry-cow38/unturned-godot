@@ -933,13 +933,16 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.24f, 0.22f), Roughness = 1f } });
             AddChild(ground);
 
+            bool norot = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_NOROT"));
+            WorldItem.NoDropRotation = norot;   // UG_NOROT=1 -> hold each item at IDENTITY (frozen) to read the raw model orientation
             var parts = ids.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
             const float span = 1.7f;
             float x0 = -(parts.Length - 1) * span * 0.5f;
             for (int i = 0; i < parts.Length; i++)
             {
                 if (!ushort.TryParse(parts[i].Trim(), out var id)) continue;
-                WorldItem.Spawn(this, new Item(id), new Vector3(x0 + i * span, 1.2f, 0f));   // drop from 1.2 m -> it must FALL to the plane
+                var wi = WorldItem.Spawn(this, new Item(id), new Vector3(x0 + i * span, norot ? 0.7f : 1.2f, 0f));   // drop from 1.2 m -> it must FALL to the plane (norot: hold at 0.7 for the shot)
+                if (norot) wi.Freeze = true;   // freeze at identity so physics doesn't settle it -> see the authored up-orientation
                 AddChild(new Label3D { Text = id.ToString(), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 40, PixelSize = 0.006f,
                     Position = new Vector3(x0 + i * span, 1.85f, 0f), Modulate = new Color(1f, 1f, 0.6f) });
             }

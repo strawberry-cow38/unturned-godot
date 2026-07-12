@@ -68,6 +68,21 @@ def main_tex_pathid(mat_obj):
         pass
     return None
 
+def mat_color(mat_obj):
+    """flat _Color of a material (its real look when it has NO _MainTex albedo -- rope/bricks/suppressor...)."""
+    if not mat_obj: return None
+    try:
+        cols = mat_obj.read_typetree().get("m_SavedProperties", {}).get("m_Colors", [])
+        for e in cols:
+            if isinstance(e, (list, tuple)) and len(e) == 2: nm, cv = e
+            elif isinstance(e, dict): nm, cv = e.get("first"), e.get("second")
+            else: continue
+            if nm == "_Color" and isinstance(cv, dict):
+                return [round(cv.get("r", 1), 4), round(cv.get("g", 1), 4), round(cv.get("b", 1), 4)]
+    except Exception:
+        pass
+    return None
+
 def prefix_of(folder):
     p = folder.replace("\\", "/").lower().split("/bundles/items/")
     return "items/" + p[1] + "/item.prefab" if len(p) > 1 else None
@@ -179,8 +194,8 @@ for iid_s, meta in loot.items():
     center=[(max(xs)+min(xs))/2, (max(ys)+min(ys))/2, (max(zs)+min(zs))/2]
     write_obj(os.path.join(OUT, f"{iid}.obj"), Vs, Ns, Ts, Fs)
 
-    # primary texture = material of the biggest part
-    tex_name = None
+    # primary texture = material of the biggest part; if it has no albedo, fall back to its flat _Color
+    tex_name = None; flat = None
     if parts and pvc:
         bigi = max(range(len(pvc)), key=lambda i: pvc[i]) if pvc else 0
         mat_obj = parts[bigi][2] if bigi < len(parts) else None
@@ -193,9 +208,11 @@ for iid_s, meta in loot.items():
                     tex_name = f"{iid}.png"; n_tex += 1
             except Exception:
                 pass
+        if tex_name is None:
+            flat = mat_color(mat_obj) or next((mat_color(p[2]) for p in parts if mat_color(p[2])), None)
     if len([p for p in pvc if p>0]) > 1: n_multi += 1
     manifest[iid_s] = {"name": name, "type": typ, "obj": f"{iid}.obj",
-                       "tex": tex_name, "box": [round(b,4) for b in box],
+                       "tex": tex_name, "color": flat, "box": [round(b,4) for b in box],
                        "center": [round(c,4) for c in center], "parts": len(parts)}
     n_ok += 1
     report.append((iid, name, typ, "ok", len(parts), max(box)))
