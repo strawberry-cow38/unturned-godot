@@ -8,6 +8,8 @@ namespace UnturnedGodot
     public sealed class GunDef
     {
         public string Id;
+        public string Action;   // .dat Action: Trigger/Bolt/Pump/Break/Rail...; Pump+Break shotguns reload shell-by-shell (not a mag swap)
+        public bool ShellReload => Action == "Pump" || Action == "Break";
         public float PlayerDamage;
         public float ZombieDamage;
         public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage
@@ -43,6 +45,7 @@ namespace UnturnedGodot
             var g = new GunDef
             {
                 Id = d.GetString("ID"),
+                Action = d.GetString("Action"),
                 PlayerDamage = d.ParseFloat("Player_Damage"),
                 ZombieDamage = d.ParseFloat("Zombie_Damage"),
                 VehicleDamage = d.ParseFloat("Vehicle_Damage", 40f),   // .dat Vehicle_Damage (all stock guns specify it; 40 = fallback)

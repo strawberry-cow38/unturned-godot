@@ -111,6 +111,7 @@ namespace UnturnedGodot
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
                 else if (arg == "--crafttest") { RunCraftTest(); GetTree().Quit(); return; }   // parse an item .dat's Blueprints -> print (crafting parser self-test)
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
+                else if (arg == "--shelltest") { RunShellTest(); GetTree().Quit(); return; }   // shotgun shell-by-shell reload detection + sequence self-test
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1766,6 +1767,25 @@ namespace UnturnedGodot
             }
             System.IO.File.WriteAllLines(outPath, lines);
             GD.Print($"[BPEXTRACT] {items} craftable items, {bps} blueprints -> content/blueprints.tsv");
+        }
+
+        // Shotgun shell-by-shell reload self-test: verify Pump/Break guns are detected as ShellReload + show the
+        // incremental load sequence (each shell cancelable by firing). Non-shell guns mag-swap (whole mag at once).
+        static void RunShellTest()
+        {
+            foreach (var g in new[] { "masterkey", "eaglefire", "cobra", "grizzly" })
+            {
+                string path = ProjectSettings.GlobalizePath($"res://content/{g}.dat");
+                if (!System.IO.File.Exists(path)) { GD.Print($"[SHELLTEST] {g}: (no .dat bundled)"); continue; }
+                var gun = GunDef.FromDatText(System.IO.File.ReadAllText(path));
+                GD.Print($"[SHELLTEST] {g}: Action={gun.Action ?? "?"} ShellReload={gun.ShellReload} AmmoMax={gun.AmmoMax}");
+                if (gun.ShellReload)
+                {
+                    var seq = new System.Collections.Generic.List<int>();
+                    for (int a = 0; a < gun.AmmoMax;) { a = System.Math.Min(a + 1, gun.AmmoMax); seq.Add(a); }
+                    GD.Print($"[SHELLTEST]   loads shell-by-shell: {string.Join(" -> ", seq)} (firing mid-reload cancels + shoots what's loaded)");
+                }
+            }
         }
 
         // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every

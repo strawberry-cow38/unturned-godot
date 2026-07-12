@@ -717,14 +717,15 @@ namespace UnturnedGodot
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
             _viewmodel?.SetReloading(true);
-            _reloadTimer = _viewmodel?.ReloadLength ?? ReloadTime;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s)
+            double full = _viewmodel?.ReloadLength ?? ReloadTime;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s)
+            _reloadTimer = Gun?.ShellReload == true ? full / System.Math.Max(1, max) : full;   // shell-fed shotguns (Pump/Break) load ONE shell per interval (see the reload tick + StartFire cancel)
         }
 
         // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
         void StartFire()
         {
             if (_dead) return;   // ignore fire commands on the death screen (master)
-            if (_reloading) return;   // fire input during a reload is IGNORED, not queued -> no burst fires when the reload ends (master)
+            if (_reloading) { if (Gun?.ShellReload == true && Ammo > 0) { _reloading = false; _viewmodel?.SetReloading(false); } else return; }   // shell-fed shotgun: firing CANCELS the shell-by-shell reload (shoot what's loaded); other guns ignore fire mid-reload (master)
             if (_viewmodel != null && _viewmodel.InAttachView) return;   // no firing while the T attachment menu is up
             if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
             if (_firemode == FireMode.Safety) return;
@@ -1292,7 +1293,17 @@ namespace UnturnedGodot
             if (_reloading)
             {
                 _reloadTimer -= delta;
-                if (_reloadTimer <= 0) { Ammo = Gun?.AmmoMax ?? 30; _reloading = false; _viewmodel?.SetReloading(false); }
+                if (_reloadTimer <= 0)
+                {
+                    int max = Gun?.AmmoMax ?? 30;
+                    if (Gun?.ShellReload == true)   // shotgun: load ONE shell, then queue the next shell (or finish when full)
+                    {
+                        Ammo = System.Math.Min(Ammo + 1, max);
+                        if (Ammo >= max) { _reloading = false; _viewmodel?.SetReloading(false); }
+                        else { _reloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, max); _viewmodel?.SetReloading(true); }
+                    }
+                    else { Ammo = max; _reloading = false; _viewmodel?.SetReloading(false); }   // magazine swap: whole mag at once
+                }
             }
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
             if (_fireCd <= 0f && !_reloading)
