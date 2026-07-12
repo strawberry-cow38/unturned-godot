@@ -461,7 +461,7 @@ namespace UnturnedGodot
         {
             Body = "tractor_body.txt", Wheel = "tractor_wheel_front.txt", WheelTex = "tractor_wheel_albedo.png", Palette = "tractor_palette.png",
             DefaultPaints = new[] { "#3f7d2f" },   // green tractor
-            WheelRadius = 0.89f, WheelRadii = new[] { 0.89f, 0.89f, 1.04f, 1.04f },   // real tractor wheel model + sizes: small yellow front, big yellow rear (master: big yellow wheels, diff model)
+            WheelRadius = 0.90f, WheelRadii = new[] { 0.90f, 0.90f, 1.05f, 1.05f },   // src Tractor_0 Tire WheelCollider radii: 0.90 front / 1.05 rear (the real yellow tractor wheel model)
             Engine = 620f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 10f, SpeedMin = -5f, Brake = 24f,
             BoxSize = new Vector3(2.5f, 1.8f, 4.78f), BoxCenter = new Vector3(0f, 0.72f, -0.12f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
@@ -471,7 +471,7 @@ namespace UnturnedGodot
             TailPos = new[] { new Vector3(0.70f, 1.08f, 2.45f), new Vector3(-0.70f, 1.08f, 2.45f) },
             SteerPivot = new Vector3(0f, 1.56f, -0.29f), SteerAxis = new Vector3(0f, 0.5f, 0.866f),   // upright tractor column
             Wheels = new (float, float, float, bool)[]
-            { (-0.90f, 0.89f, -1.54f, true), (0.90f, 0.89f, -1.54f, true), (-1.50f, 1.00f, 1.36f, false), (1.50f, 1.00f, 1.36f, false) },   // axles raised to match the big wheel radii
+            { (-0.903f, 0.450f, -1.545f, true), (0.903f, 0.450f, -1.545f, true), (-1.505f, 0.525f, 1.359f, false), (1.505f, 0.525f, 1.359f, false) },   // src Tire WheelCollider positions (Z-flipped): front y0.45 / rear y0.525
             Parts = new (string, Color)[]
             {
                 ("tractor_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
@@ -771,6 +771,8 @@ namespace UnturnedGodot
                                                                                                        : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic (kinematic vanished the car); wrecks collapse flush via the killed suspension
             else if (!wantHold && Freeze) Freeze = false;
+            bool damping = (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea")
+            LinearDamp = damping ? 6f : 0f; AngularDamp = damping ? 6f : 0f;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
             if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)
                 for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
