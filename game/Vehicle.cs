@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
-        bool _parked, _handbraking; float _spawnGrace = 2.5f, _settleTimer = 0f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze after the LOW-PASSED velocity/spin stay low (jitter-immune) for a ~0.65s dwell; _spawnGrace lets a fresh car DROP to terrain first
+        bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
@@ -762,16 +762,13 @@ namespace UnturnedGodot
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
             bool mostlyGrounded = groundedCount * 2 > _wNodes.Length;   // MAJORITY of wheels down = sitting level (not teetering on 1 wheel, not airborne) -- master
-            _velAvg = _velAvg.Lerp(LinearVelocity, 0.08f);    // LOW-PASS velocity + spin (master's "check above the jitter freq"): the jitter's rapid
-            _angAvg = _angAvg.Lerp(AngularVelocity, 0.08f);   // back-and-forth cancels to ~0 in the running average, but a real roll or a handbrake
-            // (0.08 = a longer settle lag than 0.12 -- master wanted a bit more delay to cover edge cases)
-            // nose-dive REBOUND (sustained, directional) survives the filter. So we wait for the suspension to normalize (angular avg settles) yet
-            // never deadlock on the jitter -- fixes both "jitter is back" AND "freezes mid nose-dive with the back wheels up" (master).
-            bool settled = _angAvg.LengthSquared() < 0.1f && (_exploded ? _velAvg.LengthSquared() < 1.0f                                     // wreck: killed suspension, so DON'T require wheel contact -- freeze once it stops tumbling
-                                                                         : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
-                                                                                                      : (_handbraking && _velAvg.LengthSquared() < 0.2f)));    // higher "settled" cutoffs so it freezes THROUGH the last residual jitter (master: up the jitter threshold)
-            _settleTimer = settled ? _settleTimer + (float)delta : 0f;   // hard ~0.65s dwell (master) -- gated on the FILTERED velocity so the jitter can't reset it (no catch-22)
-            bool wantHold = _settleTimer > 0.65f;
+            _velAvg = _velAvg.Lerp(LinearVelocity, 0.12f);    // LOW-PASS velocity + spin (master's "check above the jitter freq"): the jitter's rapid back-and-forth
+            _angAvg = _angAvg.Lerp(AngularVelocity, 0.12f);   // cancels to ~0 in the running average, but a real roll / handbrake nose-dive REBOUND (sustained,
+            // directional) survives the filter -- so we wait for the suspension to normalize yet never deadlock on the jitter. Reverted to the CLEAN
+            // d9588d3 low-pass (no dwell, no raised thresholds) per master. The wreck branch keeps the no-wheel-contact check (killed suspension).
+            bool wantHold = _angAvg.LengthSquared() < 0.03f && (_exploded ? _velAvg.LengthSquared() < 1.0f
+                                                                          : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
+                                                                                                       : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic (kinematic vanished the car); wrecks collapse flush via the killed suspension
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes

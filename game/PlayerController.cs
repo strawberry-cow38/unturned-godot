@@ -10,7 +10,7 @@ namespace UnturnedGodot
     public partial class PlayerController : CharacterBody3D
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
-        bool _crouched, _xHeld, _proned, _zHeld;   // X toggles crouch, Z toggles prone (master: ctrl / hold gone)
+        bool _xHeld, _zHeld; EPlayerStance _baseStance = EPlayerStance.STAND;   // intertwined stance state machine: X = crouch key, Z = prone key (master)
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
         Viewmodel _viewmodel;
@@ -1056,25 +1056,20 @@ namespace UnturnedGodot
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
-            bool xNow = Input.IsPhysicalKeyPressed(Key.X);   // X = toggle crouch, Z = toggle prone (master: ctrl / hold-to-stance gone)
-            if (xNow && !_xHeld) _crouched = !_crouched;
+            // Intertwined stance STATE MACHINE (master): X = crouch key, Z = prone key, moving between STAND/CROUCH/PRONE from ANY state.
+            bool xNow = Input.IsPhysicalKeyPressed(Key.X);
+            if (xNow && !_xHeld) _baseStance = (_baseStance == EPlayerStance.CROUCH) ? EPlayerStance.STAND : EPlayerStance.CROUCH;   // X: stand<->crouch, and prone->crouch
             _xHeld = xNow;
             bool zNow = Input.IsPhysicalKeyPressed(Key.Z);
-            if (zNow && !_zHeld) _proned = !_proned;
+            if (zNow && !_zHeld) _baseStance = (_baseStance == EPlayerStance.PRONE) ? EPlayerStance.STAND : EPlayerStance.PRONE;    // Z: stand<->prone, and crouch->prone
             _zHeld = zNow;
-            var wantStance = ScriptedStance
-                           ?? (_proned ? EPlayerStance.PRONE
-                             : (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
-                             : _crouched ? EPlayerStance.CROUCH
-                             : EPlayerStance.STAND);
+            var wantStance = ScriptedStance ?? _baseStance;
+            if (wantStance == EPlayerStance.STAND && Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) wantStance = EPlayerStance.SPRINT;   // sprint overlays standing
             if (Broken && wantStance == EPlayerStance.SPRINT) wantStance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
             // can't rise into a ceiling: if the target stance is TALLER than the current capsule and there's no headroom, stay low (master)
             float wantH = PlayerMovementDef.HeightForStance(wantStance);
             if (wantH > _capStance + 0.01f && _capStance > 0f && !HeadroomFor(wantH))
-            {
-                if (_capStance <= PlayerMovementDef.HEIGHT_PRONE + 0.01f) { _proned = true; wantStance = EPlayerStance.PRONE; }
-                else { _crouched = true; _proned = false; wantStance = EPlayerStance.CROUCH; }
-            }
+                wantStance = _baseStance = (_capStance <= PlayerMovementDef.HEIGHT_PRONE + 0.01f) ? EPlayerStance.PRONE : EPlayerStance.CROUCH;   // blocked overhead -> stay in the stance that fits
             _move.Stance = wantStance;
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
 
