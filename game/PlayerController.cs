@@ -875,7 +875,7 @@ namespace UnturnedGodot
         // SetMeta("surf", (int)Surf) -- terrain = Grass, vehicles = Metal, untagged (buildings/props) = Concrete.
         public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand }
         public const string SurfMeta = "surf";
-        static Color SurfDust(Surf s) => s switch
+        public static Color SurfDust(Surf s) => s switch
         {
             Surf.Grass => new Color(0.40f, 0.50f, 0.28f),
             Surf.Dirt  => new Color(0.45f, 0.35f, 0.25f),

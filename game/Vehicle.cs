@@ -15,7 +15,8 @@ namespace UnturnedGodot
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
-        CpuParticles3D _wheelDust;   // dust kicked up from the wheels while driving (surface-tinted, master)
+        CpuParticles3D[] _wheelDust;   // per-WHEEL dust from the ground contact point (src Wheel.cs TireMotionEffectInstance is per-wheel); tinted by the Surf under each wheel
+        PlayerController.Surf[] _wheelSurf; float _dustCheckT;   // cached ground material per wheel (raycast, throttled)
         MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
@@ -133,6 +134,20 @@ namespace UnturnedGodot
             };
             if (fire) { ps.AnimOffsetMax = 1f; ps.AnimSpeedMin = 5f; ps.AnimSpeedMax = 9f; }   // random start frame + flicker through the 4
             return ps;
+        }
+
+        // Ground material under a wheel (raycast down from the wheel to read the collider's "surf" tag). Drives the
+        // per-wheel dust tint + gate. Untagged ground defaults to grass (PEI terrain).
+        PlayerController.Surf WheelSurf(VehicleWheel3D w)
+        {
+            var from = w.GlobalPosition;
+            var to = from + Vector3.Down * (w.WheelRadius + w.SuspensionTravel + 0.4f);
+            var q = PhysicsRayQueryParameters3D.Create(from, to, 1u << 0);
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
+            if (hit.Count > 0 && hit["collider"].AsGodotObject() is Node n && n.HasMeta(PlayerController.SurfMeta))
+                return (PlayerController.Surf)(int)n.GetMeta(PlayerController.SurfMeta);
+            return PlayerController.Surf.Grass;
         }
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
@@ -737,10 +752,21 @@ namespace UnturnedGodot
             v._fire   = MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.7f, 4.5f, 30, true,  1.0f, 2.0f);   // explosion fire; src startSize 1-2m
             v._smoke.Position = firePos; v._smoke0.Position = firePos; v._fire.Position = firePos;
             v.AddChild(v._smoke); v.AddChild(v._smoke0); v.AddChild(v._fire);
-            v._wheelDust = MakeSmoke("veh_smoke_1.png", new Color(0.62f, 0.58f, 0.50f), 0.6f, 1.6f, 14, false, 0.15f, 0.5f);   // wheels kick up dust while driving (generic tan; per-surface tint = the surf-material system)
-            v._wheelDust.Direction = new Vector3(0f, 0.5f, 1f); v._wheelDust.Spread = 30f; v._wheelDust.Gravity = new Vector3(0f, -2.5f, 0f);
-            v._wheelDust.Position = new Vector3(0f, 0.1f, s.BoxCenter.Z + s.BoxSize.Z * 0.35f);   // rear axle, low
-            v.AddChild(v._wheelDust);
+            // Per-WHEEL tire dust (source Wheel.cs TireMotionEffectInstance): one emitter per wheel, spawned at that wheel's
+            // ground CONTACT point, aimed UP at low speed -> tilting ~45deg backward at speed, only while grounded + moving.
+            // NOTE: vanilla assigns NO TireMotionEffect to any physics material (the whole system is WIP "WipDoNotUse"), so
+            // vanilla actually kicks up NOTHING -- this is an ENHANCEMENT driven by our Surf tag: soft ground (grass/dirt/sand)
+            // puffs a tinted cloud; road/metal/wood stay clean.
+            v._wheelDust = new CpuParticles3D[nw];
+            v._wheelSurf = new PlayerController.Surf[nw];
+            for (int i = 0; i < nw; i++)
+            {
+                var d = MakeSmoke("veh_smoke_1.png", new Color(0.55f, 0.50f, 0.40f), 0.55f, 1.4f, 8, false, 0.2f, 0.55f);
+                d.Spread = 22f; d.Gravity = new Vector3(0f, -3f, 0f);   // fall back to the ground quickly
+                v.AddChild(d);
+                v._wheelDust[i] = d;
+                v._wheelSurf[i] = PlayerController.Surf.Grass;
+            }
             v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
             v.AddChild(v._fireLight);
             v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
@@ -969,10 +995,31 @@ namespace UnturnedGodot
             _prevSpeed = curSpeed;
             if (_smoke != null) _smoke.Emitting = _exploded || Health < SmokeHealth;         // source updateFires: smoke_1 at health < 200 (or exploded)
             if (_smoke0 != null) _smoke0.Emitting = _exploded || Health < HeavySmokeHealth;   // source updateFires: smoke_0 (heavy) at health < 100 (or exploded)
-            if (_wheelDust != null)   // dust while driving on the ground (surface-tint TODO with the surf-material system)
+            if (_wheelDust != null)   // per-wheel dust at each wheel's ground contact (source structure; vanilla ships none -> our Surf-driven enhancement)
             {
-                bool grounded = false; foreach (var w in _wNodes) if (w != null && w.IsInContact()) { grounded = true; break; }
-                _wheelDust.Emitting = !_exploded && grounded && new Vector2(LinearVelocity.X, LinearVelocity.Z).Length() > 3f;
+                float spd = new Vector2(LinearVelocity.X, LinearVelocity.Z).Length();
+                bool moving = spd > 3f && !_exploded;
+                // aim UP at low speed, tilt ~45deg toward backward (+Z local) approaching top speed (src blendWeight = speed% * 0.5)
+                float blend = Mathf.Clamp(spd / Mathf.Max(1f, _speedMax), 0f, 1f) * 0.5f;
+                var dir = new Vector3(0f, 1f, 0f).Lerp(new Vector3(0f, 0f, 1f), blend).Normalized();
+                bool recheck = moving && (_dustCheckT -= (float)delta) <= 0f;   // throttle the per-wheel surface raycast
+                if (recheck) _dustCheckT = 0.12f;
+                for (int i = 0; i < _wNodes.Length; i++)
+                {
+                    var w = _wNodes[i]; var d = _wheelDust[i];
+                    if (w == null || d == null) continue;
+                    bool contact = moving && w.IsInContact();
+                    if (contact)
+                    {
+                        d.Position = ToLocal(w.GetContactPoint());   // spawn at the ground hit like the source
+                        if (recheck) _wheelSurf[i] = WheelSurf(w);
+                    }
+                    var sf = _wheelSurf[i];
+                    bool soft = sf == PlayerController.Surf.Grass || sf == PlayerController.Surf.Dirt || sf == PlayerController.Surf.Sand;   // only loose ground kicks up
+                    d.Direction = dir;
+                    if (soft) d.Color = PlayerController.SurfDust(sf);
+                    d.Emitting = contact && soft;
+                }
             }
             if (_exploded)   // master: explosion smoke/fire emits from the ENGINE bay (like the hurt smoke) but rises STRAIGHT UP -- world-space so the plume doesn't tilt with the tumbling wreck
             {
