@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
-        bool _parked, _handbraking; float _spawnGrace = 2.5f;   // parked/handbraked + settled -> STATIC freeze (source isKinematic); _spawnGrace lets a fresh car DROP to terrain first
+        bool _parked, _handbraking; float _spawnGrace = 2.5f, _settleTimer = 0f;   // -> STATIC freeze once FULLY grounded + stopped for a settle dwell (levels out first); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
@@ -39,6 +39,7 @@ namespace UnturnedGodot
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         StandardMaterial3D _sirenMat0, _sirenMat1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
+        AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
         // Bumper roadkill (source Bumper.OnTriggerEnter + VehicleAsset ParseFloat defaults): a moving vehicle damages a
@@ -70,6 +71,14 @@ namespace UnturnedGodot
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
         }
 
+        static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
+        {
+            byte[] b = System.IO.File.ReadAllBytes(ProjectSettings.GlobalizePath(resPath));
+            int channels = System.BitConverter.ToInt16(b, 22), rate = System.BitConverter.ToInt32(b, 24), bits = System.BitConverter.ToInt16(b, 34);
+            int dataSize = System.BitConverter.ToInt32(b, 40); byte[] pcm = new byte[dataSize]; System.Array.Copy(b, 44, pcm, 0, dataSize);
+            return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
+                                        LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopEnd = dataSize / (channels * bits / 8) };
+        }
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
 
@@ -620,6 +629,11 @@ namespace UnturnedGodot
                     if (txt.Contains("siren0")) v._sirenMat0 = pm;   // capture the roof lightbar lenses to flash them (master: ctrl toggles siren)
                     if (txt.Contains("siren1")) v._sirenMat1 = pm;
                 }
+            if (v._sirenMat0 != null)   // emergency vehicle -> looping siren audio (master), silent until the lightbar's toggled on
+            {
+                v._sirenAudio = new AudioStreamPlayer3D { Stream = LoadWav("res://content/siren.wav"), UnitSize = 14f, MaxDistance = 120f, VolumeDb = 2f };
+                v.AddChild(v._sirenAudio);
+            }
 
             if (s.SpotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
             {
@@ -745,10 +759,17 @@ namespace UnturnedGodot
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
-            bool grounded = false; foreach (var w in _wNodes) if (w.IsInContact()) { grounded = true; break; }
+            int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
+            bool mostlyGrounded = groundedCount * 2 > _wNodes.Length;   // MAJORITY of wheels down = a natural rest: 3-of-4 on bumpy ground freezes, a car teetering on 1 wheel doesn't (master)
             float vel2 = LinearVelocity.LengthSquared();
-            bool wantHold = !_exploded && grounded && (_parked ? (_spawnGrace <= 0f && vel2 < 0.5f)
-                                                              : (_handbraking && vel2 < 0.04f));   // handbrake WHILE driving: freeze only at ~zero, strong brake above
+            float ang2 = AngularVelocity.LengthSquared();
+            // Settle = most wheels down + stopped (linear) + not rocking (angular ~ leveled out), held for a short dwell so it levels
+            // out first. Applies to parked-on-exit, the manual handbrake, AND wrecks (car corpses).
+            bool settling = mostlyGrounded && ang2 < 0.05f && (_exploded ? vel2 < 0.5f
+                                                                         : _parked ? (_spawnGrace <= 0f && vel2 < 0.5f)
+                                                                                   : (_handbraking && vel2 < 0.04f));
+            _settleTimer = settling ? _settleTimer + (float)delta : 0f;
+            bool wantHold = settling && _settleTimer > 0.4f;   // handbrake WHILE driving: freeze only at ~zero, strong brake above
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic: kinematic fought the wheel forces + vanished the car (master)
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
@@ -786,16 +807,17 @@ namespace UnturnedGodot
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
                 if (Battery <= 0f) SetHeadlights(false);
             }
-            if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles)
+            if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.
             {
-                if (_sirenOn)
+                if (_sirenOn && !_exploded)
                 {
+                    if (_sirenAudio != null && !_sirenAudio.Playing) _sirenAudio.Play();
                     _sirenFlash += (float)delta * 5f;
                     bool red = (_sirenFlash % 1f) < 0.5f;
                     _sirenMat0.EmissionEnabled = true; _sirenMat0.Emission = new Color(1f, 0.05f, 0.05f); _sirenMat0.EmissionEnergyMultiplier = red ? 4f : 0f;
                     _sirenMat1.EmissionEnabled = true; _sirenMat1.Emission = new Color(0.1f, 0.15f, 1f); _sirenMat1.EmissionEnergyMultiplier = red ? 0f : 4f;
                 }
-                else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; }
+                else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop(); }
             }
             bool tailWant = EngineOn && Battery > 0f;   // source synchronizeTaillights: taillights on while isDriven && canTurnOnLights
             if (tailWant != _taillightsOn) SetTaillights(tailWant);
