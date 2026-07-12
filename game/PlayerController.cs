@@ -699,6 +699,7 @@ namespace UnturnedGodot
         void StartFire()
         {
             if (_dead) return;   // ignore fire commands on the death screen (master)
+            if (_reloading) return;   // fire input during a reload is IGNORED, not queued -> no burst fires when the reload ends (master)
             if (_viewmodel != null && _viewmodel.InAttachView) return;   // no firing while the T attachment menu is up
             if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
             if (_firemode == FireMode.Safety) return;
