@@ -23,6 +23,32 @@ namespace SDG.Unturned
             Add(95,  "Bandage",       1, 1, EItemType.MEDICAL,  EItemRarity.UNCOMMON,  0, 0, "Medium quality cloth for stopping bleeding, and recovering.", uh: 15, ub: true);
             Add(14,  "Bottled Water", 1, 1, EItemType.WATER,    EItemRarity.COMMON,    0, 0, "Overpriced tap water.", uw: 55);
             Add(13,  "Canned Beans",  1, 1, EItemType.FOOD,     EItemRarity.COMMON,    0, 0, "Very tactically packed for maximum taste.", uh: 10, uf: 55);
+            WireExtractedGuns();
+        }
+
+        // Wire gunName on the extracted PEI gun items (content/<name>.dat's numeric ID -> ItemAsset.gunName) so equipping
+        // or picking up the item loads the right viewmodel via EquipHeldGun. Gun names come from content/guns_visual.tsv.
+        static void WireExtractedGuns()
+        {
+            const string gv = "res://content/guns_visual.tsv";
+            if (!Godot.FileAccess.FileExists(gv)) return;
+            using var f = Godot.FileAccess.Open(gv, Godot.FileAccess.ModeFlags.Read);
+            int n = 0;
+            while (f != null && !f.EofReached())
+            {
+                string line = f.GetLine();
+                if (string.IsNullOrEmpty(line)) continue;
+                string name = line.Split('\t')[0];
+                string datPath = ProjectSettings.GlobalizePath($"res://content/{name}.dat");
+                if (!System.IO.File.Exists(datPath)) continue;
+                try
+                {
+                    var d = new DatParser().Parse(System.IO.File.ReadAllText(datPath));
+                    if (ushort.TryParse(d.GetString("ID"), out var id)) { var a = Assets.find(id); if (a != null) { a.gunName = name; n++; } }
+                }
+                catch { /* skip a malformed .dat */ }
+            }
+            GD.Print($"[items] wired {n} extracted guns for in-game equip");
         }
 
         // bulk-load the pre-extracted retail catalog: one tab-separated line per item -- id,name,Type,Rarity,Size_X,Size_Y,Description

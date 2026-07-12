@@ -1786,6 +1786,11 @@ namespace UnturnedGodot
                     GD.Print($"[SHELLTEST]   loads shell-by-shell: {string.Join(" -> ", seq)} (firing mid-reload cancels + shoots what's loaded)");
                 }
             }
+            // catalog gun-wiring: gun items with gunName set are pick-up-equippable in-game (EquipHeldGun -> viewmodel)
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            int wired = 0; var sample = new System.Collections.Generic.List<string>();
+            foreach (var a in SDG.Unturned.Assets.all()) if (!string.IsNullOrEmpty(a.gunName)) { wired++; if (sample.Count < 8) sample.Add($"{a.id}={a.gunName}"); }
+            GD.Print($"[SHELLTEST] equippable guns (gunName set): {wired} -- {string.Join(", ", sample)}");
         }
 
         // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every
