@@ -2190,6 +2190,7 @@ namespace UnturnedGodot
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
+            else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
             else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
             img.SavePng(_shotPath);
