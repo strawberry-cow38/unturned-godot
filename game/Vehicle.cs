@@ -136,6 +136,7 @@ namespace UnturnedGodot
         {
             _exploded = true;
             Freeze = false;   // unfreeze the parked/kinematic car so the wreck flies + tumbles
+            foreach (var w in _wNodes) { w.SuspensionStiffness = 0.5f; w.SuspensionMaxForce = 0f; }   // KILL the suspension -> the hulk collapses flush onto its body instead of perching on ghost-wheels (master "kill it completely")
             ApplyCentralImpulse(Vector3.Up * 18000f);         // source min/maxExplosionForce straight up; boosted for a dramatic chassis fling against the 3x gravity (master: much higher)
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
@@ -766,14 +767,10 @@ namespace UnturnedGodot
             // (0.08 = a longer settle lag than 0.12 -- master wanted a bit more delay to cover edge cases)
             // nose-dive REBOUND (sustained, directional) survives the filter. So we wait for the suspension to normalize (angular avg settles) yet
             // never deadlock on the jitter -- fixes both "jitter is back" AND "freezes mid nose-dive with the back wheels up" (master).
-            bool wantHold = mostlyGrounded && _angAvg.LengthSquared() < 0.03f && (_exploded ? _velAvg.LengthSquared() < 1.0f
-                                                                                            : _parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
-                                                                                                      : (_handbraking && _velAvg.LengthSquared() < 0.06f));   // handbrake WHILE driving: freeze only at ~zero, strong brake above
-            if (wantHold && !Freeze)
-            {
-                if (_exploded) GlobalPosition += Vector3.Down * 0.3f;   // a wreck settles FLUSH -- drop the hulk so it sits on the ground, not perched up on its dead suspension (master)
-                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true;   // STATIC not kinematic: kinematic fought the wheel forces + vanished the car (master)
-            }
+            bool wantHold = _angAvg.LengthSquared() < 0.03f && (_exploded ? _velAvg.LengthSquared() < 1.0f                                    // wreck: killed suspension, so DON'T require wheel contact -- freeze once it stops tumbling
+                                                                          : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
+                                                                                                       : (_handbraking && _velAvg.LengthSquared() < 0.06f)));   // handbrake WHILE driving: freeze only at ~zero, strong brake above
+            if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic (kinematic vanished the car); wrecks collapse flush via the killed suspension
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
             if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)

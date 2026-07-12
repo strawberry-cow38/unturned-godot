@@ -639,6 +639,7 @@ namespace UnturnedGodot
         // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
         void StartFire()
         {
+            if (_dead) return;   // ignore fire commands on the death screen (master)
             if (_viewmodel != null && _viewmodel.InAttachView) return;   // no firing while the T attachment menu is up
             if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
             if (_firemode == FireMode.Safety) return;
@@ -692,7 +693,7 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null) return false;
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null || _dead) return false;   // never fire while dead -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master)
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
