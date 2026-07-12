@@ -858,7 +858,7 @@ namespace UnturnedGodot
                     if (on && !_alarmLit) { DoHorn(); SetHeadlights(true); }        // rising edge -> honk + lights on (the honk lures zombies like a real horn)
                     else if (!on && _alarmLit) SetHeadlights(false);                // falling edge -> lights off, NO honk
                     _alarmLit = on;
-                    if (_alarmTimer <= 0f) { SetHeadlights(false); _alarmLit = false; }   // alarm done
+                    if (_alarmTimer <= 0f) { SetHeadlights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, this car never alarms again (master)
                 }
             }
             if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.
