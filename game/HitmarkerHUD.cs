@@ -13,12 +13,22 @@ namespace UnturnedGodot
 
         struct Mark { public float Age; public bool Crit; }
         readonly List<Mark> _marks = new();
+        AudioStreamPlayer _critSound;   // source: a headshot plays Sounds/Hit.mp3 at 0.5 volume
 
-        public override void _Ready() => Instance = this;
+        public override void _Ready()
+        {
+            Instance = this;
+            var s = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/hit.ogg"));
+            if (s != null) { _critSound = new AudioStreamPlayer { Stream = s, VolumeDb = -6f }; AddChild(_critSound); }   // -6 dB ~ the source's 0.5 volume
+        }
         public override void _ExitTree() { if (Instance == this) Instance = null; }
 
-        // crit = headshot -> red marker (+ the source plays Sounds/Hit.mp3, wired by the caller)
-        public void Show(bool crit) => _marks.Add(new Mark { Age = 0f, Crit = crit });
+        // crit = headshot -> red marker + the source's Hit.mp3 ding
+        public void Show(bool crit)
+        {
+            _marks.Add(new Mark { Age = 0f, Crit = crit });
+            if (crit) _critSound?.Play();
+        }
 
         public override void _Process(double delta)
         {
