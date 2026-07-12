@@ -76,6 +76,7 @@ namespace UnturnedGodot
                 else if (arg == "--netdemo") netdemo = true;
                 else if (arg == "--server") server = true;
                 else if (arg == "--client") client = true;
+                else if (arg.StartsWith("--connect=")) { client = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
@@ -2047,6 +2048,7 @@ namespace UnturnedGodot
         }
 
         const ushort NetPort = 47872;
+        string _connectHost = "127.0.0.1";   // --connect=<ip>: the dedicated server to join (default = same-machine loopback)
 
         // Headless dedicated server process (+ a scripted bot player).
         void BuildServer()
@@ -2083,9 +2085,9 @@ namespace UnturnedGodot
 
             ScatterScenery(); // real ripped Unturned props so the arena isn't a bare plane
 
-            var cli = new Net.NetClient("127.0.0.1", NetPort);
+            var cli = new Net.NetClient(_connectHost, NetPort);
             AddChild(new ClientNode { Client = cli });
-            GD.Print($"[CLIENT] connected to 127.0.0.1:{NetPort}; local player = real PlayerController (synced)");
+            GD.Print($"[CLIENT] connected to {_connectHost}:{NetPort}; local player = real PlayerController (synced)");
         }
 
         // Scatter a few real ripped props (textured) around the arena as static scenery.
