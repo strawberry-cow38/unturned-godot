@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
-        bool _parked, _handbraking; float _spawnGrace = 2.5f;   // parked/handbraked + settled -> kinematic freeze (source isKinematic, no jitter); _spawnGrace lets a fresh car DROP to terrain first
+        bool _parked, _handbraking; float _spawnGrace = 2.5f, _exitDelay = 0f;   // parked/handbraked + settled -> kinematic freeze; _spawnGrace = drop-to-terrain, _exitDelay = wait after exit before freezing (master)
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
@@ -121,7 +121,7 @@ namespace UnturnedGodot
         {
             _exploded = true;
             Freeze = false;   // unfreeze the parked/kinematic car so the wreck flies + tumbles
-            ApplyCentralImpulse(Vector3.Up * 6000f);          // source min/maxExplosionForce (default straight up), calibrated for the Godot mass
+            ApplyCentralImpulse(Vector3.Up * 18000f);         // source min/maxExplosionForce straight up; boosted for a dramatic chassis fling against the 3x gravity (master: much higher)
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
             if (_fire != null) _fire.Emitting = true;
@@ -487,7 +487,7 @@ namespace UnturnedGodot
         static readonly Spec _police = new()
         {
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
-            DefaultPaints = new[] { "#26365e" },   // police navy (paintable body)
+            DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 17f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
@@ -680,6 +680,7 @@ namespace UnturnedGodot
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
         {
             _parked = true;
+            _exitDelay = 1.0f;   // master: wait ~1s after exit before freezing so it settles/rolls first
             EngineForce = 0f;
             _steerTarget = 0f;
             AngularVelocity = Vector3.Zero;
@@ -727,20 +728,21 @@ namespace UnturnedGodot
         {
             if (_wNodes == null) return;
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
+            if (_exitDelay > 0f) _exitDelay -= (float)delta;     // master: wait ~1s after exit before freezing (let it settle/roll first)
             // Middle ground (source: a parked / not-locally-driven vehicle goes isKinematic -- InteractableVehicle 1495/1517):
-            // once a car has settled it FREEZES kinematic so it physically cannot jitter, and it's dynamic while driven. My
-            // axis-lock hit a catch-22 -- the brake's own oscillation kept speed above the lock threshold, so it never locked.
+            // once a car has settled it FREEZES kinematic so it can't jitter, and it's dynamic while driven / exploded.
             float hSpeed2 = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).LengthSquared();
-            bool wantHold = _parked ? (_spawnGrace <= 0f && hSpeed2 < 1.0f)   // parked: freeze once the settle grace is done + it's rolled to a stop
-                                    : (_handbraking && hSpeed2 < 0.04f);      // handbraking WHILE driving: freeze only at ~zero (0.2 m/s), strong brake above
+            bool wantHold = !_exploded && (_parked ? (_spawnGrace <= 0f && _exitDelay <= 0f && hSpeed2 < 1.0f)   // parked: freeze once settled (grace + exit-delay done, rolled to a stop)
+                                                    : (_handbraking && hSpeed2 < 0.04f));                        // handbraking WHILE driving: freeze only at ~zero, strong brake above
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; Freeze = true; }
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
-            for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
-            {
-                _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
-                _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
-            }
+            if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)
+                for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
+                {
+                    _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
+                    _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
+                }
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
             float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
             float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
