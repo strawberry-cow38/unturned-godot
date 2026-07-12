@@ -92,6 +92,7 @@ namespace UnturnedGodot
             var shape = new CollisionShape3D { Shape = new CapsuleShape3D { Height = low ? 0.8f : 1.8f, Radius = 0.4f } };
             shape.Position = new Vector3(0, low ? 0.4f : 0.9f, 0);
             AddChild(shape);
+            FloorMaxAngle = Mathf.DegToRad(55f); FloorSnapLength = 0.5f;   // climb steeper slopes + stay grounded, like the player (master)
 
             // each zombie randomly wears one of the baked ZombieClothing outfits (real zombies randomise their
             // shirt/pants from the map's LevelZombies table) so the horde isn't a uniform.
@@ -142,6 +143,16 @@ namespace UnturnedGodot
         {
             float h = Speciality == ESpeciality.CRAWLER ? 0.8f : 1.8f;
             return worldPoint.Y - GlobalPosition.Y > h * 0.82f;
+        }
+
+        const float StepHeight = 0.4f;   // curb/threshold step-over, matches the player (master: apply movement changes to zombies)
+        void StepUp(float dt)
+        {
+            if (!IsOnFloor()) return;
+            Vector3 motion = new Vector3(Velocity.X, 0f, Velocity.Z) * dt;
+            if (motion.LengthSquared() < 1e-6f) return;
+            var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
+            if (TestMove(GlobalTransform, motion) && !TestMove(raised, motion)) GlobalPosition += Vector3.Up * StepHeight;
         }
 
         void ApplyDamage(float amount, Vector3 point, Vector3 dir, bool impact)
@@ -208,6 +219,7 @@ namespace UnturnedGodot
                 bool goingHome = toHome.LengthSquared() > 4f;             // >2 m from spawn -> shamble back
                 Vector3 hv = goingHome ? toHome.Normalized() * (Speed * 0.5f) : Vector3.Zero;
                 Velocity = new Vector3(hv.X, Velocity.Y - g * dt, hv.Z);
+                StepUp((float)dt);
                 MoveAndSlide();
                 if (_rig != null) { _rig.Tick(delta); _rig.SetLocomotion(hv.Length()); }
                 if (hv.LengthSquared() > 1e-4f) LookAt(GlobalPosition + hv, Vector3.Up);
@@ -259,6 +271,7 @@ namespace UnturnedGodot
             bool inReach = num3 < ATTACK_PLAYER_SQ;
             Vector3 horiz = (!inReach && to.LengthSquared() > 1e-4f) ? to.Normalized() * Speed : Vector3.Zero;
             Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
+            StepUp((float)dt);
             MoveAndSlide();
 
             // --- ACID: spit a corrosive glob at the player from range (Zombie askSpit -> askAcid) ---
@@ -380,6 +393,7 @@ namespace UnturnedGodot
             Vector3 to = _huntPoint - me; to.Y = 0f;
             Vector3 horiz = (!arrived && to.LengthSquared() > 1e-4f) ? to.Normalized() * Speed : Vector3.Zero;
             Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
+            StepUp((float)dt);
             MoveAndSlide();
 
             if (_rig != null)
