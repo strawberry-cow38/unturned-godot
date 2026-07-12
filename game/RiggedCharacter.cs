@@ -322,7 +322,7 @@ namespace UnturnedGodot
             var bodyMat = new StandardMaterial3D
             {
                 AlbedoColor = tint,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled, // skinned winding is doubled
+                CullMode = BaseMaterial3D.CullModeEnum.Front, // Z-flip reverses winding -> cull the (reversed) BACK faces = single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer)
             };
             // optional baked skin atlas (ZombieClothing composite: skin + shirt + pants + face decal). The tint
             // multiplies it, so a NORMAL zombie passes white for the natural look, specials an accent colour.
@@ -357,7 +357,8 @@ namespace UnturnedGodot
                     fq.MaterialOverride = new StandardMaterial3D
                     {
                         AlbedoTexture = ImageTexture.CreateFromImage(fimg),
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor,   // hard-edged pixel decal -> CUTOUT (early-z, no blend overdraw) beats alpha-blend
+                        AlphaScissorThreshold = 0.5f,
                         TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
                         CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                     };
