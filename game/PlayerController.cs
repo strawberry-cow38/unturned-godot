@@ -841,7 +841,7 @@ namespace UnturnedGodot
             {
                 var b = _bullets[i];
                 Vector3 next = b.Pos + b.Vel * 0.02f;
-                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6)); // world + enemy + ragdoll + vehicle + props
+                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9)); // world + enemy + ragdoll + vehicle + props + water surface
                 var hit = space.IntersectRay(query);
                 if (hit.Count > 0)
                 {
@@ -882,7 +882,7 @@ namespace UnturnedGodot
 
         // surface materials for bullet impacts (a slice of the source EPhysicsMaterial set). Tagged on colliders via
         // SetMeta("surf", (int)Surf) -- terrain = Grass, vehicles = Metal, untagged (buildings/props) = Concrete.
-        public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand }
+        public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water }
         public const string SurfMeta = "surf";
         public static Color SurfDust(Surf s) => s switch
         {
@@ -891,6 +891,7 @@ namespace UnturnedGodot
             Surf.Metal => new Color(1f, 0.82f, 0.35f),
             Surf.Wood  => new Color(0.50f, 0.38f, 0.24f),
             Surf.Sand  => new Color(0.78f, 0.70f, 0.52f),
+            Surf.Water => new Color(0.62f, 0.72f, 0.85f),   // pale blue-white splash
             _          => new Color(0.58f, 0.56f, 0.52f),   // concrete
         };
 
@@ -951,7 +952,7 @@ namespace UnturnedGodot
             string name = surf switch
             {
                 Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "gravel",
-                Surf.Grass => "foliage", Surf.Dirt => "gravel", _ => "concrete",
+                Surf.Grass => "foliage", Surf.Dirt => "gravel", Surf.Water => "water", _ => "concrete",
             };
             string p = ProjectSettings.GlobalizePath($"res://content/impact_{name}_static_0.png");
             ImageTexture tex = null;

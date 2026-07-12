@@ -289,6 +289,13 @@ void fragment() {
                     Roughness = 0.12f, Metallic = 0.15f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                 };
                 terr.AddChild(water);
+                // Bullets-only splash collider on a dedicated layer (bit9): the bullet raycast checks it, but player/
+                // vehicles don't mask bit9 so it never blocks movement/swimming. Shooting the ocean -> Water_Static splash.
+                var wbody = new StaticBody3D { CollisionLayer = 1u << 9, Position = water.Position };
+                wbody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Water);
+                var wsize = ((PlaneMesh)water.Mesh).Size;
+                wbody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(wsize.X, 0.2f, wsize.Y) } });
+                terr.AddChild(wbody);
             }
             if (withCollider)
             {
