@@ -769,7 +769,11 @@ namespace UnturnedGodot
             bool wantHold = mostlyGrounded && _angAvg.LengthSquared() < 0.03f && (_exploded ? _velAvg.LengthSquared() < 1.0f
                                                                                             : _parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
                                                                                                       : (_handbraking && _velAvg.LengthSquared() < 0.06f));   // handbrake WHILE driving: freeze only at ~zero, strong brake above
-            if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic: kinematic fought the wheel forces + vanished the car (master)
+            if (wantHold && !Freeze)
+            {
+                if (_exploded) GlobalPosition += Vector3.Down * 0.3f;   // a wreck settles FLUSH -- drop the hulk so it sits on the ground, not perched up on its dead suspension (master)
+                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true;   // STATIC not kinematic: kinematic fought the wheel forces + vanished the car (master)
+            }
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
             if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)
