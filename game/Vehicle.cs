@@ -56,6 +56,21 @@ namespace UnturnedGodot
         Color _outlineColor = new Color(0.82f, 0.83f, 0.90f);   // vehicle outline/label tint (no per-vehicle rarity in the port yet)
         const float InfoH = 2.35f;
 
+        // source's 2nd body BoxCollider (a slab at roof height, Godot space -- Z already negated) = the roof/frame
+        // collision the port was missing (master). Jeep/Quad/Tractor are open-top -> null.
+        static (Vector3 size, Vector3 center)? RoofBox(string name) => name switch
+        {
+            "Sedan" or "Police" => (new Vector3(2.5f, 0.254f, 2.320f), new Vector3(0f, 2.0f, 0.195f)),
+            "Hatchback"         => (new Vector3(2.5f, 0.254f, 2.675f), new Vector3(0f, 2.0f, 0.723f)),
+            "Humvee"            => (new Vector3(2.5f, 0.254f, 2.815f), new Vector3(0f, 2.0f, 0.050f)),
+            "Roadster"          => (new Vector3(2.5f, 0.254f, 1.367f), new Vector3(0f, 2.0f, 0.672f)),
+            "Bus"               => (new Vector3(3.0f, 0.512f, 7.834f), new Vector3(0f, 2.130f, 0.346f)),
+            "Ambulance"         => (new Vector3(2.5f, 0.254f, 4.815f), new Vector3(0f, 2.0f, 0.087f)),
+            "Firetruck"         => (new Vector3(2.5f, 0.262f, 6.803f), new Vector3(0f, 2.256f, 0.104f)),
+            "Ural"              => (new Vector3(2.5f, 0.255f, 3.169f), new Vector3(0f, 2.257f, 1.570f)),
+            _ => null,
+        };
+
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
@@ -593,6 +608,8 @@ namespace UnturnedGodot
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+            var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
+            if (roof.HasValue) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
             v.BodyExtents = s.BoxSize * 0.5f; v.BodyCenter = s.BoxCenter;   // for the zombie swipe-reach
 
             // front bumper trigger (source Bumper): a forward volume that roadkills characters (enemy layer bit 1) the
