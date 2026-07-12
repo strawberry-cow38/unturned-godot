@@ -10,6 +10,8 @@ namespace UnturnedGodot
     public partial class PlayerController : CharacterBody3D
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
+        bool _crouched, _xHeld;   // X TOGGLES crouch (master: ctrl no longer crouches)
+        CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
@@ -253,6 +255,26 @@ namespace UnturnedGodot
         public UnityEngine.Vector2? ScriptedInput;
         // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
         public EPlayerStance? ScriptedStance;
+
+        void UpdateHitbox(EPlayerStance stance)   // collision capsule per stance (STAND 2 / CROUCH 1.2 / PRONE 0.8), bottom pinned to the feet
+        {
+            float h = PlayerMovementDef.HeightForStance(stance);
+            if (Mathf.Abs(h - _capStance) < 0.001f) return;
+            _capStance = h; _capsule.Height = h; _hitbox.Position = new Vector3(0f, h / 2f, 0f);
+        }
+
+        const float StepHeight = 0.4f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks)
+        // If the horizontal motion is blocked at foot level but clear a step higher, raise onto the step; FloorSnapLength then
+        // pulls us back down onto it. Reused by both the player and zombies (source has stair/ledge handling in PlayerMovement).
+        void StepUp(float delta)
+        {
+            if (!IsOnFloor()) return;
+            Vector3 motion = new Vector3(Velocity.X, 0f, Velocity.Z) * delta;
+            if (motion.LengthSquared() < 1e-6f) return;
+            var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
+            if (TestMove(GlobalTransform, motion) && !TestMove(raised, motion))
+                GlobalPosition += Vector3.Up * StepHeight;
+        }
         public bool CaptureMouse = true;
 
         public GunDef Gun;          // real ItemGunAsset stats (damage/range/firerate/mag) when loaded
@@ -428,9 +450,11 @@ namespace UnturnedGodot
             CollisionLayer = 1 << 3;   // player bit
             CollisionMask = 1 << 0;    // walk on ground (bit 0)
 
-            var shape = new CollisionShape3D { Shape = new CapsuleShape3D { Height = 1.8f, Radius = 0.35f } };
-            shape.Position = new Vector3(0, 0.9f, 0);
-            AddChild(shape);
+            _capsule = new CapsuleShape3D { Height = PlayerMovementDef.HEIGHT_STAND, Radius = 0.35f };
+            _hitbox = new CollisionShape3D { Shape = _capsule, Position = new Vector3(0, PlayerMovementDef.HEIGHT_STAND / 2f, 0) };
+            AddChild(_hitbox);
+            FloorMaxAngle = Mathf.DegToRad(55f);   // climb steeper slopes than Godot's 45 default (master)
+            FloorSnapLength = 0.5f;                 // stay glued to the ground over small steps / undulations
 
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
             AddChild(_cam);
@@ -1015,12 +1039,16 @@ namespace UnturnedGodot
                 else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
+            bool xNow = Input.IsPhysicalKeyPressed(Key.X);   // X = TOGGLE crouch (master: ctrl no longer crouches)
+            if (xNow && !_xHeld) _crouched = !_crouched;
+            _xHeld = xNow;
             _move.Stance = ScriptedStance
                          ?? (Input.IsPhysicalKeyPressed(Key.Z) ? EPlayerStance.PRONE        // hold Z to go prone (lowest profile)
                            : (Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) ? EPlayerStance.SPRINT
-                           : Input.IsPhysicalKeyPressed(Key.Ctrl) ? EPlayerStance.CROUCH
+                           : _crouched ? EPlayerStance.CROUCH
                            : EPlayerStance.STAND);
             if (Broken && _move.Stance == EPlayerStance.SPRINT) _move.Stance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
+            UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
 
             float forward, strafe;
             if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
@@ -1041,6 +1069,7 @@ namespace UnturnedGodot
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);
             bool wasAirborne = !IsOnFloor();                  // ground state going into this step
             Velocity = new Vector3(world.X, v.y, world.Z);
+            StepUp((float)delta);   // climb small curbs/thresholds so we don't snag (master)
             MoveAndSlide();
             if (wasAirborne && IsOnFloor()) CheckFallDamage(v.y);   // just touched down -> fall damage on a hard landing
         }
