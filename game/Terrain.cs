@@ -143,6 +143,7 @@ void fragment() {
             if (withCollider)
             {
                 var body = new StaticBody3D { CollisionLayer = 1u << 0 };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass);   // bullet impacts on the ground kick up grass/dirt
                 body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
                 node.AddChild(body);
             }

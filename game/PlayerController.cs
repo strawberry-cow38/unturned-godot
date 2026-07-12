@@ -850,8 +850,8 @@ namespace UnturnedGodot
                     var collider = hit["collider"].As<GodotObject>();
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
-                    else if (collider is Vehicle veh) veh.TakeDamage(b.VehicleDamage);   // source Vehicle_Damage (eaglefire 35), NOT the zombie damage (99)
-                    else SpawnSurfaceImpact(point, hit["normal"].AsVector3());   // world/prop -> bullet-hole decal + dust puff (foundation; per-material src effects are the next step)
+                    else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); }   // source Vehicle_Damage (35) + metal sparks
+                    else SpawnSurfaceImpact(point, hit["normal"].AsVector3(), collider is Node n && n.HasMeta(SurfMeta) ? (Surf)(int)n.GetMeta(SurfMeta) : Surf.Concrete);   // world/prop -> material impact (terrain=grass, untagged=concrete)
                     RemoveBullet(i);
                     continue;
                 }
@@ -871,30 +871,52 @@ namespace UnturnedGodot
             return _bulletHoleTex;
         }
 
-        // Bullet impact on world/props: a projected bullet-hole DECAL + a small dust puff at the hit, oriented to the
-        // surface normal. FOUNDATION -- source-accurate PER-MATERIAL effects (concrete/metal/wood via DamageTool.impact's
-        // EPhysicsMaterial->effect map) need a surface-material tag on every collider, a separate world-wide build.
-        void SpawnSurfaceImpact(Vector3 point, Vector3 normal)
+        // surface materials for bullet impacts (a slice of the source EPhysicsMaterial set). Tagged on colliders via
+        // SetMeta("surf", (int)Surf) -- terrain = Grass, vehicles = Metal, untagged (buildings/props) = Concrete.
+        public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand }
+        public const string SurfMeta = "surf";
+        static Color SurfDust(Surf s) => s switch
+        {
+            Surf.Grass => new Color(0.40f, 0.50f, 0.28f),
+            Surf.Dirt  => new Color(0.45f, 0.35f, 0.25f),
+            Surf.Metal => new Color(1f, 0.82f, 0.35f),
+            Surf.Wood  => new Color(0.50f, 0.38f, 0.24f),
+            Surf.Sand  => new Color(0.78f, 0.70f, 0.52f),
+            _          => new Color(0.58f, 0.56f, 0.52f),   // concrete
+        };
+
+        // Bullet impact: a projected bullet-hole DECAL (hard surfaces only) + a material-tinted dust/spark puff at the
+        // hit, oriented to the surface normal. Metal = additive sparks; soft ground (grass/dirt/sand) = no decal.
+        void SpawnSurfaceImpact(Vector3 point, Vector3 normal, Surf surf)
         {
             var scene = GetTree().CurrentScene;
             if (scene == null) return;
             Vector3 up = normal.Normalized();
+            bool hard = surf is Surf.Concrete or Surf.Metal or Surf.Wood;
+            bool metal = surf == Surf.Metal;
             var tex = BulletHoleTex();
-            if (tex != null)
+            if (hard && tex != null)
             {
-                var dec = new Decal { TextureAlbedo = tex, Size = new Vector3(0.16f, 0.3f, 0.16f), AlbedoMix = 1f };
+                var dec = new Decal { TextureAlbedo = tex, Size = new Vector3(0.16f, 0.3f, 0.16f), AlbedoMix = 1f, Modulate = metal ? new Color(0.72f, 0.72f, 0.75f) : Colors.White };
                 scene.AddChild(dec);
                 Vector3 t = Mathf.Abs(up.Dot(Vector3.Up)) < 0.95f ? Vector3.Up : Vector3.Right;
                 Vector3 right = up.Cross(t).Normalized();
                 dec.GlobalTransform = new Transform3D(new Basis(right, up, right.Cross(up)), point + up * 0.06f);   // +Y = normal -> projects DOWN into the surface
                 var t1 = GetTree().CreateTimer(18.0); t1.Timeout += () => { if (IsInstanceValid(dec)) dec.QueueFree(); };
             }
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                AlbedoColor = new Color(SurfDust(surf), metal ? 1f : 0.7f), BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                BlendMode = metal ? BaseMaterial3D.BlendModeEnum.Add : BaseMaterial3D.BlendModeEnum.Mix,
+            };
+            if (metal) { mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.7f, 0.2f); mat.EmissionEnergyMultiplier = 2f; }
             var dust = new CpuParticles3D
             {
-                Emitting = true, OneShot = true, Amount = 8, Lifetime = 0.4f, Explosiveness = 0.9f,
-                Direction = up, Spread = 40f, InitialVelocityMin = 1.0f, InitialVelocityMax = 2.4f,
-                Gravity = new Vector3(0f, -3f, 0f), ScaleAmountMin = 0.03f, ScaleAmountMax = 0.09f,
-                Mesh = new QuadMesh { Size = Vector2.One, Material = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, AlbedoColor = new Color(0.58f, 0.56f, 0.52f, 0.7f), BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles } },
+                Emitting = true, OneShot = true, Amount = metal ? 12 : 8, Lifetime = metal ? 0.35f : 0.45f, Explosiveness = 0.95f,
+                Direction = up, Spread = metal ? 25f : 42f, InitialVelocityMin = metal ? 2f : 1f, InitialVelocityMax = metal ? 4.5f : 2.4f,
+                Gravity = new Vector3(0f, metal ? -6f : -3f, 0f), ScaleAmountMin = 0.02f, ScaleAmountMax = metal ? 0.06f : 0.09f,
+                Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
             };
             scene.AddChild(dust);
             dust.GlobalPosition = point + up * 0.03f;
