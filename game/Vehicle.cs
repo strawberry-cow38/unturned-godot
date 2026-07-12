@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
-        bool _parked;   // driver left: smoothly damp to a stop (no hard-brake wheel-lock judder), then hold
+        bool _parked, _handbraking;   // _parked = not being driven (spawned/exited); _handbraking = Space held. Either + stopped -> freeze (no jitter)
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
@@ -118,6 +118,7 @@ namespace UnturnedGodot
         void Explode()   // source explode: launch up + spin, fire on, char the body, disable
         {
             _exploded = true;
+            Freeze = false;   // a frozen parked car must unfreeze to fly + tumble on explode
             ApplyCentralImpulse(Vector3.Up * 6000f);          // source min/maxExplosionForce (default straight up), calibrated for the Godot mass
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
@@ -383,7 +384,7 @@ namespace UnturnedGodot
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
-            v._steerTurnSpeed = s.SteerMax * 5f;   // source SteeringAngleTurnSpeed default = SteerMax * 5 (deg/s)
+            v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name;
@@ -507,7 +508,7 @@ namespace UnturnedGodot
             v.AddChild(v._fireLight);
             v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
             v.AddChild(v._explosionAudio);
-            v.Brake = s.Brake * HandbrakeScale;   // parking brake ENGAGED on spawn so the car doesn't roll off (released once driven)
+            v.Brake = s.Brake * HandbrakeScale; v._parked = true;   // spawns parked: brake on + freezes once settled so it holds ride height without jitter (released once driven)
             return v;
         }
 
@@ -529,6 +530,7 @@ namespace UnturnedGodot
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
             _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp -- master confirmed the raw angle is fine
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
+            _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
             Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : 0f);
         }
 
@@ -581,10 +583,13 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_wNodes == null) return;
-            if (_parked)   // driver left: hold with the parking brake and let the suspension settle EXACTLY as it does while
-            {              // driving. Manually clamping LinearVelocity/AngularVelocity here was fighting the suspension and
-                Brake = _brakeForce * HandbrakeScale;   // squatting the car ONLY after exit (master); the brake alone holds it.
-            }
+            // Hold the car ROCK STILL when it isn't being driven (spawned/parked) or is handbraked, once it's slow. A strong
+            // brake on a near-stopped VehicleBody3D oscillates (jitter), and clamping the velocity fought the suspension
+            // (squat) -- FREEZING at the current ride height dodges both (master: handbrake jitter, parked + while driving).
+            bool holdStill = (_parked || _handbraking) && LinearVelocity.LengthSquared() < 0.25f;   // < 0.5 m/s
+            if (holdStill && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }
+            else if (!holdStill && Freeze) Freeze = false;
+            if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // still rolling to a stop -> brake until slow enough to freeze
             for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
             {
                 _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
