@@ -94,8 +94,44 @@ namespace UnturnedGodot
         {
             "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
             "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.44f, 0.40f, 0.28f), Ejects = true },
-            _             => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.40f, 0.36f, 0.32f), Ejects = true },
+            "eaglefire"   => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.40f, 0.36f, 0.32f), Ejects = true },
+            _             => ExtraVisual(name),   // the bulk PEI arsenal: extracted content + content/guns_visual.tsv
         };
+
+        // GunVisuals for the bulk PEI arsenal, loaded from content/guns_visual.tsv (emitted by tools/extract_gun.py).
+        // Line: name \t muzzle(x,y,z) \t aim(x,y,z) \t ejects(1|0). Sight/Mag null + real _MainTex albedo (white tint)
+        // as the first pass -- per-gun ADS/mag/sight tuning is polish.
+        static System.Collections.Generic.Dictionary<string, GunVisual> _extraVisuals;
+        static GunVisual ExtraVisual(string name)
+        {
+            _extraVisuals ??= LoadExtraVisuals();
+            return _extraVisuals.TryGetValue(name, out var gv) ? gv : Visual("eaglefire");
+        }
+        static System.Collections.Generic.Dictionary<string, GunVisual> LoadExtraVisuals()
+        {
+            var d = new System.Collections.Generic.Dictionary<string, GunVisual>();
+            string path = ProjectSettings.GlobalizePath("res://content/guns_visual.tsv");
+            if (!System.IO.File.Exists(path)) return d;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                var c = line.Split('\t');
+                if (c.Length < 4) continue;
+                d[c[0]] = new GunVisual
+                {
+                    Gun = c[0] + "_gun.txt", Albedo = c[0] + "_albedo.png", Sight = null, Mag = null,
+                    Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg",
+                    MuzzleHook = V3(c[1]), AimHook = V3(c[2]), ViewOffset = Vector3.Zero,
+                    AlbedoTint = new Color(1f, 1f, 1f), Ejects = c[3].Trim() == "1",
+                };
+            }
+            return d;
+        }
+        static Vector3 V3(string s)
+        {
+            var p = s.Split(',');
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            return new Vector3(float.Parse(p[0], ci), float.Parse(p[1], ci), float.Parse(p[2], ci));
+        }
         Node3D _sight;
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
