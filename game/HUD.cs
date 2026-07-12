@@ -18,10 +18,12 @@ namespace UnturnedGodot
         static readonly Color CO = new Color(57f / 85f, 0.5019608f, 5f / 51f);
         static readonly Color CB = new Color(10f / 51f, 0.59607846f, 40f / 51f);
         static readonly Color CY = new Color(44f / 51f, 0.7058824f, 0.07450981f);
+        static readonly Color CG = new Color(0.24f, 0.71f, 0.29f);   // Palette COLOR_G (virus / infection)
 
         const float IconSz = 20f, IconX = 5f, BarX = 30f, BarH = 10f, RowH = 30f, TopPad = 5f;
 
         readonly System.Collections.Generic.List<(ColorRect fill, System.Func<float> val)> _vitals = new();
+        readonly System.Collections.Generic.List<(Control ic, Control bg, System.Func<bool> show)> _vitalRows = new();   // situational vitals (virus): whole row hidden unless its condition holds
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
         Label _fireMode;
@@ -54,7 +56,7 @@ namespace UnturnedGodot
             var lifeBox = new Control();
             lifeBox.AnchorLeft = 0f; lifeBox.AnchorRight = 0.2f; lifeBox.AnchorTop = 1f; lifeBox.AnchorBottom = 1f;
             lifeBox.OffsetLeft = 0f; lifeBox.OffsetRight = 0f;
-            lifeBox.OffsetTop = -(TopPad + 4f * RowH); lifeBox.OffsetBottom = -6f;
+            lifeBox.OffsetTop = -(TopPad + 5f * RowH); lifeBox.OffsetBottom = -6f;   // 5 rows: 4 always-on vitals + the situational virus meter
             lifeBox.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(lifeBox);
             _playerOnly.Add(lifeBox);
@@ -64,13 +66,14 @@ namespace UnturnedGodot
             AddVital(lifeBox, 1, "hud_food.png",    CO, () => Player != null ? Player.Food    : 1f);
             AddVital(lifeBox, 2, "hud_water.png",   CB, () => Player != null ? Player.Water   : 1f);
             AddVital(lifeBox, 3, "hud_stamina.png", CY, () => Player != null ? Player.Stamina : 1f);
+            AddVital(lifeBox, 4, "hud_virus.png",   CG, () => Player != null ? Player.Infection : 0f, () => Player != null && Player.Infection > 0.001f);   // situational INFECTION meter (master)
 
             // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
             AddStatus(root, 0, "hud_bleeding.png", () => Player != null && Player.Bleeding);
-            AddStatus(root, 1, "hud_broken.png",   () => false);
+            AddStatus(root, 1, "hud_broken.png",   () => Player != null && Player.Broken);
             AddStatus(root, 2, "hud_starved.png",  () => Player != null && (Player.Food <= 0f || Player.Water <= 0f));
-            AddStatus(root, 3, "hud_virus.png",    () => Player != null && Player.Infection > 0.30f);
+            // virus is now the situational infection METER in the vitals (above), not a binary status icon (master)
 
             // ammo count, bottom-right
             _ammo = new Label();
@@ -142,7 +145,7 @@ namespace UnturnedGodot
             return fill;
         }
 
-        void AddVital(Control box, int i, string icon, Color color, System.Func<float> val)
+        void AddVital(Control box, int i, string icon, Color color, System.Func<float> val, System.Func<bool> show = null)
         {
             float y = TopPad + i * RowH;
             // icon: 20x20 at x=5, at the row top
@@ -165,6 +168,7 @@ namespace UnturnedGodot
             fill.MouseFilter = Control.MouseFilterEnum.Ignore;
             bg.AddChild(fill);
             _vitals.Add((fill, val));
+            if (show != null) _vitalRows.Add((ic, bg, show));   // situational: whole row hidden unless `show` is true
         }
 
         // a 40x40 status box (SleekBoxIcon): dark background + centred icon, shown only on its condition
@@ -197,6 +201,7 @@ namespace UnturnedGodot
 
             foreach (var (fill, val) in _vitals)
                 fill.AnchorRight = Mathf.Clamp(val(), 0f, 1f);   // foreground.SizeScale_X = state
+            foreach (var (ic, bg, show) in _vitalRows) { bool s = show(); ic.Visible = s; bg.Visible = s; }   // situational vitals (virus) shown only on condition
             foreach (var (box, on) in _status)
                 box.Visible = on();
             if (Player != null)
