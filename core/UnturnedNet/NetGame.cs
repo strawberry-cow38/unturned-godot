@@ -17,7 +17,11 @@ namespace UnturnedGodot.Net
     {
         public byte Id;
         public uint Tick;
-        public float X, Y, Z, Yaw;
+        public float X, Y, Z, Yaw, Pitch;
+        public byte Stance;   // 0 stand / 1 crouch / 2 prone / 3 sprint
+        public byte GunId;    // equipped gun (0 = unarmed) -> remote avatar shows the right weapon
+        public byte Flags;    // bit0 firing, bit1 ADS, bit2 reloading, bit3 dead
+        public byte Health;   // 0-100
 
         public void Write(NetPakWriter w)
         {
@@ -27,6 +31,11 @@ namespace UnturnedGodot.Net
             w.WriteBits(BitConverter.SingleToUInt32Bits(Y), 32);
             w.WriteBits(BitConverter.SingleToUInt32Bits(Z), 32);
             w.WriteBits(BitConverter.SingleToUInt32Bits(Yaw), 32);
+            w.WriteBits(BitConverter.SingleToUInt32Bits(Pitch), 32);
+            w.WriteBits(Stance, 8);
+            w.WriteBits(GunId, 8);
+            w.WriteBits(Flags, 8);
+            w.WriteBits(Health, 8);
         }
         public static PlayerState Read(NetPakReader r)
         {
@@ -37,6 +46,11 @@ namespace UnturnedGodot.Net
             r.ReadBits(32, out uint y); s.Y = BitConverter.UInt32BitsToSingle(y);
             r.ReadBits(32, out uint z); s.Z = BitConverter.UInt32BitsToSingle(z);
             r.ReadBits(32, out uint yaw); s.Yaw = BitConverter.UInt32BitsToSingle(yaw);
+            r.ReadBits(32, out uint pitch); s.Pitch = BitConverter.UInt32BitsToSingle(pitch);
+            r.ReadBits(8, out uint st); s.Stance = (byte)st;
+            r.ReadBits(8, out uint gid); s.GunId = (byte)gid;
+            r.ReadBits(8, out uint fl); s.Flags = (byte)fl;
+            r.ReadBits(8, out uint hp); s.Health = (byte)hp;
             return s;
         }
     }
