@@ -424,6 +424,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("ambulance_steer.txt", new Color(0.15f, 0.15f, 0.15f)),   // steering wheel: dark
+                ("ambulance_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
+                ("ambulance_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
                 ("ambulance_siren0.txt", new Color(0.5f, 0.08f, 0.08f)),   // roof lightbar (left) red lens -- flashes with the siren
                 ("ambulance_siren1.txt", new Color(0.08f, 0.12f, 0.5f)),   // roof lightbar (right) blue lens
             },
@@ -451,6 +453,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("firetruck_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+                ("firetruck_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
+                ("firetruck_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
                 ("firetruck_siren0.txt", new Color(0.5f, 0.08f, 0.08f)),   // roof lightbar (left) red lens -- flashes with the siren
                 ("firetruck_siren1.txt", new Color(0.08f, 0.12f, 0.5f)),   // roof lightbar (right) blue lens
             },
@@ -475,6 +479,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("tractor_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+                ("tractor_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
+                ("tractor_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
             },
         };
 
@@ -500,6 +506,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("ural_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+                ("ural_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
+                ("ural_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
             },
         };
 
@@ -521,6 +529,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("police_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+                ("police_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
+                ("police_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
                 ("police_siren0.txt", new Color(0.5f, 0.08f, 0.08f)),   // roof lightbar (left) red lens -- flashes with the siren
                 ("police_siren1.txt", new Color(0.08f, 0.12f, 0.5f)),   // roof lightbar (right) blue lens
             },
@@ -762,11 +772,12 @@ namespace UnturnedGodot
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
             bool mostlyGrounded = groundedCount * 2 > _wNodes.Length;   // MAJORITY of wheels down = sitting level (not teetering on 1 wheel, not airborne) -- master
+            bool anyGrounded = groundedCount > 0;                        // at least touching -- a wreck must be grounded to freeze so it can't stick at its own fling-apex (master "stuck in the air")
             _velAvg = _velAvg.Lerp(LinearVelocity, 0.12f);    // LOW-PASS velocity + spin (master's "check above the jitter freq"): the jitter's rapid back-and-forth
             _angAvg = _angAvg.Lerp(AngularVelocity, 0.12f);   // cancels to ~0 in the running average, but a real roll / handbrake nose-dive REBOUND (sustained,
             // directional) survives the filter -- so we wait for the suspension to normalize yet never deadlock on the jitter. Reverted to the CLEAN
             // d9588d3 low-pass (no dwell, no raised thresholds) per master. The wreck branch keeps the no-wheel-contact check (killed suspension).
-            bool wantHold = _angAvg.LengthSquared() < 0.03f && (_exploded ? _velAvg.LengthSquared() < 1.0f
+            bool wantHold = _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
                                                                           : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
                                                                                                        : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic (kinematic vanished the car); wrecks collapse flush via the killed suspension
