@@ -921,10 +921,10 @@ namespace UnturnedGodot
                 BackgroundMode = Godot.Environment.BGMode.Color,
                 BackgroundColor = new Color(0.30f, 0.34f, 0.40f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.75f, 0.75f, 0.76f), AmbientLightEnergy = 0.95f,
+                AmbientLightColor = new Color(0.55f, 0.56f, 0.60f), AmbientLightEnergy = 0.35f,   // low ambient + strong sun (like in-game) so inverted-winding/normals actually SHOW (high ambient masks it)
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-50f, -40f, 0f), LightEnergy = 1.5f, ShadowEnabled = true });
 
             // ground: a wide static box on the world layer (bit0) so the items rest on it + a matching visible slab
             var ground = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };

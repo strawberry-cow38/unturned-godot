@@ -74,6 +74,7 @@ namespace UnturnedGodot
                                     AlbedoTexture = ImageTexture.CreateFromImage(img),
                                     TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps,   // blocky Unturned pixels, like the rest of the port
                                     Roughness = 0.8f,
+                                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,   // double-sided like all the port's ripped meshes (their winding is authored for it -> back-cull renders them inside-out)
                                 };
                             }
                         }
@@ -126,7 +127,7 @@ namespace UnturnedGodot
             if (model != null && model.Ok)
             {
                 _mesh.Mesh = model.Mesh;
-                _mesh.MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? new Color(rar.R, rar.G, rar.B), Roughness = 0.7f };
+                _mesh.MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? new Color(rar.R, rar.G, rar.B), Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 col.Shape = new BoxShape3D { Size = model.Box };
                 col.Position = model.Center;            // mesh sits in model space; the best-fit box is offset to wrap it
             }
