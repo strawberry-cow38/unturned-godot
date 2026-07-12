@@ -14,7 +14,6 @@ namespace UnturnedGodot
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
         Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
-        Transform3D _vehPrev, _vehCurr; bool _vehReady;   // same render-interp for the DRIVING cam -- interpolate the vehicle transform (no mouse-look while driving so we can lerp rotation too)
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
@@ -470,7 +469,8 @@ namespace UnturnedGodot
             FloorMaxAngle = Mathf.DegToRad(55f);   // climb steeper slopes than Godot's 45 default (master)
             FloorSnapLength = 0.5f;                 // stay glued to the ground over small steps / undulations
 
-            _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true };
+            PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // opt the PLAYER out of Godot's global physics interp -- on-foot uses MANUAL position-only interp so the mouse stays instant (master)
+            _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };
             AddChild(_cam);
             if (CaptureMouse) Local = this;   // the interactive (mouse-captured) player -> explosions shake this camera
 
@@ -892,6 +892,8 @@ namespace UnturnedGodot
         {
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
+            if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
+                PositionDriveCam(_driving.GetGlobalTransformInterpolated());
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)
@@ -972,7 +974,6 @@ namespace UnturnedGodot
         void EnterVehicle(Vehicle v)
         {
             _driving = v;
-            _vehReady = false;                                 // fresh drive-cam render-interp (no smear from a previous drive)
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             v.EngineOn = true;                                 // start burning fuel (source: engine on)
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
@@ -1013,8 +1014,7 @@ namespace UnturnedGodot
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             _driving.Drive(throttle, steer, Input.IsPhysicalKeyPressed(Key.Space));
-            GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle
-            PositionDriveCam(_driving.GlobalTransform);   // cam steps WITH the vehicle mesh (same physics transform) so they stay in sync -- smoothing the cam alone jittered the car in 3rd-person (master); proper fix = built-in interp on the vehicle
+            GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle (the cam is positioned in _Process from the vehicle's INTERPOLATED transform)
         }
 
         void PositionDriveCam(Transform3D vt)   // FP / chase cam from the (interpolated) vehicle transform. Full global transform atomically
@@ -1033,9 +1033,6 @@ namespace UnturnedGodot
                 _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
             }
         }
-
-        static Transform3D LerpTransform(Transform3D a, Transform3D b, float t) =>
-            new Transform3D(new Basis(a.Basis.GetRotationQuaternion().Slerp(b.Basis.GetRotationQuaternion(), t).Normalized()), a.Origin.Lerp(b.Origin, t));
 
         public override void _PhysicsProcess(double delta)
         {

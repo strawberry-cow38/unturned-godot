@@ -21,3 +21,4 @@ project/assembly_name="UnturnedGodot"
 [physics]
 3d/physics_engine="JoltPhysics3D"
 common/physics_ticks_per_second=50
+common/physics_interpolation=true
