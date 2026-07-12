@@ -1,4 +1,5 @@
 using Godot;
+using SDG.Unturned;   // ItemAsset.RarityColorUI + EItemRarity (vehicle look-at outline colour)
 
 namespace UnturnedGodot
 {
@@ -68,7 +69,7 @@ namespace UnturnedGodot
             public string Sound;   // engine loop ogg basename (source: the prefab's AudioSource m_audioClip)
             public float IdlePitch, MaxPitch, IdleVolume, MaxVolume;   // .dat EngineSound (EngineRPMSimple)
             public float Fuel, Health;   // .dat Fuel / Health capacities (HUD gauges)
-            public SDG.Unturned.EItemRarity Rarity;   // .dat Rarity (default COMMON) -> look-at outline colour (master)
+            public EItemRarity Rarity;   // .dat Rarity (default COMMON) -> look-at outline colour (master)
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
@@ -306,7 +307,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
-            Fuel = 2250f, Health = 700f, Rarity = SDG.Unturned.EItemRarity.Uncommon, Name = "Bus", Horn = "carhorn_04.ogg",
+            Fuel = 2250f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -399,7 +400,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1250f, Health = 500f, Rarity = SDG.Unturned.EItemRarity.Rare, Name = "Roadster", Horn = "roadster_horn.ogg",
+            Fuel = 1250f, Health = 500f, Rarity = EItemRarity.RARE, Name = "Roadster", Horn = "roadster_horn.ogg",
             SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.969f), new Vector3(0.765f, 0.708f, -2.969f) }, OmniPos = new Vector3(0f, 0.841f, -2.945f),
             TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.841f), new Vector3(0.979f, 0.688f, 2.841f) },
             SteerPivot = new Vector3(-0.464f, 0.894f, -0.46f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -423,7 +424,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 2.0f, 5.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),   // tall van (compound BoxCollider -> one encompassing box)
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 8f, ShiftUpRpm = 4500f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2000f, Health = 600f, Rarity = SDG.Unturned.EItemRarity.Uncommon, Name = "Ambulance", Horn = "carhorn_03.ogg",
+            Fuel = 2000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Ambulance", Horn = "carhorn_03.ogg",
             SpotPos = new[] { new Vector3(-0.71f, 0.74f, -2.58f), new Vector3(0.71f, 0.74f, -2.58f) }, OmniPos = new Vector3(0f, 0.87f, -2.56f),
             TailPos = new[] { new Vector3(-0.95f, 0.71f, 2.59f), new Vector3(0.95f, 0.71f, 2.59f) },
             SteerPivot = new Vector3(-0.47f, 0.99f, -2.21f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -449,7 +450,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2250f, Health = 700f, Rarity = SDG.Unturned.EItemRarity.Uncommon, Name = "Firetruck", Horn = "carhorn_03.ogg",
+            Fuel = 2250f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Firetruck", Horn = "carhorn_03.ogg",
             SpotPos = new[] { new Vector3(-0.69f, 0.89f, -3.59f), new Vector3(0.69f, 0.89f, -3.59f) }, OmniPos = new Vector3(0f, 1.02f, -3.57f),
             TailPos = new[] { new Vector3(-0.98f, 0.55f, 3.64f), new Vector3(0.98f, 0.55f, 3.64f) },
             SteerPivot = new Vector3(-0.47f, 1.16f, -3.20f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -503,7 +504,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 2.0f, 6.6f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2500f, Health = 700f, Rarity = SDG.Unturned.EItemRarity.Rare, Name = "Ural", Horn = "carhorn_03.ogg",
+            Fuel = 2500f, Health = 700f, Rarity = EItemRarity.RARE, Name = "Ural", Horn = "carhorn_03.ogg",
             SpotPos = new[] { new Vector3(-0.97f, 0.78f, -3.12f), new Vector3(0.97f, 0.78f, -3.12f) }, OmniPos = new Vector3(0f, 0.91f, -3.10f),
             TailPos = new[] { new Vector3(-0.98f, 0.73f, 3.30f), new Vector3(0.98f, 0.73f, 3.30f) },
             SteerPivot = new Vector3(-0.47f, 1.03f, -2.11f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -530,7 +531,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1750f, Health = 600f, Rarity = SDG.Unturned.EItemRarity.Uncommon, Name = "Police", Horn = "carhorn_02.ogg",
+            Fuel = 1750f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Police", Horn = "carhorn_02.ogg",
             SpotPos = new[] { new Vector3(-0.77f, 0.71f, -2.97f), new Vector3(0.77f, 0.71f, -2.97f) }, OmniPos = new Vector3(0f, 0.84f, -2.95f),
             TailPos = new[] { new Vector3(-0.98f, 0.69f, 2.84f), new Vector3(0.98f, 0.69f, 2.84f) },
             SteerPivot = new Vector3(-0.47f, 0.90f, -1.42f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -573,7 +574,7 @@ namespace UnturnedGodot
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
-            v._outlineColor = SDG.Unturned.ItemAsset.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
+            v._outlineColor = ItemAsset.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
             v._infoLabel = new Label3D   // look-at info billboard (name/HP/fuel/battery), TopLevel so it floats above in world space
             {
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, TopLevel = true, Visible = false,
