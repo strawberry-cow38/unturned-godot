@@ -841,7 +841,7 @@ namespace UnturnedGodot
             {
                 var b = _bullets[i];
                 Vector3 next = b.Pos + b.Vel * 0.02f;
-                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 1) | (1u << 4) | (1u << 5)); // enemy + ragdoll bones + vehicle
+                var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6)); // world + enemy + ragdoll + vehicle + props
                 var hit = space.IntersectRay(query);
                 if (hit.Count > 0)
                 {
@@ -851,6 +851,7 @@ namespace UnturnedGodot
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     else if (collider is Vehicle veh) veh.TakeDamage(b.VehicleDamage);   // source Vehicle_Damage (eaglefire 35), NOT the zombie damage (99)
+                    else SpawnSurfaceImpact(point, hit["normal"].AsVector3());   // world/prop -> bullet-hole decal + dust puff (foundation; per-material src effects are the next step)
                     RemoveBullet(i);
                     continue;
                 }
@@ -862,6 +863,43 @@ namespace UnturnedGodot
         }
 
         void RemoveBullet(int i) { _bullets[i].Tracer?.QueueFree(); _bullets.RemoveAt(i); }
+
+        Texture2D _bulletHoleTex; bool _bhTried;
+        Texture2D BulletHoleTex()
+        {
+            if (!_bhTried) { _bhTried = true; string p = ProjectSettings.GlobalizePath("res://content/bullet_hole.png"); if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _bulletHoleTex = ImageTexture.CreateFromImage(img); } }
+            return _bulletHoleTex;
+        }
+
+        // Bullet impact on world/props: a projected bullet-hole DECAL + a small dust puff at the hit, oriented to the
+        // surface normal. FOUNDATION -- source-accurate PER-MATERIAL effects (concrete/metal/wood via DamageTool.impact's
+        // EPhysicsMaterial->effect map) need a surface-material tag on every collider, a separate world-wide build.
+        void SpawnSurfaceImpact(Vector3 point, Vector3 normal)
+        {
+            var scene = GetTree().CurrentScene;
+            if (scene == null) return;
+            Vector3 up = normal.Normalized();
+            var tex = BulletHoleTex();
+            if (tex != null)
+            {
+                var dec = new Decal { TextureAlbedo = tex, Size = new Vector3(0.16f, 0.3f, 0.16f), AlbedoMix = 1f };
+                scene.AddChild(dec);
+                Vector3 t = Mathf.Abs(up.Dot(Vector3.Up)) < 0.95f ? Vector3.Up : Vector3.Right;
+                Vector3 right = up.Cross(t).Normalized();
+                dec.GlobalTransform = new Transform3D(new Basis(right, up, right.Cross(up)), point + up * 0.06f);   // +Y = normal -> projects DOWN into the surface
+                var t1 = GetTree().CreateTimer(18.0); t1.Timeout += () => { if (IsInstanceValid(dec)) dec.QueueFree(); };
+            }
+            var dust = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Amount = 8, Lifetime = 0.4f, Explosiveness = 0.9f,
+                Direction = up, Spread = 40f, InitialVelocityMin = 1.0f, InitialVelocityMax = 2.4f,
+                Gravity = new Vector3(0f, -3f, 0f), ScaleAmountMin = 0.03f, ScaleAmountMax = 0.09f,
+                Mesh = new QuadMesh { Size = Vector2.One, Material = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, AlbedoColor = new Color(0.58f, 0.56f, 0.52f, 0.7f), BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles } },
+            };
+            scene.AddChild(dust);
+            dust.GlobalPosition = point + up * 0.03f;
+            var t2 = GetTree().CreateTimer(1.0); t2.Timeout += () => { if (IsInstanceValid(dust)) dust.QueueFree(); };
+        }
 
         // The traveling tracer: a thin additive "Bullet"-textured streak that rides with the bullet, oriented along
         // its velocity (the Military_30's Trail_0). Made once per bullet; UpdateTracer re-places it each step.
