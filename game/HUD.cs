@@ -29,7 +29,7 @@ namespace UnturnedGodot
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
         public Vehicle Vehicle;   // bound driven vehicle; the box is visible while this is non-null
-        Control _vehBox; Label _vehTitle; ColorRect _vehFuel, _vehHealth, _vehBattery;
+        Control _vehBox; Label _vehTitle, _vehRpmGear; ColorRect _vehFuel, _vehHealth, _vehBattery;
         readonly System.Collections.Generic.List<Control> _playerOnly = new();   // on-foot HUD, hidden when Player == null (vehicle-only render)
 
         public override void _Ready()
@@ -110,6 +110,12 @@ namespace UnturnedGodot
             _vehTitle.AnchorRight = 1f; _vehTitle.OffsetLeft = 5; _vehTitle.OffsetRight = -5; _vehTitle.OffsetTop = 5; _vehTitle.OffsetBottom = 45;
             _vehTitle.MouseFilter = Control.MouseFilterEnum.Ignore;
             _vehBox.AddChild(_vehTitle);
+
+            _vehRpmGear = new Label();   // RPM + gear read-out, right-aligned on the title row (master)
+            _vehRpmGear.AddThemeFontSizeOverride("font_size", 15);
+            _vehRpmGear.AnchorRight = 1f; _vehRpmGear.OffsetLeft = 5; _vehRpmGear.OffsetRight = -8; _vehRpmGear.OffsetTop = 12; _vehRpmGear.OffsetBottom = 45;
+            _vehRpmGear.HorizontalAlignment = HorizontalAlignment.Right; _vehRpmGear.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _vehBox.AddChild(_vehRpmGear);
 
             _vehFuel = AddVehBar(45, "icon_fuel.png", CY);        // fuel = COLOR_Y (yellow)
             _vehHealth = AddVehBar(75, "icon_health.png", CR);    // health = COLOR_R (red)
@@ -207,6 +213,7 @@ namespace UnturnedGodot
                 _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
                 _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
                 _vehTitle.Text = Vehicle.DisplayName;
+                _vehRpmGear.Text = $"{Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}";
             }
         }
 

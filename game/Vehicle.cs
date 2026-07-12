@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
-        bool _parked, _handbraking, _held; float _spawnGrace = 2.5f;   // _parked/_handbraking + ~zero speed -> axis-lock (no jitter, vertical stays free); _spawnGrace lets a fresh car DROP to terrain first
+        bool _parked, _handbraking; float _spawnGrace = 2.5f;   // parked/handbraked + settled -> kinematic freeze (source isKinematic, no jitter); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
@@ -24,6 +24,7 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         public float EngineRpm => _engineRpm;
+        public string GearLabel => LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}";   // gear read-out: R when reversing, else G<n>
         public float EngineRpmNorm => Mathf.Clamp((_engineRpm - IdleRpm) / (MaxRpm - IdleRpm), 0f, 1f);
         public int Gear => _gear;
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
@@ -118,7 +119,7 @@ namespace UnturnedGodot
         void Explode()   // source explode: launch up + spin, fire on, char the body, disable
         {
             _exploded = true;
-            AxisLockLinearX = AxisLockLinearZ = AxisLockAngularX = AxisLockAngularY = AxisLockAngularZ = false; _held = false;   // release parked axis-locks so the wreck flies + tumbles
+            Freeze = false;   // unfreeze the parked/kinematic car so the wreck flies + tumbles
             ApplyCentralImpulse(Vector3.Up * 6000f);          // source min/maxExplosionForce (default straight up), calibrated for the Godot mass
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
@@ -585,23 +586,16 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_wNodes == null) return;
-            if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay loose ~2.5s so a fresh car DROPS to fit terrain before it locks (master)
-            // Hold the car still ONLY at ~zero horizontal speed, via axis LOCKS (not a full freeze) so VERTICAL stays free --
-            // master: the handbrake mustn't freeze vertical movement, and while driving it's just a strong brake until ~zero.
+            if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
+            // Middle ground (source: a parked / not-locally-driven vehicle goes isKinematic -- InteractableVehicle 1495/1517):
+            // once a car has settled it FREEZES kinematic so it physically cannot jitter, and it's dynamic while driven. My
+            // axis-lock hit a catch-22 -- the brake's own oscillation kept speed above the lock threshold, so it never locked.
             float hSpeed2 = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).LengthSquared();
-            bool holdStill = (_parked || _handbraking) && _spawnGrace <= 0f && hSpeed2 < 0.01f;   // < 0.1 m/s horizontal
-            if (holdStill && !_held)
-            {
-                LinearVelocity = new Vector3(0f, LinearVelocity.Y, 0f); AngularVelocity = Vector3.Zero;
-                AxisLockLinearX = AxisLockLinearZ = AxisLockAngularX = AxisLockAngularY = AxisLockAngularZ = true;   // pin horizontal + rotation, leave vertical free
-                _held = true;
-            }
-            else if (!holdStill && _held)
-            {
-                AxisLockLinearX = AxisLockLinearZ = AxisLockAngularX = AxisLockAngularY = AxisLockAngularZ = false;
-                _held = false;
-            }
-            if (_parked && !_held) Brake = _brakeForce * HandbrakeScale;   // a rolling parked car brakes to a stop, then locks
+            bool wantHold = _parked ? (_spawnGrace <= 0f && hSpeed2 < 1.0f)   // parked: freeze once the settle grace is done + it's rolled to a stop
+                                    : (_handbraking && hSpeed2 < 0.04f);      // handbraking WHILE driving: freeze only at ~zero (0.2 m/s), strong brake above
+            if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Kinematic; Freeze = true; }
+            else if (!wantHold && Freeze) Freeze = false;
+            if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
             for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
             {
                 _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
