@@ -136,7 +136,7 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _fireTest = true;
                 _shotPath = shot;   // --shot: capture at a late frame (below) with live impacts down-range
-                BuildFireTest(supp);
+                BuildFireTest(supp, gun);
                 return;
             }
 
@@ -851,7 +851,7 @@ namespace UnturnedGodot
         // radius (won't sense the player), but inside the 48 m gunshot alert -> it should hear an UNsuppressed shot and
         // print [ALERT]; with a suppressor attached the shot is silent (source UseableGun ~936) -> no [ALERT]. Behavioral
         // proof of the suppressor effect (+ a reusable firing-mechanics harness).
-        void BuildFireTest(bool suppressed)
+        void BuildFireTest(bool suppressed, string gun)
         {
             var env = new Godot.Environment
             {
@@ -874,7 +874,7 @@ namespace UnturnedGodot
             CharacterModel.LoadBundled();
 
             var player = new PlayerController();
-            player.LoadGun("res://content/eaglefire.dat");
+            player.LoadGun($"res://content/{gun ?? "eaglefire"}.dat");   // --gun=<name> to fire-test a specific gun (launcher_rocket -> verify the rocket blast)
             AddChild(player);
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             player.RotationDegrees = new Vector3(0, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? 0f : 180f, 0);   // default: face +Z AWAY from the zombie (noise-only, suppressor-alert test). UG_HITZOMBIE: face -Z AT it -> hit it -> verify the flesh/blood impact
@@ -2405,7 +2405,7 @@ namespace UnturnedGodot
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
-            else if (_fireTest) { if (_ftPlayer == null || _ftPlayer.Ammo > 20) return; }   // firetest: framerate-independent -> capture once ~10 shots fired (equip done + impacts live down-range)
+            else if (_fireTest) { if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit
             else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
