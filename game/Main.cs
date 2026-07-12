@@ -118,6 +118,7 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _fireTest = true;
+                _shotPath = shot;   // --shot: capture at a late frame (below) with live impacts down-range
                 BuildFireTest(supp);
                 return;
             }
@@ -2155,7 +2156,12 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter -- the _frame demo loop below is gated on _rigDir
-            if (_peiPlay && _peiPlayer != null) { _peiFrame++; if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f); }   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
+            if (_peiPlay && _peiPlayer != null)
+            {
+                _peiFrame++;
+                if (System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1") { if (_peiFrame >= 55 && _peiFrame % 12 == 0) _peiPlayer.Fire(); }   // impact-render test: stay on foot + fire forward at the ground
+                else if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f);   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
+            }
             if (_rigDir != null)
             {
                 _frame++;
@@ -2226,6 +2232,7 @@ namespace UnturnedGodot
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
+            else if (_fireTest) { if (_ftPlayer == null || _ftPlayer.Ammo > 20) return; }   // firetest: framerate-independent -> capture once ~10 shots fired (equip done + impacts live down-range)
             else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();

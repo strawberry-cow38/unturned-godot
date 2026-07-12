@@ -900,8 +900,9 @@ namespace UnturnedGodot
         // additive sparks; soft ground (grass/dirt/sand) = no decal.
         void SpawnSurfaceImpact(Vector3 point, Vector3 normal, Surf surf, Node3D attachTo = null)
         {
+            if (System.Environment.GetEnvironmentVariable("UG_IMPACTDEBUG") == "1") GD.Print($"[impact] surf={surf} @ {point.Round()} tex={(ImpactTex(surf) != null)}");
             var scene = GetTree().CurrentScene;
-            if (scene == null) return;
+            if (scene == null) { GD.PrintErr("[impact] CurrentScene NULL -> no impact spawned"); return; }
             Vector3 up = normal.Normalized();
             bool hard = surf is Surf.Concrete or Surf.Metal or Surf.Wood;
             bool metal = surf == Surf.Metal;
