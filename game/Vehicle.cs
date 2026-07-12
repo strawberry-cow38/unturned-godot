@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
-        bool _parked, _handbraking; float _spawnGrace = 2.5f, _exitDelay = 0f;   // parked/handbraked + settled -> kinematic freeze; _spawnGrace = drop-to-terrain, _exitDelay = wait after exit before freezing (master)
+        bool _parked, _handbraking; float _spawnGrace = 2.5f;   // parked/handbraked + settled -> STATIC freeze (source isKinematic); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
@@ -37,6 +37,7 @@ namespace UnturnedGodot
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
+        StandardMaterial3D _sirenMat0, _sirenMat1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
@@ -92,8 +93,10 @@ namespace UnturnedGodot
 
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
         // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
-        public void Wake() { Freeze = false; _parked = false; _exitDelay = 0f; }   // resume dynamic physics (rammed or re-driven)
+        public void Wake() { Freeze = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
         void OnVehicleContact(Node body) { if (body is Vehicle v && v != this) v.Wake(); }   // ram a frozen parked car -> wake it so it gets shoved (master)
+        public bool HasSiren => _sirenMat0 != null;   // only emergency vehicles (police/fire/ambulance) have a lightbar
+        public void ToggleSiren() { if (HasSiren) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving
 
         void OnBumperHit(Node3D body)
         {
@@ -411,6 +414,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("ambulance_steer.txt", new Color(0.15f, 0.15f, 0.15f)),   // steering wheel: dark
+                ("ambulance_siren0.txt", new Color(0.5f, 0.08f, 0.08f)),   // roof lightbar (left) red lens -- flashes with the siren
+                ("ambulance_siren1.txt", new Color(0.08f, 0.12f, 0.5f)),   // roof lightbar (right) blue lens
             },
         };
 
@@ -436,6 +441,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("firetruck_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+                ("firetruck_siren0.txt", new Color(0.5f, 0.08f, 0.08f)),   // roof lightbar (left) red lens -- flashes with the siren
+                ("firetruck_siren1.txt", new Color(0.08f, 0.12f, 0.5f)),   // roof lightbar (right) blue lens
             },
         };
 
@@ -504,6 +511,8 @@ namespace UnturnedGodot
             Parts = new (string, Color)[]
             {
                 ("police_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+                ("police_siren0.txt", new Color(0.5f, 0.08f, 0.08f)),   // roof lightbar (left) red lens -- flashes with the siren
+                ("police_siren1.txt", new Color(0.08f, 0.12f, 0.5f)),   // roof lightbar (right) blue lens
             },
         };
 
@@ -608,6 +617,8 @@ namespace UnturnedGodot
                     else v.AddChild(mi);
                     if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
                     if (txt.Contains("taillight")) v._taillightMat = pm;   // capture so the taillight glows red while driving
+                    if (txt.Contains("siren0")) v._sirenMat0 = pm;   // capture the roof lightbar lenses to flash them (master: ctrl toggles siren)
+                    if (txt.Contains("siren1")) v._sirenMat1 = pm;
                 }
 
             if (s.SpotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
@@ -685,7 +696,6 @@ namespace UnturnedGodot
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
         {
             _parked = true;
-            _exitDelay = 1.0f;   // master: wait ~1s after exit before freezing so it settles/rolls first
             EngineForce = 0f;
             _steerTarget = 0f;
             AngularVelocity = Vector3.Zero;
@@ -733,12 +743,12 @@ namespace UnturnedGodot
         {
             if (_wNodes == null) return;
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
-            if (_exitDelay > 0f) _exitDelay -= (float)delta;     // master: wait ~1s after exit before freezing (let it settle/roll first)
-            // Middle ground (source: a parked / not-locally-driven vehicle goes isKinematic -- InteractableVehicle 1495/1517):
-            // once a car has settled it FREEZES kinematic so it can't jitter, and it's dynamic while driven / exploded.
-            float hSpeed2 = new Vector3(LinearVelocity.X, 0f, LinearVelocity.Z).LengthSquared();
-            bool wantHold = !_exploded && (_parked ? (_spawnGrace <= 0f && _exitDelay <= 0f && hSpeed2 < 1.0f)   // parked: freeze once settled (grace + exit-delay done, rolled to a stop)
-                                                    : (_handbraking && hSpeed2 < 0.04f));                        // handbraking WHILE driving: freeze only at ~zero, strong brake above
+            // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
+            // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
+            bool grounded = false; foreach (var w in _wNodes) if (w.IsInContact()) { grounded = true; break; }
+            float vel2 = LinearVelocity.LengthSquared();
+            bool wantHold = !_exploded && grounded && (_parked ? (_spawnGrace <= 0f && vel2 < 0.5f)
+                                                              : (_handbraking && vel2 < 0.04f));   // handbrake WHILE driving: freeze only at ~zero, strong brake above
             if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic: kinematic fought the wheel forces + vanished the car (master)
             else if (!wantHold && Freeze) Freeze = false;
             if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
@@ -775,6 +785,17 @@ namespace UnturnedGodot
             {
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
                 if (Battery <= 0f) SetHeadlights(false);
+            }
+            if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles)
+            {
+                if (_sirenOn)
+                {
+                    _sirenFlash += (float)delta * 5f;
+                    bool red = (_sirenFlash % 1f) < 0.5f;
+                    _sirenMat0.EmissionEnabled = true; _sirenMat0.Emission = new Color(1f, 0.05f, 0.05f); _sirenMat0.EmissionEnergyMultiplier = red ? 4f : 0f;
+                    _sirenMat1.EmissionEnabled = true; _sirenMat1.Emission = new Color(0.1f, 0.15f, 1f); _sirenMat1.EmissionEnergyMultiplier = red ? 0f : 4f;
+                }
+                else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; }
             }
             bool tailWant = EngineOn && Battery > 0f;   // source synchronizeTaillights: taillights on while isDriven && canTurnOnLights
             if (tailWant != _taillightsOn) SetTaillights(tailWant);

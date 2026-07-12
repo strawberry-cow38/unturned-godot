@@ -500,7 +500,7 @@ namespace UnturnedGodot
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no look, fire, aim, reload, etc.
             if (_driving != null)
             {
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Escape);
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 if (!allowedKey && !allowedMouse) return;
             }
@@ -539,6 +539,10 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
             {
                 if (_driving != null) _driving.ToggleHeadlights();         // L while driving: toggle headlights
+            }
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Ctrl })
+            {
+                if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
                 { if (!OpenNearestCrate()) _viewmodel?.PlayInspect(); }   // F: open a nearby crate, else inspect the gun
