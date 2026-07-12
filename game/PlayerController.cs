@@ -504,6 +504,8 @@ namespace UnturnedGodot
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 if (!allowedKey && !allowedMouse) return;
             }
+            // clicks belong to an open UI (inventory / crate / dashboard) when the cursor's visible -- don't fire / honk / aim THROUGH them (master)
+            if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 RotateY(Mathf.DegToRad(-mm.Relative.X * MouseSensitivity));
