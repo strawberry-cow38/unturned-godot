@@ -109,6 +109,7 @@ namespace UnturnedGodot
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
                 else if (arg == "--crafttest") { RunCraftTest(); GetTree().Quit(); return; }   // parse an item .dat's Blueprints -> print (crafting parser self-test)
+                else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1705,7 +1706,43 @@ namespace UnturnedGodot
                 GD.Print($"[CRAFTTEST] PlayerInventory: CanCraft={pcan}; after craft scrap={pinv.getItemCount(67)}(exp 0) blowtorch={pinv.getItemCount(76)}(exp 1 tool-kept)");
                 logicOk = logicOk && pcan && pinv.getItemCount(67) == 0 && pinv.getItemCount(76) == 1;
             }
-            GD.Print($"[CRAFTTEST] RESULT parse {bps.Count}bp, resolve {resolved}/{total}, craft-logic {(logicOk ? "PASS" : "FAIL")}");
+
+            // blueprint REGISTRY: load the pre-extracted catalog + list what's craftable from a stocked inventory
+            int loaded = BlueprintRegistry.Load();
+            var stock = new Crafting.DictInv(); stock.Add(67, 50); stock.Add(76, 1);   // 50 Metal Scrap + Blowtorch
+            var applic = loaded > 0 ? BlueprintRegistry.Applicable(stock) : new System.Collections.Generic.List<BlueprintDef>();
+            GD.Print($"[CRAFTTEST] registry: {loaded} loaded; {applic.Count} craftable from 50 scrap + blowtorch");
+            for (int i = 0; i < System.Math.Min(6, applic.Count); i++) GD.Print("[CRAFTTEST]   craftable: " + applic[i]);
+            GD.Print($"[CRAFTTEST] RESULT parse {bps.Count}bp, resolve {resolved}/{total}, craft-logic {(logicOk ? "PASS" : "FAIL")}, registry {loaded}bp");
+        }
+
+        // --extractblueprints: walk the retail item .dats -> content/blueprints.tsv (the blueprint catalog the
+        // BlueprintRegistry loads, since the port bundles only a few item .dats). Reuses the verified BlueprintDef parse.
+        static void RunExtractBlueprints()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            string baseDir = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\Items";
+            string outPath = ProjectSettings.GlobalizePath("res://content/blueprints.tsv");
+            if (!System.IO.Directory.Exists(baseDir)) { GD.Print($"[BPEXTRACT] no Items dir {baseDir}"); return; }
+            var lines = new System.Collections.Generic.List<string>();
+            int items = 0, bps = 0;
+            foreach (var datPath in System.IO.Directory.GetFiles(baseDir, "*.dat", System.IO.SearchOption.AllDirectories))
+            {
+                if (System.IO.Path.GetFileName(datPath).Equals("English.dat", System.StringComparison.OrdinalIgnoreCase)) continue;
+                string text;
+                try { text = System.IO.File.ReadAllText(datPath); } catch { continue; }
+                if (!text.Contains("Blueprints")) continue;
+                SDG.Unturned.IDatDictionary d;
+                try { d = new SDG.Unturned.DatParser().Parse(text); } catch { continue; }
+                string ownerId = d.GetString("ID");
+                if (string.IsNullOrEmpty(ownerId)) continue;
+                var list = BlueprintDef.ParseAll(d, ownerId);
+                if (list.Count == 0) continue;
+                items++;
+                foreach (var bp in list) { lines.Add(bp.ToTsv()); bps++; }
+            }
+            System.IO.File.WriteAllLines(outPath, lines);
+            GD.Print($"[BPEXTRACT] {items} craftable items, {bps} blueprints -> content/blueprints.tsv");
         }
 
         // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every

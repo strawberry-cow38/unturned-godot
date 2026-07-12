@@ -84,5 +84,31 @@ namespace UnturnedGodot
         }
 
         static string Short(string guid) => string.IsNullOrEmpty(guid) || guid.Length < 8 ? guid : guid.Substring(0, 8);
+
+        // TSV (de)serialization for the pre-extracted blueprint catalog (content/blueprints.tsv), since the port
+        // bundles only a few item .dats. Layout: ownerId | operation | name | skill | skillLevel | inputs | outputs | stations
+        //   inputs = guid:amount:consume(1|0) pipe-sep ; outputs = guid:amount pipe-sep ; stations = guid pipe-sep
+        public string ToTsv()
+        {
+            var ins = new List<string>();
+            foreach (var i in Inputs) ins.Add($"{i.Guid}:{i.Amount}:{(i.Consume ? 1 : 0)}");
+            var outs = new List<string>();
+            foreach (var o in Outputs) outs.Add($"{o.Guid}:{o.Amount}");
+            string name = (Name ?? "").Replace('\t', ' ');
+            return string.Join("\t", OwnerItemId, Operation, name, Skill ?? "", SkillLevel.ToString(),
+                                string.Join("|", ins), string.Join("|", outs), string.Join("|", StationTags));
+        }
+
+        public static BlueprintDef FromTsv(string line)
+        {
+            var c = line.Split('\t');
+            if (c.Length < 8) return null;
+            var bp = new BlueprintDef { OwnerItemId = c[0], Operation = c[1], Name = c[2], Skill = c[3] };
+            int.TryParse(c[4], out int lvl); bp.SkillLevel = lvl;
+            foreach (var s in c[5].Split('|')) { if (string.IsNullOrEmpty(s)) continue; var p = s.Split(':'); if (p.Length >= 3 && int.TryParse(p[1], out int a)) bp.Inputs.Add(new Ingredient { Guid = p[0], Amount = a, Consume = p[2] == "1" }); }
+            foreach (var s in c[6].Split('|')) { if (string.IsNullOrEmpty(s)) continue; var p = s.Split(':'); if (p.Length >= 2 && int.TryParse(p[1], out int a)) bp.Outputs.Add(new Ingredient { Guid = p[0], Amount = a, Consume = true }); }
+            foreach (var s in c[7].Split('|')) { if (!string.IsNullOrEmpty(s)) bp.StationTags.Add(s); }
+            return bp;
+        }
     }
 }
