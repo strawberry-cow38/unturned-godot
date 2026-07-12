@@ -77,7 +77,7 @@ namespace UnturnedGodot
         // Look-at interaction (master): cast the eye-ray from the camera forward, up to ~3.5 m, against item interaction
         // spheres (bit 8) AND world geometry (bit 0). The CLOSEST hit wins -> a wall between you and the item blocks it
         // (LOS-correct). The hit item gets a rarity glow outline + name billboard; a different/no item clears the old.
-        const float LookReach = 2.6f, LookSphereR = 0.32f;   // the eye-ray reaches this far, ending in a sphere of this radius (master's LookAtRadius)
+        const float LookReach = 2.6f, LookSphereR = 0.16f;   // the eye-ray reaches this far, ending in a sphere of this radius (master shrank it by half)
 
         void UpdateLookFocus()
         {
@@ -89,7 +89,7 @@ namespace UnturnedGodot
                 Vector3 fwd = -_cam.GlobalTransform.Basis.Z;
                 // 1) LOS: ray forward -> the sphere sits where the ray ENDS (a wall shortens the reach so you can't grab through it)
                 var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * LookReach);
-                rq.CollisionMask = 1u << 0;   // world/terrain/buildings
+                rq.CollisionMask = (1u << 0) | (1u << 6);   // world/terrain/buildings + props (master: the look-ray must collide with props)
                 rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
                 var rhit = space.IntersectRay(rq);
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;

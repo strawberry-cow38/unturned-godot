@@ -425,6 +425,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
             {
+                ("ambulance_seats.txt", new Color(0.25f, 0.25f, 0.25f)),   // seats (Seat_0/Seat_1 extracted -- were missing, master)
                 ("ambulance_steer.txt", new Color(0.15f, 0.15f, 0.15f)),   // steering wheel: dark
                 ("ambulance_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
                 ("ambulance_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
@@ -454,6 +455,7 @@ namespace UnturnedGodot
             },
             Parts = new (string, Color)[]
             {
+                ("firetruck_seats.txt", new Color(0.25f, 0.25f, 0.25f)),   // seats (Seat_0/Seat_1 extracted -- were missing, master)
                 ("firetruck_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
                 ("firetruck_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
                 ("firetruck_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
@@ -530,6 +532,7 @@ namespace UnturnedGodot
             { (-1.30f, 0.25f, -1.60f, true), (1.30f, 0.25f, -1.60f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
             Parts = new (string, Color)[]
             {
+                ("sedan_seats.txt", new Color(0.25f, 0.25f, 0.25f)),   // police reuses the sedan seats (no separate Seat node; sedan-class body) -- were missing, master
                 ("police_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
                 ("police_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
                 ("police_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red

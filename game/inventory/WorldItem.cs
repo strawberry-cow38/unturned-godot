@@ -33,8 +33,11 @@ namespace UnturnedGodot
         bool _focused;
 
         Vector3 _velAvg, _angAvg;   // low-pass velocity/spin for settle detection (jitter cancels in the running average)
-        float _settleT;
+        float _settleT, _age;
         bool _settled;
+        Vector3[] _hitPts;          // hitbox sample points (centre + 8 corners, local) for the full-hitbox LOS cull (master)
+        Vector3 _boxCtr;
+        Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
 
         // ---- shared item-model cache: parse each id's mesh/tex/box ONCE, reuse across its many spawns/despawns ----
         class Model { public ArrayMesh Mesh; public Material Mat; public Color? FlatColor; public Vector3 Box; public Vector3 Center; public bool Ok; }
@@ -115,6 +118,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             AddToGroup("worlditems");
+            _excludeSelf = new Godot.Collections.Array<Rid> { GetRid() };
             var asset = Item?.GetAsset();
             string nm;
             if (asset != null) { _rar = ItemAsset.RarityColorUI(asset.rarity); nm = asset.itemName; }
@@ -153,6 +157,15 @@ namespace UnturnedGodot
             col.Position = boxCenter;                   // mesh sits in model space; the best-fit box is offset to wrap it
             AddChild(_mesh);
             AddChild(col);
+            _boxCtr = boxCenter;
+            var hh = boxSize * 0.5f;                     // hitbox samples: centre + 8 corners (local) -> full-hitbox LOS cull
+            _hitPts = new[] {
+                boxCenter,
+                boxCenter + new Vector3( hh.X,  hh.Y,  hh.Z), boxCenter + new Vector3(-hh.X,  hh.Y,  hh.Z),
+                boxCenter + new Vector3( hh.X, -hh.Y,  hh.Z), boxCenter + new Vector3(-hh.X, -hh.Y,  hh.Z),
+                boxCenter + new Vector3( hh.X,  hh.Y, -hh.Z), boxCenter + new Vector3(-hh.X,  hh.Y, -hh.Z),
+                boxCenter + new Vector3( hh.X, -hh.Y, -hh.Z), boxCenter + new Vector3(-hh.X, -hh.Y, -hh.Z),
+            };
 
             // look-at highlight: the item silhouette on the OUTLINE visual layer (main cams cull it; OutlineOverlay's mask
             // cam renders only it -> a fullscreen dilate draws the crisp rarity rim). White + unshaded = a clean solid mask.
@@ -204,6 +217,7 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_settled) return;   // frozen static once it came to rest -> zero per-frame cost + no jitter
+            _age += (float)delta;
             _velAvg = _velAvg.Lerp(LinearVelocity, 0.15f);
             _angAvg = _angAvg.Lerp(AngularVelocity, 0.15f);
             if (_velAvg.LengthSquared() < 0.02f && _angAvg.LengthSquared() < 0.05f)
@@ -214,9 +228,26 @@ namespace UnturnedGodot
                     LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
                     FreezeMode = FreezeModeEnum.Static; Freeze = true;
                     _settled = true;
+                    DespawnIfStuck();
                 }
             }
+            else if (_age > 8f) QueueFree();   // never settled (buzzing in the ground / on an edge) -> despawn (master: happens in vanilla too)
             else _settleT = 0f;
+        }
+
+        // master: items sometimes clip INTO the ground; if a world surface sits just above the item's centre when it
+        // came to rest, it's stuck -> despawn it after a couple seconds (vanilla does the same).
+        void DespawnIfStuck()
+        {
+            Vector3 c = GlobalTransform * _boxCtr;
+            var q = PhysicsRayQueryParameters3D.Create(c, c + Vector3.Up * 0.5f);
+            q.CollisionMask = 1;   // world/terrain
+            q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            if (GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0)
+            {
+                var t = GetTree().CreateTimer(2.5);
+                t.Timeout += () => { if (IsInstanceValid(this)) QueueFree(); };
+            }
         }
 
         public override void _Process(double delta)
@@ -232,11 +263,20 @@ namespace UnturnedGodot
                 if (cam != null)
                 {
                     show = !cam.IsPositionBehind(GlobalPosition) && cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 40000f;
-                    if (show)
+                    if (show && _hitPts != null)
                     {
-                        var q = PhysicsRayQueryParameters3D.Create(cam.GlobalPosition, GlobalPosition + Vector3.Up * 0.3f);
-                        q.CollisionMask = 1;   // only large world/terrain geometry (bit0) breaks line of sight
-                        if (GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0) show = false;
+                        // full-hitbox LOS (master): if ANY hitbox sample point (centre + corners) has clear LOS, keep it visible.
+                        // Breaks on the first clear point, so a visible item usually costs ONE ray; only occluded items check all.
+                        show = false;
+                        var space = GetWorld3D().DirectSpaceState;
+                        Transform3D gt = GlobalTransform;
+                        foreach (var lp in _hitPts)
+                        {
+                            var q = PhysicsRayQueryParameters3D.Create(cam.GlobalPosition, gt * lp);
+                            q.CollisionMask = 1;   // only large world/terrain geometry (bit0) breaks line of sight
+                            q.Exclude = _excludeSelf;
+                            if (space.IntersectRay(q).Count == 0) { show = true; break; }
+                        }
                     }
                 }
                 if (Visible != show) Visible = show;   // hide the whole prop when occluded/behind -- physics keeps running so it still settles
