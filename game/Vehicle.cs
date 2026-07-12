@@ -192,8 +192,9 @@ namespace UnturnedGodot
         }
 
         // Curated natural car colours for RandomHueOrGrayscale vehicles -- the source's random-hue goes neon, so master
-        // wants a hand-picked natural set (white/black/silver/gunmetal/dark-red/navy/forest/tan/olive).
-        static readonly string[] CarColors = { "#ececec", "#242424", "#c2c2c2", "#4a4d50", "#7a1f1f", "#24365e", "#2e4a2e", "#a69884", "#6b6f52" };
+        // wants a hand-picked natural set. Tuned for the CORRECTED (sRGB->linear) paint render -- the hexes are the lighter
+        // tones master wants on-screen (the old darker set only looked right under the washed-out pre-fix render).
+        static readonly string[] CarColors = { "#ececec", "#4c4c4c", "#c2c2c2", "#7d8288", "#b23a3a", "#425f9c", "#4f7d4f", "#c4b498", "#969b74" };
 
         // Source paint on spawn: unpainted -> white; List -> a random .dat DefaultPaintColor; the source's
         // RandomHueOrGrayscale is swapped for a random pick from the curated CarColors (natural, not neon).
@@ -425,11 +426,10 @@ namespace UnturnedGodot
                 var w = new VehicleWheel3D
                 {
                     Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = true,
-                    WheelRadius = s.WheelRadius, WheelRestLength = 0.32f, SuspensionTravel = 0.25f,
-                    // MUCH stiffer + higher max force so 900kg holds ride height instead of squatting onto the wheels (master
-                    // reported 2x); longer rest length lifts the stance + un-tucks the wheels from the fenders; heavy damping
-                    // keeps the stiff spring from bouncing; higher friction slip = more TRACTION (was sliding/understeering).
-                    SuspensionStiffness = 140f, SuspensionMaxForce = 24000f, DampingCompression = 4.8f, DampingRelaxation = 5.2f, WheelFrictionSlip = 6.0f,
+                    WheelRadius = s.WheelRadius, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
+                    // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
+                    // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
+                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = 6.0f,
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3(x < 0 ? -1f : 1f, 1f, 1f) };
@@ -581,13 +581,9 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_wNodes == null) return;
-            if (_parked)   // smooth stop-and-hold after the driver leaves (avoids the hard-brake wheel-lock judder)
-            {
-                var lv = LinearVelocity;                                                                // damp only the HORIZONTAL roll and leave
-                var flat = new Vector3(lv.X, 0f, lv.Z).MoveToward(Vector3.Zero, 20f * (float)delta);    // the vertical to the suspension, so the car
-                LinearVelocity = new Vector3(flat.X, lv.Y, flat.Z);                                     // holds ride height instead of squatting/sinking (master)
-                AngularVelocity = Vector3.Zero;
-                Brake = _brakeForce * HandbrakeScale;   // hold with the full parking brake so it can't creep
+            if (_parked)   // driver left: hold with the parking brake and let the suspension settle EXACTLY as it does while
+            {              // driving. Manually clamping LinearVelocity/AngularVelocity here was fighting the suspension and
+                Brake = _brakeForce * HandbrakeScale;   // squatting the car ONLY after exit (master); the brake alone holds it.
             }
             for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
             {
