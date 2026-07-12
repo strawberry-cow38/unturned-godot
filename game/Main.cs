@@ -548,7 +548,13 @@ namespace UnturnedGodot
             }
 
             _vehCam = new Camera3D { Current = true, Fov = 60f };
+            _vehCam.CullMask &= ~OutlineOverlay.OutlineLayer;   // the mask cam renders the vehicle silhouette, not this one
             AddChild(_vehCam);
+            if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VFOCUS")))   // preview the vehicle look-at outline + info panel
+            {
+                AddChild(new OutlineOverlay());
+                _veh.SetLookFocused(true);
+            }
 
             _veh.EngineOn = true;                      // engine running -> fuel gauge ticks down
             if (_demo) { _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f; }   // --demo: varied gauge levels (else full/spawn)

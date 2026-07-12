@@ -50,6 +50,11 @@ namespace UnturnedGodot
         const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> zombies within earshot investigate
         public bool HeadlightsOn => _headlightsOn;
 
+        // look-at focus (master): same system as items -- a screen-space outline + an info billboard (name/HP/fuel/battery)
+        bool _lookFocused; System.Collections.Generic.List<MeshInstance3D> _outlineMeshes; Label3D _infoLabel;
+        Color _outlineColor = new Color(0.82f, 0.83f, 0.90f);   // vehicle outline/label tint (no per-vehicle rarity in the port yet)
+        const float InfoH = 2.35f;
+
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
@@ -567,6 +572,13 @@ namespace UnturnedGodot
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
+            v._infoLabel = new Label3D   // look-at info billboard (name/HP/fuel/battery), TopLevel so it floats above in world space
+            {
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, TopLevel = true, Visible = false,
+                Modulate = v._outlineColor, PixelSize = 0.0055f, NoDepthTest = true, FontSize = 52, OutlineSize = 8,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            v.AddChild(v._infoLabel);
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
@@ -776,8 +788,39 @@ namespace UnturnedGodot
             }
         }
 
+        // look-at focus (master): the eye-sphere is on this vehicle -> screen-space outline (add the outline layer to every
+        // vehicle mesh so OutlineOverlay's mask cam picks them up) + the info billboard. E enters (PlayerController).
+        public void SetLookFocused(bool on)
+        {
+            if (_lookFocused == on) return;
+            _lookFocused = on;
+            if (_outlineMeshes == null)   // lazy-collect every MeshInstance3D under the vehicle (built across Build)
+            {
+                _outlineMeshes = new System.Collections.Generic.List<MeshInstance3D>();
+                CollectMeshes(this, _outlineMeshes);
+            }
+            foreach (var mi in _outlineMeshes)
+                mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
+            if (on) WorldItem.FocusColor = _outlineColor;   // OutlineOverlay tints the rim with this
+            if (_infoLabel != null) _infoLabel.Visible = on;
+        }
+
+        static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)
+        {
+            foreach (var c in n.GetChildren())
+            {
+                if (c is MeshInstance3D mi) list.Add(mi);
+                CollectMeshes(c, list);
+            }
+        }
+
         public override void _PhysicsProcess(double delta)
         {
+            if (_lookFocused && _infoLabel != null)   // keep the info billboard above the car + live (before any perf early-return)
+            {
+                _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
+                _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}\nFuel {Fuel:0}/{FuelMax:0}   Battery {Battery / BatteryMax * 100f:0}%";
+            }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {

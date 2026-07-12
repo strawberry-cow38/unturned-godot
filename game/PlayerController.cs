@@ -71,6 +71,7 @@ namespace UnturnedGodot
         }
 
         WorldItem _focusItem;   // the dropped item the player is currently LOOKING AT (glowing + named), pickup target for E
+        Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
 
@@ -81,33 +82,42 @@ namespace UnturnedGodot
 
         void UpdateLookFocus()
         {
-            WorldItem hitItem = null;
+            WorldItem hitItem = null; Vehicle hitVeh = null;
             if (!_dead && _driving == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 var space = GetWorld3D().DirectSpaceState;
                 Vector3 from = _cam.GlobalPosition;
                 Vector3 fwd = -_cam.GlobalTransform.Basis.Z;
-                // 1) LOS: ray forward -> the sphere sits where the ray ENDS (a wall shortens the reach so you can't grab through it)
+                // 1) ray forward -> the sphere sits where the ray STOPS (on world/props/items/vehicles, or max reach)
                 var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * LookReach);
-                rq.CollisionMask = (1u << 0) | (1u << 6);   // world/terrain/buildings + props (master: the look-ray must collide with props)
+                rq.CollisionMask = (1u << 0) | (1u << 5) | (1u << 6) | (1u << 7);   // world + vehicles + props + items
                 rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
                 var rhit = space.IntersectRay(rq);
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
-                // 2) sphere at the ray end -> whichever ITEM box (bit 7) it overlaps, nearest to the sphere centre, is focusable
+                // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 var sq = new PhysicsShapeQueryParameters3D
                 {
                     Shape = new SphereShape3D { Radius = LookSphereR },
                     Transform = new Transform3D(Basis.Identity, _lookEnd),
-                    CollisionMask = WorldItem.ItemHitLayer,
+                    CollisionMask = WorldItem.ItemHitLayer | (1u << 5),
                     Exclude = new Godot.Collections.Array<Rid> { GetRid() },
                 };
-                float best = float.MaxValue;
+                float bestI = float.MaxValue, bestV = float.MaxValue;
                 foreach (var h in space.IntersectShape(sq, 8))
-                    if (h["collider"].As<GodotObject>() is WorldItem wi && IsInstanceValid(wi))
+                {
+                    var c = h["collider"].As<GodotObject>();
+                    if (c is WorldItem wi && IsInstanceValid(wi))
                     {
                         float d = wi.GlobalPosition.DistanceSquaredTo(_lookEnd);
-                        if (d < best) { best = d; hitItem = wi; }
+                        if (d < bestI) { bestI = d; hitItem = wi; }
                     }
+                    else if (c is Vehicle v && IsInstanceValid(v) && !v.Exploded)
+                    {
+                        float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
+                        if (d < bestV) { bestV = d; hitVeh = v; }
+                    }
+                }
+                if (hitItem != null && hitVeh != null) { if (bestV < bestI) hitItem = null; else hitVeh = null; }   // focus the nearer of the two
             }
             if (_lookViz != null) { _lookViz.Visible = WorldItem.ShowLookSphere && !_dead && _driving == null; if (_lookViz.Visible) _lookViz.GlobalPosition = _lookEnd; }
             if (hitItem != _focusItem)
@@ -115,6 +125,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusItem)) _focusItem.SetFocused(false);
                 _focusItem = hitItem;
                 _focusItem?.SetFocused(true);
+            }
+            if (hitVeh != _focusVehicle)
+            {
+                if (IsInstanceValid(_focusVehicle)) _focusVehicle.SetLookFocused(false);
+                _focusVehicle = hitVeh;
+                _focusVehicle?.SetLookFocused(true);
             }
         }
 
@@ -591,7 +607,7 @@ namespace UnturnedGodot
             {
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
                 else if (_focusItem != null) TryPickup();                                                  // looking at an item: pick it up
-                else { var veh = NearestVehicle(); if (veh != null) EnterVehicle(veh); }                     // else near a vehicle: get in
+                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle)) EnterVehicle(_focusVehicle); // looking at a vehicle: get in (master: look-at, not proximity)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
             {
