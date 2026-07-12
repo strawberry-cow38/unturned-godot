@@ -885,8 +885,9 @@ namespace UnturnedGodot
             _          => new Color(0.58f, 0.56f, 0.52f),   // concrete
         };
 
-        // Bullet impact: a projected bullet-hole DECAL (hard surfaces only) + a material-tinted dust/spark puff at the
-        // hit, oriented to the surface normal. Metal = additive sparks; soft ground (grass/dirt/sand) = no decal.
+        // Bullet impact: a projected bullet-hole DECAL (hard surfaces only) + the REAL source impact effect debris burst
+        // at the hit, oriented to the surface normal (Effects/Impacts/<mat>_static, extracted textures + params). Metal =
+        // additive sparks; soft ground (grass/dirt/sand) = no decal.
         void SpawnSurfaceImpact(Vector3 point, Vector3 normal, Surf surf, Node3D attachTo = null)
         {
             var scene = GetTree().CurrentScene;
@@ -904,23 +905,50 @@ namespace UnturnedGodot
                 dec.GlobalTransform = new Transform3D(new Basis(right, up, right.Cross(up)), point + up * 0.06f);   // +Y = normal -> projects DOWN into the surface (local-to-parent once attached)
                 var t1 = GetTree().CreateTimer(18.0); t1.Timeout += () => { if (IsInstanceValid(dec)) dec.QueueFree(); };
             }
+            // Source ParticleSystem (Effects/Impacts/<mat>_static): a one-shot BURST of debris -- concrete/wood/gravel/foliage
+            // = 8 @ 0.25-0.5m, 2-4 m/s; metal = 16 @ 0.125-0.25m, 4-8 m/s; all gravityModifier 1 (fall), ~1s life. The debris
+            // sheets are 4 frames (a random chip per particle); metal is one spark sprite.
+            var itex = ImpactTex(surf);
+            bool sheet = itex != null && itex.GetWidth() >= itex.GetHeight() * 3;   // 32x8 debris strip = 4 chips; 16x16 metal = single
             var mat = new StandardMaterial3D
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                AlbedoColor = new Color(SurfDust(surf), metal ? 1f : 0.7f), BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                AlbedoColor = Colors.White, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
                 BlendMode = metal ? BaseMaterial3D.BlendModeEnum.Add : BaseMaterial3D.BlendModeEnum.Mix,
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
             };
-            if (metal) { mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.7f, 0.2f); mat.EmissionEnergyMultiplier = 2f; }
+            if (itex != null) mat.AlbedoTexture = itex;
+            if (sheet) { mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = false; }
+            if (metal) { mat.EmissionEnabled = true; if (itex != null) mat.EmissionTexture = itex; mat.Emission = new Color(1f, 0.7f, 0.2f); mat.EmissionEnergyMultiplier = 2.5f; }
             var dust = new CpuParticles3D
             {
-                Emitting = true, OneShot = true, Amount = metal ? 12 : 8, Lifetime = metal ? 0.35f : 0.45f, Explosiveness = 0.95f,
-                Direction = up, Spread = metal ? 25f : 42f, InitialVelocityMin = metal ? 2f : 1f, InitialVelocityMax = metal ? 4.5f : 2.4f,
-                Gravity = new Vector3(0f, metal ? -6f : -3f, 0f), ScaleAmountMin = 0.02f, ScaleAmountMax = metal ? 0.06f : 0.09f,
+                Emitting = true, OneShot = true, Amount = metal ? 16 : 8, Lifetime = 1.0f, Explosiveness = 1f,
+                Direction = up, Spread = 70f, InitialVelocityMin = metal ? 4f : 2f, InitialVelocityMax = metal ? 8f : 4f,
+                Gravity = new Vector3(0f, -9.8f, 0f), ScaleAmountMin = metal ? 0.125f : 0.25f, ScaleAmountMax = metal ? 0.25f : 0.5f,
                 Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
             };
+            if (sheet) { dust.AnimOffsetMin = 0f; dust.AnimOffsetMax = 1f; }   // random static chip frame per particle
             scene.AddChild(dust);
             dust.GlobalPosition = point + up * 0.03f;
-            var t2 = GetTree().CreateTimer(1.0); t2.Timeout += () => { if (IsInstanceValid(dust)) dust.QueueFree(); };
+            var t2 = GetTree().CreateTimer(1.4); t2.Timeout += () => { if (IsInstanceValid(dust)) dust.QueueFree(); };
+        }
+
+        // Real impact-effect debris texture per surface (Effects/Impacts/<mat>_static extracted PNG), cached. Surf->effect:
+        // grass=foliage, dirt/sand=gravel, metal/wood/concrete same-named.
+        readonly System.Collections.Generic.Dictionary<Surf, ImageTexture> _impactTex = new System.Collections.Generic.Dictionary<Surf, ImageTexture>();
+        ImageTexture ImpactTex(Surf surf)
+        {
+            if (_impactTex.TryGetValue(surf, out var cached)) return cached;
+            string name = surf switch
+            {
+                Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "gravel",
+                Surf.Grass => "foliage", Surf.Dirt => "gravel", _ => "concrete",
+            };
+            string p = ProjectSettings.GlobalizePath($"res://content/impact_{name}_static_0.png");
+            ImageTexture tex = null;
+            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) tex = ImageTexture.CreateFromImage(img); }
+            _impactTex[surf] = tex;
+            return tex;
         }
 
         // The traveling tracer: a thin additive "Bullet"-textured streak that rides with the bullet, oriented along
