@@ -855,10 +855,10 @@ namespace UnturnedGodot
                 {
                     _alarmTimer -= (float)delta; _alarmBlip += (float)delta;
                     bool on = (_alarmBlip % 1.0f) < 0.5f;
-                    if (on && !_alarmLit) { DoHorn(); SetHeadlights(true); }        // rising edge -> honk + lights on (the honk lures zombies like a real horn)
-                    else if (!on && _alarmLit) SetHeadlights(false);                // falling edge -> lights off, NO honk
+                    if (on && !_alarmLit) { DoHorn(); SetHeadlights(true); SetTaillights(true); }   // rising edge -> honk + head+tail lights ON in sync (master); the honk lures zombies like a real horn
+                    else if (!on && _alarmLit) { SetHeadlights(false); SetTaillights(false); }     // falling edge -> all lights off, NO honk
                     _alarmLit = on;
-                    if (_alarmTimer <= 0f) { SetHeadlights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, this car never alarms again (master)
+                    if (_alarmTimer <= 0f) { SetHeadlights(false); SetTaillights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, never alarms again (master)
                 }
             }
             if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.
@@ -873,8 +873,11 @@ namespace UnturnedGodot
                 }
                 else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop(); }
             }
-            bool tailWant = EngineOn && Battery > 0f;   // source synchronizeTaillights: taillights on while isDriven && canTurnOnLights
-            if (tailWant != _taillightsOn) SetTaillights(tailWant);
+            if (_alarmTimer <= 0f)   // the alarm owns the taillights while blaring (master); otherwise source synchronizeTaillights = isDriven && canTurnOnLights
+            {
+                bool tailWant = EngineOn && Battery > 0f;
+                if (tailWant != _taillightsOn) SetTaillights(tailWant);
+            }
             if (_hornCd > 0f) _hornCd -= (float)delta;
             // collision/ram damage (source isVulnerableToBumper): a sudden horizontal deceleration = a crash. Horizontal only, so the spawn drop doesn't count.
             float curSpeed = new Vector2(LinearVelocity.X, LinearVelocity.Z).Length();
