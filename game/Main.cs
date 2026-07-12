@@ -110,6 +110,16 @@ namespace UnturnedGodot
                 else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
             }
 
+            // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
+            // (e.g. master's "cow tools"). Mirrors the --map= logic. Set $env:UG_MAP before launching godot.
+            var ugMap = System.Environment.GetEnvironmentVariable("UG_MAP");
+            if (!string.IsNullOrEmpty(ugMap))
+            {
+                _mapRoot = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\" + ugMap;
+                string ugKey = System.Text.RegularExpressions.Regex.Replace(ugMap, "[^A-Za-z0-9]", "");
+                _mapPlace = ugMap == "PEI" ? "placements.txt" : "placements_" + ugKey + ".txt";
+            }
+
             if (hurtdemo)   // first-person: a zombie hits the player so the hurt flash + camera flinch are visible
             {
                 GetWindow().Size = new Vector2I(1280, 720);
@@ -881,13 +891,13 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
-            AddChild(Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: false));
+            AddChild(Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: false));   // --map= aware (defaults to PEI); any modern-Landscape map renders here
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
             cam.Position = new Vector3(0f, 5200f, 1f);
             cam.LookAt(Vector3.Zero, new Vector3(0f, 0f, -1f));   // STRAIGHT TOP-DOWN; screen-up = world -Z (= Unity +Z = north) to match the map chart's orientation
-            GD.Print("[TERRAIN] loaded the whole PEI island (merged, seamless)");
+            GD.Print($"[TERRAIN] loaded {System.IO.Path.GetFileName(_mapRoot)} (merged, seamless)");
         }
 
         // --proptest=NAME diagnostic: one prop at identity with RGB axis refs (X=red +right, Y=green +up, Z=blue +back)
