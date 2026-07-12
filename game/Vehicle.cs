@@ -13,7 +13,7 @@ namespace UnturnedGodot
         float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
-        float _deadTimer = -1f; bool _exploded; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _firePos = engine-bay local offset
+        float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _fire; OmniLight3D _fireLight; MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
         public bool Exploded => _exploded;
@@ -103,7 +103,7 @@ namespace UnturnedGodot
         // source Bumper.OnTriggerEnter: the front bumper roadkills a character it drives into. Damage scales with impact
         // speed (clamped at 10) x the base BumperZombieDamage; the vehicle takes a little self-damage per hit too.
         public void Wake() { Freeze = false; _parked = false; }   // resume dynamic physics (rammed or re-driven)
-        void OnVehicleContact(Node body) { if (body is Vehicle v && v != this) v.Wake(); }   // ram a frozen parked car -> wake it so it gets shoved (master)
+        void OnVehicleContact(Node body) { if (body is Vehicle v && v != this && !v._husk) v.Wake(); }   // ram a frozen parked car -> wake it (a dead husk stays put)
         public bool HasSiren => _sirenMat0 != null;   // only emergency vehicles (police/fire/ambulance) have a lightbar
         public void ToggleSiren() { if (HasSiren) _sirenOn = !_sirenOn; }   // master: ctrl toggles the siren/lightbar while driving
 
@@ -766,7 +766,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            if (_wNodes == null) return;
+            if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
@@ -780,7 +780,11 @@ namespace UnturnedGodot
             bool wantHold = _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
                                                                           : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
                                                                                                        : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
-            if (wantHold && !Freeze) { LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true; }   // STATIC not kinematic (kinematic vanished the car); wrecks collapse flush via the killed suspension
+            if (wantHold && !Freeze)
+            {
+                LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero; FreezeMode = RigidBody3D.FreezeModeEnum.Static; Freeze = true;   // STATIC not kinematic (kinematic vanished the car)
+                if (_exploded) { _husk = true; foreach (var w in _wNodes) w.QueueFree(); }   // a settled wreck becomes a pure static HUSK: drop the wheels + kill the whole sim (master, perf -- lots of wrecks)
+            }
             else if (!wantHold && Freeze) Freeze = false;
             bool damping = (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea")
             LinearDamp = damping ? 6f : 0f; AngularDamp = damping ? 6f : 0f;
