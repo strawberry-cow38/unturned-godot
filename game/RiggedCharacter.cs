@@ -312,7 +312,7 @@ namespace UnturnedGodot
                 skin.SetBindPose(j, Xf(rig.skin[j].pos, rig.skin[j].rot, rig.skin[j].scale));
             }
 
-            var mi = new MeshInstance3D { Name = "Body", Mesh = mesh };
+            var mi = new MeshInstance3D { Name = "Body", Mesh = mesh, VisibilityRangeEnd = 95f };   // horde perf: don't draw a skinned body past ~95m (player/arms always near, never culled)
             root.Body = mi;
             skel.AddChild(mi);
             mi.Skin = skin;
@@ -353,7 +353,7 @@ namespace UnturnedGodot
                     // world=(localY,-localX,localZ); the head-front world (0,1.75,-0.25) -> bone-local (-0.43,0,-0.25).
                     var att = new BoneAttachment3D { BoneName = "Skull" };
                     skel.AddChild(att);
-                    var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.38f, 0.38f) } };
+                    var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.38f, 0.38f) }, VisibilityRangeEnd = 45f, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // tiny transparent decal: cull its overdraw past ~45m + it never needs a shadow
                     fq.MaterialOverride = new StandardMaterial3D
                     {
                         AlbedoTexture = ImageTexture.CreateFromImage(fimg),

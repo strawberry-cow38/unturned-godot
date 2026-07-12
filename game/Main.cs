@@ -37,6 +37,7 @@ namespace UnturnedGodot
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
+        float _perfT;   // UG_PERF: throttle the perf log
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
 
         public override void _Ready()
@@ -772,7 +773,7 @@ namespace UnturnedGodot
             }
             else
             {
-                if (!_noZombies) AddChild(new HordeSpawner { Target = player });
+                if (!_noZombies) AddChild(new HordeSpawner { Target = player, MaxAlive = int.TryParse(System.Environment.GetEnvironmentVariable("UG_HORDE"), out var _h) ? _h : 8 });   // UG_HORDE overrides the horde size (perf repro)
                 var pause = new PauseMenu();   // ESC -> live viewmodel FOV/offset tuning sliders
                 AddChild(pause);
                 player.PauseMenu = pause;
@@ -2159,6 +2160,14 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
+            {
+                _perfT = 1f;
+                int zc = GetTree().GetNodesInGroup("zombies").Count;
+                double physMs = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
+                double procMs = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0;
+                GD.Print($"[perf] fps={Engine.GetFramesPerSecond()} zombies={zc} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
+            }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter -- the _frame demo loop below is gated on _rigDir
             if (_peiPlay && _peiPlayer != null)
             {
