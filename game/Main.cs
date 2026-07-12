@@ -34,6 +34,8 @@ namespace UnturnedGodot
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
+        bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
+        int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
 
         public override void _Ready()
@@ -1089,8 +1091,38 @@ namespace UnturnedGodot
 
         // --objects: PEI's real placed objects (Level/Objects.dat) instanced on the terrain. placements.txt = every
         // object's guid+transform; guid_mesh.txt maps the top types to extracted object.prefab meshes.
+        // UG_TREECHECK: raycast horizontally through the first ~40 tree trunks at several heights -> prove the collider is
+        // actually hittable (i.e., Jolt didn't drop the shape). Prints a WORKS/BROKEN verdict.
+        void DoTreeCheck()
+        {
+            var space = GetViewport().World3D.DirectSpaceState;
+            var trees = GetTree().GetNodesInGroup("tree");
+            int tested = 0, hit = 0;
+            foreach (Node nd in trees)
+            {
+                if (nd is not StaticBody3D body) continue;
+                if (tested >= 60) break;
+                var cs = body.GetChildOrNull<CollisionShape3D>(0);
+                if (cs == null) continue;
+                Vector3 c = body.GlobalTransform * cs.Position;   // exact trunk-collider centre (no height guessing)
+                var q = PhysicsRayQueryParameters3D.Create(c + new Vector3(1.3f, 0f, 0f), c - new Vector3(1.3f, 0f, 0f), 1u << 0);   // short ray through it -> won't grab a neighbour
+                var r = space.IntersectRay(q);
+                tested++;
+                bool h = r.Count > 0 && r["collider"].As<Node>() is Node hn && hn.IsInGroup("tree");
+                if (h) hit++;
+                if (tested <= 5)
+                {
+                    var cyl = cs.Shape as CylinderShape3D;
+                    string what = r.Count > 0 ? ((Node)r["collider"].As<Node>()).Name : "MISS";
+                    GD.Print($"[treecheck#{tested}] bodyPos={body.GlobalPosition} centre={c} r={cyl?.Radius:0.00} h={cyl?.Height:0.00} enabled={!cs.Disabled} ray->{what}");
+                }
+            }
+            GD.Print($"[treecheck] {hit}/{tested} tree trunks solid -> collision {(tested > 0 && hit >= tested - 2 ? "WORKS" : "PARTIAL/BROKEN")}");
+        }
+
         async void BuildObjectsTest()
         {
+            _worldBuild = true;   // --shot waits for _worldReady (below) so the async world (incl. Trees) is fully loaded before the screenshot
             float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
             // Phased async load with a progress screen + per-category timing (master). Phase(name) records the PREVIOUS
             // phase's elapsed ms, advances the bar, sets the label, and yields a frame so the overlay actually paints
@@ -1468,6 +1500,7 @@ namespace UnturnedGodot
             NearestFilter.Apply(this);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
             if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading.Advance(); }   // record the final phase
             loading.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
+            _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
@@ -2188,12 +2221,15 @@ namespace UnturnedGodot
                 }
                 return;
             }
+            if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
+            else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
+            if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(); return; }
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();

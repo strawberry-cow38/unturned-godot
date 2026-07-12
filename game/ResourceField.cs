@@ -19,7 +19,7 @@ namespace UnturnedGodot
             string dir = ProjectSettings.GlobalizePath("res://content/resources/");
             string manifest = dir + "resources.txt";
             if (!File.Exists(manifest)) { GD.Print("[resources] no resources.txt -- skipping"); return; }
-            int total = 0, types = 0;
+            int total = 0, types = 0, treeCols = 0;
             foreach (var line in File.ReadAllLines(manifest))
             {
                 var sp = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
@@ -47,15 +47,19 @@ namespace UnturnedGodot
                     var mat = MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
                     if (isTree && i == 0)   // MultiMesh has no colliders -> add a trunk cylinder per tree so trees BLOCK bullets/movement (master), tagged Wood
                     {
-                        var ab = mesh.GetAabb();
-                        var shp = new CylinderShape3D { Radius = Mathf.Max(0.25f, Mathf.Max(ab.Size.X, ab.Size.Z) * 0.28f), Height = Mathf.Max(1.5f, ab.Size.Y) };
-                        float cy = ab.Position.Y + ab.Size.Y * 0.5f;   // trunk centre Y in local space
                         foreach (var t in xf)
                         {
-                            var body = new StaticBody3D { Transform = t, CollisionLayer = 1u << 0 };
+                            // part-0's mesh AABB is the WHOLE tree (incl. canopy) -> that gave a giant ~5m-radius cylinder
+                            // floating at canopy height that missed the ground. Use a FIXED trunk (~0.5m radius, ~8m tall) at
+                            // the base, scaled by the instance scale, on an ORTHONORMAL body (Jolt drops non-uniform-scaled shapes).
+                            Vector3 sc = t.Basis.Scale;
+                            float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
+                            var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                             body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
-                            body.AddChild(new CollisionShape3D { Shape = shp, Position = new Vector3(0f, cy, 0f) });
+                            body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
+                            body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
                             AddChild(body);
+                            treeCols++;
                         }
                     }
                     foreach (var kv in byCell)
@@ -71,7 +75,7 @@ namespace UnturnedGodot
                 total += xf.Count; types++;
                 GD.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");
             }
-            GD.Print($"[resources] {total} instances across {types} types (MultiMesh)");
+            GD.Print($"[resources] {total} instances across {types} types (MultiMesh), {treeCols} tree trunk colliders");
         }
 
         static List<Transform3D> ReadInstances(string binPath)
