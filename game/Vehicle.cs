@@ -16,7 +16,7 @@ namespace UnturnedGodot
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
         CpuParticles3D[] _wheelDust;   // per-WHEEL dust from the ground contact point (src Wheel.cs TireMotionEffectInstance is per-wheel); tinted by the Surf under each wheel
-        PlayerController.Surf[] _wheelSurf; float _dustCheckT;   // cached ground material per wheel (raycast, throttled)
+        PlayerController.Surf[] _wheelSurf; float _dustCheckT, _dustLogT;   // cached ground material per wheel (raycast, throttled); _dustLogT throttles UG_DUSTDEBUG
         MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
@@ -1019,6 +1019,12 @@ namespace UnturnedGodot
                     d.Direction = dir;
                     if (soft) d.Color = PlayerController.SurfDust(sf);
                     d.Emitting = contact && soft;
+                }
+                if (System.Environment.GetEnvironmentVariable("UG_DUSTDEBUG") == "1" && moving && (_dustLogT -= (float)delta) <= 0f)
+                {
+                    _dustLogT = 1f;
+                    bool anyEmit = false; foreach (var d in _wheelDust) if (d != null && d.Emitting) { anyEmit = true; break; }
+                    GD.Print($"[wheeldust] spd={spd:0.0} surf0={_wheelSurf[0]} anyEmit={anyEmit}");
                 }
             }
             if (_exploded)   // master: explosion smoke/fire emits from the ENGINE bay (like the hurt smoke) but rises STRAIGHT UP -- world-space so the plume doesn't tilt with the tumbling wreck
