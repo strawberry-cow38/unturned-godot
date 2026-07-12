@@ -494,7 +494,9 @@ namespace UnturnedGodot
 
             PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // opt the PLAYER out of Godot's global physics interp -- on-foot uses MANUAL position-only interp so the mouse stays instant (master)
             _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };
+            _cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the items' silhouette meshes in the main view (only the offscreen mask cam does)
             AddChild(_cam);
+            CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());   // screen-space look-at outline (deferred so the viewport/camera exist)
             if (CaptureMouse) Local = this;   // the interactive (mouse-captured) player -> explosions shake this camera
 
             _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
@@ -586,6 +588,11 @@ namespace UnturnedGodot
             {
                 WorldItem.ShowLabels = !WorldItem.ShowLabels;                       // P: toggle ALL item ESP name tags
                 GetTree().CallGroup("esp_labels", "set_visible", WorldItem.ShowLabels);
+            }
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.O, Echo: false })
+            {
+                WorldItem.ShowInteractSphere = !WorldItem.ShowInteractSphere;       // O: toggle the LookAtRadius ball visualizer (master)
+                GetTree().CallGroup("interact_spheres", "set_visible", WorldItem.ShowInteractSphere);
             }
             else if (@event is InputEventKey { Keycode: Key.T, Echo: false } tKey)
             {

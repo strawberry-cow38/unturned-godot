@@ -936,7 +936,8 @@ namespace UnturnedGodot
             AddChild(ground);
 
             bool norot = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_NOROT"));
-            bool focus = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_FOCUS"));   // UG_FOCUS=1 -> highlight the middle item (look-at glow + name preview)
+            bool focus = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_FOCUS"));   // UG_FOCUS=1 -> highlight the middle item (look-at outline + name preview)
+            WorldItem.ShowInteractSphere = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_SPHERE"));   // UG_SPHERE=1 -> show the LookAtRadius balls
             WorldItem.NoDropRotation = norot;   // UG_NOROT=1 -> hold each item at IDENTITY (frozen) to read the raw model orientation
             var parts = ids.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
             const float span = 1.7f;
@@ -954,10 +955,12 @@ namespace UnturnedGodot
             if (focus && spawned.Count > 0) spawned[spawned.Count / 2].SetFocused(true);   // preview the look-at highlight on the middle item
 
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f };
+            cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // the mask cam renders the item silhouettes, not this one
             AddChild(cam);
             float w = Mathf.Max(3f, parts.Length * span);
             cam.Position = new Vector3(0f, 1.5f, w * 0.85f + 1.2f);
             cam.LookAt(new Vector3(0f, 0.15f, 0f), Vector3.Up);
+            CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());   // screen-space outline overlay (so UG_FOCUS previews it)
             GD.Print($"[ITEMTEST] dropped {parts.Length} items: {ids}");
         }
 

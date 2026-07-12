@@ -18,14 +18,16 @@ namespace UnturnedGodot
         public Color? FallbackColor;   // unknown-id loot (no registered asset / no model): tint by its spawn TABLE
         public string FallbackName;    // ...and label by the table name (e.g. "Military Canada", "Food")
         public static bool ShowLabels; // P force-shows ALL item name tags (else a tag shows only while looked-at)
+        public static bool ShowInteractSphere; // O toggles the LookAtRadius ball visualizer (master)
         public static bool NoDropRotation; // --itemtest UG_NOROT diagnostic: spawn at identity to read the raw model orientation
+        public static Color FocusColor = Colors.White;   // the currently-focused item's rarity colour -- OutlineOverlay tints the rim with it
 
         public const uint InteractLayer = 1u << 8;   // item interaction spheres -- the player's look-ray masks this (+ bit0 for LOS)
         const float LabelH = 0.4f;                    // name tag floats this far above the item origin (world space)
 
         float _losTimer;    // throttle the LOS visibility check (staggered) -- NOT a raycast-per-item every frame
         bool _shown = true;
-        MeshInstance3D _mesh, _glow;
+        MeshInstance3D _mesh, _glow, _sphereViz;
         Label3D _label;
         Color _rar;
         bool _focused;
@@ -152,24 +154,14 @@ namespace UnturnedGodot
             AddChild(_mesh);
             AddChild(col);
 
-            // rarity glow (look-at highlight): an enlarged translucent unshaded rarity shell around the item = a HAZY rarity
-            // aura (master). Double-sided + transparent so it's winding-independent (the ripped meshes are authored for
-            // double-sided, which breaks a front-cull inverted-hull outline -> it covered the item at some angles).
-            const float glowScale = 1.12f;
+            // look-at highlight: the item silhouette on the OUTLINE visual layer (main cams cull it; OutlineOverlay's mask
+            // cam renders only it -> a fullscreen dilate draws the crisp rarity rim). White + unshaded = a clean solid mask.
             _glow = new MeshInstance3D
             {
                 Mesh = _mesh.Mesh, Visible = false,
+                Layers = OutlineOverlay.OutlineLayer,   // only the offscreen mask camera renders this
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                Scale = Vector3.One * glowScale,
-                Position = boxCenter * (1f - glowScale),   // scale about the item's CENTRE, not the model origin
-            };
-            _glow.MaterialOverride = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                AlbedoColor = new Color(_rar.R, _rar.G, _rar.B, 0.33f),   // see-through rarity haze -> the item shows through + a rarity halo around it
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                EmissionEnabled = true, Emission = new Color(_rar.R, _rar.G, _rar.B), EmissionEnergyMultiplier = 1.0f,
+                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
             };
             AddChild(_glow);
 
@@ -178,6 +170,22 @@ namespace UnturnedGodot
             float r = Mathf.Max(0.35f, Mathf.Max(boxSize.X, Mathf.Max(boxSize.Y, boxSize.Z)) * 0.5f + 0.2f);
             area.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = r }, Position = boxCenter });
             AddChild(area);
+
+            // O toggles a debug visualizer of that LookAtRadius ball (master)
+            _sphereViz = new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = r, Height = r * 2f, RadialSegments = 16, Rings = 10 },
+                Position = boxCenter, Visible = ShowInteractSphere,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    AlbedoColor = new Color(0.3f, 0.8f, 1f, 0.16f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                },
+            };
+            AddChild(_sphereViz);
+            _sphereViz.AddToGroup("interact_spheres");
 
             // src ItemManager.spawnItem drop pose: +90 X (Z-reflection of the src -90 X) lays the model flat right-side-up
             if (!NoDropRotation)
@@ -208,6 +216,7 @@ namespace UnturnedGodot
         {
             if (_focused == on) return;
             _focused = on;
+            if (on) FocusColor = _rar;                            // OutlineOverlay tints the rim with the focused item's rarity
             if (_glow != null) _glow.Visible = on && _shown;
             if (_label != null) _label.Visible = on || ShowLabels;
         }
