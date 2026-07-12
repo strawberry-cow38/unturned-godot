@@ -460,7 +460,7 @@ namespace UnturnedGodot
         {
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
             CollisionLayer = 1 << 3;   // player bit
-            CollisionMask = 1 << 0;    // walk on ground (bit 0)
+            CollisionMask = (1 << 0) | (1 << 6);    // walk on ground (bit 0) + collide with transparent props on bit 6 (see-through to the item LOS raycast but still solid for the player -- master)
 
             _capsule = new CapsuleShape3D { Height = PlayerMovementDef.HEIGHT_STAND, Radius = 0.35f };
             _hitbox = new CollisionShape3D { Shape = _capsule, Position = new Vector3(0, PlayerMovementDef.HEIGHT_STAND / 2f, 0) };

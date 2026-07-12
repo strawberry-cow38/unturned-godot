@@ -1155,7 +1155,7 @@ namespace UnturnedGodot
                 if (_peiPlayable)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
                     if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
-                    if (shp != null) { var body = new StaticBody3D { Transform = new Transform3D(basis, gpos) }; body.AddChild(new CollisionShape3D { Shape = shp }); AddChild(body); }
+                    if (shp != null) { var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = MatFor(name).Transparency != BaseMaterial3D.TransparencyEnum.Disabled ? 1u << 6 : 1u << 0 }; body.AddChild(new CollisionShape3D { Shape = shp }); AddChild(body); }   // transparent props (glass / alpha-cutout) go on the see-through layer 6: the item LOS raycast (mask bit 0) passes through, still solid to the player (master)
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
