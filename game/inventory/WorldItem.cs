@@ -56,11 +56,23 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            var cam = GetViewport().GetCamera3D();   // behind the player (or way out) -> kill the spin/bob entirely, zero CPU (master); the mesh frustum-culls itself
-            if (cam != null && (cam.IsPositionBehind(GlobalPosition) || cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 40000f)) return;
+            var cam = GetViewport().GetCamera3D();
+            if (cam != null)
+            {
+                // Derender when we can't see it (master): behind the camera, far out, OR occluded by terrain/walls (LOS raycast).
+                bool show = !cam.IsPositionBehind(GlobalPosition) && cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 40000f;
+                if (show)
+                {
+                    var q = PhysicsRayQueryParameters3D.Create(cam.GlobalPosition, GlobalPosition + Vector3.Up * 0.3f);
+                    q.CollisionMask = 1;   // world/terrain static geometry between the camera and the item = no line of sight
+                    if (GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0) show = false;
+                }
+                if (Visible != show) Visible = show;
+                if (!show) return;   // no _Process work when it's not on screen
+            }
+            // NO spin (master: killed everywhere) -- just a gentle bob while it's visible
             _t += delta;
-            RotateY((float)delta * 1.1f);                                    // slow spin
-            if (_box != null) _box.Position = new Vector3(0, 0.28f + 0.05f * Mathf.Sin((float)_t * 2.2f), 0);   // bob
+            if (_box != null) _box.Position = new Vector3(0, 0.28f + 0.05f * Mathf.Sin((float)_t * 2.2f), 0);
         }
     }
 }
