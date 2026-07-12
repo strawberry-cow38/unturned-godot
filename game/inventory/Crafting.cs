@@ -65,5 +65,18 @@ namespace UnturnedGodot
             public void Remove(ushort id, int amount) { int n = Count(id) - amount; if (n > 0) Items[id] = n; else Items.Remove(id); }
             public void Add(ushort id, int amount) { Items[id] = Count(id) + amount; }
         }
+
+        // Adapts the real grid PlayerInventory to IInv so crafting runs against the player's actual items.
+        public sealed class PlayerInvAdapter : IInv
+        {
+            readonly PlayerInventory _inv;
+            public PlayerInvAdapter(PlayerInventory inv) { _inv = inv; }
+            public int Count(ushort id) => _inv.getItemCount(id);
+            public void Remove(ushort id, int amount) => _inv.removeItemAmount(id, amount);
+            public void Add(ushort id, int amount)
+            {
+                while (amount > 0) { int take = System.Math.Min(amount, 255); _inv.tryAddItem(new Item(id, (byte)take)); amount -= take; }
+            }
+        }
     }
 }

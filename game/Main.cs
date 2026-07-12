@@ -1694,6 +1694,16 @@ namespace UnturnedGodot
                     GD.Print($"[CRAFTTEST] logic outputs: 2 scrap -> craft -> scrap={inv3.Count(67)}(exp 0) blowtorch={inv3.Count(76)}(exp 1 produced)");
                 }
                 logicOk = can && !can2 && inv.Count(67) == 0 && inv.Count(76) == 1 && inv3.Count(76) == 1;
+
+                // craft against the REAL grid PlayerInventory via the adapter (in-game integration)
+                var pinv = new SDG.Unturned.PlayerInventory();
+                pinv.tryAddItem(new SDG.Unturned.Item(67, 4));   // Metal Scrap x4
+                pinv.tryAddItem(new SDG.Unturned.Item(76, 1));   // Blowtorch x1
+                var padapt = new Crafting.PlayerInvAdapter(pinv);
+                bool pcan = Crafting.CanCraft(repair, padapt, out _);
+                Crafting.DoCraft(repair, padapt);
+                GD.Print($"[CRAFTTEST] PlayerInventory: CanCraft={pcan}; after craft scrap={pinv.getItemCount(67)}(exp 0) blowtorch={pinv.getItemCount(76)}(exp 1 tool-kept)");
+                logicOk = logicOk && pcan && pinv.getItemCount(67) == 0 && pinv.getItemCount(76) == 1;
             }
             GD.Print($"[CRAFTTEST] RESULT parse {bps.Count}bp, resolve {resolved}/{total}, craft-logic {(logicOk ? "PASS" : "FAIL")}");
         }

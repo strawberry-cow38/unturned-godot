@@ -131,5 +131,27 @@ namespace SDG.Unturned
             }
             return n;
         }
+
+        // consume up to `amount` of item id across the player's pages (crafting supply consumption); removes emptied jars
+        public void removeItemAmount(ushort id, int amount)
+        {
+            for (byte b = 0; b < (byte)(PAGES - 2) && amount > 0; b++)
+            {
+                var page = items[b];
+                byte i = 0;
+                while (i < page.getItemCount() && amount > 0)
+                {
+                    var jar = page.getItem(i);
+                    if (jar?.item != null && jar.item.id == id)
+                    {
+                        int take = Math.Min(amount, jar.item.amount);
+                        jar.item.amount -= (byte)take;
+                        amount -= take;
+                        if (jar.item.amount == 0) { page.removeItem(i); continue; }   // jar removed -> list shifted, don't advance i
+                    }
+                    i++;
+                }
+            }
+        }
     }
 }
