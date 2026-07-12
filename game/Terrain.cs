@@ -107,6 +107,19 @@ void fragment() {
         }
         public static bool IsWater(byte layer) => layer == 5;   // splat layer 5 = ocean; every other layer is drivable land
 
+        public static Terrain Active;   // most-recently-built terrain -> bullet impacts sample the ground material off its splatmap
+        // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
+        // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
+        public PlayerController.Surf SurfAt(float worldX, float worldZ) => SampleDominantLayer(worldX, worldZ) switch
+        {
+            1 => PlayerController.Surf.Sand,      // PEI_Sand
+            3 => PlayerController.Surf.Concrete,  // road network
+            4 => PlayerController.Surf.Concrete,  // rock / cliff
+            5 => PlayerController.Surf.Sand,      // underwater seabed (sand)
+            6 => PlayerController.Surf.Dirt,      // dirt
+            _ => PlayerController.Surf.Grass,     // 2 grass, 0/7 forest, 255 none
+        };
+
         // Build one landscape tile's mesh (+ optional trimesh collider) from its .heightmap file, placed at its coord.
         public static Node3D LoadTile(string heightmapPath, int coordX, int coordY, bool withCollider = true)
         {
@@ -154,6 +167,7 @@ void fragment() {
         public static Terrain LoadMap(string heightmapsDir, bool withCollider = true)
         {
             var t = new Terrain { Name = "Terrain" };
+            Active = t;
             foreach (var path in Directory.GetFiles(heightmapsDir, "Tile_*_Source.heightmap"))
             {
                 // "Tile_<cx>_<cy>_Source.heightmap"
@@ -193,6 +207,7 @@ void fragment() {
                 }
             }
             var terr = new Terrain { Name = "Terrain" };
+            Active = terr;
             if (tiles.Count == 0) return terr;
 
             int GW = (maxX - minX + 1) * 256 + 1, GH = (maxY - minY + 1) * 256 + 1;
@@ -278,6 +293,8 @@ void fragment() {
             if (withCollider)
             {
                 var body = new StaticBody3D { CollisionLayer = 1u << 0 };
+                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass);   // fallback if SurfAt has no splat data
+                body.AddToGroup("terrain");                                                 // bullet impacts sample SurfAt per-point
                 body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
                 terr.AddChild(body);
             }

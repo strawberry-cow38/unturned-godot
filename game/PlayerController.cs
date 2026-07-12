@@ -851,7 +851,16 @@ namespace UnturnedGodot
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car
-                    else SpawnSurfaceImpact(point, hit["normal"].AsVector3(), collider is Node n && n.HasMeta(SurfMeta) ? (Surf)(int)n.GetMeta(SurfMeta) : Surf.Concrete);   // world/prop -> material impact (terrain=grass, untagged=concrete)
+                    else   // world/prop/terrain -> material impact; terrain samples its splatmap PER-POINT (sand/road/dirt/grass) for the real ground material
+                    {
+                        Surf sf = Surf.Concrete;
+                        if (collider is Node n)
+                        {
+                            if (Terrain.Active != null && n.IsInGroup("terrain")) sf = Terrain.Active.SurfAt(point.X, point.Z);
+                            else if (n.HasMeta(SurfMeta)) sf = (Surf)(int)n.GetMeta(SurfMeta);
+                        }
+                        SpawnSurfaceImpact(point, hit["normal"].AsVector3(), sf);
+                    }
                     RemoveBullet(i);
                     continue;
                 }
