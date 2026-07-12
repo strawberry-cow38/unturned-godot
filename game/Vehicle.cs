@@ -220,6 +220,7 @@ namespace UnturnedGodot
             "Bus" => new Vector3(-0.80f, -0.03f, -2.558f),
             "Quad" => new Vector3(0.00f, 0.26f, 0.557f),
             "Ambulance" => new Vector3(-0.50f, 0.12f, -1.40f),
+            "Firetruck" => new Vector3(-0.50f, 0.29f, -2.40f),
             _ => new Vector3(-0.50f, 0.10f, -0.024f),   // Jeep + fallback
         };
 
@@ -406,6 +407,31 @@ namespace UnturnedGodot
             },
         };
 
+        // Firetruck.dat: Speed 14.5, steer 48->24 (big), 6-wheel, red DefaultPaint, Health 700, CarHorn_03.
+        static readonly Spec _firetruck = new()
+        {
+            Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
+            DefaultPaints = new[] { "#b81c1c" },   // red firetruck
+            WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
+            ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
+            Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 2250f, Health = 700f, Name = "Firetruck", Horn = "carhorn_03.ogg",
+            SpotPos = new[] { new Vector3(-0.69f, 0.89f, -3.59f), new Vector3(0.69f, 0.89f, -3.59f) }, OmniPos = new Vector3(0f, 1.02f, -3.57f),
+            TailPos = new[] { new Vector3(-0.98f, 0.55f, 3.64f), new Vector3(0.98f, 0.55f, 3.64f) },
+            SteerPivot = new Vector3(-0.47f, 1.16f, -3.20f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            {
+                (-1.30f, 0.25f, -2.33f, true), (1.30f, 0.25f, -2.33f, true),    // front (steered)
+                (-1.30f, 0.25f, 0.80f, false), (1.30f, 0.25f, 0.80f, false),    // mid
+                (-1.30f, 0.25f, 2.24f, false), (1.30f, 0.25f, 2.24f, false),    // rear
+            },
+            Parts = new (string, Color)[]
+            {
+                ("firetruck_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+            },
+        };
+
         public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
@@ -414,7 +440,8 @@ namespace UnturnedGodot
         public static Vehicle BuildHumvee(int variant = 0) => Build(_humvee, variant);
         public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant);
         public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildFiretruck(int variant = 0) => Build(_firetruck, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), _ => BuildJeep(variant) };
 
         static Vehicle Build(Spec s, int variant)
         {
