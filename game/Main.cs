@@ -853,14 +853,14 @@ namespace UnturnedGodot
             player.LoadGun("res://content/eaglefire.dat");
             AddChild(player);
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
-            player.RotationDegrees = new Vector3(0, 180f, 0);   // face +Z, AWAY from the zombie (only the shot NOISE should reach it, not the bullet)
+            player.RotationDegrees = new Vector3(0, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? 0f : 180f, 0);   // default: face +Z AWAY from the zombie (noise-only, suppressor-alert test). UG_HITZOMBIE: face -Z AT it -> hit it -> verify the flesh/blood impact
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _ftPlayer = player;
             if (suppressed) player.SetSuppressor(true);
 
             var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
             AddChild(z);
-            z.GlobalPosition = new Vector3(0, 1.0f, -25f);
+            z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
 
