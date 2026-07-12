@@ -109,7 +109,7 @@ namespace UnturnedGodot
 
         // billboarded smoke/fire burst using the REAL source particle texture (veh_smoke_0/veh_smoke_1/veh_fire,
         // ripped from the vehicle prefab's ParticleSystemRenderer). smoke = grey rising; fire = additive orange.
-        static CpuParticles3D MakeSmoke(string texName, Color c, float life, float vel, int amount, bool fire)
+        static CpuParticles3D MakeSmoke(string texName, Color c, float life, float vel, int amount, bool fire, float sizeMin, float sizeMax)
         {
             var mat = new StandardMaterial3D
             {
@@ -129,7 +129,7 @@ namespace UnturnedGodot
             {
                 Emitting = false, Amount = amount, Lifetime = life, Direction = Vector3.Up, Spread = 25f,
                 InitialVelocityMin = vel * 0.6f, InitialVelocityMax = vel, Gravity = new Vector3(0f, 1.5f, 0f),
-                ScaleAmountMin = 0.4f, ScaleAmountMax = 1.3f, Color = c, Mesh = new QuadMesh { Size = new Vector2(0.7f, 0.7f), Material = mat },
+                ScaleAmountMin = sizeMin, ScaleAmountMax = sizeMax, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
             };
             if (fire) { ps.AnimOffsetMax = 1f; ps.AnimSpeedMin = 5f; ps.AnimSpeedMax = 9f; }   // random start frame + flicker through the 4
             return ps;
@@ -732,14 +732,13 @@ namespace UnturnedGodot
             // damage smoke + explosion fire from the engine bay (source: smoke_0/1 at health thresholds, fire + Fire light on explode)
             var firePos = new Vector3(0f, 1.24f, -1.70f);   // source Fire node (0,1.238,1.703), Z negated
             v._firePos = firePos;   // remembered so the explosion plume can emit from the engine bay in world-space
-            v._smoke  = MakeSmoke("veh_smoke_1.png", new Color(0.55f, 0.55f, 0.55f), 2.2f, 2.2f, 20, false);   // light damage smoke (health < SMOKE_1 = 200)
-            v._smoke0 = MakeSmoke("veh_smoke_0.png", new Color(0.30f, 0.29f, 0.27f), 2.9f, 2.9f, 28, false);   // heavy smoke (health < SMOKE_0 = 100)
-            v._fire   = MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.7f, 4.5f, 30, true);     // explosion fire
+            v._smoke  = MakeSmoke("veh_smoke_1.png", new Color(0.55f, 0.55f, 0.55f), 2.2f, 2.2f, 20, false, 2.0f, 4.0f);   // light damage smoke (hp<200); src startSize 2-4m
+            v._smoke0 = MakeSmoke("veh_smoke_0.png", new Color(0.30f, 0.29f, 0.27f), 2.9f, 2.9f, 28, false, 2.0f, 4.0f);   // heavy smoke (hp<100); src startSize 2-4m
+            v._fire   = MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.7f, 4.5f, 30, true,  1.0f, 2.0f);   // explosion fire; src startSize 1-2m
             v._smoke.Position = firePos; v._smoke0.Position = firePos; v._fire.Position = firePos;
             v.AddChild(v._smoke); v.AddChild(v._smoke0); v.AddChild(v._fire);
-            v._wheelDust = MakeSmoke("veh_smoke_1.png", new Color(0.62f, 0.58f, 0.50f), 0.6f, 1.6f, 14, false);   // wheels kick up dust while driving (generic tan; per-surface tint = the surf-material system)
+            v._wheelDust = MakeSmoke("veh_smoke_1.png", new Color(0.62f, 0.58f, 0.50f), 0.6f, 1.6f, 14, false, 0.15f, 0.5f);   // wheels kick up dust while driving (generic tan; per-surface tint = the surf-material system)
             v._wheelDust.Direction = new Vector3(0f, 0.5f, 1f); v._wheelDust.Spread = 30f; v._wheelDust.Gravity = new Vector3(0f, -2.5f, 0f);
-            v._wheelDust.ScaleAmountMin = 0.15f; v._wheelDust.ScaleAmountMax = 0.5f;
             v._wheelDust.Position = new Vector3(0f, 0.1f, s.BoxCenter.Z + s.BoxSize.Z * 0.35f);   // rear axle, low
             v.AddChild(v._wheelDust);
             v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
