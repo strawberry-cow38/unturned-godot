@@ -738,7 +738,7 @@ namespace UnturnedGodot
 
         public void Honk()   // source tellHorn: one-shot the horn; 0.5s cooldown (canUseHorn) + needs battery charge
         {
-            if (_hornCd > 0f || Battery <= 0f || _hornAudio == null) return;
+            if (_hornCd > 0f || Battery <= 0f || _hornAudio == null || _alarmTimer > 0f) return;   // can't manually honk while the alarm's blaring (master)
             DoHorn();
             _hornCd = 0.5f;
         }
@@ -750,7 +750,7 @@ namespace UnturnedGodot
         }
         void TriggerAlarm() { if (_alarmed && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master)
 
-        public void ToggleHeadlights() => SetHeadlights(!_headlightsOn);   // source tellHeadlights
+        public void ToggleHeadlights() { if (_alarmTimer > 0f) return; SetHeadlights(!_headlightsOn); }   // source tellHeadlights; blocked while the alarm owns the lights (master)
         void SetHeadlights(bool on)
         {
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights
