@@ -119,7 +119,7 @@ namespace UnturnedGodot
                 d[c[0]] = new GunVisual
                 {
                     Gun = c[0] + "_gun.txt", Albedo = c[0] + "_albedo.png", Sight = null, Mag = null,
-                    Shoot = c[0] + "_shoot.ogg", Reload = c[0] + "_reload.ogg",   // real per-gun sounds (extracted from each gun's AudioClips)
+                    Shoot = Snd(c[0] + "_shoot.ogg", "eaglefire_shoot.ogg"), Reload = Snd(c[0] + "_reload.ogg", "eaglefire_reload.ogg"),   // real per-gun sounds; fall back to eaglefire's if a clip is missing
                     MuzzleHook = V3(c[1]), AimHook = V3(c[2]), ViewOffset = Vector3.Zero,
                     AlbedoTint = new Color(1f, 1f, 1f), Ejects = c[3].Trim() == "1",
                 };
@@ -132,6 +132,7 @@ namespace UnturnedGodot
             var ci = System.Globalization.CultureInfo.InvariantCulture;
             return new Vector3(float.Parse(p[0], ci), float.Parse(p[1], ci), float.Parse(p[2], ci));
         }
+        static string Snd(string name, string fallback) => System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + name)) ? name : fallback;
         Node3D _sight;
 
         // Equip gate — source: you can't start OR stop aiming until the Equip (pull-out) animation finishes
