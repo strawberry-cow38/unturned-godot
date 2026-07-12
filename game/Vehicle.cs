@@ -39,6 +39,7 @@ namespace UnturnedGodot
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         StandardMaterial3D _sirenMat0, _sirenMat1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
+        bool _alarmed; float _alarmTimer, _alarmBlip, _alarmCheckT = 0.3f; bool _alarmLit;   // "alarmed" car (5% of spawns): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies (master)
         AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
         Node3D _steerPivot; Vector3 _steerAxis;   // steering wheel model (source Objects/Steer): rotates by the steer angle around the disc normal
         const float BatteryBurnRate = 20f;   // source batteryBurnRate default (headlights drain while on, EBatteryMode.Burn)
@@ -129,6 +130,7 @@ namespace UnturnedGodot
         {
             if (_exploded || amount <= 0f) return;
             Health = Mathf.Max(0f, Health - amount);
+            TriggerAlarm();   // damaging an alarmed car sets off its alarm (master)
             if (Health <= 0f && _deadTimer < 0f) _deadTimer = ExplodeDelay;
         }
 
@@ -692,6 +694,7 @@ namespace UnturnedGodot
             v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
             v.AddChild(v._explosionAudio);
             v.Brake = s.Brake * HandbrakeScale; v._parked = true;   // spawns parked: brake on + freezes once settled so it holds ride height without jitter (released once driven)
+            v._alarmed = GD.Randf() < 0.05f;   // 5% of spawned cars are "alarmed" -- proximity/damage sets off the alarm loop (master)
             return v;
         }
 
@@ -736,10 +739,17 @@ namespace UnturnedGodot
         public void Honk()   // source tellHorn: one-shot the horn; 0.5s cooldown (canUseHorn) + needs battery charge
         {
             if (_hornCd > 0f || Battery <= 0f || _hornAudio == null) return;
-            _hornAudio.Play();
+            DoHorn();
             _hornCd = 0.5f;
-            GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, HornAlertRadius);   // source tellHorn AlertTool.alert(pos,32): the noise pulls nearby zombies to investigate (same broadcast the gunshot alert uses)
         }
+        void DoHorn()   // the actual honk: a pitch-varied one-shot (master: slight variation per honk) + the zombie noise alert
+        {
+            if (_hornAudio == null) return;
+            _hornAudio.PitchScale = 1f + (GD.Randf() - 0.5f) * 0.14f;   // +-7% pitch per honk so they don't all sound identical (master)
+            _hornAudio.Play();
+            GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, HornAlertRadius);   // source tellHorn AlertTool.alert(pos,32): the noise pulls nearby zombies to investigate
+        }
+        void TriggerAlarm() { if (_alarmed && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master)
 
         public void ToggleHeadlights() => SetHeadlights(!_headlightsOn);   // source tellHeadlights
         void SetHeadlights(bool on)
@@ -767,7 +777,7 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
-            if (Freeze && _deadTimer < 0f)          // a frozen parked car that's off-screen -> skip the settle sim; it stays frozen and its particles render on their own (master, perf)
+            if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();
                 if (cam != null && (cam.IsPositionBehind(GlobalPosition) || cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 90000f)) return;
@@ -827,6 +837,30 @@ namespace UnturnedGodot
             {
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
                 if (Battery <= 0f) SetHeadlights(false);
+            }
+            if (_alarmed)   // "alarmed" car (master): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies
+            {
+                if (_alarmTimer <= 0f)   // idle -> watch for a proximity trigger (throttled)
+                {
+                    _alarmCheckT -= (float)delta;
+                    if (_alarmCheckT <= 0f)
+                    {
+                        _alarmCheckT = 0.3f;
+                        var acam = GetViewport().GetCamera3D();
+                        bool near = acam != null && acam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 49f;   // player within ~7m
+                        if (!near) foreach (var z in GetTree().GetNodesInGroup("zombies")) if (z is Node3D zn && zn.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 36f) { near = true; break; }   // a zombie within ~6m
+                        if (near) TriggerAlarm();
+                    }
+                }
+                else   // ALARMING: blip 0.5s on / 0.5s off for ~30s
+                {
+                    _alarmTimer -= (float)delta; _alarmBlip += (float)delta;
+                    bool on = (_alarmBlip % 1.0f) < 0.5f;
+                    if (on && !_alarmLit) { DoHorn(); SetHeadlights(true); }        // rising edge -> honk + lights on (the honk lures zombies like a real horn)
+                    else if (!on && _alarmLit) SetHeadlights(false);                // falling edge -> lights off, NO honk
+                    _alarmLit = on;
+                    if (_alarmTimer <= 0f) { SetHeadlights(false); _alarmLit = false; }   // alarm done
+                }
             }
             if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.
             {
