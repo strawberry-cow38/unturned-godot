@@ -15,6 +15,8 @@ namespace UnturnedGodot
         public static bool ShowLabels; // P toggles ALL item ESP name tags on/off (off by default; see PlayerController Key.P)
         double _t;
         MeshInstance3D _box;
+        float _losTimer;    // throttle the LOS visibility check (staggered) so a town full of loot isn't a raycast-per-item EVERY frame (master: town stutter)
+        bool _shown = true;
 
         public static WorldItem Spawn(Node parent, Item item, Vector3 pos, Color? fallbackColor = null, string fallbackName = null)
         {
@@ -56,20 +58,27 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            var cam = GetViewport().GetCamera3D();
-            if (cam != null)
+            _losTimer -= (float)delta;
+            if (_losTimer <= 0f)   // recompute visibility ~4x/sec, STAGGERED per item -- NOT a LOS raycast every frame per item (that raycast-storm was the town stutter, master)
             {
-                // Derender when we can't see it (master): behind the camera, far out, OR occluded by terrain/walls (LOS raycast).
-                bool show = !cam.IsPositionBehind(GlobalPosition) && cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 40000f;
-                if (show)
+                _losTimer = 0.22f + GD.Randf() * 0.14f;
+                var cam = GetViewport().GetCamera3D();
+                bool show = true;
+                if (cam != null)
                 {
-                    var q = PhysicsRayQueryParameters3D.Create(cam.GlobalPosition, GlobalPosition + Vector3.Up * 0.3f);
-                    q.CollisionMask = 1;   // world/terrain static geometry between the camera and the item = no line of sight
-                    if (GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0) show = false;
+                    // Derender when we can't see it (master): behind the camera, far out, OR occluded by terrain/walls (LOS raycast).
+                    show = !cam.IsPositionBehind(GlobalPosition) && cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 40000f;
+                    if (show)
+                    {
+                        var q = PhysicsRayQueryParameters3D.Create(cam.GlobalPosition, GlobalPosition + Vector3.Up * 0.3f);
+                        q.CollisionMask = 1;   // world/terrain static geometry between the camera and the item = no line of sight
+                        if (GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0) show = false;
+                    }
                 }
                 if (Visible != show) Visible = show;
-                if (!show) return;   // no _Process work when it's not on screen
+                _shown = show;
             }
+            if (!_shown) return;   // no _Process work while it's not on screen
             // NO spin (master: killed everywhere) -- just a gentle bob while it's visible
             _t += delta;
             if (_box != null) _box.Position = new Vector3(0, 0.28f + 0.05f * Mathf.Sin((float)_t * 2.2f), 0);
