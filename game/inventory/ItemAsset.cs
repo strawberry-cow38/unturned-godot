@@ -15,6 +15,7 @@ namespace SDG.Unturned
     public class ItemAsset
     {
         public ushort id;
+        public string guid = "";   // the item's own GUID (from items_catalog.tsv) -> lets blueprints resolve ingredient GUIDs to numeric ids
         public string itemName = "";
         public string description = "";   // the real localized Description from the item's English.dat
         public byte size_x = 1;
@@ -75,10 +76,12 @@ namespace SDG.Unturned
     public static class Assets
     {
         static readonly Dictionary<ushort, ItemAsset> _byId = new();
+        static readonly Dictionary<string, ItemAsset> _byGuid = new();   // item GUID -> asset (blueprint ingredient resolution)
 
-        public static void add(ItemAsset a) { if (a != null) _byId[a.id] = a; }
+        public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; } }
         public static ItemAsset find(ushort id) => _byId.TryGetValue(id, out var a) ? a : null;
+        public static ItemAsset findByGuid(string guid) => !string.IsNullOrEmpty(guid) && _byGuid.TryGetValue(guid, out var a) ? a : null;
         public static IEnumerable<ItemAsset> all() => _byId.Values;
-        public static void clear() => _byId.Clear();
+        public static void clear() { _byId.Clear(); _byGuid.Clear(); }
     }
 }

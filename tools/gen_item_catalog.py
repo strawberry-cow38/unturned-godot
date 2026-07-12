@@ -5,7 +5,7 @@ OUT  = r"C:\claude-workspace\unturned-godot\game\content\items_catalog.tsv"
 def parse_kv(path):
     d = {}
     try:
-        with open(path, encoding='utf-8', errors='replace') as f:
+        with open(path, encoding='utf-8-sig', errors='replace') as f:   # utf-8-sig strips the BOM so the line-1 "GUID" key isn't read as "﻿GUID"
             for line in f:
                 s = line.strip()
                 if not s or s in ('{', '}', '[', ']'):
@@ -44,7 +44,8 @@ for root, dirs, files in os.walk(BASE):
         typ = d.get('Type', 'Generic')
         types[typ] = types.get(typ, 0) + 1
         seen[iid] = (iid, name.strip(), typ, d.get('Rarity', 'Common'),
-                     d.get('Size_X', '1'), d.get('Size_Y', '1'), desc.strip())
+                     d.get('Size_X', '1'), d.get('Size_Y', '1'), desc.strip(),
+                     d.get('GUID', '').strip())   # col 7: item's own GUID -> resolve blueprint ingredient GUIDs to ids
 
 rows = sorted(seen.values())
 os.makedirs(os.path.dirname(OUT), exist_ok=True)

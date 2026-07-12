@@ -1649,14 +1649,26 @@ namespace UnturnedGodot
         // outputs, skill, station). Proves BlueprintDef reads the modern nested-GUID blueprint format end to end.
         static void RunCraftTest()
         {
+            SDG.Unturned.ItemCatalog.RegisterAll();   // populates the item GUID->id map used to resolve blueprint ingredients
             string path = ProjectSettings.GlobalizePath("res://content/eaglefire.dat");
             if (!System.IO.File.Exists(path)) { GD.Print($"[CRAFTTEST] no .dat at {path}"); return; }
             string text = System.IO.File.ReadAllText(path);
             SDG.Unturned.IDatDictionary d = new SDG.Unturned.DatParser().Parse(text);
             var bps = BlueprintDef.ParseAll(d, "4");
             GD.Print($"[CRAFTTEST] eaglefire.dat -> {bps.Count} blueprint(s):");
-            foreach (var bp in bps) GD.Print("[CRAFTTEST]   " + bp.ToString());
-            GD.Print($"[CRAFTTEST] RESULT {(bps.Count > 0 ? "PASS parsed blueprints" : "FAIL no blueprints parsed")}");
+            int resolved = 0, total = 0;
+            foreach (var bp in bps)
+            {
+                GD.Print("[CRAFTTEST]   " + bp.ToString());
+                foreach (var ing in bp.Inputs)
+                {
+                    total++;
+                    var a = SDG.Unturned.Assets.findByGuid(ing.Guid);
+                    if (a != null) { resolved++; GD.Print($"[CRAFTTEST]     in {ing.Guid.Substring(0, 8)} -> id {a.id} \"{a.itemName}\" x{ing.Amount}{(ing.Consume ? "" : " (tool)")}"); }
+                    else GD.Print($"[CRAFTTEST]     in {ing.Guid} -> UNRESOLVED");
+                }
+            }
+            GD.Print($"[CRAFTTEST] RESULT parsed {bps.Count} bp, resolved {resolved}/{total} ingredient GUIDs -> item ids");
         }
 
         // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every

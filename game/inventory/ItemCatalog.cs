@@ -42,6 +42,7 @@ namespace SDG.Unturned
                 {
                     id = id, itemName = c[1], type = ParseType(c[2]), rarity = ParseRarity(c[3]),
                     size_x = ParseByte(c[4]), size_y = ParseByte(c[5]), description = c.Length > 6 ? c[6] : "",
+                    guid = c.Length > 7 ? c[7] : "",
                 });
                 n++;
             }
