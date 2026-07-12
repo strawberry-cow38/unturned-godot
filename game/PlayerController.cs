@@ -880,6 +880,20 @@ namespace UnturnedGodot
             return _bulletHoleTex;
         }
 
+        // Real per-material bullet-hole decal (Effects/Impacts/<mat>_WithDecal, MeshRenderer _MainTex extracted), cached.
+        // Only hard surfaces (concrete/metal/wood) leave a hole; falls back to the generated bullet_hole if a texture's missing.
+        readonly System.Collections.Generic.Dictionary<Surf, Texture2D> _decalTex = new System.Collections.Generic.Dictionary<Surf, Texture2D>();
+        Texture2D DecalTex(Surf surf)
+        {
+            if (_decalTex.TryGetValue(surf, out var cached)) return cached;
+            string name = surf switch { Surf.Metal => "metal", Surf.Wood => "wood", _ => "concrete" };
+            string p = ProjectSettings.GlobalizePath($"res://content/decal_{name}.png");
+            Texture2D t = null;
+            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) { img.GenerateMipmaps(); t = ImageTexture.CreateFromImage(img); } }
+            _decalTex[surf] = t ??= BulletHoleTex();
+            return t;
+        }
+
         // surface materials for bullet impacts (a slice of the source EPhysicsMaterial set). Tagged on colliders via
         // SetMeta("surf", (int)Surf) -- terrain = Grass, vehicles = Metal, untagged (buildings/props) = Concrete.
         public enum Surf { Concrete, Grass, Dirt, Metal, Wood, Sand, Water }
@@ -906,10 +920,10 @@ namespace UnturnedGodot
             Vector3 up = normal.Normalized();
             bool hard = surf is Surf.Concrete or Surf.Metal or Surf.Wood;
             bool metal = surf == Surf.Metal;
-            var tex = BulletHoleTex();
+            var tex = DecalTex(surf);
             if (hard && tex != null)
             {
-                var dec = new Decal { TextureAlbedo = tex, Size = new Vector3(0.16f, 0.3f, 0.16f), AlbedoMix = 1f, Modulate = metal ? new Color(0.72f, 0.72f, 0.75f) : Colors.White };
+                var dec = new Decal { TextureAlbedo = tex, Size = new Vector3(0.16f, 0.3f, 0.16f), AlbedoMix = 1f, Modulate = Colors.White };   // real per-material decal carries its own colour
                 (attachTo ?? (Node)scene).AddChild(dec);   // vehicle hits: parent to the car so the hole FOLLOWS it (master); world hits: static in the scene
                 Vector3 t = Mathf.Abs(up.Dot(Vector3.Up)) < 0.95f ? Vector3.Up : Vector3.Right;
                 Vector3 right = up.Cross(t).Normalized();
