@@ -32,16 +32,28 @@ namespace UnturnedGodot
                 if (!File.Exists(binPath)) continue;
                 var xf = ReadInstances(binPath);
                 if (xf.Count == 0) continue;
+                // Bucket instances into spatial CELLS so each chunk frustum-culls independently (behind the player) + distance-culls,
+                // instead of one map-wide MultiMesh that's never culled. Trees keep their shadows within range (master); props cull closer.
+                const float Cell = 64f;
+                float cullRange = isTree ? 320f : 180f;
+                var byCell = new Dictionary<(int, int), List<Transform3D>>();
+                foreach (var t in xf) { var key = ((int)Mathf.Floor(t.Origin.X / Cell), (int)Mathf.Floor(t.Origin.Z / Cell)); if (!byCell.TryGetValue(key, out var cl)) { cl = new List<Transform3D>(); byCell[key] = cl; } cl.Add(t); }
                 for (int i = 0; i < parts; i++)
                 {
                     string objP = dir + name + "_" + i + ".obj";
                     if (!File.Exists(objP)) continue;
                     var mesh = ObjMesh.Load(objP);
                     if (mesh == null) continue;
-                    var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = xf.Count };
-                    for (int k = 0; k < xf.Count; k++) mm.SetInstanceTransform(k, xf[k]);
-                    AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = MakeMat(dir + name + "_" + i + "_tex.png", !isTree),
-                        CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off });
+                    var mat = MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
+                    foreach (var kv in byCell)
+                    {
+                        var lst = kv.Value;
+                        var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
+                        for (int k = 0; k < lst.Count; k++) mm.SetInstanceTransform(k, lst[k]);
+                        AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
+                            CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
+                            VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+                    }
                 }
                 total += xf.Count; types++;
                 GD.Print($"[resources] {name}: {xf.Count} x {parts} part(s)");

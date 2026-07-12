@@ -767,6 +767,11 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
+            if (Freeze && _deadTimer < 0f)          // a frozen parked car that's off-screen -> skip the settle sim; it stays frozen and its particles render on their own (master, perf)
+            {
+                var cam = GetViewport().GetCamera3D();
+                if (cam != null && (cam.IsPositionBehind(GlobalPosition) || cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 90000f)) return;
+            }
             if (_spawnGrace > 0f) _spawnGrace -= (float)delta;   // spawn/world-init: stay DYNAMIC ~2.5s so a fresh car drops to fit terrain first
             // Freeze a settled car (source isKinematic) -- but ONLY once it's GROUNDED + fully stopped. No fixed exit-timer (that kept the
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)

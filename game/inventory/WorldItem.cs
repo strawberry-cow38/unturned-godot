@@ -56,6 +56,8 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            var cam = GetViewport().GetCamera3D();   // behind the player (or way out) -> kill the spin/bob entirely, zero CPU (master); the mesh frustum-culls itself
+            if (cam != null && (cam.IsPositionBehind(GlobalPosition) || cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) > 40000f)) return;
             _t += delta;
             RotateY((float)delta * 1.1f);                                    // slow spin
             if (_box != null) _box.Position = new Vector3(0, 0.28f + 0.05f * Mathf.Sin((float)_t * 2.2f), 0);   // bob
