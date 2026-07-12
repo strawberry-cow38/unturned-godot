@@ -1155,7 +1155,17 @@ namespace UnturnedGodot
                 if (_peiPlayable)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
                     if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
-                    if (shp != null) { var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = MatFor(name).Transparency != BaseMaterial3D.TransparencyEnum.Disabled ? 1u << 6 : 1u << 0 }; body.AddChild(new CollisionShape3D { Shape = shp }); AddChild(body); }   // transparent props (glass / alpha-cutout) go on the see-through layer 6: the item LOS raycast (mask bit 0) passes through, still solid to the player (master)
+                    if (shp != null)
+                    {
+                        // Only LARGE opaque structures (buildings, gated by scaled mesh size) block the item LOS raycast; every small prop
+                        // + all glass/alpha-cutout goes on the see-through layer 6 so the raycast passes through (master). Player collides with both.
+                        var ab = mesh.GetAabb();
+                        float maxDim = Mathf.Max(ab.Size.X * sx, Mathf.Max(ab.Size.Y * sy, ab.Size.Z * sz));
+                        bool losBlocker = maxDim >= 5f && MatFor(name).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
+                        var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
+                        body.AddChild(new CollisionShape3D { Shape = shp });
+                        AddChild(body);
+                    }
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
