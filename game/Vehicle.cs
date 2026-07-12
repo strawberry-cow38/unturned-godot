@@ -53,6 +53,7 @@ namespace UnturnedGodot
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
+            public float[] WheelRadii;   // optional per-wheel radius (tractor: small front, big rear); null = uniform WheelRadius
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
             public float ReverseGear, ShiftUpRpm;   // .dat ReverseGearRatio + GearShift_UpThresholdRPM
@@ -221,6 +222,7 @@ namespace UnturnedGodot
             "Quad" => new Vector3(0.00f, 0.26f, 0.557f),
             "Ambulance" => new Vector3(-0.50f, 0.12f, -1.40f),
             "Firetruck" => new Vector3(-0.50f, 0.29f, -2.40f),
+            "Tractor" => new Vector3(0.00f, 0.69f, 1.10f),
             _ => new Vector3(-0.50f, 0.10f, -0.024f),   // Jeep + fallback
         };
 
@@ -432,6 +434,28 @@ namespace UnturnedGodot
             },
         };
 
+        // Tractor_0.dat: Speed 10 (slow), steer 24->12, front-steered, big-rear/small-front wheels, green, Health 700, CarHorn_03.
+        static readonly Spec _tractor = new()
+        {
+            Body = "tractor_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "tractor_palette.png",
+            DefaultPaints = new[] { "#3f7d2f" },   // green tractor
+            WheelRadius = 0.6f, WheelRadii = new[] { 0.45f, 0.45f, 0.68f, 0.68f },   // small front, big rear (agricultural)
+            Engine = 620f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 10f, SpeedMin = -5f, Brake = 24f,
+            BoxSize = new Vector3(2.5f, 1.8f, 4.78f), BoxCenter = new Vector3(0f, 0.72f, -0.12f),
+            ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
+            Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 2000f, Health = 700f, Name = "Tractor", Horn = "carhorn_03.ogg",
+            SpotPos = new[] { new Vector3(-0.40f, 1.26f, -2.65f), new Vector3(0.40f, 1.26f, -2.65f) }, OmniPos = new Vector3(0f, 1.40f, -2.62f),
+            TailPos = new[] { new Vector3(0.70f, 1.08f, 2.45f), new Vector3(-0.70f, 1.08f, 2.45f) },
+            SteerPivot = new Vector3(0f, 1.56f, -0.29f), SteerAxis = new Vector3(0f, 0.5f, 0.866f),   // upright tractor column
+            Wheels = new (float, float, float, bool)[]
+            { (-0.90f, 0.45f, -1.54f, true), (0.90f, 0.45f, -1.54f, true), (-1.50f, 0.52f, 1.36f, false), (1.50f, 0.52f, 1.36f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("tractor_steer.txt", new Color(0.15f, 0.15f, 0.15f)),
+            },
+        };
+
         public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
@@ -441,7 +465,8 @@ namespace UnturnedGodot
         public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant);
         public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant);
         public static Vehicle BuildFiretruck(int variant = 0) => Build(_firetruck, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), _ => BuildJeep(variant) };
+        public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), _ => BuildJeep(variant) };
 
         static Vehicle Build(Spec s, int variant)
         {
@@ -490,16 +515,18 @@ namespace UnturnedGodot
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
+                float wr = s.WheelRadii != null ? s.WheelRadii[i] : s.WheelRadius;   // per-wheel radius (tractor dual sizes)
+                float wscale = wr / s.WheelRadius;                                   // scale the shared wheel mesh to match
                 var w = new VehicleWheel3D
                 {
                     Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = true,
-                    WheelRadius = s.WheelRadius, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
+                    WheelRadius = wr, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
                     SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = 6.0f,
                 };
                 // left wheels: flip the mesh so the tread faces outward
-                var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3(x < 0 ? -1f : 1f, 1f, 1f) };
+                var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
                 w.AddChild(mi);
                 v.AddChild(w);
                 v._wNodes[i] = w; v._wMeshes[i] = mi; v._wSign[i] = x < 0 ? -1f : 1f;

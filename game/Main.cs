@@ -1284,7 +1284,8 @@ namespace UnturnedGodot
                                     2 => "firetruck",                                                           // Fire
                                     3 => (i % 2 == 0) ? "humvee" : "jeep",                                      // Military_Canada: humvee + jeep, both forest (master: jeep is military)
                                     4 => "ambulance",                                                           // Medic -> drivable ambulance
-                                    _ => "quad",                                                                // Farm (5): quad ATV stand-in until a tractor is ported
+                                    5 => "tractor",                                                             // Farm -> drivable tractor
+                                    _ => "quad",                                                                // fallback
                                 };
                                 var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
                                 AddChild(veh);
