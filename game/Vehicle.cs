@@ -242,10 +242,12 @@ namespace UnturnedGodot
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
             Fuel = 1000f, Health = 450f, Name = "Quad", Horn = "carhorn_01.ogg",
+            SteerPivot = new Vector3(0f, 1.00f, -0.32f), SteerAxis = new Vector3(0f, 1f, 0f),   // handlebars: pivot at the prefab Steer node, yaw around vertical
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
             Parts = new (string, Color)[]
             {
+                ("quad_steer.txt", new Color(0.15f, 0.15f, 0.15f)),        // handlebars: dark metal/rubber (turns with steering)
                 ("quad_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // cream
                 ("quad_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // red
             },
