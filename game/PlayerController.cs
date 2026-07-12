@@ -988,38 +988,40 @@ namespace UnturnedGodot
             b.Tracer.Scale = new Vector3(1f, 1f, len / 5f);                   // shrink the 5 m box to the trail length
         }
 
-        // Flesh impact — the source Flesh_Dynamic effect (impact ID 5: a ~25-particle billboard blood spray,
-        // size 0.5-1, ~1s life). Ported as a one-shot GPUParticles3D blood burst at the world hit point, sprayed
-        // back out of the wound (-dir) under gravity, auto-freed. (Per-material impacts — concrete/metal/wood —
-        // are a follow-up; flesh is what you hit in the demo.)
+        // Flesh impact — the REAL source Flesh_Dynamic effect (impact ID 5), extracted texture + params: a 16-particle
+        // burst of the 4-frame blood sprite, size 0.5-1.0m, 3-6 m/s, gravityModifier 1, ~1s life, sprayed back out of the
+        // wound (-dir). One-shot GpuParticles3D at the world hit point, auto-freed. (Was a flat-red placeholder quad @ 24
+        // particles / 0.1m — now the real blood texture at source counts/sizes.)
         void SpawnFleshImpact(Vector3 point, Vector3 dir)
         {
+            if (!_fleshTexTried)
+            {
+                _fleshTexTried = true;
+                string fp = ProjectSettings.GlobalizePath("res://content/impact_flesh_dynamic_0.png");
+                if (System.IO.File.Exists(fp)) { var fi = Image.LoadFromFile(fp); if (fi != null) _fleshTex = ImageTexture.CreateFromImage(fi); }
+            }
             var pm = new ParticleProcessMaterial
             {
-                Direction = -dir,
-                Spread = 60f,
-                InitialVelocityMin = 1.5f,
-                InitialVelocityMax = 4.5f,
-                Gravity = new Vector3(0f, -9.8f, 0f),
-                ScaleMin = 0.5f,
-                ScaleMax = 1.0f,
-                Color = new Color(0.5f, 0.02f, 0.02f),
+                Direction = -dir, Spread = 60f,
+                InitialVelocityMin = 3f, InitialVelocityMax = 6f,       // source startSpeed 3-6
+                Gravity = new Vector3(0f, -9.8f, 0f),                   // gravityModifier 1
+                ScaleMin = 0.5f, ScaleMax = 1.0f,                       // source startSize 0.5-1.0m (QuadMesh Size 1 -> metres)
+                Color = Colors.White,                                   // texture supplies the blood red
+                AnimOffsetMin = 0f, AnimOffsetMax = 1f,                 // random static blood frame per particle (4-frame sheet)
             };
             var mat = new StandardMaterial3D
             {
-                AlbedoColor = new Color(0.5f, 0.02f, 0.02f),
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                AlbedoColor = Colors.White, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
             };
+            if (_fleshTex != null) { mat.AlbedoTexture = _fleshTex; mat.ParticlesAnimHFrames = 4; mat.ParticlesAnimVFrames = 1; mat.ParticlesAnimLoop = false; }
+            else mat.AlbedoColor = new Color(0.5f, 0.02f, 0.02f);       // fallback: red if the texture is missing
             var ps = new GpuParticles3D
             {
-                Amount = 24,
-                Lifetime = 1.0,
-                OneShot = true,
-                Explosiveness = 0.95f,
+                Amount = 16, Lifetime = 1.0, OneShot = true, Explosiveness = 1f,   // source burst of 16
                 ProcessMaterial = pm,
-                DrawPass1 = new QuadMesh { Size = new Vector2(0.1f, 0.1f), Material = mat },
+                DrawPass1 = new QuadMesh { Size = Vector2.One, Material = mat },
                 Emitting = true,
             };
             GetTree().CurrentScene?.AddChild(ps);
@@ -1030,6 +1032,7 @@ namespace UnturnedGodot
 
         static Texture2D _tracerTex;      // the "Bullet" sprite, loaded once (shared by MakeTracer)
         static bool _tracerTexTried;
+        static Texture2D _fleshTex; static bool _fleshTexTried;   // the real Flesh_Dynamic blood sprite (loaded once)
 
         // Brief world-space muzzle flash light. The source Muzzle_0 effect illuminates the environment on each shot;
         // our viewmodel flash lives in an isolated SubViewport world, so it can't light the main scene. Warm Muzzle_0
