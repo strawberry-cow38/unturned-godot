@@ -761,8 +761,9 @@ namespace UnturnedGodot
             // car dynamic ~1s -> braking jitter) and full velocity incl. vertical (so a falling/braking car never freezes mid-air). (master)
             int groundedCount = 0; foreach (var w in _wNodes) if (w.IsInContact()) groundedCount++;
             bool mostlyGrounded = groundedCount * 2 > _wNodes.Length;   // MAJORITY of wheels down = sitting level (not teetering on 1 wheel, not airborne) -- master
-            _velAvg = _velAvg.Lerp(LinearVelocity, 0.12f);    // LOW-PASS velocity + spin (master's "check above the jitter freq"): the jitter's rapid
-            _angAvg = _angAvg.Lerp(AngularVelocity, 0.12f);   // back-and-forth cancels to ~0 in the running average, but a real roll or a handbrake
+            _velAvg = _velAvg.Lerp(LinearVelocity, 0.08f);    // LOW-PASS velocity + spin (master's "check above the jitter freq"): the jitter's rapid
+            _angAvg = _angAvg.Lerp(AngularVelocity, 0.08f);   // back-and-forth cancels to ~0 in the running average, but a real roll or a handbrake
+            // (0.08 = a longer settle lag than 0.12 -- master wanted a bit more delay to cover edge cases)
             // nose-dive REBOUND (sustained, directional) survives the filter. So we wait for the suspension to normalize (angular avg settles) yet
             // never deadlock on the jitter -- fixes both "jitter is back" AND "freezes mid nose-dive with the back wheels up" (master).
             bool wantHold = mostlyGrounded && _angAvg.LengthSquared() < 0.03f && (_exploded ? _velAvg.LengthSquared() < 1.0f
