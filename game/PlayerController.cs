@@ -942,6 +942,7 @@ namespace UnturnedGodot
             scene.AddChild(dust);
             dust.GlobalPosition = point + up * 0.03f;
             var t2 = GetTree().CreateTimer(1.4); t2.Timeout += () => { if (IsInstanceValid(dust)) dust.QueueFree(); };
+            PlayImpactSound(ImpactSnd(surf), point);   // source impact effects carry per-material audio
         }
 
         // Real impact-effect debris texture per surface (Effects/Impacts/<mat>_static extracted PNG), cached. Surf->effect:
@@ -960,6 +961,40 @@ namespace UnturnedGodot
             if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) tex = ImageTexture.CreateFromImage(img); }
             _impactTex[surf] = tex;
             return tex;
+        }
+
+        // Impact SOUND — each source impact effect carries its own audio (Effects/Impacts/<mat>/<mat>.mp3), extracted to WAV.
+        // A 3D one-shot at the hit point, cached per surface. grass=foliage, dirt/sand=gravel, else same-named.
+        static readonly System.Collections.Generic.Dictionary<Surf, AudioStream> _impactSnd = new System.Collections.Generic.Dictionary<Surf, AudioStream>();
+        static AudioStream _fleshSnd; static bool _fleshSndTried;
+        static AudioStream LoadWav(string rel)
+        {
+            string p = ProjectSettings.GlobalizePath(rel);
+            return System.IO.File.Exists(p) ? AudioStreamWav.LoadFromFile(p) : null;
+        }
+        AudioStream ImpactSnd(Surf surf)
+        {
+            if (_impactSnd.TryGetValue(surf, out var cached)) return cached;
+            string name = surf switch
+            {
+                Surf.Metal => "metal", Surf.Wood => "wood", Surf.Sand => "gravel",
+                Surf.Grass => "foliage", Surf.Dirt => "gravel", Surf.Water => "water", _ => "concrete",
+            };
+            var a = LoadWav($"res://content/impact_{name}.wav");
+            _impactSnd[surf] = a;
+            return a;
+        }
+        void PlayImpactSound(AudioStream a, Vector3 pos)
+        {
+            if (a == null) return;
+            var scene = GetTree().CurrentScene;
+            if (scene == null) return;
+            var pl = new AudioStreamPlayer3D { Stream = a, UnitSize = 5f, MaxDistance = 70f, VolumeDb = -3f };
+            scene.AddChild(pl);
+            pl.GlobalPosition = pos;
+            pl.Play();
+            pl.Finished += () => { if (IsInstanceValid(pl)) pl.QueueFree(); };
+            if (System.Environment.GetEnvironmentVariable("UG_IMPACTDEBUG") == "1") GD.Print($"[impactaudio] played @ {pos.Round()}");
         }
 
         // The traveling tracer: a thin additive "Bullet"-textured streak that rides with the bullet, oriented along
@@ -1039,6 +1074,8 @@ namespace UnturnedGodot
             ps.GlobalPosition = point;
             var timer = GetTree().CreateTimer(1.4);
             timer.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
+            if (!_fleshSndTried) { _fleshSndTried = true; _fleshSnd = LoadWav("res://content/impact_flesh.wav"); }
+            PlayImpactSound(_fleshSnd, point);   // source flesh impact carries blood-splat audio
         }
 
         static Texture2D _tracerTex;      // the "Bullet" sprite, loaded once (shared by MakeTracer)
