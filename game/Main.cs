@@ -1262,7 +1262,7 @@ namespace UnturnedGodot
                             float gz = -pz;                  // Unity Z -> port negate-Z
                             var vpos = new Vector3(px, terr.SampleHeight(px, gz) + 1.2f, gz);
                             var vyaw = new Basis(Vector3.Up, Mathf.DegToRad(-ang));   // spawn yaw (negate for negate-Z)
-                            string vn = type == 1 ? "Veh_Police" : null;   // only Police stays a static mesh; Firetruck + Ambulance are drivable below
+                            string vn = null;   // all PEI service vehicles (Police / Fire / Medic) are drivable now, no static meshes
                             if (vn != null)   // real static vehicle mesh (Police / Firetruck / Ambulance) + collider
                             {
                                 if (!cache.TryGetValue(vn, out var vm)) { vm = ObjMesh.Load(dir + vn + ".obj"); cache[vn] = vm; }
@@ -1281,6 +1281,7 @@ namespace UnturnedGodot
                                 vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
                                 {
                                     0 => (i % 3) switch { 0 => "sedan", 1 => "hatchback", _ => "roadster" },   // Civilian rolls the civilian car pool
+                                    1 => "police",                                                              // Police
                                     2 => "firetruck",                                                           // Fire
                                     3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },            // Military_Canada: humvee + jeep + ural truck, all forest
                                     4 => "ambulance",                                                           // Medic -> drivable ambulance
