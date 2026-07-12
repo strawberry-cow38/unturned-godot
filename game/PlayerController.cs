@@ -891,7 +891,7 @@ namespace UnturnedGodot
             if (_fp || _dead) { return; }
             if (_driving != null)   // in the driver seat (best-effort idle pose)
             {
-                _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, new Vector3(-0.5f, 0.05f, -0.12f));
+                _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, _driving.SeatOffset);   // per-vehicle driver seat (prefab Seat_0)
                 _body.SetLocomotion(0f);
             }
             else   // on foot: at the player's feet, facing the body yaw, locomotion by horizontal speed

@@ -29,7 +29,7 @@ namespace UnturnedGodot
         public int Gear => _gear;
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
-        public bool EngineOn; public string DisplayName;
+        public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
@@ -208,6 +208,19 @@ namespace UnturnedGodot
                 return new Color(s.DefaultPaints[variant % s.DefaultPaints.Length]);
             return Colors.White;   // no default paint -> unpainted white (e.g. the bus is #d4d4d4, near-white)
         }
+
+        // Driver seat position per vehicle (prefab Seats/Seat_0, Godot space Z-negated) + a small body rise so the 3rd-person
+        // driver sits in the right spot -- cars sit LEFT, the quad is CENTRED, the bus is far-left + way back (master).
+        static Vector3 SeatOf(string name) => name switch
+        {
+            "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
+            "Hatchback" => new Vector3(-0.50f, -0.04f, -0.239f),
+            "Humvee" => new Vector3(-0.50f, 0.07f, -0.480f),
+            "Roadster" => new Vector3(-0.50f, -0.04f, 0.390f),
+            "Bus" => new Vector3(-0.80f, -0.03f, -2.558f),
+            "Quad" => new Vector3(0.00f, 0.26f, 0.557f),
+            _ => new Vector3(-0.50f, 0.10f, -0.024f),   // Jeep + fallback
+        };
 
         // Jeep.dat: Speed 12.5, steer 28, front-steered, torque 2.8. Godot space (front = -Z): X +-1.30, front Z -1.40.
         static readonly Spec _jeep = new()
@@ -390,7 +403,7 @@ namespace UnturnedGodot
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
-            v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name;
+            v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
 
             var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
