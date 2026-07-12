@@ -14,6 +14,7 @@ namespace UnturnedGodot
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
         Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
+        Transform3D _vehPrev, _vehCurr; bool _vehReady;   // same render-interp for the DRIVING cam -- interpolate the vehicle transform (no mouse-look while driving so we can lerp rotation too)
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
@@ -891,6 +892,8 @@ namespace UnturnedGodot
         {
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
+            if (_driving != null && _vehReady && !_dead)   // same render-interp for the DRIVING cam: position it from the INTERPOLATED vehicle transform (master)
+                PositionDriveCam(LerpTransform(_vehPrev, _vehCurr, (float)Engine.GetPhysicsInterpolationFraction()));
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)
@@ -971,6 +974,7 @@ namespace UnturnedGodot
         void EnterVehicle(Vehicle v)
         {
             _driving = v;
+            _vehReady = false;                                 // fresh drive-cam render-interp (no smear from a previous drive)
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             v.EngineOn = true;                                 // start burning fuel (source: engine on)
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
@@ -1012,12 +1016,16 @@ namespace UnturnedGodot
             }
             _driving.Drive(throttle, steer, Input.IsPhysicalKeyPressed(Key.Space));
             GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle
+            // Snapshot the vehicle transform for RENDER INTERPOLATION -- the cam is positioned in _Process from the INTERPOLATED
+            // transform so the driving view is smooth at 60+ fps instead of stepping at the 50Hz physics rate (master).
+            _vehPrev = _vehReady ? _vehCurr : _driving.GlobalTransform; _vehCurr = _driving.GlobalTransform; _vehReady = true;
+        }
+
+        void PositionDriveCam(Transform3D vt)   // FP / chase cam from the (interpolated) vehicle transform. Full global transform atomically
+        {                                        // (position + orientation): a LookAt updated pos but not rotation through turns -> car slid out of frame.
             if (_cam == null) return;
-            var vt = _driving.GlobalTransform;
             var fwd = -vt.Basis.Z; fwd.Y = 0f;
             fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-            // Set the FULL global transform atomically (position + orientation). LookAt on a TopLevel child of the
-            // moving player updated position but NOT rotation through turns -> the car slid out of frame. GlobalTransform is reliable.
             if (_fp)   // first-person from the driver's head, looking forward over the hood
             {
                 var eye = vt * new Vector3(-0.4f, 1.85f, 0.4f);
@@ -1029,6 +1037,9 @@ namespace UnturnedGodot
                 _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
             }
         }
+
+        static Transform3D LerpTransform(Transform3D a, Transform3D b, float t) =>
+            new Transform3D(new Basis(a.Basis.GetRotationQuaternion().Slerp(b.Basis.GetRotationQuaternion(), t).Normalized()), a.Origin.Lerp(b.Origin, t));
 
         public override void _PhysicsProcess(double delta)
         {

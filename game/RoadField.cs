@@ -155,7 +155,7 @@ namespace UnturnedGodot
             {
                 float length = Mathf.Max(SegLength(r, index), 0.001f);
                 float step;
-                for (step = carry; step < length; step += 2.5f) samples.Add((index, step / length));   // sample every 2.5u (src 5) so the road hugs the terrain tighter between joints (master)
+                for (step = carry; step < length; step += 5f) samples.Add((index, step / length));   // sample every 5u (src value) -- the 2.5u tighter sampling left BALD road patches, reverted (master)
                 carry = step - length;
             }
             if (loop) samples.Add((0, 0f)); else samples.Add((jc - 2, 1f));
