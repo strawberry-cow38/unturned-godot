@@ -242,12 +242,14 @@ namespace UnturnedGodot
                     mi.AddChild(_drySnd);
                     mi.AddChild(_muzzleFlash);
 
-                    // Eject hook marker (gun Eject hook (0,0.0275,0.0814) -> port (0,0.0275,-0.0814)) + the shared
-                    // casing mesh/material: a small yellow rectangle cube standing in for the 5.56 brass.
+                    // Eject hook marker (gun Eject hook (0,0.0275,0.0814) -> port (0,0.0275,-0.0814)) + the casing mesh/
+                    // material. The source Casing effect's Model_0 IS a plain box (24 verts, square section, ~3.3:1) with a
+                    // flat brass _Color (0.904,0.768,0.007) -- so the box replicates the real asset; sized to master's +50%.
+                    // (Shotguns' red Shell casing _Color (0.588,0.190,0.190) is extracted too, pending per-gun action wiring.)
                     _ejectHook = new Node3D { Name = "EjectHook", Position = new Vector3(0f, 0.0275f, -0.0814f) };
                     mi.AddChild(_ejectHook);
-                    _casingMesh = new BoxMesh { Size = new Vector3(0.0135f, 0.0135f, 0.042f) };   // +50% (master)
-                    _casingMat = new StandardMaterial3D { AlbedoColor = new Color(0.96f, 0.79f, 0.15f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+                    _casingMesh = new BoxMesh { Size = new Vector3(0.0135f, 0.0135f, 0.042f) };   // source square section @ master's +50% length
+                    _casingMat = new StandardMaterial3D { AlbedoColor = new Color(0.904f, 0.768f, 0.007f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };   // exact source brass _Color
                 }
             }
 
