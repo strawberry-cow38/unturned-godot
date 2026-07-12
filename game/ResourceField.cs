@@ -45,6 +45,19 @@ namespace UnturnedGodot
                     var mesh = ObjMesh.Load(objP);
                     if (mesh == null) continue;
                     var mat = MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
+                    if (isTree && i == 0)   // MultiMesh has no colliders -> add a trunk cylinder per tree so trees BLOCK bullets/movement (master), tagged Wood
+                    {
+                        var ab = mesh.GetAabb();
+                        var shp = new CylinderShape3D { Radius = Mathf.Max(0.25f, Mathf.Max(ab.Size.X, ab.Size.Z) * 0.28f), Height = Mathf.Max(1.5f, ab.Size.Y) };
+                        float cy = ab.Position.Y + ab.Size.Y * 0.5f;   // trunk centre Y in local space
+                        foreach (var t in xf)
+                        {
+                            var body = new StaticBody3D { Transform = t, CollisionLayer = 1u << 0 };
+                            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
+                            body.AddChild(new CollisionShape3D { Shape = shp, Position = new Vector3(0f, cy, 0f) });
+                            AddChild(body);
+                        }
+                    }
                     foreach (var kv in byCell)
                     {
                         var lst = kv.Value;
