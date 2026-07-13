@@ -1563,6 +1563,7 @@ namespace UnturnedGodot
                 cam.Fov = 72f;
                 cam.Position = new Vector3(0f, 1650f, 0f);
                 cam.RotationDegrees = new Vector3(-90f, 0f, 0f);   // straight down: +X = east, -Z = north (map orientation)
+                cam.Near = 1200f; cam.Far = 2200f;   // terrain is all ~1.4-1.7km away -> a tight near/far restores depth precision + kills the z-fighting that hid pockets at this zoom
             }
             else   // close-up over one pocket with a ring of zombies + their vision cones
             {
@@ -1570,7 +1571,8 @@ namespace UnturnedGodot
                 Vector3 look = Vector3.Zero;
                 if (pockets.Count > 0)
                 {
-                    var pk = pockets[Mathf.Min(3, pockets.Count - 1)];
+                    int pkIdx = int.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVPOCKET"), out var pi) ? Mathf.Clamp(pi, 0, pockets.Count - 1) : 3;   // UG_NAVPOCKET=N -> close up on pocket N
+                var pk = pockets[pkIdx];
                     float cy = terr.SampleHeight(pk.Center.X, pk.Center.Z);
                     look = new Vector3(pk.Center.X, cy, pk.Center.Z);
                     for (int i = 0; i < 6; i++)

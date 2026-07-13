@@ -86,7 +86,9 @@ namespace UnturnedGodot
                     baked++;
                     try { ResourceSaver.Save(nm, path); } catch (System.Exception e) { GD.Print($"[zombienav] save skip {i}: {e.Message}"); }
                 }
-                polys += nm.GetPolygonCount();
+                int pp = nm.GetPolygonCount();
+                polys += pp;
+                if (overlay) GD.Print($"[zombienav]  pocket {i}: {pp} polys @ ({pockets[i].Center.X:0},{pockets[i].Center.Z:0}) box {pockets[i].HalfExtent.X * 2f:0}x{pockets[i].HalfExtent.Z * 2f:0}m");
                 var region = new NavigationRegion3D { NavigationMesh = nm };
                 worldRoot.AddChild(region);
                 if (overlay) { var ov = NavDebug.NavmeshOverlay(nm, new Color(0.1f, 0.9f, 1f, 0.55f)); if (ov != null) worldRoot.AddChild(ov); }   // translucent floor overlay for the verify screenshot
