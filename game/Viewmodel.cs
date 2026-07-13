@@ -90,7 +90,7 @@ namespace UnturnedGodot
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset; public Color AlbedoTint; public bool Ejects; }
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint; public bool Ejects; }
         static GunVisual Visual(string name) => name switch
         {
             "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
@@ -125,6 +125,17 @@ namespace UnturnedGodot
                     AlbedoTint = new Color(1f, 1f, 1f), Ejects = c[3].Trim() == "1",
                 };
             }
+            // per-gun DEFAULT iron sights (content/sights.tsv: name \t sight_model \t mount(x,y,z)) extracted from each
+            // gun's default Sight attachment (tools/extract_gun_sights.py) -- merge onto the loaded GunVisuals.
+            string sp = ProjectSettings.GlobalizePath("res://content/sights.tsv");
+            if (System.IO.File.Exists(sp))
+                foreach (var line in System.IO.File.ReadAllLines(sp))
+                {
+                    var c = line.Split('\t');
+                    if (c.Length < 3 || !d.TryGetValue(c[0], out var gv)) continue;
+                    gv.Sight = c[1]; gv.SightPos = V3(c[2]);
+                    d[c[0]] = gv;
+                }
             return d;
         }
         static Vector3 V3(string s)
@@ -233,7 +244,7 @@ namespace UnturnedGodot
                     var sightMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.06f, 0.06f, 0.07f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                     var ironMesh = gv.Sight != null ? ContentProvider.ParseObj($"res://content/{gv.Sight}") : null;
                     if (ironMesh != null)
-                        mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = new Vector3(0f, 0.1312f, -0.118f) });
+                        mi.AddChild(new MeshInstance3D { Name = "IronSights", Mesh = ironMesh, MaterialOverride = sightMat, Position = gv.SightPos != Vector3.Zero ? gv.SightPos : new Vector3(0f, 0.1312f, -0.118f) });   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
                     // core.masterbundle, converted (x,y,z)->(-x,y,-z). Mounted as Attachments.cs does
