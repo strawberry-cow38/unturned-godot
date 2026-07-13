@@ -1552,16 +1552,14 @@ namespace UnturnedGodot
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.
         void BuildPeiPlay()
         {
-            var env = new Godot.Environment
-            {
-                BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.5f, 0.6f, 0.75f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.6f, 0.6f, 0.62f),
-                AmbientLightEnergy = 0.75f,
-            };
+            // REAL PEI lighting via DayNightCycle (src Lighting.dat: warm ambient + sky/sun per time-of-day). The old
+            // hardcoded flat GREY env (0.6 grey @ 0.75) is what made everything dark + washed -- it never used the
+            // lighting rework at all. The DayNightCycle drives Env (sky + warm ambient) + the sun each frame.
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
+            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true };
+            AddChild(sun);
+            AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
 
             var terr = Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: true);
             AddChild(terr);

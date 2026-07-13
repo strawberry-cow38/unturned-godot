@@ -183,6 +183,8 @@ void sky() {
             // src has NO post-process saturation grade -- the warm ambient is what reads rich. UG_SAT = optional override.
             float sat = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SAT"), out var s) ? s : 1.0f;
             if (System.Math.Abs(sat - 1.0f) > 0.001f) { Env.AdjustmentEnabled = true; Env.AdjustmentSaturation = sat; }
+            // optional exposure knob for tuning (default 1.0 = neutral). UG_EXP-tunable.
+            Env.TonemapExposure = float.TryParse(System.Environment.GetEnvironmentVariable("UG_EXP"), out var ex) ? ex : 1.0f;
         }
 
         public void Apply()
