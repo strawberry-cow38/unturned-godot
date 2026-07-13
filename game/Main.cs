@@ -1128,6 +1128,11 @@ namespace UnturnedGodot
             Check("XP spent to 0", sk.experience == 0);
             Check("mastery 2/7", Mathf.Abs(ag.Mastery - 2f / 7f) < 0.001f);
 
+            // SHARPSHOOTER recoil/spread multiplier = 1 - mastery*0.4 (lvl0 = 1.0, max7 = 0.6)
+            var ss = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.SHARPSHOOTER);
+            ss.level = 0; Check("sharpshooter mult 1.0 at lvl0", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 1.0f) < 0.001f);
+            ss.level = 7; Check("sharpshooter mult 0.6 at max", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 0.6f) < 0.001f);
+
             GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
         }
 

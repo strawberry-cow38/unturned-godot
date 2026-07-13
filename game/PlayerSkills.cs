@@ -81,6 +81,9 @@ namespace SDG.Unturned
         // Earn XP (source ServerModifyExperience/askAward). Kills/harvests/crafts feed this in the follow-up.
         public void AwardExperience(uint xp) { _experience += xp; }
 
+        // Source GetSharpshooterRecoilMultiplier: recoil + spread scale by 1 - mastery*0.4 (up to 40% less at max SHARPSHOOTER lvl 7).
+        public float SharpshooterRecoilMultiplier() => 1f - GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.SHARPSHOOTER).Mastery * 0.4f;
+
         // Spend XP to raise a skill one level (source askUpgrade). Returns true if it leveled up.
         public bool TryUpgrade(int speciality, int index)
         {

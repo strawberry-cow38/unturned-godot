@@ -870,10 +870,11 @@ namespace UnturnedGodot
                                  new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ), rvPitch, rvYaw);
             }
             else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero, 0f, 0f);
+            float sharp = Skills.SharpshooterRecoilMultiplier();   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun)
             if (Gun != null)   // additive recoil: each shot kicks the AIM up + random-sign yaw (scaled by Recover); it accumulates and STAYS -- player pulls back down (master)
             {
-                _recoilPending += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY;
-                _recoilYawPending += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f);
+                _recoilPending += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY * sharp;
+                _recoilYawPending += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f) * sharp;
             }
 
             Vector3 from = _cam.GlobalPosition;
@@ -894,7 +895,7 @@ namespace UnturnedGodot
             // dir * MuzzleVelocity; it steps every physics tick (0.02s) in StepBullets, dropping under gravity, its
             // tracer flying with it, hits/damage landing when it arrives. (source: BulletInfo + UseableGun.cs:1539.)
             float spread = Gun != null && Gun.SpreadAngleDegrees > 0f
-                ? Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA) : 0f;
+                ? Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA) * sharp : 0f;   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
             int pellets = Mathf.Max(1, Gun?.Pellets ?? 1);
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
             int steps = Gun?.BallisticSteps ?? 20;
