@@ -1124,7 +1124,9 @@ namespace UnturnedGodot
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                AlbedoColor = new Color(1f, 0.9f, 0.55f),
+                // HDR albedo (>1) so the additive streak crosses the world glow HDR threshold (0.9) and BLOOMS -> a
+                // glowing tracer day+night. Modest x2.2 to stay tasteful (thin 0.05m box, won't wash). No glow = just brighter.
+                AlbedoColor = new Color(2.2f, 1.98f, 1.21f),
             };
             if (_tracerTex != null) mat.AlbedoTexture = _tracerTex;
             return new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, 5f) }, MaterialOverride = mat };
