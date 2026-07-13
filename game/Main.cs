@@ -2481,6 +2481,10 @@ namespace UnturnedGodot
             bool ok = pos.DistanceTo(new Vector3(40, 0, 0)) < 0.01f && Mathf.Abs(sal - 8f) < 0.01f;
             GD.Print($"[heartest] winner pos={pos} salience={sal:0.##}  (expected (40,0,0) sal 8)  -> {(ok ? "PASS" : "FAIL")}");
             GD.Print($"[heartest] loud gunshot(48@40m,sal8) beat near footstep(6@5m,sal1); too-quiet(2@3m) + out-of-range(64@60m) correctly ignored");
+            // stay-on-task gate: while committed to a loud sound (salience 8), a quieter footstep must NOT override, but a louder shot must.
+            bool ignoresFootstep = !z.DebugWouldOverride(8f, new Vector3(5, 0, 0), 6f);    // footstep salience 1 < 8 -> stays on task
+            bool takesLouder     =  z.DebugWouldOverride(8f, new Vector3(10, 0, 0), 48f);   // gunshot salience 38 > 8 -> switches
+            GD.Print($"[heartest] stay-on-task: ignores quieter footstep={ignoresFootstep}, switches to louder shot={takesLouder} -> {(ignoresFootstep && takesLouder ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
 

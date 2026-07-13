@@ -67,6 +67,7 @@ namespace UnturnedGodot
         // Phase 3 hearing (master): a hearing SPHERE + per-emitter loudness -> path to the LOUDEST+CLOSEST sound heard.
         [Export] public float HearingRange = 48f;   // the zombie's ears (m): a sound is heard only within this sphere AND if its loudness carries that far
         Vector3 _heardPos; float _heardSalience;    // best (loudest+closest) sound heard since the last tick; salience = loudness - dist
+        float _huntSalience;   // salience of the sound we're CURRENTLY investigating -> STAY ON TASK; only a strictly LOUDER+CLOSER sound overrides it (no re-agro on every footstep). Fades over time.
 
         public override void _Ready()
         {
@@ -239,16 +240,23 @@ namespace UnturnedGodot
                 }
             }
 
-            // --- Phase 3 HEARING: react to the loudest+closest sound heard since last tick (SIGHT still outranks it) ---
+            // --- Phase 3 HEARING: investigate the loudest+closest sound but STAY ON TASK -- only a strictly LOUDER+CLOSER
+            //     sound overrides the one we're already chasing (no re-agro on every footstep). SIGHT still outranks sound. ---
+            _huntSalience = Mathf.Max(0f, _huntSalience - 4f * dt);   // the memory of the current sound FADES, so a fresh nearer sound can eventually win even after a loud one
             if (_heardSalience > 0f)
             {
-                if (_hunt != EHunt.PLAYER) { _hunt = EHunt.POINT; _startled = false; _huntPoint = _heardPos; _lastHunted = (float)_age; }   // (re)point to the salient sound + refresh give-up clock
-                _heardSalience = 0f;   // consume it -- a sound heard mid player-hunt is just dropped
+                if (_hunt != EHunt.PLAYER && _heardSalience > _huntSalience)   // commit to the current task unless THIS sound is more salient (louder+closer)
+                {
+                    _hunt = EHunt.POINT; _startled = false;
+                    _huntPoint = _heardPos; _huntSalience = _heardSalience; _lastHunted = (float)_age;   // switch target + refresh give-up clock
+                }
+                _heardSalience = 0f;   // consume it (a lesser sound, or one heard mid player-hunt, is just dropped)
             }
 
             // --- IDLE: MOTIONLESS (master's rework: zombies stand still until they SEE (vision cone) or HEAR a noise) ---
             if (_hunt == EHunt.NONE)
             {
+                _huntSalience = 0f;   // idle = no current sound target -> the next sound (any loudness) can grab us fresh
                 if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(false);   // FRIENDLY: solid again
                 Velocity = new Vector3(0f, Velocity.Y - g * dt, 0f);   // gravity only -- no wandering
                 StepUp((float)dt);
@@ -472,6 +480,15 @@ namespace UnturnedGodot
 
         // --heartest offline verify: the best (loudest+closest) sound accumulated so far this tick.
         public (Vector3 pos, float salience) DebugHeard() => (_heardPos, _heardSalience);
+
+        // --heartest offline verify: given a sound we're already investigating (currentHuntSalience), would a newly-heard
+        // sound OVERRIDE it? (the "stay on task" gate: only a strictly louder+closer sound wins). Mirrors _PhysicsProcess.
+        public bool DebugWouldOverride(float currentHuntSalience, Vector3 soundPos, float loudness)
+        {
+            _huntSalience = currentHuntSalience; _heardSalience = 0f;
+            Hear(soundPos, loudness);
+            return _heardSalience > _huntSalience;
+        }
 
         // Zombie.askSpit -> askAcid: lob a corrosive glob at the player. Arced so gravity drops it onto the aim point.
         void SpitAcid(PlayerController player)
