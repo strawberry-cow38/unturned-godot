@@ -36,8 +36,10 @@ for ch in tr.read_typetree().get("m_Children", []):
     cgo = by_id.get(ctt.get("m_GameObject", {}).get("m_PathID"))
     if cgo and cgo.read_typetree().get("m_Name") == "Model_0":
         model0 = cgo
+if not model0 and comp_of(prefab.read_typetree(), ("MeshFilter",)):
+    model0 = prefab   # simpler items (axe/bat/machete/sledgehammer/...) put the mesh on the Item ROOT, no Model_0 child
 if not model0:
-    print("NO Model_0 in", PREFAB_HINT); sys.exit(1)
+    print("NO mesh in", PREFAB_HINT); sys.exit(1)
 m0tt = model0.read_typetree()
 mf = comp_of(m0tt, ("MeshFilter",))
 mesh = by_id.get(mf.read_typetree().get("m_Mesh", {}).get("m_PathID")) if mf else None
