@@ -61,9 +61,9 @@ for line in txt.splitlines():
     if not p:
         continue
     if p[0] == "v":
-        Vs.append((float(p[1]), float(p[2]), -float(p[3])))
+        Vs.append((-float(p[1]), float(p[2]), -float(p[3])))   # Unturned(Unity LH) -> Godot(RH): negate X AND Z (the originals do both; Z-only left the guns mirrored L/R -- ejection ports on the wrong side)
     elif p[0] == "vn":
-        Ns.append((float(p[1]), float(p[2]), -float(p[3])))
+        Ns.append((-float(p[1]), float(p[2]), -float(p[3])))
     elif p[0] == "vt":
         Ts.append((p[1], p[2]))
     elif p[0] == "f":
@@ -153,8 +153,8 @@ print("HOOKS", {k: hooks[k] for k in ("Model_0", "Sight", "Barrel", "Magazine", 
 # emit the Viewmodel GunVisual data line: name \t muzzle(x,y,z) \t aim(x,y,z) \t ejects(1/0)
 # muzzle = Barrel hook Z-negated; aim = a first-pass ADS offset from the Sight hook (fit to eaglefire, tune later)
 sg = hooks.get("Sight", (0, 0, 0)); ba = hooks.get("Barrel", (0, 0, 0))
-muzzle = (round(ba[0], 4), round(ba[1], 4), round(-ba[2], 4))
-aim = (round(sg[0], 4), round(sg[1] - 0.229, 4), round(-sg[2] - 0.071, 4))
+muzzle = (round(-ba[0], 4), round(ba[1], 4), round(-ba[2], 4))
+aim = (round(-sg[0], 4), round(sg[1] - 0.229, 4), round(-sg[2] - 0.071, 4))
 ejects = "0" if gl in ("grizzly", "schofield", "ace", "peacemaker", "desert_falcon", "luger", "masterkey", "quadbarrel", "sawed_off", "matamorez", "crossbow", "bow_maple", "bow_birch", "bow_pine", "bow_compound", "launcher_rocket") else "1"
 vline = "%s\t%s,%s,%s\t%s,%s,%s\t%s" % (gl, muzzle[0], muzzle[1], muzzle[2], aim[0], aim[1], aim[2], ejects)
 open(os.path.join(OUTDIR, "guns_visual.tsv"), "a").write(vline + "\n")
