@@ -261,20 +261,22 @@ namespace UnturnedGodot
             return m;
         }
 
-        // Curated natural car colours for RandomHueOrGrayscale vehicles -- the source's random-hue goes neon, so master
-        // wants a hand-picked natural set. Tuned for the CORRECTED (sRGB->linear) paint render -- the hexes are the lighter
-        // tones master wants on-screen (the old darker set only looked right under the washed-out pre-fix render).
-        static readonly string[] CarColors = { "#ececec", "#4c4c4c", "#c2c2c2", "#7d8288", "#b23a3a", "#425f9c", "#4f7d4f", "#c4b498", "#969b74" };
-
-        // Source paint on spawn: unpainted -> white; List -> a random .dat DefaultPaintColor; the source's
-        // RandomHueOrGrayscale is swapped for a random pick from the curated CarColors (natural, not neon).
-        static Color SpawnPaint(Spec s, int variant)   // variant = the spawn's colour index (deterministic, per instance)
+        // Source paint on spawn (VehicleAsset.getDefaultPaintColor): unpainted -> white; LIST mode -> a random pick from
+        // the .dat's DefaultPaintColors; RandomHueOrGrayscale -> the REAL HSV roll (10% grayscale, else random hue with
+        // saturation 0.15-0.7 + value 0.15-0.9, from Sedan.dat's RandomPaintColorConfiguration). Seeded by the spawn's
+        // deterministic variant so each instance keeps a stable colour. (Was a hand-picked "curated" set -- not src-accurate.)
+        static Color SpawnPaint(Spec s, int variant)
         {
             if (s.RandomHueGray)
-                return new Color(CarColors[variant % CarColors.Length]);
+            {
+                var rng = new System.Random(unchecked(variant * 486187739 + 1150833019));
+                float R() => (float)rng.NextDouble();
+                if (R() < 0.1f) { float v = 0.15f + R() * 0.75f; return new Color(v, v, v); }   // grayscaleChance 0.1
+                return Color.FromHsv(R(), 0.15f + R() * 0.55f, 0.15f + R() * 0.75f);              // hue / sat .15-.7 / val .15-.9
+            }
             if (s.DefaultPaints != null && s.DefaultPaints.Length > 0)
                 return new Color(s.DefaultPaints[variant % s.DefaultPaints.Length]);
-            return Colors.White;   // no default paint -> unpainted white (e.g. the bus is #d4d4d4, near-white)
+            return Colors.White;   // no paint slot -> unpainted white
         }
 
         // Driver seat position per vehicle (prefab Seats/Seat_0, Godot space Z-negated) + a small body rise so the 3rd-person
@@ -299,7 +301,7 @@ namespace UnturnedGodot
         static readonly Spec _jeep = new()
         {
             Body = "jeep_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "jeep_palette.png",
-            DefaultPaints = new[] { "#437c44" },   // master: PEI/Canada military = FOREST fixed (src Jeep/Humvee.dat list all 4 factions + random-pick, but master wants forest)
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
@@ -413,7 +415,7 @@ namespace UnturnedGodot
         static readonly Spec _humvee = new()
         {
             Body = "humvee_body.txt", Wheel = "humvee_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "humvee_palette.png",
-            DefaultPaints = new[] { "#437c44" },   // master: PEI/Canada military = FOREST fixed (src Jeep/Humvee.dat list all 4 factions + random-pick, but master wants forest)
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src .dat DefaultPaintColors = the 4 faction paints (#475e83 Coalition / #a69884 Desert / #437c44 Forest / #495631 Russia), random pick per spawn
             WheelRadius = 0.6f, Engine = 680f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14f, SpeedMin = -6f, Brake = 40f,
             BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
             ForwardGears = new[] { 20f, 12.56f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
@@ -541,7 +543,7 @@ namespace UnturnedGodot
         static readonly Spec _ural = new()
         {
             Body = "ural_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "ural_palette.png",
-            DefaultPaints = new[] { "#437c44" },   // forest military
+            DefaultPaints = new[] { "#475e83", "#a69884", "#437c44", "#495631" },   // src 4 faction paints (Coalition/Desert/Forest/Russia)
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
             BoxSize = new Vector3(2.5f, 2.0f, 6.6f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
