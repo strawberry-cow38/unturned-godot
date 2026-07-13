@@ -47,7 +47,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false, farmTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -58,6 +58,7 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--heartest") hearTest = true;   // OFFLINE verify: Phase 3 hearing -> a zombie picks the LOUDEST+CLOSEST sound, ignores out-of-range/too-quiet
                 else if (arg == "--armortest") armorTest = true;   // OFFLINE verify: worn clothing's whole-body fall + explosion armor aggregates as a PRODUCT
+                else if (arg == "--farmtest") farmTest = true;   // OFFLINE verify: a planted crop grows over Growth secs then harvest yields Grow
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -214,6 +215,7 @@ namespace UnturnedGodot
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
             if (hearTest) { RunHearTest(); return; }   // pure logic check, no world needed
             if (armorTest) { RunArmorTest(); return; }   // pure logic check, no world needed
+            if (farmTest) { RunFarmTest(); return; }   // pure logic check, no world needed
 
             if (navShot != null) { GetWindow().Size = new Vector2I(1280, 720); BuildNavShot(navShot); return; }
 
@@ -2520,6 +2522,23 @@ namespace UnturnedGodot
             inv2.wearPants(new SDG.Unturned.Item(9003));
             bool bootBone = inv2.PreventsFallingBoneBreak;                 // boots on -> bones protected
             GD.Print($"[armortest] bone-proof: bare={bareBone}(want F)  boots={bootBone}(want T) -> {((!bareBone && bootBone) ? "PASS" : "FAIL")}");
+            GetTree().Quit();
+        }
+
+        // --farmtest: a planted crop grows over FarmDef.Growth seconds, then harvest yields FarmDef.Grow (source InteractableFarm).
+        void RunFarmTest()
+        {
+            SDG.Unturned.FarmRegistry.Load();
+            bool isSeed = SDG.Unturned.FarmRegistry.IsSeed(330);            // Carrot seed
+            SDG.Unturned.FarmRegistry.TryGet(330, out var carrot);
+            var crop = new SDG.Unturned.PlantedCrop { Def = carrot, PlantedAt = 0.0 };
+            bool freshOk = !crop.IsFullyGrown(5.0) && crop.Harvest(5.0) == 0;   // just planted -> not grown, no yield
+            double t = carrot.Growth + 1.0;
+            ushort yield = crop.Harvest(t);
+            bool grownOk = crop.IsFullyGrown(t) && yield == carrot.Grow && yield != 0;   // grown -> yields Grow (329)
+            float half = crop.GrowthFraction(carrot.Growth / 2.0);
+            bool ok = isSeed && freshOk && grownOk && Mathf.Abs(half - 0.5f) < 0.01f;
+            GD.Print($"[farmtest] {SDG.Unturned.FarmRegistry.Count} crops; seed330 growth={carrot.Growth}s grow={carrot.Grow}: fresh(nogrow,yield0)={freshOk} grown(yield{yield})={grownOk} half={half:0.##} -> {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
 
