@@ -15,6 +15,8 @@ namespace UnturnedGodot
         LineEdit _input;
         Label _log;
         static readonly string[] Verbs = { "give", "vehicle", "teleport" };
+        readonly System.Collections.Generic.List<string> _history = new();
+        int _histIdx;
 
         public override void _Ready()
         {
@@ -39,6 +41,8 @@ namespace UnturnedGodot
             if (k.Keycode == Key.F1) { Toggle(); GetViewport().SetInputAsHandled(); }
             else if (_input.Visible && k.Keycode == Key.Tab) { Autocomplete(); GetViewport().SetInputAsHandled(); }
             else if (_input.Visible && k.Keycode == Key.Escape) { Toggle(); GetViewport().SetInputAsHandled(); }
+            else if (_input.Visible && k.Keycode == Key.Up) { HistoryNav(-1); GetViewport().SetInputAsHandled(); }     // up = older command
+            else if (_input.Visible && k.Keycode == Key.Down) { HistoryNav(1); GetViewport().SetInputAsHandled(); }    // down = newer (or a blank line at the end)
         }
 
         void Toggle()
@@ -52,7 +56,10 @@ namespace UnturnedGodot
 
         void OnSubmit(string text)
         {
-            Run(text.Trim());
+            var t = text.Trim();
+            if (t.Length > 0 && (_history.Count == 0 || _history[^1] != t)) _history.Add(t);   // record for up/down recall (skip blanks + immediate dupes)
+            _histIdx = _history.Count;   // reset the browse cursor to "past the newest"
+            Run(t);
             _input.Clear();
             _input.GrabFocus();   // stay open for the next command
         }
@@ -87,7 +94,7 @@ namespace UnturnedGodot
             {
                 var m = MapNodes.Locations.Where(n => n.Name.Replace(" ", "").StartsWith(arg.Replace(" ", ""), System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Name.Length).ToList();
                 if (m.Count == 0) { Log($"no location '{arg}'"); return; }
-                if (Player != null) Player.GlobalPosition = m[0].Pos + Vector3.Up * 3f;   // drop in slightly above the node (master)
+                Player?.TeleportTo(m[0].Pos + Vector3.Up * 3f);   // teleport the vehicle if driving, else the player (master)
                 Log($"teleported to {m[0].Name}");
             }
             else Log($"unknown command '{verb}' -- give / vehicle / teleport");
@@ -119,6 +126,12 @@ namespace UnturnedGodot
             if (match != null) SetInput(parts[0] + " " + match);
         }
 
+        void HistoryNav(int dir)   // up/down arrow: browse this session's command history (bash-style)
+        {
+            if (_history.Count == 0) return;
+            _histIdx = Mathf.Clamp(_histIdx + dir, 0, _history.Count);
+            SetInput(_histIdx < _history.Count ? _history[_histIdx] : "");   // one-past-the-end = a fresh blank line
+        }
         void SetInput(string s) { _input.Text = s; _input.CaretColumn = s.Length; }
         void Log(string msg) { _log.Text = msg; GD.Print("[console] " + msg); }
     }

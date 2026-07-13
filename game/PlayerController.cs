@@ -72,6 +72,17 @@ namespace UnturnedGodot
             return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * LookReach;
         }
 
+        // teleport (F1 console): move the VEHICLE if driving (the player rides attached to it), else the player. Zero velocity so it doesn't launch.
+        public void TeleportTo(Vector3 pos)
+        {
+            if (_driving != null) { _driving.GlobalPosition = pos; _driving.LinearVelocity = Vector3.Zero; _driving.AngularVelocity = Vector3.Zero; }
+            else
+            {
+                GlobalPosition = pos; Velocity = Vector3.Zero;
+                _interpPrev = _interpCurr = pos;   // MUST reset the render-interp snapshots too — otherwise the next 50Hz tick does `GlobalPosition = _interpCurr` and snaps us right back to the old spot (the "gave feedback but didn't tp" bug; master was on foot, not driving)
+            }
+        }
+
         public void DropWorldItem(Item item, Vector3 pos)
         {
             var space = GetWorld3D().DirectSpaceState;
