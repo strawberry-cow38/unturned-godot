@@ -41,7 +41,7 @@ namespace UnturnedGodot
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
-        StandardMaterial3D _sirenMat0, _sirenMat1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate
+        StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
         bool _alarmed; float _alarmTimer, _alarmBlip, _alarmCheckT = 0.3f; bool _alarmLit;   // "alarmed" car (5% of spawns): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies (master)
         AudioStreamPlayer3D _sirenAudio;   // looping siren clip while the emergency lightbar's on (master)
@@ -709,8 +709,8 @@ namespace UnturnedGodot
                     else v.AddChild(mi);
                     if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
                     if (txt.Contains("taillight")) v._taillightMat = pm;   // capture so the taillight glows red while driving
-                    if (txt.Contains("siren0")) v._sirenMat0 = pm;   // capture the roof lightbar lenses to flash them (master: ctrl toggles siren)
-                    if (txt.Contains("siren1")) v._sirenMat1 = pm;
+                    if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); }   // red lens: glow the material + cast a real red light from that side (master)
+                    if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); }      // blue lens: material glow + real blue light from the other side
                 }
             if (v._sirenMat0 != null)   // emergency vehicle -> looping siren audio (master), silent until the lightbar's toggled on
             {
@@ -861,6 +861,16 @@ namespace UnturnedGodot
             }
         }
 
+        // A real colored light cast from a lightbar lens (source Siren_0/Siren_1 are GameObjects with Unity Lights).
+        // Placed at the lens mesh's centre so red emits from one side + blue from the other; off until it flashes.
+        static OmniLight3D AddSirenLight(MeshInstance3D mi, Color c)
+        {
+            var center = mi.Mesh != null ? mi.Mesh.GetAabb().GetCenter() : Vector3.Zero;
+            var light = new OmniLight3D { Position = center, OmniRange = 12f, LightColor = c, LightEnergy = 0f, ShadowEnabled = false, OmniAttenuation = 1.5f };
+            mi.AddChild(light);
+            return light;
+        }
+
         // look-at focus (master): the eye-sphere is on this vehicle -> screen-space outline (add the outline layer to every
         // vehicle mesh so OutlineOverlay's mask cam picks them up) + the info billboard. E enters (PlayerController).
         public void SetLookFocused(bool on)
@@ -985,16 +995,18 @@ namespace UnturnedGodot
                 if (_sirenOn && !_exploded)
                 {
                     if (_sirenAudio != null && !_sirenAudio.Playing) _sirenAudio.Play();
-                    _sirenFlash += (float)delta * 5f;
-                    bool red = (_sirenFlash % 1f) < 0.5f;
+                    _sirenFlash += (float)delta;
+                    bool red = (_sirenFlash % 0.66f) < 0.33f;   // source UpdateSirenVisuals: sirenState flips only every 0.33s (lastWeeoo gate) -> each lens lit 0.33s; mine was toggling every 0.1s (~3x too fast, master caught it)
                     _sirenMat0.EmissionEnabled = true; _sirenMat0.Emission = new Color(1f, 0.05f, 0.05f); _sirenMat0.EmissionEnergyMultiplier = red ? 4f : 0f;
                     _sirenMat1.EmissionEnabled = true; _sirenMat1.Emission = new Color(0.1f, 0.15f, 1f); _sirenMat1.EmissionEnergyMultiplier = red ? 0f : 4f;
+                    if (_sirenLight0 != null) _sirenLight0.LightEnergy = red ? 5f : 0f;   // real red light from the left lens
+                    if (_sirenLight1 != null) _sirenLight1.LightEnergy = red ? 0f : 5f;   // real blue light from the right lens (master)
                 }
-                else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop(); }
+                else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; if (_sirenLight0 != null) _sirenLight0.LightEnergy = 0f; if (_sirenLight1 != null) _sirenLight1.LightEnergy = 0f; if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop(); }
             }
             if (_alarmTimer <= 0f)   // the alarm owns the taillights while blaring (master); otherwise source synchronizeTaillights = isDriven && canTurnOnLights
             {
-                bool tailWant = EngineOn && Battery > 0f;
+                bool tailWant = (EngineOn && Battery > 0f) || _headlightsOn;   // source synchronizeTaillights = isDriven && canTurnOnLights; master's rule ADDS: headlights on -> taillights on too, even parked / no driver
                 if (tailWant != _taillightsOn) SetTaillights(tailWant);
             }
             if (_hornCd > 0f) _hornCd -= (float)delta;
