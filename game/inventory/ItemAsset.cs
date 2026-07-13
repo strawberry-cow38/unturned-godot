@@ -30,6 +30,15 @@ namespace SDG.Unturned
         public byte width;
         public byte height;
 
+        // ItemClothingAsset protection multipliers (default 1.0 = no protection; armor-eligible = hat/shirt/pants/vest).
+        // The port applies the two WHOLE-BODY ones (source aggregates these as products of all worn clothing):
+        //   fallingDamageMultiplier -> CheckFallDamage, explosionArmor -> Explode. `armor` (general bullet/melee) is
+        //   PER-LIMB in source (hat=head, shirt/vest=torso, pants=legs) so it's stored but NOT applied yet -- the port
+        //   has no per-limb player damage. Loaded additively from content/clothing_armor.tsv (WireClothingArmor).
+        public float armor = 1f;
+        public float explosionArmor = 1f;
+        public float fallingDamageMultiplier = 1f;
+
         // ItemConsumeableAsset effects applied on Use, then the item is consumed. Health is absolute (0-100);
         // Food/Water are the .dat 0-100 values (the port's vitals are 0..1, so divided by 100 on apply).
         public int useHealth, useFood, useWater;

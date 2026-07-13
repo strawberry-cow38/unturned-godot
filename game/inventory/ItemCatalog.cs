@@ -25,6 +25,35 @@ namespace SDG.Unturned
             Add(13,  "Canned Beans",  1, 1, EItemType.FOOD,     EItemRarity.COMMON,    0, 0, "Very tactically packed for maximum taste.", uh: 10, uf: 55);
             WireExtractedGuns();
             WireExtractedMelee();
+            WireClothingArmor();
+        }
+
+        // Load the additive clothing-armor table (content/clothing_armor.tsv: id  Armor  Armor_Explosion  Falling_Damage_Multiplier)
+        // onto the already-registered ItemAssets. Kept separate from items_catalog.tsv so it never risks the main 1937-item catalog.
+        // The port applies the two WHOLE-BODY ones (explosionArmor -> Explode, fallingDamageMultiplier -> CheckFallDamage);
+        // `armor` (general per-limb) is stored for when the port models limb damage.
+        static void WireClothingArmor()
+        {
+            const string path = "res://content/clothing_armor.tsv";
+            if (!Godot.FileAccess.FileExists(path)) return;
+            using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var fs = System.Globalization.NumberStyles.Float;
+            int n = 0;
+            while (f != null && !f.EofReached())
+            {
+                string line = f.GetLine();
+                if (string.IsNullOrEmpty(line)) continue;
+                var c = line.Split('\t');
+                if (c.Length < 4 || !ushort.TryParse(c[0], out var id)) continue;
+                var a = Assets.find(id);
+                if (a == null) continue;
+                if (float.TryParse(c[1], fs, inv, out var ar)) a.armor = ar;
+                if (float.TryParse(c[2], fs, inv, out var ae)) a.explosionArmor = ae;
+                if (float.TryParse(c[3], fs, inv, out var fl)) a.fallingDamageMultiplier = fl;
+                n++;
+            }
+            GD.Print($"[items] wired clothing armor for {n} items (fall + explosion whole-body multipliers)");
         }
 
         // Wire gunName on the extracted PEI gun items (content/<name>.dat's numeric ID -> ItemAsset.gunName) so equipping

@@ -223,14 +223,16 @@ namespace UnturnedGodot
 
         // PlayerLife.onLanded: landing faster than the fall-damage threshold (map default 22 m/s, and the port has
         // normal gravity so totalGravityMultiplier > 0.67 always holds) deals damage = min(101, |verticalVelocity|),
-        // rounded. The DEFENSE/STRENGTH skill and clothing multipliers are 1.0 here (no skill/armor system yet), and
-        // leg-breaking (the source's breakLegs) is a separate mechanic the port doesn't model -- a later pass.
+        // rounded. Source multiplies by the DEFENSE/STRENGTH skill (still 1.0 -- no skill system) then the WHOLE-BODY
+        // clothing fallingDamageMultiplier (PlayerLife:2430 `damage *= clothing.fallingDamageMultiplier`) -- now WIRED.
+        // Leg-breaking (source breakLegs, gated by FallingBoneBreakingProof) is still a separate un-modelled mechanic.
         void CheckFallDamage(float verticalVel)
         {
             const float threshold = 22.0f;
             if (verticalVel >= -threshold) return;             // a normal jump lands at ~7 m/s -> no damage
             Broken = true;                                     // any fall past the threshold breaks legs (shouldBreakLegs defaults true)
-            int dmg = Mathf.RoundToInt(Mathf.Min(101f, Mathf.Abs(verticalVel)));   // RoundAndClampToByte; damage <= 101
+            float armored = Mathf.Abs(verticalVel) * (Inventory?.FallingDamageMultiplier ?? 1f);   // worn clothing cuts fall damage (source: whole-body product)
+            int dmg = Mathf.RoundToInt(Mathf.Min(101f, armored));   // RoundAndClampToByte; damage <= 101
             if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
         }
 
@@ -259,7 +261,7 @@ namespace UnturnedGodot
                     v.TakeDamage(vehicleDamage * (1f - range / radius));   // linear falloff (port's simplified explosion model)
                 }
             float pr = GlobalPosition.DistanceTo(point);
-            if (pr <= radius) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t); }
+            if (pr <= radius) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t * (Inventory?.ExplosionArmor ?? 1f)); }   // worn clothing cuts blast damage (source Player.cs:1981 getPlayerExplosionArmor)
             Local?.FlinchFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
             GD.Print($"[explode] r={radius} at {point}");
         }

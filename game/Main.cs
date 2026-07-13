@@ -47,7 +47,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -57,6 +57,7 @@ namespace UnturnedGodot
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--heartest") hearTest = true;   // OFFLINE verify: Phase 3 hearing -> a zombie picks the LOUDEST+CLOSEST sound, ignores out-of-range/too-quiet
+                else if (arg == "--armortest") armorTest = true;   // OFFLINE verify: worn clothing's whole-body fall + explosion armor aggregates as a PRODUCT
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -212,6 +213,7 @@ namespace UnturnedGodot
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
             if (hearTest) { RunHearTest(); return; }   // pure logic check, no world needed
+            if (armorTest) { RunArmorTest(); return; }   // pure logic check, no world needed
 
             if (navShot != null) { GetWindow().Size = new Vector2I(1280, 720); BuildNavShot(navShot); return; }
 
@@ -2485,6 +2487,32 @@ namespace UnturnedGodot
             bool ignoresFootstep = !z.DebugWouldOverride(8f, new Vector3(5, 0, 0), 6f);    // footstep salience 1 < 8 -> stays on task
             bool takesLouder     =  z.DebugWouldOverride(8f, new Vector3(10, 0, 0), 48f);   // gunshot salience 38 > 8 -> switches
             GD.Print($"[heartest] stay-on-task: ignores quieter footstep={ignoresFootstep}, switches to louder shot={takesLouder} -> {(ignoresFootstep && takesLouder ? "PASS" : "FAIL")}");
+            GetTree().Quit();
+        }
+
+        // --armortest: worn clothing's whole-body protection aggregates as a PRODUCT of every worn piece (source
+        // PlayerClothing), for fall (fallingDamageMultiplier) + explosion (explosionArmor). A bare player = 1.0 (no cut).
+        void RunArmorTest()
+        {
+            SDG.Unturned.Assets.clear();
+            SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset { id = 9001, itemName = "Test Vest", type = SDG.Unturned.EItemType.VEST, fallingDamageMultiplier = 0.5f, explosionArmor = 0.7f });
+            SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset { id = 9002, itemName = "Test Hat",  type = SDG.Unturned.EItemType.HAT,  fallingDamageMultiplier = 0.8f });
+            var inv = new SDG.Unturned.PlayerInventory();
+            float bare = inv.FallingDamageMultiplier;                 // nothing worn -> 1.0
+            inv.wearVest(new SDG.Unturned.Item(9001));
+            inv.wearHat(new SDG.Unturned.Item(9002));
+            float fall = inv.FallingDamageMultiplier;                 // 0.5 * 0.8 = 0.40
+            float expl = inv.ExplosionArmor;                          // 0.7 * 1.0 = 0.70
+            bool ok = Mathf.Abs(bare - 1f) < 1e-4f && Mathf.Abs(fall - 0.40f) < 1e-4f && Mathf.Abs(expl - 0.70f) < 1e-4f;
+            GD.Print($"[armortest] bare={bare:0.##}  fall(vest.5 x hat.8)={fall:0.###}  explosion(vest.7)={expl:0.###}  (expect 1 / 0.4 / 0.7) -> {(ok ? "PASS" : "FAIL")}");
+            GD.Print($"[armortest] a 50 m/s fall: {Mathf.RoundToInt(Mathf.Min(101f, 50f))} dmg bare -> {Mathf.RoundToInt(Mathf.Min(101f, 50f * fall))} dmg armored (x{fall:0.##})");
+            // real data: RegisterAll loads the catalog + wires clothing_armor.tsv onto the actual items
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var boots = SDG.Unturned.Assets.find(1839);   // fall gear (Falling_Damage_Multiplier 0.05)
+            var mil   = SDG.Unturned.Assets.find(2);       // armored top (Armor/Armor_Explosion 0.95)
+            bool data = boots != null && Mathf.Abs(boots.fallingDamageMultiplier - 0.05f) < 1e-3f
+                     && mil != null && Mathf.Abs(mil.explosionArmor - 0.95f) < 1e-3f;
+            GD.Print($"[armortest] real data wired: id1839 fall={boots?.fallingDamageMultiplier:0.###}(exp .05)  id2 expl={mil?.explosionArmor:0.###}(exp .95) -> {(data ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
 

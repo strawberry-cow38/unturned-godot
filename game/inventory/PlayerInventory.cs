@@ -53,6 +53,19 @@ namespace SDG.Unturned
         public void wearGlasses(Item item) => wornGlasses = item;
         public void wearMask(Item item) => wornMask = item;
 
+        // Whole-body clothing protection = the PRODUCT of every worn piece's multiplier (source PlayerClothing aggregates
+        // fallingDamageMultiplier over all worn slots; a plain/missing item contributes 1.0). Fall + explosion use these.
+        public float FallingDamageMultiplier => WornProduct(a => a.fallingDamageMultiplier);
+        public float ExplosionArmor => WornProduct(a => a.explosionArmor);
+
+        float WornProduct(Func<ItemAsset, float> pick)
+        {
+            float m = 1f;
+            foreach (var it in new[] { wornShirt, wornPants, wornHat, wornBackpack, wornVest, wornMask, wornGlasses })
+                if (it != null) { var a = Assets.find(it.id); if (a != null) m *= pick(a); }
+            return m;
+        }
+
         void Resize(byte page, Item item)
         {
             var a = item?.GetAsset();
