@@ -1037,10 +1037,9 @@ namespace UnturnedGodot
             // dirt ground plane
             AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(6f, 6f) },
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.38f, 0.32f, 0.2f), Roughness = 1f } });
-            // carrot Model_0 dirt _Color (from extract_crop_tex.py); TODO per-crop via crops.tsv when batching
-            var dirt = new Color(0.559f, 0.388f, 0.131f);
-            var young = CropNode.Spawn(name, dirt); young.Position = new Vector3(-0.5f, 0f, 0f); young.SetGrown(false); AddChild(young);
-            var grown = CropNode.Spawn(name, dirt); grown.Position = new Vector3(0.5f, 0f, 0f); grown.SetGrown(true); AddChild(grown);
+            CropRegistry.Load();   // dirt _Color per crop from content/crops.tsv (tools/batch_crops.py)
+            var young = CropNode.Spawn(name); young.Position = new Vector3(-0.5f, 0f, 0f); young.SetGrown(false); AddChild(young);
+            var grown = CropNode.Spawn(name); grown.Position = new Vector3(0.5f, 0f, 0f); grown.SetGrown(true); AddChild(grown);
             var cam = new Camera3D { Current = true, Fov = 45f, Far = 1000f };
             AddChild(cam);
             cam.Position = new Vector3(0f, 0.85f, 2.0f);
