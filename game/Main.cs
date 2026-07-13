@@ -1551,6 +1551,10 @@ namespace UnturnedGodot
             var terr = Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: true);
             AddChild(terr);
 
+            // Zombie navmesh POCKETS (source LevelNavigation Flags): bake a Godot navmesh in each of PEI's 19 POI
+            // pockets from the world collision (agent-radius wall buffer), saved + reused. (Phase 1 -- pathing wired next.)
+            { var _pk = ZombieNav.LoadPockets(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI"); ZombieNav.BuildOrLoad(this, _pk); }
+
             CharacterModel.LoadBundled();
             var player = new PlayerController();
             player.LoadGun("res://content/eaglefire.dat");

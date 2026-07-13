@@ -47,3 +47,5 @@ fplaybuild.png
 launcher/pub/
 launcher/obj/
 launcher/bin/
+
+game/content/navmesh/
