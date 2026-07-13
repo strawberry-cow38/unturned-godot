@@ -1133,6 +1133,11 @@ namespace UnturnedGodot
             ss.level = 0; Check("sharpshooter mult 1.0 at lvl0", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 1.0f) < 0.001f);
             ss.level = 7; Check("sharpshooter mult 0.6 at max", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 0.6f) < 0.001f);
 
+            // STRENGTH fall-damage multiplier = 1 - mastery*0.75 (max STRENGTH lvl 5 -> 0.25)
+            var st = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.STRENGTH);
+            st.level = 0; Check("strength fall mult 1.0 at lvl0", Mathf.Abs(sk.StrengthFallMultiplier() - 1.0f) < 0.001f);
+            st.level = 5; Check("strength fall mult 0.25 at max", Mathf.Abs(sk.StrengthFallMultiplier() - 0.25f) < 0.001f);
+
             GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
         }
 

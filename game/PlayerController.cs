@@ -233,7 +233,7 @@ namespace UnturnedGodot
             const float threshold = 22.0f;
             if (verticalVel >= -threshold) return;             // a normal jump lands at ~7 m/s -> no damage
             Broken = !(Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
-            float armored = Mathf.Abs(verticalVel) * (Inventory?.FallingDamageMultiplier ?? 1f);   // worn clothing cuts fall damage (source: whole-body product)
+            float armored = Mathf.Abs(verticalVel) * (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier();   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
             int dmg = Mathf.RoundToInt(Mathf.Min(101f, armored));   // RoundAndClampToByte; damage <= 101
             if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
         }

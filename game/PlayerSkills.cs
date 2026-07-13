@@ -84,6 +84,9 @@ namespace SDG.Unturned
         // Source GetSharpshooterRecoilMultiplier: recoil + spread scale by 1 - mastery*0.4 (up to 40% less at max SHARPSHOOTER lvl 7).
         public float SharpshooterRecoilMultiplier() => 1f - GetSkill((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.SHARPSHOOTER).Mastery * 0.4f;
 
+        // Source PlayerLife:2428: STRENGTH cuts fall damage by up to 75% at max level.
+        public float StrengthFallMultiplier() => 1f - GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.STRENGTH).Mastery * 0.75f;
+
         // Spend XP to raise a skill one level (source askUpgrade). Returns true if it leveled up.
         public bool TryUpgrade(int speciality, int index)
         {
