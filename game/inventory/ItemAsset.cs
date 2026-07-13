@@ -25,6 +25,7 @@ namespace SDG.Unturned
         public byte amount = 1;        // default stack Amount (min 1)
         public string iconPath;        // res:// icon texture, if we have one
         public string gunName;         // for a GUN: the content name (eaglefire|maplestrike|masterkey) to hold on Equip
+        public string meleeName;       // for a MELEE weapon: the content folder name (knife_military|sledgehammer|...) to hold on Equip
         // ItemBagAsset: the storage grid a worn bag/shirt/pants/vest provides (0,0 = none)
         public byte width;
         public byte height;

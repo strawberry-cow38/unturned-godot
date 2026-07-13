@@ -24,6 +24,7 @@ namespace SDG.Unturned
             Add(14,  "Bottled Water", 1, 1, EItemType.WATER,    EItemRarity.COMMON,    0, 0, "Overpriced tap water.", uw: 55);
             Add(13,  "Canned Beans",  1, 1, EItemType.FOOD,     EItemRarity.COMMON,    0, 0, "Very tactically packed for maximum taste.", uh: 10, uf: 55);
             WireExtractedGuns();
+            WireExtractedMelee();
         }
 
         // Wire gunName on the extracted PEI gun items (content/<name>.dat's numeric ID -> ItemAsset.gunName) so equipping
@@ -49,6 +50,31 @@ namespace SDG.Unturned
                 catch { /* skip a malformed .dat */ }
             }
             GD.Print($"[items] wired {n} extracted guns for in-game equip");
+        }
+
+        // Wire meleeName on the extracted PEI melee items (content/<folder>.dat's ID -> ItemAsset.meleeName) so equipping
+        // a knife/axe/bat loads its viewmodel + weapon-specific swings via EquipHeldMelee. Folders from content/melee_list.tsv.
+        static void WireExtractedMelee()
+        {
+            const string ml = "res://content/melee_list.tsv";
+            if (!Godot.FileAccess.FileExists(ml)) return;
+            using var f = Godot.FileAccess.Open(ml, Godot.FileAccess.ModeFlags.Read);
+            int n = 0;
+            while (f != null && !f.EofReached())
+            {
+                string line = f.GetLine();
+                if (string.IsNullOrEmpty(line)) continue;
+                string name = line.Split('\t')[0].Trim();
+                string datPath = ProjectSettings.GlobalizePath($"res://content/{name}.dat");
+                if (!System.IO.File.Exists(datPath)) continue;
+                try
+                {
+                    var d = new DatParser().Parse(System.IO.File.ReadAllText(datPath));
+                    if (ushort.TryParse(d.GetString("ID"), out var id)) { var a = Assets.find(id); if (a != null) { a.meleeName = name; n++; } }
+                }
+                catch { /* skip a malformed .dat */ }
+            }
+            GD.Print($"[items] wired {n} extracted melee weapons for in-game equip");
         }
 
         // bulk-load the pre-extracted retail catalog: one tab-separated line per item -- id,name,Type,Rarity,Size_X,Size_Y,Description
