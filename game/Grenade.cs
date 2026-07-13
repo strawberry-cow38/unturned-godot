@@ -16,10 +16,15 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            var mat = new StandardMaterial3D { Metallic = 0.4f, Roughness = 0.6f };
+            string ap = ProjectSettings.GlobalizePath("res://content/grenade_albedo.png");   // real Grenade material _MainTex
+            if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            else mat.AlbedoColor = new Color(0.16f, 0.2f, 0.13f);
+            var mesh = ContentProvider.ParseObj("res://content/grenade.txt");   // real Grenade item.prefab Model_0 (was a placeholder SphereMesh)
             AddChild(new MeshInstance3D
             {
-                Mesh = new SphereMesh { Radius = 0.11f, Height = 0.22f },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.16f, 0.2f, 0.13f), Metallic = 0.4f, Roughness = 0.6f },
+                Mesh = mesh != null ? (Mesh)mesh : new SphereMesh { Radius = 0.11f, Height = 0.22f },
+                MaterialOverride = mat,
             });
         }
 
