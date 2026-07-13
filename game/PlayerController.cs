@@ -851,8 +851,13 @@ namespace UnturnedGodot
             }
 
             Vector3 from = _cam.GlobalPosition;
-            Vector3 aim = -_cam.GlobalTransform.Basis.Z;                    // undeviated shot axis
-            Basis cb = _cam.GlobalTransform.Basis;                          // camera: X=right, Y=up, -Z=forward
+            // Aim from the player's AUTHORITATIVE look (body yaw + camera pitch), NOT the camera's live GLOBAL basis.
+            // Reading _cam.GlobalTransform.Basis meant a shot could inherit a transiently-bad camera axis -- flinch/
+            // hit-shake (line 1223 sets _cam.Basis = flinch*look) or a frame where the cam basis wasn't the player's
+            // -- firing the bullet off in a FIXED world direction regardless of where you aimed (the "stray tracer
+            // flies straight south, any gun, any time" bug). Recoil is preserved (it drains into Rotation.Y/_pitchDeg).
+            Basis cb = new Basis(Vector3.Up, Rotation.Y) * new Basis(Vector3.Right, Mathf.DegToRad(_pitchDeg));  // X=right, Y=up, -Z=forward
+            Vector3 aim = -cb.Z;                                            // undeviated shot axis, from the real look angles
             float aimA = _viewmodel?.AimAlpha ?? 0f;
             // muzzle: hip sits lower-right (where the barrel is); ADS pulls the gun onto the camera axis, so the
             // muzzle centres (X offset -> 0) as you aim -> the bullet + tracer keep originating from the barrel.
