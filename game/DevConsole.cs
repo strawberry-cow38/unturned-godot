@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -97,7 +97,17 @@ namespace UnturnedGodot
                 Player?.TeleportTo(m[0].Pos + Vector3.Up * 3f);   // teleport the vehicle if driving, else the player (master)
                 Log($"teleported to {m[0].Name}");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport");
+            else if (verb == "plant")
+            {
+                // plant <crop> [grown]  -- spawn a growing crop at the look point (or already grown, for harvest testing)
+                var pp = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                bool grown = pp.Length > 1 && (pp[1].Equals("grown", System.StringComparison.OrdinalIgnoreCase) || pp[1] == "1");
+                if (!CropManager.Ready) { Log("no crop manager in this scene"); return; }
+                var crop = CropManager.Plant(pp[0], at, grown);
+                if (crop == null) { Log($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
+                Log($"planted {pp[0]}{(grown ? " (grown)" : "")} -- UG_FARMSPEED speeds growth; E near a grown crop to harvest");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant");
         }
 
         static ItemAsset ResolveItem(string arg)

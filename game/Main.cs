@@ -124,6 +124,7 @@ namespace UnturnedGodot
                 else if (arg == "--crafttest") { RunCraftTest(); GetTree().Quit(); return; }   // parse an item .dat's Blueprints -> print (crafting parser self-test)
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
                 else if (arg == "--shelltest") { RunShellTest(); GetTree().Quit(); return; }   // shotgun shell-by-shell reload detection + sequence self-test
+                else if (arg == "--farmloop") { RunFarmLoopTest(); GetTree().Quit(); return; }   // plant->grow->harvest loop: crops.tsv<->farms.tsv seed linkage + growth/yield self-test
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1047,6 +1048,29 @@ namespace UnturnedGodot
             GD.Print($"[CROPTEST] {name}: young(Foliage_0) left, grown(Foliage_1) right");
         }
 
+        // --farmloop: validate the plant->grow->harvest loop's DATA (crops.tsv seed id <-> farms.tsv growth/grow) + the
+        // growth timer + harvest yield, without a scene. (The console `plant` + E-harvest INPUT is playtested live.)
+        void RunFarmLoopTest()
+        {
+            CropRegistry.Load();
+            SDG.Unturned.FarmRegistry.Load();
+            int pass = 0, fail = 0;
+            foreach (var cropName in new[] { "carrot", "wheat", "tomato", "potato" })
+            {
+                if (!CropRegistry.TryByName(cropName, out var cd)) { GD.Print($"[farmloop] {cropName}: FAIL no crops.tsv entry"); fail++; continue; }
+                SDG.Unturned.FarmRegistry.TryGet(cd.SeedId, out var def);
+                var crop = new SDG.Unturned.PlantedCrop { Def = def, PlantedAt = 0 };
+                bool young = !crop.IsFullyGrown(1);                         // just planted -> not grown
+                bool grown = def.Growth > 0 && crop.IsFullyGrown(def.Growth + 1);   // after Growth secs -> grown
+                ushort yield = crop.Harvest(def.Growth + 1);               // harvest a grown crop -> Grow item id
+                bool yok = yield == def.Grow && yield != 0;
+                bool ok = young && grown && yok;
+                GD.Print($"[farmloop] {cropName}: seed={cd.SeedId} growth={def.Growth}s grow={def.Grow} | young={young} grown={grown} yield={yield}/{yok} => {(ok ? "PASS" : "FAIL")}");
+                if (ok) pass++; else fail++;
+            }
+            GD.Print($"[farmloop] {pass} PASS / {fail} FAIL");
+        }
+
         // --itemtest=ID,ID,...: drop those loot items as real physics WorldItems from a small height onto a ground plane,
         // to eyeball the extracted mesh + primary albedo + best-fit box AND that they FALL + settle (gravity, no float).
         void BuildItemTest(string ids)
@@ -1447,7 +1471,8 @@ namespace UnturnedGodot
                 AddChild(player);
                 _pdPlayer = player;   // UG_AUTOFIRE terrain-impact verification
                 player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
-                AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> spawns at the look-orb (master)
+                AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> / plant <crop> spawns at the look-orb (master)
+                AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, E to harvest)
                 AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
                 player.RotationDegrees = new Vector3(0f, spawnYaw, 0f);   // face the spawn point's angle
@@ -1701,6 +1726,7 @@ namespace UnturnedGodot
             player.LoadGun("res://content/eaglefire.dat");
             AddChild(player);
             player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient (same missing hookup as Drive PEI)
+            AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, E to harvest)
             // auto-pick a grassy, well-inland spawn so the jeep drives on real green PEI land, not the coastal water-splat
             float sx = 0f, sz = -350f; int bestMargin = -1; float bestDist = float.MaxValue;
             for (float cz = -1800f; cz <= 1800f; cz += 50f)

@@ -678,6 +678,7 @@ namespace UnturnedGodot
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
                 else if (_focusItem != null) TryPickup();                                                  // looking at an item: pick it up
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle)) EnterVehicle(_focusVehicle); // looking at a vehicle: get in (master: look-at, not proximity)
+                else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
             {
