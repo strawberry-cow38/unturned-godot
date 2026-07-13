@@ -67,7 +67,7 @@ namespace UnturnedGodot
         // Phase 3 hearing (master): a hearing SPHERE + per-emitter loudness -> path to the LOUDEST+CLOSEST sound heard.
         [Export] public float HearingRange = 48f;   // the zombie's ears (m): a sound is heard only within this sphere AND if its loudness carries that far
         Vector3 _heardPos; float _heardSalience;    // best (loudest+closest) sound heard since the last tick; salience = loudness - dist
-        float _huntSalience;   // salience of the sound we're CURRENTLY investigating -> STAY ON TASK; only a strictly LOUDER+CLOSER sound overrides it (no re-agro on every footstep). Fades over time.
+        float _huntSalience;   // salience of the sound we're CURRENTLY investigating -> STAY ON TASK; only a strictly LOUDER+CLOSER sound overrides it (no re-agro on every footstep). Resets when the hunt ends / goes idle.
 
         public override void _Ready()
         {
@@ -241,8 +241,9 @@ namespace UnturnedGodot
             }
 
             // --- Phase 3 HEARING: investigate the loudest+closest sound but STAY ON TASK -- only a strictly LOUDER+CLOSER
-            //     sound overrides the one we're already chasing (no re-agro on every footstep). SIGHT still outranks sound. ---
-            _huntSalience = Mathf.Max(0f, _huntSalience - 4f * dt);   // the memory of the current sound FADES, so a fresh nearer sound can eventually win even after a loud one
+            //     sound overrides the one we're already chasing (no re-agro on every footstep, incl. equal-loudness ones).
+            //     It re-evaluates when the investigation ENDS (arrived+gave up, or timed out -> idle resets _huntSalience).
+            //     SIGHT still outranks sound. ---
             if (_heardSalience > 0f)
             {
                 if (_hunt != EHunt.PLAYER && _heardSalience > _huntSalience)   // commit to the current task unless THIS sound is more salient (louder+closer)
@@ -434,6 +435,7 @@ namespace UnturnedGodot
             Vector3 me = GlobalPosition;
             float num3 = HDistSq(_huntPoint, me);
             bool arrived = num3 < 3f;                                      // Zombie isMoving = num3 > 3 (~1.73 m)
+            if (_age - _lastHunted > 12f) { _hunt = EHunt.NONE; return; }             // hard cap: unreachable/stale noise -> stop, go idle (then re-attracts to the next sound)
             if (arrived && _age - _lastHunted > 3f) { _hunt = EHunt.NONE; return; }   // stop()
 
             Vector3 horiz;
