@@ -34,6 +34,7 @@ namespace UnturnedGodot
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
+        float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
@@ -958,6 +959,15 @@ namespace UnturnedGodot
                     _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n));
                 }
                 else _engineAudio.VolumeDb = -80f;   // engine off -> kill the noise
+            }
+            // Phase 3 hearing: a running, MOVING car makes engine/tire noise zombies hear -- source DRIVING stealth
+            // radius DETECT_FORWARD(48) x forward-speed% (parked/idling ~silent since speed~0). Throttled like footsteps.
+            _engineNoiseT -= (float)delta;
+            if (EngineOn && _engineNoiseT <= 0f)
+            {
+                _engineNoiseT = 0.4f;
+                float loud = 48f * ForwardSpeedPct();
+                if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
             if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
                 Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);
