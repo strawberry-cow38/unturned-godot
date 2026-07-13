@@ -125,6 +125,7 @@ namespace UnturnedGodot
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
                 else if (arg == "--shelltest") { RunShellTest(); GetTree().Quit(); return; }   // shotgun shell-by-shell reload detection + sequence self-test
                 else if (arg == "--farmloop") { RunFarmLoopTest(); GetTree().Quit(); return; }   // plant->grow->harvest loop: crops.tsv<->farms.tsv seed linkage + growth/yield self-test
+                else if (arg == "--skilltest") { RunSkillTest(); GetTree().Quit(); return; }   // PlayerSkills grid + XP cost formula + upgrade/mastery self-test
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1069,6 +1070,38 @@ namespace UnturnedGodot
                 if (ok) pass++; else fail++;
             }
             GD.Print($"[farmloop] {pass} PASS / {fail} FAIL");
+        }
+
+        // --skilltest: validate the PlayerSkills grid sizes + the source XP cost formula + upgrade/mastery (data-model self-test).
+        void RunSkillTest()
+        {
+            var sk = new SDG.Unturned.PlayerSkills();
+            int pass = 0, fail = 0;
+            void Check(string name, bool ok) { GD.Print($"[skilltest] {name}: {(ok ? "PASS" : "FAIL")}"); if (ok) pass++; else fail++; }
+
+            Check("OFFENSE has 7", sk.skills[(int)SDG.Unturned.EPlayerSpeciality.OFFENSE].Length == 7);
+            Check("DEFENSE has 7", sk.skills[(int)SDG.Unturned.EPlayerSpeciality.DEFENSE].Length == 7);
+            Check("SUPPORT has 8", sk.skills[(int)SDG.Unturned.EPlayerSpeciality.SUPPORT].Length == 8);
+
+            // cost: AGRICULTURE (max7,base10,diff1.0) L0=10,L1=20 ; CRAFTING (max3,base20,diff1.5) L0=20,L1=50
+            var ag = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
+            Check("AGRICULTURE max 7", ag.max == 7);
+            Check("AGRICULTURE L0 cost 10", ag.Cost == 10);
+            var cr = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.CRAFTING);
+            Check("CRAFTING max 3", cr.max == 3);
+            Check("CRAFTING L0 cost 20", cr.Cost == 20);
+
+            // award 30 XP -> upgrade AGRICULTURE twice (10+20) -> level 2, 0 XP left, 3rd blocked
+            sk.AwardExperience(30);
+            bool u1 = sk.TryUpgrade(SDG.Unturned.EPlayerSupport.AGRICULTURE);   // 10 -> lvl1, 20 left
+            bool u2 = sk.TryUpgrade(SDG.Unturned.EPlayerSupport.AGRICULTURE);   // 20 -> lvl2, 0 left
+            bool u3 = sk.TryUpgrade(SDG.Unturned.EPlayerSupport.AGRICULTURE);   // 30 -> blocked (0 XP)
+            Check("upgrade x2 ok + 3rd blocked", u1 && u2 && !u3);
+            Check("AGRICULTURE level 2", sk.Level(SDG.Unturned.EPlayerSupport.AGRICULTURE) == 2);
+            Check("XP spent to 0", sk.experience == 0);
+            Check("mastery 2/7", Mathf.Abs(ag.Mastery - 2f / 7f) < 0.001f);
+
+            GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
         }
 
         // --itemtest=ID,ID,...: drop those loot items as real physics WorldItems from a small height onto a ground plane,
