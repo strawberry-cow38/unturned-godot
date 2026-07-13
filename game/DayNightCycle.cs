@@ -17,21 +17,29 @@ namespace UnturnedGodot
         public float DayLength = 120f;   // seconds per full cycle (short here; Unturned's is ~an hour)
         public float Time = 0.35f;       // 0..1 time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
 
-        // sky-dome zenith colour at midnight / dawn / noon / dusk -- noon key = Unturned Skybox.mat _SkyColor
+        // ── PEI's REAL per-time-of-day lighting, ripped byte-exact from Maps/PEI/Environment/Lighting.dat (v12: the
+        //    LightingInfo[4] table = DAWN/MIDDAY/DUSK/MIDNIGHT x ELightingColor, readColor = 3 bytes RGB /255).
+        //    Arrays ordered [midnight, dawn, noon, dusk] to match Grad(). tools/parse_lighting.py dumps the full table.
+        // sky-dome zenith = SKY_SKY
         static readonly Color[] SkyTop = {
-            new(0.020f, 0.030f, 0.070f), new(0.560f, 0.430f, 0.450f), new(0.636f, 0.720f, 0.801f), new(0.640f, 0.360f, 0.250f),
+            new(0.020f, 0.071f, 0.180f), new(0.878f, 0.753f, 0.584f), new(0.400f, 0.627f, 0.808f), new(0.757f, 0.188f, 0.267f),
         };
-        // horizon (equator) colour -- noon key = Unturned Skybox.mat _EquatorColor (0.801)
+        // horizon (equator) = SKY_EQUATOR
         static readonly Color[] SkyHorizon = {
-            new(0.040f, 0.050f, 0.100f), new(0.760f, 0.560f, 0.460f), new(0.801f, 0.801f, 0.801f), new(0.820f, 0.460f, 0.300f),
+            new(0.078f, 0.071f, 0.180f), new(0.761f, 0.482f, 0.176f), new(0.784f, 0.784f, 0.784f), new(1.000f, 0.341f, 0.204f),
         };
-        // below-horizon ground colour -- noon key = Unturned Skybox.mat _GroundColor (0.5)
+        // below-horizon = SKY_GROUND
         static readonly Color[] Ground = {
-            new(0.030f, 0.035f, 0.060f), new(0.330f, 0.300f, 0.290f), new(0.500f, 0.500f, 0.500f), new(0.360f, 0.280f, 0.240f),
+            new(0.000f, 0.071f, 0.102f), new(0.651f, 0.251f, 0.098f), new(0.329f, 0.518f, 0.780f), new(0.216f, 0.118f, 0.141f),
         };
-        // ambient tint at midnight / dawn / noon / dusk
+        // ambient = AMBIENT_SKY/EQUATOR/GROUND averaged. MIDDAY is a WARM TAN (0.74,0.63,0.47), NOT grey -- this is the
+        // washout fix: Unturned's real midday ambient is warm + bright, my old flat grey (0.60,0.62,0.65) desaturated it.
         static readonly Color[] Amb = {
-            new(0.05f, 0.06f, 0.12f), new(0.42f, 0.38f, 0.40f), new(0.60f, 0.62f, 0.65f), new(0.50f, 0.40f, 0.36f),
+            new(0.098f, 0.196f, 0.294f), new(0.329f, 0.340f, 0.345f), new(0.735f, 0.625f, 0.467f), new(0.561f, 0.106f, 0.248f),
+        };
+        // sun light colour = SUN (midnight = black; night light comes from the moon tint below)
+        static readonly Color[] SunCol = {
+            new(0.000f, 0.000f, 0.000f), new(0.718f, 0.463f, 0.098f), new(0.933f, 0.863f, 0.757f), new(1.000f, 0.000f, 0.000f),
         };
 
         Sky _sky;
@@ -165,31 +173,30 @@ void sky() {
             _sky = new Sky { SkyMaterial = _skyMat };
             Env.BackgroundMode = Godot.Environment.BGMode.Sky;
             Env.Sky = _sky;
-            // SOURCE-ACCURATE ambient (master: "washed vs Unturned's rich/saturated palette"). Unturned lights the world
-            // from a sky/equator/ground GRADIENT ambient -- LevelLighting sets RenderSettings.ambientSky/Equator/GroundColor
-            // (Unity Trilight) per time-of-day. My flat GREY single-colour ambient was the washout (grey fill desaturates
-            // everything). Godot has no Trilight, so drive ambient from the (coloured) sky shader -- the closest: the sky's
-            // colour gradient lights the world, and it tracks day/night for free.
-            Env.AmbientLightSource = Godot.Environment.AmbientSource.Sky;
-            Env.AmbientLightSkyContribution = 1.0f;
-            Env.AmbientLightEnergy = float.TryParse(System.Environment.GetEnvironmentVariable("UG_AMB"), out var ae) ? ae : 1.15f;
-            // the src does NO post-process saturation grade -- the coloured gradient ambient is what reads rich. Grade OFF
-            // by default (source-accurate); UG_SAT is an optional A/B override.
+            // SOURCE-ACCURATE ambient. Unturned's ambient is a warm sky/equator/ground gradient (RenderSettings ambient
+            // Trilight) from the level's AMBIENT_SKY/EQUATOR/GROUND -- at midday a WARM TAN, not grey (that grey was the
+            // washout). Godot has no Trilight, so use a single flat ambient = the per-time AMBIENT colour (Grad(Amb), set
+            // each frame in Apply); at midday the 3 bands are near-identical warm tan so flat is faithful. NOT sky-sourced
+            // -- the sky is blue but the AMBIENT is warm tan; they're separate slots in the src.
+            Env.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+            Env.AmbientLightEnergy = float.TryParse(System.Environment.GetEnvironmentVariable("UG_AMB"), out var ae) ? ae : 1.0f;
+            // src has NO post-process saturation grade -- the warm ambient is what reads rich. UG_SAT = optional override.
             float sat = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SAT"), out var s) ? s : 1.0f;
-            if (System.Math.Abs(sat - 1.0f) > 0.001f) { Env.AdjustmentEnabled = true; Env.AdjustmentSaturation = sat; Env.AdjustmentContrast = 1.05f; }
+            if (System.Math.Abs(sat - 1.0f) > 0.001f) { Env.AdjustmentEnabled = true; Env.AdjustmentSaturation = sat; }
         }
 
         public void Apply()
         {
+            if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_TIME"), out var ft)) Time = ft;   // freeze time-of-day for lighting A/B tests (0.5 = noon)
             Vector3 sunDir = new(0f, -1f, 0f);
             if (Sun != null)
             {
                 float elevation = -Mathf.Cos(Time * Mathf.Tau) * 90f;      // +90 overhead at noon, -90 below at midnight
                 Sun.RotationDegrees = new Vector3(-elevation, -40f, 0f);
                 Sun.LightEnergy = Mathf.Clamp(Mathf.Sin(Time * Mathf.Tau - Mathf.Pi / 2f) * 1.35f, 0.015f, 1.35f);
-                Sun.LightColor = Time < 0.28f || Time > 0.72f ? new Color(0.6f, 0.62f, 0.8f)   // moonlight tint
-                               : Time < 0.35f || Time > 0.65f ? new Color(1f, 0.72f, 0.5f)     // golden hour
-                               : Colors.White;
+                // real PEI SUN colour per time (dawn amber -> noon warm white -> dusk red -> midnight black); the
+                // LightEnergy curve above fades it out at night, and the warm AMBIENT (Grad(Amb)) carries the daylight fill.
+                Sun.LightColor = Grad(SunCol);
                 sunDir = (-Sun.GlobalTransform.Basis.Z).Normalized();     // direction the light travels
             }
             if (Env != null)
