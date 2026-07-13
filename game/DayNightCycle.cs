@@ -165,14 +165,18 @@ void sky() {
             _sky = new Sky { SkyMaterial = _skyMat };
             Env.BackgroundMode = Godot.Environment.BGMode.Sky;
             Env.Sky = _sky;
-            Env.AmbientLightSource = Godot.Environment.AmbientSource.Color;   // keep the tuned ambient
-            // Unturned's palette is far RICHER + more saturated than Godot's flat default grade washed it to (master:
-            // "WAYYY off, much richer and saturated"). Add a post-process color grade on the world: strong saturation
-            // boost + a touch of contrast. UG_SAT env var overrides the saturation for A/B tuning (default 1.45).
-            float sat = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SAT"), out var s) ? s : 1.45f;
-            Env.AdjustmentEnabled = true;
-            Env.AdjustmentSaturation = sat;
-            Env.AdjustmentContrast = 1.08f;
+            // SOURCE-ACCURATE ambient (master: "washed vs Unturned's rich/saturated palette"). Unturned lights the world
+            // from a sky/equator/ground GRADIENT ambient -- LevelLighting sets RenderSettings.ambientSky/Equator/GroundColor
+            // (Unity Trilight) per time-of-day. My flat GREY single-colour ambient was the washout (grey fill desaturates
+            // everything). Godot has no Trilight, so drive ambient from the (coloured) sky shader -- the closest: the sky's
+            // colour gradient lights the world, and it tracks day/night for free.
+            Env.AmbientLightSource = Godot.Environment.AmbientSource.Sky;
+            Env.AmbientLightSkyContribution = 1.0f;
+            Env.AmbientLightEnergy = float.TryParse(System.Environment.GetEnvironmentVariable("UG_AMB"), out var ae) ? ae : 1.15f;
+            // the src does NO post-process saturation grade -- the coloured gradient ambient is what reads rich. Grade OFF
+            // by default (source-accurate); UG_SAT is an optional A/B override.
+            float sat = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SAT"), out var s) ? s : 1.0f;
+            if (System.Math.Abs(sat - 1.0f) > 0.001f) { Env.AdjustmentEnabled = true; Env.AdjustmentSaturation = sat; Env.AdjustmentContrast = 1.05f; }
         }
 
         public void Apply()
