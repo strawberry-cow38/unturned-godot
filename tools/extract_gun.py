@@ -123,6 +123,10 @@ for _snd in ("shoot", "reload"):
     if _save_ogg("assets/coremasterbundle/items/guns/" + gl + "/" + _snd + ".mp3", _snd):
         snds.append(_snd)
 
+# FALLBACK 0 (launcher): some guns name the fire clip fire.mp3 instead of shoot.mp3.
+if "shoot" not in snds and _save_ogg("assets/coremasterbundle/items/guns/" + gl + "/fire.mp3", "shoot"):
+    snds.append("shoot(fire.mp3)")
+
 # FALLBACK 1 (bows/crossbow): no guns/<name>/shoot.mp3 -> the fire sound lives on the gun's DEFAULT Barrel.
 # Source: the gun .dat's "Barrel <id>" (Bow_Compound -> Barrel 354 = Bow_Barrel) -> items/barrels/<barrel>/shoot.mp3 (the string twang, NOT a gunshot).
 if "shoot" not in snds:

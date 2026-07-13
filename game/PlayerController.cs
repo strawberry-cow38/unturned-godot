@@ -831,13 +831,14 @@ namespace UnturnedGodot
 
         // A simulated bullet (Unturned's BulletInfo): flies from the muzzle with a velocity, dropping under gravity,
         // stepped every physics tick; its tracer travels with it; it hits/despawns on contact or after its steps.
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage; public MeshInstance3D Tracer; }
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage; public MeshInstance3D Tracer; public Node3D RocketVis; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage)
         {
             var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, Tracer = MakeTracer() };
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
+            if (Gun?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
             _bullets.Add(b);
         }
 
@@ -878,11 +879,24 @@ namespace UnturnedGodot
                 b.Pos = next;
                 b.Vel += new Vector3(0f, b.Gravity * 0.02f, 0f);
                 UpdateTracer(b);
+                if (b.RocketVis != null && IsInstanceValid(b.RocketVis)) { b.RocketVis.GlobalPosition = b.Pos; var _vd = b.Vel.Normalized(); if (Mathf.Abs(_vd.Y) < 0.98f) b.RocketVis.LookAt(b.Pos + b.Vel, Vector3.Up); }   // fly the rocket model along the ballistic, nose along velocity
                 if (--b.StepsLeft <= 0) RemoveBullet(i);
             }
         }
 
-        void RemoveBullet(int i) { _bullets[i].Tracer?.QueueFree(); _bullets.RemoveAt(i); }
+        void RemoveBullet(int i) { _bullets[i].Tracer?.QueueFree(); _bullets[i].RocketVis?.QueueFree(); _bullets.RemoveAt(i); }
+
+        // The rocket launcher's projectile is a VISIBLE flying rocket (projectile.prefab Model_0; no _MainTex -> flat dark body).
+        ArrayMesh _rocketMesh; bool _rocketTried;
+        Node3D SpawnRocketVis(Vector3 pos)
+        {
+            if (!_rocketTried) { _rocketTried = true; try { _rocketMesh = ContentProvider.ParseObj("res://content/rocket_projectile.txt"); } catch { } }
+            if (_rocketMesh == null) return null;
+            var rv = new MeshInstance3D { Mesh = _rocketMesh, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.324f, 0.397f, 0.331f), Roughness = 0.75f, Metallic = 0f } };   // projectile.prefab material _Color (olive body) + _Glossiness 0.25 -> roughness 0.75
+            GetTree().CurrentScene?.AddChild(rv);
+            rv.GlobalPosition = pos;
+            return rv;
+        }
 
         Texture2D _bulletHoleTex; bool _bhTried;
         Texture2D BulletHoleTex()
