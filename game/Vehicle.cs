@@ -180,7 +180,11 @@ namespace UnturnedGodot
             if (_exploded || amount <= 0f) return;
             Health = Mathf.Max(0f, Health - amount);
             TriggerAlarm();   // damaging an alarmed car sets off its alarm (master)
-            if (Health <= 0f && _deadTimer < 0f) _deadTimer = ExplodeDelay;
+            if (Health <= 0f && _deadTimer < 0f)
+            {
+                _deadTimer = ExplodeDelay;
+                EngineOn = false;   // engine dies AT 0 HP: cuts engine POWER (Drive gates on EngineOn) + the engine SOUND (audio goes silent when !EngineOn). Velocity is untouched -> the car keeps its momentum and coasts to a stop (master)
+            }
         }
 
         void Explode()   // source explode: launch up + spin, fire on, char the body, disable
@@ -191,6 +195,7 @@ namespace UnturnedGodot
             ApplyCentralImpulse(Vector3.Up * 18000f);         // source min/maxExplosionForce straight up; boosted for a dramatic chassis fling against the 3x gravity (master: much higher)
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
+            SetHeadlights(false); SetTaillights(false);   // a corpse's lamps go dark -- kill the head + tail lights (master)
             if (_fire != null) _fire.Emitting = true;
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
             _explosionAudio?.Play();
@@ -784,6 +789,7 @@ namespace UnturnedGodot
         {
             if (_exploded) { EngineForce = 0f; Steering = 0f; Brake = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
+            if (!EngineOn) throttle = 0f;   // dead/off engine (e.g. 0 HP): no drive power, but the car keeps its momentum and can still steer + brake -> coasts to a stop instead of freezing (master)
             float speed = LinearVelocity.Length();   // m/s (horizontal-ish while driving)
             float fwd = LinearVelocity.Dot(-GlobalTransform.Basis.Z);   // signed forward speed (front = -Z)
             // S while rolling FORWARD (or W while rolling backward) = a foot BRAKE, not an instant reverse -- real pedal feel
