@@ -806,6 +806,7 @@ namespace UnturnedGodot
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
             Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : 0f);
+            if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = (handbrake || footBrake) ? 6f : 2f;   // brake lights flare brighter while braking (master); running taillights sit at 2x
         }
 
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
