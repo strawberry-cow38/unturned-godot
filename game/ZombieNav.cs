@@ -64,7 +64,7 @@ namespace UnturnedGodot
         // World geometry is PARSED ONCE (whole subtree), then each pocket bakes from it with its own FilterBakingAabb.
         // Baked meshes are saved to res://content/navmesh/ so subsequent loads skip the (slow) Recast bake -- master's
         // "build it once when we load the map, save it to a file" (editor-time baking comes later).
-        public static void BuildOrLoad(Node worldRoot, List<NavPocket> pockets, bool overlay = false, bool save = true)
+        public static void BuildOrLoad(Node worldRoot, List<NavPocket> pockets, bool overlay = false, bool save = true, bool bakeIfMissing = true)
         {
             if (pockets.Count == 0) return;
             const string dir = "res://content/navmesh";
@@ -78,6 +78,7 @@ namespace UnturnedGodot
                 string path = $"{dir}/pei_pocket_{i}.res";
                 NavigationMesh nm = null;
                 if (Godot.FileAccess.FileExists(path)) { nm = ResourceLoader.Load<NavigationMesh>(path); if (nm != null) loaded++; }
+                if (nm == null && !bakeIfMissing) { GD.Print($"[zombienav] pocket {i}: no baked file -- run --bakenav to generate; skipped"); continue; }   // game LOADS only, never gens
                 if (nm == null)
                 {
                     nm = MakeMesh(pockets[i].Box);

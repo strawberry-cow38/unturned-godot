@@ -37,6 +37,7 @@ namespace UnturnedGodot
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
+        bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
@@ -44,12 +45,13 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--navshot=")) navShot = arg["--navshot=".Length..];   // verify screenshot: navmesh floor overlay + zombie vision cones, synchronous world, aerial over a pocket
+                else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -157,6 +159,8 @@ namespace UnturnedGodot
                 BuildTerrainTest();
                 return;
             }
+
+            if (bakenav) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); GetTree().Quit(); return; }   // offline navmesh bake tool: sync full-world load (peiPlayable=true so object COLLIDERS get built -> buildings carve the mesh) -> bake + save -> quit
 
             if (objects)   // real PEI placed objects (Objects.dat) on the terrain, viewed over the densest cluster
             {
@@ -1183,7 +1187,7 @@ namespace UnturnedGodot
             {
                 if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading.Advance(); }
                 curPhase = name; loading.SetStatus(name + "…"); phaseSw.Restart();
-                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                if (!_bakeNav) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);   // --bakenav: skip the per-phase frame-yield so the WHOLE world loads synchronously -> we can bake offline
             }
             // REAL PEI lighting via DayNightCycle (src Lighting.dat: ported sky shader + warm ambient + sun per time-of-day)
             // -- replaces the ProceduralSky + sky-tinted ambient that didn't match the source palette. "Drive PEI"
@@ -1540,7 +1544,7 @@ namespace UnturnedGodot
             // Zombie navmesh POCKETS -- bake NOW, in the FULL world, so the BUILDINGS (layer 1<<0) carve the mesh and
             // zombies route around them. This full-world bake is the CANONICAL one (save:true -> pei_pocket_N.res);
             // the terrain-only peiplay/navshot verify modes pass save:false so they never overwrite it.
-            try { var _navPk = ZombieNav.LoadPockets(_mapRoot); ZombieNav.BuildOrLoad(this, _navPk, overlay: false, save: true); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world bake failed: {_ne.Message}"); }
+            try { var _navPk = ZombieNav.LoadPockets(_mapRoot); ZombieNav.BuildOrLoad(this, _navPk, overlay: false, save: _bakeNav, bakeIfMissing: _bakeNav); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world nav failed: {_ne.Message}"); }   // --bakenav BAKES+SAVES here; the game just LOADS the committed .res
             _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
         }
 
