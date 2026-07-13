@@ -22,6 +22,7 @@ namespace UnturnedGodot
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         Vehicle _driving; bool _fp;   // vehicle being driven + camera mode: _fp false = 3rd person (default), true = 1st; H toggles (on foot + driving)
+        readonly bool _ugFp = System.Environment.GetEnvironmentVariable("UG_FP") == "1";   // render harness: force 1st-person to screenshot the FP viewmodel
         RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
         // camera flinch (PlayerLook.flinchLocalRotation, an angular kick perpendicular to the hit that decays to level).
@@ -1235,6 +1236,7 @@ namespace UnturnedGodot
             _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
             if (_cam != null && !_dead && _driving == null)   // while driving, DriveVehicle (in _PhysicsProcess) owns the cam
             {
+                if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
                 {
                     // FP: eye height follows the stance (PlayerLook.heightLook 1.75/1.2/0.35, lerped 4/s), pitched by the mouse
