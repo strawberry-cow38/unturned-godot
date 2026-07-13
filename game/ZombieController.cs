@@ -64,6 +64,9 @@ namespace UnturnedGodot
         [Export] public float SightHalfAngleDeg = 60f;  // vision-cone half-angle from the eyes
         float _repathAcc;   // throttle agent re-target (perf: don't SetTargetPosition every single tick)
         float _lostSightAcc;   // seconds since we last saw the player mid-chase -> after a grace, go investigate last-seen
+        // Phase 3 hearing (master): a hearing SPHERE + per-emitter loudness -> path to the LOUDEST+CLOSEST sound heard.
+        [Export] public float HearingRange = 48f;   // the zombie's ears (m): a sound is heard only within this sphere AND if its loudness carries that far
+        Vector3 _heardPos; float _heardSalience;    // best (loudest+closest) sound heard since the last tick; salience = loudness - dist
 
         public override void _Ready()
         {
@@ -234,6 +237,13 @@ namespace UnturnedGodot
                     if (_hunt == EHunt.NONE) { if (_rng.Randf() > 0.8f) PlaySound(_groans); }
                     else PlaySound(_roars);
                 }
+            }
+
+            // --- Phase 3 HEARING: react to the loudest+closest sound heard since last tick (SIGHT still outranks it) ---
+            if (_heardSalience > 0f)
+            {
+                if (_hunt != EHunt.PLAYER) { _hunt = EHunt.POINT; _startled = false; _huntPoint = _heardPos; _lastHunted = (float)_age; }   // (re)point to the salient sound + refresh give-up clock
+                _heardSalience = 0f;   // consume it -- a sound heard mid player-hunt is just dropped
             }
 
             // --- IDLE: MOTIONLESS (master's rework: zombies stand still until they SEE (vision cone) or HEAR a noise) ---
@@ -445,13 +455,23 @@ namespace UnturnedGodot
                 _huntPoint = point;
         }
 
-        // Broadcast from PlayerController.Fire (AlertTool.alert point-noise): a gunshot within earshot pulls the
-        // zombie over to investigate where it came from -- and once there, normal sight tends to spot the player.
-        public void OnGunshot(Vector3 pos, float radius)
+        // Phase 3 sound bus (SoundBus.Emit -> CallGroup "Hear"): a sound at `pos` carrying `loudness` (m). Heard only
+        // within the HearingRange sphere AND if the loudness carries that far; keeps the LOUDEST+CLOSEST one this tick
+        // (salience = loudness - dist) and acts on it in _PhysicsProcess -- master's hearing rework. Sight still wins.
+        public void Hear(Vector3 pos, float loudness)
         {
             if (Dead) return;
-            if ((pos - GlobalPosition).LengthSquared() < radius * radius) AlertPoint(pos);
+            float dist = (pos - GlobalPosition).Length();
+            if (dist > HearingRange || dist > loudness) return;   // outside the ears, or the sound doesn't carry this far
+            float salience = loudness - dist;                     // loud + close = most salient (master: loudest + closest)
+            if (salience > _heardSalience) { _heardSalience = salience; _heardPos = pos; }
         }
+
+        // Back-compat shim: older callers (CallGroup "OnGunshot", pos, radius) map radius -> loudness through the same ears.
+        public void OnGunshot(Vector3 pos, float radius) => Hear(pos, radius);
+
+        // --heartest offline verify: the best (loudest+closest) sound accumulated so far this tick.
+        public (Vector3 pos, float salience) DebugHeard() => (_heardPos, _heardSalience);
 
         // Zombie.askSpit -> askAcid: lob a corrosive glob at the player. Arced so gravity drops it onto the aim point.
         void SpitAcid(PlayerController player)

@@ -343,6 +343,7 @@ namespace UnturnedGodot
         public int Agro;
         public bool Moving { get; private set; }
         public EPlayerStance Stance => _move.Stance;
+        float _footNoiseT;   // Phase 3 hearing: throttle the continuous footstep-noise emit (~2.5x/s while moving)
 
         // Port of PlayerStance.GetStealthDetectionRadius: the radius (m) within which a zombie can sense this
         // player, by stance -- standing 12, crouched 6, sprinting 20, prone 3, x1.1 while moving. AlertTool
@@ -880,7 +881,7 @@ namespace UnturnedGodot
             }
             // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
             // barrel skips the alert ENTIRELY (source UseableGun ~936: only alert if barrel==null || !isSilenced) -> stealth.
-            if (!(_viewmodel?.IsSuppressed ?? false)) GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, GunshotRadius);
+            if (!(_viewmodel?.IsSuppressed ?? false)) SoundBus.Emit(GetTree(), GlobalPosition, SoundBus.Gunshot);   // Phase 3 sound bus: unsuppressed gunshot loudness (suppressed = silent)
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
 
@@ -1413,6 +1414,17 @@ namespace UnturnedGodot
             Moving = moving;                                  // exposed for zombie stealth detection
             _viewmodel?.SetLocomotion(moving, _move.Stance);
             UpdateVitals(moving, (float)delta);
+
+            // Phase 3 hearing: moving on foot makes FOOTSTEP noise the zombies can hear, loudness = the source stealth
+            // detection radius by stance/speed (sprint 20 loud .. prone 3 near-silent). Throttled; a motionless player
+            // makes no sound (must be SEEN instead). Zombies within earshot path to it via SoundBus.Hear.
+            _footNoiseT -= (float)delta;
+            if (moving && _footNoiseT <= 0f)
+            {
+                _footNoiseT = 0.4f;
+                float loud = GetStealthDetectionRadius();
+                if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
+            }
 
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, IsOnFloor(), (float)delta);
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);

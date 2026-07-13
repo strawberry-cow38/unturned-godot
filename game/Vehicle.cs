@@ -834,7 +834,7 @@ namespace UnturnedGodot
         {
             if (_hornAudio == null) return;
             _hornAudio.Play();
-            GetTree().CallGroup("zombies", "OnGunshot", GlobalPosition, HornAlertRadius);   // source tellHorn AlertTool.alert(pos,32): the noise pulls nearby zombies to investigate
+            SoundBus.Emit(GetTree(), GlobalPosition, SoundBus.Horn);   // Phase 3 sound bus: horn loudness (source tellHorn AlertTool.alert(pos,32))
         }
         void TriggerAlarm() { if (_alarmed && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master)
 

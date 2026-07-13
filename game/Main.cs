@@ -47,7 +47,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -56,6 +56,7 @@ namespace UnturnedGodot
                 else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
+                else if (arg == "--heartest") hearTest = true;   // OFFLINE verify: Phase 3 hearing -> a zombie picks the LOUDEST+CLOSEST sound, ignores out-of-range/too-quiet
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -210,6 +211,7 @@ namespace UnturnedGodot
 
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
+            if (hearTest) { RunHearTest(); return; }   // pure logic check, no world needed
 
             if (navShot != null) { GetWindow().Size = new Vector2I(1280, 720); BuildNavShot(navShot); return; }
 
@@ -2460,6 +2462,25 @@ namespace UnturnedGodot
             }
             GD.Print($"[zombietest] planned {n} zombie spawns; {onNav}/{n} within 1.5m of the baked navmesh ({(n > 0 ? 100f * onNav / n : 0):0.#}%), avg snap {(n > 0 ? sum / n : 0):0.##}m, worst {worst:0.#}m");
             GD.Print($"[zombietest] {(n > 0 && onNav >= n * 0.85f ? "PASS -- zombies spawn on the navmesh, ready to pathfind" : "CHECK -- many spawns off-navmesh (bucketing or navmesh gap?)")}");
+            GetTree().Quit();
+        }
+
+        // --heartest: a zombie should react to the LOUDEST+CLOSEST sound it can hear (salience = loudness - dist),
+        // ignoring sounds outside its HearingRange sphere or too quiet to carry that far (master's hearing rework).
+        void RunHearTest()
+        {
+            var z = new ZombieController();
+            AddChild(z);                       // _Ready: joins the "zombies" group, HearingRange 48
+            z.GlobalPosition = Vector3.Zero;
+            z.Hear(new Vector3(10, 0, 0), 12f);   // dist 10 <= 12 loud  -> heard, salience 2
+            z.Hear(new Vector3(5, 0, 0), 6f);     // dist 5  <= 6  loud  -> heard, salience 1
+            z.Hear(new Vector3(40, 0, 0), 48f);   // dist 40 <= 48 loud  -> heard, salience 8  (LOUD gunshot beats near footsteps)
+            z.Hear(new Vector3(3, 0, 0), 2f);     // dist 3  >  2  loud  -> IGNORED (too quiet to carry)
+            z.Hear(new Vector3(60, 0, 0), 64f);   // dist 60 >  48 range -> IGNORED (outside the ears)
+            var (pos, sal) = z.DebugHeard();
+            bool ok = pos.DistanceTo(new Vector3(40, 0, 0)) < 0.01f && Mathf.Abs(sal - 8f) < 0.01f;
+            GD.Print($"[heartest] winner pos={pos} salience={sal:0.##}  (expected (40,0,0) sal 8)  -> {(ok ? "PASS" : "FAIL")}");
+            GD.Print($"[heartest] loud gunshot(48@40m,sal8) beat near footstep(6@5m,sal1); too-quiet(2@3m) + out-of-range(64@60m) correctly ignored");
             GetTree().Quit();
         }
 
