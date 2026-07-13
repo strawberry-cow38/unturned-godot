@@ -1,19 +1,19 @@
-zubeknakov	zubeknakov_sight.txt	-0.0,0.1698,-0.0867
-grizzly	grizzly_sight.txt	-0.0,0.1413,-0.1138
-timberwolf	timberwolf_sight.txt	-0.0,0.21,-0.1386
-sabertooth	sabertooth_sight.txt	-0.0,0.1413,-0.1152
-snayperskya	snayperskya_sight.txt	-0.0,0.1409,-0.1145
-augewehr	augewehr_sight.txt	-0.0,-0.03,-0.123
-bluntforce	bluntforce_sight.txt	-0.0,0.0555,-0.102
-nightraider	nightraider_sight.txt	-0.0,0.052,-0.1599
-heartbreaker	heartbreaker_sight.txt	-0.0,-0.0107,-0.1059
-nykorev	nykorev_sight.txt	-0.0,0.1781,-0.0962
-sportshot	sportshot_sight.txt	-0.0,0.2178,-0.1376
-schofield	schofield_sight.txt	-0.0,0.2309,-0.1314
-hawkhound	hawkhound_sight.txt	-0.0,0.21,-0.1332
-dragonfang	dragonfang_sight.txt	-0.0,0.1388,-0.1156
-shadowstalker	shadowstalker_sight.txt	-0.0,0.0086,-0.1541
-honeybadger	honeybadger_sight.txt	-0.0,0.1441,-0.118
-crossbow	crossbow_sight.txt	-0.0,-0.1031,-0.1161
-bow_compound	bow_compound_sight.txt	0.027,0.2607,0.0573
-launcher_rocket	launcher_rocket_sight.txt	-0.0,-0.0104,-0.1241
+zubeknakov	zubeknakov_sight.txt	-0.0,0.1698,-0.0867	0.361,0.361,0.361
+grizzly	grizzly_sight.txt	-0.0,0.1413,-0.1138	0.275,0.275,0.275
+timberwolf	timberwolf_sight.txt	-0.0,0.21,-0.1386	0.3,0.3,0.3
+sabertooth	sabertooth_sight.txt	-0.0,0.1413,-0.1152	0.275,0.275,0.275
+snayperskya	snayperskya_sight.txt	-0.0,0.1409,-0.1145	0.196,0.196,0.196
+augewehr	augewehr_sight.txt	-0.0,-0.03,-0.123	0.3,0.3,0.3
+bluntforce	bluntforce_sight.txt	-0.0,0.0555,-0.102	0.118,0.118,0.118
+nightraider	nightraider_sight.txt	-0.0,0.052,-0.1599	0.235,0.235,0.235
+heartbreaker	heartbreaker_sight.txt	-0.0,-0.0107,-0.1059	0.275,0.275,0.275
+nykorev	nykorev_sight.txt	-0.0,0.1781,-0.0962	0.361,0.361,0.361
+sportshot	sportshot_sight.txt	-0.0,0.2178,-0.1376	0.275,0.275,0.275
+schofield	schofield_sight.txt	-0.0,0.2309,-0.1314	0.643,0.643,0.643
+hawkhound	hawkhound_sight.txt	-0.0,0.21,-0.1332	0.275,0.275,0.275
+dragonfang	dragonfang_sight.txt	-0.0,0.1388,-0.1156	0.196,0.196,0.196
+shadowstalker	shadowstalker_sight.txt	-0.0,0.0086,-0.1541	0.192,0.18,0.2
+honeybadger	honeybadger_sight.txt	-0.0,0.1441,-0.118	0.463,0.427,0.353
+crossbow	crossbow_sight.txt	-0.0,-0.1031,-0.1161	0.275,0.275,0.275
+bow_compound	bow_compound_sight.txt	0.027,0.2607,0.0573	0.118,0.118,0.118
+launcher_rocket	launcher_rocket_sight.txt	-0.0,-0.0104,-0.1241	0.275,0.275,0.275
