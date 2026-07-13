@@ -160,7 +160,29 @@ namespace UnturnedGodot
                 return;
             }
 
-            if (bakenav) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); GetTree().Quit(); return; }   // offline navmesh bake tool: sync full-world load (peiPlayable=true so object COLLIDERS get built -> buildings carve the mesh) -> bake + save -> quit
+            if (bakenav)   // offline navmesh bake tool: sync full-world load (peiPlayable=true -> object COLLIDERS get built -> buildings carve the mesh) -> bake + save
+            {
+                _bakeNav = true; _peiPlayable = true;
+                BuildObjectsTest();
+                string navShotOut = System.Environment.GetEnvironmentVariable("UG_NAVSHOT");
+                if (navShotOut == null) { GetTree().Quit(); return; }   // pure bake -> quit
+                // verify shot (UG_NAVSHOT): overlay the just-baked BUILDING-AWARE meshes + aerial cam over a pocket, so
+                // the holes-around-buildings read visually. _peiPlayer/HUD are hidden so it's a clean nav overview.
+                if (_peiPlayer != null) _peiPlayer.Visible = false;
+                var _pk = ZombieNav.LoadPockets(_mapRoot);
+                ZombieNav.BuildOrLoad(this, _pk, overlay: true, save: false, bakeIfMissing: false);
+                int _pi = int.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVPOCKET"), out var _p) ? Mathf.Clamp(_p, 0, _pk.Count - 1) : 7;
+                if (_pk.Count > 0)
+                {
+                    var c = _pk[_pi].Center; var look = new Vector3(c.X, 32f, c.Z);
+                    var cam = new Camera3D { Fov = 60f, Current = true };
+                    AddChild(cam);
+                    cam.GlobalPosition = look + new Vector3(0f, 80f, 65f);
+                    cam.LookAt(look, Vector3.Up);
+                }
+                _shotPath = navShotOut; _navShot = true;
+                return;
+            }
 
             if (objects)   // real PEI placed objects (Objects.dat) on the terrain, viewed over the densest cluster
             {
