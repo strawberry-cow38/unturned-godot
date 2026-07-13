@@ -240,7 +240,8 @@ namespace UnturnedGodot
 
         // DamageTool.explode (bounded): every zombie within radius takes zombieDamage * (1 - range/radius) -- LINEAR
         // falloff (Zombie.cs:270); the thrower (player) within radius takes playerDamage * (1 - (range/radius)^2) --
-        // SQUARED falloff (Player.cs:1975). Out of radius = nothing. No LoS/armor/limb/buildable/vehicle damage yet.
+        // SQUARED falloff (Player.cs:1975). Out of radius = nothing. Walls block the blast (LoS) + worn clothing cuts it
+        // (explosionArmor); vehicles take it too. Still no LIMB or buildable damage.
         public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage, float vehicleDamage)
         {
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
@@ -248,6 +249,7 @@ namespace UnturnedGodot
                 {
                     float range = z.GlobalPosition.DistanceTo(point);
                     if (range > radius) continue;
+                    if (ExplosionBlocked(point, z.GlobalPosition)) continue;   // a wall between the blast and the zombie stops it (source LineOfSightTest)
                     float times = 1f - range / radius;
                     bool wd = z.Dead;
                     z.DamageHit(zombieDamage * times, z.GlobalPosition, (z.GlobalPosition - point).Normalized());
@@ -258,12 +260,23 @@ namespace UnturnedGodot
                 {
                     float range = v.GlobalPosition.DistanceTo(point);
                     if (range > radius) continue;
+                    if (ExplosionBlocked(point, v.GlobalPosition)) continue;
                     v.TakeDamage(vehicleDamage * (1f - range / radius));   // linear falloff (port's simplified explosion model)
                 }
             float pr = GlobalPosition.DistanceTo(point);
-            if (pr <= radius) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t * (Inventory?.ExplosionArmor ?? 1f)); }   // worn clothing cuts blast damage (source Player.cs:1981 getPlayerExplosionArmor)
+            if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t * (Inventory?.ExplosionArmor ?? 1f)); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
             Local?.FlinchFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
             GD.Print($"[explode] r={radius} at {point}");
+        }
+
+        // Explosion line-of-sight (source ExplosionDamageParameters.LineOfSightTest): raycast from the blast to the target
+        // on the WORLD/LOS-blocking layer -- a wall/terrain between them shields the target (no damage). Both ends raised to
+        // chest height so the ray doesn't graze the ground; targets aren't on WorldLayer so only walls register.
+        bool ExplosionBlocked(Vector3 point, Vector3 target)
+        {
+            Vector3 a = point + Vector3.Up * 0.8f, b = target + Vector3.Up * 0.8f;
+            var q = PhysicsRayQueryParameters3D.Create(a, b, ZombieNav.WorldLayer);
+            return GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0;
         }
 
         // Explosion camera shake -- src: EffectManager.cs:1615 -> PlayerLook.FlinchFromExplosion. A flinch rotation toward the
