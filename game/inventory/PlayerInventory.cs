@@ -66,6 +66,16 @@ namespace SDG.Unturned
             return m;
         }
 
+        // Source: legs never break on a fall if ANY worn piece has Prevents_Falling_Broken_Bones (PlayerLife:2436).
+        public bool PreventsFallingBoneBreak => AnyWorn(a => a.preventsFallingBoneBreak);
+
+        bool AnyWorn(Func<ItemAsset, bool> pred)
+        {
+            foreach (var it in new[] { wornShirt, wornPants, wornHat, wornBackpack, wornVest, wornMask, wornGlasses })
+                if (it != null) { var a = Assets.find(it.id); if (a != null && pred(a)) return true; }
+            return false;
+        }
+
         void Resize(byte page, Item item)
         {
             var a = item?.GetAsset();

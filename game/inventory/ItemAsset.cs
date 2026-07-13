@@ -38,6 +38,7 @@ namespace SDG.Unturned
         public float armor = 1f;
         public float explosionArmor = 1f;
         public float fallingDamageMultiplier = 1f;
+        public bool preventsFallingBoneBreak;   // ItemClothingAsset.preventsFallingBrokenBones: if ANY worn piece has it, a hard fall doesn't break legs
 
         // ItemConsumeableAsset effects applied on Use, then the item is consumed. Health is absolute (0-100);
         // Food/Water are the .dat 0-100 values (the port's vitals are 0..1, so divided by 100 on apply).

@@ -50,15 +50,17 @@ for root, dirs, files in os.walk(BASE):
         armor = fv(d.get('Armor'), 1.0)
         aexp  = fv(d.get('Armor_Explosion'), armor)   # source: Armor_Explosion defaults to Armor
         fall  = fv(d.get('Falling_Damage_Multiplier'), 1.0)
-        if abs(armor - 1.0) < 1e-6 and abs(aexp - 1.0) < 1e-6 and abs(fall - 1.0) < 1e-6:
+        # Prevents_Falling_Broken_Bones is a bool FLAG (key present = true unless explicitly false/0) -> source ParseBool
+        bone  = 1 if ('Prevents_Falling_Broken_Bones' in d and str(d.get('Prevents_Falling_Broken_Bones', '')).strip().lower() not in ('false', '0')) else 0
+        if abs(armor - 1.0) < 1e-6 and abs(aexp - 1.0) < 1e-6 and abs(fall - 1.0) < 1e-6 and bone == 0:
             continue
-        rows.append((iid, armor, aexp, fall))
+        rows.append((iid, armor, aexp, fall, bone))
 
 rows.sort()
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
-    for iid, a, ae, fl in rows:
-        f.write(f"{iid}\t{a:g}\t{ae:g}\t{fl:g}\n")
+    for iid, a, ae, fl, bn in rows:
+        f.write(f"{iid}\t{a:g}\t{ae:g}\t{fl:g}\t{bn}\n")
 print("clothing armor rows:", len(rows))
 for r in rows[:10]:
     print("  ", r)

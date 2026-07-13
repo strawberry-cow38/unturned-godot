@@ -2513,6 +2513,13 @@ namespace UnturnedGodot
             bool data = boots != null && Mathf.Abs(boots.fallingDamageMultiplier - 0.05f) < 1e-3f
                      && mil != null && Mathf.Abs(mil.explosionArmor - 0.95f) < 1e-3f;
             GD.Print($"[armortest] real data wired: id1839 fall={boots?.fallingDamageMultiplier:0.###}(exp .05)  id2 expl={mil?.explosionArmor:0.###}(exp .95) -> {(data ? "PASS" : "FAIL")}");
+            // bone-proof: any worn piece with Prevents_Falling_Broken_Bones stops leg-break (source PlayerLife:2436)
+            SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset { id = 9003, itemName = "Test Boots", type = SDG.Unturned.EItemType.PANTS, preventsFallingBoneBreak = true });
+            var inv2 = new SDG.Unturned.PlayerInventory();
+            bool bareBone = inv2.PreventsFallingBoneBreak;                 // nothing worn -> legs CAN break
+            inv2.wearPants(new SDG.Unturned.Item(9003));
+            bool bootBone = inv2.PreventsFallingBoneBreak;                 // boots on -> bones protected
+            GD.Print($"[armortest] bone-proof: bare={bareBone}(want F)  boots={bootBone}(want T) -> {((!bareBone && bootBone) ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
 

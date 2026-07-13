@@ -225,12 +225,12 @@ namespace UnturnedGodot
         // normal gravity so totalGravityMultiplier > 0.67 always holds) deals damage = min(101, |verticalVelocity|),
         // rounded. Source multiplies by the DEFENSE/STRENGTH skill (still 1.0 -- no skill system) then the WHOLE-BODY
         // clothing fallingDamageMultiplier (PlayerLife:2430 `damage *= clothing.fallingDamageMultiplier`) -- now WIRED.
-        // Leg-breaking (source breakLegs, gated by FallingBoneBreakingProof) is still a separate un-modelled mechanic.
+        // Leg-breaking (source breakLegs) is now gated by worn clothing's Prevents_Falling_Broken_Bones (PlayerLife:2436) -- WIRED.
         void CheckFallDamage(float verticalVel)
         {
             const float threshold = 22.0f;
             if (verticalVel >= -threshold) return;             // a normal jump lands at ~7 m/s -> no damage
-            Broken = true;                                     // any fall past the threshold breaks legs (shouldBreakLegs defaults true)
+            Broken = !(Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
             float armored = Mathf.Abs(verticalVel) * (Inventory?.FallingDamageMultiplier ?? 1f);   // worn clothing cuts fall damage (source: whole-body product)
             int dmg = Mathf.RoundToInt(Mathf.Min(101f, armored));   // RoundAndClampToByte; damage <= 101
             if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }

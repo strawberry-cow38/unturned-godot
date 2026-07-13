@@ -51,6 +51,7 @@ namespace SDG.Unturned
                 if (float.TryParse(c[1], fs, inv, out var ar)) a.armor = ar;
                 if (float.TryParse(c[2], fs, inv, out var ae)) a.explosionArmor = ae;
                 if (float.TryParse(c[3], fs, inv, out var fl)) a.fallingDamageMultiplier = fl;
+                if (c.Length > 4) a.preventsFallingBoneBreak = c[4].Trim() == "1";
                 n++;
             }
             GD.Print($"[items] wired clothing armor for {n} items (fall + explosion whole-body multipliers)");
