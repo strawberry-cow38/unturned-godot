@@ -149,24 +149,37 @@ namespace UnturnedGodot
         }
 
         float _meleeCd;
+        MeleeDef _melee;   // the equipped melee weapon (null = bare fists)
 
-        // G: melee swing -- hit the nearest zombie in front within reach (proximity, not a raycast). Reuses the
-        // zombie damage path. Rounds out combat (Unturned lets you swing/punch when out of ammo or up close).
+        // Equip a melee weapon: load its real ItemMeleeAsset .dat (Range + per-target damage) so a swing is
+        // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
+        public void EquipHeldMelee(string meleeName)
+        {
+            string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
+            _melee = System.IO.File.Exists(p) ? MeleeDef.FromDatText(meleeName, System.IO.File.ReadAllText(p)) : new MeleeDef { Name = meleeName };
+            _viewmodel?.QueueFree(); _viewmodel = null;
+            GD.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
+        }
+
+        // G: melee swing -- hit the nearest zombie in front within the weapon's reach (proximity, not a raycast). Reuses
+        // the zombie damage path. Rounds out combat (Unturned lets you swing/punch when out of ammo or up close).
         public void MeleeAttack()
         {
             if (_meleeCd > 0f || _cam == null) return;
             _meleeCd = 0.45f;   // ~half-second between swings
-            Vector3 origin = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
+            float dmg = _melee?.ZombieDamage ?? 45f;   // the weapon's .dat Zombie_Damage (fists 45)
+            Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;   // proximity from the player torso (robust); aimed by the look direction
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {
                     Vector3 to = z.GlobalPosition + Vector3.Up - origin;   // aim at the torso
-                    if (to.Length() < 2.2f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach
+                    if (to.Length() < range + 0.5f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach (+0.5 torso-vs-center slack)
                     {
                         bool wd = z.Dead;
-                        z.DamageHit(45f, z.GlobalPosition + Vector3.Up, fwd);
+                        z.DamageHit(dmg, z.GlobalPosition + Vector3.Up, fwd);
                         if (!wd && z.Dead) Kills++;
-                        GD.Print("[melee] hit a zombie");
+                        GD.Print($"[melee] hit a zombie ({_melee?.Name ?? "fists"} {dmg} dmg, range {range})");
                         break;   // one target per swing
                     }
                 }

@@ -1803,7 +1803,7 @@ namespace UnturnedGodot
             AddChild(ground);
 
             var player = new PlayerController { CaptureMouse = false };
-            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
+            player.EquipHeldMelee(gunPath ?? "knife_military");   // --gun=<melee name> (knife_military | sledgehammer | machete...) -> real .dat range/damage
             AddChild(player);                       // _Ready builds the FP camera used to aim the swing
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
 
@@ -1811,8 +1811,8 @@ namespace UnturnedGodot
             AddChild(z);
             z.GlobalPosition = player.GlobalPosition + new Vector3(0f, 0.2f, -1.4f);   // dead ahead, in reach
 
-            AddChild(new MeleeTestDriver { P = player });
-            GD.Print("[MELEE] demo: NORMAL zombie ~1.4m ahead (100 HP); swinging (45/hit, ~0.45s cd)");
+            AddChild(new MeleeTestDriver { P = player, Z = z });
+            GD.Print("[MELEE] demo: NORMAL zombie ~1.4m ahead; swinging the equipped melee weapon (weapon-specific dmg/range)");
         }
 
         // Fall-damage self-test: drop the player from 40 m onto the ground plane. Expect PlayerLife.onLanded to fire
@@ -2421,11 +2421,13 @@ namespace UnturnedGodot
     public partial class MeleeTestDriver : Node3D
     {
         public PlayerController P;
+        public ZombieController Z;   // re-anchored dead-ahead each frame so the swing always has an in-reach target (the demo player physics-drifts)
         int _frames; bool _done;
 
         public override void _PhysicsProcess(double delta)
         {
             _frames++;
+            if (Z != null && P != null && !Z.Dead) Z.GlobalPosition = P.GlobalPosition + new Vector3(0f, 0f, -1.2f);   // keep it 1.2 m dead ahead of the (facing -Z) player
             if (_frames > 5 && P != null) P.MeleeAttack();
             if (!_done && P != null && P.Kills > 0)
             {
