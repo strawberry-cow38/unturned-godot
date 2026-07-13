@@ -166,6 +166,13 @@ void sky() {
             Env.BackgroundMode = Godot.Environment.BGMode.Sky;
             Env.Sky = _sky;
             Env.AmbientLightSource = Godot.Environment.AmbientSource.Color;   // keep the tuned ambient
+            // Unturned's palette is far RICHER + more saturated than Godot's flat default grade washed it to (master:
+            // "WAYYY off, much richer and saturated"). Add a post-process color grade on the world: strong saturation
+            // boost + a touch of contrast. UG_SAT env var overrides the saturation for A/B tuning (default 1.45).
+            float sat = float.TryParse(System.Environment.GetEnvironmentVariable("UG_SAT"), out var s) ? s : 1.45f;
+            Env.AdjustmentEnabled = true;
+            Env.AdjustmentSaturation = sat;
+            Env.AdjustmentContrast = 1.08f;
         }
 
         public void Apply()
