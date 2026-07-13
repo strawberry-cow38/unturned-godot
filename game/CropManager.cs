@@ -32,7 +32,7 @@ namespace UnturnedGodot
         }
 
         public static double Now => _inst?._clock ?? 0;
-        public static bool Ready => _inst != null;
+        public static bool Active => _inst != null;   // a CropManager exists in the scene
 
         // Plant a crop at pos. grown=true spawns it already mature (harvest testing). Returns the node (null if unknown crop).
         public static CropNode Plant(string cropName, Vector3 pos, bool grown = false)

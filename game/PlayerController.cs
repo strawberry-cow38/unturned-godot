@@ -18,6 +18,7 @@ namespace UnturnedGodot
         public PlayerInventory Inventory;   // the ported 9-page inventory model
         InventoryUI _invUI;                 // the dashboard (Tab to open)
         CraftingUI _craftUI;                // the crafting menu (K to open)
+        SkillsUI _skillsUI;                 // the skills menu (J to open) -- spend XP to level skills
         BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
@@ -624,6 +625,8 @@ namespace UnturnedGodot
             AddChild(_invUI);
             _craftUI = new CraftingUI { Inv = Inventory, Player = this };
             AddChild(_craftUI);
+            _skillsUI = new SkillsUI { Player = this };
+            AddChild(_skillsUI);
             _build = new BuildTool { Cam = _cam };
             GetParent().AddChild(_build);   // structures live in the scene, not under the player
 
@@ -734,6 +737,11 @@ namespace UnturnedGodot
                 if (_viewmodel != null && _viewmodel.InAttachView) return;   // no crafting while the T attachment menu is up
                 _craftUI?.Toggle();   // K: open/close the crafting menu (lists what you can make from your supplies)
                 Input.MouseMode = (_craftUI != null && _craftUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+            }
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.J })
+            {
+                _skillsUI?.Toggle();   // J: open/close the skills menu (spend XP to level skills)
+                Input.MouseMode = (_skillsUI != null && _skillsUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
             {

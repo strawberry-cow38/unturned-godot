@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -102,7 +102,7 @@ namespace UnturnedGodot
                 // plant <crop> [grown]  -- spawn a growing crop at the look point (or already grown, for harvest testing)
                 var pp = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 bool grown = pp.Length > 1 && (pp[1].Equals("grown", System.StringComparison.OrdinalIgnoreCase) || pp[1] == "1");
-                if (!CropManager.Ready) { Log("no crop manager in this scene"); return; }
+                if (!CropManager.Active) { Log("no crop manager in this scene"); return; }
                 var crop = CropManager.Plant(pp[0], at, grown);
                 if (crop == null) { Log($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
                 Log($"planted {pp[0]}{(grown ? " (grown)" : "")} -- UG_FARMSPEED speeds growth; E near a grown crop to harvest");
@@ -117,7 +117,15 @@ namespace UnturnedGodot
                 sk.level = (byte)Mathf.Clamp(target, 0, sk.max);
                 Log($"{label} skill -> level {sk.level}/{sk.max}");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill");
+            else if (verb == "xp")
+            {
+                // xp <n>  -- grant n experience to spend in the skills menu (J). For testing the leveling economy.
+                if (Player?.Skills == null) { Log("no player skills"); return; }
+                if (!uint.TryParse(arg.Split(' ')[0], out var amt)) { Log("usage: xp <amount>"); return; }
+                Player.Skills.AwardExperience(amt);
+                Log($"+{amt} XP (now {Player.Skills.experience}) -- open skills with J");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp");
         }
 
         static ItemAsset ResolveItem(string arg)
