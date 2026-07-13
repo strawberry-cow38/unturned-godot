@@ -157,7 +157,9 @@ namespace UnturnedGodot
         {
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
             _melee = System.IO.File.Exists(p) ? MeleeDef.FromDatText(meleeName, System.IO.File.ReadAllText(p)) : new MeleeDef { Name = meleeName };
-            _viewmodel?.QueueFree(); _viewmodel = null;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { MeleeMesh = $"{meleeName}.txt", MeleeAlbedo = $"{meleeName}_albedo.png" };   // show the melee weapon in-hand (arms + model, no gun FX)
+            AddChild(_viewmodel);
             GD.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
         }
 

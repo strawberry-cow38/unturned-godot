@@ -82,6 +82,7 @@ namespace UnturnedGodot
         // (_Ready builds the gun). Aim hooks: Eaglefire SightHook(0,-0.2398,0.1386)+Model_0(0,0.371,-0.0206)+
         // Aim(0,-0.6,0.0918) -> port (0,-0.4688,-0.2098); Maplestrike Aim(0,-0.57,0.1111) -> port (0,-0.4388,-0.2291).
         public string GunName = "eaglefire";
+        public string MeleeMesh, MeleeAlbedo;   // set (instead of GunName) to show a MELEE weapon in-hand: mesh + albedo only, no sight/mag/muzzle/fire
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
         // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
         // gun's own AudioClips (the assault rifles share the Eaglefire's).
@@ -201,7 +202,9 @@ namespace UnturnedGodot
                     var att = new BoneAttachment3D { Name = "GunAttach" };
                     skel.AddChild(att);
                     att.BoneName = skel.GetBoneName(hb);
-                    var gv = Visual(GunName);
+                    var gv = MeleeMesh != null
+                        ? new GunVisual { Gun = MeleeMesh, Albedo = MeleeAlbedo, Ejects = false, AlbedoTint = new Color(1, 1, 1) }   // melee: mesh + albedo only (no sight/mag/muzzle/shoot)
+                        : Visual(GunName);
                     _ejects = gv.Ejects;
                     _armsPos += gv.ViewOffset;   // per-gun hip-pose nudge (ADS re-aligns via the aim hook regardless)
                     var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{gv.Gun}") };
