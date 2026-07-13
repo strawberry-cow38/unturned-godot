@@ -1556,28 +1556,38 @@ namespace UnturnedGodot
             var pockets = ZombieNav.LoadPockets(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI");
             ZombieNav.BuildOrLoad(this, pockets, overlay: true);
 
-            CharacterModel.LoadBundled();
-            Vector3 look = Vector3.Zero;
-            if (pockets.Count > 0)
-            {
-                var pk = pockets[Mathf.Min(3, pockets.Count - 1)];
-                float cy = terr.SampleHeight(pk.Center.X, pk.Center.Z);
-                look = new Vector3(pk.Center.X, cy, pk.Center.Z);
-                for (int i = 0; i < 6; i++)
-                {
-                    float ang = i / 6f * Mathf.Tau;
-                    float zx = pk.Center.X + 9f * Mathf.Cos(ang), zz = pk.Center.Z + 9f * Mathf.Sin(ang);
-                    var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
-                    AddChild(z);
-                    z.GlobalPosition = new Vector3(zx, terr.SampleHeight(zx, zz) + 0.05f, zz);
-                    z.LookAt(new Vector3(look.X, z.GlobalPosition.Y, look.Z), Vector3.Up);   // face the pocket centre so the cones point inward
-                    z.AddChild(NavDebug.ConeWire(18f, 55f, new Color(1f, 0.9f, 0.2f)));
-                }
-            }
-            var cam = new Camera3D { Fov = 62f, Current = true };
+            var cam = new Camera3D { Current = true };
             AddChild(cam);
-            cam.GlobalPosition = look + new Vector3(0f, 60f, 36f);   // higher + steeper -> the navmesh floor coverage reads clearly
-            cam.LookAt(look, Vector3.Up);
+            if (System.Environment.GetEnvironmentVariable("UG_NAVFULL") == "1")   // zoomed-out full-island map of ALL 19 pockets (top-down, north up)
+            {
+                cam.Fov = 72f;
+                cam.Position = new Vector3(0f, 1650f, 0f);
+                cam.RotationDegrees = new Vector3(-90f, 0f, 0f);   // straight down: +X = east, -Z = north (map orientation)
+            }
+            else   // close-up over one pocket with a ring of zombies + their vision cones
+            {
+                CharacterModel.LoadBundled();
+                Vector3 look = Vector3.Zero;
+                if (pockets.Count > 0)
+                {
+                    var pk = pockets[Mathf.Min(3, pockets.Count - 1)];
+                    float cy = terr.SampleHeight(pk.Center.X, pk.Center.Z);
+                    look = new Vector3(pk.Center.X, cy, pk.Center.Z);
+                    for (int i = 0; i < 6; i++)
+                    {
+                        float ang = i / 6f * Mathf.Tau;
+                        float zx = pk.Center.X + 9f * Mathf.Cos(ang), zz = pk.Center.Z + 9f * Mathf.Sin(ang);
+                        var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
+                        AddChild(z);
+                        z.GlobalPosition = new Vector3(zx, terr.SampleHeight(zx, zz) + 0.05f, zz);
+                        z.LookAt(new Vector3(look.X, z.GlobalPosition.Y, look.Z), Vector3.Up);   // face the pocket centre so the cones point inward
+                        z.AddChild(NavDebug.ConeWire(18f, 55f, new Color(1f, 0.9f, 0.2f)));
+                    }
+                }
+                cam.Fov = 62f;
+                cam.GlobalPosition = look + new Vector3(0f, 60f, 36f);
+                cam.LookAt(look, Vector3.Up);
+            }
             _shotPath = outPath; _navShot = true;
             GD.Print($"[NAVSHOT] terrain + {pockets.Count} nav pockets (overlay) + zombie cones; capturing -> {outPath}");
         }
