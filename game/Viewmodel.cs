@@ -190,8 +190,10 @@ namespace UnturnedGodot
                 _attachStartClip = _arms.ClipLength(capGun + "_AttachStart") > 0f ? capGun + "_AttachStart" : null;
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
-                _arms.Play("Gun_Equip");                 // raise -> holds the two-handed rifle stance
-                _equipLen = _arms.ClipLength("Gun_Equip");
+                _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // melee equip/swing clips play once
+                string equipClip = MeleeMesh != null ? "Melee_Equip" : "Gun_Equip";
+                _arms.Play(equipClip);                   // melee: raise the weapon (Melee_Equip); gun: the two-handed rifle stance
+                _equipLen = _arms.ClipLength(equipClip);
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
 
                 var skel = _arms.Skeleton;
@@ -324,6 +326,8 @@ namespace UnturnedGodot
         public void SetLocomotion(bool moving, EPlayerStance stance) { _moving = moving; _stance = stance; }
 
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
+
+        public void SwingMelee(bool strong = false) { _arms?.Play(strong ? "Melee_Strong" : "Melee_Weak"); }   // play the source melee swing anim (Weak / Strong)
 
         // Toss a casing from the Eject hook: initial velocity = gun-right + up + slightly back (+ jitter), then it
         // arcs under gravity + tumbles (integrated in _Process). Parented to the viewport world so it flies free of

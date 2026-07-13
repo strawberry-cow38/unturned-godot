@@ -517,6 +517,7 @@ namespace UnturnedGodot
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
+            if (isMelee) AddChild(new MeleeSwingDriver { VM = _vm });   // periodic swings so the --vm render shows the melee swing anim
             if (_vmAttach) { _am = new AttachmentMenu(); AddChild(_am); _am.VM = _vm; }   // --attach: show the T menu over the gun
         }
 
@@ -2422,6 +2423,13 @@ namespace UnturnedGodot
 
     // Drives the melee self-test: after a few settle frames, swings every physics tick (the cooldown gates it to
     // ~0.45 s). Quits when the zombie dies (Kills > 0) or after a timeout, so the run self-terminates for log-check.
+    public partial class MeleeSwingDriver : Node3D
+    {
+        public Viewmodel VM;
+        int _f;
+        public override void _PhysicsProcess(double delta) { _f++; if (_f % 35 == 25 && VM != null) VM.SwingMelee(); }   // periodic swings for the --vm melee render
+    }
+
     public partial class MeleeTestDriver : Node3D
     {
         public PlayerController P;
