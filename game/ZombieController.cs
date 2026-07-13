@@ -57,6 +57,13 @@ namespace UnturnedGodot
         double _age;                // local clock (Time.time analogue)
         float _lastAttack = -100f;  // last swing START (Zombie.lastAttack); the hit lands at +ATTACK_TIME/2
         Vector3 _home; bool _homeSet;   // spawn point, to wander back to on leave (Zombie isLeaving)
+        // Phase 2 nav rework (master): real NavigationAgent3D pathfinding (no beeline) + vision cone + investigate-last-seen.
+        NavigationAgent3D _nav;
+        Vector3 _lastSeen; bool _hasLastSeen;   // where the player was last SEEN -> go investigate there when line-of-sight breaks
+        [Export] public float SightRange = 20f;         // vision-cone range (m); the player SNEAKING shrinks it
+        [Export] public float SightHalfAngleDeg = 60f;  // vision-cone half-angle from the eyes
+        float _repathAcc;   // throttle agent re-target (perf: don't SetTargetPosition every single tick)
+        float _lostSightAcc;   // seconds since we last saw the player mid-chase -> after a grace, go investigate last-seen
 
         public override void _Ready()
         {
@@ -93,6 +100,8 @@ namespace UnturnedGodot
             shape.Position = new Vector3(0, low ? 0.4f : 0.9f, 0);
             AddChild(shape);
             FloorMaxAngle = Mathf.DegToRad(55f); FloorSnapLength = 0.5f;   // climb steeper slopes + stay grounded, like the player (master)
+            _nav = new NavigationAgent3D { PathDesiredDistance = 0.8f, TargetDesiredDistance = 1.3f, Radius = 0.4f, Height = 1.8f, AvoidanceEnabled = false, PathMaxDistance = 30f };
+            AddChild(_nav);   // paths on the pre-baked pocket navmesh (ZombieNav) -> routes around buildings instead of beelining
 
             // each zombie randomly wears one of the baked ZombieClothing outfits (real zombies randomise their
             // shirt/pants from the map's LevelZombies table) so the horde isn't a uniform.
@@ -155,6 +164,23 @@ namespace UnturnedGodot
             if (TestMove(GlobalTransform, motion) && !TestMove(raised, motion)) GlobalPosition += Vector3.Up * StepHeight;
         }
 
+        // Phase 2: path toward `target` on the baked pocket navmesh via the agent (NO beeline), moving at Speed. Returns
+        // the horizontal velocity applied (for facing + locomotion). Off-navmesh, the agent falls back toward the target.
+        Vector3 MoveTo(Vector3 target, float g, float dt)
+        {
+            _repathAcc += dt;
+            if (_repathAcc > 0.25f) { _nav.TargetPosition = target; _repathAcc = 0f; }   // re-target ~4x/s (perf: not every tick)
+            Vector3 horiz = Vector3.Zero;
+            if (!_nav.IsNavigationFinished())
+            {
+                Vector3 to = _nav.GetNextPathPosition() - GlobalPosition; to.Y = 0f;
+                if (to.LengthSquared() > 1e-4f) horiz = to.Normalized() * Speed;
+            }
+            Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
+            StepUp(dt); MoveAndSlide();
+            return horiz;
+        }
+
         void ApplyDamage(float amount, Vector3 point, Vector3 dir, bool impact)
         {
             if (Dead) return;
@@ -210,20 +236,15 @@ namespace UnturnedGodot
                 }
             }
 
-            // --- idle: wander back toward spawn if we chased the player off and lost them out here (Zombie
-            // isLeaving), otherwise stand still; either way keep sensing for the player (AlertTool) ---
+            // --- IDLE: MOTIONLESS (master's rework: zombies stand still until they SEE (vision cone) or HEAR a noise) ---
             if (_hunt == EHunt.NONE)
             {
                 if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(false);   // FRIENDLY: solid again
-                Vector3 toHome = _home - GlobalPosition; toHome.Y = 0f;
-                bool goingHome = toHome.LengthSquared() > 4f;             // >2 m from spawn -> shamble back
-                Vector3 hv = goingHome ? toHome.Normalized() * (Speed * 0.5f) : Vector3.Zero;
-                Velocity = new Vector3(hv.X, Velocity.Y - g * dt, hv.Z);
+                Velocity = new Vector3(0f, Velocity.Y - g * dt, 0f);   // gravity only -- no wandering
                 StepUp((float)dt);
                 MoveAndSlide();
-                if (_rig != null) { _rig.Tick(delta); _rig.SetLocomotion(hv.Length()); }
-                if (hv.LengthSquared() > 1e-4f) LookAt(GlobalPosition + hv, Vector3.Up);
-                TrySense(player);
+                if (_rig != null) { _rig.Tick(delta); _rig.SetLocomotion(0f); }
+                TrySense(player);   // vision cone -> Alert() when the player walks into view
                 return;
             }
 
@@ -239,6 +260,10 @@ namespace UnturnedGodot
             float num3 = HDistSq(pp, me);
             float num4 = Mathf.Abs(pp.Y - me.Y);
             if (player.Health <= 0f || num3 > LEAVE_SQ) { _hunt = EHunt.NONE; return; }
+            // chase while we can SEE them; the moment sight breaks, remember the spot and (after a short grace) go
+            // INVESTIGATE it instead of tracking magically through walls (master's rework).
+            if (CanSee(player)) { _lastSeen = pp; _hasLastSeen = true; _lostSightAcc = 0f; }
+            else { _lostSightAcc += dt; if (_lostSightAcc > 1.5f && _hasLastSeen) { _hunt = EHunt.POINT; _huntPoint = _lastSeen; _lastHunted = (float)_age; _hasLastSeen = false; return; } }
 
             // --- pick the approach point for this path (Zombie.tick banded flanking) ---
             Vector3 pFwd = Flat(-player.GlobalTransform.Basis.Z);
@@ -267,12 +292,10 @@ namespace UnturnedGodot
             // --- steer toward the point until within reach, then plant and swing. In the source the seeker
             // moves every tick regardless of the derived isMoving flag; only entering attack range stops it, so
             // gating movement on isMoving (as a first pass did) leaves a dead zone short of the swing range. ---
-            Vector3 to = tp - me; to.Y = 0f;
             bool inReach = num3 < ATTACK_PLAYER_SQ;
-            Vector3 horiz = (!inReach && to.LengthSquared() > 1e-4f) ? to.Normalized() * Speed : Vector3.Zero;
-            Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
-            StepUp((float)dt);
-            MoveAndSlide();
+            Vector3 horiz;
+            if (inReach) { Velocity = new Vector3(0f, Velocity.Y - g * dt, 0f); StepUp((float)dt); MoveAndSlide(); horiz = Vector3.Zero; }   // in swing range: plant + swing, don't shove into them
+            else horiz = MoveTo(tp, g, (float)dt);   // PATH to the (flank) approach point on the navmesh -> routes around buildings, no beeline
 
             // --- ACID: spit a corrosive glob at the player from range (Zombie askSpit -> askAcid) ---
             if (Speciality == ESpeciality.ACID && _age > _nextSpit && num3 > 16f && num3 < 900f && num4 < 6f)
@@ -340,18 +363,23 @@ namespace UnturnedGodot
 
         // AlertTool.check + line-of-sight: sense the player only within their stealth radius, not behind the
         // zombie's back while they sneak (anything but sprinting counts as sneaking), and with clear sight.
-        void TrySense(PlayerController player)
+        // Phase 2 VISION CONE (master): the zombie sees the player only within its eye cone -- inside SightRange and
+        // within SightHalfAngleDeg of where it's FACING -- and with a clear confirming line-of-sight ray. Sneaking
+        // (any stance but sprint, not driving) halves the reach. Returns true if it can currently see the player.
+        bool CanSee(PlayerController player)
         {
-            if (player.Health <= 0f) return;
-            Vector3 offset = GlobalPosition - player.GlobalPosition;   // player -> zombie
-            float radius = player.GetStealthDetectionRadius();
-            if (offset.LengthSquared() > radius * radius) return;
-            bool sneak = player.Stance != EPlayerStance.SPRINT && !player.IsDriving;   // driving isn't sneaking -> omnidirectional (source AlertTool sneak flag: stance != SPRINT && != DRIVING)
+            if (player.Health <= 0f) return false;
+            Vector3 toP = player.GlobalPosition - GlobalPosition;   // zombie -> player
+            float distSq = toP.LengthSquared();
+            bool sneak = player.Stance != EPlayerStance.SPRINT && !player.IsDriving;
+            float range = sneak ? SightRange * 0.5f : SightRange;
+            if (distSq > range * range) return false;
             Vector3 fwd = -GlobalTransform.Basis.Z;
-            if (offset.LengthSquared() > 1e-4f && sneak && fwd.Normalized().Dot(offset.Normalized()) > 0.5f) return;
-            if (!HasLineOfSight(player)) return;
-            Alert(player);
+            if (distSq > 1e-4f && fwd.Normalized().AngleTo(toP.Normalized()) > Mathf.DegToRad(SightHalfAngleDeg)) return false;   // outside the cone
+            return HasLineOfSight(player);   // confirming ray: nothing solid between the eyes and the player
         }
+
+        void TrySense(PlayerController player) { if (CanSee(player)) Alert(player); }
 
         // AlertTool raycast: eye-height ray toward the player over 95 % of the gap; any world geometry blocks it.
         bool HasLineOfSight(PlayerController player)
@@ -390,11 +418,9 @@ namespace UnturnedGodot
             bool arrived = num3 < 3f;                                      // Zombie isMoving = num3 > 3 (~1.73 m)
             if (arrived && _age - _lastHunted > 3f) { _hunt = EHunt.NONE; return; }   // stop()
 
-            Vector3 to = _huntPoint - me; to.Y = 0f;
-            Vector3 horiz = (!arrived && to.LengthSquared() > 1e-4f) ? to.Normalized() * Speed : Vector3.Zero;
-            Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
-            StepUp((float)dt);
-            MoveAndSlide();
+            Vector3 horiz;
+            if (arrived) { Velocity = new Vector3(0f, Velocity.Y - g * dt, 0f); StepUp((float)dt); MoveAndSlide(); horiz = Vector3.Zero; }   // arrived: stand + look around, then give up (above)
+            else horiz = MoveTo(_huntPoint, g, dt);   // PATH to where the noise / last sighting was (navmesh, no beeline)
 
             if (_rig != null)
             {
