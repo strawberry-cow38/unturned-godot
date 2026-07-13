@@ -24,9 +24,9 @@ namespace UnturnedGodot
     public static class ZombieNav
     {
         public const uint WorldLayer = 1u << 0;   // LOS-blocking world geometry (terrain + solid buildings) -- what zombies can't walk through
-        const float AgentRadius = 0.5f;            // wall buffer so zombies don't clip/bunch through walls (master)
+        const float AgentRadius = 0.4f;            // = the zombie's collision-capsule radius (ZombieController 0.4m): keeps the navmesh off walls WITHOUT eroding narrow (~1m) DOORWAYS shut (master: diner doorway had no navmesh at 0.5m)
         const float AgentHeight = 2.0f;
-        const float CellSize = 0.25f;
+        const float CellSize = 0.2f;               // Recast erodes in WHOLE cells: at 0.25 both r=0.4 and 0.5 round up to 2 cells (0.5m erosion), so the radius fix did nothing. 0.2 -> r=0.4 = exactly 2 cells = 0.4m erosion, so ~0.8-1m doorways keep navmesh (master: diner doorway)
 
         // Parse the 3 flag files -> the 19 pockets. Empty list if the PEI Environment isn't present.
         public static List<NavPocket> LoadPockets(string peiRoot)
