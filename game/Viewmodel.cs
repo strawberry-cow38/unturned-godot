@@ -186,6 +186,20 @@ namespace UnturnedGodot
                 AmbientLightColor = new Color(0.72f, 0.72f, 0.74f),
                 AmbientLightEnergy = 1.0f,
             };
+            // Glow on the VIEWMODEL viewport too -- the world env's glow doesn't reach this isolated SubViewport, so the
+            // FP muzzle flash never bloomed. High HDR threshold (1.25) so ONLY the HDR flash billboard blooms; the lit gun
+            // surfaces (<=1.0) stay crisp -- NOT the old "energy 5 washed the frame". ACES matches the world tonemap.
+            if (System.Environment.GetEnvironmentVariable("UG_NOGLOW") != "1")
+            {
+                _vpEnv.GlowEnabled = true;
+                _vpEnv.GlowIntensity = 0.9f;
+                _vpEnv.GlowStrength = 1.0f;
+                _vpEnv.GlowBloom = 0.15f;
+                _vpEnv.GlowHdrThreshold = 1.25f;
+                _vpEnv.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Screen;
+            }
+            _vpEnv.TonemapMode = System.Environment.GetEnvironmentVariable("UG_LINEAR") == "1"
+                ? Godot.Environment.ToneMapper.Linear : Godot.Environment.ToneMapper.Aces;
             _vp.AddChild(new WorldEnvironment { Environment = _vpEnv });
 
             _arms = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), armsOnly: true);
@@ -494,6 +508,7 @@ namespace UnturnedGodot
             _t += delta;
             _equipElapsed += (float)delta;
             _flash = Mathf.Max(0f, _flash - (float)delta);
+            if (System.Environment.GetEnvironmentVariable("UG_FLASHHOLD") == "1") _flash = 0.05f;   // render-harness: hold the flash so a single-frame --shot captures its bloom
             if (_muzzleFlash != null) _muzzleFlash.Visible = _flash > 0f;
             // aim-in/out ramp (AimInDuration seconds) + the source smootherstep-squared ease
             _aimT = Mathf.Clamp(_aimT + (_aiming ? 1f : -1f) * (float)delta / AimInDuration, 0f, 1f);

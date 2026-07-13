@@ -6,6 +6,7 @@ render_mode unshaded, cull_disabled, blend_add, depth_draw_never, shadows_disabl
 
 uniform sampler2D tex : source_color, filter_linear_mipmap;
 uniform float roll = 0.0;
+uniform float intensity = 2.6;   // HDR boost so the additive flash crosses the viewport glow threshold and blooms
 
 void vertex() {
     float c = cos(roll);
@@ -17,6 +18,6 @@ void vertex() {
 
 void fragment() {
     vec4 t = texture(tex, UV);
-    ALBEDO = t.rgb;
+    ALBEDO = t.rgb * intensity;   // HDR so the bright core exceeds the glow HDR threshold -> blooms
     ALPHA = t.a;
 }
