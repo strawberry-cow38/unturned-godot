@@ -521,6 +521,7 @@ namespace UnturnedGodot
         public void EquipHeldGun(string gunName)
         {
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode
+            _melee = null;   // holding a gun now, not a melee weapon (re-enables ADS)
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -610,7 +611,7 @@ namespace UnturnedGodot
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
-                else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to aim down sights (Unturned default mode)
+                else if (_melee == null) _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
                 StartReload();
