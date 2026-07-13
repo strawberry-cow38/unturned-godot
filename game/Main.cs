@@ -1537,6 +1537,10 @@ namespace UnturnedGodot
             NearestFilter.Apply(this);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
             if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading.Advance(); }   // record the final phase
             loading.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
+            // Zombie navmesh POCKETS -- bake NOW, in the FULL world, so the BUILDINGS (layer 1<<0) carve the mesh and
+            // zombies route around them. This full-world bake is the CANONICAL one (save:true -> pei_pocket_N.res);
+            // the terrain-only peiplay/navshot verify modes pass save:false so they never overwrite it.
+            try { var _navPk = ZombieNav.LoadPockets(_mapRoot); ZombieNav.BuildOrLoad(this, _navPk, overlay: false, save: true); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world bake failed: {_ne.Message}"); }
             _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
         }
 
@@ -1554,7 +1558,7 @@ namespace UnturnedGodot
             AddChild(terr);
 
             var pockets = ZombieNav.LoadPockets(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI");
-            ZombieNav.BuildOrLoad(this, pockets, overlay: true);
+            ZombieNav.BuildOrLoad(this, pockets, overlay: true, save: false);   // verify shot: terrain-only, don't overwrite the canonical full-world bake
 
             var cam = new Camera3D { Current = true };
             AddChild(cam);
@@ -1611,7 +1615,7 @@ namespace UnturnedGodot
 
             // Zombie navmesh POCKETS (source LevelNavigation Flags): bake a Godot navmesh in each of PEI's 19 POI
             // pockets from the world collision (agent-radius wall buffer), saved + reused. (Phase 1 -- pathing wired next.)
-            { var _pk = ZombieNav.LoadPockets(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI"); ZombieNav.BuildOrLoad(this, _pk); }
+            { var _pk = ZombieNav.LoadPockets(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI"); ZombieNav.BuildOrLoad(this, _pk, overlay: false, save: false); }   // peiplay is terrain-only -> don't save (loads the canonical full-world mesh if --peidrive baked it)
 
             CharacterModel.LoadBundled();
             var player = new PlayerController();
