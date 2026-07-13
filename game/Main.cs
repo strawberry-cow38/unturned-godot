@@ -175,9 +175,12 @@ namespace UnturnedGodot
                 if (_pk.Count > 0)
                 {
                     var c = _pk[_pi].Center; var look = new Vector3(c.X, 32f, c.Z);
+                    if (System.Environment.GetEnvironmentVariable("UG_NAVLOOK") is string _lk) { var _lp = _lk.Split(','); if (_lp.Length == 2 && float.TryParse(_lp[0], out var _lx) && float.TryParse(_lp[1], out var _lz)) look += new Vector3(_lx, 0f, _lz); }   // UG_NAVLOOK=x,z world offset to the look point
                     var cam = new Camera3D { Fov = 60f, Current = true };
                     AddChild(cam);
-                    cam.GlobalPosition = look + (System.Environment.GetEnvironmentVariable("UG_NAVLOW") == "1" ? new Vector3(0f, 14f, 34f) : new Vector3(0f, 80f, 65f));   // UG_NAVLOW=1 -> low/close angle
+                    var _off = System.Environment.GetEnvironmentVariable("UG_NAVLOW") == "1" ? new Vector3(0f, 14f, 34f) : new Vector3(0f, 80f, 65f);   // UG_NAVLOW=1 -> low/close angle
+                    if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVYAW"), out var _yaw)) _off = _off.Rotated(Vector3.Up, Mathf.DegToRad(_yaw));   // UG_NAVYAW=deg -> orbit the cam around the look point (+90 = face west)
+                    cam.GlobalPosition = look + _off;
                     cam.LookAt(look, Vector3.Up);
                 }
                 _shotPath = navShotOut; _navShot = true;
