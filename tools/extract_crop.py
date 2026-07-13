@@ -7,7 +7,8 @@ toggled by InteractableFarm.SetModelGrown. This walks the prefab, bakes each mes
 TRS relative to the root (same as extract_attachment_mesh.py), but outputs ONE .txt PER
 top-level child so the port can show base+Foliage_0 while growing, base+Foliage_1 when grown.
 
-Same gun/world-space convention as the rest of the rip: Z negate + winding reverse (RH Y-up).
+Outputs RAW Unity coords (baked TRS only) like resource_extract.py -- ObjMesh.Load does the
+Unity->Godot convert (winding reverse + V-flip) so crops load through the same placed-prop path.
 
 Usage: python extract_crop.py <prefab-subpath> <out-base>
   e.g. python extract_crop.py seed_carrot/barricade.prefab C:\claude-workspace\crop_carrot
@@ -84,15 +85,15 @@ def export(meshes, out):
                 continue
             if p[0] == "v":
                 w = M @ np.array([float(p[1]), float(p[2]), float(p[3]), 1.0])
-                Vs.append((w[0], w[1], -w[2]))
+                Vs.append((w[0], w[1], w[2]))          # RAW Unity coords -- ObjMesh.Load does the Godot convert (like resource_extract.py)
             elif p[0] == "vn":
                 n = Rn @ np.array([float(p[1]), float(p[2]), float(p[3])])
                 ln = np.linalg.norm(n)
                 if ln > 0:
                     n = n / ln
-                Ns.append((n[0], n[1], -n[2]))
+                Ns.append((n[0], n[1], n[2]))           # raw
             elif p[0] == "vt":
-                Ts.append((p[1], p[2]))
+                Ts.append((p[1], p[2]))                 # raw (ObjMesh V-flips)
             elif p[0] == "f":
                 idx = []
                 for tok in p[1:]:
@@ -101,7 +102,7 @@ def export(meshes, out):
                     ti = (int(q[1]) + tb) if len(q) > 1 and q[1] else None
                     ni = (int(q[2]) + nb) if len(q) > 2 and q[2] else None
                     idx.append((vi, ti, ni))
-                Fs.append(list(reversed(idx)))
+                Fs.append(idx)                          # original winding (ObjMesh reverses)
     L = ["g Model_0"]
     L += ["v %.6f %.6f %.6f" % v for v in Vs]
     L += ["vt %s %s" % t for t in Ts]
