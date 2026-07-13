@@ -12,6 +12,7 @@ namespace UnturnedGodot
         static CropManager _inst;
         double _clock;
         readonly List<CropNode> _crops = new();
+        const uint HarvestRewardExperience = 1;   // source ItemFarmAsset default (verified: no Seed_* .dat overrides Harvest_Reward_Experience)
         static float Speed => float.TryParse(System.Environment.GetEnvironmentVariable("UG_FARMSPEED"), out var s) ? s : 1f;
 
         public override void _Ready()
@@ -59,11 +60,15 @@ namespace UnturnedGodot
             if (crop?.Crop == null || !crop.Crop.IsFullyGrown(Now)) return false;
             ushort yield = crop.Crop.Def.Grow;
             Vector3 at = crop.GlobalPosition + Vector3.Up * 0.3f;
-            if (yield != 0 && by != null)
+            if (by != null)
             {
-                by.DropWorldItem(new Item(yield), at);
-                var ag = by.Skills?.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE);
-                if (ag != null && GD.Randf() < ag.Mastery) by.DropWorldItem(new Item(yield), at + Vector3.Right * 0.25f);   // agriculture 2nd yield
+                if (yield != 0)
+                {
+                    by.DropWorldItem(new Item(yield), at);
+                    var ag = by.Skills?.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE);
+                    if (ag != null && GD.Randf() < ag.Mastery) by.DropWorldItem(new Item(yield), at + Vector3.Right * 0.25f);   // agriculture 2nd yield
+                }
+                by.Skills?.AwardExperience(HarvestRewardExperience);   // source InteractableFarm: harvest awards Harvest_Reward_Experience (all crops = default 1)
             }
             crop.QueueFree();
             return true;

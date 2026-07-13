@@ -9,6 +9,7 @@ namespace UnturnedGodot
     public partial class SkillsUI : CanvasLayer
     {
         public PlayerController Player;
+        public SDG.Unturned.PlayerSkills SkillsSource;   // optional direct skills (render harness); else Player.Skills
         const int PANELW = 640, PANELH = 680;
 
         Control _root;
@@ -63,7 +64,7 @@ namespace UnturnedGodot
         void Refresh()
         {
             foreach (Node c in _list.GetChildren()) c.QueueFree();
-            var sk = Player?.Skills;
+            var sk = SkillsSource ?? Player?.Skills;
             if (sk == null) return;
             _header.Text = $"SKILLS    ·    {sk.experience} XP";
             for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
@@ -76,8 +77,8 @@ namespace UnturnedGodot
                 {
                     int spec = s, idx = i;   // capture for the closure
                     var skill = arr[i];
-                    var row = new HBoxContainer();
-                    var lbl = new Label { Text = $"    {SkillNames[s][i]}   [{skill.level}/{skill.max}]", CustomMinimumSize = new Vector2(PANELW - 230, 0), VerticalAlignment = VerticalAlignment.Center };
+                    var row = new HBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(PANELW - 44, 0) };
+                    var lbl = new Label { Text = $"    {SkillNames[s][i]}   [{skill.level}/{skill.max}]", VerticalAlignment = VerticalAlignment.Center, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
                     lbl.AddThemeFontSizeOverride("font_size", 14);
                     row.AddChild(lbl);
                     bool maxed = skill.level >= skill.max;

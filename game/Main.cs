@@ -47,6 +47,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null;
+            bool skillsui = false;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false, farmTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -61,6 +62,7 @@ namespace UnturnedGodot
                 else if (arg == "--farmtest") farmTest = true;   // OFFLINE verify: a planted crop grows over Growth secs then harvest yields Grow
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
+                else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
@@ -246,6 +248,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildCropTest(croptest);
+                return;
+            }
+
+            if (skillsui)   // render the skills menu (a sample PlayerSkills with some XP + levels)
+            {
+                GetWindow().Size = new Vector2I(720, 760);
+                _shotPath = shot;
+                BuildSkillsUiShot();
                 return;
             }
 
@@ -1049,6 +1059,21 @@ namespace UnturnedGodot
             cam.Position = new Vector3(0f, 0.85f, 2.0f);
             cam.LookAt(new Vector3(0f, 0.2f, 0f), Vector3.Up);
             GD.Print($"[CROPTEST] {name}: young(Foliage_0) left, grown(Foliage_1) right");
+        }
+
+        // --skillsui: render the SkillsUI with a sample PlayerSkills (some XP + a few leveled) to showcase/validate it.
+        void BuildSkillsUiShot()
+        {
+            var skills = new SDG.Unturned.PlayerSkills();
+            skills.AwardExperience(500);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.CRAFTING);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
+            skills.TryUpgrade((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.SHARPSHOOTER);
+            var ui = new SkillsUI { SkillsSource = skills };
+            AddChild(ui);
+            ui.Open();
+            GD.Print("[skillsui] opened skills menu with a sample PlayerSkills");
         }
 
         // --farmloop: validate the plant->grow->harvest loop's DATA (crops.tsv seed id <-> farms.tsv growth/grow) + the
