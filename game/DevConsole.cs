@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport" };
 
         public override void _Ready()
         {
@@ -83,7 +83,14 @@ namespace UnturnedGodot
                 v.GlobalPosition = at + Vector3.Up * 1.5f;
                 Log($"spawned {name}");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle");
+            else if (verb == "teleport" || verb == "tp")
+            {
+                var m = MapNodes.Locations.Where(n => n.Name.Replace(" ", "").StartsWith(arg.Replace(" ", ""), System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Name.Length).ToList();
+                if (m.Count == 0) { Log($"no location '{arg}'"); return; }
+                if (Player != null) Player.GlobalPosition = m[0].Pos + Vector3.Up * 3f;   // drop in slightly above the node (master)
+                Log($"teleported to {m[0].Name}");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport");
         }
 
         static ItemAsset ResolveItem(string arg)
@@ -105,8 +112,8 @@ namespace UnturnedGodot
                 return;
             }
             string verb = parts[0].ToLowerInvariant(), pre = parts[1].Replace(" ", "");
-            string match = verb.StartsWith("veh")
-                ? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
+            string match = verb.StartsWith("veh") ? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
+                : (verb == "teleport" || verb == "tp") ? MapNodes.Locations.Select(n => n.Name).Where(n => n.Replace(" ", "").StartsWith(pre, System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Length).FirstOrDefault()
                 : Assets.all().Select(x => x.itemName).Where(n => !string.IsNullOrEmpty(n) && n.Replace(" ", "").StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
                             .OrderBy(n => n.Length).FirstOrDefault();
             if (match != null) SetInput(parts[0] + " " + match);
@@ -114,5 +121,28 @@ namespace UnturnedGodot
 
         void SetInput(string s) { _input.Text = s; _input.CaretColumn = s.Length; }
         void Log(string msg) { _log.Text = msg; GD.Print("[console] " + msg); }
+    }
+
+    // PEI's real named LOCATION nodes (towns/POIs), ripped byte-exact from Maps/PEI/Environment/Nodes.dat -> content/nodes.tsv
+    // (tools/parse_nodes.py). Used by the F1 `teleport` command and the map.
+    public static class MapNodes
+    {
+        public static readonly System.Collections.Generic.List<(string Name, Vector3 Pos)> Locations = Load();
+        static System.Collections.Generic.List<(string, Vector3)> Load()
+        {
+            var list = new System.Collections.Generic.List<(string, Vector3)>();
+            string path = ProjectSettings.GlobalizePath("res://content/nodes.tsv");
+            if (!System.IO.File.Exists(path)) return list;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                var c = line.Split('\t');
+                if (c.Length < 2) continue;
+                var q = c[1].Split(',');
+                if (q.Length < 3) continue;
+                list.Add((c[0], new Vector3(float.Parse(q[0], ci), float.Parse(q[1], ci), float.Parse(q[2], ci))));
+            }
+            return list;
+        }
     }
 }
