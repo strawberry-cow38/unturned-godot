@@ -18,6 +18,7 @@ namespace UnturnedGodot
 
         SubViewport _vp;
         DirectionalLight3D _vpLight;                 // the viewmodel's own sun -- synced to the world's each frame
+        DirectionalLight3D _vpFill1, _vpFill2;       // readability fill lights -- scaled with world brightness so the gun darkens at night
         Godot.Environment _vpEnv;                    // the viewmodel's ambient -- synced to the world's
         public DirectionalLight3D WorldSun;          // set by the game so the FP gun takes the world's day/night light
         public Godot.Environment WorldEnv;
@@ -175,8 +176,10 @@ namespace UnturnedGodot
             _vp.AddChild(_vpLight);
             // Fill lights from complementary angles -- the SubViewport's ambient wasn't reaching the guns, so faces
             // missing the key light rendered black. These cover the other sides so the whole gun stays readable.
-            _vp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 165f, 0f), LightEnergy = 0.45f });
-            _vp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-65f, 55f, 0f), LightEnergy = 0.35f });
+            _vpFill1 = new DirectionalLight3D { RotationDegrees = new Vector3(25f, 165f, 0f), LightEnergy = 0.45f };
+            _vpFill2 = new DirectionalLight3D { RotationDegrees = new Vector3(-65f, 55f, 0f), LightEnergy = 0.35f };
+            _vp.AddChild(_vpFill1);
+            _vp.AddChild(_vpFill2);
             _vpEnv = new Godot.Environment
             {
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
@@ -473,9 +476,15 @@ namespace UnturnedGodot
             // take in the world's lighting: sync the FP viewport's sun + ambient to the day/night cycle each frame
             if (WorldSun != null && _vpLight != null)
             {
+                // scale the whole viewmodel brightness with the world so the gun DARKENS at night to match (master: "pure
+                // lighting"). A readability floor (UG_VMFLOOR, default 0.3) keeps it from going pitch-black in the hands.
+                float vmFloor = float.TryParse(System.Environment.GetEnvironmentVariable("UG_VMFLOOR"), out var _vf) ? _vf : 0.3f;
+                float bright = Mathf.Clamp(WorldSun.LightEnergy, vmFloor, 1f);
                 _vpLight.RotationDegrees = WorldSun.RotationDegrees;
-                _vpLight.LightEnergy = Mathf.Max(0.25f, WorldSun.LightEnergy);   // keep the gun readable even at night
+                _vpLight.LightEnergy = Mathf.Max(vmFloor * 0.6f, WorldSun.LightEnergy);   // key follows the sun; low floor so it dims hard at night
                 _vpLight.LightColor = WorldSun.LightColor;
+                if (_vpFill1 != null) _vpFill1.LightEnergy = 0.45f * bright;   // fills fade with the world -> gun no longer stays evenly lit 24/7
+                if (_vpFill2 != null) _vpFill2.LightEnergy = 0.35f * bright;
             }
             if (WorldEnv != null && _vpEnv != null)
             {
