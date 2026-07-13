@@ -1411,6 +1411,7 @@ namespace UnturnedGodot
                 player.LoadGun("res://content/eaglefire.dat");
                 AddChild(player);
                 _pdPlayer = player;   // UG_AUTOFIRE terrain-impact verification
+                player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
                 AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> spawns at the look-orb (master)
                 AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
@@ -1664,6 +1665,7 @@ namespace UnturnedGodot
             var player = new PlayerController();
             player.LoadGun("res://content/eaglefire.dat");
             AddChild(player);
+            player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient (same missing hookup as Drive PEI)
             // auto-pick a grassy, well-inland spawn so the jeep drives on real green PEI land, not the coastal water-splat
             float sx = 0f, sz = -350f; int bestMargin = -1; float bestDist = float.MaxValue;
             for (float cz = -1800f; cz <= 1800f; cz += 50f)
@@ -2558,7 +2560,7 @@ namespace UnturnedGodot
             if (_peiPlay && _peiPlayer != null)
             {
                 _peiFrame++;
-                if (System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1") { if (_peiFrame >= 55 && _peiFrame % 12 == 0) _peiPlayer.Fire(); }   // impact-render test: stay on foot + fire forward at the ground
+                if (System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1") { if (_peiFrame >= 55 && (_peiFrame % 12 == 0 || _peiFrame >= 156)) _peiPlayer.Fire(); }   // impact-render test: stay on foot + fire forward; sustained burst 156+ so a muzzle FLASH lands on the frame-160 capture (glow showcase)
                 else if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f);   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
             }
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render

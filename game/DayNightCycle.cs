@@ -185,6 +185,23 @@ void sky() {
             if (System.Math.Abs(sat - 1.0f) > 0.001f) { Env.AdjustmentEnabled = true; Env.AdjustmentSaturation = sat; }
             // optional exposure knob for tuning (default 1.0 = neutral). UG_EXP-tunable.
             Env.TonemapExposure = float.TryParse(System.Environment.GetEnvironmentVariable("UG_EXP"), out var ex) ? ex : 1.0f;
+
+            // ── "show off Godot" post-processing (master 2026-07-13): GLOW/BLOOM -- the cheapest + most dramatic pass.
+            // Bright things bloom + halo: the sun disc, muzzle flashes, headlights/lightbar, fire, campfires. HDR-thresholded
+            // so only the genuinely bright areas glow (not flat surfaces). UG_NOGLOW=1 to A/B; UG_GLOW / UG_GLOWTHRESH tune it.
+            if (System.Environment.GetEnvironmentVariable("UG_NOGLOW") != "1")
+            {
+                Env.GlowEnabled = true;
+                Env.GlowIntensity = float.TryParse(System.Environment.GetEnvironmentVariable("UG_GLOW"), out var gi) ? gi : 0.8f;
+                Env.GlowStrength = 1.0f;
+                Env.GlowBloom = 0.1f;                                                                                     // a touch of full-screen bloom under the threshold
+                Env.GlowHdrThreshold = float.TryParse(System.Environment.GetEnvironmentVariable("UG_GLOWTHRESH"), out var gt) ? gt : 0.9f;  // only the top brightness blooms
+                Env.GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Screen;                                            // natural bloom (not additive blowout)
+            }
+            // ACES filmic tonemap: cinematic highlight rolloff (near-free) vs clipping to flat white. UG_LINEAR=1 reverts.
+            Env.TonemapMode = System.Environment.GetEnvironmentVariable("UG_LINEAR") == "1"
+                ? Godot.Environment.ToneMapper.Linear
+                : Godot.Environment.ToneMapper.Aces;
         }
 
         public void Apply()
