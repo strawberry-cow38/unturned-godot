@@ -191,8 +191,9 @@ namespace UnturnedGodot
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
                 _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // melee equip/swing clips play once
-                string equipClip = MeleeMesh != null ? "Melee_Equip" : "Gun_Equip";
-                _arms.Play(equipClip);                   // melee: raise the weapon (Melee_Equip); gun: the two-handed rifle stance
+                string equipClip = MeleeMesh != null ? "Melee_Equip" : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: raise the weapon; gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
+                _arms.SetClipLoop(equipClip, false);
+                _arms.Play(equipClip);
                 _equipLen = _arms.ClipLength(equipClip);
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
 
