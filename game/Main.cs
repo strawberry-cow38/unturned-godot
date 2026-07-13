@@ -1181,29 +1181,14 @@ namespace UnturnedGodot
                 curPhase = name; loading.SetStatus(name + "…"); phaseSw.Restart();
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             }
-            var env = new Godot.Environment
-            {
-                BackgroundMode = Godot.Environment.BGMode.Sky,
-                Sky = new Sky
-                {
-                    SkyMaterial = new ProceduralSkyMaterial
-                    {
-                        SkyTopColor = new Color(0.30f, 0.50f, 0.78f),        // deep blue overhead
-                        SkyHorizonColor = new Color(0.75f, 0.83f, 0.90f),    // hazy pale-blue horizon
-                        GroundHorizonColor = new Color(0.75f, 0.83f, 0.90f),
-                        GroundBottomColor = new Color(0.56f, 0.59f, 0.55f),
-                        SunAngleMax = 24f, SunCurve = 0.12f,                 // soft sun disk at the directional light's heading
-                    },
-                },
-                AmbientLightSource = Godot.Environment.AmbientSource.Sky,    // natural sky-tinted fill (replaces the flat grey ambient)
-                AmbientLightEnergy = 0.9f,
-                FogEnabled = true,                                          // subtle distance haze -> far terrain/ocean fades (Unturned-like)
-                FogLightColor = new Color(0.78f, 0.84f, 0.90f),             // pale, matches the hazy horizon
-                FogDensity = 0.0006f,
-                FogSkyAffect = 0f,                                          // keep the sky gradient crisp; only fog the geometry
-            };
+            // REAL PEI lighting via DayNightCycle (src Lighting.dat: ported sky shader + warm ambient + sun per time-of-day)
+            // -- replaces the ProceduralSky + sky-tinted ambient that didn't match the source palette. "Drive PEI"
+            // (--peidrive) is the mode master actually plays, so THIS is the one that has to carry the src-accurate lighting.
+            var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -50f, 0f), LightEnergy = 1.2f, ShadowEnabled = true, SkyMode = DirectionalLight3D.SkyModeEnum.LightAndSky });
+            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true };
+            AddChild(sun);
+            AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
             await Phase("Terrain");
             var terr = Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: true);
             AddChild(terr);
