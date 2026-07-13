@@ -59,6 +59,19 @@ namespace UnturnedGodot
 
         // Drop an item into the world at pos, grounded by a downward cast (ItemManager.dropItem: snap to ground +
         // a small +-0.125 spread). Spawns a WorldItem you can walk back over and pick up.
+        // aim point for the F1 dev console -- the look-orb: camera ray forward to the first hit (world/vehicles/props) or max reach.
+        public Vector3 LookPoint()
+        {
+            if (_cam == null) return GlobalPosition - GlobalTransform.Basis.Z * 3f;
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * LookReach);
+            rq.CollisionMask = (1u << 0) | (1u << 5) | (1u << 6);   // world + vehicles + props
+            rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var hit = space.IntersectRay(rq);
+            return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * LookReach;
+        }
+
         public void DropWorldItem(Item item, Vector3 pos)
         {
             var space = GetWorld3D().DirectSpaceState;

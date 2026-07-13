@@ -1,0 +1,118 @@
+using Godot;
+using System.Linq;
+using SDG.Unturned;
+
+namespace UnturnedGodot
+{
+    // F1 dev console (master). Press F1 to open a command bar at the top of the screen:
+    //   give <item id|name>      -> spawns a WorldItem at the player's look-orb
+    //   vehicle <id|name>        -> spawns that vehicle at the look-orb
+    // TAB autocompletes (verb first, then the item/vehicle name); ENTER runs; ESC / F1 closes.
+    // While it's open the mouse is freed, which gates player look/movement the same way the inventory UI does.
+    public partial class DevConsole : CanvasLayer
+    {
+        public PlayerController Player;
+        LineEdit _input;
+        Label _log;
+        static readonly string[] Verbs = { "give", "vehicle" };
+
+        public override void _Ready()
+        {
+            Layer = 100;
+            _log = new Label { Position = new Vector2(14, 10), Modulate = new Color(0.72f, 1f, 0.72f), Visible = false };
+            _log.AddThemeFontSizeOverride("font_size", 15);
+            AddChild(_log);
+            _input = new LineEdit
+            {
+                PlaceholderText = "give <item> | vehicle <name>     (Tab autocompletes, Esc closes)",
+                Visible = false,
+                Size = new Vector2(820, 30),
+                Position = new Vector2(14, 34),
+            };
+            AddChild(_input);
+            _input.TextSubmitted += OnSubmit;
+        }
+
+        public override void _Input(InputEvent e)
+        {
+            if (e is not InputEventKey { Pressed: true } k) return;
+            if (k.Keycode == Key.F1) { Toggle(); GetViewport().SetInputAsHandled(); }
+            else if (_input.Visible && k.Keycode == Key.Tab) { Autocomplete(); GetViewport().SetInputAsHandled(); }
+            else if (_input.Visible && k.Keycode == Key.Escape) { Toggle(); GetViewport().SetInputAsHandled(); }
+        }
+
+        void Toggle()
+        {
+            bool open = !_input.Visible;
+            _input.Visible = open;
+            _log.Visible = open;
+            if (open) { _input.GrabFocus(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+            else { _input.ReleaseFocus(); _input.Clear(); Input.MouseMode = Input.MouseModeEnum.Captured; }
+        }
+
+        void OnSubmit(string text)
+        {
+            Run(text.Trim());
+            _input.Clear();
+            _input.GrabFocus();   // stay open for the next command
+        }
+
+        void Run(string cmd)
+        {
+            if (string.IsNullOrWhiteSpace(cmd)) return;
+            var parts = cmd.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
+            string verb = parts[0].ToLowerInvariant();
+            string arg = parts.Length > 1 ? parts[1].Trim() : "";
+            if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
+            Vector3 at = Player?.LookPoint() ?? Vector3.Zero;
+
+            if (verb == "give")
+            {
+                var asset = ResolveItem(arg);
+                if (asset == null) { Log($"no item matching '{arg}'"); return; }
+                Player.DropWorldItem(new Item(asset.id), at);
+                Log($"gave {asset.itemName} (#{asset.id})");
+            }
+            else if (verb == "vehicle" || verb == "veh")
+            {
+                string name = Vehicle.SpecNames.FirstOrDefault(n => n.Equals(arg, System.StringComparison.OrdinalIgnoreCase))
+                           ?? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
+                if (name == null) { Log($"no vehicle '{arg}' (try: {string.Join(", ", Vehicle.SpecNames)})"); return; }
+                var v = Vehicle.BuildByName(name, (int)(GD.Randi() % 8));
+                (Player?.GetParent() ?? GetTree().Root).AddChild(v);
+                v.GlobalPosition = at + Vector3.Up * 1.5f;
+                Log($"spawned {name}");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle");
+        }
+
+        static ItemAsset ResolveItem(string arg)
+        {
+            if (ushort.TryParse(arg, out var id)) return Assets.find(id);
+            string a = arg.Replace(" ", "");
+            return Assets.all().FirstOrDefault(x => string.Equals(x.itemName, arg, System.StringComparison.OrdinalIgnoreCase))
+                ?? Assets.all().Where(x => !string.IsNullOrEmpty(x.itemName) && x.itemName.Replace(" ", "").StartsWith(a, System.StringComparison.OrdinalIgnoreCase))
+                             .OrderBy(x => x.itemName.Length).FirstOrDefault();
+        }
+
+        void Autocomplete()
+        {
+            var parts = _input.Text.Split(' ', 2, System.StringSplitOptions.None);
+            if (parts.Length < 2)
+            {
+                var v = Verbs.FirstOrDefault(x => x.StartsWith(_input.Text.Trim(), System.StringComparison.OrdinalIgnoreCase));
+                if (v != null) SetInput(v + " ");
+                return;
+            }
+            string verb = parts[0].ToLowerInvariant(), pre = parts[1].Replace(" ", "");
+            string match = verb.StartsWith("veh")
+                ? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
+                : Assets.all().Select(x => x.itemName).Where(n => !string.IsNullOrEmpty(n) && n.Replace(" ", "").StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
+                            .OrderBy(n => n.Length).FirstOrDefault();
+            if (match != null) SetInput(parts[0] + " " + match);
+        }
+
+        void SetInput(string s) { _input.Text = s; _input.CaretColumn = s.Length; }
+        void Log(string msg) { _log.Text = msg; GD.Print("[console] " + msg); }
+    }
+}

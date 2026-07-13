@@ -610,6 +610,7 @@ namespace UnturnedGodot
         public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant);
         public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant);
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police" };   // F1 dev-console autocomplete + validation
 
         static Vehicle Build(Spec s, int variant)
         {
