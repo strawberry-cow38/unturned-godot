@@ -127,6 +127,7 @@ namespace UnturnedGodot
                 else if (arg == "--farmloop") { RunFarmLoopTest(); GetTree().Quit(); return; }   // plant->grow->harvest loop: crops.tsv<->farms.tsv seed linkage + growth/yield self-test
                 else if (arg == "--skilltest") { RunSkillTest(); GetTree().Quit(); return; }   // PlayerSkills grid + XP cost formula + upgrade/mastery self-test
                 else if (arg == "--craftgate") { RunCraftGateTest(); GetTree().Quit(); return; }   // blueprint CRAFTING-skill gating self-test
+                else if (arg == "--farmyield") { RunFarmYieldTest(); GetTree().Quit(); return; }   // agriculture-skill 2nd-yield roll self-test
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1125,6 +1126,27 @@ namespace UnturnedGodot
             Check("null skills = ungated", Crafting.MeetsSkill(bp, null));
 
             GD.Print($"[craftgate] {pass} PASS / {fail} FAIL");
+        }
+
+        // --farmyield: the agriculture-skill 2nd-yield roll (source InteractableFarm: Random.value < mastery(AGRICULTURE)).
+        void RunFarmYieldTest()
+        {
+            var skills = new SDG.Unturned.PlayerSkills();
+            var ag = skills.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
+            int pass = 0, fail = 0;
+            void Check(string n, bool ok) { GD.Print($"[farmyield] {n}: {(ok ? "PASS" : "FAIL")}"); if (ok) pass++; else fail++; }
+
+            ag.level = 0; Check("mastery 0 at agri 0", ag.Mastery == 0f);
+            ag.level = 7; Check("mastery 1.0 at agri max", Mathf.Abs(ag.Mastery - 1f) < 0.001f);
+            ag.level = 0; int f0 = 0; for (int i = 0; i < 2000; i++) if (GD.Randf() < ag.Mastery) f0++;
+            Check("no 2nd-yield at agri 0", f0 == 0);
+            ag.level = 7; int f1 = 0; for (int i = 0; i < 2000; i++) if (GD.Randf() < ag.Mastery) f1++;
+            Check("always 2nd-yield at agri max", f1 == 2000);
+            ag.level = 4; int f4 = 0; for (int i = 0; i < 4000; i++) if (GD.Randf() < ag.Mastery) f4++;
+            float rate = f4 / 4000f;   // mastery 4/7 ~= 0.571
+            Check($"~57% at agri 4 (got {rate:0.00})", Mathf.Abs(rate - 4f / 7f) < 0.05f);
+
+            GD.Print($"[farmyield] {pass} PASS / {fail} FAIL");
         }
 
         // --itemtest=ID,ID,...: drop those loot items as real physics WorldItems from a small height onto a ground plane,

@@ -52,11 +52,19 @@ namespace UnturnedGodot
         }
 
         // Harvest a grown crop: drop its Grow yield item at the crop + remove it. Returns false if not ready.
+        // AGRICULTURE skill effect (source InteractableFarm): a chance of a SECOND yield item = Random.value < mastery(AGRICULTURE),
+        // so at AGRICULTURE max (mastery 1.0) every harvest doubles. (harvestRewardExperience XP award is a follow-up -- needs per-crop extraction.)
         public static bool Harvest(CropNode crop, PlayerController by)
         {
             if (crop?.Crop == null || !crop.Crop.IsFullyGrown(Now)) return false;
             ushort yield = crop.Crop.Def.Grow;
-            if (yield != 0 && by != null) by.DropWorldItem(new Item(yield), crop.GlobalPosition + Vector3.Up * 0.3f);
+            Vector3 at = crop.GlobalPosition + Vector3.Up * 0.3f;
+            if (yield != 0 && by != null)
+            {
+                by.DropWorldItem(new Item(yield), at);
+                var ag = by.Skills?.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE);
+                if (ag != null && GD.Randf() < ag.Mastery) by.DropWorldItem(new Item(yield), at + Vector3.Right * 0.25f);   // agriculture 2nd yield
+            }
             crop.QueueFree();
             return true;
         }
