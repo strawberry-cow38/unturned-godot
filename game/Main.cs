@@ -126,6 +126,7 @@ namespace UnturnedGodot
                 else if (arg == "--shelltest") { RunShellTest(); GetTree().Quit(); return; }   // shotgun shell-by-shell reload detection + sequence self-test
                 else if (arg == "--farmloop") { RunFarmLoopTest(); GetTree().Quit(); return; }   // plant->grow->harvest loop: crops.tsv<->farms.tsv seed linkage + growth/yield self-test
                 else if (arg == "--skilltest") { RunSkillTest(); GetTree().Quit(); return; }   // PlayerSkills grid + XP cost formula + upgrade/mastery self-test
+                else if (arg == "--craftgate") { RunCraftGateTest(); GetTree().Quit(); return; }   // blueprint CRAFTING-skill gating self-test
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1102,6 +1103,28 @@ namespace UnturnedGodot
             Check("mastery 2/7", Mathf.Abs(ag.Mastery - 2f / 7f) < 0.001f);
 
             GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
+        }
+
+        // --craftgate: a blueprint requiring CRAFTING level 2 is blocked below it + allowed at/above it (skill-effect self-test).
+        void RunCraftGateTest()
+        {
+            var skills = new SDG.Unturned.PlayerSkills();
+            var bp = new BlueprintDef { Skill = "Craft", SkillLevel = 2 };   // requires CRAFTING >= 2
+            var craft = skills.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.CRAFTING);
+            int pass = 0, fail = 0;
+            void Check(string n, bool ok) { GD.Print($"[craftgate] {n}: {(ok ? "PASS" : "FAIL")}"); if (ok) pass++; else fail++; }
+
+            Check("blocked at CRAFTING 0", !Crafting.MeetsSkill(bp, skills));
+            craft.level = 1;
+            Check("blocked at CRAFTING 1", !Crafting.MeetsSkill(bp, skills));
+            craft.level = 2;
+            Check("allowed at CRAFTING 2", Crafting.MeetsSkill(bp, skills));
+            craft.level = 5;
+            Check("allowed at CRAFTING 5", Crafting.MeetsSkill(bp, skills));
+            Check("no-skill blueprint always ok", Crafting.MeetsSkill(new BlueprintDef { Skill = "", SkillLevel = 0 }, new SDG.Unturned.PlayerSkills()));
+            Check("null skills = ungated", Crafting.MeetsSkill(bp, null));
+
+            GD.Print($"[craftgate] {pass} PASS / {fail} FAIL");
         }
 
         // --itemtest=ID,ID,...: drop those loot items as real physics WorldItems from a small height onto a ground plane,

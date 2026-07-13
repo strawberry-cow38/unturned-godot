@@ -20,6 +20,29 @@ namespace UnturnedGodot
 
         static ushort Resolve(string guid) => Assets.findByGuid(guid)?.id ?? (ushort)0;
 
+        // Does the player meet a blueprint's SKILL requirement? Source EBlueprintSkill (Craft/Cook/Repair) maps to the
+        // Support skills CRAFTING/COOKING/ENGINEER; the player's level must be >= Skill_Level. No requirement / no skills = true.
+        public static bool MeetsSkill(BlueprintDef bp, PlayerSkills skills)
+        {
+            if (!bp.RequiresSkill || skills == null) return true;
+            int idx = (bp.Skill ?? "").ToLowerInvariant() switch
+            {
+                "craft" => (int)EPlayerSupport.CRAFTING,
+                "cook" => (int)EPlayerSupport.COOKING,
+                "repair" => (int)EPlayerSupport.ENGINEER,
+                _ => -1,
+            };
+            if (idx < 0) return true;   // unknown skill tag -> don't gate
+            return skills.GetSkill((int)EPlayerSpeciality.SUPPORT, idx).level >= bp.SkillLevel;
+        }
+
+        // Skill-aware craftability: the item math AND the skill gate (source: a blueprint needs its Craft/Cook/Repair level).
+        public static bool CanCraft(BlueprintDef bp, IInv inv, PlayerSkills skills, out string reason)
+        {
+            if (!MeetsSkill(bp, skills)) { reason = $"need {bp.Skill} skill level {bp.SkillLevel}"; return false; }
+            return CanCraft(bp, inv, out reason);
+        }
+
         // Is `bp` craftable from `inv`? (item-satisfiability only; skill/station gated by the caller)
         public static bool CanCraft(BlueprintDef bp, IInv inv, out string reason)
         {

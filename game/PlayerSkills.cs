@@ -92,5 +92,17 @@ namespace SDG.Unturned
             return true;
         }
         public bool TryUpgrade(EPlayerSupport s) => TryUpgrade((int)EPlayerSpeciality.SUPPORT, (int)s);
+
+        // Find a skill by its enum name ("crafting", "agriculture", "sharpshooter"...) across all specialities. For the dev console.
+        public bool TryFind(string name, out Skill skill, out string label)
+        {
+            if (System.Enum.TryParse<EPlayerOffense>(name, true, out var o) && System.Enum.IsDefined(typeof(EPlayerOffense), o))
+            { skill = _skills[(int)EPlayerSpeciality.OFFENSE][(int)o]; label = o.ToString(); return true; }
+            if (System.Enum.TryParse<EPlayerDefense>(name, true, out var d) && System.Enum.IsDefined(typeof(EPlayerDefense), d))
+            { skill = _skills[(int)EPlayerSpeciality.DEFENSE][(int)d]; label = d.ToString(); return true; }
+            if (System.Enum.TryParse<EPlayerSupport>(name, true, out var s) && System.Enum.IsDefined(typeof(EPlayerSupport), s))
+            { skill = _skills[(int)EPlayerSpeciality.SUPPORT][(int)s]; label = s.ToString(); return true; }
+            skill = null; label = null; return false;
+        }
     }
 }

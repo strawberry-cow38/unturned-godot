@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -107,7 +107,17 @@ namespace UnturnedGodot
                 if (crop == null) { Log($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
                 Log($"planted {pp[0]}{(grown ? " (grown)" : "")} -- UG_FARMSPEED speeds growth; E near a grown crop to harvest");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant");
+            else if (verb == "skill")
+            {
+                // skill <name> [level]  -- set a skill's level (e.g. `skill crafting 3`, `skill agriculture`) for testing gates/effects
+                if (Player?.Skills == null) { Log("no player skills"); return; }
+                var pp = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (!Player.Skills.TryFind(pp[0], out var sk, out var label)) { Log($"no skill '{pp[0]}' (try: crafting, agriculture, sharpshooter, strength...)"); return; }
+                int target = pp.Length > 1 && int.TryParse(pp[1], out var lv) ? lv : sk.level + 1;
+                sk.level = (byte)Mathf.Clamp(target, 0, sk.max);
+                Log($"{label} skill -> level {sk.level}/{sk.max}");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill");
         }
 
         static ItemAsset ResolveItem(string arg)

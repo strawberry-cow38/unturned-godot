@@ -1297,6 +1297,7 @@ namespace UnturnedGodot
         }
 
         public HUD Hud;   // set by the scene builder; the vehicle status box binds to the driven vehicle on enter/exit
+        public SDG.Unturned.PlayerSkills Skills { get; } = new();   // the player's skills/XP (source PlayerSkills); gates crafting, boosts farming, etc.
 
         void EnterVehicle(Vehicle v)
         {

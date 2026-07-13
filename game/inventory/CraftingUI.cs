@@ -94,6 +94,7 @@ namespace UnturnedGodot
             hb.AddChild(lbl);
 
             var btn = new Button { Text = "Craft", CustomMinimumSize = new Vector2(96, 36) };
+            if (!Crafting.MeetsSkill(bp, Player?.Skills)) { btn.Disabled = true; btn.TooltipText = $"needs {bp.Skill} skill {bp.SkillLevel}"; }   // skill-locked recipe
             btn.Pressed += () => OnCraft(bp);
             hb.AddChild(btn);
             return row;
@@ -101,6 +102,7 @@ namespace UnturnedGodot
 
         void OnCraft(BlueprintDef bp)
         {
+            if (!Crafting.MeetsSkill(bp, Player?.Skills)) { GD.Print($"[craftui] blocked: needs {bp.Skill} skill {bp.SkillLevel}"); return; }   // skill gate (source EBlueprintSkill level)
             var adapter = new Crafting.PlayerInvAdapter(Inv);
             if (!Crafting.DoCraft(bp, adapter)) return;
             // RepairTargetItem restores the owned item's quality (target-op); other ops just consume->produce.
