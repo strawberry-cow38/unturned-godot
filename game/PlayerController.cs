@@ -83,6 +83,15 @@ namespace UnturnedGodot
             }
         }
 
+        // Map arrow (M map): radians for a 2D arrow that points up=north at 0, turning clockwise. Source sets
+        // localPlayerImage.RotationAngle = player yaw; we take the look/camera forward on the XZ plane. Godot 2D
+        // rotation is clockwise-positive, so an up-pointing arrow rotates by atan2(fx, -fz).
+        public float MapFacingAngle()
+        {
+            Vector3 f = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
+            return Mathf.Atan2(f.X, -f.Z);
+        }
+
         public void DropWorldItem(Item item, Vector3 pos)
         {
             var space = GetWorld3D().DirectSpaceState;

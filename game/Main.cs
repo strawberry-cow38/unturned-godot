@@ -1366,6 +1366,7 @@ namespace UnturnedGodot
                 AddChild(player);
                 _pdPlayer = player;   // UG_AUTOFIRE terrain-impact verification
                 AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> spawns at the look-orb (master)
+                AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
                 player.RotationDegrees = new Vector3(0f, spawnYaw, 0f);   // face the spawn point's angle
                 player.Spawn = player.GlobalPosition;   // respawn on this above-ground point, NOT the default (0,1,0) which is underground on PEI
@@ -1578,6 +1579,7 @@ namespace UnturnedGodot
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             _peiPlayer = player;
             AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> spawns at the look-orb (master)
+            AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
 
             // a jeep right beside the player, dropped onto the terrain -> hop in + drive PEI
             var jeep = Vehicle.BuildByName("jeep");   // auto-joins the "vehicles" group in Build
