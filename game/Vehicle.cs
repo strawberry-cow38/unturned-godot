@@ -917,6 +917,26 @@ namespace UnturnedGodot
             }
         }
 
+        // Union of every mesh's AABB (incl. seats/steering) in WORLD space -> the look-at can focus the whole visual
+        // bounds, so looking at a seat/wheel through a window still selects the car even though they have no collider (master).
+        public Aabb WorldMeshAabb()
+        {
+            var list = new System.Collections.Generic.List<MeshInstance3D>();
+            CollectMeshes(this, list);
+            Aabb acc = default; bool any = false;
+            foreach (var mi in list)
+            {
+                if (!IsInstanceValid(mi) || mi.Mesh == null) continue;
+                var lb = mi.Mesh.GetAabb(); var xf = mi.GlobalTransform;
+                for (int i = 0; i < 8; i++)
+                {
+                    var w = xf * (lb.Position + lb.Size * new Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1));
+                    if (!any) { acc = new Aabb(w, Vector3.Zero); any = true; } else acc = acc.Expand(w);
+                }
+            }
+            return any ? acc.Grow(0.1f) : new Aabb(GlobalPosition - Vector3.One, Vector3.One * 2f);
+        }
+
         // --- Wreck salvage (master): a burnt-out car can be broken down with a blowtorch into scrap metal ---
         public bool IsWreck => _exploded;
         public bool WreckOnFire => _exploded && _burnTime >= 0f && _burnTime < 60f;   // still burning -> too hot to salvage

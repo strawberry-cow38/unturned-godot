@@ -157,6 +157,10 @@ namespace UnturnedGodot
                     }
                 }
                 if (hitItem != null && hitVeh != null) { if (bestV < bestI) hitItem = null; else hitVeh = null; }   // focus the nearer of the two
+                if (hitVeh == null && hitItem == null)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master)
+                    foreach (var node in GetTree().GetNodesInGroup("vehicles"))
+                        if (node is Vehicle vv && IsInstanceValid(vv) && vv.WorldMeshAabb().IntersectsSegment(from, _lookEnd))
+                        { float d = vv.GlobalPosition.DistanceSquaredTo(from); if (d < bestV) { bestV = d; hitVeh = vv; } }
             }
             if (_lookViz != null) { _lookViz.Visible = WorldItem.ShowLookSphere && !_dead && _driving == null; if (_lookViz.Visible) _lookViz.GlobalPosition = _lookEnd; }
             if (hitItem != _focusItem)
