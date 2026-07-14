@@ -1147,6 +1147,8 @@ namespace UnturnedGodot
             Check("cardio regen 2.0x at max", Mathf.Abs(sk.CardioStaminaRegenMultiplier() - 2.0f) < 0.001f);
             sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.EXERCISE).level = 5;
             Check("exercise drain 0.5x at max", Mathf.Abs(sk.ExerciseStaminaDrainMultiplier() - 0.5f) < 0.001f);
+            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.OVERKILL).level = 7;
+            Check("overkill melee 1.5x at max", Mathf.Abs(sk.OverkillMeleeMultiplier() - 1.5f) < 0.001f);
 
             GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
         }

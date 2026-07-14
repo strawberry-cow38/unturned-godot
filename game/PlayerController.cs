@@ -206,7 +206,7 @@ namespace UnturnedGodot
             _meleeCd = 0.45f;   // ~half-second between swings
             _viewmodel?.SwingMelee();   // play the source melee swing animation (Weak)
             float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
-            float dmg = _melee?.ZombieDamage ?? 45f;   // the weapon's .dat Zombie_Damage (fists 45)
+            float dmg = (_melee?.ZombieDamage ?? 45f) * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage (fists 45) x OVERKILL skill (source PlayerEquipment:2274)
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;   // proximity from the player torso (robust); aimed by the look direction
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)

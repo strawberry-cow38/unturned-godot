@@ -90,6 +90,9 @@ namespace SDG.Unturned
         // Source skills.mastery(spec, index) = level/max fraction.
         public float Mastery(int speciality, int index) => _skills[speciality][index].Mastery;
 
+        // Source PlayerEquipment:2274: OVERKILL boosts melee damage by up to 50% at max level.
+        public float OverkillMeleeMultiplier() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.OVERKILL) * 0.5f;
+
         // Survival-sim skill multipliers. VITALITY/SURVIVAL are the source-exact interval->rate inversions (magnitudes
         // 0.5/0.25 from PlayerLife:2030/1953/1975); CARDIO/EXERCISE are source-INFORMED for the port's simplified
         // continuous stamina (the source is tick-based -- PlayerLife:1797/1806-1810). Applied to the port's stand-in rates.
