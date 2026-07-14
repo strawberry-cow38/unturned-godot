@@ -77,9 +77,12 @@ namespace UnturnedGodot
 
             // ammo count, bottom-right
             _ammo = new Label();
-            _ammo.AddThemeFontSizeOverride("font_size", 28);
+            _ammo.AddThemeFontSizeOverride("font_size", 56);   // master: 2x bigger (was 28)
+            _ammo.AddThemeFontOverride("font", new FontVariation { VariationEmbolden = 0.75f });   // master: bold
+            _ammo.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _ammo.AddThemeConstantOverride("outline_size", 5);   // readable over any background at the bigger size
             _ammo.AnchorLeft = 1; _ammo.AnchorRight = 1; _ammo.AnchorTop = 1; _ammo.AnchorBottom = 1;
-            _ammo.OffsetLeft = -190; _ammo.OffsetRight = -22; _ammo.OffsetTop = -52; _ammo.OffsetBottom = -22;
+            _ammo.OffsetLeft = -360; _ammo.OffsetRight = -22; _ammo.OffsetTop = -92; _ammo.OffsetBottom = -22;
             _ammo.HorizontalAlignment = HorizontalAlignment.Right;
             _ammo.MouseFilter = Control.MouseFilterEnum.Ignore;
             root.AddChild(_ammo);
@@ -88,7 +91,7 @@ namespace UnturnedGodot
             _fireMode = new Label();
             _fireMode.AddThemeFontSizeOverride("font_size", 18);
             _fireMode.AnchorLeft = 1; _fireMode.AnchorRight = 1; _fireMode.AnchorTop = 1; _fireMode.AnchorBottom = 1;
-            _fireMode.OffsetLeft = -190; _fireMode.OffsetRight = -22; _fireMode.OffsetTop = -80; _fireMode.OffsetBottom = -54;
+            _fireMode.OffsetLeft = -190; _fireMode.OffsetRight = -22; _fireMode.OffsetTop = -120; _fireMode.OffsetBottom = -94;
             _fireMode.HorizontalAlignment = HorizontalAlignment.Right;
             _fireMode.Modulate = new Color(1f, 1f, 1f, 0.7f);
             _fireMode.MouseFilter = Control.MouseFilterEnum.Ignore;

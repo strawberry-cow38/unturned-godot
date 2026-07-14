@@ -1004,6 +1004,7 @@ namespace UnturnedGodot
             bag.tryAddItem(new Item(6, 30));                        // Military Magazine (full, 30 rounds)
             bag.tryAddItem(new Item(6, 30));                        // Military Magazine (full)
             bag.tryAddItem(new Item(6, 12));                        // Military Magazine (partial, 12 left)
+            bag.tryAddItem(new Item(6, 0));                         // Military Magazine (EMPTY -> shows x0)
             Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
         }
 

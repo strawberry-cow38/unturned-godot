@@ -484,7 +484,7 @@ namespace UnturnedGodot
                 tile.AddChild(lbl);
             }
 
-            if (jar.item != null && jar.item.amount > 1)
+            if (jar.item != null && (jar.item.amount > 1 || asset?.IsMagazine == true))   // stacks show >1; a magazine ALWAYS shows its round count, incl. x0 when empty (master)
             {
                 var amt = new Label { Text = "x" + jar.item.amount, Position = new Vector2(0, h - 20), Size = new Vector2(w - 4, 18) };
                 amt.HorizontalAlignment = HorizontalAlignment.Right;
