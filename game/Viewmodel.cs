@@ -55,7 +55,7 @@ namespace UnturnedGodot
         float _flash;
         ShaderMaterial _flashMat;   // muzzle flash billboard material (roll uniform set per shot)
         float _flashRoll;           // ACCUMULATED flash roll -- each shot rolls it L/R by an amount, remembering the last (master)
-        AudioStreamPlayer _shootSnd, _reloadSnd, _drySnd;   // real Eaglefire Shoot/Reload/Hammer(dry-fire) sounds
+        AudioStreamPlayer _shootSnd, _reloadSnd, _hammerSnd, _drySnd;   // real per-gun Shoot / Reload / Hammer(rack) sounds; dry-fire = its own click (none shipped yet)
         // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
         // is non-vanilla): a generic 5.56 casing (yellow rectangle cube) tossed from the gun's Eject hook each shot,
         // arcing out to the right + tumbling under gravity, then despawning. Lives in the viewmodel viewport world.
@@ -96,12 +96,12 @@ namespace UnturnedGodot
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
         static GunVisual Visual(string name) => name switch
         {
-            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
-            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.44f, 0.40f, 0.28f), Ejects = true },
-            "eaglefire"   => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.40f, 0.36f, 0.32f), Ejects = true },
+            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
+            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.44f, 0.40f, 0.28f), Ejects = true },
+            "eaglefire"   => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.40f, 0.36f, 0.32f), Ejects = true },
             _             => ExtraVisual(name),   // the bulk PEI arsenal: extracted content + content/guns_visual.tsv
         };
 
@@ -127,6 +127,7 @@ namespace UnturnedGodot
                 {
                     Gun = c[0] + "_gun.txt", Albedo = c[0] + "_albedo.png", Sight = null, Mag = null,
                     Shoot = Snd(c[0] + "_shoot.ogg", "eaglefire_shoot.ogg"), Reload = Snd(c[0] + "_reload.ogg", "eaglefire_reload.ogg"),   // real per-gun sounds; fall back to eaglefire's if a clip is missing
+                    Hammer = Snd(c[0] + "_hammer.ogg", "eaglefire_hammer.ogg"),   // rack / bolt-cycle sound (per-gun once ripped; eaglefire's for now)
                     MuzzleHook = V3(c[1]), AimHook = V3(c[2]), ViewOffset = Vector3.Zero,
                     AlbedoTint = new Color(1f, 1f, 1f), Ejects = c[3].Trim() == "1",
                 };
@@ -326,7 +327,11 @@ namespace UnturnedGodot
                     mi.AddChild(_shootSnd);
                     _reloadSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Reload}"), VolumeDb = -3f };
                     mi.AddChild(_reloadSnd);
-                    _drySnd = new AudioStreamPlayer { Stream = LoadOgg("res://content/eaglefire_hammer.ogg"), VolumeDb = -3f };
+                    _hammerSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Hammer}"), VolumeDb = -3f };   // the rack / bolt-cycle sound (source ItemGunAsset.hammer) -> plays with the Hammer animation
+                    mi.AddChild(_hammerSnd);
+                    // dry-fire is its OWN sound, NOT the hammer (master). Vanilla Unturned plays no dry-fire sound (just a RELOAD hint),
+                    // so this is null until a real {gun}_dryfire.ogg is ripped -> a null stream just clicks silently for now.
+                    _drySnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Gun.Replace("_gun.txt", "")}_dryfire.ogg"), VolumeDb = -3f };
                     mi.AddChild(_drySnd);
                     mi.AddChild(_muzzleFlash);
 
@@ -445,6 +450,7 @@ namespace UnturnedGodot
         {
             if (_hammerClip == null) return;
             _arms?.Play(_hammerClip, speed);
+            if (_hammerSnd != null) { _hammerSnd.PitchScale = speed; _hammerSnd.Play(); }   // the real rack / bolt-cycle sound (was missing) -- master
             _hammering = true; _hammerCapture = true;                       // follow the hand bone through the rack so the gun rotates with it
             _hammerViewTimer = HammerLength / Mathf.Max(0.01f, speed);      // for the clip's (dexterity-sped) duration
         }
