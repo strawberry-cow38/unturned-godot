@@ -66,7 +66,7 @@ namespace UnturnedGodot
             AddVital(lifeBox, 1, "hud_food.png",    CO, () => Player != null ? Player.Food    : 1f);
             AddVital(lifeBox, 2, "hud_water.png",   CB, () => Player != null ? Player.Water   : 1f);
             AddVital(lifeBox, 3, "hud_stamina.png", CY, () => Player != null ? Player.Stamina : 1f);
-            AddVital(lifeBox, 4, "hud_virus.png",   CG, () => Player != null ? Player.Infection : 0f, () => Player != null && Player.Infection > 0.001f);   // situational INFECTION meter (master)
+            AddVital(lifeBox, 4, "hud_virus.png",   CG, () => Player != null ? 1f - Player.Infection : 1f, null);   // INFECTION meter: ALWAYS shown, starts FULL (healthy), depletes as infection rises (master)
 
             // status icons (PlayerLifeUI.statusIconsContainer): a row of 40x40 boxes above the vitals, each shown
             // ONLY on its condition — bleeding after a hit; broken/starved need the survival sim so they stay hidden.
@@ -222,7 +222,7 @@ namespace UnturnedGodot
                 _vehHealth.AnchorRight = Mathf.Clamp(Vehicle.HealthNorm, 0f, 1f);
                 _vehBattery.AnchorRight = Mathf.Clamp(Vehicle.BatteryNorm, 0f, 1f);
                 _vehTitle.Text = Vehicle.DisplayName;
-                _vehRpmGear.Text = $"{Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}";
+                _vehRpmGear.Text = $"{Vehicle.LinearVelocity.Length() * 2.23694f:0} mph · {Vehicle.EngineRpm:0} rpm · {Vehicle.GearLabel}";   // MPH speedometer + rpm + gear (master)
             }
         }
 

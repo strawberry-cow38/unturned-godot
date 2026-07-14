@@ -290,17 +290,11 @@ namespace UnturnedGodot
             if (_consumeTimer <= 0f && _heldConsumable != null)
             {
                 Consume(_heldConsumable);   // apply Health/Food/Water/etc.
-                GD.Print($"[consume] consumed {_heldConsumable.itemName}");
                 ushort id = _heldConsumable.id;
-                Inventory?.removeItemAmount(id, 1);   // spend one from the stack (source consume() -> ItemManager removes 1)
-                if ((Inventory?.getItemCount(id) ?? 0) > 0)
-                    GD.Print($"[consume] {Inventory.getItemCount(id)} left -- click to eat/drink another");   // still have some: keep holding, click again
-                else
-                {
-                    _heldConsumable = null;   // ran out: auto-unequip back to the last-held gun (source re-selects the prior slot)
-                    EquipHeldGun(string.IsNullOrEmpty(_gunName) ? "eaglefire" : _gunName);
-                    GD.Print("[consume] out of that item -- back to the gun");
-                }
+                GD.Print($"[consume] consumed {_heldConsumable.itemName}");
+                _heldConsumable = null;             // ONE use per equip: dequip the instant the stats apply (master) -- not a hold-and-spam-the-stack
+                Inventory?.removeItemAmount(id, 1);  // delete the one that was eaten from the stack
+                EquipHeldGun(string.IsNullOrEmpty(_gunName) ? "eaglefire" : _gunName);   // back to the gun/fists (re-equip from inventory to eat another)
             }
         }
 

@@ -1011,8 +1011,14 @@ namespace UnturnedGodot
             {
                 float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
                 int newGear = Mathf.Clamp(1 + (int)(Mathf.Clamp(fwd / _speedMax, 0f, 0.999f) * _gears.Length), 1, _gears.Length);
-                if (newGear != _gear && !_exploded && !_husk && fwd > 1.5f)   // gear change while moving -> a brief CLUTCH JOLT: a lurch opposite travel (master)
-                    ApplyCentralImpulse(-LinearVelocity.Normalized() * Mass * 0.5f);
+                if (newGear != _gear && !_exploded && !_husk && fwd > 1.5f)   // gear change while moving -> a brief CLUTCH JOLT.
+                {
+                    // A fore-aft impulse dipped the speed under the shift point -> instant re-downshift -> STUCK shifting
+                    // (master caught the loop). So the jolt is a VERTICAL hitch + pitch nod you FEEL but that doesn't
+                    // touch the gear-selecting fore-aft speed.
+                    ApplyCentralImpulse(Vector3.Up * Mass * 0.22f);
+                    ApplyTorqueImpulse(GlobalTransform.Basis.X * Mass * 0.5f);
+                }
                 _gear = newGear;
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
