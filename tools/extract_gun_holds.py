@@ -64,7 +64,7 @@ n=0; nogun=[]
 for gun in guns:
     clips=gun_clips(gun)
     if not clips: nogun.append(gun); continue
-    for cn in ("Equip","Reload","Inspect"):
+    for cn in ("Equip","Reload","Inspect","Hammer"):   # Hammer = the rechamber/rack played AFTER Reload when the mag was empty (source UseableGun)
         if cn in clips:
             rig["anims"][cap(gun)+"_"+cn]=convert(clips[cn]); n+=1
 print("added",n,"clips across",len(guns),"guns; no-prefab:",nogun)

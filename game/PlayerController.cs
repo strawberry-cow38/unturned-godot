@@ -519,6 +519,9 @@ namespace UnturnedGodot
         const float GunshotRadius = 48f;   // earshot of an unsuppressed shot (AlertTool noise); suppressors would cut it
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
+        bool _hammerPending;        // reloaded from EMPTY -> after the mag swap, play the rechamber Hammer clip (source: the reload's 2nd half)
+        double _hammerDur;
+        float _reloadSpeed = 1f;    // DEXTERITY reload speed, kept so the Hammer clip plays at the same rate
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
         float _recoilPending, _recoilYawPending;  // un-applied recoil kick (deg); drains additively into the real aim and STAYS -- never auto-returns (master: additive, no recover-to-origin)
         readonly RandomNumberGenerator _rng = new();
@@ -930,9 +933,14 @@ namespace UnturnedGodot
             if (Ammo >= max) return;
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
+            // Empty-mag reload -> after the mag swap, RECHAMBER: play the Hammer clip (the reload's source 2nd half). Not for
+            // shell-fed shotguns (their pump is the reload). Source ERechamberGunAfterReloadMode.IfAmmoWasEmpty (the common case).
+            _hammerPending = Ammo <= 0 && Gun?.ShellReload != true && (_viewmodel?.HasHammer ?? false);
             float rspeed = Skills.DexterityReloadSpeed();   // DEXTERITY: faster reload -- speeds the anim + shortens the timer to match
+            _reloadSpeed = rspeed;
             _viewmodel?.SetReloading(true, rspeed);
             double full = (_viewmodel?.ReloadLength ?? ReloadTime) / rspeed;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s), sped up by DEXTERITY
+            _hammerDur = _hammerPending ? (_viewmodel.HammerLength / rspeed) : 0.0;
             _reloadTimer = Gun?.ShellReload == true ? full / System.Math.Max(1, max) : full;   // shell-fed shotguns (Pump/Break) load ONE shell per interval (see the reload tick + StartFire cancel)
         }
 
@@ -1542,7 +1550,12 @@ namespace UnturnedGodot
                         if (Ammo >= max) { _reloading = false; _viewmodel?.SetReloading(false); }
                         else { _reloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, max); _viewmodel?.SetReloading(true); }
                     }
-                    else { Ammo = max; _reloading = false; _viewmodel?.SetReloading(false); }   // magazine swap: whole mag at once
+                    else   // magazine swap: whole mag at once
+                    {
+                        Ammo = max;
+                        if (_hammerPending) { _hammerPending = false; _viewmodel?.PlayHammer(_reloadSpeed); _reloadTimer = _hammerDur; }   // empty reload: now RACK the round (source Hammer clip = the reload's 2nd half); stay reloading through it
+                        else { _reloading = false; _viewmodel?.SetReloading(false); }
+                    }
                 }
             }
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)

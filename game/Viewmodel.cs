@@ -45,6 +45,7 @@ namespace UnturnedGodot
         float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
         bool _reloading;      // true while the reload clip plays (blocks ADS)
         string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
+        string _hammerClip = null;           // {Gun}_Hammer: the rechamber/rack played AFTER Reload when the mag was empty (source UseableGun); null = gun has none
         string _inspectClip = null;          // per-gun inspect clip ({Gun}_Inspect); null if the gun ships no Inspect anim
         bool _inspecting; float _inspectTimer; Basis _inspectBoneStart; bool _inspectCapture;   // inspect: layer the hand-bone rotation delta onto the camera-locked gun so it tilts with the gesture
         string _attachStartClip = null, _attachStopClip = null;   // per-gun attach-view pose clips ({Gun}_AttachStart/Stop)
@@ -215,6 +216,8 @@ namespace UnturnedGodot
                 // per-gun reload clip ({Gun}_Reload, extracted from that gun's animations.prefab); fall back to Gun_Reload
                 string capGun = char.ToUpper(GunName[0]) + GunName.Substring(1);
                 _reloadClip = _arms.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
+                _hammerClip = _arms.ClipLength(capGun + "_Hammer") > 0f ? capGun + "_Hammer" : null;   // rechamber rack (empty-reload second half)
+                if (_hammerClip != null) _arms.SetClipLoop(_hammerClip, false);
                 _arms.SetClipLoop(_reloadClip, false);
                 // per-gun inspect clip ({Gun}_Inspect, from that gun's animations.prefab). null = gun has no Inspect anim.
                 _inspectClip = _arms.ClipLength(capGun + "_Inspect") > 0f ? capGun + "_Inspect" : null;
@@ -434,6 +437,10 @@ namespace UnturnedGodot
             _reloading = on;
             if (on) { _aiming = false; _arms?.Play(_reloadClip, speed); if (_reloadSnd != null) { _reloadSnd.PitchScale = speed; _reloadSnd.Play(); } }   // per-gun reload arm anim + sound, sped up by DEXTERITY
         }
+        // The rechamber RACK (source Hammer clip) -- the 2nd half of an empty reload. Stays in the reloading state so ADS/fire stay blocked.
+        public bool HasHammer => _hammerClip != null;
+        public float HammerLength => (_arms != null && _hammerClip != null) ? _arms.ClipLength(_hammerClip) : 0f;
+        public void PlayHammer(float speed = 1f) { if (_hammerClip != null) _arms?.Play(_hammerClip, speed); }
 
         // F to inspect: play the gun's OWN Inspect clip (per-gun, from its animations.prefab; ends back on the ready
         // hold). Guns without an Inspect clip (_inspectClip == null) just don't inspect, matching the source's
