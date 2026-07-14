@@ -387,10 +387,10 @@ namespace UnturnedGodot
 
         // Driven by PlayerController while reloading — the gun dips down as a simple reload gesture (the full
         // Gun_Reload clip is a TODO; it needs additive-layer integration like the aim pose). Can't ADS mid-reload.
-        public void SetReloading(bool on)
+        public void SetReloading(bool on, float speed = 1f)
         {
             _reloading = on;
-            if (on) { _aiming = false; _arms?.Play(_reloadClip); _reloadSnd?.Play(); }   // per-gun reload arm anim + sound
+            if (on) { _aiming = false; _arms?.Play(_reloadClip, speed); if (_reloadSnd != null) { _reloadSnd.PitchScale = speed; _reloadSnd.Play(); } }   // per-gun reload arm anim + sound, sped up by DEXTERITY
         }
 
         // F to inspect: play the gun's OWN Inspect clip (per-gun, from its animations.prefab; ends back on the ready

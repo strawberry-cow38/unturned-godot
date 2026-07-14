@@ -792,8 +792,9 @@ namespace UnturnedGodot
             if (Ammo >= max) return;
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
-            _viewmodel?.SetReloading(true);
-            double full = _viewmodel?.ReloadLength ?? ReloadTime;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s)
+            float rspeed = Skills.DexterityReloadSpeed();   // DEXTERITY: faster reload -- speeds the anim + shortens the timer to match
+            _viewmodel?.SetReloading(true, rspeed);
+            double full = (_viewmodel?.ReloadLength ?? ReloadTime) / rspeed;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s), sped up by DEXTERITY
             _reloadTimer = Gun?.ShellReload == true ? full / System.Math.Max(1, max) : full;   // shell-fed shotguns (Pump/Break) load ONE shell per interval (see the reload tick + StartFire cancel)
         }
 
