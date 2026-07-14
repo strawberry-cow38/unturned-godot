@@ -230,11 +230,8 @@ namespace UnturnedGodot
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
                 _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // generic (knife) melee fallback clips play once
-                if (_meleeCap != null)   // this melee's OWN ripped clips: equip/swings/stop/inspect play once; a Repeated tool's Start_Swing LOOPS as the continuous "using" motion while held (source startSwing)
-                {
-                    foreach (var c in new[] { "_Equip", "_Weak", "_Strong", "_Stop_Swing", "_Inspect" }) _arms.SetClipLoop(_meleeCap + c, false);
-                    _arms.SetClipLoop(_meleeCap + "_Start_Swing", true);
-                }
+                if (_meleeCap != null)   // this melee's OWN ripped clips ALL play once and hold (source animator.play plays non-looping); a Repeated tool's continuous "blowtorching" is the spark EMISSION while held, NOT a looping Start_Swing
+                    foreach (var c in new[] { "_Equip", "_Weak", "_Strong", "_Start_Swing", "_Stop_Swing", "_Inspect" }) _arms.SetClipLoop(_meleeCap + c, false);
                 string equipClip = ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
 
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
@@ -403,26 +400,36 @@ namespace UnturnedGodot
         }
         public void PlayMeleeInspect() { if (_meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Inspect") > 0f) _arms.Play(_meleeCap + "_Inspect"); }
 
-        CpuParticles3D _torchSparks;   // blowtorch: orange sparks fly from the torch tip while repairing / cutting a wreck (master)
+        CpuParticles3D _torchSparks;   // blowtorch: the REAL "Hit" ParticleSystem from item.prefab -- the game's own blue spark sprite, emitted from the nozzle while the torch is used (source UseableMelee.firstEmitter)
         public void SetTorchSparks(bool on)
         {
             if (_torchSparks == null)
             {
                 if (_gun == null) return;
-                var quad = new QuadMesh { Size = new Vector2(0.03f, 0.03f) };
-                quad.Material = new StandardMaterial3D
+                // the real 16x16 spark sprite ripped from the blowtorch "Hit" ParticleSystem material (_MainTex + _EmissionMap).
+                // source startColor is WHITE, so the blue lives in the sprite itself -- albedo tint stays white.
+                var mat = new StandardMaterial3D
                 {
-                    AlbedoColor = new Color(0.6f, 0.8f, 1f), EmissionEnabled = true, Emission = new Color(0.45f, 0.68f, 1f),   // BLUE welding-arc sparks (src: metal impact, not orange) -- master
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    BlendMode = BaseMaterial3D.BlendModeEnum.Add, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,   // full-bright sprite, ignores scene light
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                    AlbedoColor = new Color(1f, 1f, 1f),   // startColor is white; the blue is in the sprite. alpha-blended (NOT additive) so overlapping sparks stay blue instead of blooming to white
                 };
+                var spark = LoadTex("res://content/torch_spark.png");
+                if (spark != null) mat.AlbedoTexture = spark;
+                var quad = new QuadMesh { Size = new Vector2(0.06f, 0.06f), Material = mat };   // spark size baked into the mesh (CpuParticles ScaleAmount doesn't scale the mesh here); ~source startSize 0.05-0.10
+                // "Hit" node local pos in item.prefab = (-0.1359, 0.4719, 0) -> port frame (x,y,z)->(-x,y,-z) = (0.1359, 0.4719, 0) (the nozzle tip)
+                // Source ParticleSystem params (startSize 0.05-0.10, startSpeed 1-2, sphere r=0.25, gravity x1, lifetime 1s)
+                // are WORLD-scale; the viewmodel renders the torch at native model scale (the gun ~0.5 units in view), so the
+                // raw values fill the screen. Scaled ~0.2x here so it reads as the game's small blue nozzle spark spray.
                 _torchSparks = new CpuParticles3D
                 {
-                    Emitting = false, Amount = 22, Lifetime = 0.3f, Mesh = quad,
-                    Position = new Vector3(0f, 0.12f, 0.28f),   // ~torch nozzle, forward + up from the mesh origin (tunable)
-                    Direction = new Vector3(0f, 0.25f, 1f), Spread = 42f,
-                    InitialVelocityMin = 1.6f, InitialVelocityMax = 3.2f, Gravity = new Vector3(0f, -7f, 0f),
-                    ScaleAmountMin = 0.6f, ScaleAmountMax = 1.2f,
+                    Emitting = false, Amount = 16, Lifetime = 0.6f, Mesh = quad,
+                    Position = new Vector3(0.1359f, 0.4719f, 0f),               // the "Hit" nozzle node, port frame (x,y,z)->(-x,y,-z)
+                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.03f,
+                    Direction = new Vector3(0f, 1f, 0f), Spread = 180f,          // sphere shape = omnidirectional spray
+                    InitialVelocityMin = 0.3f, InitialVelocityMax = 0.7f,        // source startSpeed 1-2 is world-scale; scaled for the close viewmodel
+                    Gravity = new Vector3(0f, -2.2f, 0f),                        // fall off
                 };
                 _gun.AddChild(_torchSparks);
             }

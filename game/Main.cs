@@ -3054,7 +3054,7 @@ namespace UnturnedGodot
         {
             _f++;
             if (VM == null) return;
-            if (VM.HasStartSwing) { if (_f == 25) VM.StartTorch(); }   // Repeated tool (blowtorch/chainsaw): kick the continuous Start_Swing once; it loops
+            if (VM.HasStartSwing) { if (_f == 25) { VM.StartTorch(); VM.SetTorchSparks(true); } }   // Repeated tool: play Start_Swing once + emit the real nozzle sparks (continuous while "held")
             else if (_f % 35 == 25) VM.SwingMelee();                   // normal melee: periodic weak swings for the --vm render
         }
     }
