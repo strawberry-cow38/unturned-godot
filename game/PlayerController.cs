@@ -1117,6 +1117,9 @@ namespace UnturnedGodot
             bag.tryAddItem(new Item(6, 0));                         // Military Magazine (EMPTY -> shows x0)
             bag.tryAddItem(new Item(381, 32));                      // 20 Gauge Shells (full stack of 32 -> Masterkey / Sawed-Off ammo)
             bag.tryAddItem(new Item(113, 32));                      // 12 Gauge Shells (full stack of 32 -> Bluntforce ammo)
+            bag.tryAddItem(new Item(121, 1));                       // Military Knife (melee: LMB weak / RMB strong swing)
+            bag.tryAddItem(new Item(136, 1));                       // Sledgehammer (heavy melee -- anti-structure)
+            bag.tryAddItem(new Item(76, 1));                        // Blowtorch (repair live hurt cars / salvage cold wrecks)
             Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
         }
 
