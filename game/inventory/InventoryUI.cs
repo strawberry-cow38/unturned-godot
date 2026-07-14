@@ -130,7 +130,7 @@ namespace UnturnedGodot
             bool rot = _dragRot % 2 == 1;
             int w = (rot ? _dragJar.size_y : _dragJar.size_x) * CELL;
             int h = (rot ? _dragJar.size_x : _dragJar.size_y) * CELL;
-            _dragTile = MakeTile(_dragJar, w, h);
+            _dragTile = MakeTile(_dragJar, w, h, _dragRot);   // preview the LIVE rotation (R toggles _dragRot), so the icon spins as you turn it
             _dragTile.Modulate = new Color(1f, 1f, 1f, 0.8f);
             _dragTile.MouseFilter = Control.MouseFilterEnum.Ignore;
             _root.AddChild(_dragTile);   // on top of the dashboard
@@ -438,9 +438,10 @@ namespace UnturnedGodot
         }
 
         // one item tile: dark rarity-tinted background + rarity border + real ICON (name fallback) + amount badge
-        Control MakeTile(ItemJar jar, int w, int h)
+        Control MakeTile(ItemJar jar, int w, int h, int rotParam = -1)
         {
             var asset = jar.GetAsset();
+            bool rotated = ((rotParam >= 0 ? rotParam : jar.rot) % 2) == 1;   // drawn rotated? (the drag preview passes the live _dragRot)
             Color rar = asset != null ? ItemAsset.RarityColorUI(asset.rarity) : Colors.White;
             Color bg = new Color(rar.R * 0.22f, rar.G * 0.22f, rar.B * 0.22f, 0.97f);   // BackgroundIfLight(rarity)
 
@@ -453,9 +454,19 @@ namespace UnturnedGodot
             if (tex != null)   // the real item icon fills the tile (like SleekItem's rendered item image)
             {
                 var ic = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
-                ic.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-                ic.SetOffsetsPreset(Control.LayoutPreset.FullRect);
                 ic.MouseFilter = Control.MouseFilterEnum.Ignore;
+                if (rotated)   // SleekItemIcon.rot spins the icon with the jar (internalImage.RotationAngle = rot*90). Draw it at its
+                {              // NATURAL un-rotated h x w box (KeepAspect), then turn 90 clockwise and re-centre in the w x h tile.
+                    ic.Size = new Vector2(h, w);
+                    ic.PivotOffset = new Vector2(h / 2f, w / 2f);
+                    ic.RotationDegrees = 90f;
+                    ic.Position = new Vector2((w - h) / 2f, (h - w) / 2f);
+                }
+                else
+                {
+                    ic.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    ic.SetOffsetsPreset(Control.LayoutPreset.FullRect);
+                }
                 tile.AddChild(ic);
             }
             else   // no icon on disk -> the old rarity-tinted name label
