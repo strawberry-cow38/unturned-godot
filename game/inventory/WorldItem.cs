@@ -258,6 +258,7 @@ namespace UnturnedGodot
             _losTimer -= (float)delta;
             if (_losTimer <= 0f)   // recompute visibility ~4x/sec, STAGGERED per item (the raycast-storm was the town stutter, master)
             {
+                ulong _pt = Time.GetTicksUsec();   // profiler: aggregate item-LOS raycast cost per window
                 _losTimer = 0.22f + GD.Randf() * 0.14f;
                 var cam = GetViewport().GetCamera3D();
                 bool show = true;
@@ -283,6 +284,7 @@ namespace UnturnedGodot
                 if (Visible != show) Visible = show;   // hide the whole prop when occluded/behind -- physics keeps running so it still settles
                 _shown = show;
                 if (!show && _glow != null && _glow.Visible) _glow.Visible = false;
+                Prof.Add("item_LOS", _pt);
             }
         }
     }

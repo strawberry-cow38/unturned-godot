@@ -61,8 +61,20 @@ namespace UnturnedGodot
                 $"render: {M(Performance.Monitor.RenderTotalDrawCallsInFrame):0} draws   {M(Performance.Monitor.RenderTotalObjectsInFrame):0} objs   {M(Performance.Monitor.RenderTotalPrimitivesInFrame) / 1.0e6:0.0}M prims\n" +
                 $"scene: {M(Performance.Monitor.ObjectNodeCount):0} nodes   {M(Performance.Monitor.ObjectCount):0} objects   {M(Performance.Monitor.ObjectResourceCount):0} res   {M(Performance.Monitor.ObjectOrphanNodeCount):0} orphans\n" +
                 $"mem: static {M(Performance.Monitor.MemoryStatic) / 1048576.0:0} MB   vram {M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0} MB\n" +
+                $"systems (ms/win, big = the spike): {SystemsBreakdown()}\n" +
                 $"[F3 to hide]";
+            Prof.Reset();
             _accum = 0; _frames = 0; _worstFrame = 0;
+        }
+
+        static string SystemsBreakdown()
+        {
+            if (Prof.Us.Count == 0) return "(none instrumented / idle)";
+            var list = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, long>>(Prof.Us);
+            list.Sort((a, b) => b.Value.CompareTo(a.Value));   // biggest spender first
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var kv in list) parts.Add($"{kv.Key} {kv.Value / 1000.0:0.0}");
+            return string.Join("   ", parts);
         }
     }
 }

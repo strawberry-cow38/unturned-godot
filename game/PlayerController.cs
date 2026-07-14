@@ -1678,8 +1678,8 @@ namespace UnturnedGodot
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
-            UpdateLookFocus();   // look-at item interaction (master): eye-ray -> focus the item you're aiming at (rarity glow + name)
-            UpdateSalvage((float)delta);   // wreck salvage prompt + LMB-hold-with-blowtorch teardown (master)
+            { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
+            { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)
