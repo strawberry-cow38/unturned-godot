@@ -403,30 +403,39 @@ namespace UnturnedGodot
             _meleeCd = _viewmodel?.MeleeSwingLength(strong) ?? 0f;
             if (_meleeCd <= 0.05f) _meleeCd = strong ? 0.75f : 0.45f;
             _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
-            float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
-            float mult = strong ? (_melee?.Strength ?? 1.5f) : 1f;   // STRONG swing hits harder (source: dmg *= strength)
-            // a VEHICLE you're looking at (source multi-target melee): a blowtorch REPAIRS a hurt one, any other melee DAMAGES it (master)
+            float alert = _melee?.Alert ?? 0f;
+            if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing NOISE fires with the swing (source AlertTool.alert); 0 = stealthy
+            // DAMAGE lands at the END of the swing (source: isDamageable is only true once the swing anim has played),
+            // NOT instantly on click -- scheduled here and applied by the tick, re-evaluating targets when it connects (master).
+            _pendingMeleeStrong = strong; _pendingMeleeHit = _meleeCd * 0.7f;
+        }
+
+        float _pendingMeleeHit = -1f; bool _pendingMeleeStrong;   // deferred melee hit: >0 = a swing is mid-flight, damage lands when it reaches 0
+        // The deferred melee hit -- runs when the swing connects (end of the anim); targets are re-evaluated NOW so a moving target can be missed.
+        void ApplyMeleeHit(bool strong)
+        {
+            if (_cam == null || _dead) return;
+            float range = _melee?.Range ?? 2.2f;
+            float mult = strong ? (_melee?.Strength ?? 1.5f) : 1f;   // STRONG swing hits harder (source dmg *= strength)
             if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck
                 && (_focusVehicle.GlobalPosition - GlobalPosition).Length() < range + 3f)   // vehicles are big -> generous reach
             {
-                if (HasBlowtorch) { if (_focusVehicle.Hurt) { _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f); GD.Print($"[repair] {_focusVehicle.DisplayName} -> HP {_focusVehicle.Health:0}/{_focusVehicle.HealthMax:0}"); } }
+                if (HasBlowtorch) { if (_focusVehicle.Hurt) _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f); }
                 else { _focusVehicle.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusVehicle.DisplayName} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
-            float alert = _melee?.Alert ?? 0f;
-            if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing noise -> zombies investigate (source AlertTool.alert); 0 = stealthy
-            float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill (source PlayerEquipment:2274)
-            Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;   // proximity from the player torso (robust); aimed by the look direction
+            float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
+            Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {
-                    Vector3 to = z.GlobalPosition + Vector3.Up - origin;   // aim at the torso
-                    if (to.Length() < range + 0.5f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach (+0.5 torso-vs-center slack)
+                    Vector3 to = z.GlobalPosition + Vector3.Up - origin;
+                    if (to.Length() < range + 0.5f && to.Normalized().Dot(fwd) > 0.3f)   // in front, in reach
                     {
                         bool wd = z.Dead;
                         z.DamageHit(dmg, z.GlobalPosition + Vector3.Up, fwd);
                         if (!wd && z.Dead) Kills++;
-                        GD.Print($"[melee] {(strong ? "STRONG" : "weak")} hit ({_melee?.Name ?? "fists"} {dmg:0} dmg, range {range})");
+                        GD.Print($"[melee] {(strong ? "STRONG" : "weak")} hit ({_melee?.Name ?? "fists"} {dmg:0} dmg)");
                         break;   // one target per swing
                     }
                 }
@@ -1778,6 +1787,7 @@ namespace UnturnedGodot
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
             if (_meleeCd > 0f) _meleeCd -= (float)delta;
+            if (_pendingMeleeHit > 0f) { _pendingMeleeHit -= (float)delta; if (_pendingMeleeHit <= 0f) ApplyMeleeHit(_pendingMeleeStrong); }   // deferred melee damage lands at swing-end (master)
             if (_burstCd > 0f) _burstCd -= (float)delta;
             if (_grenadeCd > 0f) _grenadeCd -= (float)delta;
             if (_reloading)
