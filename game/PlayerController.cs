@@ -158,10 +158,16 @@ namespace UnturnedGodot
                     }
                 }
                 if (hitItem != null && hitVeh != null) { if (bestV < bestI) hitItem = null; else hitVeh = null; }   // focus the nearer of the two
-                if (hitVeh == null && hitItem == null)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master)
+                if (hitVeh == null && hitItem == null)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master). DISTANCE-CULLED so it isn't O(all vehicles) every frame (perf regression fix).
+                {
+                    float maxD = (LookReach + 6f) * (LookReach + 6f);
                     foreach (var node in GetTree().GetNodesInGroup("vehicles"))
-                        if (node is Vehicle vv && IsInstanceValid(vv) && vv.WorldMeshAabb().IntersectsSegment(from, _lookEnd))
-                        { float d = vv.GlobalPosition.DistanceSquaredTo(from); if (d < bestV) { bestV = d; hitVeh = vv; } }
+                        if (node is Vehicle vv && IsInstanceValid(vv))
+                        {
+                            float d = vv.GlobalPosition.DistanceSquaredTo(from);
+                            if (d < maxD && d < bestV && vv.WorldMeshAabb().IntersectsSegment(from, _lookEnd)) { bestV = d; hitVeh = vv; }   // cheap distance gate before the AABB test
+                        }
+                }
             }
             if (_lookViz != null) { _lookViz.Visible = WorldItem.ShowLookSphere && !_dead && _driving == null; if (_lookViz.Visible) _lookViz.GlobalPosition = _lookEnd; }
             if (hitItem != _focusItem)
