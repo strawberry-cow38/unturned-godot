@@ -391,10 +391,13 @@ namespace UnturnedGodot
         {
             if (_meleeCd > 0f || _cam == null || _dead || _driving != null || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return;
             if (IsRepeatedMelee) return;   // Repeated tools (blowtorch/chainsaw) have NO weak/strong swing -- you don't punch with them; their use is the continuous LMB-hold (source UseableMelee.startPrimary/startSecondary)
-            float staminaCost = (_melee?.Stamina ?? 0f) / 100f;   // .dat Stamina (0-100) -> a fraction of the bar
-            if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded to swing (source: a swing needs stamina)
+            float staminaCost = strong ? (_melee?.Stamina ?? 0f) / 100f : 0f;   // only the STRONG (RMB) swing costs stamina; the WEAK (LMB) attack is free (master)
+            if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded for a strong swing
             if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _staminaRegenDelay = 1f; }
-            _meleeCd = strong ? 0.75f : 0.45f;   // a strong swing has a longer wind-up/recovery than a weak one
+            // cooldown = this weapon's actual swing-anim length (per-weapon: knife fast, sledge slow) so click-spam can't
+            // out-pace the swing cadence + the rate matches the animation (master). Fallback for fists / a missing clip.
+            _meleeCd = _viewmodel?.MeleeSwingLength(strong) ?? 0f;
+            if (_meleeCd <= 0.05f) _meleeCd = strong ? 0.75f : 0.45f;
             _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
             float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
             float mult = strong ? (_melee?.Strength ?? 1.5f) : 1f;   // STRONG swing hits harder (source: dmg *= strength)

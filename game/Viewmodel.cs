@@ -388,6 +388,13 @@ namespace UnturnedGodot
             string own = _meleeCap + (strong ? "_Strong" : "_Weak");
             _arms?.Play(_meleeCap != null && _arms.ClipLength(own) > 0f ? own : (strong ? "Melee_Strong" : "Melee_Weak"));
         }
+        // This weapon's swing-anim length (per-weapon), used as the attack cooldown so click-spam can't beat the cadence.
+        public float MeleeSwingLength(bool strong)
+        {
+            if (_arms == null) return 0f;
+            if (_meleeCap != null) { float l = _arms.ClipLength(_meleeCap + (strong ? "_Strong" : "_Weak")); if (l > 0f) return l; }
+            return _arms.ClipLength(strong ? "Melee_Strong" : "Melee_Weak");
+        }
         // Repeated tool (blowtorch/chainsaw/jackhammer): the continuous "using" motion. Start_Swing LOOPS while the trigger's
         // held; Stop_Swing plays once on release (source UseableMelee.startSwing/stopSwing). HasStartSwing == "this is a Repeated tool".
         public bool HasStartSwing => _meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Start_Swing") > 0f;
