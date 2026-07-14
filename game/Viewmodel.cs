@@ -391,23 +391,21 @@ namespace UnturnedGodot
         // Repeated tool (blowtorch/chainsaw/jackhammer): the continuous "using" motion. Start_Swing LOOPS while the trigger's
         // held; Stop_Swing plays once on release (source UseableMelee.startSwing/stopSwing). HasStartSwing == "this is a Repeated tool".
         public bool HasStartSwing => _meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Start_Swing") > 0f;
-        AudioStreamPlayer _torchSnd;   // the blowtorch "Use" loop (ripped use.wav) -- plays while the torch is running
-        bool _torchSndOn;
+        AudioStreamPlayer _torchSnd;   // the blowtorch "Use" loop (ripped use.wav, NATIVELY looped -> gapless) -- plays while the torch runs
         public void StartTorch()
         {
             if (!HasStartSwing) return;
             _arms.Play(_meleeCap + "_Start_Swing");
             if (_torchSnd == null)
             {
-                _torchSnd = new AudioStreamPlayer { Stream = GD.Load<AudioStream>("res://content/blowtorch_use.wav"), VolumeDb = -5f };
-                _torchSnd.Finished += () => { if (_torchSndOn) _torchSnd.Play(); };   // loop the use sound while held (robust, no .import loop dependency)
+                _torchSnd = new AudioStreamPlayer { Stream = LoadWavLooped("res://content/blowtorch_use.wav"), VolumeDb = -5f };
                 AddChild(_torchSnd);
             }
-            _torchSndOn = true; _torchSnd.Play();
+            if (!_torchSnd.Playing) _torchSnd.Play();   // native LoopMode.Forward -> seamless, no per-loop gap
         }
         public void StopTorch()
         {
-            _torchSndOn = false; _torchSnd?.Stop();
+            _torchSnd?.Stop();
             if (_meleeCap == null || _arms == null) return;
             if (_arms.ClipLength(_meleeCap + "_Stop_Swing") > 0f) _arms.Play(_meleeCap + "_Stop_Swing");
             else _arms.Play(_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip");   // no stop clip: settle back to the ready hold
@@ -435,9 +433,9 @@ namespace UnturnedGodot
                 _torchSparks = new CpuParticles3D
                 {
                     Emitting = false, Amount = 16, Lifetime = 0.6f, Mesh = quad,
-                    Position = new Vector3(0.1359f, 0.4719f, 0f),               // the "Hit" nozzle node, port frame (x,y,z)->(-x,y,-z)
-                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.015f,   // tight point at the nozzle so sparks clearly originate there
-                    Direction = new Vector3(0f, 1f, 0f), Spread = 180f,          // sphere shape = omnidirectional spray
+                    Position = TorchNozzlePos(),                                // the NOZZLE head (top of the mesh); UG_TORCHPOS to tune
+                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.008f,   // tight point at the nozzle so sparks clearly originate there
+                    Direction = new Vector3(0f, 1f, 0f), Spread = 45f,           // stream OUT the nozzle (up the torch axis) in a cone, not an omni cloud
                     InitialVelocityMin = 0.3f, InitialVelocityMax = 0.7f,        // source startSpeed 1-2 is world-scale; scaled for the close viewmodel
                     Gravity = new Vector3(0f, -2.2f, 0f),                        // fall off
                 };
@@ -786,6 +784,45 @@ namespace UnturnedGodot
         {
             string p = ProjectSettings.GlobalizePath(res);
             return System.IO.File.Exists(p) ? AudioStreamOggVorbis.LoadFromFile(p) : null;
+        }
+
+        // Load a .wav as a NATIVELY-LOOPING AudioStreamWav (LoopMode.Forward) so a held loop (blowtorch) has NO gap
+        // between repeats (the Finished->replay trick left an audible seam). Minimal RIFF parse: fmt + data chunks.
+        static AudioStream LoadWavLooped(string res)
+        {
+            string p = ProjectSettings.GlobalizePath(res);
+            if (!System.IO.File.Exists(p)) return null;
+            var b = System.IO.File.ReadAllBytes(p);
+            int channels = 2, rate = 48000, bits = 16, dataOff = -1, dataLen = 0;
+            for (int i = 12; i + 8 <= b.Length;)
+            {
+                string id = System.Text.Encoding.ASCII.GetString(b, i, 4);
+                int sz = System.BitConverter.ToInt32(b, i + 4);
+                if (id == "fmt ") { channels = System.BitConverter.ToInt16(b, i + 10); rate = System.BitConverter.ToInt32(b, i + 12); bits = System.BitConverter.ToInt16(b, i + 22); }
+                else if (id == "data") { dataOff = i + 8; dataLen = sz; break; }
+                i += 8 + sz + (sz & 1);
+            }
+            if (dataOff < 0 || dataOff + dataLen > b.Length) return null;
+            var pcm = new byte[dataLen];
+            System.Array.Copy(b, dataOff, pcm, 0, dataLen);
+            int bpf = (bits / 8) * channels;
+            return new AudioStreamWav
+            {
+                Data = pcm,
+                Format = bits == 16 ? AudioStreamWav.FormatEnum.Format16Bits : AudioStreamWav.FormatEnum.Format8Bits,
+                MixRate = rate, Stereo = channels == 2,
+                LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = dataLen / bpf,
+            };
+        }
+
+        // Blowtorch spark origin = the NOZZLE head. The prefab "Hit" node converted wrong (landed outside the mesh);
+        // the real nozzle is the top of the blowtorch mesh (AABB Y max ~0.406, top-Y vertex cluster X~-0.021 Z~-0.017).
+        static Vector3 TorchNozzlePos()
+        {
+            var p = new Vector3(-0.039f, 0.406f, -0.026f);   // the mesh's very tip = the nozzle opening
+            if (System.Environment.GetEnvironmentVariable("UG_TORCHPOS") is string s && s.Split(',').Length == 3)
+            { var q = s.Split(','); p = new Vector3(float.Parse(q[0]), float.Parse(q[1]), float.Parse(q[2])); }
+            return p;
         }
     }
 }
