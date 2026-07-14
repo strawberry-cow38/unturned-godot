@@ -390,7 +390,7 @@ namespace UnturnedGodot
                 var quad = new QuadMesh { Size = new Vector2(0.03f, 0.03f) };
                 quad.Material = new StandardMaterial3D
                 {
-                    AlbedoColor = new Color(1f, 0.72f, 0.25f), EmissionEnabled = true, Emission = new Color(1f, 0.55f, 0.12f),
+                    AlbedoColor = new Color(0.6f, 0.8f, 1f), EmissionEnabled = true, Emission = new Color(0.45f, 0.68f, 1f),   // BLUE welding-arc sparks (src: metal impact, not orange) -- master
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
                 };
