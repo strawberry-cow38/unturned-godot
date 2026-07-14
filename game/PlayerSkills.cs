@@ -87,6 +87,17 @@ namespace SDG.Unturned
         // Source PlayerLife:2428: STRENGTH cuts fall damage by up to 75% at max level.
         public float StrengthFallMultiplier() => 1f - GetSkill((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.STRENGTH).Mastery * 0.75f;
 
+        // Source skills.mastery(spec, index) = level/max fraction.
+        public float Mastery(int speciality, int index) => _skills[speciality][index].Mastery;
+
+        // Survival-sim skill multipliers. VITALITY/SURVIVAL are the source-exact interval->rate inversions (magnitudes
+        // 0.5/0.25 from PlayerLife:2030/1953/1975); CARDIO/EXERCISE are source-INFORMED for the port's simplified
+        // continuous stamina (the source is tick-based -- PlayerLife:1797/1806-1810). Applied to the port's stand-in rates.
+        public float VitalityRegenMultiplier() => 1f / (1f - Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.VITALITY) * 0.5f);          // faster health regen (up to 2x)
+        public float SurvivalDrainMultiplier() => 1f / (1f + Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.SURVIVAL) * 0.25f);          // slower food/water drain (down to 0.8x)
+        public float CardioStaminaRegenMultiplier() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.CARDIO);                       // faster stamina regen (up to 2x)
+        public float ExerciseStaminaDrainMultiplier() => 1f - Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.EXERCISE) * 0.5f;            // slower stamina drain (down to 0.5x)
+
         // Spend XP to raise a skill one level (source askUpgrade). Returns true if it leveled up.
         public bool TryUpgrade(int speciality, int index)
         {

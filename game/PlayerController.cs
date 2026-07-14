@@ -526,14 +526,14 @@ namespace UnturnedGodot
         {
             if (_dead) return;
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
-            if (sprinting) { Stamina = Mathf.Max(0f, Stamina - 0.22f * dt); _staminaRegenDelay = 1f; }   // hold regen 1s after releasing sprint
-            else { _staminaRegenDelay = Mathf.Max(0f, _staminaRegenDelay - dt); if (_staminaRegenDelay <= 0f) Stamina = Mathf.Min(1f, Stamina + 0.33f * dt); }
-            Food  = Mathf.Max(0f, Food  - 0.0050f * dt);
-            Water = Mathf.Max(0f, Water - 0.0070f * dt);
+            if (sprinting) { Stamina = Mathf.Max(0f, Stamina - 0.22f * dt * Skills.ExerciseStaminaDrainMultiplier()); _staminaRegenDelay = 1f; }   // EXERCISE slows the drain; hold regen 1s after releasing sprint
+            else { _staminaRegenDelay = Mathf.Max(0f, _staminaRegenDelay - dt); if (_staminaRegenDelay <= 0f) Stamina = Mathf.Min(1f, Stamina + 0.33f * dt * Skills.CardioStaminaRegenMultiplier()); }   // CARDIO speeds the regen
+            Food  = Mathf.Max(0f, Food  - 0.0050f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows hunger
+            Water = Mathf.Max(0f, Water - 0.0070f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows thirst
             Infection = Mathf.Max(0f, Infection - 0.01f * dt);       // virus slowly clears if you stop getting bitten
             bool sick = Infection > 0.75f;                           // heavy infection makes you ill (loses health)
             if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick)
-                Health = Mathf.Min(MaxHealth, Health + 2f * dt);     // regen while fed + hydrated (blocked while sick)
+                Health = Mathf.Min(MaxHealth, Health + 2f * dt * Skills.VitalityRegenMultiplier());     // VITALITY speeds regen while fed + hydrated (blocked while sick)
             else if (Food <= 0f || Water <= 0f || sick)
                 Health = Mathf.Max(0f, Health - (sick ? 2f : 1.5f) * dt);   // starve / dehydrate / infection sickness
             if (Health <= 0f) { Deaths++; Die(); }

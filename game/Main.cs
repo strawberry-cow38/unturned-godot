@@ -1138,6 +1138,16 @@ namespace UnturnedGodot
             st.level = 0; Check("strength fall mult 1.0 at lvl0", Mathf.Abs(sk.StrengthFallMultiplier() - 1.0f) < 0.001f);
             st.level = 5; Check("strength fall mult 0.25 at max", Mathf.Abs(sk.StrengthFallMultiplier() - 0.25f) < 0.001f);
 
+            // survival-sim multipliers at max level (all max 5)
+            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.VITALITY).level = 5;
+            Check("vitality regen 2.0x at max", Mathf.Abs(sk.VitalityRegenMultiplier() - 2.0f) < 0.001f);
+            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.SURVIVAL).level = 5;
+            Check("survival drain 0.8x at max", Mathf.Abs(sk.SurvivalDrainMultiplier() - 0.8f) < 0.001f);
+            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.CARDIO).level = 5;
+            Check("cardio regen 2.0x at max", Mathf.Abs(sk.CardioStaminaRegenMultiplier() - 2.0f) < 0.001f);
+            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.EXERCISE).level = 5;
+            Check("exercise drain 0.5x at max", Mathf.Abs(sk.ExerciseStaminaDrainMultiplier() - 0.5f) < 0.001f);
+
             GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
         }
 
