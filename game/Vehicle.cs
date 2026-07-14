@@ -35,6 +35,16 @@ namespace UnturnedGodot
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
+
+        // --- trailer hitch (master steer: back the cab under the trailer, hop out, walk to the hitch, E to couple; then
+        // the trailer swings behind on the pin like a real rig). A PinJoint3D pins the cab's fifth-wheel to the trailer
+        // kingpin -> a ball joint that lets the trailer articulate (yaw through turns) around the coupling point. ---
+        public Vector3 FifthWheelLocal, KingpinLocal;   // local coupling points (cab plate / trailer kingpin); Zero = none
+        public bool CanTow => FifthWheelLocal != Vector3.Zero;
+        public bool IsTrailer => KingpinLocal != Vector3.Zero;
+        public Vehicle CoupledTrailer, CoupledCab;       // partner when hitched (cab -> trailer, trailer -> cab)
+        PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
+        public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
@@ -73,6 +83,7 @@ namespace UnturnedGodot
             "Ambulance"         => (new Vector3(2.5f, 0.254f, 4.815f), new Vector3(0f, 2.0f, 0.087f)),
             "Firetruck"         => (new Vector3(2.5f, 0.262f, 6.803f), new Vector3(0f, 2.256f, 0.104f)),
             "Ural"              => (new Vector3(2.5f, 0.255f, 3.169f), new Vector3(0f, 2.257f, 1.570f)),
+            "Semi Truck"        => (new Vector3(3.18f, 2.35f, 3.6f), new Vector3(0f, 2.675f, -0.9f)),   // tall cab+sleeper at the FRONT (Y 1.5..3.85); the rest of the length stays the low frame box so a trailer interlocks over the rear
             _ => null,
         };
 
@@ -97,6 +108,8 @@ namespace UnturnedGodot
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
+            public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
+            public Vector3 Kingpin;      // trailer: local kingpin point (front); Zero = not a trailer
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -345,7 +358,7 @@ namespace UnturnedGodot
             Body = "semi_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
             DefaultPaints = new[] { "#3a5a78" },   // Semi_0's blue cab
             WheelRadius = 0.55f, Engine = 950f, SteerMax = 22f, SteerMin = 10f, SpeedMax = 14f, SpeedMin = -4f, Brake = 34f,
-            BoxSize = new Vector3(3.18f, 3.69f, 7.08f), BoxCenter = new Vector3(0f, 2.0f, 0.96f),   // cab + chassis bbox
+            BoxSize = new Vector3(3.18f, 1.5f, 7.08f), BoxCenter = new Vector3(0f, 0.75f, 0.96f),   // LOW frame/chassis box (Y 0..1.5); the tall cab-front is a 2nd box via RoofBox("Semi Truck") -> a trailer deck can overhang the low rear fifth-wheel
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.8f, MaxPitch = 1.6f, IdleVolume = 0.85f, MaxVolume = 1.0f,
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_04.ogg",
@@ -359,6 +372,7 @@ namespace UnturnedGodot
                 (-1.28f, 0.55f,  3.15f, false), (1.28f, 0.55f,  3.15f, false),   // rear axle 2 (tandem, drive)
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
+            FifthWheel = new Vector3(0f, 1.3f, 2.6f),   // coupling plate behind the cab, over the rear drive axles (deck height)
         };
 
         // Semi trailer (semi_1 prop -> towable). TOWED, not driven: no engine/steer/drive (Engine=0 -> _engineForce=0
@@ -373,7 +387,7 @@ namespace UnturnedGodot
             Body = "trailer_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
             DefaultPaints = new[] { "#3a5a78" },   // shares the cab's blue palette
             WheelRadius = 0.55f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,   // towed: no drive/steer/brake of its own
-            BoxSize = new Vector3(3.0f, 2.5f, 16.1f), BoxCenter = new Vector3(0f, 1.25f, 0.05f),
+            BoxSize = new Vector3(3.0f, 1.0f, 16.1f), BoxCenter = new Vector3(0f, 2.0f, 0.05f),   // DECK slab only (Y 1.5..2.5); front underside left open so the cab's low rear frame backs under it to the kingpin
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,   // unused (no engine) but non-null for the drive logic
             Sound = null,   // no engine -> no engine loop
             Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
@@ -385,6 +399,7 @@ namespace UnturnedGodot
                 (-1.30f, 0.55f, 7.2f, false), (1.30f, 0.55f, 7.2f, false),
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole trailer box; no separate parts
+            Kingpin = new Vector3(0f, 0.4f, -7.5f),   // coupling pin under the front of the trailer (front face ~Z -8.0)
         };
 
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
@@ -683,6 +698,7 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
@@ -737,11 +753,12 @@ namespace UnturnedGodot
                 float wscale = wr / s.WheelRadius;                                   // scale the shared wheel mesh to match
                 var w = new VehicleWheel3D
                 {
-                    Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = true,
+                    Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = s.Kingpin == Vector3.Zero,   // a TRAILER's wheels are passive rollers, NOT traction -- traction wheels on a towed body resist the pull
                     WheelRadius = wr, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
-                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = 6.0f,
+                    // Trailer = low friction so the wheels free-roll behind the cab instead of gripping/dragging.
+                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = s.Kingpin != Vector3.Zero ? 1.5f : 6.0f,
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
@@ -887,6 +904,38 @@ namespace UnturnedGodot
             EngineForce = 0f;
             _steerTarget = 0f;
             AngularVelocity = Vector3.Zero;
+        }
+
+        // --- Trailer hitch: couple/uncouple. Called from the on-foot E interaction (PlayerController). ---
+        public Vector3 FifthWheelWorld => ToGlobal(FifthWheelLocal);
+        public Vector3 KingpinWorld => ToGlobal(KingpinLocal);
+
+        // Couple THIS cab to a trailer: pin the fifth-wheel to the kingpin so the trailer swings behind on the joint.
+        public bool CoupleTo(Vehicle trailer)
+        {
+            if (!CanTow || trailer == null || !trailer.IsTrailer || CoupledTrailer != null || trailer.CoupledCab != null) return false;
+            if (FifthWheelWorld.DistanceTo(trailer.KingpinWorld) > CoupleReach) return false;   // must be backed under the kingpin
+            var joint = new PinJoint3D { Name = "Hitch" };
+            GetParent().AddChild(joint);                       // sibling of the two bodies in the world
+            joint.GlobalPosition = (FifthWheelWorld + trailer.KingpinWorld) * 0.5f;   // pin at the coupling point (after it's in the tree)
+            joint.NodeA = joint.GetPathTo(this);
+            joint.NodeB = joint.GetPathTo(trailer);
+            _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
+            AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls
+            Sleeping = false; trailer.Wake();                  // wake both; trailer.Wake() also clears its spawn `_parked` so it won't damp/freeze-static and anchor the tow (was the 2mph stall)
+            return true;
+        }
+
+        // Uncouple: works called on either the cab or the trailer.
+        public void Uncouple()
+        {
+            var cab = CanTow ? this : CoupledCab;
+            if (cab == null || cab.CoupledTrailer == null) return;
+            var trailer = cab.CoupledTrailer;
+            if (cab._hitch != null && IsInstanceValid(cab._hitch)) cab._hitch.QueueFree();
+            if (trailer != null && IsInstanceValid(trailer)) cab.RemoveCollisionExceptionWith(trailer);   // restore hull collision once uncoupled
+            cab._hitch = null; cab.CoupledTrailer = null;
+            if (trailer != null) { trailer.CoupledCab = null; trailer.Park(); }   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
         }
 
         public float ForwardSpeedPct()   // source GetReplicatedForwardSpeedPercentageOfTargetSpeed: forward speed / top speed (0..1) for the DRIVING stealth radius
@@ -1070,7 +1119,8 @@ namespace UnturnedGodot
             _angAvg = _angAvg.Lerp(AngularVelocity, 0.12f);   // cancels to ~0 in the running average, but a real roll / handbrake nose-dive REBOUND (sustained,
             // directional) survives the filter -- so we wait for the suspension to normalize yet never deadlock on the jitter. Reverted to the CLEAN
             // d9588d3 low-pass (no dwell, no raised thresholds) per master. The wreck branch keeps the no-wheel-contact check (killed suspension).
-            bool wantHold = _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
+            bool towed = CoupledCab != null;   // a trailer being PULLED by a cab: never let the settle/park logic freeze-static or damp it -- that would anchor the whole rig (the 2mph stall)
+            bool wantHold = !towed && _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
                                                                           : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
                                                                                                        : (_handbraking && _velAvg.LengthSquared() < 0.06f)));
             if (wantHold && !Freeze)
@@ -1079,9 +1129,9 @@ namespace UnturnedGodot
                 if (_exploded) { _husk = true; foreach (var w in _wNodes) w.QueueFree(); }   // a settled wreck becomes a pure static HUSK: drop the wheels + kill the whole sim (master, perf -- lots of wrecks)
             }
             else if (!wantHold && Freeze) Freeze = false;
-            bool damping = (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea")
+            bool damping = !towed && (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea"). A towed trailer never damps -- it'd anchor the tow.
             LinearDamp = damping ? 6f : 0f; AngularDamp = damping ? 6f : 0f;
-            if (_parked && !Freeze) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes
+            if (_parked && !Freeze && !towed) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes (never brake a towed trailer)
             if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)
                 for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
                 {

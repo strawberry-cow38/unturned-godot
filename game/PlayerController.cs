@@ -1102,8 +1102,9 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
             {
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
+                else if (TryToggleHitch()) { }                                                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusItem != null) TryPickup();                                                  // looking at an item: pick it up
-                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck) EnterVehicle(_focusVehicle); // looking at a LIVE vehicle: get in (a wreck can't be entered -- it's salvaged with LMB+blowtorch)
+                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
@@ -1754,6 +1755,25 @@ namespace UnturnedGodot
                     if (d < bestD) { bestD = d; best = v; }
                 }
             return best;
+        }
+
+        // On-foot trailer hitch (master steer: back the cab under the trailer, hop out, walk to the hitch, press E).
+        // Uncouples the nearby trailer if it's already hitched; else couples a cab that's backed under its kingpin.
+        bool TryToggleHitch()
+        {
+            if (_driving != null) return false;
+            Vehicle trailer = null; float bestD = 3.5f * 3.5f;   // player stands within ~3.5 m of the kingpin (the hitch point)
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle t && t.IsTrailer && !t.Exploded)
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(t.KingpinWorld);
+                    if (d < bestD) { bestD = d; trailer = t; }
+                }
+            if (trailer == null) return false;
+            if (trailer.CoupledCab != null) { trailer.Uncouple(); return true; }   // already hitched -> disconnect
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle cab && cab.CanTow && cab.CoupledTrailer == null && cab.CoupleTo(trailer)) return true;   // a cab backed under -> couple
+            return false;
         }
 
         public HUD Hud;   // set by the scene builder; the vehicle status box binds to the driven vehicle on enter/exit
