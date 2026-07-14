@@ -2132,6 +2132,15 @@ namespace UnturnedGodot
             Check("military mag spawns full as loot (30 rounds)", SDG.Unturned.Assets.makeLoot(6).amount == 30);
             Check("non-mag loot spawns as a single (1)", SDG.Unturned.Assets.makeLoot(13).amount == 1);
 
+            // melee: the strong-swing multiplier + stamina come from the real .dat (source UseableMelee)
+            string knifePath = ProjectSettings.GlobalizePath("res://content/knife_military.dat");
+            if (System.IO.File.Exists(knifePath))
+            {
+                var mk = MeleeDef.FromDatText("knife_military", System.IO.File.ReadAllText(knifePath));
+                Check("melee: knife strong-swing x1.5 (Strength)", System.Math.Abs(mk.Strength - 1.5f) < 0.01f);
+                Check("melee: knife swing costs 15 stamina", System.Math.Abs(mk.Stamina - 15f) < 0.01f);
+            }
+
             // gun-state persistence: a gun remembers ammo/firemode/mag on its backing item through hands<->inventory<->drop (master)
             var gunItem = new SDG.Unturned.Item(4);   // an Eaglefire item
             p.LoadGun("res://content/eaglefire.dat");

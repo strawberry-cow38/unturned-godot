@@ -11,8 +11,10 @@ namespace UnturnedGodot
         public string Name = "fists";
         public float Range = 2.2f;
         public float ZombieDamage = 45f, PlayerDamage = 45f, VehicleDamage = 10f, StructureDamage = 5f, ResourceDamage = 5f;
-        public float Stamina;   // swing stamina cost
-        public float Strong;    // heavy/held-swing fraction (.dat Strong)
+        public float Stamina;   // swing stamina cost (.dat Stamina, 0-100)
+        public float Strong = 0.5f;   // strong-swing timing fraction (.dat Strong)
+        public float Strength = 1.5f; // STRONG swing damage multiplier (.dat Strength; source: dmg *= strength on a strong swing)
+        public float Alert;           // .dat Alert_Radius: a swing's noise radius (source AlertTool.alert); 0 = silent/stealthy
 
         public static MeleeDef FromDatText(string name, string datText)
         {
@@ -27,7 +29,9 @@ namespace UnturnedGodot
                 StructureDamage = d.ParseFloat("Structure_Damage", 5f),
                 ResourceDamage = d.ParseFloat("Resource_Damage", 5f),
                 Stamina = d.ParseFloat("Stamina", 0f),
-                Strong = d.ParseFloat("Strong", 0f),
+                Strong = d.ParseFloat("Strong", 0.5f),
+                Strength = d.ParseFloat("Strength", 1.5f),
+                Alert = d.ParseFloat("Alert_Radius", 0f),
             };
         }
     }

@@ -368,13 +368,21 @@ namespace UnturnedGodot
 
         // G: melee swing -- hit the nearest zombie in front within the weapon's reach (proximity, not a raycast). Reuses
         // the zombie damage path. Rounds out combat (Unturned lets you swing/punch when out of ammo or up close).
-        public void MeleeAttack()
+        // Melee swing (source UseableMelee): LMB = WEAK, RMB = STRONG. A strong swing hits for x Strength but winds up
+        // slower and costs the same stamina; both drain the weapon's Stamina and make swing-noise at its Alert_Radius.
+        public void MeleeAttack(bool strong = false)
         {
-            if (_meleeCd > 0f || _cam == null) return;
-            _meleeCd = 0.45f;   // ~half-second between swings
-            _viewmodel?.SwingMelee();   // play the source melee swing animation (Weak)
+            if (_meleeCd > 0f || _cam == null || _dead || _driving != null || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return;
+            float staminaCost = (_melee?.Stamina ?? 0f) / 100f;   // .dat Stamina (0-100) -> a fraction of the bar
+            if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded to swing (source: a swing needs stamina)
+            if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _staminaRegenDelay = 1f; }
+            _meleeCd = strong ? 0.75f : 0.45f;   // a strong swing has a longer wind-up/recovery than a weak one
+            _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
+            float alert = _melee?.Alert ?? 0f;
+            if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing noise -> zombies investigate (source AlertTool.alert); 0 = stealthy
             float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
-            float dmg = (_melee?.ZombieDamage ?? 45f) * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage (fists 45) x OVERKILL skill (source PlayerEquipment:2274)
+            float mult = strong ? (_melee?.Strength ?? 1.5f) : 1f;   // STRONG swing hits harder (source: dmg *= strength)
+            float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill (source PlayerEquipment:2274)
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;   // proximity from the player torso (robust); aimed by the look direction
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
@@ -385,7 +393,7 @@ namespace UnturnedGodot
                         bool wd = z.Dead;
                         z.DamageHit(dmg, z.GlobalPosition + Vector3.Up, fwd);
                         if (!wd && z.Dead) Kills++;
-                        GD.Print($"[melee] hit a zombie ({_melee?.Name ?? "fists"} {dmg} dmg, range {range})");
+                        GD.Print($"[melee] {(strong ? "STRONG" : "weak")} hit ({_melee?.Name ?? "fists"} {dmg:0} dmg, range {range})");
                         break;   // one target per swing
                     }
                 }
@@ -973,12 +981,14 @@ namespace UnturnedGodot
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && _focusVehicle.WreckSalvageable && HasBlowtorch) { }   // LMB-hold salvages the wreck (UpdateSalvage) -- no melee swing
+                else if (_melee != null) MeleeAttack(false);            // LMB with a melee weapon = WEAK swing (source UseableMelee)
                 else StartFire();
             }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
-                else if (_melee == null) _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
+                else if (_melee != null) { if (rmb.Pressed) MeleeAttack(true); }   // RMB with a melee weapon = STRONG swing (source UseableMelee); a melee has no ADS
+                else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
                 StartReload();
