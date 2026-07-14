@@ -91,6 +91,15 @@ namespace UnturnedGodot
             if (want != _loco || _ap.CurrentAnimation != want) { _loco = want; _ap.Play(want); }
         }
 
+        // Play a looping clip (e.g. Idle_Drive while seated in a vehicle) and HOLD it -- no-op if it's already the current
+        // clip, so it can be called every frame without restarting. Uses the same _loco slot as locomotion (master).
+        public void PlayLoop(string name)
+        {
+            if (_ap == null || _oneShot > 0 || !_ap.HasAnimation(name)) return;
+            _ap.GetAnimation(name).LoopMode = Animation.LoopModeEnum.Linear;
+            if (name != _loco || _ap.CurrentAnimation != name) { _loco = name; _ap.Play(name); }
+        }
+
         // Play a one-shot (Attack_0 / Startle_0); locomotion resumes after it finishes.
         public void PlayOnce(string name)
         {
