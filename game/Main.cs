@@ -2090,6 +2090,15 @@ namespace UnturnedGodot
             // empty the bag of mags -> reload must be blocked
             for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
             Check("no spare mag -> cannot reload", !p.DebugHasSpareMag());
+
+            // masterkey: a BREAK-action double-barrel reloads BOTH shells at once (not shell-by-shell like a pump tube), no +1 chamber
+            p.LoadGun("res://content/masterkey.dat");
+            Check("masterkey is a shotgun", p.DebugIsShotgun());
+            Check("masterkey break-action is NOT shell-by-shell (loads together)", !p.DebugShellReload());
+            Check("masterkey has no +1 chamber", !p.DebugHasChamber());
+            p.Ammo = 0;                 // both barrels fired
+            p.DebugCompleteReload();     // one reload
+            Check("masterkey reload loads BOTH shells at once (Ammo=2)", p.Ammo == 2);
             GD.Print($"[MAGTEST] RESULT {pass} passed, {fail} failed");
         }
 

@@ -263,6 +263,10 @@ namespace UnturnedGodot
         public bool DebugUsesMag() => UsesMagItem;           // test: does the equipped gun use magazine items
         public void DebugMagSwap() => DoMagSwap();           // test: run one reload magazine swap
         public bool DebugHasSpareMag() => FindBestMag() != null;   // test: is there a compatible spare mag to reload from
+        public bool DebugIsShotgun() => Gun?.IsShotgun ?? false;   // test: pump/break shell gun
+        public bool DebugShellReload() => Gun?.ShellReload ?? false;   // test: shell-by-shell (pump tube) reload
+        public bool DebugHasChamber() => HasChamber;         // test: does the gun get a +1 chambered round
+        public void DebugCompleteReload() { int max = Gun?.AmmoMax ?? 30; if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max; }   // test: run the reload fill (same branch as the reload tick)
 
         // Play the consumable's use/eat/drink sound (source ItemConsumeableAsset.use, content/sounds/<stem>.wav).
         AudioStreamPlayer _consumeAudio;
@@ -533,7 +537,7 @@ namespace UnturnedGodot
         bool UsesMagItem => Gun != null && !Gun.ShellReload && (SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.IsMagazine ?? false);
         // +1 round in the chamber: a non-shell gun keeps its chambered round through a reload -> capacity is AmmoMax+1. Reloaded
         // from EMPTY (Ammo 0) it has to RACK a round out of the fresh mag (the Hammer clip) and tops out at AmmoMax (no bonus).
-        bool HasChamber => Gun != null && !Gun.ShellReload;
+        bool HasChamber => Gun != null && !Gun.IsShotgun;   // +1 chamber = mag-fed guns only; neither shotgun action (pump tube / break double-barrel) gets it
         int ChamberedCap => (Gun?.AmmoMax ?? 30) + (HasChamber ? 1 : 0);   // absolute max Ammo = a full mag plus the one in the chamber
         (byte page, byte idx, Item item)? FindBestMag()   // the spare mag in inventory that fits the gun, with the MOST ammo
         {
@@ -983,7 +987,7 @@ namespace UnturnedGodot
             _hammerActive = false;
             // Empty-mag reload -> after the mag swap, RECHAMBER: play the Hammer clip (the reload's source 2nd half). Not for
             // shell-fed shotguns (their pump is the reload). Source ERechamberGunAfterReloadMode.IfAmmoWasEmpty (the common case).
-            _hammerPending = Ammo <= 0 && Gun?.ShellReload != true && (_viewmodel?.HasHammer ?? false);
+            _hammerPending = Ammo <= 0 && HasChamber && (_viewmodel?.HasHammer ?? false);   // rack after an empty reload only on chambered (mag-fed) guns -- neither shotgun racks on reload
             float rspeed = Skills.DexterityReloadSpeed();   // DEXTERITY: faster reload -- speeds the anim + shortens the timer to match
             _reloadSpeed = rspeed;
             _viewmodel?.SetReloading(true, rspeed);

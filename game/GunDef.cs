@@ -8,8 +8,12 @@ namespace UnturnedGodot
     public sealed class GunDef
     {
         public string Id;
-        public string Action;   // .dat Action: Trigger/Bolt/Pump/Break/Rail...; Pump+Break shotguns reload shell-by-shell (not a mag swap)
-        public bool ShellReload => Action == "Pump" || Action == "Break";
+        public string Action;   // .dat Action: Trigger/Bolt/Pump/Break/Rail...
+        public bool IsShotgun => Action == "Pump" || Action == "Break";   // shell-calibre guns (no detachable-mag, so no +1 chamber)
+        // Shell-by-shell reload = the PUMP tube only (one shell per interval, cancel-fire to stop). A BREAK-action double-barrel is
+        // NOT shell-by-shell: it cracks open and loads ALL shells at once (source ItemGunAsset: defaultCasingEjectCountAfterReload =
+        // ammoMax for EAction.Break -> the whole magazine ejects+reloads together). master: "the masterkey should reload both shells".
+        public bool ShellReload => Action == "Pump";
         public float PlayerDamage;
         public float ZombieDamage;
         public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage
