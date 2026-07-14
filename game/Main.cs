@@ -2139,6 +2139,15 @@ namespace UnturnedGodot
                 var mk = MeleeDef.FromDatText("knife_military", System.IO.File.ReadAllText(knifePath));
                 Check("melee: knife strong-swing x1.5 (Strength)", System.Math.Abs(mk.Strength - 1.5f) < 0.01f);
                 Check("melee: knife swing costs 15 stamina", System.Math.Abs(mk.Stamina - 15f) < 0.01f);
+                Check("melee: knife is NOT Repeated (keeps normal weak/strong swings)", !mk.Repeated);
+                // blowtorch: source "Repeated" + "Repair" flags (trailing bare flags past the Blueprints block, on a CRLF .dat) -> continuous HOLD tool, no weak/strong swing, no strong (RMB) attack
+                string btPath = ProjectSettings.GlobalizePath("res://content/blowtorch.dat");
+                if (System.IO.File.Exists(btPath))
+                {
+                    var bt = MeleeDef.FromDatText("blowtorch", System.IO.File.ReadAllText(btPath));
+                    Check("melee: blowtorch parses Repeated (no weak/strong swing, you don't punch)", bt.Repeated);
+                    Check("melee: blowtorch parses Repair (continuous heal, not damage)", bt.Repair);
+                }
             }
 
             // gun-state persistence: a gun remembers ammo/firemode/mag on its backing item through hands<->inventory<->drop (master)

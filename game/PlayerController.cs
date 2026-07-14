@@ -177,9 +177,9 @@ namespace UnturnedGodot
         // if you have none, white "Hold LMB to salvage" with a blowtorch equipped. Holding LMB breaks it into scrap + despawns it.
         void UpdateSalvage(float delta)
         {
-            bool sparks = false;
             var v = (_focusVehicle != null && IsInstanceValid(_focusVehicle)) ? _focusVehicle : null;
             bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsMouseButtonPressed(MouseButton.Left) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false);
+            bool sparks = HasBlowtorch && lmb;   // the torch is LIT whenever the trigger's held (source: Repeated Start_Swing continuous use); it repairs a hurt car / salvages a cold wreck when aimed at one
             if (v != null && HasBlowtorch && !v.IsWreck && v.Hurt)   // blowtorch REPAIR: full-auto healing of a hurt alive car while LMB is held (master), with torch sparks
             {
                 if (lmb) { v.Repair((_melee?.VehicleDamage ?? 10f) * 3f * delta); sparks = true; }   // ~30 HP/s continuous
@@ -199,7 +199,7 @@ namespace UnturnedGodot
                 else { v.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
             }
             else _salvageTimer = 0f;
-            _viewmodel?.SetTorchSparks(sparks);   // orange sparks fly from the torch while repairing/cutting (master)
+            _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
         }
 
         // E: pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
@@ -218,7 +218,8 @@ namespace UnturnedGodot
         float _meleeCd;
         MeleeDef _melee;   // the equipped melee weapon (null = bare fists)
         string _heldMeleeName;   // content name of the held melee (for tool checks, e.g. the blowtorch)
-        public bool HasBlowtorch => _heldMeleeName == "blowtorch";   // a blowtorch equipped in hand -> can salvage wrecks (master)
+        public bool HasBlowtorch => _melee != null && _melee.Repair;   // a REPAIR tool in hand (source: blowtorch carries the "Repair" flag) -> repairs hurt cars + salvages wrecks
+        public bool IsRepeatedMelee => _melee != null && _melee.Repeated;   // a "Repeated" tool (blowtorch/chainsaw): continuous HOLD, NO weak/strong swing, NO strong (RMB) attack (source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks")
         float _salvageTimer;   // seconds of LMB-hold accumulated against the focused wreck (blowtorch salvage)
         const float SalvageTime = 3f;   // hold this long to break a wreck down
 
@@ -380,6 +381,7 @@ namespace UnturnedGodot
         public void MeleeAttack(bool strong = false)
         {
             if (_meleeCd > 0f || _cam == null || _dead || _driving != null || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return;
+            if (IsRepeatedMelee) return;   // Repeated tools (blowtorch/chainsaw) have NO weak/strong swing -- you don't punch with them; their use is the continuous LMB-hold (source UseableMelee.startPrimary/startSecondary)
             float staminaCost = (_melee?.Stamina ?? 0f) / 100f;   // .dat Stamina (0-100) -> a fraction of the bar
             if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded to swing (source: a swing needs stamina)
             if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _staminaRegenDelay = 1f; }
@@ -995,14 +997,14 @@ namespace UnturnedGodot
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
-                else if (HasBlowtorch && _focusVehicle != null && IsInstanceValid(_focusVehicle) && (_focusVehicle.WreckSalvageable || _focusVehicle.Hurt)) { }   // blowtorch: LMB-HOLD salvages a cold wreck / continuously repairs a hurt car (the tick handles it) -- no swing
-                else if (_melee != null) MeleeAttack(false);            // LMB with a melee weapon = WEAK swing (source UseableMelee)
+                else if (IsRepeatedMelee) { }                          // Repeated tool (blowtorch/chainsaw): LMB is a continuous HOLD driven by the use-tick (UpdateSalvage), never a swing/punch (source UseableMelee.startPrimary: isRepeated -> startSwing)
+                else if (_melee != null) MeleeAttack(false);            // LMB with a normal melee = WEAK swing (source UseableMelee)
                 else StartFire();
             }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
-                else if (_melee != null) { if (rmb.Pressed) MeleeAttack(true); }   // RMB with a melee weapon = STRONG swing (source UseableMelee); a melee has no ADS
+                else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })

@@ -15,6 +15,8 @@ namespace UnturnedGodot
         public float Strong = 0.5f;   // strong-swing timing fraction (.dat Strong)
         public float Strength = 1.5f; // STRONG swing damage multiplier (.dat Strength; source: dmg *= strength on a strong swing)
         public float Alert;           // .dat Alert_Radius: a swing's noise radius (source AlertTool.alert); 0 = silent/stealthy
+        public bool Repeated;   // .dat "Repeated": a continuous HOLD-to-use tool (blowtorch, chainsaw). Source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks" -> LMB = continuous use (no weak click / no punch), RMB = nothing.
+        public bool Repair;     // .dat "Repair": the continuous action REPAIRS the target (blowtorch) rather than damaging it.
 
         public static MeleeDef FromDatText(string name, string datText)
         {
@@ -32,6 +34,8 @@ namespace UnturnedGodot
                 Strong = d.ParseFloat("Strong", 0.5f),
                 Strength = d.ParseFloat("Strength", 1.5f),
                 Alert = d.ParseFloat("Alert_Radius", 0f),
+                Repeated = d.ContainsKey("Repeated"),   // blowtorch/chainsaw: continuous hold, no weak/strong swings
+                Repair = d.ContainsKey("Repair"),       // blowtorch: continuous action heals instead of damaging
             };
         }
     }
