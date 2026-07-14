@@ -10,11 +10,11 @@ namespace UnturnedGodot
         public string Id;
         public string Action;   // .dat Action: Trigger/Bolt/Pump/Break/Rail...
         public bool IsShotgun => Action == "Pump" || Action == "Break";   // shell-calibre guns (no detachable-mag, so no +1 chamber)
-        // Vanilla Unturned has NO shell-by-shell reload for ANY gun -- UseableGun.ReceivePlayReload sets ammo = magazine.amount
-        // (the WHOLE mag) in one swap. Pump shotguns reload their whole tube at once, same as a rifle mag (they just rechamber
-        // after each SHOT -- a firing mechanic, not reload). So nothing is shell-by-shell. (Kept as a hook; always false now.)
-        // master: the bluntforce shell-by-shell reload "feels completely wrong" -> it replayed the reload sound per shell + isn't src.
-        public bool ShellReload => false;
+        // Shell-by-shell reload for the PUMP tube (bluntforce): load ONE shell per interval, so firing mid-reload keeps what's
+        // loaded. master WANTS this (a pump-shotgun feel) -- the earlier "feels completely wrong" was the reload SOUND replaying
+        // once per shell, now fixed (the sound plays once at the start). A BREAK-action (masterkey) is NOT shell-by-shell: it
+        // cracks open and loads all barrels at once.
+        public bool ShellReload => Action == "Pump";
         public float PlayerDamage;
         public float ZombieDamage;
         public float VehicleDamage;   // Vehicle_Damage: bullets hurt vehicles LESS than zombies (eaglefire 35 vs 99) -- was wrongly using ZombieDamage

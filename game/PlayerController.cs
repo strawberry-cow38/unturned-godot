@@ -1734,11 +1734,11 @@ namespace UnturnedGodot
                 {
                     int max = Gun?.AmmoMax ?? 30;
                     if (_hammerActive) { _hammerActive = false; _reloading = false; _viewmodel?.SetReloading(false); }   // the rack (reload 2nd half) finished
-                    else if (Gun?.ShellReload == true)   // pump shotgun: load ONE shell per interval, consuming it from the shell stack; stop when full or out of shells
+                    else if (Gun?.ShellReload == true)   // pump shotgun: load ONE shell per interval from the shell stack (fire mid-reload keeps what's loaded); stop when full or out of shells
                     {
                         if (!UsesShells || ConsumeShells(1) > 0) Ammo = System.Math.Min(Ammo + 1, max);
                         if (Ammo >= max || (UsesShells && CountShells() <= 0)) { _reloading = false; _viewmodel?.SetReloading(false); }
-                        else { _reloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, max); _viewmodel?.SetReloading(true); }
+                        else _reloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, max);   // next shell -- do NOT re-fire SetReloading (the reload anim + sound play ONCE at the start; replaying per shell was the "completely wrong" sound) (master)
                     }
                     else   // whole reload: break-action shotgun loads its barrels from the shell stack; else a mag-swap / whole refill
                     {
