@@ -292,7 +292,9 @@ namespace UnturnedGodot
         public bool DebugIsShotgun() => Gun?.IsShotgun ?? false;   // test: pump/break shell gun
         public bool DebugShellReload() => Gun?.ShellReload ?? false;   // test: shell-by-shell (pump tube) reload
         public bool DebugHasChamber() => HasChamber;         // test: does the gun get a +1 chambered round
-        public void DebugCompleteReload() { int max = Gun?.AmmoMax ?? 30; if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max; }   // test: run the reload fill (same branch as the reload tick)
+        public void DebugCompleteReload() { int max = Gun?.AmmoMax ?? 30; if (UsesShells) Ammo += ConsumeShells(max - Ammo); else if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max; }   // test: run the reload fill (same branch as the reload tick)
+        public bool DebugUsesShells() => UsesShells;         // test: does the gun feed from loose shells
+        public int DebugCountShells() => CountShells();      // test: shells of the gun's caliber carried
 
         // Play the consumable's use/eat/drink sound (source ItemConsumeableAsset.use, content/sounds/<stem>.wav).
         AudioStreamPlayer _consumeAudio;
@@ -599,6 +601,47 @@ namespace UnturnedGodot
             Ammo = loaded + (chambered ? 1 : 0);                                         // +1: the already-chambered round stays on top of the fresh mag
             Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0))));   // old mag back MINUS the chambered round (it stayed in the gun)
             _loadedMagId = fresh.id;
+        }
+
+        // Loose ammo (shotgun shells, master: real ammo types). A gun uses shells when a stackable isAmmo item matches its
+        // caliber (12ga=113 -> caliber 8; 20ga=381 -> caliber 16). Reload CONSUMES shells from the stack (vs swapping a mag).
+        bool UsesShells => Gun != null && Gun.Caliber > 0 && ShellAsset != null;
+        SDG.Unturned.ItemAsset ShellAsset   // the shell item whose caliber fits the equipped gun (null if none registered)
+        {
+            get { foreach (var a in SDG.Unturned.Assets.all()) if (a.isAmmo && a.magCaliber == Gun.Caliber) return a; return null; }
+        }
+        int CountShells()   // total loose shells of the gun's caliber carried across all pages
+        {
+            if (Inventory == null || Gun == null) return 0;
+            int n = 0;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = Inventory.items[b];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i); var a = jar?.item != null ? SDG.Unturned.Assets.find(jar.item.id) : null;
+                    if (a != null && a.isAmmo && a.magCaliber == Gun.Caliber) n += jar.item.amount;
+                }
+            }
+            return n;
+        }
+        int ConsumeShells(int want)   // remove up to `want` matching shells from inventory stacks; returns how many were actually taken
+        {
+            if (Inventory == null || Gun == null || want <= 0) return 0;
+            int taken = 0;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2) && taken < want; b++)
+            {
+                var pg = Inventory.items[b];
+                for (int i = pg.getItemCount() - 1; i >= 0 && taken < want; i--)
+                {
+                    var jar = pg.getItem((byte)i); var a = jar?.item != null ? SDG.Unturned.Assets.find(jar.item.id) : null;
+                    if (a == null || !a.isAmmo || a.magCaliber != Gun.Caliber) continue;
+                    int t = System.Math.Min(want - taken, jar.item.amount);
+                    jar.item.amount = (byte)(jar.item.amount - t); taken += t;
+                    if (jar.item.amount <= 0) pg.removeItem((byte)i);   // empty shell stack -> free the slot
+                }
+            }
+            return taken;
         }
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
         float _recoilPending, _recoilYawPending;  // un-applied recoil kick (deg); drains additively into the real aim and STAYS -- never auto-returns (master: additive, no recover-to-origin)
@@ -1005,6 +1048,8 @@ namespace UnturnedGodot
             bag.tryAddItem(new Item(6, 30));                        // Military Magazine (full)
             bag.tryAddItem(new Item(6, 12));                        // Military Magazine (partial, 12 left)
             bag.tryAddItem(new Item(6, 0));                         // Military Magazine (EMPTY -> shows x0)
+            bag.tryAddItem(new Item(381, 32));                      // 20 Gauge Shells (full stack of 32 -> Masterkey / Sawed-Off ammo)
+            bag.tryAddItem(new Item(113, 32));                      // 12 Gauge Shells (full stack of 32 -> Bluntforce ammo)
             Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
         }
 
@@ -1017,6 +1062,7 @@ namespace UnturnedGodot
             int max = Gun?.AmmoMax ?? 30;
             if (Ammo >= ChamberedCap) return;   // already topped off (full mag + the round in the chamber)
             if (UsesMagItem && FindBestMag() == null) { _viewmodel?.PlayDryFire(); return; }   // working magazines: no spare mag in the bag -> can't reload
+            if (UsesShells && CountShells() <= 0) { _viewmodel?.PlayDryFire(); return; }        // shotgun with no shells in the bag -> can't reload
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
             _hammerActive = false;
@@ -1635,15 +1681,16 @@ namespace UnturnedGodot
                 {
                     int max = Gun?.AmmoMax ?? 30;
                     if (_hammerActive) { _hammerActive = false; _reloading = false; _viewmodel?.SetReloading(false); }   // the rack (reload 2nd half) finished
-                    else if (Gun?.ShellReload == true)   // shotgun: load ONE shell, then queue the next shell (or finish when full)
+                    else if (Gun?.ShellReload == true)   // pump shotgun: load ONE shell per interval, consuming it from the shell stack; stop when full or out of shells
                     {
-                        Ammo = System.Math.Min(Ammo + 1, max);
-                        if (Ammo >= max) { _reloading = false; _viewmodel?.SetReloading(false); }
+                        if (!UsesShells || ConsumeShells(1) > 0) Ammo = System.Math.Min(Ammo + 1, max);
+                        if (Ammo >= max || (UsesShells && CountShells() <= 0)) { _reloading = false; _viewmodel?.SetReloading(false); }
                         else { _reloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, max); _viewmodel?.SetReloading(true); }
                     }
-                    else   // mag-swap complete (1st half): swap the magazine ITEM (working mags) or refill the whole mag
+                    else   // whole reload: break-action shotgun loads its barrels from the shell stack; else a mag-swap / whole refill
                     {
-                        if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max;   // +1: a non-empty reload keeps the chambered round (empty -> just max, then the rack)
+                        if (UsesShells) Ammo += ConsumeShells(max - Ammo);   // break-action: fill the barrels from the shell stack (limited by what's carried)
+                        else if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max;   // +1: a non-empty reload keeps the chambered round (empty -> just max, then the rack)
                         if (_hammerPending) { _hammerPending = false; _hammerActive = true; _viewmodel?.PlayHammer(_reloadSpeed); _reloadTimer = _hammerDur; }   // empty reload: now RACK the round (source Hammer clip = the reload's 2nd half)
                         else { _reloading = false; _viewmodel?.SetReloading(false); }
                     }

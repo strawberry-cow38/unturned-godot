@@ -28,6 +28,18 @@ namespace SDG.Unturned
             WireExtractedMelee();
             WireClothingArmor();
             WireConsumableStats();
+            WireShotgunShells();
+        }
+
+        // Real Unturned shotgun shells as stackable loose ammo (master: new ammo types, stack to 32 per slot). These items
+        // (12 Gauge = 113, 20 Gauge = 381) already load from items_catalog.tsv as type Magazine; here we make them FUNCTIONAL
+        // ammo -- magCaliber matches the shotgun (12ga -> caliber 8 = Bluntforce; 20ga -> caliber 16 = Masterkey/Sawed-Off),
+        // isAmmo so a reload consumes shells from the stack, and stackSize 32.
+        static void WireShotgunShells()
+        {
+            void Shell(ushort id, int caliber) { var a = Assets.find(id); if (a != null) { a.magCaliber = caliber; a.isAmmo = true; a.stackSize = 32; } }
+            Shell(113, 8);    // 12 Gauge Shells (Bluntforce / Quadbarrel / Determinator)
+            Shell(381, 16);   // 20 Gauge Shells (Masterkey / Sawed-Off)
         }
 
         // Load real ItemConsumeableAsset effects (content/consumable_stats.tsv: id health food water virus disinfectant

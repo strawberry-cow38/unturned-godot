@@ -79,9 +79,17 @@ namespace SDG.Unturned
         public bool tryAddItem(Item item)
         {
             if (getItemCount() >= 200) return false;
-            if (StackingEnabled)
+            // Per-item stacking: ammo (shotgun shells) stack up to their asset stackSize; most Unturned items = 1 (never stack).
+            // The old global StackingEnabled option is subsumed -> it just makes the cap effectively unlimited.
+            int cap = StackingEnabled ? byte.MaxValue : System.Math.Max(1, Assets.find(item.id)?.stackSize ?? 1);
+            if (cap > 1)
                 foreach (var j in items)
-                    if (j.item != null && j.item.id == item.id) { j.item.amount += item.amount; onStateUpdated?.Invoke(); return true; }
+                    if (j.item != null && j.item.id == item.id && j.item.amount < cap)
+                    {
+                        int add = System.Math.Min(cap - j.item.amount, item.amount);
+                        j.item.amount = (byte)(j.item.amount + add); item.amount = (byte)(item.amount - add);
+                        if (item.amount == 0) { onStateUpdated?.Invoke(); return true; }   // fully merged; else the remainder overflows to a new slot
+                    }
             ItemJar itemJar = new ItemJar(item);
             if (!tryFindSpace(itemJar.size_x, itemJar.size_y, out var x, out var y, out var rot)) return false;
             itemJar.x = x; itemJar.y = y; itemJar.rot = rot;

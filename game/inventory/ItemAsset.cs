@@ -55,6 +55,10 @@ namespace SDG.Unturned
         public int magCapacity;
         public int magCaliber;
         public bool IsMagazine => magCapacity > 0;
+        // Loose per-round ammo (shotgun shells): stacks in a slot up to stackSize, matched to a gun by magCaliber (magCapacity 0).
+        // A reload consumes shells from the stack rather than swapping a whole magazine. (12/20 Gauge Shells, stack 32.)
+        public bool isAmmo;
+        public int stackSize = 1;   // max per-slot stack (Unturned items = 1; ammo like shotgun shells stack, e.g. 32)
 
         // ItemTool.getRarityColorUI: the exact per-rarity UI colours
         public static Godot.Color RarityColorUI(EItemRarity r) => r switch

@@ -2091,14 +2091,28 @@ namespace UnturnedGodot
             for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
             Check("no spare mag -> cannot reload", !p.DebugHasSpareMag());
 
-            // masterkey: a BREAK-action double-barrel reloads BOTH shells at once (not shell-by-shell like a pump tube), no +1 chamber
+            // masterkey: a BREAK-action double-barrel that feeds from loose 20 Gauge Shells (item 381, stack 32), no +1 chamber
+            int Jars(ushort id) { int n = 0; var pg = p.Inventory.items[PlayerInventory.BACKPACK]; for (byte i = 0; i < pg.getItemCount(); i++) if (pg.getItem(i)?.item?.id == id) n++; return n; }
             p.LoadGun("res://content/masterkey.dat");
             Check("masterkey is a shotgun", p.DebugIsShotgun());
             Check("masterkey break-action is NOT shell-by-shell (loads together)", !p.DebugShellReload());
             Check("masterkey has no +1 chamber", !p.DebugHasChamber());
-            p.Ammo = 0;                 // both barrels fired
+            Check("masterkey feeds from loose shells", p.DebugUsesShells());
+            bag.tryAddItem(new SDG.Unturned.Item(381, 20));
+            bag.tryAddItem(new SDG.Unturned.Item(381, 20));   // 20 + 20 -> merges to 32, overflows 8
+            Check("20 gauge shells stack (40 carried)", p.DebugCountShells() == 40);
+            Check("shells cap at 32/slot (40 -> 32 + 8 = 2 stacks)", Jars(381) == 2);
+            p.Ammo = 0;                 // both barrels empty
             p.DebugCompleteReload();     // one reload
-            Check("masterkey reload loads BOTH shells at once (Ammo=2)", p.Ammo == 2);
+            Check("masterkey loads BOTH barrels from the stack (Ammo=2)", p.Ammo == 2);
+            Check("reload consumed 2 shells (40 -> 38)", p.DebugCountShells() == 38);
+            // 12 Gauge Shells (item 113, caliber 8) are a DIFFERENT ammo type -> the caliber-16 masterkey ignores them
+            bag.tryAddItem(new SDG.Unturned.Item(113, 32));
+            Check("12 gauge shells don't count for the 20ga masterkey (still 38)", p.DebugCountShells() == 38);
+            p.LoadGun("res://content/bluntforce.dat");
+            Check("bluntforce (pump) feeds from loose shells", p.DebugUsesShells());
+            Check("bluntforce is shell-by-shell (pump)", p.DebugShellReload());
+            Check("bluntforce sees the 12 gauge shells (32)", p.DebugCountShells() == 32);
 
             // bolt/pump per-shot rechamber (source RechamberAfterShotCount): a bolt-action must cycle the bolt before firing again
             p.LoadGun("res://content/timberwolf.dat");
