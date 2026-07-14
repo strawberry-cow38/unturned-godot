@@ -198,6 +198,47 @@ namespace UnturnedGodot
             GD.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
         }
 
+        // --- Consumables held in hand (food/drink/medical): equip -> hold -> LMB eats/drinks -> effects apply (source UseableConsumeable). ---
+        ItemAsset _heldConsumable;   // the consumable held in hand (null = none); LMB starts eating/drinking it
+        float _consumeTimer;         // >0 while eating -- applies the consumable's effects when it hits 0
+        const float ConsumeUseTime = 2.2f;   // eat/drink duration (source per-consumable useTime; a default until wired per-item)
+        public bool HoldingConsumable => _heldConsumable != null;
+
+        // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
+        public void EquipHeldConsumable(ItemAsset asset, string meshName)
+        {
+            _heldConsumable = asset;
+            _consumeTimer = 0f;
+            _melee = null;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { ConsumableMesh = $"{meshName}.txt", ConsumableAlbedo = $"{meshName}_albedo.png" };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[consume] holding {asset?.itemName ?? meshName} -- click to eat/drink");
+        }
+
+        // LMB while holding a consumable: begin eating/drinking (plays the Use anim + starts the use timer).
+        public void StartConsume()
+        {
+            if (_heldConsumable == null || _consumeTimer > 0f || _dead) return;
+            _consumeTimer = ConsumeUseTime;
+            _viewmodel?.PlayConsumeUse();
+            GD.Print($"[consume] eating {_heldConsumable?.itemName}...");
+        }
+
+        // Ticked each frame: run the eat timer; when it elapses, apply the consumable's effects (source consume()).
+        void TickConsume(float dt)
+        {
+            if (_consumeTimer <= 0f) return;
+            _consumeTimer -= dt;
+            if (_consumeTimer <= 0f && _heldConsumable != null)
+            {
+                Consume(_heldConsumable);   // apply Health/Food/Water/etc.
+                GD.Print($"[consume] consumed {_heldConsumable.itemName}");
+                // TODO(increment 2): decrement the inventory stack + auto-unequip when depleted
+            }
+        }
+
         // G: melee swing -- hit the nearest zombie in front within the weapon's reach (proximity, not a raycast). Reuses
         // the zombie damage path. Rounds out combat (Unturned lets you swing/punch when out of ammo or up close).
         public void MeleeAttack()
@@ -429,10 +470,13 @@ namespace UnturnedGodot
         FireMode _firemode = FireMode.Semi;
         public string FiremodeName => _firemode.ToString().ToUpper();   // for the HUD
         // let the FP viewmodel take the world's lighting (day/night sun + ambient)
+        DirectionalLight3D _worldSun; Godot.Environment _worldEnv;
         public void LinkWorldLighting(DirectionalLight3D sun, Godot.Environment env)
         {
+            _worldSun = sun; _worldEnv = env;   // stored so a re-equipped viewmodel (consumable/gun swap) can re-link
             if (_viewmodel != null) { _viewmodel.WorldSun = sun; _viewmodel.WorldEnv = env; }
         }
+        void RelinkViewmodelLighting() { if (_viewmodel != null) { _viewmodel.WorldSun = _worldSun; _viewmodel.WorldEnv = _worldEnv; } }
         int _burstLeft;                               // rounds remaining in the current burst
         float _burstCd;                               // NON-source anti-spam-click cooldown between bursts (master's call)
 
@@ -659,6 +703,7 @@ namespace UnturnedGodot
             {
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
+                else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else StartFire();
             }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
@@ -1445,6 +1490,7 @@ namespace UnturnedGodot
             Moving = moving;                                  // exposed for zombie stealth detection
             _viewmodel?.SetLocomotion(moving, _move.Stance);
             UpdateVitals(moving, (float)delta);
+            TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
 
             // Phase 3 hearing: moving on foot makes FOOTSTEP noise the zombies can hear, loudness = the source stealth
             // detection radius by stance/speed (sprint 20 loud .. prone 3 near-silent). Throttled; a motionless player

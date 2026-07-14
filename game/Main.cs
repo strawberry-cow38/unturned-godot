@@ -1857,6 +1857,7 @@ namespace UnturnedGodot
             player.LoadGun("res://content/eaglefire.dat");
             AddChild(player);
             player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient (same missing hookup as Drive PEI)
+            if (System.Environment.GetEnvironmentVariable("UG_HOLD") is string _hc && _hc.Length > 0) player.EquipHeldConsumable(null, _hc);   // render harness: hold a consumable (UG_HOLD=canned_beans)
             AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, E to harvest)
             // auto-pick a grassy, well-inland spawn so the jeep drives on real green PEI land, not the coastal water-splat
             float sx = 0f, sz = -350f; int bestMargin = -1; float bestDist = float.MaxValue;

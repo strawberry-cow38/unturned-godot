@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -116,6 +116,15 @@ namespace UnturnedGodot
                 int target = pp.Length > 1 && int.TryParse(pp[1], out var lv) ? lv : sk.level + 1;
                 sk.level = (byte)Mathf.Clamp(target, 0, sk.max);
                 Log($"{label} skill -> level {sk.level}/{sk.max}");
+            }
+            else if (verb == "hold")
+            {
+                // hold <consumable>  -- equip a consumable (food/drink) to the hands; LMB eats/drinks it. (mesh must be extracted)
+                var asset = ResolveItem(arg);
+                if (asset == null) { Log($"no item '{arg}'"); return; }
+                string mesh = asset.itemName.ToLowerInvariant().Replace(" ", "_");
+                Player.EquipHeldConsumable(asset, mesh);
+                Log($"holding {asset.itemName} -- LMB to eat/drink");
             }
             else if (verb == "xp")
             {
