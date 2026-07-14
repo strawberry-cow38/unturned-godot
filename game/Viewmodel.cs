@@ -604,10 +604,11 @@ namespace UnturnedGodot
                 // Consumable: FOLLOW THE HAND BONE (the eat/drink anim tilts the wrist to sip -- source), instead of the
                 // gun's barrel->aim pin which would freeze it upright + kill the tilt (master). + the source's held-model
                 // localRotation = Euler(0,0,90) (PlayerEquipment: firstModel.localRotation), render-tunable via UG_ROLL.
-                Vector3 roll = new Vector3(0f, 0f, -90f);   // source Euler(0,0,90) mapped through the mesh's negate-X+Z (=Ry180) convention -> Rz(-90)
+                Vector3 roll = new Vector3(0f, 0f, 90f);   // source PlayerEquipment held-model localRotation = Euler(0,0,90). (my earlier -90 was a bad derivation: it flipped asymmetric items -- carrot showed green-up instead of the root, master caught it. the SOURCE value is right.)
                 if (System.Environment.GetEnvironmentVariable("UG_ROLL") is string _r && _r.Split(',').Length == 3)
                 { var pp = _r.Split(','); roll = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 var rollB = Basis.FromEuler(new Vector3(Mathf.DegToRad(roll.X), Mathf.DegToRad(roll.Y), Mathf.DegToRad(roll.Z)));
+                if (System.Environment.GetEnvironmentVariable("UG_VMSCALE") is string _sc && float.TryParse(_sc, out var _s)) rollB = rollB.Scaled(new Vector3(_s, _s, _s));   // debug: enlarge held item to inspect orientation
                 _gun.GlobalTransform = new Transform3D(catt.GlobalTransform.Basis * rollB, catt.GlobalPosition);
             }
             else if (_gun != null && _gun.GetParent() is Node3D att)
