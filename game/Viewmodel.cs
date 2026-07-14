@@ -50,6 +50,7 @@ namespace UnturnedGodot
         bool _inspecting; float _inspectTimer; Basis _inspectBoneStart; bool _inspectCapture;   // inspect: layer the hand-bone rotation delta onto the camera-locked gun so it tilts with the gesture
         string _attachStartClip = null, _attachStopClip = null;   // per-gun attach-view pose clips ({Gun}_AttachStart/Stop)
         bool _attachView, _attachCapture; Basis _attachBoneStart;   // T attachment view: hold the presented pose (gun follows the bone like inspect)
+        bool _hammering, _hammerCapture; float _hammerViewTimer; Basis _hammerBoneStart;   // rack (Hammer clip): follow the hand bone so the gun ROTATES as it's charged (else the rack was translation-only)
         Node3D _muzzleFlash;  // brief flash light + spark at the muzzle on fire
         float _flash;
         ShaderMaterial _flashMat;   // muzzle flash billboard material (roll uniform set per shot)
@@ -440,7 +441,13 @@ namespace UnturnedGodot
         // The rechamber RACK (source Hammer clip) -- the 2nd half of an empty reload. Stays in the reloading state so ADS/fire stay blocked.
         public bool HasHammer => _hammerClip != null;
         public float HammerLength => (_arms != null && _hammerClip != null) ? _arms.ClipLength(_hammerClip) : 0f;
-        public void PlayHammer(float speed = 1f) { if (_hammerClip != null) _arms?.Play(_hammerClip, speed); }
+        public void PlayHammer(float speed = 1f)
+        {
+            if (_hammerClip == null) return;
+            _arms?.Play(_hammerClip, speed);
+            _hammering = true; _hammerCapture = true;                       // follow the hand bone through the rack so the gun rotates with it
+            _hammerViewTimer = HammerLength / Mathf.Max(0.01f, speed);      // for the clip's (dexterity-sped) duration
+        }
 
         // F to inspect: play the gun's OWN Inspect clip (per-gun, from its animations.prefab; ends back on the ready
         // hold). Guns without an Inspect clip (_inspectClip == null) just don't inspect, matching the source's
@@ -608,6 +615,7 @@ namespace UnturnedGodot
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 
             if (_inspecting) { _inspectTimer -= (float)delta; if (_inspectTimer <= 0f) _inspecting = false; }
+            if (_hammering) { _hammerViewTimer -= (float)delta; if (_hammerViewTimer <= 0f) { _hammering = false; _hammerCapture = false; } }   // rack over -> stop following the bone, gun snaps back to barrel-lock
             if (_gun != null && ConsumableMesh != null && _gun.GetParent() is Node3D catt)
             {
                 // Consumable: FOLLOW THE HAND BONE (the eat/drink anim tilts the wrist to sip -- source), instead of the
@@ -647,6 +655,11 @@ namespace UnturnedGodot
                 {
                     if (_attachCapture) { _attachBoneStart = att.GlobalTransform.Basis; _attachCapture = false; }
                     basis = (att.GlobalTransform.Basis * _attachBoneStart.Inverse()) * basis;
+                }
+                if (_hammering)   // the rack ROTATES the gun: follow the hand bone's rotation delta since the rack began (like inspect), so it isn't barrel-locked
+                {
+                    if (_hammerCapture) { _hammerBoneStart = att.GlobalTransform.Basis; _hammerCapture = false; }
+                    basis = (att.GlobalTransform.Basis * _hammerBoneStart.Inverse()) * basis;
                 }
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
             }

@@ -531,6 +531,10 @@ namespace UnturnedGodot
         // Working magazines (increment 1: the Military STANAG). A gun uses mag ITEMS when its default Magazine is a
         // registered magazine (else the old whole-mag reload). A mag fits when its caliber matches the gun's.
         bool UsesMagItem => Gun != null && !Gun.ShellReload && (SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.IsMagazine ?? false);
+        // +1 round in the chamber: a non-shell gun keeps its chambered round through a reload -> capacity is AmmoMax+1. Reloaded
+        // from EMPTY (Ammo 0) it has to RACK a round out of the fresh mag (the Hammer clip) and tops out at AmmoMax (no bonus).
+        bool HasChamber => Gun != null && !Gun.ShellReload;
+        int ChamberedCap => (Gun?.AmmoMax ?? 30) + (HasChamber ? 1 : 0);   // absolute max Ammo = a full mag plus the one in the chamber
         (byte page, byte idx, Item item)? FindBestMag()   // the spare mag in inventory that fits the gun, with the MOST ammo
         {
             if (Inventory == null || Gun == null) return null;
@@ -553,9 +557,11 @@ namespace UnturnedGodot
             if (!found.HasValue) { Ammo = Gun?.AmmoMax ?? Ammo; return; }   // gated by StartReload, but be safe
             var (fb, fi, fresh) = found.Value;
             int oldAmmo = Ammo;
+            bool chambered = HasChamber && oldAmmo > 0;                                   // a round rides in the chamber through a TACTICAL swap
             Inventory.items[fb].removeItem(fi);                                          // take the fresh mag out of the bag
-            Ammo = System.Math.Min(fresh.amount, Gun?.AmmoMax ?? fresh.amount);          // load its rounds
-            Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo)));   // old mag back, keeping leftover
+            int loaded = System.Math.Min(fresh.amount, Gun?.AmmoMax ?? fresh.amount);    // rounds from the fresh mag
+            Ammo = loaded + (chambered ? 1 : 0);                                         // +1: the already-chambered round stays on top of the fresh mag
+            Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo - (chambered ? 1 : 0))));   // old mag back MINUS the chambered round (it stayed in the gun)
             _loadedMagId = fresh.id;
         }
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
@@ -970,7 +976,7 @@ namespace UnturnedGodot
         {
             if (_reloading || _dead) return;
             int max = Gun?.AmmoMax ?? 30;
-            if (Ammo >= max) return;
+            if (Ammo >= ChamberedCap) return;   // already topped off (full mag + the round in the chamber)
             if (UsesMagItem && FindBestMag() == null) { _viewmodel?.PlayDryFire(); return; }   // working magazines: no spare mag in the bag -> can't reload
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
@@ -1595,7 +1601,7 @@ namespace UnturnedGodot
                     }
                     else   // mag-swap complete (1st half): swap the magazine ITEM (working mags) or refill the whole mag
                     {
-                        if (UsesMagItem) DoMagSwap(); else Ammo = max;
+                        if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max;   // +1: a non-empty reload keeps the chambered round (empty -> just max, then the rack)
                         if (_hammerPending) { _hammerPending = false; _hammerActive = true; _viewmodel?.PlayHammer(_reloadSpeed); _reloadTimer = _hammerDur; }   // empty reload: now RACK the round (source Hammer clip = the reload's 2nd half)
                         else { _reloading = false; _viewmodel?.SetReloading(false); }
                     }

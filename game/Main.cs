@@ -408,7 +408,9 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                _rigCaptureFrames = new[] { 10, 66, 89, 92, 95, 120 };  // equip -> ADS -> fire+1 (muzzle flash + tracer) -> reload
+                _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
+                    ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
+                    : new[] { 10, 66, 89, 92, 95, 120 };        // equip -> ADS -> fire+1 (muzzle flash + tracer) -> reload
                 _vmTest = true;
                 GetWindow().Size = new Vector2I(2560, 1440);
                 BuildViewmodelTest(gun ?? "eaglefire");   // --gun=<name> picks the gun (eaglefire | maplestrike)
@@ -2076,10 +2078,14 @@ namespace UnturnedGodot
             Check("3 spare mags = 72 rounds in the bag", p.Inventory.getItemCount(6) == 72);
             Check("has a spare mag to reload from", p.DebugHasSpareMag());
 
-            p.Ammo = 5;              // fired down to 5
-            p.DebugMagSwap();        // reload
-            Check("reload swapped to a full mag (Ammo=30)", p.Ammo == 30);
-            Check("ammo conserved: spares now 47 (72 - 30 taken + 5 old back)", p.Inventory.getItemCount(6) == 47);
+            p.Ammo = 5;              // fired down to 5 (a round still chambered)
+            p.DebugMagSwap();        // TACTICAL reload -> keep the chambered round
+            Check("tactical reload keeps the chambered round (Ammo=31 = mag+1)", p.Ammo == 31);
+            Check("ammo conserved: spares now 46 (72 - 30 taken + 4 old back, chambered round stayed)", p.Inventory.getItemCount(6) == 46);
+
+            p.Ammo = 0;              // fired dry -> chamber empty
+            p.DebugMagSwap();        // EMPTY reload -> no +1 (the rack chambers one out of the fresh mag)
+            Check("empty reload has no chambered bonus (Ammo=30, not 31)", p.Ammo == 30);
 
             // empty the bag of mags -> reload must be blocked
             for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
@@ -2903,6 +2909,7 @@ namespace UnturnedGodot
                     // then a reload, so the test shows the real Gun_Reload arm anim (and its return to ready)
                     if (_frame == 100) _vm.SetReloading(true);
                     if (_frame == 150) _vm.SetReloading(false);
+                    if (System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1" && _frame == 50) _vm.PlayHammer();   // verify the rack rotates the gun (bone-follow)
                 }
                 if (_vehTest && _veh != null)
                 {
