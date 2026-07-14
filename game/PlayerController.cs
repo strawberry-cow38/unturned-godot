@@ -177,22 +177,29 @@ namespace UnturnedGodot
         // if you have none, white "Hold LMB to salvage" with a blowtorch equipped. Holding LMB breaks it into scrap + despawns it.
         void UpdateSalvage(float delta)
         {
-            if (_focusVehicle == null || !IsInstanceValid(_focusVehicle) || !_focusVehicle.IsWreck) { _salvageTimer = 0f; return; }
-            var v = _focusVehicle;
-            Color red = new Color(0.90f, 0.25f, 0.20f), white = new Color(0.95f, 0.95f, 0.95f);
-            if (v.WreckOnFire) { v.SetSalvagePrompt("Too hot to salvage", red); _salvageTimer = 0f; }
-            else if (!HasBlowtorch) { v.SetSalvagePrompt("Requires blowtorch to salvage", red); _salvageTimer = 0f; }
-            else   // fire out + blowtorch in hand: hold LMB to salvage
+            bool sparks = false;
+            var v = (_focusVehicle != null && IsInstanceValid(_focusVehicle)) ? _focusVehicle : null;
+            bool lmb = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsMouseButtonPressed(MouseButton.Left) && !_dead && _driving == null && !(_invUI?.IsOpen ?? false);
+            if (v != null && HasBlowtorch && !v.IsWreck && v.Hurt)   // blowtorch REPAIR: full-auto healing of a hurt alive car while LMB is held (master), with torch sparks
             {
-                bool holding = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsMouseButtonPressed(MouseButton.Left) && !_dead && _driving == null;
-                if (holding)
+                if (lmb) { v.Repair((_melee?.VehicleDamage ?? 10f) * 3f * delta); sparks = true; }   // ~30 HP/s continuous
+                _salvageTimer = 0f;
+            }
+            else if (v != null && v.IsWreck)   // a WRECK: state prompt + hold-LMB-to-salvage
+            {
+                Color red = new Color(0.90f, 0.25f, 0.20f), white = new Color(0.95f, 0.95f, 0.95f);
+                if (v.WreckOnFire) { v.SetSalvagePrompt("Too hot to salvage", red); _salvageTimer = 0f; }
+                else if (!HasBlowtorch) { v.SetSalvagePrompt("Requires blowtorch to salvage", red); _salvageTimer = 0f; }
+                else if (lmb)
                 {
-                    _salvageTimer += delta;
-                    if (_salvageTimer >= SalvageTime) { v.Salvage(); _focusVehicle = null; _salvageTimer = 0f; }
+                    _salvageTimer += delta; sparks = true;
+                    if (_salvageTimer >= SalvageTime) { v.Salvage(); _focusVehicle = null; _salvageTimer = 0f; sparks = false; }
                     else v.SetSalvagePrompt($"Salvaging... {Mathf.Clamp((int)(_salvageTimer / SalvageTime * 100f), 0, 99)}%", white);
                 }
                 else { v.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
             }
+            else _salvageTimer = 0f;
+            _viewmodel?.SetTorchSparks(sparks);   // orange sparks fly from the torch while repairing/cutting (master)
         }
 
         // E: pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
@@ -988,7 +995,7 @@ namespace UnturnedGodot
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
-                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && _focusVehicle.WreckSalvageable && HasBlowtorch) { }   // LMB-hold salvages the wreck (UpdateSalvage) -- no melee swing
+                else if (HasBlowtorch && _focusVehicle != null && IsInstanceValid(_focusVehicle) && (_focusVehicle.WreckSalvageable || _focusVehicle.Hurt)) { }   // blowtorch: LMB-HOLD salvages a cold wreck / continuously repairs a hurt car (the tick handles it) -- no swing
                 else if (_melee != null) MeleeAttack(false);            // LMB with a melee weapon = WEAK swing (source UseableMelee)
                 else StartFire();
             }

@@ -381,6 +381,32 @@ namespace UnturnedGodot
 
         public void SwingMelee(bool strong = false) { _arms?.Play(strong ? "Melee_Strong" : "Melee_Weak"); }   // play the source melee swing anim (Weak / Strong)
 
+        CpuParticles3D _torchSparks;   // blowtorch: orange sparks fly from the torch tip while repairing / cutting a wreck (master)
+        public void SetTorchSparks(bool on)
+        {
+            if (_torchSparks == null)
+            {
+                if (_gun == null) return;
+                var quad = new QuadMesh { Size = new Vector2(0.03f, 0.03f) };
+                quad.Material = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(1f, 0.72f, 0.25f), EmissionEnabled = true, Emission = new Color(1f, 0.55f, 0.12f),
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BlendMode = BaseMaterial3D.BlendModeEnum.Add, BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                };
+                _torchSparks = new CpuParticles3D
+                {
+                    Emitting = false, Amount = 22, Lifetime = 0.3f, Mesh = quad,
+                    Position = new Vector3(0f, 0.12f, 0.28f),   // ~torch nozzle, forward + up from the mesh origin (tunable)
+                    Direction = new Vector3(0f, 0.25f, 1f), Spread = 42f,
+                    InitialVelocityMin = 1.6f, InitialVelocityMax = 3.2f, Gravity = new Vector3(0f, -7f, 0f),
+                    ScaleAmountMin = 0.6f, ScaleAmountMax = 1.2f,
+                };
+                _gun.AddChild(_torchSparks);
+            }
+            _torchSparks.Emitting = on;
+        }
+
         // Toss a casing from the Eject hook: initial velocity = gun-right + up + slightly back (+ jitter), then it
         // arcs under gravity + tumbles (integrated in _Process). Parented to the viewport world so it flies free of
         // the gun. Non-vanilla for the Eaglefire (it has no Shell effect) — a visual feel add per master.
