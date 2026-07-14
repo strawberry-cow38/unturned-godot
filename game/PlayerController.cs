@@ -114,6 +114,9 @@ namespace UnturnedGodot
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
+        PhysicsRayQueryParameters3D _lookRayQ;     // reused across frames (no per-frame alloc)
+        PhysicsShapeQueryParameters3D _lookSphereQ;
+        Godot.Collections.Array<Rid> _lookExclude;
 
         // Look-at interaction (master): cast the eye-ray from the camera forward, up to ~3.5 m, against item interaction
         // spheres (bit 8) AND world geometry (bit 0). The CLOSEST hit wins -> a wall between you and the item blocks it
@@ -128,22 +131,18 @@ namespace UnturnedGodot
                 var space = GetWorld3D().DirectSpaceState;
                 Vector3 from = _cam.GlobalPosition;
                 Vector3 fwd = -_cam.GlobalTransform.Basis.Z;
-                // 1) ray forward -> the sphere sits where the ray STOPS (on world/props/items/vehicles, or max reach)
-                var rq = PhysicsRayQueryParameters3D.Create(from, from + fwd * LookReach);
-                rq.CollisionMask = (1u << 0) | (1u << 5) | (1u << 6) | (1u << 7);   // world + vehicles + props + items
-                rq.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
-                var rhit = space.IntersectRay(rq);
+                // 1) ray forward -> the sphere sits where the ray STOPS (on world/props/items/vehicles, or max reach).
+                // Query objects are REUSED across frames (they were alloc'd fresh every frame -> GC pressure = the "dips") -- master.
+                _lookExclude ??= new Godot.Collections.Array<Rid> { GetRid() };
+                _lookRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 5) | (1u << 6) | (1u << 7), Exclude = _lookExclude };
+                _lookRayQ.From = from; _lookRayQ.To = from + fwd * LookReach;
+                var rhit = space.IntersectRay(_lookRayQ);
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
-                var sq = new PhysicsShapeQueryParameters3D
-                {
-                    Shape = new SphereShape3D { Radius = LookSphereR },
-                    Transform = new Transform3D(Basis.Identity, _lookEnd),
-                    CollisionMask = WorldItem.ItemHitLayer | (1u << 5),
-                    Exclude = new Godot.Collections.Array<Rid> { GetRid() },
-                };
+                _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5), Exclude = _lookExclude };
+                _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
                 float bestI = float.MaxValue, bestV = float.MaxValue;
-                foreach (var h in space.IntersectShape(sq, 8))
+                foreach (var h in space.IntersectShape(_lookSphereQ, 8))
                 {
                     var c = h["collider"].As<GodotObject>();
                     if (c is WorldItem wi && IsInstanceValid(wi))
