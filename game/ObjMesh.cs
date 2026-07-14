@@ -22,9 +22,11 @@ namespace UnturnedGodot
         public static ArrayMesh Load(string globalPath)
         {
             var pos = new List<Vector3>();
+            var col = new List<Color>();   // optional per-vertex colour: "v x y z r g b" (billboard ad geometry baked from its palette)
             var nrm = new List<Vector3>();
             var uv = new List<Vector2>();
             var outV = new List<Vector3>();
+            var outC = new List<Color>();
             var outN = new List<Vector3>();
             var outU = new List<Vector2>();
             foreach (var raw in System.IO.File.ReadLines(globalPath))
@@ -39,6 +41,7 @@ namespace UnturnedGodot
                         2 => new Vector3(-F(p[1]), F(p[2]), F(p[3])),    // negate X
                         _ => new Vector3(F(p[1]), F(p[2]), -F(p[3])),    // negate Z (0,3)
                     });
+                    col.Add(p.Length >= 7 ? new Color(F(p[4]), F(p[5]), F(p[6])) : Colors.White);   // baked palette colour, or white (no tint)
                 }
                 else if (raw[0] == 'v' && raw[1] == 'n')
                 {
@@ -72,6 +75,7 @@ namespace UnturnedGodot
                         foreach (int k in new[] { 0, i + 1, i })
                         {
                             outV.Add(pos[vi[k]]);
+                            outC.Add(vi[k] >= 0 && vi[k] < col.Count ? col[vi[k]] : Colors.White);
                             outN.Add(ni[k] >= 0 && ni[k] < nrm.Count ? nrm[ni[k]] : Vector3.Up);
                             outU.Add(ti[k] >= 0 && ti[k] < uv.Count ? uv[ti[k]] : Vector2.Zero);
                         }
@@ -84,6 +88,7 @@ namespace UnturnedGodot
             arr[(int)Mesh.ArrayType.Vertex] = outV.ToArray();
             arr[(int)Mesh.ArrayType.Normal] = outN.ToArray();
             arr[(int)Mesh.ArrayType.TexUV] = outU.ToArray();
+            arr[(int)Mesh.ArrayType.Color] = outC.ToArray();   // white unless the obj carried baked vertex colours
             var m = new ArrayMesh();
             m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             return m;

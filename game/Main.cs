@@ -1017,7 +1017,7 @@ namespace UnturnedGodot
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var mesh = ObjMesh.Load(dir + name + ".obj");
             if (mesh == null) { GD.Print($"[PROPTEST] no mesh {name}"); GetTree().Quit(); return; }
-            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
@@ -1301,7 +1301,7 @@ namespace UnturnedGodot
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
             var mesh = ObjMesh.Load(dir + name + ".obj");
             if (mesh == null) { GD.PrintErr($"[ROTTEST] no mesh {name}"); GetTree().Quit(); return; }
-            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             var es = (System.Environment.GetEnvironmentVariable("UG_EULER") ?? "270,194,0").Split(',');
@@ -1457,7 +1457,9 @@ namespace UnturnedGodot
                     matCache[nm] = mm;
                     return mm;
                 }
-                mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                // VertexColorUseAsAlbedo: objects are white by default (texture unchanged), but billboards bake their ad-geometry
+                // palette into per-vertex colour so multi-material signs keep their real colours over the merged mesh (master).
+                mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
                 string tp = dir + nm + "_tex.png";
                 if (System.IO.File.Exists(tp))
                 {
