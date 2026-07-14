@@ -2098,6 +2098,7 @@ namespace UnturnedGodot
             Check("masterkey break-action is NOT shell-by-shell (loads together)", !p.DebugShellReload());
             Check("masterkey has no +1 chamber", !p.DebugHasChamber());
             Check("masterkey feeds from loose shells", p.DebugUsesShells());
+            Check("masterkey fires 8 pellets (from the 20ga shell)", p.DebugPellets() == 8);
             bag.tryAddItem(new SDG.Unturned.Item(381, 20));
             bag.tryAddItem(new SDG.Unturned.Item(381, 20));   // 20 + 20 -> merges to 32, overflows 8
             Check("20 gauge shells stack (40 carried)", p.DebugCountShells() == 40);
@@ -2117,6 +2118,7 @@ namespace UnturnedGodot
             p.DebugCompleteReload();     // one whole reload
             Check("bluntforce loads all 8 at once from the stack (Ammo=8)", p.Ammo == 8);
             Check("whole reload consumed 8 shells (32 -> 24)", p.DebugCountShells() == 24);
+            Check("bluntforce fires 6 pellets (from the 12ga shell)", p.DebugPellets() == 6);
 
             // bolt/pump per-shot rechamber (source RechamberAfterShotCount): a bolt-action must cycle the bolt before firing again
             p.LoadGun("res://content/timberwolf.dat");

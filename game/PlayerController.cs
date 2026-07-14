@@ -193,6 +193,8 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
             _melee = System.IO.File.Exists(p) ? MeleeDef.FromDatText(meleeName, System.IO.File.ReadAllText(p)) : new MeleeDef { Name = meleeName };
             _viewmodel?.QueueFree();
@@ -295,6 +297,7 @@ namespace UnturnedGodot
         public void DebugCompleteReload() { int max = Gun?.AmmoMax ?? 30; if (UsesShells) Ammo += ConsumeShells(max - Ammo); else if (UsesMagItem) DoMagSwap(); else Ammo = (HasChamber && Ammo > 0) ? max + 1 : max; }   // test: run the reload fill (same branch as the reload tick)
         public bool DebugUsesShells() => UsesShells;         // test: does the gun feed from loose shells
         public int DebugCountShells() => CountShells();      // test: shells of the gun's caliber carried
+        public int DebugPellets() => UsesShells && ShellAsset != null ? System.Math.Max(1, ShellAsset.pellets) : System.Math.Max(1, Gun?.Pellets ?? 1);   // test: rays per shot (shotgun = shell pellets)
 
         // Play the consumable's use/eat/drink sound (source ItemConsumeableAsset.use, content/sounds/<stem>.wav).
         AudioStreamPlayer _consumeAudio;
@@ -817,6 +820,8 @@ namespace UnturnedGodot
             Ammo = Gun.AmmoMax;
             _loadedMagId = Gun.MagazineId;   // the gun comes equipped with its default magazine loaded (its ammo = Ammo)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;   // fresh gun -> not mid-cycle
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // switching weapons mid-reload aborts the reload (anim + logic) -- master
+            _viewmodel?.SetReloading(false);
             // reset to a valid firemode for THIS gun — don't inherit the previous one (e.g. Auto carried onto the
             // semi-only shotgun would let it hold-fire full-auto). Prefer Semi, then Auto/Burst, else Safety.
             var modes = AvailableModes();
@@ -840,12 +845,6 @@ namespace UnturnedGodot
             AddChild(_viewmodel);
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
             GD.Print($"[gun] holding {_gunName}");
-        }
-
-        // Q toggles between the three ported guns.
-        void SwitchWeapon()
-        {
-            EquipHeldGun(_gunName switch { "eaglefire" => "maplestrike", "maplestrike" => "masterkey", _ => "eaglefire" });
         }
 
         public override void _Ready()
@@ -938,8 +937,7 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.Q })
-                SwitchWeapon();   // toggle Eaglefire <-> Maplestrike
+            // (Q weapon-switch removed -- master: we have the inventory + spawn commands to test weapons now)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
             {
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
@@ -1176,7 +1174,7 @@ namespace UnturnedGodot
             // tracer flying with it, hits/damage landing when it arrives. (source: BulletInfo + UseableGun.cs:1539.)
             float spread = Gun != null && Gun.SpreadAngleDegrees > 0f
                 ? Mathf.DegToRad(Gun.SpreadAngleDegrees) * Mathf.Lerp(1f, Gun.SpreadAim, aimA) * sharp : 0f;   // SHARPSHOOTER tightens spread too (source UseableGun:5055)
-            int pellets = Mathf.Max(1, Gun?.Pellets ?? 1);
+            int pellets = UsesShells && ShellAsset != null ? Mathf.Max(1, ShellAsset.pellets) : Mathf.Max(1, Gun?.Pellets ?? 1);   // shotgun buckshot: pellets come from the LOADED shell (source ItemMagazineAsset.pellets) -- 12ga=6, 20ga=8
             float muzzleVel = Gun?.MuzzleVelocity ?? 500f;
             int steps = Gun?.BallisticSteps ?? 20;
             float gravity = -9.81f * (Gun?.GravityMultiplier ?? 4f);

@@ -59,6 +59,7 @@ namespace SDG.Unturned
         // A reload consumes shells from the stack rather than swapping a whole magazine. (12/20 Gauge Shells, stack 32.)
         public bool isAmmo;
         public int stackSize = 1;   // max per-slot stack (Unturned items = 1; ammo like shotgun shells stack, e.g. 32)
+        public int pellets = 1;     // ItemMagazineAsset.Pellets: rays fired per shot from THIS ammo (12ga shells = 6, 20ga = 8; slugs = 1)
 
         // ItemTool.getRarityColorUI: the exact per-rarity UI colours
         public static Godot.Color RarityColorUI(EItemRarity r) => r switch
