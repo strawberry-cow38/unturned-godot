@@ -2037,6 +2037,11 @@ namespace UnturnedGodot
             Check("beans WAV loads as 16-bit PCM", PlayerController.DebugCanLoadWav("eatcanl"));
             Check("water WAV loads as 16-bit PCM", PlayerController.DebugCanLoadWav("drinkswallow"));
 
+            // no-texture consumables use their flat _Color (cheese=yellow, potato=brown), not the gray default
+            Check("cheese has a flat _Color (no texture)", ConsumableRegistry.FlatColor("cheese") is Color cc && cc.G > 0.5f && cc.B < 0.5f);
+            Check("potato has a flat _Color", ConsumableRegistry.FlatColor("potato") != null);
+            Check("textured item (canned_beans) has NO flat color", ConsumableRegistry.FlatColor("canned_beans") == null);
+
             GD.Print($"[HOLDTEST] beans={beansAn.Use}/{beansAn.UseLen:0.00}s water={waterAn.Use}/{waterAn.UseLen:0.00}s medkit={medkitAn.Use}/{medkitAn.UseLen:0.00}s");
             GD.Print($"[HOLDTEST] RESULT {pass} passed, {fail} failed");
         }

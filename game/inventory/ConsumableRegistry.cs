@@ -12,6 +12,7 @@ namespace UnturnedGodot
         public readonly struct AnimSet { public readonly string Equip, Use; public readonly float UseLen; public AnimSet(string e, string u, float l) { Equip = e; Use = u; UseLen = l; } }
         static readonly Dictionary<string, AnimSet> _animsByMesh = new();
         static readonly Dictionary<ushort, string> _soundById = new();   // id -> use-sound file stem (content/sounds/<x>.wav)
+        static readonly Dictionary<string, Color> _colorByMesh = new();  // mesh -> flat _Color for NO-texture items (cheese/potato); else absent
         static bool _loaded;
 
         public static void Load()
@@ -40,7 +41,22 @@ namespace UnturnedGodot
                     var c = ln.Split('\t');   // id, soundStem
                     if (c.Length >= 2 && ushort.TryParse(c[0], out var id)) _soundById[id] = c[1].Trim();
                 }
-            GD.Print($"[consumables] loaded {_byId.Count} meshes, {_animsByMesh.Count} anim sets, {_soundById.Count} sounds");
+            string cp = ProjectSettings.GlobalizePath("res://content/consumable_colors.tsv");
+            if (System.IO.File.Exists(cp))
+                foreach (var ln in System.IO.File.ReadAllLines(cp))
+                {
+                    var c = ln.Split('\t');   // mesh, r, g, b  (flat _Color for items with no albedo texture)
+                    if (c.Length >= 4 && float.TryParse(c[1], out var r) && float.TryParse(c[2], out var g) && float.TryParse(c[3], out var b))
+                        _colorByMesh[c[0].Trim()] = new Color(r, g, b);
+                }
+            GD.Print($"[consumables] loaded {_byId.Count} meshes, {_animsByMesh.Count} anim sets, {_soundById.Count} sounds, {_colorByMesh.Count} flat colors");
+        }
+
+        // flat _Color for a no-texture consumable mesh (cheese/potato/etc.), or null if it has a real albedo texture.
+        public static Color? FlatColor(string mesh)
+        {
+            if (!_loaded) Load();
+            return mesh != null && _colorByMesh.TryGetValue(mesh, out var col) ? col : (Color?)null;
         }
 
         // this item's use/eat/drink sound stem (content/sounds/<x>.wav), or null (source ItemConsumeableAsset.use)

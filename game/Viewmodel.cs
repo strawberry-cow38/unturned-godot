@@ -86,6 +86,7 @@ namespace UnturnedGodot
         public string MeleeMesh, MeleeAlbedo;   // set (instead of GunName) to show a MELEE weapon in-hand: mesh + albedo only, no sight/mag/muzzle/fire
         public string ConsumableMesh, ConsumableAlbedo;   // set (instead of GunName) to HOLD a consumable (food/drink/medical): mesh + albedo, Equip hold + Use eat/drink anim, no gun FX
         public string ConsumableEquipClip, ConsumableUseClip;   // this item's OWN archetype clips (CE_n/CU_n from consumable_anims), e.g. drink vs eat vs syringe; empty -> generic fallback
+        public Color? ConsumableColor;   // flat _Color for a no-texture consumable (cheese=yellow, potato=brown) -> used instead of the gray default
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
         // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
         // gun's own AudioClips (the assault rifles share the Eaglefire's).
@@ -239,7 +240,7 @@ namespace UnturnedGodot
                     skel.AddChild(att);
                     att.BoneName = skel.GetBoneName(hb);
                     var gv = ConsumableMesh != null
-                        ? new GunVisual { Gun = ConsumableMesh, Albedo = ConsumableAlbedo, Ejects = false, AlbedoTint = new Color(1, 1, 1) }   // consumable: mesh + albedo only (no sight/mag/muzzle/shoot)
+                        ? new GunVisual { Gun = ConsumableMesh, Albedo = ConsumableAlbedo, Ejects = false, AlbedoTint = ConsumableColor ?? new Color(1, 1, 1) }   // consumable: mesh + albedo; AlbedoTint carries the flat _Color for no-texture items (cheese/potato)
                         : MeleeMesh != null
                         ? new GunVisual { Gun = MeleeMesh, Albedo = MeleeAlbedo, Ejects = false, AlbedoTint = new Color(1, 1, 1) }   // melee: mesh + albedo only
                         : Visual(GunName);
@@ -256,7 +257,8 @@ namespace UnturnedGodot
                     // highlight (the 3 viewmodel lights were kicking a "shiny" sheen off the body at Roughness 0.85).
                     var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     var tex = LoadTex($"res://content/{gv.Albedo}");
-                    if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = new Color(0.24f, 0.24f, 0.26f);
+                    // no albedo texture: a consumable uses its real flat _Color (cheese/potato); anything else falls back to the neutral gray.
+                    if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = ConsumableMesh != null ? gv.AlbedoTint : new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
