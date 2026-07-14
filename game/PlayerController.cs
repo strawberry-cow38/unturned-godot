@@ -514,7 +514,10 @@ namespace UnturnedGodot
             Vector3 camPos = _cam.GlobalPosition;
             var found = new System.Collections.Generic.List<(float d2, Light3D l)>();
             foreach (var n in GetTree().GetNodesInGroup("dynlight"))
-                if (n is Light3D dl && dl.Visible && dl.LightEnergy > 0.01f && IsInstanceValid(dl))
+                // IsVisibleInTree (not just .Visible): headlights toggle OFF by hiding their PARENT container, so an
+                // off headlight still reads Visible=true + LightEnergy=9. Walk the ancestor chain so we only mirror lights
+                // actually ON. (Sirens/fire toggle LightEnergy to 0 -> the energy check already skips those.)
+                if (n is Light3D dl && IsInstanceValid(dl) && dl.IsVisibleInTree() && dl.LightEnergy > 0.01f)
                 {
                     float rng = LightRange(dl);
                     float d2 = camPos.DistanceSquaredTo(dl.GlobalPosition);

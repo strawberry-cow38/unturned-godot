@@ -1858,7 +1858,12 @@ namespace UnturnedGodot
             player.LoadGun("res://content/eaglefire.dat");
             AddChild(player);
             player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient (same missing hookup as Drive PEI)
-            if (System.Environment.GetEnvironmentVariable("UG_HOLD") is string _hc && _hc.Length > 0) player.EquipHeldConsumable(null, _hc);   // render harness: hold a consumable (UG_HOLD=canned_beans)
+            if (System.Environment.GetEnvironmentVariable("UG_HOLD") is string _hc && _hc.Length > 0)
+            {
+                SDG.Unturned.ItemCatalog.RegisterAll();
+                var _ha = SDG.Unturned.Assets.find(ConsumableRegistry.IdForMesh(_hc));   // resolve a REAL asset so StartConsume works (UG_EAT)
+                player.EquipHeldConsumable(_ha, _hc);   // render harness: hold a consumable (UG_HOLD=canned_beans [UG_EAT=1 to play the eat])
+            }
             if (System.Environment.GetEnvironmentVariable("UG_TESTLIGHT") == "1")   // render harness: a bright red dynlight just in front-left of the player -> should spill onto the FP gun
             {
                 var tl = new OmniLight3D { OmniRange = 6f, LightColor = new Color(1f, 0.1f, 0.1f), LightEnergy = 8f, ShadowEnabled = false };
@@ -2817,7 +2822,7 @@ namespace UnturnedGodot
             {
                 _peiFrame++;
                 if (System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1") { if (_peiFrame >= 55 && (_peiFrame % 12 == 0 || _peiFrame >= 156)) _peiPlayer.Fire(); }   // impact-render test: stay on foot + fire forward; sustained burst 156+ so a muzzle FLASH lands on the frame-160 capture (glow showcase)
-                else if (System.Environment.GetEnvironmentVariable("UG_FP") == "1") { }   // UG_FP: stay on foot (don't hop in the jeep) so the 1st-person viewmodel is captured
+                else if (System.Environment.GetEnvironmentVariable("UG_FP") == "1") { if (System.Environment.GetEnvironmentVariable("UG_EAT") is string _eatAt && _eatAt.Length > 0 && _peiFrame == (int.TryParse(_eatAt, out var _ef) ? _ef : 100)) _peiPlayer.StartConsume(); }   // UG_FP: on foot for the FP viewmodel; UG_EAT=<startFrame> click-eat (frame-160 capture lands that many frames into the eat/drink)
                 else if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f);   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
             }
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render

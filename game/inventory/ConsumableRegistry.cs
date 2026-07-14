@@ -41,6 +41,13 @@ namespace UnturnedGodot
             return _byId.TryGetValue(id, out var m) ? m : null;
         }
         public static bool Has(ushort id) => Mesh(id) != null;
+        // reverse lookup (render harness UG_HOLD/UG_EAT): first id whose held mesh matches this name
+        public static ushort IdForMesh(string mesh)
+        {
+            if (!_loaded) Load();
+            foreach (var kv in _byId) if (kv.Value == mesh) return kv.Key;
+            return 0;
+        }
 
         // this mesh's own Equip/Use clips + useTime; default (generic + 2.2s) when the mesh has no mapped set.
         public static AnimSet Anims(string mesh)
