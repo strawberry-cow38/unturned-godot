@@ -803,15 +803,27 @@ namespace UnturnedGodot
                 i += 8 + sz + (sz & 1);
             }
             if (dataOff < 0 || dataOff + dataLen > b.Length) return null;
-            var pcm = new byte[dataLen];
-            System.Array.Copy(b, dataOff, pcm, 0, dataLen);
             int bpf = (bits / 8) * channels;
+            int frames = dataLen / bpf;
+            // TRIM leading/trailing SILENCE, then loop the sounding portion -> no gap. The ripped clip carries ~59ms of
+            // lead + ~31ms of trailing silence; looping the whole thing played that silence every cycle = the audible seam.
+            int lead = 0, trail = frames - 1;
+            if (bits == 16)
+            {
+                const int THR = 400;
+                System.Func<int, int> amp = fr => { int m = 0; for (int c = 0; c < channels; c++) { int s = System.BitConverter.ToInt16(b, dataOff + (fr * channels + c) * 2); int a = System.Math.Abs(s); if (a > m) m = a; } return m; };
+                while (lead < trail && amp(lead) < THR) lead++;
+                while (trail > lead && amp(trail) < THR) trail--;
+            }
+            int trimFrames = trail - lead + 1;
+            var pcm = new byte[trimFrames * bpf];
+            System.Array.Copy(b, dataOff + lead * bpf, pcm, 0, trimFrames * bpf);
             return new AudioStreamWav
             {
                 Data = pcm,
                 Format = bits == 16 ? AudioStreamWav.FormatEnum.Format16Bits : AudioStreamWav.FormatEnum.Format8Bits,
                 MixRate = rate, Stereo = channels == 2,
-                LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = dataLen / bpf,
+                LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = trimFrames,
             };
         }
 
