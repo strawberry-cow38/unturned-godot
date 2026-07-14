@@ -361,6 +361,32 @@ namespace UnturnedGodot
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
         };
 
+        // Semi trailer (semi_1 prop -> towable). TOWED, not driven: no engine/steer/drive (Engine=0 -> _engineForce=0
+        // so its traction wheels apply no force); it's dragged behind the cab by a fifth-wheel PinJoint hitch (see
+        // BuildTrailer). semi_0 (cab) + semi_1 (trailer) are one authoring set and SHARE the flat blue _MainTex
+        // (verified via UnityPy: same texture path_id), so it reuses semi_0_albedo.png. Bbox 3.0w x 2.5h x 16.1L.
+        // Wheels = a rear tandem bogie only; the front of the trailer rests on the cab's fifth wheel (no front axle).
+        // NOTE: orientation from the rip is UNVERIFIED (catboy's flip-check rendered edge-on) -- render + eyeball
+        // behind the cab; if inverted, roll the mesh 180 deg about Z (x->-x, y->(minY+maxY)-y) and re-ground.
+        static readonly Spec _trailer = new()
+        {
+            Body = "trailer_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
+            DefaultPaints = new[] { "#3a5a78" },   // shares the cab's blue palette
+            WheelRadius = 0.55f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,   // towed: no drive/steer/brake of its own
+            BoxSize = new Vector3(3.0f, 2.5f, 16.1f), BoxCenter = new Vector3(0f, 1.25f, 0.05f),
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,   // unused (no engine) but non-null for the drive logic
+            Sound = null,   // no engine -> no engine loop
+            Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
+            TailPos = new[] { new Vector3(-1.35f, 1.0f, 8.0f), new Vector3(1.35f, 1.0f, 8.0f) },   // taillights at the rear of the 16 m box
+            SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
+            Wheels = new (float, float, float, bool)[]
+            {
+                (-1.30f, 0.55f, 6.0f, false), (1.30f, 0.55f, 6.0f, false),   // rear tandem bogie (no steer, no drive) -- estimated from the bbox
+                (-1.30f, 0.55f, 7.2f, false), (1.30f, 0.55f, 7.2f, false),
+            },
+            Parts = new (string, Color)[] { },   // Model_0 is the whole trailer box; no separate parts
+        };
+
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
         static readonly Spec _quad = new()
         {
@@ -637,6 +663,7 @@ namespace UnturnedGodot
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
         public static Vehicle BuildSedan(int variant = 0) => Build(_sedan, variant);
         public static Vehicle BuildSemi(int variant = 0) => Build(_semi, variant);
+        public static Vehicle BuildTrailer(int variant = 0) => Build(_trailer, variant);
         public static Vehicle BuildHatchback(int variant = 0) => Build(_hatchback, variant);
         public static Vehicle BuildHumvee(int variant = 0) => Build(_humvee, variant);
         public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant);
@@ -645,8 +672,8 @@ namespace UnturnedGodot
         public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant);
         public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant);
         public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi" };   // F1 dev-console autocomplete + validation
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer" };   // F1 dev-console autocomplete + validation
 
         static Vehicle Build(Spec s, int variant)
         {
@@ -844,7 +871,7 @@ namespace UnturnedGodot
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
-            float t = Mathf.Clamp(speed / _speedMax, 0f, 1f);
+            float t = _speedMax > 0f ? Mathf.Clamp(speed / _speedMax, 0f, 1f) : 0f;   // guard div-by-0 for a towed body (_speedMax=0) -> NaN steer target; matches ForwardSpeedPct's _speedMax<=0 guard
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
             _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp -- master confirmed the raw angle is fine
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
