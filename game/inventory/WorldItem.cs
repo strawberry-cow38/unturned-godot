@@ -264,8 +264,13 @@ namespace UnturnedGodot
                 bool show = true;
                 if (cam != null)
                 {
-                    show = !cam.IsPositionBehind(GlobalPosition) && cam.GlobalPosition.DistanceSquaredTo(GlobalPosition) < 40000f;
-                    if (show && _hitPts != null)
+                    // CONE cull (master): an item is only a candidate if it's inside the view cone (+ range) -- anything off
+                    // to the side or behind is hidden with NO raycast, and distance culling comes free from the same test.
+                    // ~60deg half-cone (a touch wider than the FOV so items don't pop right at the screen edge).
+                    Vector3 toItem = GlobalPosition - cam.GlobalPosition;
+                    float d2 = toItem.LengthSquared();
+                    show = d2 < 40000f && d2 > 1e-4f && toItem.Normalized().Dot(-cam.GlobalTransform.Basis.Z) > 0.5f;
+                    if (show && _hitPts != null)   // in the cone -> only NOW cast a ray (or a few for occluded) to check for a hard wall between
                     {
                         // full-hitbox LOS (master): if ANY hitbox sample point (centre + corners) has clear LOS, keep it visible.
                         // Breaks on the first clear point, so a visible item usually costs ONE ray; only occluded items check all.
