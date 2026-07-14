@@ -701,6 +701,7 @@ namespace UnturnedGodot
                 {
                     var pm = SolidMat(color);
                     var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = pm };
+                    if (txt.Contains("seat") || txt.Contains("steer")) mi.SetMeta("no_outline", true);   // interior parts -> keep OUT of the look-at outline so it's ONE silhouette, not the seats/wheel showing through the windows (master)
                     if (txt.Contains("steer") && s.SteerAxis != Vector3.Zero)   // wrap the steering wheel in a pivot at its centre so it can turn
                     {
                         v._steerPivot = new Node3D { Position = s.SteerPivot };
@@ -888,13 +889,14 @@ namespace UnturnedGodot
         {
             if (_lookFocused == on) return;
             _lookFocused = on;
-            if (_outlineMeshes == null)   // lazy-collect every MeshInstance3D under the vehicle (built across Build)
+            if (on || _outlineMeshes == null)   // (re)collect on FOCUS -- a settled wreck dropped its wheels, so a stale cached list would hold FREED refs
             {
                 _outlineMeshes = new System.Collections.Generic.List<MeshInstance3D>();
                 CollectMeshes(this, _outlineMeshes);
             }
             foreach (var mi in _outlineMeshes)
-                mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
+                if (IsInstanceValid(mi))   // guard freed husk meshes -- else the loop threw + aborted, leaving later meshes stuck ON the layer (outline "never reset", master)
+                    mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
             if (on) WorldItem.FocusColor = _outlineColor;   // OutlineOverlay tints the rim with this
             if (_infoLabel != null) _infoLabel.Visible = on;
         }
@@ -903,7 +905,7 @@ namespace UnturnedGodot
         {
             foreach (var c in n.GetChildren())
             {
-                if (c is MeshInstance3D mi) list.Add(mi);
+                if (c is MeshInstance3D mi && !mi.HasMeta("no_outline")) list.Add(mi);   // interior (seats/steer) excluded -> the outline is the body silhouette, one piece (master)
                 CollectMeshes(c, list);
             }
         }
