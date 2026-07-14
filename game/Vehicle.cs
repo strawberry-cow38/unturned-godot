@@ -135,7 +135,7 @@ namespace UnturnedGodot
                 ScaleAmountMin = sizeMin, ScaleAmountMax = sizeMax, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
             };
             if (fire) { ps.AnimOffsetMax = 1f; ps.AnimSpeedMin = 5f; ps.AnimSpeedMax = 9f; }   // random start frame + flicker through the 4
-            else { ps.AngleMin = -180f; ps.AngleMax = 180f; ps.AngularVelocityMin = -35f; ps.AngularVelocityMax = 35f; }   // SMOKE (not fire): random per-puff rotation + slow tumble (master)
+            else { ps.AngleMin = -180f; ps.AngleMax = 180f; }   // SMOKE (not fire): random per-puff rotation (master); no continuous spin (ruling it out as the black-puff artifact)
             return ps;
         }
 
@@ -771,8 +771,8 @@ namespace UnturnedGodot
             // damage smoke + explosion fire from the engine bay (source: smoke_0/1 at health thresholds, fire + Fire light on explode)
             var firePos = new Vector3(0f, 1.24f, -1.70f);   // source Fire node (0,1.238,1.703), Z negated
             v._firePos = firePos;   // remembered so the explosion plume can emit from the engine bay in world-space
-            v._smoke  = MakeSmoke("veh_smoke_1.png", new Color(0.55f, 0.55f, 0.55f), 2.2f, 2.2f, 20, false, 2.0f, 4.0f);   // light damage smoke (hp<200); src startSize 2-4m
-            v._smoke0 = MakeSmoke("veh_smoke_0.png", new Color(0.30f, 0.29f, 0.27f), 2.9f, 2.9f, 28, false, 2.0f, 4.0f);   // heavy smoke (hp<100); src startSize 2-4m
+            v._smoke  = MakeSmoke("veh_smoke_1.png", new Color(1.4f, 1.4f, 1.4f),  2.2f, 2.2f, 20, false, 2.0f, 4.0f);   // light damage smoke (hp<200). tint BRIGHTENED: the grey texture (0.31) x the old 0.55 tint = ~0.17 = near-BLACK (master's "black puff"); 1.4 x 0.31 = ~0.43 grey
+            v._smoke0 = MakeSmoke("veh_smoke_0.png", new Color(1.0f, 0.96f, 0.9f), 2.9f, 2.9f, 28, false, 2.0f, 4.0f);   // heavy smoke (hp<100); brightened likewise so it's dark-grey, not black
             v._fire   = MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.7f, 4.5f, 30, true,  1.0f, 2.0f);   // explosion fire; src startSize 1-2m
             v._smoke.Position = firePos; v._smoke0.Position = firePos; v._fire.Position = firePos;
             v.AddChild(v._smoke); v.AddChild(v._smoke0); v.AddChild(v._fire);
