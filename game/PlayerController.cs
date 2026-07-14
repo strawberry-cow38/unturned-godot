@@ -193,7 +193,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null;   // stash the outgoing gun's state to its item; a melee has none
+            SaveGunState(); _heldItem = null; _heldConsumable = null;   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -858,7 +858,7 @@ namespace UnturnedGodot
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
-            _melee = null;   // holding a gun now, not a melee weapon (re-enables ADS)
+            _melee = null; _heldConsumable = null;   // equipping a gun REPLACES the held consumable/melee (not a layer) -- master
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -921,6 +921,9 @@ namespace UnturnedGodot
 
         public override void _UnhandledInput(InputEvent @event)
         {
+            // Inventory dashboard open -> EAT ALL game input except Tab (to close it) + Escape: no firing / world interactions /
+            // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
+            if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape })) return;
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no look, fire, aim, reload, etc.
             if (_driving != null)
             {
@@ -1153,7 +1156,9 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null) return false;   // never fire while dead -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
+                || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return false;   // no firing while holding a consumable (it REPLACES the gun, not a layer) or with the inventory open (master) -- also guards the polled auto/burst tick
+            // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
