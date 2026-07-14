@@ -1145,10 +1145,9 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
             {
-                if (PauseMenu != null)   // ESC opens the viewmodel-tuning pause menu (frees the mouse for the sliders)
+                if (PauseMenu != null)   // ESC opens the pause menu (freezes the sim; the menu handles ESC-to-resume itself since we're then paused)
                 {
-                    PauseMenu.Toggle();
-                    Input.MouseMode = PauseMenu.IsOpen ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+                    if (!PauseMenu.IsOpen) PauseMenu.Open();   // Open() sets Paused + frees the mouse
                 }
                 else
                     Input.MouseMode = Input.MouseMode == Input.MouseModeEnum.Captured
