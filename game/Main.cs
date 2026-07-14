@@ -131,6 +131,7 @@ namespace UnturnedGodot
                 else if (arg == "--craftgate") { RunCraftGateTest(); GetTree().Quit(); return; }   // blueprint CRAFTING-skill gating self-test
                 else if (arg == "--farmyield") { RunFarmYieldTest(); GetTree().Quit(); return; }   // agriculture-skill 2nd-yield roll self-test
                 else if (arg == "--consumeholdtest") { RunConsumeHoldTest(); GetTree().Quit(); return; }   // inventory hold->eat->decrement->auto-unequip self-test
+                else if (arg == "--magtest") { RunMagTest(); GetTree().Quit(); return; }   // working-magazine reload-swap self-test
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -2053,6 +2054,37 @@ namespace UnturnedGodot
 
             GD.Print($"[HOLDTEST] beans={beansAn.Use}/{beansAn.UseLen:0.00}s water={waterAn.Use}/{waterAn.UseLen:0.00}s medkit={medkitAn.Use}/{medkitAn.UseLen:0.00}s");
             GD.Print($"[HOLDTEST] RESULT {pass} passed, {fail} failed");
+        }
+
+        // --magtest: working magazines (Military STANAG) -- reload SWAPS the fullest spare mag in, the old one goes back
+        // keeping its leftover rounds, ammo is conserved, and no spare mag = no reload.
+        static void RunMagTest()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var p = new PlayerController { Inventory = new PlayerInventory() };
+            p.Inventory.wearBackpack(new SDG.Unturned.Item(253));   // Alicepack -> the BACKPACK page has room
+            var bag = p.Inventory.items[PlayerInventory.BACKPACK];
+            bag.tryAddItem(new SDG.Unturned.Item(6, 30));   // 2 full + 1 partial Military mags in the bag
+            bag.tryAddItem(new SDG.Unturned.Item(6, 30));
+            bag.tryAddItem(new SDG.Unturned.Item(6, 12));
+            int pass = 0, fail = 0;
+            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[MAGTEST] PASS  {n}"); } else { fail++; GD.Print($"[MAGTEST] FAIL  {n}"); } }
+
+            p.LoadGun("res://content/eaglefire.dat");
+            Check("eaglefire uses magazine items (caliber match)", p.DebugUsesMag());
+            Check("gun starts loaded (Ammo=30)", p.Ammo == 30);
+            Check("3 spare mags = 72 rounds in the bag", p.Inventory.getItemCount(6) == 72);
+            Check("has a spare mag to reload from", p.DebugHasSpareMag());
+
+            p.Ammo = 5;              // fired down to 5
+            p.DebugMagSwap();        // reload
+            Check("reload swapped to a full mag (Ammo=30)", p.Ammo == 30);
+            Check("ammo conserved: spares now 47 (72 - 30 taken + 5 old back)", p.Inventory.getItemCount(6) == 47);
+
+            // empty the bag of mags -> reload must be blocked
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
+            Check("no spare mag -> cannot reload", !p.DebugHasSpareMag());
+            GD.Print($"[MAGTEST] RESULT {pass} passed, {fail} failed");
         }
 
         // Crafting parser self-test: parse a real item .dat's Blueprints list -> print each (operation, inputs,

@@ -50,6 +50,12 @@ namespace SDG.Unturned
         public bool IsConsumable => type == EItemType.FOOD || type == EItemType.WATER || type == EItemType.MEDICAL
                                  || useHealth > 0 || useFood > 0 || useWater > 0 || useVirus > 0 || useDisinfectant > 0 || useEnergy > 0 || useStopsBleeding || useHealBroken;
 
+        // ItemMagazineAsset: a magazine holds ammo (the Item instance's `amount` = current rounds). A mag fits a gun when
+        // magCaliber == GunDef.Caliber. magCapacity = max rounds (0 = not a magazine). (Military STANAG = cap 30, caliber 1.)
+        public int magCapacity;
+        public int magCaliber;
+        public bool IsMagazine => magCapacity > 0;
+
         // ItemTool.getRarityColorUI: the exact per-rarity UI colours
         public static Godot.Color RarityColorUI(EItemRarity r) => r switch
         {

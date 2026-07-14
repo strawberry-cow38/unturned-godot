@@ -260,6 +260,9 @@ namespace UnturnedGodot
         // test-only: drive the eat/drink timer from a headless self-test (--consumeholdtest)
         public void DebugConsumeTick(float dt) => TickConsume(dt);
         public static bool DebugCanLoadWav(string stem) => LoadWavOneShot($"res://content/sounds/{stem}.wav") != null;   // test: the exported WAV parses as 16-bit PCM
+        public bool DebugUsesMag() => UsesMagItem;           // test: does the equipped gun use magazine items
+        public void DebugMagSwap() => DoMagSwap();           // test: run one reload magazine swap
+        public bool DebugHasSpareMag() => FindBestMag() != null;   // test: is there a compatible spare mag to reload from
 
         // Play the consumable's use/eat/drink sound (source ItemConsumeableAsset.use, content/sounds/<stem>.wav).
         AudioStreamPlayer _consumeAudio;
@@ -522,6 +525,39 @@ namespace UnturnedGodot
         bool _hammerPending;        // reloaded from EMPTY -> after the mag swap, play the rechamber Hammer clip (source: the reload's 2nd half)
         double _hammerDur;
         float _reloadSpeed = 1f;    // DEXTERITY reload speed, kept so the Hammer clip plays at the same rate
+        bool _hammerActive;         // true while the rack (Hammer, reload 2nd half) is playing -> the completion tick just finishes
+        int _loadedMagId;           // the magazine item loaded in the gun (its ammo = Ammo); set to Gun.MagazineId on equip
+
+        // Working magazines (increment 1: the Military STANAG). A gun uses mag ITEMS when its default Magazine is a
+        // registered magazine (else the old whole-mag reload). A mag fits when its caliber matches the gun's.
+        bool UsesMagItem => Gun != null && !Gun.ShellReload && (SDG.Unturned.Assets.find((ushort)Gun.MagazineId)?.IsMagazine ?? false);
+        (byte page, byte idx, Item item)? FindBestMag()   // the spare mag in inventory that fits the gun, with the MOST ammo
+        {
+            if (Inventory == null || Gun == null) return null;
+            (byte, byte, Item)? best = null; int bestAmmo = -1;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = Inventory.items[b];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var jar = pg.getItem(i); if (jar?.item == null) continue;
+                    var a = SDG.Unturned.Assets.find(jar.item.id);
+                    if (a != null && a.IsMagazine && a.magCaliber == Gun.Caliber && jar.item.amount > bestAmmo) { bestAmmo = jar.item.amount; best = (b, i, jar.item); }
+                }
+            }
+            return best;
+        }
+        void DoMagSwap()   // pull the fullest spare mag in, put the old one back with its leftover rounds (source magazine swap)
+        {
+            var found = FindBestMag();
+            if (!found.HasValue) { Ammo = Gun?.AmmoMax ?? Ammo; return; }   // gated by StartReload, but be safe
+            var (fb, fi, fresh) = found.Value;
+            int oldAmmo = Ammo;
+            Inventory.items[fb].removeItem(fi);                                          // take the fresh mag out of the bag
+            Ammo = System.Math.Min(fresh.amount, Gun?.AmmoMax ?? fresh.amount);          // load its rounds
+            Inventory?.tryAddItem(new Item((ushort)_loadedMagId, (byte)System.Math.Max(0, oldAmmo)));   // old mag back, keeping leftover
+            _loadedMagId = fresh.id;
+        }
         const double ReloadTime = 1.633; // Eaglefire Gun_Reload clip length (no reload-time key in the .dat)
         float _recoilPending, _recoilYawPending;  // un-applied recoil kick (deg); drains additively into the real aim and STAYS -- never auto-returns (master: additive, no recover-to-origin)
         readonly RandomNumberGenerator _rng = new();
@@ -694,6 +730,7 @@ namespace UnturnedGodot
             Gun = GunDef.FromDatText(text);
             _gunName = System.IO.Path.GetFileNameWithoutExtension(datPath);
             Ammo = Gun.AmmoMax;
+            _loadedMagId = Gun.MagazineId;   // the gun comes equipped with its default magazine loaded (its ammo = Ammo)
             // reset to a valid firemode for THIS gun — don't inherit the previous one (e.g. Auto carried onto the
             // semi-only shotgun would let it hold-fire full-auto). Prefer Semi, then Auto/Burst, else Safety.
             var modes = AvailableModes();
@@ -921,6 +958,9 @@ namespace UnturnedGodot
             bag.tryAddItem(new Item(14));                           // Bottled Water
             bag.tryAddItem(new Item(14));                           // Bottled Water (separate)
             bag.tryAddItem(new Item(95));                           // Bandage
+            bag.tryAddItem(new Item(6, 30));                        // Military Magazine (full, 30 rounds)
+            bag.tryAddItem(new Item(6, 30));                        // Military Magazine (full)
+            bag.tryAddItem(new Item(6, 12));                        // Military Magazine (partial, 12 left)
             Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
         }
 
@@ -931,8 +971,10 @@ namespace UnturnedGodot
             if (_reloading || _dead) return;
             int max = Gun?.AmmoMax ?? 30;
             if (Ammo >= max) return;
+            if (UsesMagItem && FindBestMag() == null) { _viewmodel?.PlayDryFire(); return; }   // working magazines: no spare mag in the bag -> can't reload
             _burstLeft = 0;   // reloading cancels any in-progress burst -> it won't resume after the reload (master)
             _reloading = true;
+            _hammerActive = false;
             // Empty-mag reload -> after the mag swap, RECHAMBER: play the Hammer clip (the reload's source 2nd half). Not for
             // shell-fed shotguns (their pump is the reload). Source ERechamberGunAfterReloadMode.IfAmmoWasEmpty (the common case).
             _hammerPending = Ammo <= 0 && Gun?.ShellReload != true && (_viewmodel?.HasHammer ?? false);
@@ -1544,16 +1586,17 @@ namespace UnturnedGodot
                 if (_reloadTimer <= 0)
                 {
                     int max = Gun?.AmmoMax ?? 30;
-                    if (Gun?.ShellReload == true)   // shotgun: load ONE shell, then queue the next shell (or finish when full)
+                    if (_hammerActive) { _hammerActive = false; _reloading = false; _viewmodel?.SetReloading(false); }   // the rack (reload 2nd half) finished
+                    else if (Gun?.ShellReload == true)   // shotgun: load ONE shell, then queue the next shell (or finish when full)
                     {
                         Ammo = System.Math.Min(Ammo + 1, max);
                         if (Ammo >= max) { _reloading = false; _viewmodel?.SetReloading(false); }
                         else { _reloadTimer = (_viewmodel?.ReloadLength ?? ReloadTime) / System.Math.Max(1, max); _viewmodel?.SetReloading(true); }
                     }
-                    else   // magazine swap: whole mag at once
+                    else   // mag-swap complete (1st half): swap the magazine ITEM (working mags) or refill the whole mag
                     {
-                        Ammo = max;
-                        if (_hammerPending) { _hammerPending = false; _viewmodel?.PlayHammer(_reloadSpeed); _reloadTimer = _hammerDur; }   // empty reload: now RACK the round (source Hammer clip = the reload's 2nd half); stay reloading through it
+                        if (UsesMagItem) DoMagSwap(); else Ammo = max;
+                        if (_hammerPending) { _hammerPending = false; _hammerActive = true; _viewmodel?.PlayHammer(_reloadSpeed); _reloadTimer = _hammerDur; }   // empty reload: now RACK the round (source Hammer clip = the reload's 2nd half)
                         else { _reloading = false; _viewmodel?.SetReloading(false); }
                     }
                 }

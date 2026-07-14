@@ -16,6 +16,7 @@ namespace SDG.Unturned
             //  id   name            sx sy  type                 rarity               storage   description (real, from English.dat)
             Add(4,   "Eaglefire",     4, 2, EItemType.GUN,      EItemRarity.RARE,      0, 0, "American assault rifle chambered in Military ammunition.", gun: "eaglefire");
             Add(363, "Maplestrike",   4, 2, EItemType.GUN,      EItemRarity.EPIC,      0, 0, "Canadian assault rifle chambered in Military ammunition.", gun: "maplestrike");
+            Add(6,   "Military Magazine", 1, 3, EItemType.MAGAZINE, EItemRarity.UNCOMMON, 0, 0, "Standard STANAG magazine for Military rifles.", magCap: 30, magCal: 1);   // the eaglefire/maplestrike mag (caliber 1)
             Add(253, "Alicepack",     2, 2, EItemType.BACKPACK, EItemRarity.EPIC,      8, 7, "Large sized military cargo backpack.");
             Add(209, "Cargo Pants",   2, 2, EItemType.PANTS,    EItemRarity.UNCOMMON,  6, 3, "High capacity synthetic pants for all weather.");
             // consumables also carry their real ItemConsumeableAsset effects (Health / Food / Water / Bleeding heal)
@@ -179,11 +180,12 @@ namespace SDG.Unturned
         };
 
         static void Add(ushort id, string name, byte sx, byte sy, EItemType type, EItemRarity rar, byte w, byte h, string desc,
-                        int uh = 0, int uf = 0, int uw = 0, bool ub = false, bool hb = false, string gun = null)
+                        int uh = 0, int uf = 0, int uw = 0, bool ub = false, bool hb = false, string gun = null, int magCap = 0, int magCal = 0)
         {
             Assets.add(new ItemAsset { id = id, itemName = name, size_x = sx, size_y = sy, type = type, rarity = rar,
                                        width = w, height = h, description = desc,
-                                       useHealth = uh, useFood = uf, useWater = uw, useStopsBleeding = ub, useHealBroken = hb, gunName = gun });
+                                       useHealth = uh, useFood = uf, useWater = uw, useStopsBleeding = ub, useHealBroken = hb, gunName = gun,
+                                       magCapacity = magCap, magCaliber = magCal });
         }
     }
 }

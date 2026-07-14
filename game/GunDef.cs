@@ -18,6 +18,8 @@ namespace UnturnedGodot
         public float SpreadAim = 1f;   // spread multiplier while aiming (Eaglefire 0.05 = 5% of hip spread)
         public int Firerate;   // sim ticks between shots (lower = faster); cooldown = Firerate / 50 s
         public int AmmoMax;
+        public int MagazineId;   // .dat Magazine: the default magazine item id
+        public int Caliber;      // .dat Caliber: mags with a matching caliber can be loaded
         public int Pellets = 1;   // rays fired per shot (source: the magazine's Pellets; shotgun shells = 8). Each
                                   // pellet is deviated within the spread cone -> the shotgun spread pattern.
         // Per-shot camera recoil (degrees): X = horizontal (yaw, random sign), Y = vertical (pitch up). The aim
@@ -52,6 +54,8 @@ namespace UnturnedGodot
                 Range = d.ParseFloat("Range", 100f),
                 Firerate = d.ParseInt32("Firerate", 8),
                 AmmoMax = d.ParseInt32("Ammo_Max", 30),
+                MagazineId = d.ParseInt32("Magazine", 0),   // default magazine item id (eaglefire/maplestrike = 6, the Military STANAG)
+                Caliber = d.ParseInt32("Caliber", 0),       // which magazines fit: a mag's caliber must match (eaglefire caliber 1)
                 Pellets = d.ParseInt32("Pellets", 1),   // staged into the shotgun's .dat from its Shells_2 mag (8)
                 SpreadAngleDegrees = d.ParseFloat("Spread_Angle_Degrees"),
                 SpreadAim = d.ParseFloat("Spread_Aim", 1f),
