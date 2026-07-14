@@ -920,6 +920,8 @@ namespace UnturnedGodot
             if (_infoLabel != null) { _infoLabel.Text = $"{DisplayName}\n{line2}"; _infoLabel.Modulate = color; }
             if (_lookFocused) WorldItem.FocusColor = color;   // recolour the screen-space outline (red = can't, white = salvageable)
         }
+        public bool Hurt => !_exploded && Health < HealthMax;   // alive-but-damaged -> a blowtorch can repair it (source isRepair, master)
+        public void Repair(float amount) { if (!_exploded) Health = Mathf.Min(HealthMax, Health + amount); }   // blowtorch repair: heal HP up to max (source: isRepair heals instead of damaging)
         public void Salvage()   // blowtorch teardown: the cold wreck breaks apart into scrap metal on the ground, then despawns
         {
             var parent = GetParent();

@@ -378,6 +378,13 @@ namespace UnturnedGodot
             if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _staminaRegenDelay = 1f; }
             _meleeCd = strong ? 0.75f : 0.45f;   // a strong swing has a longer wind-up/recovery than a weak one
             _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
+            // blowtorch REPAIRS an alive-but-hurt vehicle you're looking at (source isRepair: heal by Vehicle_Damage, don't damage) -- master
+            if (HasBlowtorch && _focusVehicle != null && IsInstanceValid(_focusVehicle) && _focusVehicle.Hurt)
+            {
+                _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f);
+                GD.Print($"[repair] {_focusVehicle.DisplayName} -> HP {_focusVehicle.Health:0}/{_focusVehicle.HealthMax:0}");
+                return;
+            }
             float alert = _melee?.Alert ?? 0f;
             if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing noise -> zombies investigate (source AlertTool.alert); 0 = stealthy
             float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
