@@ -378,17 +378,18 @@ namespace UnturnedGodot
             if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _staminaRegenDelay = 1f; }
             _meleeCd = strong ? 0.75f : 0.45f;   // a strong swing has a longer wind-up/recovery than a weak one
             _viewmodel?.SwingMelee(strong);   // source Weak / Strong swing anim
-            // blowtorch REPAIRS an alive-but-hurt vehicle you're looking at (source isRepair: heal by Vehicle_Damage, don't damage) -- master
-            if (HasBlowtorch && _focusVehicle != null && IsInstanceValid(_focusVehicle) && _focusVehicle.Hurt)
+            float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
+            float mult = strong ? (_melee?.Strength ?? 1.5f) : 1f;   // STRONG swing hits harder (source: dmg *= strength)
+            // a VEHICLE you're looking at (source multi-target melee): a blowtorch REPAIRS a hurt one, any other melee DAMAGES it (master)
+            if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck
+                && (_focusVehicle.GlobalPosition - GlobalPosition).Length() < range + 3f)   // vehicles are big -> generous reach
             {
-                _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f);
-                GD.Print($"[repair] {_focusVehicle.DisplayName} -> HP {_focusVehicle.Health:0}/{_focusVehicle.HealthMax:0}");
+                if (HasBlowtorch) { if (_focusVehicle.Hurt) { _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f); GD.Print($"[repair] {_focusVehicle.DisplayName} -> HP {_focusVehicle.Health:0}/{_focusVehicle.HealthMax:0}"); } }
+                else { _focusVehicle.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusVehicle.DisplayName} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
             float alert = _melee?.Alert ?? 0f;
             if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing noise -> zombies investigate (source AlertTool.alert); 0 = stealthy
-            float range = _melee?.Range ?? 2.2f;      // the weapon's .dat Range (fists ~2.2 m)
-            float mult = strong ? (_melee?.Strength ?? 1.5f) : 1f;   // STRONG swing hits harder (source: dmg *= strength)
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill (source PlayerEquipment:2274)
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;   // proximity from the player torso (robust); aimed by the look direction
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
