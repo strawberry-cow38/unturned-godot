@@ -51,7 +51,10 @@ namespace UnturnedGodot
                 {
                     img.GenerateMipmaps();
                     mat.AlbedoTexture = ImageTexture.CreateFromImage(img);
-                    mat.TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;   // NN like the rest of the port
+                    // master: GRASS + FLOWERS get bilinear (smoother blades/petals); pebbles (+ the rest of the port) stay Nearest.
+                    mat.TextureFilter = (nm.StartsWith("grass") || nm.StartsWith("flowers"))
+                        ? BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps
+                        : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
                 }
             }
             else mat.AlbedoColor = SolidColor.TryGetValue(nm, out var c) ? c : new Color(0.5f, 0.5f, 0.5f);

@@ -1477,7 +1477,9 @@ namespace UnturnedGodot
                         bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
                         if (!palette) img.GenerateMipmaps();
                         mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
-                        if (palette) mm.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;
+                        // master: the whole world is Nearest (crisp Unturned look); only grass+flowers are bilinear (FoliageField).
+                        // palette textures skip mipmaps too (else the 2x2 cells average to black at distance).
+                        mm.TextureFilter = palette ? BaseMaterial3D.TextureFilterEnum.Nearest : BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
                     }
                     else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
                 }
