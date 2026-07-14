@@ -2135,6 +2135,21 @@ namespace UnturnedGodot
             // world loot: magazines spawn FULL (master)
             Check("military mag spawns full as loot (30 rounds)", SDG.Unturned.Assets.makeLoot(6).amount == 30);
             Check("non-mag loot spawns as a single (1)", SDG.Unturned.Assets.makeLoot(13).amount == 1);
+
+            // gun-state persistence: a gun remembers ammo/firemode/mag on its backing item through hands<->inventory<->drop (master)
+            var gunItem = new SDG.Unturned.Item(4);   // an Eaglefire item
+            p.LoadGun("res://content/eaglefire.dat");
+            p.DebugSetHeldItem(gunItem);
+            p.Ammo = 17; p.DebugSetFiremode(2);       // fire some down + flick to Auto
+            p.DebugSaveGunState();
+            Check("item remembers the gun's ammo (17)", gunItem.gunAmmo == 17);
+            Check("item remembers the fire mode (Auto=2)", gunItem.gunFiremode == 2);
+            p.Ammo = 30; p.DebugSetFiremode(1);        // wipe live state (as if a fresh equip)
+            p.DebugRestoreGunState(gunItem);
+            Check("re-equip restores ammo (17)", p.Ammo == 17);
+            Check("re-equip restores fire mode (Auto)", p.DebugFiremodeIdx() == 2);
+            p.Ammo = 25; p.DebugRestoreGunState(new SDG.Unturned.Item(4));   // a fresh item has no saved state
+            Check("fresh gun item keeps live defaults (no clobber)", p.Ammo == 25);
             GD.Print($"[MAGTEST] RESULT {pass} passed, {fail} failed");
         }
 

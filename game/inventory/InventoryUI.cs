@@ -243,7 +243,7 @@ namespace UnturnedGodot
             byte idx = pg.getIndex(_selX, _selY);
             if (idx == byte.MaxValue) return;
             var asset = pg.getItem(idx).GetAsset();
-            if (asset?.gunName != null) Player?.EquipHeldGun(asset.gunName);   // equipping a gun makes it the held weapon
+            if (asset?.gunName != null) Player?.EquipHeldGun(asset.gunName, pg.getItem(idx).item);   // equipping a gun makes it the held weapon; the item carries its saved ammo/firemode/mag (master)
             else if (asset?.meleeName != null) Player?.EquipHeldMelee(asset.meleeName);   // a melee weapon -> the melee viewmodel + weapon-specific swings
             // holster a grid gun into the first empty hand slot; an already-slotted gun just stays put
             if (_selPage >= PlayerInventory.SLOTS)

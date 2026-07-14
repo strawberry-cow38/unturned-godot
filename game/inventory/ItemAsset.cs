@@ -85,6 +85,11 @@ namespace SDG.Unturned
         public ushort id;
         public byte amount = 1;
         public byte quality = 100;
+        // Gun state carried by the item so a gun REMEMBERS it through hands<->inventory<->drop (source: player.equipment.state).
+        // -1 = unset (a fresh gun uses its defaults). Attachments are persisted separately by the attachment system (TODO).
+        public int gunAmmo = -1;       // loaded rounds incl. the chambered one
+        public int gunFiremode = -1;   // fire-mode index (Safety/Semi/Burst/Auto)
+        public int gunMagId = -1;      // the magazine item id currently loaded
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {

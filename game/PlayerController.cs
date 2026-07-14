@@ -193,6 +193,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
+            SaveGunState(); _heldItem = null;   // stash the outgoing gun's state to its item; a melee has none
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -298,6 +299,11 @@ namespace UnturnedGodot
         public bool DebugUsesShells() => UsesShells;         // test: does the gun feed from loose shells
         public int DebugCountShells() => CountShells();      // test: shells of the gun's caliber carried
         public int DebugPellets() => UsesShells && ShellAsset != null ? System.Math.Max(1, ShellAsset.pellets) : System.Math.Max(1, Gun?.Pellets ?? 1);   // test: rays per shot (shotgun = shell pellets)
+        public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
+        public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
+        public void DebugRestoreGunState(SDG.Unturned.Item it) => RestoreGunState(it);   // test: restore a gun's state from an item
+        public int DebugFiremodeIdx() => (int)_firemode;                            // test: current fire-mode index
+        public void DebugSetFiremode(int m) => _firemode = (FireMode)m;             // test: set the fire mode
 
         // Play the consumable's use/eat/drink sound (source ItemConsumeableAsset.use, content/sounds/<stem>.wav).
         AudioStreamPlayer _consumeAudio;
@@ -568,6 +574,16 @@ namespace UnturnedGodot
         float _reloadSpeed = 1f;    // DEXTERITY reload speed, kept so the Hammer clip plays at the same rate
         bool _hammerActive;         // true while the rack (Hammer, reload 2nd half) is playing -> the completion tick just finishes
         int _loadedMagId;           // the magazine item loaded in the gun (its ammo = Ammo); set to Gun.MagazineId on equip
+        SDG.Unturned.Item _heldItem;   // the inventory/world Item backing the held gun -> where its ammo/firemode/mag PERSIST (master)
+        // Mirror the held gun's live state onto its backing item so it survives hands<->inventory<->drop (source: equipment.state).
+        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; } }
+        void RestoreGunState(SDG.Unturned.Item item)
+        {
+            if (item == null || item.gunAmmo < 0) return;   // a fresh gun with no saved state keeps its LoadGun defaults
+            Ammo = item.gunAmmo;
+            if (item.gunFiremode >= 0 && System.Enum.IsDefined(typeof(FireMode), item.gunFiremode)) _firemode = (FireMode)item.gunFiremode;
+            if (item.gunMagId >= 0) _loadedMagId = item.gunMagId;
+        }
 
         // Working magazines (increment 1: the Military STANAG). A gun uses mag ITEMS when its default Magazine is a
         // registered magazine (else the old whole-mag reload). A mag fits when its caliber matches the gun's.
@@ -836,9 +852,12 @@ namespace UnturnedGodot
 
         // Hold a specific gun by its content name: reload the GunDef + rebuild the per-gun viewmodel. Used by Q-switch
         // and by the inventory's Equip action (equipping a gun makes it the held weapon).
-        public void EquipHeldGun(string gunName)
+        public void EquipHeldGun(string gunName, SDG.Unturned.Item backingItem = null)
         {
-            LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode
+            SaveGunState();   // stash the OUTGOING gun's live state onto its item before we swap away
+            LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
+            _heldItem = backingItem;
+            RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
             _melee = null;   // holding a gun now, not a melee weapon (re-enables ADS)
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
@@ -1100,6 +1119,7 @@ namespace UnturnedGodot
             int i = System.Array.IndexOf(modes, _firemode);
             _firemode = modes[(i + 1) % modes.Length];
             _burstLeft = 0;
+            SaveGunState();   // remember the fire mode on the backing item (master)
         }
 
         FireMode[] AvailableModes()
@@ -1189,6 +1209,7 @@ namespace UnturnedGodot
             // bolt/pump: this shot needs the action cycled before the next one (source RechamberAfterShotCount -> needsRechamber)
             if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount)
             { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; }
+            SaveGunState();   // keep the backing item's ammo current so a drop/holster mid-fight preserves it (master)
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
 
@@ -1692,6 +1713,7 @@ namespace UnturnedGodot
                         if (_hammerPending) { _hammerPending = false; _hammerActive = true; _viewmodel?.PlayHammer(_reloadSpeed); _reloadTimer = _hammerDur; }   // empty reload: now RACK the round (source Hammer clip = the reload's 2nd half)
                         else { _reloading = false; _viewmodel?.SetReloading(false); }
                     }
+                    SaveGunState();   // reload finished -> mirror the new ammo/mag onto the backing item (master persistence)
                 }
             }
             TickRechamber(delta);   // bolt/pump: run the post-shot bolt-cycle timer -> the Hammer clip, then re-enable firing
