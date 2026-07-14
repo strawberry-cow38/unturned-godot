@@ -150,7 +150,7 @@ namespace UnturnedGodot
                         float d = wi.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestI) { bestI = d; hitItem = wi; }
                     }
-                    else if (c is Vehicle v && IsInstanceValid(v) && !v.Exploded)
+                    else if (c is Vehicle v && IsInstanceValid(v))   // alive car (E to enter) OR a wreck (blowtorch salvage) -- both focusable (master)
                     {
                         float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestV) { bestV = d; hitVeh = v; }
@@ -173,6 +173,28 @@ namespace UnturnedGodot
             }
         }
 
+        // Wreck salvage (master): a focused wreck shows a state prompt -- red "Too hot" while burning, red "Requires blowtorch"
+        // if you have none, white "Hold LMB to salvage" with a blowtorch equipped. Holding LMB breaks it into scrap + despawns it.
+        void UpdateSalvage(float delta)
+        {
+            if (_focusVehicle == null || !IsInstanceValid(_focusVehicle) || !_focusVehicle.IsWreck) { _salvageTimer = 0f; return; }
+            var v = _focusVehicle;
+            Color red = new Color(0.90f, 0.25f, 0.20f), white = new Color(0.95f, 0.95f, 0.95f);
+            if (v.WreckOnFire) { v.SetSalvagePrompt("Too hot to salvage", red); _salvageTimer = 0f; }
+            else if (!HasBlowtorch) { v.SetSalvagePrompt("Requires blowtorch to salvage", red); _salvageTimer = 0f; }
+            else   // fire out + blowtorch in hand: hold LMB to salvage
+            {
+                bool holding = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsMouseButtonPressed(MouseButton.Left) && !_dead && _driving == null;
+                if (holding)
+                {
+                    _salvageTimer += delta;
+                    if (_salvageTimer >= SalvageTime) { v.Salvage(); _focusVehicle = null; _salvageTimer = 0f; }
+                    else v.SetSalvagePrompt($"Salvaging... {Mathf.Clamp((int)(_salvageTimer / SalvageTime * 100f), 0, 99)}%", white);
+                }
+                else { v.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
+            }
+        }
+
         // E: pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
         public void TryPickup()
         {
@@ -188,6 +210,10 @@ namespace UnturnedGodot
 
         float _meleeCd;
         MeleeDef _melee;   // the equipped melee weapon (null = bare fists)
+        string _heldMeleeName;   // content name of the held melee (for tool checks, e.g. the blowtorch)
+        public bool HasBlowtorch => _heldMeleeName == "blowtorch";   // a blowtorch equipped in hand -> can salvage wrecks (master)
+        float _salvageTimer;   // seconds of LMB-hold accumulated against the focused wreck (blowtorch salvage)
+        const float SalvageTime = 3f;   // hold this long to break a wreck down
 
         // Equip a melee weapon: load its real ItemMeleeAsset .dat (Range + per-target damage) so a swing is
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
@@ -198,6 +224,7 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
             _melee = System.IO.File.Exists(p) ? MeleeDef.FromDatText(meleeName, System.IO.File.ReadAllText(p)) : new MeleeDef { Name = meleeName };
+            _heldMeleeName = meleeName;   // remember the tool (blowtorch salvage check)
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { MeleeMesh = $"{meleeName}.txt", MeleeAlbedo = $"{meleeName}_albedo.png" };   // show the melee weapon in-hand (arms + model, no gun FX)
             AddChild(_viewmodel);
@@ -858,7 +885,7 @@ namespace UnturnedGodot
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
-            _melee = null; _heldConsumable = null;   // equipping a gun REPLACES the held consumable/melee (not a layer) -- master
+            _melee = null; _heldConsumable = null; _heldMeleeName = null;   // equipping a gun REPLACES the held consumable/melee (not a layer) -- master
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -944,6 +971,7 @@ namespace UnturnedGodot
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
+                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && _focusVehicle.WreckSalvageable && HasBlowtorch) { }   // LMB-hold salvages the wreck (UpdateSalvage) -- no melee swing
                 else StartFire();
             }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
@@ -964,7 +992,7 @@ namespace UnturnedGodot
             {
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
                 else if (_focusItem != null) TryPickup();                                                  // looking at an item: pick it up
-                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle)) EnterVehicle(_focusVehicle); // looking at a vehicle: get in (master: look-at, not proximity)
+                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck) EnterVehicle(_focusVehicle); // looking at a LIVE vehicle: get in (a wreck can't be entered -- it's salvaged with LMB+blowtorch)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
@@ -1536,6 +1564,7 @@ namespace UnturnedGodot
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
             UpdateLookFocus();   // look-at item interaction (master): eye-ray -> focus the item you're aiming at (rarity glow + name)
+            UpdateSalvage((float)delta);   // wreck salvage prompt + LMB-hold-with-blowtorch teardown (master)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)

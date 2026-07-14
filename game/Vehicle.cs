@@ -908,12 +908,32 @@ namespace UnturnedGodot
             }
         }
 
+        // --- Wreck salvage (master): a burnt-out car can be broken down with a blowtorch into scrap metal ---
+        public bool IsWreck => _exploded;
+        public bool WreckOnFire => _exploded && _burnTime >= 0f && _burnTime < 60f;   // still burning -> too hot to salvage
+        public bool WreckSalvageable => _exploded && _burnTime >= 60f;                // fire's out -> can be salvaged (with a blowtorch)
+        // Set the look-at prompt for a focused wreck (name + salvage line) with a state colour; PlayerController drives it (it knows the blowtorch).
+        public void SetSalvagePrompt(string line2, Color color)
+        {
+            if (_infoLabel != null) { _infoLabel.Text = $"{DisplayName}\n{line2}"; _infoLabel.Modulate = color; }
+            if (_lookFocused) WorldItem.FocusColor = color;   // recolour the screen-space outline (red = can't, white = salvageable)
+        }
+        public void Salvage()   // blowtorch teardown: the cold wreck breaks apart into scrap metal on the ground, then despawns
+        {
+            var parent = GetParent();
+            if (parent != null)
+                for (int i = 0; i < 3; i++)   // a wreck yields a few Metal Scrap (item 67)
+                    WorldItem.Spawn(parent, new SDG.Unturned.Item(67), GlobalPosition + new Vector3((i - 1) * 0.6f, 0.5f, 0f));
+            QueueFree();
+        }
+
         public override void _PhysicsProcess(double delta)
         {
             if (_lookFocused && _infoLabel != null)   // keep the info billboard above the car + live (before any perf early-return)
             {
                 _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
-                _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}\nFuel {Fuel:0}/{FuelMax:0}   Battery {Battery / BatteryMax * 100f:0}%";
+                if (!_exploded)   // alive car: HP/fuel/battery. A WRECK's salvage prompt is set by PlayerController (it knows the blowtorch).
+                    _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}\nFuel {Fuel:0}/{FuelMax:0}   Battery {Battery / BatteryMax * 100f:0}%";
             }
             if (_burnTime >= 0f)   // wreck fire lifecycle (master): 0-40s full burn, 40-60s dying down, out at 60s (+ light killed), sits 5 min, then despawns
             {
