@@ -397,6 +397,28 @@ namespace UnturnedGodot
             _arms?.Play(_arms.ClipLength("Consume_Use") > 0f ? "Consume_Use" : "Melee_Equip", 1f);
         }
 
+        // Dynamic world lights (muzzle flash / headlights / flares) mirrored into the subviewport so they spill onto the
+        // gun -- ADDITIVE on top of the sun-mirror + ambient rig. Each entry = the light's position in the player CAMERA's
+        // local space (so it hits the gun from the same direction as it hits the player) + color/energy/range. Pooled + capped.
+        readonly System.Collections.Generic.List<OmniLight3D> _worldMirrors = new();
+        public void SetWorldLights(System.Collections.Generic.IReadOnlyList<(Vector3 camLocalPos, Color color, float energy, float range)> lights)
+        {
+            if (_cam == null) return;
+            int n = lights.Count;
+            while (_worldMirrors.Count < n)
+            {
+                var l = new OmniLight3D { ShadowEnabled = false, OmniAttenuation = 1.0f };
+                _cam.AddChild(l);   // child of the subviewport camera -> its local position IS the view-space offset
+                _worldMirrors.Add(l);
+            }
+            for (int i = 0; i < _worldMirrors.Count; i++)
+            {
+                var m = _worldMirrors[i];
+                if (i < n) { var (p, c, e, r) = lights[i]; m.Position = p; m.LightColor = c; m.LightEnergy = e; m.OmniRange = r; m.Visible = true; }
+                else m.Visible = false;
+            }
+        }
+
         public void SetReloading(bool on, float speed = 1f)
         {
             _reloading = on;

@@ -724,8 +724,14 @@ namespace UnturnedGodot
                 var warm = new Color(0.97f, 0.96f, 0.83f);
                 v._headlights = new Node3D { Visible = false };
                 foreach (var p in s.SpotPos)
-                    v._headlights.AddChild(new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f });
-                v._headlights.AddChild(new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f });   // dim soft fill (raised above the seats so it doesn't glare)
+                {
+                    var hs = new SpotLight3D { Position = p, SpotRange = 45f, SpotAngle = 25f, SpotAngleAttenuation = 1.3f, LightColor = warm, LightEnergy = 9f };
+                    hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
+                    v._headlights.AddChild(hs);
+                }
+                var hfill = new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f };   // dim soft fill (raised above the seats so it doesn't glare)
+                hfill.AddToGroup("dynlight");
+                v._headlights.AddChild(hfill);
                 v.AddChild(v._headlights);
             }
 
@@ -777,6 +783,7 @@ namespace UnturnedGodot
                 v._wheelSurf[i] = PlayerController.Surf.Grass;
             }
             v._fireLight = new OmniLight3D { Position = firePos, OmniRange = 8f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
+            v._fireLight.AddToGroup("dynlight");   // a burning wreck spills onto the FP gun (light-scan)
             v.AddChild(v._fireLight);
             v._explosionAudio = new AudioStreamPlayer3D { Stream = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath("res://content/explosion.ogg")), UnitSize = 20f, MaxDistance = 200f, VolumeDb = 6f };   // boom on explode
             v.AddChild(v._explosionAudio);
@@ -868,6 +875,7 @@ namespace UnturnedGodot
         {
             var center = mi.Mesh != null ? mi.Mesh.GetAabb().GetCenter() : Vector3.Zero;
             var light = new OmniLight3D { Position = center, OmniRange = 12f, LightColor = c, LightEnergy = 0f, ShadowEnabled = false, OmniAttenuation = 1.5f };
+            light.AddToGroup("dynlight");   // spills onto the FP gun via the viewmodel light-scan (master)
             mi.AddChild(light);
             return light;
         }

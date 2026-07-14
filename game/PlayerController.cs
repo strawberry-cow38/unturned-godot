@@ -478,6 +478,37 @@ namespace UnturnedGodot
             if (_viewmodel != null) { _viewmodel.WorldSun = sun; _viewmodel.WorldEnv = env; }
         }
         void RelinkViewmodelLighting() { if (_viewmodel != null) { _viewmodel.WorldSun = _worldSun; _viewmodel.WorldEnv = _worldEnv; } }
+
+        // Mirror the nearest DYNAMIC world lights (muzzle flash / vehicle headlights / flares -- tagged into the "dynlight"
+        // group) into the viewmodel subviewport so they spill onto the gun. ADDITIVE on the sun-mirror rig (master). Throttled
+        // (~17/s) + capped at 4; each light's view-space offset from the player camera becomes the mirror's local position.
+        int _lightScanCd;
+        readonly System.Collections.Generic.List<(Vector3, Color, float, float)> _mirrorLights = new();
+        const int MaxMirrorLights = 4;
+        static float LightRange(Light3D l) => l is OmniLight3D o ? o.OmniRange : l is SpotLight3D s ? s.SpotRange : 12f;
+        void ScanWorldLights()
+        {
+            if (_cam == null || _viewmodel == null) return;
+            if (--_lightScanCd > 0) return;
+            _lightScanCd = 3;
+            _mirrorLights.Clear();
+            Vector3 camPos = _cam.GlobalPosition;
+            var found = new System.Collections.Generic.List<(float d2, Light3D l)>();
+            foreach (var n in GetTree().GetNodesInGroup("dynlight"))
+                if (n is Light3D dl && dl.Visible && dl.LightEnergy > 0.01f && IsInstanceValid(dl))
+                {
+                    float rng = LightRange(dl);
+                    float d2 = camPos.DistanceSquaredTo(dl.GlobalPosition);
+                    if (d2 < rng * rng * 4f) found.Add((d2, dl));   // within ~2x its range of the player
+                }
+            found.Sort((a, b) => a.d2.CompareTo(b.d2));
+            for (int i = 0; i < found.Count && i < MaxMirrorLights; i++)
+            {
+                var dl = found[i].l;
+                _mirrorLights.Add((_cam.ToLocal(dl.GlobalPosition), dl.LightColor, dl.LightEnergy, LightRange(dl)));   // light in the player camera's view space
+            }
+            _viewmodel.SetWorldLights(_mirrorLights);
+        }
         int _burstLeft;                               // rounds remaining in the current burst
         float _burstCd;                               // NON-source anti-spam-click cooldown between bursts (master's call)
 
@@ -1494,6 +1525,7 @@ namespace UnturnedGodot
             UpdateVitals(moving, (float)delta);
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
             if (_viewmodel != null && _worldSun != null && _viewmodel.WorldSun == null) RelinkViewmodelLighting();   // safety: any viewmodel created before/without a link (Drive PEI timing, vehicle exit) still takes the world lighting
+            ScanWorldLights();   // mirror nearby dynamic world lights (muzzle/headlights/flares) onto the gun
 
             // Phase 3 hearing: moving on foot makes FOOTSTEP noise the zombies can hear, loudness = the source stealth
             // detection radius by stance/speed (sprint 20 loud .. prone 3 near-silent). Throttled; a motionless player
