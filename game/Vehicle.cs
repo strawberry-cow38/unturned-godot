@@ -122,7 +122,10 @@ namespace UnturnedGodot
                 BlendMode = fire ? BaseMaterial3D.BlendModeEnum.Add : BaseMaterial3D.BlendModeEnum.Mix,
             };
             string tp = ProjectSettings.GlobalizePath($"res://content/{texName}");
-            if (System.IO.File.Exists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
+            // GenerateMipmaps: a runtime Image.LoadFromFile texture has NO mipmaps, so the default Linear-mipmap filter
+            // samples BLACK once the sprite MINIFIES (small/dense particles) -> the "stationary black smoke cluster" at
+            // the engine (same root cause as the old guns-render-black bug). Mips make minified particles sample grey.
+            if (System.IO.File.Exists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
             if (fire)   // veh_fire.png is a 4-frame flipbook (64x16 = 4x16^2) -> animate the frames, don't stretch all 4 onto one quad (master)
             {
                 mat.EmissionEnabled = true; mat.Emission = new Color(1f, 0.4f, 0.05f); mat.EmissionEnergyMultiplier = 2.5f;
