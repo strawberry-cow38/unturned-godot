@@ -46,7 +46,7 @@ namespace UnturnedGodot
         public float Stamina = 1f, Food = 1f, Water = 1f;
         float _staminaRegenDelay;   // seconds to wait after releasing sprint before stamina regenerates
         public float Infection;   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
-        public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount, 0f, 1f);
+        public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
 
         // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals.
         public void Consume(ItemAsset a)

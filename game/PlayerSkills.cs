@@ -96,6 +96,9 @@ namespace SDG.Unturned
         // Source UseableGun:2979/3046: DEXTERITY speeds the reload animation (speed += mastery*0.5), up to 1.5x at max. Reload TIME = duration / this.
         public float DexterityReloadSpeed() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.DEXTERITY) * 0.5f;
 
+        // Source UseableConsumeable:325: IMMUNITY cuts infection GAINED by up to 50% at max (askInfect(amount * (1-mastery*0.5))).
+        public float ImmunityInfectionMultiplier() => 1f - Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.IMMUNITY) * 0.5f;
+
         // Survival-sim skill multipliers. VITALITY/SURVIVAL are the source-exact interval->rate inversions (magnitudes
         // 0.5/0.25 from PlayerLife:2030/1953/1975); CARDIO/EXERCISE are source-INFORMED for the port's simplified
         // continuous stamina (the source is tick-based -- PlayerLife:1797/1806-1810). Applied to the port's stand-in rates.
