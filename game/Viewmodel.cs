@@ -391,9 +391,23 @@ namespace UnturnedGodot
         // Repeated tool (blowtorch/chainsaw/jackhammer): the continuous "using" motion. Start_Swing LOOPS while the trigger's
         // held; Stop_Swing plays once on release (source UseableMelee.startSwing/stopSwing). HasStartSwing == "this is a Repeated tool".
         public bool HasStartSwing => _meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Start_Swing") > 0f;
-        public void StartTorch() { if (HasStartSwing) _arms.Play(_meleeCap + "_Start_Swing"); }
+        AudioStreamPlayer _torchSnd;   // the blowtorch "Use" loop (ripped use.wav) -- plays while the torch is running
+        bool _torchSndOn;
+        public void StartTorch()
+        {
+            if (!HasStartSwing) return;
+            _arms.Play(_meleeCap + "_Start_Swing");
+            if (_torchSnd == null)
+            {
+                _torchSnd = new AudioStreamPlayer { Stream = GD.Load<AudioStream>("res://content/blowtorch_use.wav"), VolumeDb = -5f };
+                _torchSnd.Finished += () => { if (_torchSndOn) _torchSnd.Play(); };   // loop the use sound while held (robust, no .import loop dependency)
+                AddChild(_torchSnd);
+            }
+            _torchSndOn = true; _torchSnd.Play();
+        }
         public void StopTorch()
         {
+            _torchSndOn = false; _torchSnd?.Stop();
             if (_meleeCap == null || _arms == null) return;
             if (_arms.ClipLength(_meleeCap + "_Stop_Swing") > 0f) _arms.Play(_meleeCap + "_Stop_Swing");
             else _arms.Play(_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip");   // no stop clip: settle back to the ready hold
@@ -408,15 +422,11 @@ namespace UnturnedGodot
                 if (_gun == null) return;
                 // the real 16x16 spark sprite ripped from the blowtorch "Hit" ParticleSystem material (_MainTex + _EmissionMap).
                 // source startColor is WHITE, so the blue lives in the sprite itself -- albedo tint stays white.
-                var mat = new StandardMaterial3D
-                {
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,   // full-bright sprite, ignores scene light
-                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
-                    AlbedoColor = new Color(1f, 1f, 1f),   // startColor is white; the blue is in the sprite. alpha-blended (NOT additive) so overlapping sparks stay blue instead of blooming to white
-                };
+                // glow-emissive shader (torch_spark.gdshader): billboards + rolls each spark a random amount (muzzle-flash style)
+                // + outputs HDR so the viewport glow blooms them. Alpha-blended so overlaps stay blue, not white.
+                var mat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/torch_spark.gdshader") };
                 var spark = LoadTex("res://content/torch_spark.png");
-                if (spark != null) mat.AlbedoTexture = spark;
+                if (spark != null) mat.SetShaderParameter("tex", spark);
                 var quad = new QuadMesh { Size = new Vector2(0.06f, 0.06f), Material = mat };   // spark size baked into the mesh (CpuParticles ScaleAmount doesn't scale the mesh here); ~source startSize 0.05-0.10
                 // "Hit" node local pos in item.prefab = (-0.1359, 0.4719, 0) -> port frame (x,y,z)->(-x,y,-z) = (0.1359, 0.4719, 0) (the nozzle tip)
                 // Source ParticleSystem params (startSize 0.05-0.10, startSpeed 1-2, sphere r=0.25, gravity x1, lifetime 1s)
@@ -426,7 +436,7 @@ namespace UnturnedGodot
                 {
                     Emitting = false, Amount = 16, Lifetime = 0.6f, Mesh = quad,
                     Position = new Vector3(0.1359f, 0.4719f, 0f),               // the "Hit" nozzle node, port frame (x,y,z)->(-x,y,-z)
-                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.03f,
+                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.015f,   // tight point at the nozzle so sparks clearly originate there
                     Direction = new Vector3(0f, 1f, 0f), Spread = 180f,          // sphere shape = omnidirectional spray
                     InitialVelocityMin = 0.3f, InitialVelocityMax = 0.7f,        // source startSpeed 1-2 is world-scale; scaled for the close viewmodel
                     Gravity = new Vector3(0f, -2.2f, 0f),                        // fall off
