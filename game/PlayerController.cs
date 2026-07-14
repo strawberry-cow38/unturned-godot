@@ -195,6 +195,7 @@ namespace UnturnedGodot
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { MeleeMesh = $"{meleeName}.txt", MeleeAlbedo = $"{meleeName}_albedo.png" };   // show the melee weapon in-hand (arms + model, no gun FX)
             AddChild(_viewmodel);
+            RelinkViewmodelLighting();   // re-take the world lighting on the new viewmodel (else fullbright)
             GD.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
         }
 
@@ -620,6 +621,7 @@ namespace UnturnedGodot
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
+            RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
             GD.Print($"[gun] holding {_gunName}");
         }
 
@@ -1491,6 +1493,7 @@ namespace UnturnedGodot
             _viewmodel?.SetLocomotion(moving, _move.Stance);
             UpdateVitals(moving, (float)delta);
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
+            if (_viewmodel != null && _worldSun != null && _viewmodel.WorldSun == null) RelinkViewmodelLighting();   // safety: any viewmodel created before/without a link (Drive PEI timing, vehicle exit) still takes the world lighting
 
             // Phase 3 hearing: moving on foot makes FOOTSTEP noise the zombies can hear, loudness = the source stealth
             // detection radius by stance/speed (sprint 20 loud .. prone 3 near-silent). Throttled; a motionless player
