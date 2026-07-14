@@ -1471,8 +1471,13 @@ namespace UnturnedGodot
                             for (int i = 3; i < data.Length; i += 4) if (data[i] < 200) tr++;
                             if (tr > data.Length / 400) { mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mm.AlphaScissorThreshold = 0.5f; }
                         }
-                        img.GenerateMipmaps();
+                        // Tiny PALETTE textures (billboards etc. use a 2x2/4x2 colour-key sampled by the mesh UVs): Linear
+                        // filtering + mipmaps average the palette cells together -> the thin logo/text geometry minifies to
+                        // black at distance (same class as the gun black-texture bug). Nearest + no mipmaps keeps each cell crisp.
+                        bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
+                        if (!palette) img.GenerateMipmaps();
                         mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                        if (palette) mm.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;
                     }
                     else mm.AlbedoColor = new Color(0.60f, 0.55f, 0.47f);
                 }
