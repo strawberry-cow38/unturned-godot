@@ -272,6 +272,29 @@ namespace UnturnedGodot
             GD.Print("[equip] dequipped -> empty hands");
         }
 
+        // Hotbar (master): 1 = primary slot, 2 = secondary slot; RMB an item + 3-9 binds that key to it, then the key equips it.
+        public readonly System.Collections.Generic.Dictionary<int, (byte page, byte x, byte y)> HotbarBinds = new();
+        public void BindHotbar(int key, byte page, byte x, byte y) { HotbarBinds[key] = (page, x, y); GD.Print($"[hotbar] key {key} -> item at page {page} ({x},{y})"); }
+        public void EquipHotbar(int n)
+        {
+            if (n == 1) { EquipFromLocation(0, 0, 0); return; }        // primary slot (page 0)
+            if (n == 2) { EquipFromLocation(1, 0, 0); return; }        // secondary slot (page 1)
+            if (HotbarBinds.TryGetValue(n, out var loc)) EquipFromLocation(loc.page, loc.x, loc.y);   // a bound item (3-9)
+        }
+        void EquipFromLocation(byte page, byte x, byte y)
+        {
+            if (Inventory == null || page >= Inventory.items.Length) return;
+            var pg = Inventory.items[page];
+            byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return;                          // empty slot -> nothing to equip
+            var j = pg.getItem(idx);
+            var asset = j.GetAsset();
+            if (asset == null) return;
+            if (asset.gunName != null) EquipHeldGun(asset.gunName, j.item);
+            else if (asset.meleeName != null) EquipHeldMelee(asset.meleeName);
+            else if (asset.IsConsumable) EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_"));
+        }
+
         // --- Consumables held in hand (food/drink/medical): equip -> hold -> LMB eats/drinks -> effects apply (source UseableConsumeable). ---
         ItemAsset _heldConsumable;   // the consumable held in hand (null = none); LMB starts eating/drinking it
         string _heldConsumableMesh;  // its mesh name -> re-equip another of the same type after one is consumed (master)
@@ -1068,6 +1091,8 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
             { if (HasGunOut) StartReload(); }   // no reload without a gun out (master)
+            else if (@event is InputEventKey { Pressed: true } hk && hk.Keycode >= Key.Key1 && hk.Keycode <= Key.Key9)
+                EquipHotbar((int)hk.Keycode - (int)Key.Key0);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary slot, 3-9 = bound item. Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
             {
                 if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)

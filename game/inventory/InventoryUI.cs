@@ -108,6 +108,13 @@ namespace UnturnedGodot
                 RebuildDragTile();
                 GetViewport().SetInputAsHandled();
             }
+            else if (e is InputEventKey { Pressed: true } bk && _selPanel != null && bk.Keycode >= Key.Key3 && bk.Keycode <= Key.Key9)
+            {
+                // RMB'd an item (its selection panel is open) + 3-9 -> BIND that number key to equip this item (master)
+                Player?.BindHotbar((int)bk.Keycode - (int)Key.Key0, _selPage, _selX, _selY);
+                CloseSelection();
+                GetViewport().SetInputAsHandled();
+            }
         }
 
         void StartDrag(Vector2 global)
