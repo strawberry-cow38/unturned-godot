@@ -23,6 +23,7 @@ namespace UnturnedGodot
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
         Vehicle _driving; bool _fp;   // vehicle being driven + camera mode: _fp false = 3rd person (default), true = 1st; H toggles (on foot + driving)
+        float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         readonly bool _ugFp = System.Environment.GetEnvironmentVariable("UG_FP") == "1";   // render harness: force 1st-person to screenshot the FP viewmodel
         RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
@@ -1032,9 +1033,17 @@ namespace UnturnedGodot
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
-                RotateY(Mathf.DegToRad(-mm.Relative.X * MouseSensitivity));
-                _pitchDeg = Mathf.Clamp(_pitchDeg - mm.Relative.Y * MouseSensitivity, -89f, 89f);
-                _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
+                if (_driving != null && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
+                {
+                    _driveCamYaw -= mm.Relative.X * MouseSensitivity;
+                    _driveCamPitch = Mathf.Clamp(_driveCamPitch - mm.Relative.Y * MouseSensitivity, -25f, 70f);
+                }
+                else if (_driving == null)
+                {
+                    RotateY(Mathf.DegToRad(-mm.Relative.X * MouseSensitivity));
+                    _pitchDeg = Mathf.Clamp(_pitchDeg - mm.Relative.Y * MouseSensitivity, -89f, 89f);
+                    _cam.RotationDegrees = new Vector3(_pitchDeg, 0f, 0f);
+                }
             }
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
@@ -1777,10 +1786,14 @@ namespace UnturnedGodot
                 var eye = vt * new Vector3(-0.4f, 1.85f, 0.4f);
                 _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * new Vector3(-0.4f, 1.25f, -3.5f), Vector3.Up);
             }
-            else            // third-person chase (Unturned default): behind + above the car's heading, looking at it
+            else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
-                var eye = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
-                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+                float size = _driving.WorldMeshAabb().Size.Length();          // bounding diagonal -> bigger vehicle, further back
+                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 24f);
+                float pitchR = Mathf.DegToRad(_driveCamPitch);
+                Vector3 dir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-fwd);   // behind the heading, orbited by the mouse yaw
+                var eye = vt.Origin + dir * (dist * Mathf.Cos(pitchR)) + Vector3.Up * (dist * Mathf.Sin(pitchR) + size * 0.22f);
+                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt.Origin + Vector3.Up * (size * 0.15f), Vector3.Up);
             }
         }
 
