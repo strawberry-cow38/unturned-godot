@@ -1153,6 +1153,8 @@ namespace UnturnedGodot
             Check("dexterity reload 1.5x at max", Mathf.Abs(sk.DexterityReloadSpeed() - 1.5f) < 0.001f);
             sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.IMMUNITY).level = 5;
             Check("immunity infection 0.5x at max", Mathf.Abs(sk.ImmunityInfectionMultiplier() - 0.5f) < 0.001f);
+            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.SNEAKYBEAKY).level = 7;
+            Check("sneakybeaky noise 0.25x at max", Mathf.Abs(sk.SneakyBeakyNoiseMultiplier() - 0.25f) < 0.001f);
 
             GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
         }

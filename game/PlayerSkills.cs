@@ -99,6 +99,9 @@ namespace SDG.Unturned
         // Source UseableConsumeable:325: IMMUNITY cuts infection GAINED by up to 50% at max (askInfect(amount * (1-mastery*0.5))).
         public float ImmunityInfectionMultiplier() => 1f - Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.IMMUNITY) * 0.5f;
 
+        // Source PlayerMovement:791: SNEAKYBEAKY quiets the player's movement noise by up to 75% (volume = 1 - mastery*0.75).
+        public float SneakyBeakyNoiseMultiplier() => 1f - Mastery((int)EPlayerSpeciality.DEFENSE, (int)EPlayerDefense.SNEAKYBEAKY) * 0.75f;
+
         // Survival-sim skill multipliers. VITALITY/SURVIVAL are the source-exact interval->rate inversions (magnitudes
         // 0.5/0.25 from PlayerLife:2030/1953/1975); CARDIO/EXERCISE are source-INFORMED for the port's simplified
         // continuous stamina (the source is tick-based -- PlayerLife:1797/1806-1810). Applied to the port's stand-in rates.

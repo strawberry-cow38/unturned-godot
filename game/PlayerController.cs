@@ -1453,7 +1453,7 @@ namespace UnturnedGodot
             if (moving && _footNoiseT <= 0f)
             {
                 _footNoiseT = 0.4f;
-                float loud = GetStealthDetectionRadius();
+                float loud = GetStealthDetectionRadius() * Skills.SneakyBeakyNoiseMultiplier();   // SNEAKYBEAKY quiets footsteps -> zombies hear you from less far (source PlayerMovement:791)
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
 
