@@ -153,6 +153,7 @@ namespace UnturnedGodot
                 _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = _rar, Roughness = 0.55f };
                 boxSize = new Vector3(0.24f, 0.24f, 0.24f); boxCenter = Vector3.Zero;
             }
+            boxSize *= 1.15f;                           // +15% on every dropped item's phys hitbox (xyz) -> easier to look-at + pick up (master). scales the LOS samples below too.
             col.Shape = new BoxShape3D { Size = boxSize };
             col.Position = boxCenter;                   // mesh sits in model space; the best-fit box is offset to wrap it
             AddChild(_mesh);

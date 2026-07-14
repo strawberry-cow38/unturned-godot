@@ -605,10 +605,14 @@ namespace UnturnedGodot
 
         bool HeadroomFor(float height)   // is there space to occupy a taller capsule? (blocks standing up under a ceiling -- master)
         {
+            // LENIENCY (master): skip the bottom `foot` metres + slim the probe, so the FLOOR under the player (which the
+            // capsule would otherwise clip) isn't mistaken for a ceiling. Only a genuine low overhead blocks standing now.
+            const float foot = 0.25f;
+            float h = Mathf.Max(0.1f, height - foot);
             var q = new PhysicsShapeQueryParameters3D
             {
-                Shape = new CapsuleShape3D { Height = height, Radius = 0.34f },
-                Transform = new Transform3D(Basis.Identity, GlobalPosition + Vector3.Up * (height / 2f)),
+                Shape = new CapsuleShape3D { Height = h, Radius = 0.30f },
+                Transform = new Transform3D(Basis.Identity, GlobalPosition + Vector3.Up * (foot + h / 2f)),
                 CollisionMask = CollisionMask,
                 Exclude = new Godot.Collections.Array<Rid> { GetRid() },
             };
