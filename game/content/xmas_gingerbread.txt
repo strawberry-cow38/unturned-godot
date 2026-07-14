@@ -1,4 +1,4 @@
-# xmas_gingerbread consumable Model_0 (X+Z neg + winding rev)
+# xmas_gingerbread consumable held mesh (X+Z neg + winding rev)
 v -0.000000 -0.118288 -0.020771
 v -0.117621 -0.181676 -0.020771
 v -0.039181 -0.210814 -0.020771

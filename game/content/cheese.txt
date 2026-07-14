@@ -1,4 +1,4 @@
-# cheese consumable Model_0 (X+Z neg + winding rev)
+# cheese consumable held mesh (X+Z neg + winding rev)
 v 0.154351 0.147054 0.094261
 v 0.049317 -0.168048 0.094261
 v -0.160751 0.042020 0.094261

@@ -1,4 +1,4 @@
-# salmon_meuniere2 consumable Model_0 (X+Z neg + winding rev)
+# salmon_meuniere2 consumable held mesh (X+Z neg + winding rev)
 v -0.158453 0.158453 0.080799
 v -0.224086 0.000000 0.080799
 v -0.158453 -0.158453 0.080799

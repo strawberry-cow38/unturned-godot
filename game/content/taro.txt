@@ -1,4 +1,4 @@
-# taro consumable Model_0 (X+Z neg + winding rev)
+# taro consumable held mesh (X+Z neg + winding rev)
 v -0.043206 -0.141316 0.042149
 v -0.082112 -0.143031 -0.023800
 v -0.130801 -0.018603 -0.031215

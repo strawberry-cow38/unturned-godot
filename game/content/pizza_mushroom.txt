@@ -1,4 +1,4 @@
-# pizza_mushroom consumable Model_0 (X+Z neg + winding rev)
+# pizza_mushroom consumable held mesh (X+Z neg + winding rev)
 v -0.328189 -0.189480 0.050177
 v -0.378960 -0.000000 0.050177
 v -0.328189 0.189480 0.050177

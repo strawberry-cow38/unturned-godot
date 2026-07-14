@@ -1,4 +1,4 @@
-# goldfish_cooked consumable Model_0 (X+Z neg + winding rev)
+# goldfish_cooked consumable held mesh (X+Z neg + winding rev)
 v -0.076361 -0.020371 0.003761
 v 0.008240 -0.097935 0.003761
 v -0.036615 -0.097935 0.003761

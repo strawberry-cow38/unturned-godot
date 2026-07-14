@@ -1,4 +1,4 @@
-# dough consumable Model_0 (X+Z neg + winding rev)
+# dough consumable held mesh (X+Z neg + winding rev)
 v 0.124602 0.128249 -0.124602
 v 0.072779 0.246873 0.079779
 v 0.072393 0.251102 -0.075544

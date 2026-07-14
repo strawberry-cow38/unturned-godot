@@ -1,4 +1,4 @@
-# goatfish_raw consumable Model_0 (X+Z neg + winding rev)
+# goatfish_raw consumable held mesh (X+Z neg + winding rev)
 v -0.050996 0.183981 -0.000000
 v -0.112005 0.172517 -0.000000
 v -0.111873 0.164151 -0.000000

@@ -1,4 +1,4 @@
-# pumpkin consumable Model_0 (X+Z neg + winding rev)
+# pumpkin consumable held mesh (X+Z neg + winding rev)
 v -0.151582 0.141446 0.113507
 v -0.149080 -0.074455 0.065887
 v -0.177347 0.171009 -0.072068

@@ -1,4 +1,4 @@
-# tuna_raw consumable Model_0 (X+Z neg + winding rev)
+# tuna_raw consumable held mesh (X+Z neg + winding rev)
 v 0.281369 0.177754 -0.000000
 v 0.188642 0.259070 -0.000000
 v 0.158444 -0.106401 -0.000000

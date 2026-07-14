@@ -1,4 +1,4 @@
-# taro_mooncake consumable Model_0 (X+Z neg + winding rev)
+# taro_mooncake consumable held mesh (X+Z neg + winding rev)
 v 0.023297 0.159104 0.069076
 v -0.095447 0.128315 0.067997
 v -0.111085 0.157136 -0.044650

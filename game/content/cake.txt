@@ -1,4 +1,4 @@
-# cake consumable Model_0 (X+Z neg + winding rev)
+# cake consumable held mesh (X+Z neg + winding rev)
 v 0.037950 0.225628 -0.197451
 v 0.037950 0.225628 -0.103702
 v 0.037950 0.301529 -0.103702

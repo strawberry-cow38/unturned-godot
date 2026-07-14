@@ -1,4 +1,4 @@
-# bag_chips consumable Model_0 (X+Z neg + winding rev)
+# bag_chips consumable held mesh (X+Z neg + winding rev)
 v -0.152049 0.216889 0.069940
 v 0.152049 0.216889 0.069940
 v 0.152049 -0.209987 0.069940

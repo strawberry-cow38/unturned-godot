@@ -1,4 +1,4 @@
-# taro_ricecake consumable Model_0 (X+Z neg + winding rev)
+# taro_ricecake consumable held mesh (X+Z neg + winding rev)
 v 0.162897 0.000000 0.064326
 v 0.153198 0.164326 0.064326
 v 0.139439 0.151971 -0.104057

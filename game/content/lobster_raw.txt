@@ -1,4 +1,4 @@
-# lobster_raw consumable Model_0 (X+Z neg + winding rev)
+# lobster_raw consumable held mesh (X+Z neg + winding rev)
 v 0.173819 0.454927 0.004919
 v 0.177468 0.320569 0.054470
 v 0.177468 0.320569 -0.044409

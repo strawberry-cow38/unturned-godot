@@ -1,4 +1,4 @@
-# waffle consumable Model_0 (X+Z neg + winding rev)
+# waffle consumable held mesh (X+Z neg + winding rev)
 v 0.184643 -0.184643 -0.032458
 v 0.184643 -0.184643 0.032458
 v 0.184643 0.184643 0.032458

@@ -1,4 +1,4 @@
-# bar_granola consumable Model_0 (X+Z neg + winding rev)
+# bar_granola consumable held mesh (X+Z neg + winding rev)
 v 0.095031 0.191889 -0.040483
 v 0.075359 0.170434 -0.040483
 v 0.075359 -0.162596 -0.040483

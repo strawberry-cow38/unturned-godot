@@ -1,4 +1,4 @@
-# trout_raw consumable Model_0 (X+Z neg + winding rev)
+# trout_raw consumable held mesh (X+Z neg + winding rev)
 v 0.008315 0.152176 -0.010206
 v 0.007487 0.172051 -0.005986
 v -0.011128 0.173001 -0.014114

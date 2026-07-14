@@ -1,4 +1,4 @@
-# pie_indigo consumable Model_0 (X+Z neg + winding rev)
+# pie_indigo consumable held mesh (X+Z neg + winding rev)
 v 0.000000 0.306958 -0.108522
 v 0.000000 0.000000 -0.060400
 v 0.153479 0.265833 -0.108522

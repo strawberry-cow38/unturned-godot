@@ -1,4 +1,4 @@
-# mushroom_red consumable Model_0 (X+Z neg + winding rev)
+# mushroom_red consumable held mesh (X+Z neg + winding rev)
 v 0.035572 -0.035572 0.108613
 v 0.035572 0.035572 0.108613
 v 0.042451 0.042451 -0.022417

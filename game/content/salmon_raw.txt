@@ -1,4 +1,4 @@
-# salmon_raw consumable Model_0 (X+Z neg + winding rev)
+# salmon_raw consumable held mesh (X+Z neg + winding rev)
 v 0.009235 0.225592 -0.025309
 v 0.007994 0.255404 -0.018980
 v -0.019928 0.256830 -0.031171

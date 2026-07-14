@@ -1,4 +1,4 @@
-# pancake consumable Model_0 (X+Z neg + winding rev)
+# pancake consumable held mesh (X+Z neg + winding rev)
 v -0.136551 0.136551 -0.032458
 v -0.193112 -0.000000 -0.032458
 v -0.136551 -0.136551 -0.032458

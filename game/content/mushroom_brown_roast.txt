@@ -1,4 +1,4 @@
-# mushroom_brown_roast consumable Model_0 (X+Z neg + winding rev)
+# mushroom_brown_roast consumable held mesh (X+Z neg + winding rev)
 v -0.088363 -0.004132 0.002539
 v -0.088363 -0.004132 0.034053
 v 0.018139 0.021347 0.038712

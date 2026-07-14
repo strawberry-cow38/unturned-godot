@@ -1,4 +1,4 @@
-# gianttrevally_cooked consumable Model_0 (X+Z neg + winding rev)
+# gianttrevally_cooked consumable held mesh (X+Z neg + winding rev)
 v -0.165086 -0.054350 0.008140
 v -0.175680 0.205596 0.008140
 v -0.136598 0.357574 0.008140

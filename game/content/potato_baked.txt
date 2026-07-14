@@ -1,4 +1,4 @@
-# potato_baked consumable Model_0 (X+Z neg + winding rev)
+# potato_baked consumable held mesh (X+Z neg + winding rev)
 v 0.001274 0.191116 -0.084988
 v 0.127961 -0.019699 -0.071885
 v 0.094465 0.143055 -0.071900

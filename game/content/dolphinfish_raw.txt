@@ -1,4 +1,4 @@
-# dolphinfish_raw consumable Model_0 (X+Z neg + winding rev)
+# dolphinfish_raw consumable held mesh (X+Z neg + winding rev)
 v 0.094289 0.305780 -0.000000
 v 0.071976 -0.223424 0.000000
 v 0.105234 -0.253656 0.000000

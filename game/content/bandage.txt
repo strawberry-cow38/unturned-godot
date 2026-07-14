@@ -1,4 +1,4 @@
-# bandage consumable Model_0 (X+Z neg + winding rev)
+# bandage consumable held mesh (X+Z neg + winding rev)
 v 0.144459 -0.064781 -0.159851
 v 0.144459 -0.064781 -0.068575
 v 0.144459 0.064781 -0.068575

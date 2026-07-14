@@ -1,4 +1,4 @@
-# minnow_raw consumable Model_0 (X+Z neg + winding rev)
+# minnow_raw consumable held mesh (X+Z neg + winding rev)
 v 0.007716 0.115469 -0.007654
 v 0.007158 0.130374 -0.004490
 v -0.005407 0.131087 -0.010586

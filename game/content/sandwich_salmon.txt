@@ -1,4 +1,4 @@
-# sandwich_salmon consumable Model_0 (X+Z neg + winding rev)
+# sandwich_salmon consumable held mesh (X+Z neg + winding rev)
 v 0.183457 -0.220821 -0.016522
 v 0.183457 -0.220821 0.016522
 v 0.183457 0.220821 0.016522

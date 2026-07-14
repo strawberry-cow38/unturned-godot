@@ -208,6 +208,7 @@ namespace UnturnedGodot
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
         public void EquipHeldConsumable(ItemAsset asset, string meshName)
         {
+            if (string.IsNullOrEmpty(meshName)) meshName = "canned_beans";   // generic held stand-in so an unmapped consumable never shows a null/broken mesh
             _heldConsumable = asset;
             _consumeTimer = 0f;
             _melee = null;
@@ -236,9 +237,21 @@ namespace UnturnedGodot
             {
                 Consume(_heldConsumable);   // apply Health/Food/Water/etc.
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
-                // TODO(increment 2): decrement the inventory stack + auto-unequip when depleted
+                ushort id = _heldConsumable.id;
+                Inventory?.removeItemAmount(id, 1);   // spend one from the stack (source consume() -> ItemManager removes 1)
+                if ((Inventory?.getItemCount(id) ?? 0) > 0)
+                    GD.Print($"[consume] {Inventory.getItemCount(id)} left -- click to eat/drink another");   // still have some: keep holding, click again
+                else
+                {
+                    _heldConsumable = null;   // ran out: auto-unequip back to the last-held gun (source re-selects the prior slot)
+                    EquipHeldGun(string.IsNullOrEmpty(_gunName) ? "eaglefire" : _gunName);
+                    GD.Print("[consume] out of that item -- back to the gun");
+                }
             }
         }
+
+        // test-only: drive the eat/drink timer from a headless self-test (--consumeholdtest)
+        public void DebugConsumeTick(float dt) => TickConsume(dt);
 
         // G: melee swing -- hit the nearest zombie in front within the weapon's reach (proximity, not a raycast). Reuses
         // the zombie damage path. Rounds out combat (Unturned lets you swing/punch when out of ammo or up close).

@@ -1,4 +1,4 @@
-# rag consumable Model_0 (X+Z neg + winding rev)
+# rag consumable held mesh (X+Z neg + winding rev)
 v 0.218234 0.148847 -0.000000
 v 0.218234 0.128905 0.074423
 v -0.218234 0.128905 0.074424

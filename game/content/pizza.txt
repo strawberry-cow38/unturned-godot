@@ -1,4 +1,4 @@
-# pizza consumable Model_0 (X+Z neg + winding rev)
+# pizza consumable held mesh (X+Z neg + winding rev)
 v 0.000000 0.378960 0.050177
 v -0.189480 0.328189 0.050177
 v -0.189480 0.328189 -0.030392

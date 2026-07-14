@@ -1,4 +1,4 @@
-# squid_cooked consumable Model_0 (X+Z neg + winding rev)
+# squid_cooked consumable held mesh (X+Z neg + winding rev)
 v -0.000000 -0.200000 -0.212132
 v 0.212132 0.200000 -0.000000
 v -0.000000 0.200000 -0.212132

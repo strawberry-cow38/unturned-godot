@@ -1,4 +1,4 @@
-# bag_mre consumable Model_0 (X+Z neg + winding rev)
+# bag_mre consumable held mesh (X+Z neg + winding rev)
 v 0.178881 0.251104 -0.050128
 v 0.178881 0.304455 -0.008124
 v -0.178881 0.304455 -0.008124

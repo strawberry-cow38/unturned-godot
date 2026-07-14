@@ -1,4 +1,4 @@
-# taro_poi consumable Model_0 (X+Z neg + winding rev)
+# taro_poi consumable held mesh (X+Z neg + winding rev)
 v 0.241559 0.000000 -0.158350
 v 0.170808 0.170808 -0.158350
 v 0.298856 0.123790 -0.237909

@@ -1,4 +1,4 @@
-# shrimp_raw consumable Model_0 (X+Z neg + winding rev)
+# shrimp_raw consumable held mesh (X+Z neg + winding rev)
 v 0.052686 0.088081 -0.009079
 v 0.068687 0.088072 -0.009079
 v 0.068696 0.104073 -0.009079

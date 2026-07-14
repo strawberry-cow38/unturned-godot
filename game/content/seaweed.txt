@@ -1,4 +1,4 @@
-# seaweed consumable Model_0 (X+Z neg + winding rev)
+# seaweed consumable held mesh (X+Z neg + winding rev)
 v -0.222740 -0.012136 0.015099
 v 0.171769 -0.033246 0.000676
 v -0.209676 0.064091 0.000676

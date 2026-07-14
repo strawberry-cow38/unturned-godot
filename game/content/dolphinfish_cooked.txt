@@ -1,4 +1,4 @@
-# dolphinfish_cooked consumable Model_0 (X+Z neg + winding rev)
+# dolphinfish_cooked consumable held mesh (X+Z neg + winding rev)
 v -0.097156 -0.184940 0.008140
 v 0.016986 -0.354588 0.008140
 v -0.053668 -0.354588 0.008140

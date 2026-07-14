@@ -1,4 +1,4 @@
-# lettuce consumable Model_0 (X+Z neg + winding rev)
+# lettuce consumable held mesh (X+Z neg + winding rev)
 v 0.050338 -0.187888 0.050338
 v 0.068466 -0.216413 -0.000000
 v 0.000000 -0.282097 -0.000000

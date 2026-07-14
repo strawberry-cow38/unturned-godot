@@ -1,4 +1,4 @@
-# gianttrevally_raw consumable Model_0 (X+Z neg + winding rev)
+# gianttrevally_raw consumable held mesh (X+Z neg + winding rev)
 v -0.162692 0.441222 -0.000000
 v -0.034647 0.225497 -0.086935
 v -0.065133 0.470360 -0.000000

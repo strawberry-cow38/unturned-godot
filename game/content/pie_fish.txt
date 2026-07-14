@@ -1,4 +1,4 @@
-# pie_fish consumable Model_0 (X+Z neg + winding rev)
+# pie_fish consumable held mesh (X+Z neg + winding rev)
 v 0.083352 0.259928 -0.200164
 v 0.087938 0.279542 -0.212806
 v 0.067280 0.279664 -0.219797

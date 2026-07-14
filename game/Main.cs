@@ -130,6 +130,7 @@ namespace UnturnedGodot
                 else if (arg == "--skilltest") { RunSkillTest(); GetTree().Quit(); return; }   // PlayerSkills grid + XP cost formula + upgrade/mastery self-test
                 else if (arg == "--craftgate") { RunCraftGateTest(); GetTree().Quit(); return; }   // blueprint CRAFTING-skill gating self-test
                 else if (arg == "--farmyield") { RunFarmYieldTest(); GetTree().Quit(); return; }   // agriculture-skill 2nd-yield roll self-test
+                else if (arg == "--consumeholdtest") { RunConsumeHoldTest(); GetTree().Quit(); return; }   // inventory hold->eat->decrement->auto-unequip self-test
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args
@@ -1971,6 +1972,41 @@ namespace UnturnedGodot
             Check("water -> water 0.1+0.55=0.65", Mathf.Abs(p.Water - 0.65f) < 0.01f);
 
             GD.Print($"[USETEST] RESULT {pass} passed, {fail} failed");
+        }
+
+        // --consumeholdtest: the full inventory HOLD flow -- equip a consumable to hand, click to eat, decrement the
+        // stack, and auto-unequip back to the gun when the last one is gone (source UseableConsumeable equip->use->remove).
+        static void RunConsumeHoldTest()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var p = new PlayerController { Health = 50f, Food = 0.1f, Water = 0.1f };
+            p.Inventory = new PlayerInventory();
+            p.Inventory.items[2].tryAddItem(new SDG.Unturned.Item(13));   // 2x Canned Beans (id 13) in pockets, each its own grid item
+            p.Inventory.items[2].tryAddItem(new SDG.Unturned.Item(13));
+            int pass = 0, fail = 0;
+            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[HOLDTEST] PASS  {n}"); } else { fail++; GD.Print($"[HOLDTEST] FAIL  {n}"); } }
+
+            var beans = SDG.Unturned.Assets.find(13);
+            Check("beans resolves + IsConsumable", beans != null && beans.IsConsumable);
+            Check("beans has a held mesh in the registry", ConsumableRegistry.Mesh(13) != null);
+            Check("start count = 2", p.Inventory.getItemCount(13) == 2);
+
+            p.EquipHeldConsumable(beans, ConsumableRegistry.Mesh(13));
+            Check("holding after equip", p.HoldingConsumable);
+            Check("no stack spent just by holding", p.Inventory.getItemCount(13) == 2);
+
+            p.StartConsume();                                                 // 1st click -> eat
+            for (int i = 0; i < 60; i++) p.DebugConsumeTick(0.05f);           // 3.0s > 2.2s useTime -> consume fires once
+            Check("food rose after 1st eat", p.Food > 0.5f);
+            Check("count -> 1 after 1st eat", p.Inventory.getItemCount(13) == 1);
+            Check("still holding (1 left)", p.HoldingConsumable);
+
+            p.StartConsume();                                                 // 2nd click -> eat the last one
+            for (int i = 0; i < 60; i++) p.DebugConsumeTick(0.05f);
+            Check("count -> 0 after 2nd eat", p.Inventory.getItemCount(13) == 0);
+            Check("auto-unequipped when depleted", !p.HoldingConsumable);
+
+            GD.Print($"[HOLDTEST] RESULT {pass} passed, {fail} failed");
         }
 
         // Crafting parser self-test: parse a real item .dat's Blueprints list -> print each (operation, inputs,

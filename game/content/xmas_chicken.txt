@@ -1,4 +1,4 @@
-# xmas_chicken consumable Model_0 (X+Z neg + winding rev)
+# xmas_chicken consumable held mesh (X+Z neg + winding rev)
 v 0.158877 0.030454 0.030454
 v 0.158877 0.030454 -0.030454
 v 0.193119 0.043314 -0.043314

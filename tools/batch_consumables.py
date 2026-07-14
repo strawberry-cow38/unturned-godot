@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""batch_consumables.py -- extract the held mesh + albedo for EVERY food/medical consumable in core.masterbundle
-(same as extract_consumable.py, looped). Output: <OUT>/<name>.txt + <name>_albedo.png + consumables.txt (name list)."""
+"""batch_consumables.py -- extract the held mesh + albedo for EVERY food/medical consumable in core.masterbundle.
+Held mesh = the Model_0 child (food/most items) OR, if there's no Model_0, the ROOT Item node's own MeshFilter
+(8 medical items -- medkit/morphine/etc. store the held mesh on the root, not a child).
+Output: <OUT>/<name>.txt + <name>_albedo.png + consumables.txt (name list)."""
 import UnityPy, os, re
 CORE = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle"
 OUT = r"C:\claude-workspace\consumeout"
@@ -21,15 +23,15 @@ def pptr(v):
 def rip(name, prefab):
     tr = comp_of(prefab.read_typetree(), ("Transform",))
     m0 = None
-    for ch in tr.read_typetree().get("m_Children", []):
+    for ch in (tr.read_typetree().get("m_Children", []) if tr else []):
         ct = by_id.get(ch.get("m_PathID"))
         if not ct: continue
         cgo = by_id.get(ct.read_typetree().get("m_GameObject", {}).get("m_PathID"))
         if cgo and cgo.read_typetree().get("m_Name") == "Model_0":
             m0 = cgo
-    if not m0: return False
-    m0tt = m0.read_typetree()
-    mf = comp_of(m0tt, ("MeshFilter",))
+    src = m0 if m0 else prefab   # no Model_0 child -> the held mesh is on the root Item node (medkit-style)
+    src_tt = src.read_typetree()
+    mf = comp_of(src_tt, ("MeshFilter",))
     mesh = by_id.get(mf.read_typetree().get("m_Mesh", {}).get("m_PathID")) if mf else None
     if not mesh: return False
     txt = mesh.read().export(); Vs, Ns, Ts, Fs = [], [], [], []
@@ -42,7 +44,7 @@ def rip(name, prefab):
         elif p[0] == "f":
             idx = [(int(q[0]), (int(q[1]) if len(q) > 1 and q[1] else None), (int(q[2]) if len(q) > 2 and q[2] else None)) for tok in p[1:] for q in [tok.split("/")]]
             Fs.append(list(reversed(idx)))
-    L = ["# %s consumable Model_0 (X+Z neg + winding rev)" % name]
+    L = ["# %s consumable held mesh (X+Z neg + winding rev)" % name]
     L += ["v %.6f %.6f %.6f" % v for v in Vs] + ["vt %s %s" % t for t in Ts] + ["vn %.6f %.6f %.6f" % n for n in Ns]
     for f in Fs:
         s = "f"
@@ -50,7 +52,7 @@ def rip(name, prefab):
             s += (" %d/%d/%d" % (vi, ti, ni)) if (ti and ni) else ((" %d//%d" % (vi, ni)) if ni else ((" %d/%d" % (vi, ti)) if ti else " %d" % vi))
         L.append(s)
     open(os.path.join(OUT, name + ".txt"), "w").write("\n".join(L) + "\n")
-    mr = comp_of(m0tt, ("MeshRenderer",))
+    mr = comp_of(src_tt, ("MeshRenderer",))
     if mr:
         mats = mr.read_typetree().get("m_Materials", [])
         mo = pptr(mats[0]) if mats else None
@@ -64,11 +66,11 @@ def rip(name, prefab):
                         except Exception: pass
     return True
 
-seen = set(); names = []
+seen = set(); names = []; root_meshed = []
 for path, o in env.container.items():
-    m = re.search(r"items/(food|medical)/([^/]+)/item\.prefab$", str(path).lower())
+    m = re.search(r"items/(food|medical|water|refills)/([^/]+)/item\.prefab$", str(path).lower())
     if m and o.type.name == "GameObject" and m.group(2) not in seen:
         nm = m.group(2); seen.add(nm)
         if rip(nm, o): names.append(nm)
 open(os.path.join(OUT, "consumables.txt"), "w").write("\n".join(sorted(names)) + "\n")
-print(f"extracted {len(names)} consumables: {sorted(names)[:12]}...")
+print(f"extracted {len(names)}/{len(seen)} consumables")

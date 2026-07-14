@@ -1,4 +1,4 @@
-# doughnut consumable Model_0 (X+Z neg + winding rev)
+# doughnut consumable held mesh (X+Z neg + winding rev)
 v -0.150000 0.000000 -0.075000
 v -0.053033 0.053033 -0.000000
 v -0.106066 0.106066 -0.075000

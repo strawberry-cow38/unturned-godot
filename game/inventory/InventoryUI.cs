@@ -221,7 +221,7 @@ namespace UnturnedGodot
             // right-bottom: actions (Use for a consumable; Equip for a gun in a grid; Drop; Close)
             float by = 150;
             if (asset.IsConsumable)
-            { AddActionButton(panel, "Use", new Vector2(228, by), UseSelected); by += 44; }
+            { AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected); by += 44; }   // hold it in-hand -> LMB to eat/drink (source: consumables are held then used, not used instantly)
             if (asset.type == EItemType.GUN)
             { AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
@@ -253,8 +253,26 @@ namespace UnturnedGodot
             Refresh();
         }
 
+        // Equip a consumable INTO the hands (like a gun) -> close the inventory so LMB begins eating/drinking.
+        // The item is NOT spent here; it's decremented when the eat/drink actually completes (PlayerController.TickConsume).
+        void HoldSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var asset = pg.getItem(idx).GetAsset();
+            if (asset == null || !asset.IsConsumable) return;
+            string mesh = ConsumableRegistry.Mesh(asset.id);   // id -> held-mesh name (content/<mesh>.txt); null = no ripped mesh
+            Player?.EquipHeldConsumable(asset, mesh);
+            CloseSelection();
+            Close();   // leave the inventory so the player can click to eat/drink
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+
         // demo/verify: select an item and immediately run its Equip (headless can't click the button)
         public void DebugEquip(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; EquipSelected(); }
+        // demo/verify: select a consumable and equip it to the hands (headless can't click the button)
+        public void DebugHold(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; HoldSelected(); }
 
         void DropSelected()
         {

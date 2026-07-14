@@ -1,4 +1,4 @@
-# bread consumable Model_0 (X+Z neg + winding rev)
+# bread consumable held mesh (X+Z neg + winding rev)
 v -0.167160 0.203066 0.029742
 v 0.167160 0.203066 0.029742
 v 0.167160 -0.203066 0.029742

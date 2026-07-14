@@ -1,4 +1,4 @@
-# tuna_cooked consumable Model_0 (X+Z neg + winding rev)
+# tuna_cooked consumable held mesh (X+Z neg + winding rev)
 v -0.179471 -0.088256 0.008140
 v -0.182819 0.249809 0.008140
 v -0.081971 0.462480 0.008140

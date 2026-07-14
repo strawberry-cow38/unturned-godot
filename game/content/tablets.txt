@@ -1,4 +1,4 @@
-# tablets consumable Model_0 (X+Z neg + winding rev)
+# tablets consumable held mesh (X+Z neg + winding rev)
 v -0.061176 0.035320 -0.172591
 v -0.070641 0.000000 -0.172591
 v -0.061176 -0.035320 -0.172591

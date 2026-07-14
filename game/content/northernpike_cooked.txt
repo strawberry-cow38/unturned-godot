@@ -1,4 +1,4 @@
-# northernpike_cooked consumable Model_0 (X+Z neg + winding rev)
+# northernpike_cooked consumable held mesh (X+Z neg + winding rev)
 v -0.095331 -0.248399 0.008140
 v 0.019240 -0.413367 0.008140
 v -0.047256 -0.416170 0.008140

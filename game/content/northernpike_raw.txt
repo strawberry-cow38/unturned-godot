@@ -1,4 +1,4 @@
-# northernpike_raw consumable Model_0 (X+Z neg + winding rev)
+# northernpike_raw consumable held mesh (X+Z neg + winding rev)
 v -0.124316 -0.251229 -0.000000
 v -0.049402 -0.456745 -0.000000
 v -0.008692 -0.455760 -0.015492

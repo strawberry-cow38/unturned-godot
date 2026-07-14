@@ -1,4 +1,4 @@
-# carrot consumable Model_0 (X+Z neg + winding rev)
+# carrot consumable held mesh (X+Z neg + winding rev)
 v 0.047765 -0.239956 -0.047765
 v 0.047765 -0.239956 0.047765
 v 0.027893 -0.184340 0.027893

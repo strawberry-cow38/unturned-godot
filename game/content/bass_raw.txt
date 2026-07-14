@@ -1,4 +1,4 @@
-# bass_raw consumable Model_0 (X+Z neg + winding rev)
+# bass_raw consumable held mesh (X+Z neg + winding rev)
 v 0.018093 0.350473 -0.011351
 v 0.016852 0.380284 -0.008512
 v -0.011070 0.381710 -0.013980

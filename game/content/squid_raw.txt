@@ -1,4 +1,4 @@
-# squid_raw consumable Model_0 (X+Z neg + winding rev)
+# squid_raw consumable held mesh (X+Z neg + winding rev)
 v -0.000000 -0.087881 0.237358
 v -0.109033 -0.084310 0.124733
 v -0.097940 0.375222 0.150589

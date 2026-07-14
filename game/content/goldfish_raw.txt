@@ -1,4 +1,4 @@
-# goldfish_raw consumable Model_0 (X+Z neg + winding rev)
+# goldfish_raw consumable held mesh (X+Z neg + winding rev)
 v 0.008315 0.094555 -0.010206
 v 0.007487 0.114429 -0.005986
 v -0.011128 0.115380 -0.014114

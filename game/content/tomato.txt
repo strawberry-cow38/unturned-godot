@@ -1,4 +1,4 @@
-# tomato consumable Model_0 (X+Z neg + winding rev)
+# tomato consumable held mesh (X+Z neg + winding rev)
 v 0.000000 0.219615 -0.000000
 v 0.032695 0.219615 0.032695
 v 0.000000 0.247790 0.095393

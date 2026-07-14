@@ -1,4 +1,4 @@
-# stew_seaweed consumable Model_0 (X+Z neg + winding rev)
+# stew_seaweed consumable held mesh (X+Z neg + winding rev)
 v -0.119686 -0.119686 0.100147
 v -0.169261 0.000000 0.100147
 v -0.119686 0.119686 0.100147

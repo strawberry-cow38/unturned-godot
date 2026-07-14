@@ -1,4 +1,4 @@
-# antibiotics consumable Model_0 (X+Z neg + winding rev)
+# antibiotics consumable held mesh (X+Z neg + winding rev)
 v -0.078179 0.045136 0.113796
 v -0.090273 0.000000 0.113796
 v -0.090273 0.000000 -0.113796

@@ -1,4 +1,4 @@
-# eggs consumable Model_0 (X+Z neg + winding rev)
+# eggs consumable held mesh (X+Z neg + winding rev)
 v -0.120210 0.268227 -0.001040
 v 0.095210 0.243227 0.091386
 v -0.095210 0.243227 0.091386

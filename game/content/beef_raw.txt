@@ -1,4 +1,4 @@
-# beef_raw consumable Model_0 (X+Z neg + winding rev)
+# beef_raw consumable held mesh (X+Z neg + winding rev)
 v 0.037727 0.354671 0.050000
 v -0.267376 0.267376 0.050000
 v -0.267376 0.267376 -0.050000

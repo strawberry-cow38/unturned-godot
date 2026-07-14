@@ -1,4 +1,4 @@
-# coconut_half consumable Model_0 (X+Z neg + winding rev)
+# coconut_half consumable held mesh (X+Z neg + winding rev)
 v 0.000000 0.241610 -0.066797
 v 0.045346 0.150917 0.119721
 v -0.118718 0.150917 0.048476
