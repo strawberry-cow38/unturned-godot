@@ -85,6 +85,7 @@ namespace UnturnedGodot
         public string GunName = "eaglefire";
         public string MeleeMesh, MeleeAlbedo;   // set (instead of GunName) to show a MELEE weapon in-hand: mesh + albedo only, no sight/mag/muzzle/fire
         public string ConsumableMesh, ConsumableAlbedo;   // set (instead of GunName) to HOLD a consumable (food/drink/medical): mesh + albedo, Equip hold + Use eat/drink anim, no gun FX
+        public string ConsumableEquipClip, ConsumableUseClip;   // this item's OWN archetype clips (CE_n/CU_n from consumable_anims), e.g. drink vs eat vs syringe; empty -> generic fallback
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
         // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
         // gun's own AudioClips (the assault rifles share the Eaglefire's).
@@ -221,7 +222,8 @@ namespace UnturnedGodot
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
                 _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // melee equip/swing clips play once
-                string equipClip = ConsumableMesh != null ? (_arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: raise the food/drink to hold (real Consume_Equip if ripped, else the melee raise)
+                string equipClip = ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
+
                                  : MeleeMesh != null ? "Melee_Equip" : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: raise the weapon; gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
                 _arms.SetClipLoop(equipClip, false);
                 _arms.Play(equipClip);
@@ -391,11 +393,17 @@ namespace UnturnedGodot
 
         // Driven by PlayerController while reloading — the gun dips down as a simple reload gesture (the full
         // Gun_Reload clip is a TODO; it needs additive-layer integration like the aim pose). Can't ADS mid-reload.
-        // Consumable eat/drink motion on click -- the real Consume_Use clip if ripped, else re-raise (Melee_Equip placeholder).
+        // Consumable eat/drink motion on click -- this item's OWN archetype (CU_n: eat/drink/pills/syringe/bandage),
+        // else the generic Consume_Use, else re-raise (Melee_Equip placeholder).
         public void PlayConsumeUse()
         {
-            _arms?.Play(_arms.ClipLength("Consume_Use") > 0f ? "Consume_Use" : "Melee_Equip", 1f);
+            _arms?.Play(ConsumeUseClipName(), 1f);
         }
+        string ConsumeUseClipName()
+            => (_arms != null && _arms.ClipLength(ConsumableUseClip) > 0f) ? ConsumableUseClip
+             : (_arms != null && _arms.ClipLength("Consume_Use") > 0f) ? "Consume_Use" : "Melee_Equip";
+        // source: useTime = length of the "Use" clip. Per-item; 0 -> caller uses its own default.
+        public float ConsumeUseLength() => _arms != null ? _arms.ClipLength(ConsumeUseClipName()) : 0f;
 
         // Dynamic world lights (muzzle flash / headlights / flares) mirrored into the subviewport so they spill onto the
         // gun -- ADDITIVE on top of the sun-mirror + ambient rig. Each entry = the light's position in the player CAMERA's

@@ -8,20 +8,31 @@ namespace UnturnedGodot
     public static class ConsumableRegistry
     {
         static readonly Dictionary<ushort, string> _byId = new();
+        // mesh -> its own eat/drink archetype clips + source useTime (Use-clip length). From content/consumable_anims.tsv.
+        public readonly struct AnimSet { public readonly string Equip, Use; public readonly float UseLen; public AnimSet(string e, string u, float l) { Equip = e; Use = u; UseLen = l; } }
+        static readonly Dictionary<string, AnimSet> _animsByMesh = new();
         static bool _loaded;
 
         public static void Load()
         {
-            _byId.Clear();
+            _byId.Clear(); _animsByMesh.Clear();
             _loaded = true;
             string p = ProjectSettings.GlobalizePath("res://content/consumables.tsv");
-            if (!System.IO.File.Exists(p)) { GD.Print("[consumables] no consumables.tsv"); return; }
-            foreach (var ln in System.IO.File.ReadAllLines(p))
-            {
-                var c = ln.Split('\t');
-                if (c.Length >= 2 && ushort.TryParse(c[0], out var id)) _byId[id] = c[1].Trim();
-            }
-            GD.Print($"[consumables] loaded {_byId.Count} consumable meshes");
+            if (System.IO.File.Exists(p))
+                foreach (var ln in System.IO.File.ReadAllLines(p))
+                {
+                    var c = ln.Split('\t');
+                    if (c.Length >= 2 && ushort.TryParse(c[0], out var id)) _byId[id] = c[1].Trim();
+                }
+            else GD.Print("[consumables] no consumables.tsv");
+            string ap = ProjectSettings.GlobalizePath("res://content/consumable_anims.tsv");
+            if (System.IO.File.Exists(ap))
+                foreach (var ln in System.IO.File.ReadAllLines(ap))
+                {
+                    var c = ln.Split('\t');   // mesh, equipClip, useClip, useLen
+                    if (c.Length >= 4) { float.TryParse(c[3], out var ul); _animsByMesh[c[0].Trim()] = new AnimSet(c[1].Trim(), c[2].Trim(), ul); }
+                }
+            GD.Print($"[consumables] loaded {_byId.Count} meshes, {_animsByMesh.Count} anim sets");
         }
 
         public static string Mesh(ushort id)
@@ -30,5 +41,12 @@ namespace UnturnedGodot
             return _byId.TryGetValue(id, out var m) ? m : null;
         }
         public static bool Has(ushort id) => Mesh(id) != null;
+
+        // this mesh's own Equip/Use clips + useTime; default (generic + 2.2s) when the mesh has no mapped set.
+        public static AnimSet Anims(string mesh)
+        {
+            if (!_loaded) Load();
+            return mesh != null && _animsByMesh.TryGetValue(mesh, out var a) ? a : new AnimSet("", "", 2.2f);
+        }
     }
 }

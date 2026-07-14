@@ -1996,16 +1996,26 @@ namespace UnturnedGodot
             Check("no stack spent just by holding", p.Inventory.getItemCount(13) == 2);
 
             p.StartConsume();                                                 // 1st click -> eat
-            for (int i = 0; i < 60; i++) p.DebugConsumeTick(0.05f);           // 3.0s > 2.2s useTime -> consume fires once
+            for (int i = 0; i < 200; i++) p.DebugConsumeTick(0.05f);   // 10s > the longest per-item Use clip (bag_chips 7.6s)
             Check("food rose after 1st eat", p.Food > 0.5f);
             Check("count -> 1 after 1st eat", p.Inventory.getItemCount(13) == 1);
             Check("still holding (1 left)", p.HoldingConsumable);
 
             p.StartConsume();                                                 // 2nd click -> eat the last one
-            for (int i = 0; i < 60; i++) p.DebugConsumeTick(0.05f);
+            for (int i = 0; i < 200; i++) p.DebugConsumeTick(0.05f);   // 10s > the longest per-item Use clip (bag_chips 7.6s)
             Check("count -> 0 after 2nd eat", p.Inventory.getItemCount(13) == 0);
             Check("auto-unequipped when depleted", !p.HoldingConsumable);
 
+            // per-item eat/drink archetypes (source: each item plays its own Use clip; useTime = that clip's length)
+            var beansAn = ConsumableRegistry.Anims("canned_beans");
+            var waterAn = ConsumableRegistry.Anims("bottled_water");
+            var medkitAn = ConsumableRegistry.Anims("medkit");
+            Check("beans has a Use archetype clip", !string.IsNullOrEmpty(beansAn.Use));
+            Check("drink clip != eat clip (per-item)", waterAn.Use != beansAn.Use && !string.IsNullOrEmpty(waterAn.Use));
+            Check("syringe/medkit clip != eat clip", medkitAn.Use != beansAn.Use && !string.IsNullOrEmpty(medkitAn.Use));
+            Check("per-item useTime from Use-clip length", waterAn.UseLen > 0f && Mathf.Abs(waterAn.UseLen - beansAn.UseLen) > 0.01f);
+
+            GD.Print($"[HOLDTEST] beans={beansAn.Use}/{beansAn.UseLen:0.00}s water={waterAn.Use}/{waterAn.UseLen:0.00}s medkit={medkitAn.Use}/{medkitAn.UseLen:0.00}s");
             GD.Print($"[HOLDTEST] RESULT {pass} passed, {fail} failed");
         }
 

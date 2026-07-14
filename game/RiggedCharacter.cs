@@ -240,6 +240,20 @@ namespace UnturnedGodot
         static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
         static readonly System.Collections.Generic.Dictionary<string, RigData> _rigCache = new();   // per-path (player/deer/pig/cow rigs coexist)
+
+        // The 36+36 distinct consumable Equip/Use clips (CE_n/CU_n) live in their OWN file so rig.json stays lean.
+        // Only the 1P arms viewmodel needs them, so they're merged in for armsOnly builds (not the 3P body/zombies).
+        static System.Collections.Generic.Dictionary<string, ClipData> _consumableAnims;
+        static System.Collections.Generic.Dictionary<string, ClipData> ConsumableAnims()
+        {
+            if (_consumableAnims == null)
+            {
+                _consumableAnims = new();
+                using var f = FileAccess.Open("res://content/consumable_anims.json", FileAccess.ModeFlags.Read);
+                if (f != null) _consumableAnims = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, ClipData>>(f.GetAsText(), JsonOpts) ?? new();
+            }
+            return _consumableAnims;
+        }
         // Parse rig.json once, reuse the data for every character built (20 zombies shouldn't reparse 600KB).
         public static RiggedCharacter Build(string resPath, Color tint, bool armsOnly = false, string albedoTexPath = null, string faceTexPath = null)
         {
@@ -379,6 +393,9 @@ namespace UnturnedGodot
                     lib.AddAnimation(kv.Key, BuildAnim(kv.Value));
                     names.Add(kv.Key);
                 }
+            if (armsOnly)   // viewmodel: also load the per-item consumable eat/drink clips (CE_n/CU_n)
+                foreach (var kv in ConsumableAnims())
+                    if (!names.Contains(kv.Key)) { lib.AddAnimation(kv.Key, BuildAnim(kv.Value)); names.Add(kv.Key); }
             ap.AddAnimationLibrary("", lib);
             root._ap = ap;
             root.ClipNames = names.ToArray();

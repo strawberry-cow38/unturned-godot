@@ -202,7 +202,8 @@ namespace UnturnedGodot
         // --- Consumables held in hand (food/drink/medical): equip -> hold -> LMB eats/drinks -> effects apply (source UseableConsumeable). ---
         ItemAsset _heldConsumable;   // the consumable held in hand (null = none); LMB starts eating/drinking it
         float _consumeTimer;         // >0 while eating -- applies the consumable's effects when it hits 0
-        const float ConsumeUseTime = 2.2f;   // eat/drink duration (source per-consumable useTime; a default until wired per-item)
+        const float ConsumeUseTime = 2.2f;   // default eat/drink duration (fallback when an item has no mapped Use-clip length)
+        float _consumeUseLen = ConsumeUseTime;   // THIS item's eat/drink duration = source useTime = its Use-clip length (per-item)
         public bool HoldingConsumable => _heldConsumable != null;
 
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
@@ -212,18 +213,20 @@ namespace UnturnedGodot
             _heldConsumable = asset;
             _consumeTimer = 0f;
             _melee = null;
+            var an = ConsumableRegistry.Anims(meshName);   // this item's own eat/drink archetype clips + source useTime (Use-clip length)
+            _consumeUseLen = an.UseLen > 0f ? an.UseLen : ConsumeUseTime;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ConsumableMesh = $"{meshName}.txt", ConsumableAlbedo = $"{meshName}_albedo.png" };
+            _viewmodel = new Viewmodel { ConsumableMesh = $"{meshName}.txt", ConsumableAlbedo = $"{meshName}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[consume] holding {asset?.itemName ?? meshName} -- click to eat/drink");
+            GD.Print($"[consume] holding {asset?.itemName ?? meshName} ({an.Use}, {_consumeUseLen:0.0}s) -- click to eat/drink");
         }
 
         // LMB while holding a consumable: begin eating/drinking (plays the Use anim + starts the use timer).
         public void StartConsume()
         {
             if (_heldConsumable == null || _consumeTimer > 0f || _dead) return;
-            _consumeTimer = ConsumeUseTime;
+            _consumeTimer = _consumeUseLen;   // source-accurate: the length of THIS item's Use animation
             _viewmodel?.PlayConsumeUse();
             GD.Print($"[consume] eating {_heldConsumable?.itemName}...");
         }
