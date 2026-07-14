@@ -1,4 +1,4 @@
-# heatstim consumable held mesh (X+Z neg + winding rev)
+# heatstim consumable held mesh (Model_0 TRS baked, X+Z neg + winding rev)
 v 0.241892 -0.276448 -0.000000
 v 0.181419 -0.201086 -0.017278
 v -0.181419 -0.201086 -0.017278

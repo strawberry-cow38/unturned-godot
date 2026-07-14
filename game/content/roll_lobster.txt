@@ -1,4 +1,4 @@
-# roll_lobster consumable held mesh (X+Z neg + winding rev)
+# roll_lobster consumable held mesh (Model_0 TRS baked, X+Z neg + winding rev)
 v -0.134713 -0.077998 -0.115068
 v -0.132017 -0.027403 -0.089794
 v -0.150588 -0.033752 -0.038309

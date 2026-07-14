@@ -1,4 +1,4 @@
-# rice consumable held mesh (X+Z neg + winding rev)
+# rice consumable held mesh (Model_0 TRS baked, X+Z neg + winding rev)
 v -0.040143 -0.266616 -0.007647
 v -0.080912 0.115232 -0.036700
 v -0.065489 0.000533 0.034963

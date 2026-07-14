@@ -1,4 +1,4 @@
-# berry_teal consumable held mesh (X+Z neg + winding rev)
+# berry_teal consumable held mesh (Model_0 TRS baked, X+Z neg + winding rev)
 v 0.008333 0.029846 0.217539
 v 0.019641 -0.015197 0.260560
 v -0.041296 -0.032253 0.258720

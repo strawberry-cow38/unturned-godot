@@ -1,4 +1,4 @@
-# sugarcane consumable held mesh (X+Z neg + winding rev)
+# sugarcane consumable held mesh (Model_0 TRS baked, X+Z neg + winding rev)
 v 0.025986 0.210542 -0.044956
 v 0.085009 0.265101 -0.036180
 v 0.076074 0.304669 0.019725

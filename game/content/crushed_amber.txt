@@ -1,4 +1,4 @@
-# crushed_amber consumable held mesh (X+Z neg + winding rev)
+# crushed_amber consumable held mesh (Model_0 TRS baked, X+Z neg + winding rev)
 v 0.107624 0.054012 0.146305
 v 0.089031 -0.152813 0.081259
 v -0.081834 -0.046353 0.152012

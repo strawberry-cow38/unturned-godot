@@ -1,4 +1,4 @@
-# wheat consumable held mesh (X+Z neg + winding rev)
+# wheat consumable held mesh (Model_0 TRS baked, X+Z neg + winding rev)
 v -0.009570 -0.260519 -0.023389
 v -0.009215 -0.259180 0.021732
 v -0.006438 0.284731 0.000607
