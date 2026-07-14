@@ -250,6 +250,21 @@ namespace UnturnedGodot
             GD.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
         }
 
+        // Put whatever's in hand AWAY -> empty hands (master: dequip option). Gun state is saved to its backing item first.
+        public void Dequip()
+        {
+            SaveGunState();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _torchAnimOn = false; _pendingMeleeHit = -1f;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { EmptyHands = true };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print("[equip] dequipped -> empty hands");
+        }
+
         // --- Consumables held in hand (food/drink/medical): equip -> hold -> LMB eats/drinks -> effects apply (source UseableConsumeable). ---
         ItemAsset _heldConsumable;   // the consumable held in hand (null = none); LMB starts eating/drinking it
         string _heldConsumableMesh;  // its mesh name -> re-equip another of the same type after one is consumed (master)

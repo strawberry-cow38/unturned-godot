@@ -224,6 +224,8 @@ namespace UnturnedGodot
             { AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected); by += 44; }   // hold it in-hand -> LMB to eat/drink (source: consumables are held then used, not used instantly)
             if (asset.gunName != null || asset.meleeName != null)   // a GUN or a MELEE weapon can be equipped to hand (was gun-only -> melees had no Equip button, master)
             { AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected); by += 44; }
+            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable)   // dequip whatever's in hand -> empty hands (master)
+            { AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); }); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
