@@ -1,4 +1,4 @@
-# canned_beans consumable Model_0 (X+Z neg + winding rev)
+# canned_soup_chicken consumable Model_0 (X+Z neg + winding rev)
 v 0.137878 -0.079604 0.196482
 v 0.159208 -0.000000 0.196482
 v 0.159208 -0.000000 -0.196482
