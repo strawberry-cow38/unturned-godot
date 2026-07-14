@@ -455,17 +455,19 @@ namespace UnturnedGodot
             {
                 var ic = new TextureRect { Texture = tex, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
                 ic.MouseFilter = Control.MouseFilterEnum.Ignore;
+                int pad = (int)(CELL * 0.12f);   // breathing room around every icon inside its cell(s) (master: pad the icons)
                 if (rotated)   // SleekItemIcon.rot spins the icon with the jar (internalImage.RotationAngle = rot*90). Draw it at its
-                {              // NATURAL un-rotated h x w box (KeepAspect), then turn 90 clockwise and re-centre in the w x h tile.
-                    ic.Size = new Vector2(h, w);
-                    ic.PivotOffset = new Vector2(h / 2f, w / 2f);
+                {              // NATURAL un-rotated (h-2pad) x (w-2pad) box (KeepAspect), then turn 90 clockwise and re-centre in the w x h tile.
+                    float a = h - 2 * pad, b = w - 2 * pad;
+                    ic.Size = new Vector2(a, b);
+                    ic.PivotOffset = new Vector2(a / 2f, b / 2f);
                     ic.RotationDegrees = 90f;
-                    ic.Position = new Vector2((w - h) / 2f, (h - w) / 2f);
+                    ic.Position = new Vector2((w - a) / 2f, (h - b) / 2f);
                 }
                 else
                 {
                     ic.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-                    ic.SetOffsetsPreset(Control.LayoutPreset.FullRect);
+                    ic.SetOffsetsPreset(Control.LayoutPreset.FullRect, Control.LayoutPresetMode.Minsize, pad);   // inset by pad on all sides
                 }
                 tile.AddChild(ic);
             }
