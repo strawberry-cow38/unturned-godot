@@ -12,6 +12,7 @@ namespace UnturnedGodot
         bool _on;
         double _accum, _worstFrame;
         int _frames;
+        int _gc0, _gc1, _gc2;   // last-window GC collection counts (gen0/1/2) -> deltas show allocation churn = the spike cause
 
         public override void _Ready()
         {
@@ -46,13 +47,21 @@ namespace UnturnedGodot
             double M(Performance.Monitor m) => Performance.GetMonitor(m);
             double fps = M(Performance.Monitor.TimeFps);
             double frameMs = _accum / _frames * 1000.0;
+            // C# GC churn = the usual cause of the frame spikes. Deltas are collections THIS window; a gen0 bump on a
+            // bad-worst-frame window means that spike was a GC pause -> go hunt whatever allocates every frame.
+            int g0 = System.GC.CollectionCount(0), g1 = System.GC.CollectionCount(1), g2 = System.GC.CollectionCount(2);
+            int d0 = g0 - _gc0, d1 = g1 - _gc1, d2 = g2 - _gc2; _gc0 = g0; _gc1 = g1; _gc2 = g2;
+            double heapMB = System.GC.GetTotalMemory(false) / 1048576.0;
+            string gcFlag = d0 > 0 ? "  <-- GC ran" : "";
             _label.Text =
-                $"FPS {fps:0}    frame {frameMs:0.0} ms   (worst {_worstFrame * 1000.0:0.0} ms)\n" +
+                $"FPS {fps:0}    frame {frameMs:0.0} ms    worst {_worstFrame * 1000.0:0.0} ms{gcFlag}\n" +
                 $"cpu: process {M(Performance.Monitor.TimeProcess) * 1000.0:0.0} ms   physics {M(Performance.Monitor.TimePhysicsProcess) * 1000.0:0.0} ms\n" +
-                $"render: {M(Performance.Monitor.RenderTotalDrawCallsInFrame):0} draw calls   {M(Performance.Monitor.RenderTotalObjectsInFrame):0} objects   {M(Performance.Monitor.RenderTotalPrimitivesInFrame):0} prims\n" +
-                $"nodes {M(Performance.Monitor.ObjectNodeCount):0}   mem {M(Performance.Monitor.MemoryStatic) / 1048576.0:0} MB   vram {M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0} MB\n" +
+                $"GC/window: gen0 +{d0}  gen1 +{d1}  gen2 +{d2}    managed heap {heapMB:0.0} MB\n" +
+                $"physics: {M(Performance.Monitor.Physics3DActiveObjects):0} active   {M(Performance.Monitor.Physics3DCollisionPairs):0} pairs   {M(Performance.Monitor.Physics3DIslandCount):0} islands\n" +
+                $"render: {M(Performance.Monitor.RenderTotalDrawCallsInFrame):0} draws   {M(Performance.Monitor.RenderTotalObjectsInFrame):0} objs   {M(Performance.Monitor.RenderTotalPrimitivesInFrame) / 1.0e6:0.0}M prims\n" +
+                $"scene: {M(Performance.Monitor.ObjectNodeCount):0} nodes   {M(Performance.Monitor.ObjectCount):0} objects   {M(Performance.Monitor.ObjectResourceCount):0} res   {M(Performance.Monitor.ObjectOrphanNodeCount):0} orphans\n" +
+                $"mem: static {M(Performance.Monitor.MemoryStatic) / 1048576.0:0} MB   vram {M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0} MB\n" +
                 $"[F3 to hide]";
-
             _accum = 0; _frames = 0; _worstFrame = 0;
         }
     }
