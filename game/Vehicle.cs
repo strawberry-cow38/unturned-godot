@@ -11,7 +11,7 @@ namespace UnturnedGodot
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
-        float _steerTarget, _steerAngle, _steerTurnSpeed = 140f;   // steering smoothing: MoveTowards target at SteeringAngleTurnSpeed deg/s (source: SteerMax*5)
+        float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
@@ -135,6 +135,7 @@ namespace UnturnedGodot
                 ScaleAmountMin = sizeMin, ScaleAmountMax = sizeMax, Color = c, Mesh = new QuadMesh { Size = Vector2.One, Material = mat },   // Size 1 -> ScaleAmount = the particle diameter in metres (src startSize)
             };
             if (fire) { ps.AnimOffsetMax = 1f; ps.AnimSpeedMin = 5f; ps.AnimSpeedMax = 9f; }   // random start frame + flicker through the 4
+            else { ps.AngleMin = -180f; ps.AngleMax = 180f; ps.AngularVelocityMin = -35f; ps.AngularVelocityMax = 35f; }   // SMOKE (not fire): random per-puff rotation + slow tumble (master)
             return ps;
         }
 
@@ -186,6 +187,11 @@ namespace UnturnedGodot
             {
                 _deadTimer = ExplodeDelay;
                 EngineOn = false;   // engine dies AT 0 HP: cuts engine POWER (Drive gates on EngineOn) + the engine SOUND (audio goes silent when !EngineOn). Velocity is untouched -> the car keeps its momentum and coasts to a stop (master)
+                // a SMALL fire starts the moment it hits 0 HP (master), before Explode() (4s later) ramps it to the full blaze
+                if (_smoke != null) _smoke.Emitting = true;
+                if (_smoke0 != null) _smoke0.Emitting = true;
+                if (_fire != null) _fire.Emitting = true;
+                if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 1.2f; }   // dim glow now; Explode() takes it to 3
             }
         }
 
@@ -816,7 +822,8 @@ namespace UnturnedGodot
             _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp -- master confirmed the raw angle is fine
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
-            Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : 0f);
+            bool coasting = Mathf.Abs(throttle) < 0.05f && !footBrake;   // no throttle + no brake input -> engine braking drags it down FASTER than pure friction (master: slow faster on its own)
+            Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (coasting ? _brakeForce * FootBrakeScale * 0.35f : 0f));
             if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = (handbrake || footBrake) ? 6f : 2f;   // brake lights flare brighter while braking (master); running taillights sit at 2x
         }
 
@@ -905,7 +912,7 @@ namespace UnturnedGodot
         {
             foreach (var c in n.GetChildren())
             {
-                if (c is MeshInstance3D mi && !mi.HasMeta("no_outline")) list.Add(mi);   // interior (seats/steer) excluded -> the outline is the body silhouette, one piece (master)
+                if (c is MeshInstance3D mi) list.Add(mi);   // ALL meshes incl. seats + steering wheel -> they're part of the one combined silhouette outline now (master)
                 CollectMeshes(c, list);
             }
         }
@@ -1003,7 +1010,10 @@ namespace UnturnedGodot
             if (_gears != null && _gears.Length > 0)   // gear from SPEED band -> guaranteed clean shifts (master: never left 1st; src RPM model never redlines in gear 1 so it never shifted). RPM still sawtooths per gear via the ratio.
             {
                 float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
-                _gear = Mathf.Clamp(1 + (int)(Mathf.Clamp(fwd / _speedMax, 0f, 0.999f) * _gears.Length), 1, _gears.Length);
+                int newGear = Mathf.Clamp(1 + (int)(Mathf.Clamp(fwd / _speedMax, 0f, 0.999f) * _gears.Length), 1, _gears.Length);
+                if (newGear != _gear && !_exploded && !_husk && fwd > 1.5f)   // gear change while moving -> a brief CLUTCH JOLT: a lurch opposite travel (master)
+                    ApplyCentralImpulse(-LinearVelocity.Normalized() * Mass * 0.5f);
+                _gear = newGear;
             }
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
             {
