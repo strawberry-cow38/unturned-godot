@@ -876,9 +876,10 @@ namespace UnturnedGodot
             else
             {
                 if (!_noZombies) AddChild(new HordeSpawner { Target = player, MaxAlive = int.TryParse(System.Environment.GetEnvironmentVariable("UG_HORDE"), out var _h) ? _h : 8 });   // UG_HORDE overrides the horde size (perf repro)
-                var pause = new PauseMenu();   // ESC -> live viewmodel FOV/offset tuning sliders
+                var pause = new PauseMenu();   // ESC -> pause menu (freezes the sim)
                 AddChild(pause);
                 player.PauseMenu = pause;
+                AddChild(new Profiler());   // F3 -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
                 var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
                 AddChild(attach);
                 player.AttachMenu = attach;
@@ -1628,6 +1629,7 @@ namespace UnturnedGodot
                 AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
                 { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); AddChild(hmL); }   // hit / headshot markers (master)
                 { var pause = new PauseMenu(); AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
+                AddChild(new Profiler());   // F3 perf overlay (parity)
                 { var attach = new AttachmentMenu(); AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
                 var jeep = Vehicle.BuildByName("jeep");
                 AddChild(jeep);
