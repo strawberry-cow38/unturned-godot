@@ -640,6 +640,17 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_VMSCALE") is string _sc && float.TryParse(_sc, out var _s)) rollB = rollB.Scaled(new Vector3(_s, _s, _s));   // debug: enlarge held item to inspect orientation
                 _gun.GlobalTransform = new Transform3D(catt.GlobalTransform.Basis * rollB, catt.GlobalPosition);
             }
+            else if (_gun != null && MeleeMesh != null && _gun.GetParent() is Node3D matt)
+            {
+                // MELEE: FOLLOW THE HAND BONE so the Equip / Weak / Strong swing anims actually move + rotate the weapon,
+                // instead of the gun's barrel->aim camera-lock that pinned it facing forward (master). Held-model
+                // localRotation = Euler(0,0,90) like a consumable (source PlayerEquipment.firstModel), tunable via UG_MROLL.
+                Vector3 mroll = new Vector3(0f, 0f, 90f);
+                if (System.Environment.GetEnvironmentVariable("UG_MROLL") is string _mr && _mr.Split(',').Length == 3)
+                { var pp = _mr.Split(','); mroll = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
+                var mrollB = Basis.FromEuler(new Vector3(Mathf.DegToRad(mroll.X), Mathf.DegToRad(mroll.Y), Mathf.DegToRad(mroll.Z)));
+                _gun.GlobalTransform = new Transform3D(matt.GlobalTransform.Basis * mrollB, matt.GlobalPosition);
+            }
             else if (_gun != null && _gun.GetParent() is Node3D att)
             {
                 Vector3 aim = -_cam.GlobalTransform.Basis.Z;   // viewmodel-forward
