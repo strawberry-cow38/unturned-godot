@@ -228,6 +228,14 @@ void sky() {
                 _skyMat.SetShaderParameter("sun_direction", sunDir);
                 _skyMat.SetShaderParameter("moon_direction", -sunDir);    // moon rides opposite the sun
                 _skyMat.SetShaderParameter("sun_color", V3(Sun != null ? Sun.LightColor : Colors.White));
+                // Day->night factor from the sun's height (1 = day, 0 = night). ambient_ground/equator + cloud_rim_color were
+                // CONSTANTS (bright 0.8), so the clouds (cloudBodyColor = ambient_ground + cloud_rim_color) GLOWED at night.
+                // Darken them with the sun so night clouds go dim blue-grey (master: clouds shouldn't glow at night).
+                float dayF = Mathf.Clamp(-sunDir.Y * 1.0f + 0.15f, 0f, 1f);
+                float amb = Mathf.Lerp(0.05f, 0.8f, dayF);
+                _skyMat.SetShaderParameter("ambient_ground", new Vector3(amb, amb, amb));
+                _skyMat.SetShaderParameter("ambient_equator", new Vector3(amb, amb, amb));
+                _skyMat.SetShaderParameter("cloud_rim_color", V3(new Color(0.8f, 0.6f, 0.4f).Lerp(new Color(0.05f, 0.06f, 0.10f), 1f - dayF)));
 
                 Env.AmbientLightColor = Grad(Amb);
                 // depth fog tinted to the horizon -- thin at noon, thick at dawn/dusk/night (extra when Overcast)
