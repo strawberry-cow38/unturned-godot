@@ -422,7 +422,7 @@ namespace UnturnedGodot
             if (veh != null)
             {
                 _rigDir = veh;
-                _rigCaptureFrames = new[] { 60, 130, 200, 270, 320, 360 };   // spread across the driving course (also keeps the movie running the full length)
+                _rigCaptureFrames = new[] { 45, 90, 150, 210, 280, 340 };   // spread across the driving course (also keeps the movie running the full length)
                 _vehTest = true;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildVehicleTest(gun ?? "jeep");   // --gun=quad to test the quad
@@ -3004,8 +3004,17 @@ namespace UnturnedGodot
                         var vt = _veh.GlobalTransform;
                         var fwd = -vt.Basis.Z; fwd.Y = 0f;
                         fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-                        _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
-                        _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+                        if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VSIDE")))   // diagnostic 3/4 front-side profile (see body + wheel placement)
+                        {
+                            var right = new Vector3(fwd.Z, 0f, -fwd.X);   // fwd rotated -90 about Y
+                            _vehCam.GlobalPosition = vt.Origin + fwd * 7.5f + right * 5.5f + Vector3.Up * 2.6f;
+                            _vehCam.LookAt(vt.Origin + Vector3.Up * 1.2f, Vector3.Up);
+                        }
+                        else
+                        {
+                            _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
+                            _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+                        }
                     }
                 }
                 if (_driveTest && _dtPlayer != null)

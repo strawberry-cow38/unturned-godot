@@ -338,6 +338,29 @@ namespace UnturnedGodot
             },
         };
 
+        // Semi truck cab (Semi_0 prop -> driveable, master). Model_0 = cab + chassis, 3.2w x 7.1L x 3.7h. Heavy: slow
+        // steer, low top speed, big engine, tandem rear drive axles. Colours from the prop's own 4x2 palette (blue cab).
+        static readonly Spec _semi = new()
+        {
+            Body = "semi_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
+            DefaultPaints = new[] { "#3a5a78" },   // Semi_0's blue cab
+            WheelRadius = 0.55f, Engine = 950f, SteerMax = 22f, SteerMin = 10f, SpeedMax = 14f, SpeedMin = -4f, Brake = 34f,
+            BoxSize = new Vector3(3.18f, 3.69f, 7.08f), BoxCenter = new Vector3(0f, 2.0f, 0.96f),   // cab + chassis bbox
+            ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 0.8f, MaxPitch = 1.6f, IdleVolume = 0.85f, MaxVolume = 1.0f,
+            Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_04.ogg",
+            SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = new Vector3(0f, 1.1f, -2.4f),
+            TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
+            SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,   // no separate steering-wheel node in the prop mesh
+            Wheels = new (float, float, float, bool)[]
+            {
+                (-1.28f, 0.55f, -1.95f, true),  (1.28f, 0.55f, -1.95f, true),    // front axle (steered), under the cab
+                (-1.28f, 0.55f,  2.05f, false), (1.28f, 0.55f,  2.05f, false),   // rear axle 1 (drive)
+                (-1.28f, 0.55f,  3.15f, false), (1.28f, 0.55f,  3.15f, false),   // rear axle 2 (tandem, drive)
+            },
+            Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
+        };
+
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
         static readonly Spec _quad = new()
         {
@@ -613,6 +636,7 @@ namespace UnturnedGodot
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
         public static Vehicle BuildSedan(int variant = 0) => Build(_sedan, variant);
+        public static Vehicle BuildSemi(int variant = 0) => Build(_semi, variant);
         public static Vehicle BuildHatchback(int variant = 0) => Build(_hatchback, variant);
         public static Vehicle BuildHumvee(int variant = 0) => Build(_humvee, variant);
         public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant);
@@ -621,8 +645,8 @@ namespace UnturnedGodot
         public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant);
         public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant);
         public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police" };   // F1 dev-console autocomplete + validation
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi" };   // F1 dev-console autocomplete + validation
 
         static Vehicle Build(Spec s, int variant)
         {
