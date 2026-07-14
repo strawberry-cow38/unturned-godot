@@ -2132,6 +2132,9 @@ namespace UnturnedGodot
             Check("eaglefire (semi) does NOT rechamber per shot", p.DebugRechamberCount() == 0);
             p.DebugFireRechamber();
             Check("semi-auto never needs a per-shot cycle", !p.DebugNeedsRechamber());
+            // world loot: magazines spawn FULL (master)
+            Check("military mag spawns full as loot (30 rounds)", SDG.Unturned.Assets.makeLoot(6).amount == 30);
+            Check("non-mag loot spawns as a single (1)", SDG.Unturned.Assets.makeLoot(13).amount == 1);
             GD.Print($"[MAGTEST] RESULT {pass} passed, {fail} failed");
         }
 

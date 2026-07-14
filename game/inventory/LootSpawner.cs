@@ -33,7 +33,7 @@ namespace UnturnedGodot
             {
                 float ang = _rng.Randf() * Mathf.Tau;
                 float r = 3f + Mathf.Sqrt(_rng.Randf()) * Radius;      // uniform-ish over a ring around the player
-                WorldItem.Spawn(this, new Item(Roll(total)), new Vector3(Mathf.Cos(ang) * r, 0.1f, Mathf.Sin(ang) * r));
+                WorldItem.Spawn(this, Assets.makeLoot((ushort)Roll(total)), new Vector3(Mathf.Cos(ang) * r, 0.1f, Mathf.Sin(ang) * r));   // magazines spawn full (master)
             }
         }
 

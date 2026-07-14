@@ -368,8 +368,9 @@ namespace UnturnedGodot
                 _rng.RandfRange(Mathf.Min(shakeMin.X, shakeMax.X), Mathf.Max(shakeMin.X, shakeMax.X)),
                 _rng.RandfRange(Mathf.Min(shakeMin.Y, shakeMax.Y), Mathf.Max(shakeMin.Y, shakeMax.Y)),
                 _rng.RandfRange(Mathf.Min(shakeMin.Z, shakeMax.Z), Mathf.Max(shakeMin.Z, shakeMax.Z)));
-            // rotational recoil: gun tilts up (pitch) + yaws/rolls (PlayerAnimator maps x=pitch, y=z=yaw), springs back
-            _recoilRotSpring.CurrentPosition += new Vector3(recoilPitch, recoilYaw, recoilYaw);
+            // rotational recoil: gun tilts up (pitch) + yaws/rolls (PlayerAnimator maps x=pitch, y=z=yaw), springs back.
+            // horizontal (yaw+roll) recoil was inverted -> negate recoilYaw so the gun kicks the correct way (master, noticed in play).
+            _recoilRotSpring.CurrentPosition += new Vector3(recoilPitch, -recoilYaw, -recoilYaw);
         }
 
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the

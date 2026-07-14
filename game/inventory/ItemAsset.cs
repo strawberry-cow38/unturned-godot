@@ -104,6 +104,8 @@ namespace SDG.Unturned
         static readonly Dictionary<string, ItemAsset> _byGuid = new();   // item GUID -> asset (blueprint ingredient resolution)
 
         public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; } }
+        // World loot factory: a magazine spawns FULL (Military Magazine = 30 rounds) rather than empty (master). Other items = 1.
+        public static Item makeLoot(ushort id) { var a = find(id); return new Item(id, a != null && a.IsMagazine ? (byte)System.Math.Max(1, a.magCapacity) : (byte)1); }
         public static ItemAsset find(ushort id) => _byId.TryGetValue(id, out var a) ? a : null;
         public static ItemAsset findByGuid(string guid) => !string.IsNullOrEmpty(guid) && _byGuid.TryGetValue(guid, out var a) ? a : null;
         public static IEnumerable<ItemAsset> all() => _byId.Values;
