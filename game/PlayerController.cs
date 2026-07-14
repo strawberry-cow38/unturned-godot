@@ -603,7 +603,7 @@ namespace UnturnedGodot
         int _loadedMagId;           // the magazine item loaded in the gun (its ammo = Ammo); set to Gun.MagazineId on equip
         SDG.Unturned.Item _heldItem;   // the inventory/world Item backing the held gun -> where its ammo/firemode/mag PERSIST (master)
         // Mirror the held gun's live state onto its backing item so it survives hands<->inventory<->drop (source: equipment.state).
-        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; } }
+        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }
         void RestoreGunState(SDG.Unturned.Item item)
         {
             if (item == null || item.gunAmmo < 0) return;   // a fresh gun with no saved state keeps its LoadGun defaults
@@ -890,6 +890,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
+            if (backingItem != null && backingItem.gunAttach >= 0) _viewmodel.ApplyAttachMask(backingItem.gunAttach);   // restore the gun's saved attachments (e.g. a detached suppressor stays off) -- master
             GD.Print($"[gun] holding {_gunName}");
         }
 
@@ -1040,6 +1041,7 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Tab })
             {
                 if (_viewmodel != null && _viewmodel.InAttachView) return;   // no inventory while the T attachment menu is up
+                SaveGunState();   // capture the held gun's live state (ammo/mag/firemode/attachments) so dropping/moving it in the inventory keeps it (master)
                 if (_invUI != null && _invUI.IsOpen) CloseCrate();   // closing the dashboard saves an open crate
                 _invUI?.Toggle();   // open/close the inventory dashboard, freeing the mouse while it's open
                 Input.MouseMode = (_invUI != null && _invUI.IsOpen) ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

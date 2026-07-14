@@ -507,6 +507,11 @@ namespace UnturnedGodot
         {
             if (_attachMesh.TryGetValue(slot, out var n)) { var m = _gun?.GetNodeOrNull<MeshInstance3D>(n); if (m != null) m.Visible = on; }
         }
+        // Attachment state as a bitmask over AttachSlots (bit set = that slot's model is attached) -- persisted on the gun's Item so
+        // a detached suppressor/sight etc. survives hands<->inventory<->drop (master). Only slots the gun HAS a model for count.
+        static readonly string[] AttachSlots = { "Sight", "Tactical", "Grip", "Barrel", "Magazine" };
+        public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
+        public void ApplyAttachMask(int mask) { for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i])) SetSlotAttached(AttachSlots[i], (mask & (1 << i)) != 0); }
         // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to
         // the same child-node position as the default, so swapping just the mesh mounts the new part on the same hook.
         public void SetSlotMesh(string slot, string txtName)

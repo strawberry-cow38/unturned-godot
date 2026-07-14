@@ -90,6 +90,7 @@ namespace SDG.Unturned
         public int gunAmmo = -1;       // loaded rounds incl. the chambered one
         public int gunFiremode = -1;   // fire-mode index (Safety/Semi/Burst/Auto)
         public int gunMagId = -1;      // the magazine item id currently loaded
+        public int gunAttach = -1;     // attachment bitmask (which slots are attached; -1 = unset -> gun's defaults)
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {
