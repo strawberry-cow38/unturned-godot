@@ -77,8 +77,10 @@ namespace UnturnedGodot
             {
                 var asset = ResolveItem(arg);
                 if (asset == null) { Log($"no item matching '{arg}'"); return; }
-                Player.DropWorldItem(new Item(asset.id), at);
-                Log($"gave {asset.itemName} (#{asset.id})");
+                var item = SDG.Unturned.Assets.makeLoot(asset.id);   // magazines come full, etc.
+                if (Player?.Inventory != null && Player.Inventory.tryAddItem(item))   // into the bag if there's room (master)
+                    Log($"gave {asset.itemName} (#{asset.id}) -> bag");
+                else { Player?.DropWorldItem(item, at + Vector3.Up * 2f); Log($"gave {asset.itemName} (#{asset.id}) -> dropped in the air above the orb"); }   // else spawn it in the air over the look-orb
             }
             else if (verb == "vehicle" || verb == "veh")
             {
