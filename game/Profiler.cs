@@ -23,16 +23,22 @@ namespace UnturnedGodot
             _label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f));
             _label.AddThemeConstantOverride("outline_size", 4);
             AddChild(_label);
+            SetProcess(false);   // start hidden: _Process is fully DISABLED (not even called) until F3 -> zero cost while off (master)
         }
 
         public override void _Input(InputEvent e)
         {
-            if (e is InputEventKey { Pressed: true, Keycode: Key.F3, Echo: false }) { _on = !_on; _label.Visible = _on; }
+            if (e is InputEventKey { Pressed: true, Keycode: Key.F3, Echo: false })
+            {
+                _on = !_on;
+                _label.Visible = _on;
+                SetProcess(_on);   // only run the per-frame sampling while the overlay is actually shown
+                if (_on) { _accum = 0; _frames = 0; _worstFrame = 0; }   // fresh sampling window on show
+            }
         }
 
         public override void _Process(double delta)
         {
-            if (!_on) return;
             if (delta > _worstFrame) _worstFrame = delta;   // track the worst (longest) frame this window -- that's the stutter
             _accum += delta; _frames++;
             if (_accum < 0.25) return;                       // refresh the text 4x/sec
