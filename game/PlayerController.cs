@@ -505,7 +505,9 @@ namespace UnturnedGodot
             for (int i = 0; i < found.Count && i < MaxMirrorLights; i++)
             {
                 var dl = found[i].l;
-                _mirrorLights.Add((_cam.ToLocal(dl.GlobalPosition), dl.LightColor, dl.LightEnergy, LightRange(dl)));   // light in the player camera's view space
+                Vector3 lp = _cam.ToLocal(dl.GlobalPosition);   // light in the player camera's view space
+                _mirrorLights.Add((new Vector3(-lp.X, lp.Y, -lp.Z), dl.LightColor, dl.LightEnergy, LightRange(dl)));   // subview cam is 180 deg about Y vs the player cam -> negate X+Z (master: was inverted L/R + fwd/back)
+
             }
             _viewmodel.SetWorldLights(_mirrorLights);
         }

@@ -1863,7 +1863,7 @@ namespace UnturnedGodot
                 var tl = new OmniLight3D { OmniRange = 6f, LightColor = new Color(1f, 0.1f, 0.1f), LightEnergy = 8f, ShadowEnabled = false };
                 tl.AddToGroup("dynlight");
                 player.AddChild(tl);
-                tl.Position = new Vector3(-0.6f, 0.1f, -0.8f);   // relative to the player: left + slightly forward
+                tl.Position = new Vector3(1.1f, 0.1f, 0f);   // relative to the player: hard RIGHT -> gun should light on its right (outer) side if the transform is correct
             }
             AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, E to harvest)
             // auto-pick a grassy, well-inland spawn so the jeep drives on real green PEI land, not the coastal water-splat
