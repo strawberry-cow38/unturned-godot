@@ -15,6 +15,7 @@ namespace UnturnedGodot
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
+        float _burnTime = -1f;   // seconds since the wreck caught fire (master lifecycle): <40 full, 40-60 dying down, 60 out+light killed, 360 despawn
         CpuParticles3D[] _wheelDust;   // per-WHEEL dust from the ground contact point (src Wheel.cs TireMotionEffectInstance is per-wheel); tinted by the Surf under each wheel
         PlayerController.Surf[] _wheelSurf; float _dustCheckT, _dustLogT;   // cached ground material per wheel (raycast, throttled); _dustLogT throttles UG_DUSTDEBUG
         MeshInstance3D _bodyMesh; AudioStreamPlayer3D _explosionAudio; Vector3 _firePos;   // damage/explosion (source askDamage/explode); _husk = settled wreck, sim killed; _firePos = engine-bay local offset
@@ -199,6 +200,7 @@ namespace UnturnedGodot
             SetHeadlights(false); SetTaillights(false);   // a corpse's lamps go dark -- kill the head + tail lights (master)
             if (_fire != null) _fire.Emitting = true;
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
+            _burnTime = 0f;   // start the fire lifecycle (dies down at 40s, out at 60s, despawns 5 min later)
             _explosionAudio?.Play();
             if (_bodyMesh != null) _bodyMesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred wreck
             SpawnWheelDebris();
@@ -913,6 +915,27 @@ namespace UnturnedGodot
                 _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
                 _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}\nFuel {Fuel:0}/{FuelMax:0}   Battery {Battery / BatteryMax * 100f:0}%";
             }
+            if (_burnTime >= 0f)   // wreck fire lifecycle (master): 0-40s full burn, 40-60s dying down, out at 60s (+ light killed), sits 5 min, then despawns
+            {
+                _burnTime += (float)delta;
+                if (_burnTime < 40f) { if (_fireLight != null) _fireLight.LightEnergy = 3f; }
+                else if (_burnTime < 60f)   // die down over 20s: flames + smoke fade out, fire light dims to nothing
+                {
+                    float f = 1f - (_burnTime - 40f) / 20f;   // 1 -> 0
+                    if (_fireLight != null) _fireLight.LightEnergy = 3f * f;
+                    if (_fire != null) _fire.Transparency = 1f - f;
+                    if (_smoke != null) _smoke.Transparency = 1f - f;
+                    if (_smoke0 != null) _smoke0.Transparency = 1f - f;
+                }
+                else if (_burnTime < 360f)   // EXTINGUISHED at 60s: flames+smoke off, fire light killed; stays a cold wreck for 5 min
+                {
+                    if (_fire != null && _fire.Emitting) _fire.Emitting = false;
+                    if (_smoke != null && _smoke.Emitting) _smoke.Emitting = false;
+                    if (_smoke0 != null && _smoke0.Emitting) _smoke0.Emitting = false;
+                    if (_fireLight != null && _fireLight.Visible) { _fireLight.Visible = false; _fireLight.LightEnergy = 0f; }
+                }
+                else { QueueFree(); return; }   // 5 min after extinguishing -> despawn the wreck
+            }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
@@ -1033,7 +1056,7 @@ namespace UnturnedGodot
             float decel = _prevSpeed - curSpeed;
             if (!_parked && !_exploded && _prevSpeed > 5f && decel > 200f * (float)delta) TakeDamage(decel * 20f);   // >200 m/s^2 = a crash (braking is ~8); full-speed hit ~250 dmg
             _prevSpeed = curSpeed;
-            if (_smoke != null) _smoke.Emitting = _exploded || Health < SmokeHealth;         // source updateFires: smoke_1 at health < 200 (or exploded)
+            if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < SmokeHealth);   // source updateFires: smoke_1 at health < 200 (or exploded); OFF once the wreck fire is out at 60s (master)
             if (_smoke0 != null) _smoke0.Emitting = _exploded || Health < HeavySmokeHealth;   // source updateFires: smoke_0 (heavy) at health < 100 (or exploded)
             if (_wheelDust != null)   // per-wheel dust at each wheel's ground contact (source structure; vanilla ships none -> our Surf-driven enhancement)
             {
