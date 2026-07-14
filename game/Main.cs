@@ -2030,6 +2030,13 @@ namespace UnturnedGodot
             Check("syringe/medkit clip != eat clip", medkitAn.Use != beansAn.Use && !string.IsNullOrEmpty(medkitAn.Use));
             Check("per-item useTime from Use-clip length", waterAn.UseLen > 0f && Mathf.Abs(waterAn.UseLen - beansAn.UseLen) > 0.01f);
 
+            // per-item use/eat/drink SOUND (source ItemConsumeableAsset.use)
+            Check("beans use-sound = eatcanl", ConsumableRegistry.Sound(13) == "eatcanl");
+            Check("water use-sound = drinkswallow", ConsumableRegistry.Sound(14) == "drinkswallow");
+            Check("medkit use-sound = use_medkit", ConsumableRegistry.Sound(15) == "use_medkit");
+            Check("beans WAV loads as 16-bit PCM", PlayerController.DebugCanLoadWav("eatcanl"));
+            Check("water WAV loads as 16-bit PCM", PlayerController.DebugCanLoadWav("drinkswallow"));
+
             GD.Print($"[HOLDTEST] beans={beansAn.Use}/{beansAn.UseLen:0.00}s water={waterAn.Use}/{waterAn.UseLen:0.00}s medkit={medkitAn.Use}/{medkitAn.UseLen:0.00}s");
             GD.Print($"[HOLDTEST] RESULT {pass} passed, {fail} failed");
         }

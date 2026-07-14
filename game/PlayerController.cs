@@ -231,6 +231,7 @@ namespace UnturnedGodot
             if (_heldConsumable == null || _consumeTimer > 0f || _dead) return;
             _consumeTimer = _consumeUseLen;   // source-accurate: the length of THIS item's Use animation
             _viewmodel?.PlayConsumeUse();
+            PlayConsumeSound(_heldConsumable.id);   // source playConsume: player.playSound(asset.use) at use start
             GD.Print($"[consume] eating {_heldConsumable?.itemName}...");
         }
 
@@ -258,6 +259,41 @@ namespace UnturnedGodot
 
         // test-only: drive the eat/drink timer from a headless self-test (--consumeholdtest)
         public void DebugConsumeTick(float dt) => TickConsume(dt);
+        public static bool DebugCanLoadWav(string stem) => LoadWavOneShot($"res://content/sounds/{stem}.wav") != null;   // test: the exported WAV parses as 16-bit PCM
+
+        // Play the consumable's use/eat/drink sound (source ItemConsumeableAsset.use, content/sounds/<stem>.wav).
+        AudioStreamPlayer _consumeAudio;
+        void PlayConsumeSound(ushort id)
+        {
+            string snd = ConsumableRegistry.Sound(id);
+            if (snd == null) return;
+            var stream = LoadWavOneShot($"res://content/sounds/{snd}.wav");
+            if (stream == null) return;
+            if (_consumeAudio == null || !IsInstanceValid(_consumeAudio)) { _consumeAudio = new AudioStreamPlayer(); AddChild(_consumeAudio); }
+            _consumeAudio.Stream = stream;
+            _consumeAudio.Play();
+        }
+        // Runtime one-shot WAV loader: walk the RIFF chunks for fmt+data (UnityPy exports may carry extra chunks, so the
+        // fixed-44-byte-header assumption in Vehicle.LoadWav isn't safe here). 16-bit PCM only; anything else -> no sound.
+        static AudioStreamWav LoadWavOneShot(string resPath)
+        {
+            string p = ProjectSettings.GlobalizePath(resPath);
+            if (!System.IO.File.Exists(p)) return null;
+            byte[] b = System.IO.File.ReadAllBytes(p);
+            if (b.Length < 44) return null;
+            int channels = 1, rate = 48000, bits = 16, dataOff = -1, dataLen = 0, i = 12;   // past "RIFF"<size>"WAVE"
+            while (i + 8 <= b.Length)
+            {
+                string cid = System.Text.Encoding.ASCII.GetString(b, i, 4);
+                int csz = System.BitConverter.ToInt32(b, i + 4);
+                if (cid == "fmt " && i + 24 <= b.Length) { channels = System.BitConverter.ToInt16(b, i + 10); rate = System.BitConverter.ToInt32(b, i + 12); bits = System.BitConverter.ToInt16(b, i + 22); }
+                else if (cid == "data") { dataOff = i + 8; dataLen = System.Math.Min(csz, b.Length - dataOff); break; }
+                i += 8 + csz + (csz & 1);
+            }
+            if (dataOff < 0 || bits != 16) return null;
+            byte[] pcm = new byte[dataLen]; System.Array.Copy(b, dataOff, pcm, 0, dataLen);
+            return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2, LoopMode = AudioStreamWav.LoopModeEnum.Disabled };
+        }
 
         // G: melee swing -- hit the nearest zombie in front within the weapon's reach (proximity, not a raycast). Reuses
         // the zombie damage path. Rounds out combat (Unturned lets you swing/punch when out of ammo or up close).
