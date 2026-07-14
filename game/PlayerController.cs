@@ -248,6 +248,7 @@ namespace UnturnedGodot
 
         // --- Consumables held in hand (food/drink/medical): equip -> hold -> LMB eats/drinks -> effects apply (source UseableConsumeable). ---
         ItemAsset _heldConsumable;   // the consumable held in hand (null = none); LMB starts eating/drinking it
+        string _heldConsumableMesh;  // its mesh name -> re-equip another of the same type after one is consumed (master)
         float _consumeTimer;         // >0 while eating -- applies the consumable's effects when it hits 0
         const float ConsumeUseTime = 2.2f;   // default eat/drink duration (fallback when an item has no mapped Use-clip length)
         float _consumeUseLen = ConsumeUseTime;   // THIS item's eat/drink duration = source useTime = its Use-clip length (per-item)
@@ -261,6 +262,7 @@ namespace UnturnedGodot
         {
             if (string.IsNullOrEmpty(meshName)) meshName = "canned_beans";   // generic held stand-in so an unmapped consumable never shows a null/broken mesh
             _heldConsumable = asset;
+            _heldConsumableMesh = meshName;   // remembered so consuming one can auto-equip another of the same type (master)
             _consumeTimer = 0f;
             _melee = null;
             var an = ConsumableRegistry.Anims(meshName);   // this item's own eat/drink archetype clips + source useTime (Use-clip length)
@@ -291,10 +293,14 @@ namespace UnturnedGodot
             {
                 Consume(_heldConsumable);   // apply Health/Food/Water/etc.
                 ushort id = _heldConsumable.id;
+                var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
-                _heldConsumable = null;             // ONE use per equip: dequip the instant the stats apply (master) -- not a hold-and-spam-the-stack
-                Inventory?.removeItemAmount(id, 1);  // delete the one that was eaten from the stack
-                EquipHeldGun(string.IsNullOrEmpty(_gunName) ? "eaglefire" : _gunName);   // back to the gun/fists (re-equip from inventory to eat another)
+                _heldConsumable = null;             // one use per item: this one leaves the hand + is deleted (master)
+                Inventory?.removeItemAmount(id, 1);  // delete the one that was eaten
+                if ((Inventory?.getItemCount(id) ?? 0) > 0)
+                    EquipHeldConsumable(asset, mesh);   // still have another of the same type -> auto-equip a FRESH one (must re-click to eat it) -- master
+                else
+                    EquipHeldGun(string.IsNullOrEmpty(_gunName) ? "eaglefire" : _gunName);   // out of them -> back to the gun/fists
             }
         }
 
