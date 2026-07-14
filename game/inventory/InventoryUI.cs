@@ -63,11 +63,41 @@ namespace UnturnedGodot
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
-        public void Open() { _open = true; Visible = true; Refresh(); }
+        public void Open() { _open = true; Visible = true; Refresh(); _lastSig = InventorySignature(); }
         public void Close() { _open = false; Visible = false; }
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
 
-        public override void _Process(double delta) { if (_open) CenterDash(); }   // keep centred as the viewport settles
+        long _lastSig = -1;
+        public override void _Process(double delta)
+        {
+            if (!_open) return;
+            CenterDash();   // keep centred as the viewport settles
+            // LIVE update (master): if the inventory changed in the background (e.g. a consume finishing while the bag's
+            // open), rebuild the grid -- but NOT mid drag / selection, so it doesn't yank the item out from under you.
+            if (!_dragging && _selPanel == null)
+            {
+                long sig = InventorySignature();
+                if (sig != _lastSig) { _lastSig = sig; Refresh(); }
+            }
+        }
+
+        // Cheap rolling hash of every jar (id/amount/pos) -> detects any background change without rebuilding each frame.
+        long InventorySignature()
+        {
+            if (Inv == null) return 0;
+            long h = 1469598103934665603L;
+            foreach (var pg in Inv.items)
+            {
+                byte cnt = pg.getItemCount();
+                for (byte i = 0; i < cnt; i++)
+                {
+                    var j = pg.getItem(i);
+                    long v = ((long)j.item.id << 24) ^ ((long)j.item.amount << 8) ^ ((long)j.x << 4) ^ j.y;
+                    h = (h ^ v) * 1099511628211L;
+                }
+            }
+            return h;
+        }
 
         // --- drag-drop: pick an item up on left-press, drop it on a cell (TryDrag = the ported move/swap), R rotates ---
         public override void _Input(InputEvent e)
