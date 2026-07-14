@@ -199,6 +199,10 @@ namespace UnturnedGodot
                 else { v.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
             }
             else _salvageTimer = 0f;
+            // Repeated tool: drive the continuous-use ANIM off the LMB edge -- Start_Swing (loops) on press, Stop_Swing on release (source startSwing/stopSwing)
+            bool wantTorch = IsRepeatedMelee && lmb;
+            if (wantTorch && !_torchAnimOn) { _viewmodel?.StartTorch(); _torchAnimOn = true; }
+            else if (!wantTorch && _torchAnimOn) { _viewmodel?.StopTorch(); _torchAnimOn = false; }
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
         }
 
@@ -222,6 +226,7 @@ namespace UnturnedGodot
         public bool IsRepeatedMelee => _melee != null && _melee.Repeated;   // a "Repeated" tool (blowtorch/chainsaw): continuous HOLD, NO weak/strong swing, NO strong (RMB) attack (source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks")
         float _salvageTimer;   // seconds of LMB-hold accumulated against the focused wreck (blowtorch salvage)
         const float SalvageTime = 3f;   // hold this long to break a wreck down
+        bool _torchAnimOn;     // is the Repeated-tool continuous-use anim (Start_Swing) currently playing? (tracked off the LMB edge)
 
         // Equip a melee weapon: load its real ItemMeleeAsset .dat (Range + per-target damage) so a swing is
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
@@ -233,6 +238,7 @@ namespace UnturnedGodot
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
             _melee = System.IO.File.Exists(p) ? MeleeDef.FromDatText(meleeName, System.IO.File.ReadAllText(p)) : new MeleeDef { Name = meleeName };
             _heldMeleeName = meleeName;   // remember the tool (blowtorch salvage check)
+            _torchAnimOn = false;         // fresh weapon -> the continuous-use anim isn't running yet
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { MeleeMesh = $"{meleeName}.txt", MeleeAlbedo = $"{meleeName}_albedo.png" };   // show the melee weapon in-hand (arms + model, no gun FX)
             AddChild(_viewmodel);
@@ -1032,7 +1038,7 @@ namespace UnturnedGodot
                 if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
-                { if (!OpenNearestCrate()) _viewmodel?.PlayInspect(); }   // F: open a nearby crate, else inspect the gun
+                { if (!OpenNearestCrate()) { if (_melee != null) _viewmodel?.PlayMeleeInspect(); else _viewmodel?.PlayInspect(); } }   // F: open a nearby crate, else inspect the held weapon (melee plays its own Inspect clip, gun its own)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })

@@ -24,6 +24,7 @@ namespace UnturnedGodot
         public Godot.Environment WorldEnv;
         Camera3D _cam;
         RiggedCharacter _arms;
+        string _meleeCap;   // Cap(melee content name), e.g. "Blowtorch"/"Sledgehammer" -> per-melee clip labels (Blowtorch_Start_Swing, Sledgehammer_Weak, ...); null for guns/consumables
         Node3D _gun;
         CanvasLayer _layer;
         // Source-accurate: horizontal offset is ZERO (PlayerAnimator.cs:1653 base = Vector3.zero,
@@ -217,6 +218,7 @@ namespace UnturnedGodot
                 _arms.SetClipLoop("Gun_Reload", false);  // reload plays ONCE (the clip returns the hands to ready)
                 // per-gun reload clip ({Gun}_Reload, extracted from that gun's animations.prefab); fall back to Gun_Reload
                 string capGun = char.ToUpper(GunName[0]) + GunName.Substring(1);
+                if (MeleeMesh != null) { string mn = MeleeMesh.Replace(".txt", ""); if (mn.Length > 0) _meleeCap = char.ToUpper(mn[0]) + mn.Substring(1); }   // per-melee clip prefix: "blowtorch.txt" -> "Blowtorch", "knife_military.txt" -> "Knife_military"
                 _reloadClip = _arms.ClipLength(capGun + "_Reload") > 0f ? capGun + "_Reload" : "Gun_Reload";
                 _hammerClip = _arms.ClipLength(capGun + "_Hammer") > 0f ? capGun + "_Hammer" : null;   // rechamber rack (empty-reload second half)
                 if (_hammerClip != null) _arms.SetClipLoop(_hammerClip, false);
@@ -227,10 +229,15 @@ namespace UnturnedGodot
                 _attachStartClip = _arms.ClipLength(capGun + "_AttachStart") > 0f ? capGun + "_AttachStart" : null;
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
-                _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // melee equip/swing clips play once
+                _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // generic (knife) melee fallback clips play once
+                if (_meleeCap != null)   // this melee's OWN ripped clips: equip/swings/stop/inspect play once; a Repeated tool's Start_Swing LOOPS as the continuous "using" motion while held (source startSwing)
+                {
+                    foreach (var c in new[] { "_Equip", "_Weak", "_Strong", "_Stop_Swing", "_Inspect" }) _arms.SetClipLoop(_meleeCap + c, false);
+                    _arms.SetClipLoop(_meleeCap + "_Start_Swing", true);
+                }
                 string equipClip = ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
 
-                                 : MeleeMesh != null ? "Melee_Equip" : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: raise the weapon; gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
+                                 : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
                 _arms.SetClipLoop(equipClip, false);
                 _arms.Play(equipClip);
                 _equipLen = _arms.ClipLength(equipClip);
@@ -379,7 +386,22 @@ namespace UnturnedGodot
 
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
-        public void SwingMelee(bool strong = false) { _arms?.Play(strong ? "Melee_Strong" : "Melee_Weak"); }   // play the source melee swing anim (Weak / Strong)
+        public void SwingMelee(bool strong = false)   // play this melee's OWN Weak/Strong swing (source UseableMelee), falling back to the generic knife clip if it wasn't ripped
+        {
+            string own = _meleeCap + (strong ? "_Strong" : "_Weak");
+            _arms?.Play(_meleeCap != null && _arms.ClipLength(own) > 0f ? own : (strong ? "Melee_Strong" : "Melee_Weak"));
+        }
+        // Repeated tool (blowtorch/chainsaw/jackhammer): the continuous "using" motion. Start_Swing LOOPS while the trigger's
+        // held; Stop_Swing plays once on release (source UseableMelee.startSwing/stopSwing). HasStartSwing == "this is a Repeated tool".
+        public bool HasStartSwing => _meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Start_Swing") > 0f;
+        public void StartTorch() { if (HasStartSwing) _arms.Play(_meleeCap + "_Start_Swing"); }
+        public void StopTorch()
+        {
+            if (_meleeCap == null || _arms == null) return;
+            if (_arms.ClipLength(_meleeCap + "_Stop_Swing") > 0f) _arms.Play(_meleeCap + "_Stop_Swing");
+            else _arms.Play(_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip");   // no stop clip: settle back to the ready hold
+        }
+        public void PlayMeleeInspect() { if (_meleeCap != null && _arms != null && _arms.ClipLength(_meleeCap + "_Inspect") > 0f) _arms.Play(_meleeCap + "_Inspect"); }
 
         CpuParticles3D _torchSparks;   // blowtorch: orange sparks fly from the torch tip while repairing / cutting a wreck (master)
         public void SetTorchSparks(bool on)

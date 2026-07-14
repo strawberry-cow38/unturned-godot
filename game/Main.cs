@@ -27,6 +27,7 @@ namespace UnturnedGodot
         const int MontageFramesPerClip = 55;
         bool _ragTest;                               // --anim=Ragdoll : trigger the death ragdoll mid-capture
         bool _vmTest; Viewmodel _vm;                 // --vm=DIR : first-person viewmodel test (equip -> ADS -> hip)
+        bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
         bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain]
@@ -590,6 +591,7 @@ namespace UnturnedGodot
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
+            _vmMelee = isMelee;
             if (isMelee) AddChild(new MeleeSwingDriver { VM = _vm });   // periodic swings so the --vm render shows the melee swing anim
             if (_vmAttach) { _am = new AttachmentMenu(); AddChild(_am); _am.VM = _vm; }   // --attach: show the T menu over the gun
         }
@@ -2971,7 +2973,7 @@ namespace UnturnedGodot
                     // --attach: once equipped, hold the T attachment menu open (no aim/fire) so the render shows the slot icons
                     if (_am != null && _vm.IsEquipComplete && !_am.IsOpen && ++_vmSettle >= 8) _am.Open();
                 }
-                else if (_vmTest && _vm != null)
+                else if (_vmTest && _vm != null && !_vmMelee)   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings)
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
                     { _vm.SetAiming(true); _vmAimed = true; _vmAimStart = _frame; }
@@ -3048,7 +3050,13 @@ namespace UnturnedGodot
     {
         public Viewmodel VM;
         int _f;
-        public override void _PhysicsProcess(double delta) { _f++; if (_f % 35 == 25 && VM != null) VM.SwingMelee(); }   // periodic swings for the --vm melee render
+        public override void _PhysicsProcess(double delta)
+        {
+            _f++;
+            if (VM == null) return;
+            if (VM.HasStartSwing) { if (_f == 25) VM.StartTorch(); }   // Repeated tool (blowtorch/chainsaw): kick the continuous Start_Swing once; it loops
+            else if (_f % 35 == 25) VM.SwingMelee();                   // normal melee: periodic weak swings for the --vm render
+        }
     }
 
     public partial class MeleeTestDriver : Node3D

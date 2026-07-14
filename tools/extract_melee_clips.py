@@ -1,4 +1,11 @@
 import UnityPy, json, os
+# Rip EVERY melee weapon's own 1st-person animation set from core.masterbundle into rig.json, one clip per
+# label (same per-item convention as the guns: "Eaglefire_Reload" -> here "Sledgehammer_Weak", "Blowtorch_Start_Swing").
+# Each items/melee/<name>/animations.prefab holds an Animation component whose m_Animations are the clips:
+#   normal melees: Equip / Weak / Strong / Inspect
+#   REPEATED tools (blowtorch, chainsaw, jackhammer, xmas_saw): Equip / Start_Swing / Stop_Swing / Inspect
+# The generic Melee_Weak/Strong/Equip (ripped from knife_military) stay as the fallback the Viewmodel uses when a
+# per-melee clip is missing. Quat/pos conversion is byte-identical to the old single-knife extractor.
 MB = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle"
 RIG = r"C:\claude-workspace\unturned-godot\game\content\rig.json"
 env = UnityPy.load(MB)
@@ -40,27 +47,39 @@ def convert(cl):
         for arr in d.values():
             if arr: length=max(length,arr[-1][0])
     return {"fps":fps,"length":length,"tracks":tracks,"loop":False}
-def find_clip(name, clipname):
-    for path,obj in cont.items():
-        if f"items/melee/{name}/animations.prefab" in str(path).lower() and obj.type.name=="GameObject":
-            go=obj.read()
-            for entry in (getattr(go,"m_Component",None) or []):
-                pptr=getattr(entry,"component",None)
-                if pptr is None: continue
-                comp=pptr.read()
-                tn=comp.object_reader.type.name if hasattr(comp,"object_reader") else ""
-                if "Animation" not in tn: continue
-                for cp in (getattr(comp,"m_Animations",None) or []):
-                    cl=cp.read()
-                    print("  clip in prefab:", cl.m_Name)
-                    if cl.m_Name==clipname: return cl
-    return None
+
+# ONE container pass: bucket every melee's clips by weapon name
+by_name={}
+for path,obj in cont.items():
+    p=str(path).lower()
+    if "items/melee/" in p and "animations.prefab" in p and obj.type.name=="GameObject":
+        name=p.split("items/melee/")[1].split("/")[0]
+        go=obj.read()
+        for entry in (getattr(go,"m_Component",None) or []):
+            pptr=getattr(entry,"component",None)
+            if pptr is None: continue
+            comp=pptr.read()
+            tn=comp.object_reader.type.name if hasattr(comp,"object_reader") else ""
+            if "Animation" not in tn: continue
+            d=by_name.setdefault(name,{})
+            for cp in (getattr(comp,"m_Animations",None) or []):
+                cl=cp.read()
+                d[cl.m_Name]=cl
+
+WANT=["Equip","Weak","Strong","Start_Swing","Stop_Swing","Inspect"]
 rig=json.load(open(RIG))
-for clipname,label in (("Weak","Melee_Weak"),("Strong","Melee_Strong"),("Equip","Melee_Equip")):
-    cl=find_clip("knife_military", clipname)
-    if not cl: print("NO", clipname, "clip"); continue
-    c=convert(cl)
-    rig["anims"][label]=c
-    print(f"{label}: len={c['length']:.3f}s tracks={len(c['tracks'])} bones={sorted(c['tracks'])[:6]}")
+added=0
+# keep the generic knife-based fallbacks in sync too (Melee_Weak/Strong/Equip)
+if "knife_military" in by_name:
+    for cn,label in (("Weak","Melee_Weak"),("Strong","Melee_Strong"),("Equip","Melee_Equip")):
+        if cn in by_name["knife_military"]: rig["anims"][label]=convert(by_name["knife_military"][cn])
+for name in sorted(by_name):
+    cap=name[0].upper()+name[1:]
+    have=[]
+    for cn in WANT:
+        if cn not in by_name[name]: continue
+        rig["anims"][f"{cap}_{cn}"]=convert(by_name[name][cn])
+        have.append(cn); added+=1
+    print(f"{name:20s} {cap:20s} -> {have}")
 json.dump(rig, open(RIG,"w"))
-print("rig.json updated bytes:", os.path.getsize(RIG))
+print(f"added {added} per-melee clips across {len(by_name)} weapons; rig.json bytes:", os.path.getsize(RIG))
