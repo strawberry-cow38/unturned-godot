@@ -263,6 +263,32 @@ namespace UnturnedGodot
         public bool DebugUsesMag() => UsesMagItem;           // test: does the equipped gun use magazine items
         public void DebugMagSwap() => DoMagSwap();           // test: run one reload magazine swap
         public bool DebugHasSpareMag() => FindBestMag() != null;   // test: is there a compatible spare mag to reload from
+        // bolt/pump rechamber (source needsRechamber): after firing, wait RechamberAfterShotDelay, then cycle the action
+        // (the Hammer / bolt-cycle clip) -> fire+reload stay blocked until it finishes. PlayHammer also rotates the gun.
+        void TickRechamber(double delta)
+        {
+            if (_needsRechamber && !_rechambering)
+            {
+                _rechamberDelayTimer -= delta;
+                if (_rechamberDelayTimer <= 0)
+                {
+                    _rechambering = true;
+                    _shotCountForRechamber = 0;
+                    float hl = _viewmodel?.HammerLength ?? 0f;
+                    _rechamberAnimTimer = hl > 0f ? hl : 0.5f;   // the bolt-cycle clip length (small fallback if a gun ships none)
+                    _viewmodel?.PlayHammer();
+                }
+            }
+            else if (_rechambering)
+            {
+                _rechamberAnimTimer -= delta;
+                if (_rechamberAnimTimer <= 0) { _rechambering = false; _needsRechamber = false; }   // action cycled -> ready to fire again
+            }
+        }
+        public int DebugRechamberCount() => Gun?.RechamberAfterShotCount ?? -1;   // test: 1 for bolt/pump, 0 for self-loading
+        public bool DebugNeedsRechamber() => _needsRechamber || _rechambering;    // test: is the gun mid-cycle (can't fire)
+        public void DebugFireRechamber() { if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount) { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; } }   // test: the post-shot rechamber trigger (the tail of Fire)
+        public void DebugRechamberTick(double dt) => TickRechamber(dt);   // test: advance the bolt-cycle timers
         public bool DebugIsShotgun() => Gun?.IsShotgun ?? false;   // test: pump/break shell gun
         public bool DebugShellReload() => Gun?.ShellReload ?? false;   // test: shell-by-shell (pump tube) reload
         public bool DebugHasChamber() => HasChamber;         // test: does the gun get a +1 chambered round
@@ -526,6 +552,12 @@ namespace UnturnedGodot
         const float GunshotRadius = 48f;   // earshot of an unsuppressed shot (AlertTool noise); suppressors would cut it
         bool _reloading;            // reloading -> can't fire; magazine refills when the timer elapses
         double _reloadTimer;
+        // Per-shot rechamber (bolt/pump). After a shot the action must cycle (bolt-cycle / pump) before firing/reloading again.
+        bool _needsRechamber;        // fired -> awaiting the cycle (source needsRechamber: blocks fire/aim/reload/inspect)
+        bool _rechambering;          // true while the bolt-cycle (Hammer) animation plays
+        double _rechamberDelayTimer; // RechamberAfterShotDelay countdown before the cycle animation starts
+        double _rechamberAnimTimer;  // the Hammer (bolt-cycle) clip length
+        int _shotCountForRechamber;  // shots since the last cycle -> fires the rechamber at RechamberAfterShotCount
         bool _hammerPending;        // reloaded from EMPTY -> after the mag swap, play the rechamber Hammer clip (source: the reload's 2nd half)
         double _hammerDur;
         float _reloadSpeed = 1f;    // DEXTERITY reload speed, kept so the Hammer clip plays at the same rate
@@ -741,6 +773,7 @@ namespace UnturnedGodot
             _gunName = System.IO.Path.GetFileNameWithoutExtension(datPath);
             Ammo = Gun.AmmoMax;
             _loadedMagId = Gun.MagazineId;   // the gun comes equipped with its default magazine loaded (its ammo = Ammo)
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;   // fresh gun -> not mid-cycle
             // reset to a valid firemode for THIS gun — don't inherit the previous one (e.g. Auto carried onto the
             // semi-only shotgun would let it hold-fire full-auto). Prefer Semi, then Auto/Burst, else Safety.
             var modes = AvailableModes();
@@ -979,6 +1012,7 @@ namespace UnturnedGodot
         void StartReload()
         {
             if (_reloading || _dead) return;
+            if (_needsRechamber || _rechambering) return;   // must finish cycling the bolt/pump first (source: reload gated by needsRechamber)
             int max = Gun?.AmmoMax ?? 30;
             if (Ammo >= ChamberedCap) return;   // already topped off (full mag + the round in the chamber)
             if (UsesMagItem && FindBestMag() == null) { _viewmodel?.PlayDryFire(); return; }   // working magazines: no spare mag in the bag -> can't reload
@@ -1054,7 +1088,7 @@ namespace UnturnedGodot
         // come from the equipped gun's real ItemGunAsset .dat when loaded.
         public bool Fire()
         {
-            if (_fireCd > 0f || Ammo <= 0 || _reloading || _cam == null || _dead || _driving != null) return false;   // never fire while dead -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
+            if (_fireCd > 0f || Ammo <= 0 || _reloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null) return false;   // never fire while dead -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
@@ -1107,6 +1141,9 @@ namespace UnturnedGodot
             // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
             // barrel skips the alert ENTIRELY (source UseableGun ~936: only alert if barrel==null || !isSilenced) -> stealth.
             if (!(_viewmodel?.IsSuppressed ?? false)) SoundBus.Emit(GetTree(), GlobalPosition, SoundBus.Gunshot);   // Phase 3 sound bus: unsuppressed gunshot loudness (suppressed = silent)
+            // bolt/pump: this shot needs the action cycled before the next one (source RechamberAfterShotCount -> needsRechamber)
+            if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount)
+            { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; }
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
 
@@ -1611,6 +1648,7 @@ namespace UnturnedGodot
                     }
                 }
             }
+            TickRechamber(delta);   // bolt/pump: run the post-shot bolt-cycle timer -> the Hammer clip, then re-enable firing
             // burst rounds + full-auto hold fire on cooldown (Fire() still enforces ammo/reload/cd)
             if (_fireCd <= 0f && !_reloading)
             {

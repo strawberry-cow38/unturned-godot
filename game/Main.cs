@@ -2099,6 +2099,19 @@ namespace UnturnedGodot
             p.Ammo = 0;                 // both barrels fired
             p.DebugCompleteReload();     // one reload
             Check("masterkey reload loads BOTH shells at once (Ammo=2)", p.Ammo == 2);
+
+            // bolt/pump per-shot rechamber (source RechamberAfterShotCount): a bolt-action must cycle the bolt before firing again
+            p.LoadGun("res://content/timberwolf.dat");
+            Check("timberwolf (bolt) rechambers after each shot", p.DebugRechamberCount() == 1);
+            p.DebugFireRechamber();
+            Check("after a shot the bolt gun must cycle (blocked)", p.DebugNeedsRechamber());
+            p.DebugRechamberTick(0.30);   // past RechamberAfterShotDelay -> the bolt-cycle animation starts
+            p.DebugRechamberTick(0.60);   // past the cycle -> ready again
+            Check("after cycling the bolt gun can fire again", !p.DebugNeedsRechamber());
+            p.LoadGun("res://content/eaglefire.dat");
+            Check("eaglefire (semi) does NOT rechamber per shot", p.DebugRechamberCount() == 0);
+            p.DebugFireRechamber();
+            Check("semi-auto never needs a per-shot cycle", !p.DebugNeedsRechamber());
             GD.Print($"[MAGTEST] RESULT {pass} passed, {fail} failed");
         }
 

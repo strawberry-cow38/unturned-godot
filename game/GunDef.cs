@@ -24,6 +24,12 @@ namespace UnturnedGodot
         public int AmmoMax;
         public int MagazineId;   // .dat Magazine: the default magazine item id
         public int Caliber;      // .dat Caliber: mags with a matching caliber can be loaded
+        // Per-shot rechamber (source ItemGunAsset): Bolt & Pump guns must CYCLE the action (bolt-cycle / pump) after each shot
+        // before they can fire, aim or reload again. RechamberAfterShotCount 0 = self-loading (semi/auto). Delay = seconds after
+        // the shot before the "Hammer" (bolt-cycle) animation plays.
+        public int RechamberAfterShotCount;
+        public float RechamberAfterShotDelay;
+        public bool NeedsRechamber => RechamberAfterShotCount > 0;
         public int Pellets = 1;   // rays fired per shot (source: the magazine's Pellets; shotgun shells = 8). Each
                                   // pellet is deviated within the spread cone -> the shotgun spread pattern.
         // Per-shot camera recoil (degrees): X = horizontal (yaw, random sign), Y = vertical (pitch up). The aim
@@ -80,6 +86,9 @@ namespace UnturnedGodot
                 HasAuto = d.ContainsKey("Auto"),
                 BurstCount = d.ParseInt32("Bursts", 0),
             };
+            int defaultRechamber = (g.Action == "Bolt" || g.Action == "Pump") ? 1 : 0;   // source ItemGunAsset: Bolt & Pump default to rechambering after each shot
+            g.RechamberAfterShotCount = d.ParseInt32("RechamberAfterShotCount", defaultRechamber);
+            g.RechamberAfterShotDelay = d.ParseFloat("RechamberAfterShotDelay", 0.25f);   // source default 0.25s
             ComputeBallistics(g, d);
             return g;
         }
