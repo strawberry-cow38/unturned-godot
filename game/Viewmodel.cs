@@ -599,7 +599,18 @@ namespace UnturnedGodot
             // reload plays the real Gun_Reload clip (see SetReloading) — the base pose IS the reload motion, no dip.
 
             if (_inspecting) { _inspectTimer -= (float)delta; if (_inspectTimer <= 0f) _inspecting = false; }
-            if (_gun != null && _gun.GetParent() is Node3D att)
+            if (_gun != null && ConsumableMesh != null && _gun.GetParent() is Node3D catt)
+            {
+                // Consumable: FOLLOW THE HAND BONE (the eat/drink anim tilts the wrist to sip -- source), instead of the
+                // gun's barrel->aim pin which would freeze it upright + kill the tilt (master). + the source's held-model
+                // localRotation = Euler(0,0,90) (PlayerEquipment: firstModel.localRotation), render-tunable via UG_ROLL.
+                Vector3 roll = new Vector3(0f, 0f, -90f);   // source Euler(0,0,90) mapped through the mesh's negate-X+Z (=Ry180) convention -> Rz(-90)
+                if (System.Environment.GetEnvironmentVariable("UG_ROLL") is string _r && _r.Split(',').Length == 3)
+                { var pp = _r.Split(','); roll = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
+                var rollB = Basis.FromEuler(new Vector3(Mathf.DegToRad(roll.X), Mathf.DegToRad(roll.Y), Mathf.DegToRad(roll.Z)));
+                _gun.GlobalTransform = new Transform3D(catt.GlobalTransform.Basis * rollB, catt.GlobalPosition);
+            }
+            else if (_gun != null && _gun.GetParent() is Node3D att)
             {
                 Vector3 aim = -_cam.GlobalTransform.Basis.Z;   // viewmodel-forward
                 Vector3 x = Vector3.Up.Cross(aim);
