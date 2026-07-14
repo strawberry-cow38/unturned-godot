@@ -2111,8 +2111,12 @@ namespace UnturnedGodot
             Check("12 gauge shells don't count for the 20ga masterkey (still 38)", p.DebugCountShells() == 38);
             p.LoadGun("res://content/bluntforce.dat");
             Check("bluntforce (pump) feeds from loose shells", p.DebugUsesShells());
-            Check("bluntforce is shell-by-shell (pump)", p.DebugShellReload());
+            Check("bluntforce reloads WHOLE (vanilla has no shell-by-shell)", !p.DebugShellReload());
             Check("bluntforce sees the 12 gauge shells (32)", p.DebugCountShells() == 32);
+            p.Ammo = 0;                 // empty tube
+            p.DebugCompleteReload();     // one whole reload
+            Check("bluntforce loads all 8 at once from the stack (Ammo=8)", p.Ammo == 8);
+            Check("whole reload consumed 8 shells (32 -> 24)", p.DebugCountShells() == 24);
 
             // bolt/pump per-shot rechamber (source RechamberAfterShotCount): a bolt-action must cycle the bolt before firing again
             p.LoadGun("res://content/timberwolf.dat");
