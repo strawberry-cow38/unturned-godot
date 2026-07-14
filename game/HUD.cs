@@ -209,8 +209,9 @@ namespace UnturnedGodot
                 box.Visible = on();
             if (Player != null)
             {
-                _ammo.Text = $"{Player.Ammo} / {(Player.Gun?.AmmoMax ?? Player.Ammo)}";
-                _fireMode.Text = Player.FiremodeName;
+                bool gun = Player.HasGunOut;                       // ammo counter + firemode ONLY when a gun is genuinely out (master: off for fists/melee/held item)
+                _ammo.Visible = gun; _fireMode.Visible = gun;
+                if (gun) { _ammo.Text = $"{Player.Ammo} / {(Player.Gun?.AmmoMax ?? Player.Ammo)}"; _fireMode.Text = Player.FiremodeName; }
                 _pain.Color = new Color(CR.R, CR.G, CR.B, Player.PainAlpha);   // colorOverlayImage.TintColor.a = painAlpha
             }
 

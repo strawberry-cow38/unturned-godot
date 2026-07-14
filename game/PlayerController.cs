@@ -252,6 +252,9 @@ namespace UnturnedGodot
         const float ConsumeUseTime = 2.2f;   // default eat/drink duration (fallback when an item has no mapped Use-clip length)
         float _consumeUseLen = ConsumeUseTime;   // THIS item's eat/drink duration = source useTime = its Use-clip length (per-item)
         public bool HoldingConsumable => _heldConsumable != null;
+        // A gun is genuinely OUT only when one is loaded AND nothing else is in hand. A melee/held item is mutually
+        // exclusive with the gun, so it fully disarms: no firing, no ammo HUD, no reload/firemode logic (master).
+        public bool HasGunOut => Gun != null && _melee == null && _heldConsumable == null;
 
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
         public void EquipHeldConsumable(ItemAsset asset, string meshName)
@@ -1014,10 +1017,10 @@ namespace UnturnedGodot
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
-                StartReload();
+            { if (HasGunOut) StartReload(); }   // no reload without a gun out (master)
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })
             {
-                if (_driving == null) CycleFiremode();   // V on foot: cycle firemode (cam toggle moved to H)
+                if (_driving == null && HasGunOut) CycleFiremode();   // V on foot: cycle firemode (only with a gun out)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
@@ -1167,6 +1170,7 @@ namespace UnturnedGodot
         void StartFire()
         {
             if (_dead) return;   // ignore fire commands on the death screen (master)
+            if (!HasGunOut) return;   // no gun in hand (fists / melee / held item) -> no firing at all (master: gun & held item mutually exclusive)
             if (_reloading) { if (Gun?.ShellReload == true && Ammo > 0) { _reloading = false; _viewmodel?.SetReloading(false); } else return; }   // shell-fed shotgun: firing CANCELS the shell-by-shell reload (shoot what's loaded); other guns ignore fire mid-reload (master)
             if (_viewmodel != null && _viewmodel.InAttachView) return;   // no firing while the T attachment menu is up
             if (_viewmodel != null && _viewmodel.IsInspecting) { _viewmodel.CancelInspect(); return; }   // firing mid-inspect cancels it + snaps the gun to the shoot pose; no shot this click
@@ -1223,7 +1227,7 @@ namespace UnturnedGodot
         public bool Fire()
         {
             if (_fireCd > 0f || Ammo <= 0 || _reloading || _needsRechamber || _rechambering || _cam == null || _dead || _driving != null
-                || _heldConsumable != null || (_invUI?.IsOpen ?? false)) return false;   // no firing while holding a consumable (it REPLACES the gun, not a layer) or with the inventory open (master) -- also guards the polled auto/burst tick
+                || !HasGunOut || (_invUI?.IsOpen ?? false)) return false;   // !HasGunOut: no gun in hand (melee/held item disarm it) -> no shot, even from the polled auto/burst tick after switching away mid-fire (master)
             // -- also while the bolt/pump still needs cycling -- kills a queued burst the frame we die (the tick calls Fire()) + ignores death-screen clicks (master). _driving guard fixes the "stray tracer flies straight south" bug: the auto/burst tick (_PhysicsProcess) calls Fire() on held-LMB WITHOUT a driving check, and while driving _cam is TopLevel (detached chase cam) -> aim = the chase cam's fixed heading, not the player's look. LMB honks while driving anyway.
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
