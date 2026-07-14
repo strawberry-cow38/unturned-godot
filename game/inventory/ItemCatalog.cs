@@ -26,6 +26,34 @@ namespace SDG.Unturned
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();
+            WireConsumableStats();
+        }
+
+        // Load real ItemConsumeableAsset effects (content/consumable_stats.tsv: id health food water virus disinfectant
+        // energy bleeding bones) onto every Food/Water/Medical item -- so the WHOLE catalog is consumable, not just the
+        // 8 hardcoded above. Overwrites the hardcoded 8 with the same authoritative .dat values. bleeding/bones: 1=Heal.
+        static void WireConsumableStats()
+        {
+            const string path = "res://content/consumable_stats.tsv";
+            if (!Godot.FileAccess.FileExists(path)) return;
+            using var f = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
+            int n = 0;
+            while (f != null && !f.EofReached())
+            {
+                string line = f.GetLine();
+                if (string.IsNullOrEmpty(line)) continue;
+                var c = line.Split('\t');
+                if (c.Length < 9 || !ushort.TryParse(c[0], out var id)) continue;
+                var a = Assets.find(id);
+                if (a == null) continue;
+                int I(int k) => int.TryParse(c[k], out var v) ? v : 0;
+                a.useHealth = I(1); a.useFood = I(2); a.useWater = I(3);
+                a.useVirus = I(4); a.useDisinfectant = I(5); a.useEnergy = I(6);
+                a.useStopsBleeding = I(7) == 1;   // Bleeding_Modifier Heal
+                a.useHealBroken = I(8) == 1;       // Bones_Modifier Heal
+                n++;
+            }
+            GD.Print($"[items] wired consumable effects for {n} food/water/medical items");
         }
 
         // Load the additive clothing-armor table (content/clothing_armor.tsv: id  Armor  Armor_Explosion  Falling_Damage_Multiplier)

@@ -43,9 +43,12 @@ namespace SDG.Unturned
         // ItemConsumeableAsset effects applied on Use, then the item is consumed. Health is absolute (0-100);
         // Food/Water are the .dat 0-100 values (the port's vitals are 0..1, so divided by 100 on apply).
         public int useHealth, useFood, useWater;
+        public int useVirus, useDisinfectant, useEnergy;   // Virus (askInfect: raises infection), Disinfectant (askDisinfect: lowers it), Energy (askRest: restores stamina)
         public bool useStopsBleeding;   // Bleeding_Modifier = Heal
         public bool useHealBroken;      // Bones_Modifier = Heal (mends broken legs -- Medkit/Splint)
-        public bool IsConsumable => useHealth > 0 || useFood > 0 || useWater > 0 || useStopsBleeding || useHealBroken;
+        // Every Food/Water/Medical item is holdable + consumable (source: they're ItemConsumeableAsset), plus anything with an explicit effect.
+        public bool IsConsumable => type == EItemType.FOOD || type == EItemType.WATER || type == EItemType.MEDICAL
+                                 || useHealth > 0 || useFood > 0 || useWater > 0 || useVirus > 0 || useDisinfectant > 0 || useEnergy > 0 || useStopsBleeding || useHealBroken;
 
         // ItemTool.getRarityColorUI: the exact per-rarity UI colours
         public static Godot.Color RarityColorUI(EItemRarity r) => r switch

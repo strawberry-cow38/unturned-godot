@@ -55,6 +55,9 @@ namespace UnturnedGodot
             if (a.useHealth > 0) Health = Mathf.Min(MaxHealth, Health + a.useHealth);
             if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f);
             if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f);
+            if (a.useEnergy > 0) Stamina = Mathf.Min(1f, Stamina + a.useEnergy / 100f);   // askRest: energy drinks/bars restore stamina
+            if (a.useVirus > 0) Infect(a.useVirus / 100f);   // askInfect: raises infection (IMMUNITY skill cuts it, via Infect)
+            if (a.useDisinfectant > 0) Infection = Mathf.Max(0f, Infection - a.useDisinfectant / 100f);   // askDisinfect: antibiotics/vaccine lower infection
             if (a.useStopsBleeding) { Bleeding = false; _bleedTimer = 0; }
             if (a.useHealBroken) Broken = false;   // Bones_Modifier Heal (Medkit/Splint) mends broken legs
         }

@@ -1971,6 +1971,16 @@ namespace UnturnedGodot
             p.Consume(SDG.Unturned.Assets.find(14));   // Bottled Water: +55 water
             Check("water -> water 0.1+0.55=0.65", Mathf.Abs(p.Water - 0.65f) < 0.01f);
 
+            // NEW effects loaded from consumable_stats.tsv (the whole catalog, not just 8 hardcoded)
+            p.Stamina = 0.1f; p.Infection = 0.5f;
+            p.Consume(SDG.Unturned.Assets.find(93));   // Bottled Energy: +55 water, +75 energy
+            Check("energy -> stamina 0.1+0.75=0.85", Mathf.Abs(p.Stamina - 0.85f) < 0.01f);
+            var abx = SDG.Unturned.Assets.find(11);    // Antibiotics: disinfectant (lowers infection)
+            if (abx != null && abx.useDisinfectant > 0) { p.Consume(abx); Check("antibiotics -> infection dropped", p.Infection < 0.5f); }
+            var cola = SDG.Unturned.Assets.find(80);   // Canned Cola -- was inert (no hardcoded stats); now works from the .dat
+            Check("previously-inert cola is now IsConsumable", cola != null && cola.IsConsumable);
+            Check("cola has real .dat effects (water/energy)", cola != null && (cola.useWater > 0 || cola.useEnergy > 0));
+
             GD.Print($"[USETEST] RESULT {pass} passed, {fail} failed");
         }
 
