@@ -158,7 +158,7 @@ namespace UnturnedGodot
             return worldPoint.Y - GlobalPosition.Y > h * 0.82f;
         }
 
-        const float StepHeight = 0.4f;   // curb/threshold step-over, matches the player (master: apply movement changes to zombies)
+        const float StepHeight = 0.5f;   // curb/threshold step-over, matches the player (master: apply movement changes to zombies; bumped 0.4->0.5)
         void StepUp(float dt)
         {
             if (!IsOnFloor()) return;

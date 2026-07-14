@@ -103,7 +103,7 @@ namespace UnturnedGodot
             AgentHeight = AgentHeight,
             CellSize = CellSize,
             CellHeight = 0.2f,
-            AgentMaxClimb = 0.4f,   // = the zombie's StepHeight (ZombieController) -> navmesh connects across curbs/steps it can physically step over (default 0.25 fragmented them)
+            AgentMaxClimb = 0.5f,   // = the zombie's StepHeight (ZombieController) -> navmesh connects across curbs/steps it can physically step over (bumped 0.4->0.5 with the step height)
             AgentMaxSlope = 55f,    // = the zombie's FloorMaxAngle (55deg) -> navmesh covers slopes it can actually climb (default 45deg cut hills short)
             GeometryParsedGeometryType = NavigationMesh.ParsedGeometryType.StaticColliders,
             GeometryCollisionMask = WorldLayer,

@@ -488,7 +488,7 @@ namespace UnturnedGodot
             _capStance = h; _capsule.Height = h; _hitbox.Position = new Vector3(0f, h / 2f, 0f);
         }
 
-        const float StepHeight = 0.4f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks)
+        const float StepHeight = 0.5f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks; bumped 0.4->0.5)
         // If the horizontal motion is blocked at foot level but clear a step higher, raise onto the step; FloorSnapLength then
         // pulls us back down onto it. Reused by both the player and zombies (source has stair/ledge handling in PlayerMovement).
         void StepUp(float delta)
