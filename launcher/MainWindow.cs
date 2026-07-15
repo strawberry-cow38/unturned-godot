@@ -179,9 +179,10 @@ public class MainWindow : Window
             psi.ArgumentList.Add("--path");
             psi.ArgumentList.Add(_gameDir);
             Process.Start(psi);
-            Log($"Launched: {Path.GetFileName(exe)} --path game");
-            SetBusy("Game running…");
-            Dispatcher.UIThread.Post(async () => { await Task.Delay(2500); SetMode(Mode.Play, "Play", "Up to date."); });
+            Log($"Launched: {Path.GetFileName(exe)} --path game — handing off, closing launcher.");
+            SetBusy("Handing off to game…");
+            // hand off to the game process (it's detached), then close the launcher window -> quits the app (strawberry)
+            Dispatcher.UIThread.Post(async () => { await Task.Delay(600); Close(); });
         }
         catch (Exception ex) { Log("!! launch failed: " + ex.Message); }
     }
