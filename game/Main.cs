@@ -24,6 +24,7 @@ namespace UnturnedGodot
         string _mapRoot = MapDir("PEI");   // --map=NAME switches the whole map (terrain + objects + spawns)
         string _mapPlace = "placements.txt";   // per-map baked object placements in content/objects/ (non-PEI = placements_<key>.txt)
         int _frame;
+        MainMenu _menuShotMenu; string _menuShotDir; int _menuShotIdx;   // --menushot=DIR: render the 3D barn menu + capture each camera anchor
         string _rigDir;                              // --rig=DIR : capture a frame strip here
         int[] _rigCaptureFrames = { 4, 12, 20, 28, 36, 44 };
         int _rigShot;
@@ -55,7 +56,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null;
             bool skillsui = false;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false, farmTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
@@ -63,6 +64,7 @@ namespace UnturnedGodot
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
                 else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
                 else if (arg.StartsWith("--navshot=")) navShot = arg["--navshot=".Length..];   // verify screenshot: navmesh floor overlay + zombie vision cones, synchronous world, aerial over a pocket
+                else if (arg.StartsWith("--menushot=")) menuShot = arg["--menushot=".Length..];   // render the 3D barn main menu + capture each of the 5 camera anchors (menu_00..04.png)
                 else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
@@ -449,6 +451,15 @@ namespace UnturnedGodot
                 _driveTest = true;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildDriveTest();
+                return;
+            }
+
+            if (menuShot != null)   // render the 3D barn menu + capture each camera anchor (menu_00..04.png), then quit
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                var m = new MainMenu { OnDrivePEI = _ => { }, OnPlay = _ => { } };
+                _menuShotMenu = m; _menuShotDir = menuShot;
+                AddChild(m);
                 return;
             }
 
@@ -2998,6 +3009,24 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
+            {
+                _frame++;
+                // switch to anchor i, then capture ~45 frames later once the glide has settled (title gets a longer slow pan)
+                int[] switchAt = { 0, 100, 160, 220, 280 };
+                int[] shotAt = { 90, 145, 205, 265, 325 };
+                if (_menuShotIdx < switchAt.Length && _frame == switchAt[_menuShotIdx]) _menuShotMenu.ShowTab(_menuShotIdx);
+                if (_menuShotIdx < shotAt.Length && _frame == shotAt[_menuShotIdx])
+                {
+                    var mi = GetViewport().GetTexture().GetImage();
+                    string p = $"{_menuShotDir}/menu_{_menuShotIdx:D2}.png";
+                    mi.SavePng(p);
+                    GD.Print($"[MENUSHOT] saved {p} (frame {_frame})");
+                    _menuShotIdx++;
+                    if (_menuShotIdx >= shotAt.Length) GetTree().Quit();
+                }
+                return;
+            }
             if (_navPathTest) { if (++_frame >= 25) { _navPathTest = false; RunNavPathTest(); } return; }   // let the nav map sync a few frames, then query
             if (_zombieTest) { if (++_frame >= 25) { _zombieTest = false; RunZombieTest(); } return; }   // let the nav map sync, then verify pocket spawns land on it
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
