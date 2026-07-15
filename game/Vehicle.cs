@@ -116,19 +116,19 @@ namespace UnturnedGodot
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
-            public Vector3[] HeadlightMesh;   // procedural cream headlight LAMP boxes (front) -> glow (emissive) when 'L' on; for props whose lamps are baked into the body mesh (semi). null = none
-            public Vector3[] TaillightMesh;   // procedural red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
+            public Vector3[] TaillightMesh;   // red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public Vector3 DriverEye;   // FP driving eye offset (local); Zero = the shared default (-0.4,1.85,0.4). Tall cabs (semi) sit HIGHER so you see over the hood
-            public bool ProcInterior;   // build a procedural seat + steering wheel (for props whose body mesh has no interior sub-objects, e.g. semi); the wheel turns via SteerPivot/SteerAxis
-            public Vector3 SeatModel;   // ProcInterior: driver seat-cushion centre (backrest is placed behind it)
+            public string SeatModelFile, SteerModel;   // REAL ripped interior models re-centred into the cab (props whose body mesh has no interior sub-objects, e.g. semi). SteerModel turns via SteerPivot/SteerAxis
+            public Vector3 SeatModel;   // world-target for the seat model's AABB centre (the mesh is baked at its source vehicle -> translated here)
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
             public Vector3 Kingpin;      // trailer: local kingpin point (front); Zero = not a trailer
             public Vector3 LandingGearSize, LandingGearCenter;   // trailer: front landing-leg support box (holds the nose up when parked); toggled OFF while coupled. Zero size = none
             public Vector3 LandingLegZoneMin, LandingLegZoneMax;  // trailer: mesh-space AABB enclosing the landing-leg triangles -> split them into a toggleable MeshInstance so they VANISH when coupled. Min==Max = no split
+            public Vector3 HeadlightZoneMin, HeadlightZoneMax;    // AABB enclosing the baked-in headlight LENS triangles -> split them into their own mesh with an emissive material so the REAL lenses glow on 'L' (semi). Min==Max = no split
             public float LandingLegScaleY, LandingLegPivotY;      // trailer: vertically STRETCH the split-out leg mesh (scale about PivotY) so the feet reach the ground at the nose-up parked height. ScaleY 0/1 = no stretch
             public (Vector3 size, Vector3 center)[] ExtraBoxes;   // extra fixed collision boxes beyond the main box + RoofBox (e.g. the trailer's kingpin/gooseneck, the cab's low rear fifth-wheel deck) -> match the model geometry
         }
@@ -143,16 +143,6 @@ namespace UnturnedGodot
         }
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-
-        // a basis whose +Y axis points along `y` (used to orient a TorusMesh -- axis +Y -- so its disc faces a given normal)
-        static Basis AlignYTo(Vector3 y)
-        {
-            y = y.Normalized();
-            Vector3 seed = Mathf.Abs(y.Dot(Vector3.Right)) > 0.9f ? Vector3.Forward : Vector3.Right;
-            Vector3 z = seed.Cross(y).Normalized();
-            Vector3 x = y.Cross(z).Normalized();
-            return new Basis(x, y, z);
-        }
 
         // billboarded smoke/fire burst using the REAL source particle texture (veh_smoke_0/veh_smoke_1/veh_fire,
         // ripped from the vehicle prefab's ParticleSystemRenderer). smoke = grey rising; fire = additive orange.
@@ -401,15 +391,15 @@ namespace UnturnedGodot
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
             SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = Vector3.Zero,   // no middle omni fill -- 2 spot beams only (strawberry: the center source looked like a weird 3rd headlight)
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
-            HeadlightMesh = new[] { new Vector3(-1.05f, 0.6f, -2.55f), new Vector3(1.05f, 0.6f, -2.55f) },   // cream lamp boxes over the baked front headlights -> glow on 'L' (strawberry)
-            TaillightMesh = new[] { new Vector3(-1.15f, 0.65f, 4.45f), new Vector3(1.15f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame face; hidden under the trailer when towing (pass-through) (strawberry)
-            ProcInterior = true, SeatModel = new Vector3(-0.5f, 1.55f, -0.7f),   // procedural seat + steering wheel: the prop's Model_0 has no interior sub-objects (strawberry)
-            SteerPivot = new Vector3(-0.5f, 1.9f, -1.5f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steering wheel in front of the driver, tilted back ~15deg; turns 1:1 with the wheels
-            DriverEye = new Vector3(-0.5f, 2.4f, -0.9f),   // sit HIGH in the tall cab (floor ~Y1.5, roof ~Y3.85) so the view clears the long hood (strawberry: "taller so you can see")
+            HeadlightZoneMin = new Vector3(-1.08f, 0.45f, -2.66f), HeadlightZoneMax = new Vector3(1.08f, 1.05f, -2.45f),   // split the REAL baked headlight lenses out of the mesh -> emissive on 'L' (strawberry: they already exist, wire them up)
+            TaillightMesh = new[] { new Vector3(-1.035f, 0.65f, 4.45f), new Vector3(1.035f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame; moved 10% closer together (1.15->1.035) (strawberry)
+            SeatModelFile = "roadster_seats.txt", SeatModel = new Vector3(0f, 2.2f, 0.3f),   // REAL ripped seats (single 2-seat row) back near the cab rear wall (strawberry: use src, not proc-gen)
+            SteerModel = "jeep_steer.txt", SteerPivot = new Vector3(-0.5f, 2.1f, -0.55f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // REAL ripped steering wheel in front of the driver; turns 1:1 with the wheels
+            DriverEye = new Vector3(-0.5f, 2.5f, 0.05f),   // eye above the seat, looking forward over the hood (floor ~Y1.5, roof ~Y3.85)
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f, 0.65f, 0.65f },   // big semi tyres (mesh scales 1.24x). Axle Y kept at 0.55 so the taller tyre LIFTS the truck (ride height = radius+restLen-axleY). tandem axles spaced >1.5 apart so the fat tyres don't overlap
             Wheels = new (float, float, float, bool)[]
             {
-                (-1.42f, 0.55f, -1.72f, true),  (1.42f, 0.55f, -1.72f, true),    // front axle (steered): moved OUT 1.28->1.42 (under the fender |X|1.40-1.50) + BACK -1.95->-1.72 to sit central in the wheel-well arch (Z opening ~-2.2..-1.3) (strawberry)
+                (-1.46f, 0.55f, -1.62f, true),  (1.46f, 0.55f, -1.62f, true),    // front axle (steered): out 1.28->1.46 (under the fender) + back -1.95->-1.62, central in the wheel-well arch (strawberry: "back + wider just a touch" more)
                 (-1.28f, 0.55f,  1.90f, false), (1.28f, 0.55f,  1.90f, false),   // rear axle 1 (drive)
                 (-1.28f, 0.55f,  3.70f, false), (1.28f, 0.55f,  3.70f, false),   // rear axle 2 (tandem, drive) -- moved back 3.5->3.7 (strawberry)
             },
@@ -782,9 +772,11 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            ArrayMesh bodyMesh; ArrayMesh legMesh = null;
+            ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null;
             if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
                 (bodyMesh, legMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.LandingLegZoneMin, s.LandingLegZoneMax);
+            else if (s.HeadlightZoneMin != s.HeadlightZoneMax)   // split the baked-in headlight LENSES out so the REAL geometry can emit on 'L' (strawberry: they already exist in the mesh, wire them up)
+                (bodyMesh, hlMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.HeadlightZoneMin, s.HeadlightZoneMax);
             else
                 bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
@@ -798,6 +790,12 @@ namespace UnturnedGodot
                     v._landingLegMesh.Position = new Vector3(0f, s.LandingLegPivotY * (1f - s.LandingLegScaleY), 0f);
                 }
                 v.AddChild(v._landingLegMesh);
+            }
+            if (hlMesh != null)   // the REAL baked headlight lenses as their own mesh -> cream, and emit on 'L' like a car (SetHeadlights drives _headlightMat)
+            {
+                var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat });
+                v._headlightMat = hlMat;
             }
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
@@ -883,19 +881,7 @@ namespace UnturnedGodot
                     if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); }   // red lens: glow the material + cast a real red light from that side (master)
                     if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); }      // blue lens: material glow + real blue light from the other side
                 }
-            if (s.HeadlightMesh != null)   // procedural cream lamp boxes at the front (props with baked-in headlights, e.g. semi) -> glow when 'L' on, like a car's
-            {
-                var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                var hlMesh = new BoxMesh { Size = new Vector3(0.42f, 0.30f, 0.14f) };
-                foreach (var p in s.HeadlightMesh)
-                {
-                    var mi = new MeshInstance3D { Mesh = hlMesh, Position = p, MaterialOverride = hlMat };
-                    mi.SetMeta("no_outline", true);   // keep the lamp out of the look-at silhouette
-                    v.AddChild(mi);
-                }
-                v._headlightMat = hlMat;   // SetHeadlights toggles emission on this -> the lamps light up
-            }
-            if (s.TaillightMesh != null)   // procedural red lamp boxes at the rear -> red running glow while driven + brake flare; captured for the brake-light logic
+            if (s.TaillightMesh != null)   // red lamp boxes at the rear -> red running glow while driven + brake flare; captured for the brake-light logic
             {
                 var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 var tlMesh = new BoxMesh { Size = new Vector3(0.34f, 0.28f, 0.14f) };
@@ -907,35 +893,20 @@ namespace UnturnedGodot
                 }
                 v._taillightMat = tlMat;
             }
-            if (s.ProcInterior)   // procedural cab interior (seat + steering wheel) for props whose body mesh has no interior sub-objects (semi)
+            if (s.SeatModelFile != null)   // driver seat: the REAL ripped seat mesh, translated so its AABB centre lands at SeatModel (baked at its source vehicle) (strawberry: use src, not proc-gen)
             {
-                var seatMat = SolidMat(new Color(0.16f, 0.16f, 0.18f));
-                var seat = s.SeatModel;
-                var cushion = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.56f, 0.16f, 0.58f) }, Position = seat, MaterialOverride = seatMat };
-                cushion.SetMeta("no_outline", true); v.AddChild(cushion);
-                var backrest = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.56f, 0.78f, 0.16f) }, Position = seat + new Vector3(0f, 0.46f, 0.30f), MaterialOverride = seatMat };
-                backrest.SetMeta("no_outline", true); v.AddChild(backrest);
-                if (s.SteerAxis != Vector3.Zero)   // steering wheel: torus rim + hub + 3 spokes, wrapped in the steer pivot so it turns 1:1 with the wheels
-                {
-                    var axis = s.SteerAxis.Normalized();
-                    v._steerPivot = new Node3D { Position = s.SteerPivot };
-                    v._steerAxis = axis;
-                    var wheelRoot = new Node3D { Basis = AlignYTo(axis) };   // orient so the torus axis (+Y) = the steer axis -> spinning about it turns the rim in-plane
-                    var wMat = SolidMat(new Color(0.09f, 0.09f, 0.10f));
-                    var rim = new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = 0.20f, OuterRadius = 0.26f, RingSegments = 6 }, MaterialOverride = wMat };
-                    rim.SetMeta("no_outline", true); wheelRoot.AddChild(rim);
-                    var hub = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.06f, BottomRadius = 0.06f, Height = 0.05f }, MaterialOverride = wMat };
-                    hub.SetMeta("no_outline", true); wheelRoot.AddChild(hub);
-                    for (int sp = 0; sp < 3; sp++)   // 3 spokes at 120deg (asymmetric -> the turn actually reads)
-                    {
-                        var spoke = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.03f, 0.04f, 0.22f) }, MaterialOverride = wMat };
-                        spoke.Position = new Vector3(0f, 0f, 0.11f);   // from hub out to the rim, along local +Z
-                        var holder = new Node3D { Basis = new Basis(Vector3.Up, Mathf.DegToRad(sp * 120f)) };
-                        holder.AddChild(spoke); wheelRoot.AddChild(holder);
-                    }
-                    v._steerPivot.AddChild(wheelRoot);
-                    v.AddChild(v._steerPivot);
-                }
+                var seatMesh = ContentProvider.ParseObj($"res://content/{s.SeatModelFile}");
+                var mi = new MeshInstance3D { Mesh = seatMesh, MaterialOverride = SolidMat(new Color(0.22f, 0.22f, 0.24f)), Position = s.SeatModel - seatMesh.GetAabb().GetCenter() };
+                mi.SetMeta("no_outline", true); v.AddChild(mi);
+            }
+            if (s.SteerModel != null && s.SteerAxis != Vector3.Zero)   // steering wheel: the REAL ripped wheel mesh, re-centred on the steer pivot so it turns 1:1 with the wheels about SteerAxis
+            {
+                var wMesh = ContentProvider.ParseObj($"res://content/{s.SteerModel}");
+                v._steerPivot = new Node3D { Position = s.SteerPivot };
+                v._steerAxis = s.SteerAxis.Normalized();
+                var mi = new MeshInstance3D { Mesh = wMesh, MaterialOverride = SolidMat(new Color(0.13f, 0.11f, 0.08f)), Position = -wMesh.GetAabb().GetCenter() };
+                mi.SetMeta("no_outline", true);
+                v._steerPivot.AddChild(mi); v.AddChild(v._steerPivot);
             }
             if (v._sirenMat0 != null)   // emergency vehicle -> looping siren audio (master), silent until the lightbar's toggled on
             {
