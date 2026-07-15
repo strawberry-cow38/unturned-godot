@@ -46,7 +46,8 @@ namespace UnturnedGodot
         CollisionShape3D _landingGear;                   // trailer's front landing-leg support: enabled (down) when parked, disabled (retracted) while towed
         MeshInstance3D _landingLegMesh;                  // trailer's landing-leg VISUAL (split out of the body mesh) -> hidden while coupled so the legs vanish, shown when parked (mirrors _landingGear)
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
-        Vehicle _approachTrailer;                        // uncoupled trailer the cab is currently phasing through to line up a couple (a temporary collision exception -- the real flatbed deck sits too low for the cab to back under otherwise, and the landing gear is in the path)
+        readonly System.Collections.Generic.List<CollisionShape3D> _extraShapes = new();  // the Spec.ExtraBoxes hulls (cab: the low rear frame). A cab DROPS these while lining up under a trailer so only its BOTTOM phases through -- the tall cab body stays solid, so you can't shove the whole cab through the trailer
+        bool _phasingUnder;                              // cab: is the low rear frame currently dropped (backing under a nearby trailer)?
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         public const float ApproachReach = 6f;           // start phasing the cab through a trailer once its fifth wheel is this close to the kingpin (so you can back all the way under to CoupleReach)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
@@ -774,7 +775,10 @@ namespace UnturnedGodot
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
             if (roof.HasValue) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
             if (s.ExtraBoxes != null) foreach (var (size, center) in s.ExtraBoxes)   // fixed extra hull boxes matching model geometry (trailer flatbed deck/headboard/gooseneck+kingpin, cab's low black rear frame)
-                v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Position = center });
+            {
+                var cs = new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Position = center };
+                v.AddChild(cs); v._extraShapes.Add(cs);   // tracked so a towing cab can drop its rear frame to back under a trailer
+            }
             if (s.LandingGearSize != Vector3.Zero)   // trailer front landing legs -> holds the nose level when parked; CoupleTo disables it (retracts) while towed
             {
                 v._landingGear = new CollisionShape3D { Name = "LandingGear", Shape = new BoxShape3D { Size = s.LandingGearSize }, Position = s.LandingGearCenter };
@@ -966,20 +970,29 @@ namespace UnturnedGodot
         public Vector3 FifthWheelWorld => ToGlobal(FifthWheelLocal);
         public Vector3 KingpinWorld => ToGlobal(KingpinLocal);
 
+        // an uncoupled cab whose fifth wheel is within CoupleReach of THIS trailer's kingpin -> it's backed under, ready to hitch (drives the "[E] connect trailer" billboard prompt)
+        bool CabBackedUnder()
+        {
+            var kp = KingpinWorld;
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle v && v != this && v.CanTow && v.CoupledTrailer == null && v.FifthWheelWorld.DistanceSquaredTo(kp) <= CoupleReach * CoupleReach) return true;
+            return false;
+        }
+
         // Couple THIS cab to a trailer: pin the fifth-wheel to the kingpin so the trailer swings behind on the joint.
         public bool CoupleTo(Vehicle trailer)
         {
             if (!CanTow || trailer == null || !trailer.IsTrailer || CoupledTrailer != null || trailer.CoupledCab != null) return false;
             if (FifthWheelWorld.DistanceTo(trailer.KingpinWorld) > CoupleReach) return false;   // must be backed under the kingpin
+            trailer.GlobalPosition += FifthWheelWorld - trailer.KingpinWorld;   // MAGNETIZE: snap the kingpin exactly under the fifth wheel so the pivot is perfectly centered, not wherever it happened to land within reach
             var joint = new PinJoint3D { Name = "Hitch" };
             GetParent().AddChild(joint);                       // sibling of the two bodies in the world
-            joint.GlobalPosition = (FifthWheelWorld + trailer.KingpinWorld) * 0.5f;   // pin at the coupling point (after it's in the tree)
+            joint.GlobalPosition = FifthWheelWorld;            // pin at the (now coincident) coupling point (after it's in the tree)
             joint.NodeA = joint.GetPathTo(this);
             joint.NodeB = joint.GetPathTo(trailer);
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
-            if (_approachTrailer != null && _approachTrailer != trailer && IsInstanceValid(_approachTrailer)) RemoveCollisionExceptionWith(_approachTrailer);
-            _approachTrailer = null;                            // the approach-phase exception (if this trailer) carries straight into the coupled state
-            AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls (idempotent if approach already added it)
+            if (_phasingUnder) { foreach (var cs in _extraShapes) cs.Disabled = false; _phasingUnder = false; }   // restore the cab's rear frame -- the coupled exception now handles the overlap
+            AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls
             if (trailer._landingGear != null) trailer._landingGear.Disabled = true;   // RETRACT the landing legs -> the cab's fifth wheel now carries the nose, legs would just drag
             if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = false;   // and hide their VISUAL -> legs vanish on hookup
             Sleeping = false; trailer.Wake();                  // wake both; trailer.Wake() also clears its spawn `_parked` so it won't damp/freeze-static and anchor the tow (was the 2mph stall)
@@ -1004,26 +1017,19 @@ namespace UnturnedGodot
             }
         }
 
-        // While an uncoupled cab is close to a trailer's kingpin, phase THROUGH that trailer (temporary collision
-        // exception) so you can back all the way under it -- the real flatbed deck sits too low and the landing gear
-        // is in the path, so a solid hull would wall the cab off before it ever reaches CoupleReach. The trailer
-        // stays parked/frozen (legs still hold its nose up) the whole time; the exception just lets the cab slide in.
-        // Drops the exception again when the cab leaves ApproachReach (so a passing cab doesn't ghost through it).
+        // While an uncoupled cab's fifth wheel is close to a trailer's kingpin, DROP the cab's low rear-frame hull so
+        // that bottom slab phases under the trailer -- the real flatbed deck sits too low and the landing gear is in
+        // the path, so a solid frame walls the cab off before it reaches CoupleReach. Only the rear frame drops; the
+        // tall cab body + roof stay solid, so you can't shove the whole cab through the trailer (strawberry). The
+        // trailer stays parked (legs hold its nose up) until the couple fires; the frame pops back once out of range.
         void UpdateTrailerApproach()
         {
-            if (!CanTow || CoupledTrailer != null) { _approachTrailer = null; return; }   // coupled -> CoupleTo owns the exception
-            Vehicle near = null; float best = ApproachReach * ApproachReach;
+            if (!CanTow || CoupledTrailer != null) return;   // coupled -> the frame is restored + the coupled exception handles overlap (CoupleTo)
+            bool near = false; float best = ApproachReach * ApproachReach;
             var fw = FifthWheelWorld;
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null)
-                {
-                    float d = fw.DistanceSquaredTo(v.KingpinWorld);
-                    if (d < best) { best = d; near = v; }
-                }
-            if (near == _approachTrailer) return;
-            if (_approachTrailer != null && IsInstanceValid(_approachTrailer)) RemoveCollisionExceptionWith(_approachTrailer);
-            if (near != null) AddCollisionExceptionWith(near);
-            _approachTrailer = near;
+                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null && fw.DistanceSquaredTo(v.KingpinWorld) < best) { near = true; break; }
+            if (near != _phasingUnder) { foreach (var cs in _extraShapes) cs.Disabled = near; _phasingUnder = near; }
         }
 
         public float ForwardSpeedPct()   // source GetReplicatedForwardSpeedPercentageOfTargetSpeed: forward speed / top speed (0..1) for the DRIVING stealth radius
@@ -1168,7 +1174,15 @@ namespace UnturnedGodot
             {
                 _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
                 if (!_exploded)   // alive car: HP/fuel/battery. A WRECK's salvage prompt is set by PlayerController (it knows the blowtorch).
-                    _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}\nFuel {Fuel:0}/{FuelMax:0}   Battery {Battery / BatteryMax * 100f:0}%";
+                {
+                    if (IsTrailer)   // a trailer has no engine -> no fuel/battery; show HP + the hitch prompt instead
+                    {
+                        string hint = CoupledCab != null ? "\n[E] disconnect trailer" : (CabBackedUnder() ? "\n[E] connect trailer" : "");
+                        _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}{hint}";
+                    }
+                    else
+                        _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}\nFuel {Fuel:0}/{FuelMax:0}   Battery {Battery / BatteryMax * 100f:0}%";
+                }
             }
             if (_burnTime >= 0f)   // wreck fire lifecycle (master): 0-40s full burn, 40-60s dying down, out at 60s (+ light killed), sits 5 min, then despawns
             {
