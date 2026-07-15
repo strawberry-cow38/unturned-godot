@@ -3073,11 +3073,14 @@ namespace UnturnedGodot
                         var vt = _veh.GlobalTransform;
                         var fwd = -vt.Basis.Z; fwd.Y = 0f;
                         fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-                        if (System.Environment.GetEnvironmentVariable("UG_SIDE") == "1")   // diagnostic PURE side profile (collider vs mesh height — pair with UG_COLLVIS=1)
+                        if (System.Environment.GetEnvironmentVariable("UG_SIDE") == "1")   // diagnostic PURE side profile (collider vs mesh height — pair with UG_COLLVIS=1); UG_CAMDIST=N pulls it back + shifts along the body to frame a long rig
                         {
                             var right = new Vector3(fwd.Z, 0f, -fwd.X);   // fwd rotated -90 about Y
-                            _vehCam.GlobalPosition = vt.Origin + right * 12f + Vector3.Up * 1.4f;
-                            _vehCam.LookAt(vt.Origin + Vector3.Up * 1.1f, Vector3.Up);
+                            float sd = 12f; var sde = System.Environment.GetEnvironmentVariable("UG_CAMDIST");
+                            if (!string.IsNullOrEmpty(sde) && float.TryParse(sde, out var sdv)) sd = sdv;
+                            var center = vt.Origin - fwd * (sd * 0.35f) + Vector3.Up * 1.1f;   // shift toward the trailer so the whole cab+trailer fits
+                            _vehCam.GlobalPosition = center + right * sd + Vector3.Up * 0.3f;
+                            _vehCam.LookAt(center, Vector3.Up);
                         }
                         else if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VSIDE")))   // diagnostic 3/4 front-side profile (see body + wheel placement); =2 flips to the STARBOARD side
                         {
