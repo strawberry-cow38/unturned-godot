@@ -403,8 +403,7 @@ namespace UnturnedGodot
             ExtraBoxes = new (Vector3, Vector3)[]
             {
                 (new Vector3(3.0f, 2.35f, 1.0f), new Vector3(0f, 1.325f, -7.5f)),    // front headboard wall (Y 0.15..2.5, Z -8..-7)
-                (new Vector3(1.9f, 1.10f, 3.25f), new Vector3(0f, 0.70f, -5.85f)),   // gooseneck neck stepping down to the coupler (narrow ±0.95)
-                (new Vector3(1.5f, 0.9f, 1.3f), new Vector3(0f, 0.55f, -7.0f)),      // kingpin coupler ("circular connection thing") under the nose
+                (new Vector3(1.9f, 1.10f, 3.6f), new Vector3(0f, 0.70f, -5.7f)),     // gooseneck + kingpin coupler in ONE box (narrow ±0.95, Z -7.5..-3.9) -> the coupling area is a single clean hull, not a pile of overlapping boxes
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,   // unused (no engine) but non-null for the drive logic
             Sound = null,   // no engine -> no engine loop
