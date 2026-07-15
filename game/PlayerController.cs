@@ -1106,7 +1106,7 @@ namespace UnturnedGodot
                 if (_driving != null && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
                 {
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
-                    _driveCamPitch = Mathf.Clamp(_driveCamPitch - mm.Relative.Y * MouseSensitivity, -25f, 70f);
+                    _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
                 }
                 else if (_driving == null)
                 {
