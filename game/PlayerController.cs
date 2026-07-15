@@ -1884,8 +1884,9 @@ namespace UnturnedGodot
             fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
             if (_fp)   // first-person from the driver's head, looking forward over the hood
             {
-                var eye = vt * new Vector3(-0.4f, 1.85f, 0.4f);
-                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * new Vector3(-0.4f, 1.25f, -3.5f), Vector3.Up);
+                var eyeL = _driving.DriverEyeLocal;   // per-vehicle: tall cabs sit higher so the view clears a long hood
+                var eye = vt * eyeL;
+                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {

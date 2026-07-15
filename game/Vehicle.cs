@@ -22,7 +22,7 @@ namespace UnturnedGodot
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
         public bool Exploded => _exploded;
-        VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll, _wSign;   // wheels for visual spin
+        VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll;   // wheels for visual spin
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
@@ -36,6 +36,7 @@ namespace UnturnedGodot
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
+        public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP driving eye (local); tall cabs override higher so the view clears the hood
 
         // --- trailer hitch (master steer: back the cab under the trailer, hop out, walk to the hitch, E to couple; then
         // the trailer swings behind on the pin like a real rig). A PinJoint3D pins the cab's fifth-wheel to the trailer
@@ -116,6 +117,7 @@ namespace UnturnedGodot
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
+            public Vector3 DriverEye;   // FP driving eye offset (local); Zero = the shared default (-0.4,1.85,0.4). Tall cabs (semi) sit HIGHER so you see over the hood
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
@@ -382,15 +384,16 @@ namespace UnturnedGodot
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_large.ogg", IdlePitch = 0.8f, MaxPitch = 1.5f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // engine_large = the SOURCE heavy/truck engine (bus uses it); low pitch = diesel rumble (strawberry 2026-07-15)
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
-            SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = new Vector3(0f, 1.1f, -2.4f),
+            SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = Vector3.Zero,   // no middle omni fill -- 2 spot beams only (strawberry: the center source looked like a weird 3rd headlight)
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,   // no separate steering-wheel node in the prop mesh
+            DriverEye = new Vector3(-0.5f, 2.4f, -0.9f),   // sit HIGH in the tall cab (floor ~Y1.5, roof ~Y3.85) so the view clears the long hood (strawberry: "taller so you can see")
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f, 0.65f, 0.65f },   // big semi tyres (mesh scales 1.24x). Axle Y kept at 0.55 so the taller tyre LIFTS the truck (ride height = radius+restLen-axleY). tandem axles spaced >1.5 apart so the fat tyres don't overlap
             Wheels = new (float, float, float, bool)[]
             {
                 (-1.28f, 0.55f, -1.95f, true),  (1.28f, 0.55f, -1.95f, true),    // front axle (steered), under the cab
                 (-1.28f, 0.55f,  1.90f, false), (1.28f, 0.55f,  1.90f, false),   // rear axle 1 (drive)
-                (-1.28f, 0.55f,  3.50f, false), (1.28f, 0.55f,  3.50f, false),   // rear axle 2 (tandem, drive) -- 1.6 back so the fat tyres clear axle 1
+                (-1.28f, 0.55f,  3.70f, false), (1.28f, 0.55f,  3.70f, false),   // rear axle 2 (tandem, drive) -- moved back 3.5->3.7 (strawberry)
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
             FifthWheel = new Vector3(0f, 0.62f, 3.0f),   // over the rear tandem (moved back from 2.6 -> pivot sits further back on the cab, more trailer clearance). Y matched to the trailer kingpin's Y (0.62) so the coupled trailer rides LEVEL. (strawberry 2026-07-15)
@@ -426,8 +429,8 @@ namespace UnturnedGodot
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f },   // big trailer tyres to match the cab. Axle Y kept at 0.55 so the taller tyre lifts the bed (matches the cab's lift, so the coupled deck rises level)
             Wheels = new (float, float, float, bool)[]
             {
-                (-1.30f, 0.55f, 5.7f, false), (1.30f, 0.55f, 5.7f, false),   // rear tandem bogie (no steer, no drive); axles 1.6 apart so the fat tyres don't overlap
-                (-1.30f, 0.55f, 7.3f, false), (1.30f, 0.55f, 7.3f, false),
+                (-1.30f, 0.55f, 5.4f, false), (1.30f, 0.55f, 5.4f, false),   // rear tandem bogie -- both axles moved forward 0.3 (5.7->5.4, 7.3->7.0) (strawberry)
+                (-1.30f, 0.55f, 7.0f, false), (1.30f, 0.55f, 7.0f, false),
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole trailer box; no separate parts
             Kingpin = new Vector3(0f, 0.62f, -6.6f),   // centered on the round coupler plate under the gooseneck (was a guessed 0.4,-7.5 which sat forward+low of it)
@@ -746,6 +749,7 @@ namespace UnturnedGodot
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
+            if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
             v._outlineColor = ItemAsset.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
             v._infoLabel = new Label3D   // look-at info billboard (name/HP/fuel/battery), TopLevel so it floats above in world space
             {
@@ -812,7 +816,7 @@ namespace UnturnedGodot
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             int nw = s.Wheels.Length;
             v._wheelMeshRef = wheelMesh; v._wheelMatRef = wheelMat; v._wheelR = s.WheelRadius;   // for explosion debris
-            v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw]; v._wRoll = new float[nw]; v._wSign = new float[nw];
+            v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw]; v._wRoll = new float[nw];
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
@@ -831,7 +835,7 @@ namespace UnturnedGodot
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
                 w.AddChild(mi);
                 v.AddChild(w);
-                v._wNodes[i] = w; v._wMeshes[i] = mi; v._wSign[i] = x < 0 ? -1f : 1f;
+                v._wNodes[i] = w; v._wMeshes[i] = mi;
             }
 
             // Drop the centre of mass to just below the axle line so the car stops rolling on turns and pitching onto its
@@ -876,9 +880,12 @@ namespace UnturnedGodot
                     hs.AddToGroup("dynlight");   // spills onto the FP gun (light-scan)
                     v._headlights.AddChild(hs);
                 }
-                var hfill = new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f };   // dim soft fill (raised above the seats so it doesn't glare)
-                hfill.AddToGroup("dynlight");
-                v._headlights.AddChild(hfill);
+                if (s.OmniPos != Vector3.Zero)   // omni fill is OPTIONAL (OmniPos Zero = spots only) -- the semi drops it, its center glow read as a weird third headlight (strawberry)
+                {
+                    var hfill = new OmniLight3D { Position = s.OmniPos + Vector3.Up * 0.5f, OmniRange = 28f, LightColor = warm, LightEnergy = 0.8f };   // dim soft fill (raised above the seats so it doesn't glare)
+                    hfill.AddToGroup("dynlight");
+                    v._headlights.AddChild(hfill);
+                }
                 v.AddChild(v._headlights);
             }
 
@@ -1358,7 +1365,10 @@ namespace UnturnedGodot
             if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)
                 for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
                 {
-                    _wRoll[i] += _wNodes[i].GetRpm() * _wSign[i] * (Mathf.Tau / 60f) * (float)delta;
+                    // GetRpm() IS the physical wheel rotation -> apply it directly. NO per-side sign flip: the left wheels'
+                    // X-mesh-mirror (negative scale) does NOT reverse spin about X (a YZ-plane reflection commutes with Rx),
+                    // so the old _wSign made the two sides spin OPPOSITE directions -> one side rolled backward (strawberry).
+                    _wRoll[i] += _wNodes[i].GetRpm() * (Mathf.Tau / 60f) * (float)delta;
                     _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
                 }
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift

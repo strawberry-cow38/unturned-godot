@@ -3077,9 +3077,10 @@ namespace UnturnedGodot
                             _vehCam.GlobalPosition = vt.Origin + right * 12f + Vector3.Up * 1.4f;
                             _vehCam.LookAt(vt.Origin + Vector3.Up * 1.1f, Vector3.Up);
                         }
-                        else if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VSIDE")))   // diagnostic 3/4 front-side profile (see body + wheel placement)
+                        else if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UG_VSIDE")))   // diagnostic 3/4 front-side profile (see body + wheel placement); =2 flips to the STARBOARD side
                         {
                             var right = new Vector3(fwd.Z, 0f, -fwd.X);   // fwd rotated -90 about Y
+                            if (System.Environment.GetEnvironmentVariable("UG_VSIDE") == "2") right = -right;
                             _vehCam.GlobalPosition = vt.Origin + fwd * 7.5f + right * 5.5f + Vector3.Up * 2.6f;
                             _vehCam.LookAt(vt.Origin + Vector3.Up * 1.2f, Vector3.Up);
                         }
