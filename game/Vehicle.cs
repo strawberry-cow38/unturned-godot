@@ -852,7 +852,6 @@ namespace UnturnedGodot
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
-                mi.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // the wheel node handles suspension/steer interp; the mesh's own spin is set at RENDER rate (_Process) -> don't let 50Hz interpolation stutter it
                 w.AddChild(mi);
                 v.AddChild(w);
                 v._wNodes[i] = w; v._wMeshes[i] = mi;
@@ -1375,21 +1374,6 @@ namespace UnturnedGodot
             QueueFree();
         }
 
-        public override void _Process(double delta)   // RENDER-rate wheel spin: smooth on a fast wheel (physics is 50Hz + interpolated; spinning there stutters)
-        {
-            if (_wNodes == null || _husk || Freeze) return;   // no wheels / settled wreck / frozen -> no spin
-            for (int i = 0; i < _wNodes.Length; i++)
-            {
-                if (_wMeshes[i] == null) continue;
-                // GetRpm() IS the physical wheel rotation -> apply directly. NO per-side sign: the left wheels' negative-X
-                // mesh scale (mirror) does NOT reverse rotation about X (a YZ-plane reflection commutes with Rx), so the old
-                // _wSign made the two sides spin OPPOSITE ways -> one rolled backward (strawberry). Wrap mod Tau so the euler
-                // angle stays small (no unbounded growth / float-precision jitter over a long drive).
-                _wRoll[i] = (_wRoll[i] + _wNodes[i].GetRpm() * (Mathf.Tau / 60f) * (float)delta) % Mathf.Tau;
-                _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
-            }
-        }
-
         public override void _PhysicsProcess(double delta)
         {
             if (_lookFocused && _infoLabel != null)   // keep the info billboard above the car + live (before any perf early-return)
@@ -1463,8 +1447,12 @@ namespace UnturnedGodot
             bool damping = !towed && (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea"). A towed trailer never damps -- it'd anchor the tow.
             LinearDamp = damping ? 6f : 0f; AngularDamp = damping ? 6f : 0f;
             if (_parked && !Freeze && !towed) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes (never brake a towed trailer)
-            // NOTE: the wheels' VISUAL spin is done in _Process (RENDER rate), NOT here. Physics is 50Hz + physics
-            // interpolation is on; a fast wheel spun at 50Hz stutters against a faster refresh. Render-rate spin is smooth.
+            if (!Freeze)   // visually spin each wheel mesh by its physical RPM (steer + suspension are on the node); GetRpm() applied directly, no per-side sign flip (mirror commutes with Rx)
+                for (int i = 0; i < _wNodes.Length; i++)
+                {
+                    _wRoll[i] += _wNodes[i].GetRpm() * (Mathf.Tau / 60f) * (float)delta;
+                    _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
+                }
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
             float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
             float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
