@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO.Compression;
+using System.Linq;
 using System.Net.Http;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -19,9 +21,14 @@ public class MainWindow : Window
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 2;
+    const int LauncherVersion = 3;
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
+    // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
+    const string GodotUrl = "https://downloads.godotengine.org/?version=4.6&flavor=stable&slug=mono_win64.zip&platform=windows.64";
+    // Unturned install — the game reads its real map terrain live from here (via the UG_UNTURNED_DIR env var it honors).
+    static readonly string DefaultUnturnedDir = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned";
+    string _unturnedDir;   // resolved (env / default / saved / user-picked), passed to the game as UG_UNTURNED_DIR on launch
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
 
     enum Mode { Busy, Update, Play, Broken }
@@ -98,10 +105,11 @@ public class MainWindow : Window
         if (await CheckSelfUpdateAsync()) return;   // a newer launcher exists -> we downloaded it, spawned the swap-helper, and are closing
         _git = ResolveOnPath("git");
         _dotnet = ResolveOnPath("dotnet");
-        _godot = ResolveGodot();
+        _godot = await EnsureGodotAsync();   // UNTURNED_GODOT_EXE / PATH / prior auto-download, else fetch Godot 4.6 mono
+        _unturnedDir = ResolveUnturnedDirSilent();   // env / saved pick / default Steam path (no prompt here; the picker fires at Play time)
         if (_git == null) { Fail("git not found on PATH."); return; }
         if (_dotnet == null) { Fail("dotnet SDK not found on PATH."); return; }
-        if (_godot == null) { Fail("Godot mono exe not found. Set UNTURNED_GODOT_EXE or put godot on PATH."); return; }
+        if (_godot == null) { Fail("Godot not found and the auto-download failed. Set UNTURNED_GODOT_EXE, put godot on PATH, or check your connection."); return; }
 
         if (!Directory.Exists(Path.Combine(_srcDir, ".git")))
         {
@@ -186,7 +194,7 @@ public class MainWindow : Window
     async Task OnActionAsync()
     {
         if (_mode == Mode.Update) await DoUpdateAsync();
-        else if (_mode == Mode.Play) LaunchGame();
+        else if (_mode == Mode.Play) await LaunchGame();
     }
 
     async Task DoUpdateAsync()
@@ -212,10 +220,20 @@ public class MainWindow : Window
         await RefreshAsync();
     }
 
-    void LaunchGame()
+    async Task LaunchGame()
     {
         try
         {
+            // The game reads the real map terrain live from a local Unturned install. Resolve it (env/saved/default was
+            // tried silently at startup); if still unknown, prompt for the folder now and remember it for next time.
+            if (_unturnedDir == null) _unturnedDir = await PickAndSaveUnturnedDirAsync();
+            if (_unturnedDir != null)
+            {
+                Environment.SetEnvironmentVariable("UG_UNTURNED_DIR", _unturnedDir);   // the godot child inherits the launcher's env (UseShellExecute)
+                Log("Unturned: " + _unturnedDir);
+            }
+            else Log("(no Unturned install selected — the real map won't load; install Unturned or pick its folder next launch)");
+
             string exe = _godot;
             if (OperatingSystem.IsWindows())   // Godot mono ships a *_console.exe that pops a debug console window
             {
@@ -322,5 +340,72 @@ public class MainWindow : Window
             var r = ResolveOnPath(n); if (r != null) return r;
         }
         return null;
+    }
+
+    // ---- Godot auto-download (4.6 mono win64, matches the project's Godot.NET.Sdk) ----
+    async Task<string> EnsureGodotAsync()
+    {
+        var found = ResolveGodot();
+        if (found != null) return found;
+        string dir = Path.Combine(_baseDir, "godot");
+        var have = FindGodotExe(dir);
+        if (have != null) { Log("Godot (auto-downloaded): " + have); return have; }
+        try
+        {
+            Log("Godot not found — downloading Godot 4.6 mono (win64), ~104 MB…");
+            Directory.CreateDirectory(dir);
+            string zip = Path.Combine(dir, "godot46_mono_win64.zip");
+            var bytes = await Http.GetByteArrayAsync(GodotUrl);
+            await File.WriteAllBytesAsync(zip, bytes);
+            Log("Extracting Godot…");
+            ZipFile.ExtractToDirectory(zip, dir, overwriteFiles: true);
+            try { File.Delete(zip); } catch { }
+            var exe = FindGodotExe(dir);
+            Log(exe != null ? "Godot 4.6 ready: " + exe : "!! Godot extracted but the editor exe wasn't found.");
+            return exe;
+        }
+        catch (Exception ex) { Log("!! Godot download failed: " + ex.Message); return null; }
+    }
+
+    // the mono win64 zip extracts a Godot_v4.6-stable_mono_win64/ folder; take the editor exe, skip the *_console.exe.
+    static string FindGodotExe(string dir) =>
+        Directory.Exists(dir)
+            ? Directory.GetFiles(dir, "Godot_v*_win64.exe", SearchOption.AllDirectories)
+                .FirstOrDefault(f => !f.Contains("console", StringComparison.OrdinalIgnoreCase))
+            : null;
+
+    // ---- Unturned install resolution (the game reads its real map terrain from here via UG_UNTURNED_DIR) ----
+    string UnturnedDirConfig => Path.Combine(_baseDir, "unturned_dir.txt");
+
+    // a usable Unturned install = it has the PEI map terrain the default play mode loads.
+    static bool IsUnturnedDir(string dir) =>
+        !string.IsNullOrWhiteSpace(dir) && Directory.Exists(Path.Combine(dir, "Maps", "PEI", "Landscape"));
+
+    // env var -> saved pick -> default Steam path. No prompt here (the picker fires at Play time if this returns null).
+    string ResolveUnturnedDirSilent()
+    {
+        var env = Environment.GetEnvironmentVariable("UG_UNTURNED_DIR");
+        if (IsUnturnedDir(env)) return env;
+        string saved = null;
+        try { if (File.Exists(UnturnedDirConfig)) saved = File.ReadAllText(UnturnedDirConfig).Trim(); } catch { }
+        if (IsUnturnedDir(saved)) return saved;
+        if (IsUnturnedDir(DefaultUnturnedDir)) return DefaultUnturnedDir;
+        return null;
+    }
+
+    // prompt for the Unturned folder, validate + persist it. Returns the chosen dir (or null if cancelled).
+    async Task<string> PickAndSaveUnturnedDirAsync()
+    {
+        Log("Unturned not found automatically — pick your Unturned install folder (the one containing 'Maps').");
+        var top = TopLevel.GetTopLevel(this);
+        if (top == null) return null;
+        var picked = await top.StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions
+        { Title = "Select your Unturned install folder", AllowMultiple = false });
+        if (picked.Count == 0) return null;
+        string dir = picked[0].Path.LocalPath;
+        if (!IsUnturnedDir(dir))
+            Log("(that folder has no Maps\\PEI — saving it anyway, but the map may not load; pick the folder that contains 'Maps'.)");
+        try { File.WriteAllText(UnturnedDirConfig, dir); } catch (Exception ex) { Log("(couldn't save Unturned path: " + ex.Message + ")"); }
+        return dir;
     }
 }
