@@ -114,6 +114,8 @@ namespace UnturnedGodot
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
+        MeshInstance3D _lookHullViz; ImmediateMesh _lookHullMesh; bool _showLookHulls;   // I-toggle wireframe of every vehicle's look-focus hulls (culled behind-cam / past LookHullVizRange for fps)
+        const float LookHullVizRange = 70f;        // don't draw hull wireframes for vehicles farther than this from the camera (fps)
         PhysicsRayQueryParameters3D _lookRayQ;     // reused across frames (no per-frame alloc)
         PhysicsShapeQueryParameters3D _lookSphereQ;
         Godot.Collections.Array<Rid> _lookExclude;
@@ -164,7 +166,7 @@ namespace UnturnedGodot
                         if (node is Vehicle vv && IsInstanceValid(vv))
                         {
                             float d = vv.GlobalPosition.DistanceSquaredTo(from);
-                            if (d < maxD && d < bestV && vv.WorldMeshAabb().IntersectsSegment(from, _lookEnd)) { bestV = d; hitVeh = vv; }   // cheap distance gate before the AABB test
+                            if (d < maxD && d < bestV && vv.LookRayHitsHull(from, _lookEnd)) { bestV = d; hitVeh = vv; }   // cheap distance gate before the tight per-hull (oriented-box) test -- no world-AABB bloat / cross-vehicle overlap (strawberry)
                         }
                 }
             }
@@ -181,6 +183,38 @@ namespace UnturnedGodot
                 _focusVehicle = hitVeh;
                 _focusVehicle?.SetLookFocused(true);
             }
+        }
+
+        // I-toggle debug overlay: draw a line-wireframe of every vehicle's look-focus HULLS (the oriented boxes the
+        // focus test now uses) so their size can be eyeballed. Rebuilt each frame from the live transforms. CULLED for
+        // fps: skip vehicles past LookHullVizRange or behind the camera; the focused vehicle's hulls draw cyan. (strawberry)
+        static readonly Vector3[] _boxCorners = {   // unit-cube corners in [-0.5,0.5]
+            new(-0.5f,-0.5f,-0.5f), new(0.5f,-0.5f,-0.5f), new(0.5f,-0.5f,0.5f), new(-0.5f,-0.5f,0.5f),
+            new(-0.5f, 0.5f,-0.5f), new(0.5f, 0.5f,-0.5f), new(0.5f, 0.5f,0.5f), new(-0.5f, 0.5f,0.5f) };
+        static readonly int[] _boxEdges = { 0,1,1,2,2,3,3,0, 4,5,5,6,6,7,7,4, 0,4,1,5,2,6,3,7 };   // 12 edges (24 endpoints)
+        readonly System.Collections.Generic.List<(Vector3 p, Color c)> _hullVerts = new();
+        void UpdateLookHullViz()
+        {
+            _lookHullMesh.ClearSurfaces();
+            if (_cam == null) return;
+            Vector3 camPos = _cam.GlobalPosition, camFwd = -_cam.GlobalTransform.Basis.Z;
+            float range2 = LookHullVizRange * LookHullVizRange;
+            _hullVerts.Clear();
+            foreach (var node in GetTree().GetNodesInGroup("vehicles"))
+            {
+                if (node is not Vehicle v || !IsInstanceValid(v)) continue;
+                Vector3 to = v.GlobalPosition;
+                if (camPos.DistanceSquaredTo(to) > range2) continue;             // past the viz radius -> skip (fps)
+                if ((to - camPos).Dot(camFwd) < -8f) continue;                    // well behind the camera -> skip (small margin so edge boxes don't pop)
+                Color col = v == _focusVehicle ? new Color(0.2f, 0.9f, 1f) : new Color(0.2f, 1f, 0.4f);   // focused = cyan, else green
+                foreach (var (xf, size) in v.LookHullBoxes())
+                    for (int e = 0; e < _boxEdges.Length; e++)
+                        _hullVerts.Add((xf * (_boxCorners[_boxEdges[e]] * size), col));
+            }
+            if (_hullVerts.Count == 0) return;                                    // ImmediateMesh errors on an empty surface -> emit nothing
+            _lookHullMesh.SurfaceBegin(Mesh.PrimitiveType.Lines);
+            foreach (var (p, c) in _hullVerts) { _lookHullMesh.SurfaceSetColor(c); _lookHullMesh.SurfaceAddVertex(p); }
+            _lookHullMesh.SurfaceEnd();
         }
 
         // Wreck salvage (master): a focused wreck shows a state prompt -- red "Too hot" while burning, red "Requires blowtorch"
@@ -1016,6 +1050,13 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = new Color(0.3f, 0.8f, 1f, 0.25f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
             };
             AddChild(_lookViz);
+            _lookHullMesh = new ImmediateMesh();   // I-toggle: line-wireframe of every vehicle's look-focus hulls, rebuilt each frame from the ORIENTED boxes
+            _lookHullViz = new MeshInstance3D
+            {
+                Mesh = _lookHullMesh, TopLevel = true, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = new Color(0.2f, 1f, 0.4f), VertexColorUseAsAlbedo = true, NoDepthTest = true },
+            };
+            AddChild(_lookHullViz);
             if (CaptureMouse) Local = this;   // the interactive (mouse-captured) player -> explosions shake this camera
 
             _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
@@ -1132,6 +1173,8 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.O, Echo: false })
                 WorldItem.ShowLookSphere = !WorldItem.ShowLookSphere;               // O: toggle the look-END sphere visualizer (master)
+            else if (@event is InputEventKey { Pressed: true, Keycode: Key.I, Echo: false })
+            { _showLookHulls = !_showLookHulls; if (_lookHullViz != null) _lookHullViz.Visible = _showLookHulls; }   // I: toggle the look-focus HULL wireframes for every vehicle (strawberry)
             else if (@event is InputEventKey { Keycode: Key.T, Echo: false } tKey)
             {
                 if (AttachMenu != null)   // T (hold): show the weapon-attachment menu while held, release to close
@@ -1680,6 +1723,7 @@ namespace UnturnedGodot
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
+            if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.

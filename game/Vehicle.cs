@@ -48,7 +48,6 @@ namespace UnturnedGodot
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
         readonly System.Collections.Generic.List<CollisionShape3D> _extraShapes = new();  // the Spec.ExtraBoxes hulls (cab: the low rear frame). A cab DROPS these while lining up under a trailer so only its BOTTOM phases through -- the tall cab body stays solid, so you can't shove the whole cab through the trailer
         bool _phasingUnder;                              // cab: is the low rear frame currently dropped (backing under a nearby trailer)?
-        bool _needsSeparation;                           // trailer: after uncoupling, block re-hitch until a cab has moved OUT of coupling range (the kingpin sits right in the cab, so otherwise E instantly re-hitches)
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         public const float ApproachReach = 6f;           // start phasing the cab through a trailer once its fifth wheel is this close to the kingpin (so you can back all the way under to CoupleReach)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
@@ -985,7 +984,6 @@ namespace UnturnedGodot
         public bool CoupleTo(Vehicle trailer)
         {
             if (!CanTow || trailer == null || !trailer.IsTrailer || CoupledTrailer != null || trailer.CoupledCab != null) return false;
-            if (trailer._needsSeparation) return false;   // must move a cab OUT of range after uncoupling before it'll re-hitch (the kingpin sits in the cab, so this stops accidental instant re-hitch)
             if (FifthWheelWorld.DistanceTo(trailer.KingpinWorld) > CoupleReach) return false;   // must be backed under the kingpin
             // MAGNETIZE: snap the trailer so its kingpin sits exactly under the fifth wheel -> pivot perfectly centered.
             // A pin joint can't PULL two offset anchors together (it just holds the offset), so the only real way to
@@ -1025,7 +1023,6 @@ namespace UnturnedGodot
                 foreach (var cs in trailer._extraShapes) cs.Disabled = false;   // restore the trailer's front hulls (headboard + gooseneck) now that the cab's rear wheels are no longer under them
                 if (trailer._landingGear != null) trailer._landingGear.Disabled = false;   // DEPLOY the landing legs -> hold the nose level now that the cab's gone (fixes the "front sinks into the ground")
                 if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = true;   // and show their VISUAL again
-                trailer._needsSeparation = true;   // block re-hitch until a cab leaves coupling range -> no accidental instant re-hitch (the kingpin sits right in the cab)
                 trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
             }
         }
@@ -1160,6 +1157,44 @@ namespace UnturnedGodot
             return w2;
         }
 
+        // --- Look-focus HULLS (strawberry 2026-07-15): the loose WorldMeshAabb union ballooned for long/rotated vehicles
+        // -- a diagonal 16 m trailer's WORLD-AXIS box engulfs the airspace over the flatbed AND overlaps the cab's box,
+        // so you'd focus empty air / the wrong half. These helpers use the vehicle's REAL box collision hulls, tested
+        // ORIENTED (in each box's own frame), so the focus volume hugs the silhouette at any heading. ---
+        System.Collections.Generic.List<CollisionShape3D> _lookHulls;
+        System.Collections.Generic.List<CollisionShape3D> LookHulls()
+        {
+            if (_lookHulls == null)
+            {
+                _lookHulls = new();
+                foreach (var ch in GetChildren())   // DIRECT box CollisionShape3D children = the body hulls (main/roof/ExtraBoxes/landing gear); the bumper's shape is an Area3D grandchild + wheels are VehicleWheel3D, so both are excluded
+                    if (ch is CollisionShape3D cs && cs.Shape is BoxShape3D) _lookHulls.Add(cs);
+            }
+            return _lookHulls;
+        }
+
+        // Does the look segment from..to cross any ENABLED box hull? Each box is tested in its OWN local frame (segment
+        // pushed through the shape's inverse world xf), so the AABB test is exact for an oriented box -- no world-axis bloat.
+        public bool LookRayHitsHull(Vector3 from, Vector3 to)
+        {
+            foreach (var cs in LookHulls())
+            {
+                if (!IsInstanceValid(cs) || cs.Disabled || cs.Shape is not BoxShape3D box) continue;
+                var inv = cs.GlobalTransform.AffineInverse();
+                var half = box.Size * 0.5f;
+                if (new Aabb(-half, box.Size).IntersectsSegment(inv * from, inv * to)) return true;
+            }
+            return false;
+        }
+
+        // Enabled look-hull boxes as (world transform, size) -- feeds the debug wireframe overlay (PlayerController "I" toggle).
+        public System.Collections.Generic.IEnumerable<(Transform3D xf, Vector3 size)> LookHullBoxes()
+        {
+            foreach (var cs in LookHulls())
+                if (IsInstanceValid(cs) && !cs.Disabled && cs.Shape is BoxShape3D box)
+                    yield return (cs.GlobalTransform, box.Size);
+        }
+
         // --- Wreck salvage (master): a burnt-out car can be broken down with a blowtorch into scrap metal ---
         public bool IsWreck => _exploded;
         public bool WreckOnFire => _exploded && _burnTime >= 0f && _burnTime < 60f;   // still burning -> too hot to salvage
@@ -1188,9 +1223,10 @@ namespace UnturnedGodot
                 _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
                 if (!_exploded)   // alive car: HP/fuel/battery. A WRECK's salvage prompt is set by PlayerController (it knows the blowtorch).
                 {
-                    if (IsTrailer)   // a trailer has no engine -> no fuel/battery; show HP + the hitch prompt instead
+                    if (IsTrailer)   // a trailer has no engine -> no fuel/battery; show HP + a clear hitch state (connected / can connect / can't connect) instead
                     {
-                        string hint = CoupledCab != null ? "\n[E] disconnect trailer" : (CabBackedUnder() ? "\n[E] connect trailer" : "");
+                        string hint = CoupledCab != null ? "\n[E] disconnect trailer"
+                            : (CabBackedUnder() ? "\n[E] connect trailer" : "\ncan't connect - back a cab under");   // explicit can/can't feedback (strawberry)
                         _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}{hint}";
                     }
                     else
@@ -1220,7 +1256,6 @@ namespace UnturnedGodot
             }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
             if (CanTow) UpdateTrailerApproach();     // let an approaching cab phase through a trailer so it can back under to couple
-            if (_needsSeparation && !CabBackedUnder()) _needsSeparation = false;   // a cab has left coupling range post-uncouple -> re-hitch allowed again
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();

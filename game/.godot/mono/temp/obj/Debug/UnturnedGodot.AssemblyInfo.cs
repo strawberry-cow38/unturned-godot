@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("UnturnedGodot")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d3315c42dbf1a37c4735294ae706feddccc64f2b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+31a47303c0710630beeda579c955c3b8da2414ba")]
 [assembly: System.Reflection.AssemblyProductAttribute("UnturnedGodot")]
 [assembly: System.Reflection.AssemblyTitleAttribute("UnturnedGodot")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
