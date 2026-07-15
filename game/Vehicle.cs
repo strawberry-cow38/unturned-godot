@@ -389,7 +389,7 @@ namespace UnturnedGodot
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_large.ogg", IdlePitch = 0.8f, MaxPitch = 1.5f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // engine_large = the SOURCE heavy/truck engine (bus uses it); low pitch = diesel rumble (strawberry 2026-07-15)
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
-            SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = Vector3.Zero,   // no middle omni fill -- 2 spot beams only (strawberry: the center source looked like a weird 3rd headlight)
+            SpotPos = new[] { new Vector3(-1.175f, 0.86f, -2.60f), new Vector3(1.175f, 0.86f, -2.60f) }, OmniPos = Vector3.Zero,   // beam sources CENTERED on the real headlight lenses (X±1.175, Y0.86, front face Z-2.58); no middle omni fill (strawberry)
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
             HeadlightZoneMin = new Vector3(-1.44f, 0.66f, -2.63f), HeadlightZoneMax = new Vector3(-0.92f, 1.05f, -2.20f),   // LEFT headlight = the CREAM-texel geometry X[-1.40,-0.95] Y[0.71,1.01] near the fender (NOT the grey trim by the grille I was wrongly lighting). Verified: zone catches exactly the 20 cream tris, nothing else. right = auto X-mirror (strawberry)
             TaillightMesh = new[] { new Vector3(-1.035f, 0.65f, 4.45f), new Vector3(1.035f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame; moved 10% closer together (1.15->1.035) (strawberry)

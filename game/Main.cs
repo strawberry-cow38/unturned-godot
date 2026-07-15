@@ -3088,8 +3088,10 @@ namespace UnturnedGodot
                         }
                         else
                         {
-                            _vehCam.GlobalPosition = vt.Origin - fwd * 7.5f + Vector3.Up * 3.2f;
-                            _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f, Vector3.Up);
+                            float cd = 7.5f; var cde = System.Environment.GetEnvironmentVariable("UG_CAMDIST");   // UG_CAMDIST=N pulls the rear chase cam back (to frame a long cab+trailer rig)
+                            if (!string.IsNullOrEmpty(cde) && float.TryParse(cde, out var cdv)) cd = cdv;
+                            _vehCam.GlobalPosition = vt.Origin - fwd * cd + Vector3.Up * (3.2f + cd * 0.15f);
+                            _vehCam.LookAt(vt.Origin + Vector3.Up * 0.7f - fwd * (cd * 0.5f), Vector3.Up);   // aim at the rig's midpoint so both cab + trailer rear are framed
                         }
                     }
                 }
