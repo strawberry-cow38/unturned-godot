@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
@@ -14,6 +15,14 @@ public class MainWindow : Window
     const string Branch = "main";
     const string Solution = "game/UnturnedGodot.sln";
     const string BuildConfig = "Debug";
+
+    // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
+    // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
+    // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
+    const int LauncherVersion = 2;
+    const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
+    const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
+    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
 
     enum Mode { Busy, Update, Play, Broken }
 
@@ -86,6 +95,7 @@ public class MainWindow : Window
 
     async Task InitAsync()
     {
+        if (await CheckSelfUpdateAsync()) return;   // a newer launcher exists -> we downloaded it, spawned the swap-helper, and are closing
         _git = ResolveOnPath("git");
         _dotnet = ResolveOnPath("dotnet");
         _godot = ResolveGodot();
@@ -102,6 +112,44 @@ public class MainWindow : Window
             if (await RunAsync(_git, new[] { "clone", "--depth", "1", "--single-branch", "--branch", Branch, RepoUrl, _srcDir }, _baseDir) != 0) { Fail("git clone failed (auth set up for the repo?)."); return; }
         }
         await RefreshAsync();
+    }
+
+    // Self-update the launcher exe. Returns true if an update is underway (caller must stop -- we're closing). Windows
+    // only: a running .exe can't overwrite itself, so we download the new exe beside the current one, then hand off to a
+    // tiny .bat that waits for THIS process to exit, swaps the file, relaunches, and deletes itself.
+    async Task<bool> CheckSelfUpdateAsync()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        string exePath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exePath)) return false;
+        try
+        {
+            SetBusy("Checking launcher version…");
+            int remote = int.TryParse((await Http.GetStringAsync(VersionUrl)).Trim(), out var r) ? r : 0;
+            if (remote <= LauncherVersion) return false;
+            Log($"Launcher update v{LauncherVersion} -> v{remote}. Downloading…");
+            SetBusy("Updating launcher…");
+            var bytes = await Http.GetByteArrayAsync(ExeUrl);
+            string newExe = exePath + ".new";
+            await File.WriteAllBytesAsync(newExe, bytes);
+            int pid = Environment.ProcessId;
+            string bat = Path.Combine(Path.GetTempPath(), "ugh_selfupdate.bat");
+            const string q = "\"";
+            await File.WriteAllTextAsync(bat, string.Join("\r\n", new[]
+            {
+                "@echo off",
+                ":wait",
+                $"tasklist /FI {q}PID eq {pid}{q} | find {q}{pid}{q} >nul && (ping -n 2 127.0.0.1 >nul & goto wait)",
+                $"move /y {q}{newExe}{q} {q}{exePath}{q} >nul",
+                $"start {q}{q} {q}{exePath}{q}",
+                $"del {q}%~f0{q}",
+            }) + "\r\n");
+            Process.Start(new ProcessStartInfo("cmd.exe", $"/c {q}{bat}{q}") { UseShellExecute = false, CreateNoWindow = true });
+            Log("Launcher downloaded — restarting into the new version…");
+            Dispatcher.UIThread.Post(() => Close());
+            return true;
+        }
+        catch (Exception ex) { Log("(launcher self-update skipped: " + ex.Message + ")"); return false; }
     }
 
     async Task RefreshAsync()
