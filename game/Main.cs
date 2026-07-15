@@ -645,8 +645,8 @@ namespace UnturnedGodot
             {
                 _buTrailer = Vehicle.BuildByName("trailer");
                 AddChild(_buTrailer);
-                // face the same way as the cab; drop it so its kingpin sits ~4m behind the cab's fifth wheel -> the cab reverses to close the gap
-                _buTrailer.Position = new Vector3(0f, 1.2f, _veh.Position.Z + _veh.FifthWheelLocal.Z - _buTrailer.KingpinLocal.Z + 4.0f);
+                // face the same way as the cab; drop it OFF-CENTER (X+0.8) ~4m behind so the cab reverses to close the gap AND the magnetize has to pull the kingpin sideways onto the fifth wheel (tests the centre-pull)
+                _buTrailer.Position = new Vector3(0.8f, 1.2f, _veh.Position.Z + _veh.FifthWheelLocal.Z - _buTrailer.KingpinLocal.Z + 4.0f);
             }
 
             if (_roadkill)   // idle zombies straight ahead (-Z) in the auto-drive path to run over
