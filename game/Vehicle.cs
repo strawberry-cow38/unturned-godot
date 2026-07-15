@@ -46,10 +46,11 @@ namespace UnturnedGodot
         CollisionShape3D _landingGear;                   // trailer's front landing-leg support: enabled (down) when parked, disabled (retracted) while towed
         MeshInstance3D _landingLegMesh;                  // trailer's landing-leg VISUAL (split out of the body mesh) -> hidden while coupled so the legs vanish, shown when parked (mirrors _landingGear)
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
-        readonly System.Collections.Generic.List<CollisionShape3D> _extraShapes = new();  // the Spec.ExtraBoxes hulls (cab: the low rear frame). A cab DROPS these while lining up under a trailer so only its BOTTOM phases through -- the tall cab body stays solid, so you can't shove the whole cab through the trailer
-        bool _phasingUnder;                              // cab: is the low rear frame currently dropped (backing under a nearby trailer)?
+        readonly System.Collections.Generic.List<CollisionShape3D> _extraShapes = new();  // the Spec.ExtraBoxes hulls (cab: the low rear frame; trailer: headboard + gooseneck) -- kept SOLID; a towed trailer ghosts vs the cab by a layer swap, not by disabling shapes (would hole the player)
+        uint _baseCollisionLayer;                        // the un-ghosted body layer (bit0|bit5); a towed/backing-under trailer swaps bit0->bit6 so the cab (mask bit0) phases it while the player (mask bit6) still collides
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         public const float ApproachReach = 6f;           // start phasing the cab through a trailer once its fifth wheel is this close to the kingpin (so you can back all the way under to CoupleReach)
+        public const float HitchReach = 3.5f;            // on-foot: how close the PLAYER must stand to the kingpin to connect/disconnect (also gates the billboard prompt)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
@@ -731,6 +732,7 @@ namespace UnturnedGodot
         {
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
+            v._baseCollisionLayer = v.CollisionLayer;   // remember the un-ghosted layer (bit0|bit5) so a towed trailer can swap bit0->bit6 and restore it
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
@@ -998,9 +1000,8 @@ namespace UnturnedGodot
             joint.NodeB = joint.GetPathTo(trailer);
             joint.SetParam(PinJoint3D.Param.Bias, 0.4f);       // holds the centered pivot; the pin's free rotation gives the vertical flex over bumps
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
-            foreach (var cs in _extraShapes) cs.Disabled = true;   // drop ONLY the cab's black rear frame (its front overlaps the trailer at the coupling -> would fight the joint). NO full-body exception: the BLUE cab body stays solid, so the trailer still bumps the cabin instead of clipping through it (strawberry)
-            foreach (var cs in trailer._extraShapes) cs.Disabled = true;   // and drop the trailer's FRONT hulls (headboard + gooseneck): coupled, they sit right over the cab's rear drive wheels, so the wheel raycasts ride UP on them and lift the cab's tail. The DECK (main box, well behind the wheels) stays solid, so it still bumps the cabin -> no wheel-vs-trailer collision, anti-clip intact (strawberry 2026-07-15)
-            _phasingUnder = false;
+            AddCollisionExceptionWith(trailer); trailer.SetTowGhost(true);   // ghost the cab<->trailer pair ONLY: the exception makes the two BODIES ignore each other (both directions -> no coupling fight, no clip), the layer swap keeps the cab's rear WHEELS off the trailer front hulls (no ride-up). Every hull stays SOLID vs the player/world -- no shape disabling, no holes (strawberry 2026-07-15)
+            _approachGhost = trailer;   // remember it so Uncouple tears down the same pair
             if (trailer._landingGear != null) trailer._landingGear.Disabled = true;   // RETRACT the landing legs -> the cab's fifth wheel now carries the nose, legs would just drag
             if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = false;   // and hide their VISUAL -> legs vanish on hookup
             Sleeping = false; trailer.Wake();                  // wake both; trailer.Wake() also clears its spawn `_parked` so it won't damp/freeze-static and anchor the tow (was the 2mph stall)
@@ -1015,31 +1016,46 @@ namespace UnturnedGodot
             var trailer = cab.CoupledTrailer;
             if (cab._hitch != null && IsInstanceValid(cab._hitch)) cab._hitch.QueueFree();
             cab._hitch = null; cab.CoupledTrailer = null;
-            foreach (var cs in cab._extraShapes) cs.Disabled = false;   // restore the cab's black rear frame now that it's not overlapping the trailer
-            cab._phasingUnder = false;
             if (trailer != null)
             {
                 trailer.CoupledCab = null;
-                foreach (var cs in trailer._extraShapes) cs.Disabled = false;   // restore the trailer's front hulls (headboard + gooseneck) now that the cab's rear wheels are no longer under them
+                cab.RemoveCollisionExceptionWith(trailer); trailer.SetTowGhost(false);   // restore cab<->trailer collision + the trailer's solid layer (UpdateTrailerApproach re-ghosts if the cab is still lined up under it, so it can drive out clean)
+                cab._approachGhost = null;
                 if (trailer._landingGear != null) trailer._landingGear.Disabled = false;   // DEPLOY the landing legs -> hold the nose level now that the cab's gone (fixes the "front sinks into the ground")
                 if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = true;   // and show their VISUAL again
                 trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
             }
         }
 
-        // While an uncoupled cab's fifth wheel is close to a trailer's kingpin, DROP the cab's low rear-frame hull so
-        // that bottom slab phases under the trailer -- the real flatbed deck sits too low and the landing gear is in
-        // the path, so a solid frame walls the cab off before it reaches CoupleReach. Only the rear frame drops; the
-        // tall cab body + roof stay solid, so you can't shove the whole cab through the trailer (strawberry). The
-        // trailer stays parked (legs hold its nose up) until the couple fires; the frame pops back once out of range.
+        // Swap this trailer's body layer bit0->bit6 while a cab is coupled/backing under. This is ONLY for the cab's
+        // rear-WHEEL raycasts (which ignore collision exceptions but DO respect the cab's collision_mask=bit0): off bit0,
+        // the wheels stop riding up the trailer's front hulls. Body-vs-body ghosting is the exception's job (below). The
+        // player (mask bit6) still collides, so no hole. Idempotent. (strawberry 2026-07-15)
+        public void SetTowGhost(bool ghost)
+        {
+            uint want = ghost ? (_baseCollisionLayer & ~(1u << 0)) | (1u << 6) : _baseCollisionLayer;
+            if (CollisionLayer != want) CollisionLayer = want;
+        }
+
+        Vehicle _approachGhost;   // cab-side: the uncoupled trailer this cab is currently ghosting itself against to back under
+
+        // Cab-side, every physics frame while uncoupled: find a trailer we're backing under (fifth wheel within
+        // ApproachReach of its kingpin) and GHOST ourselves against it -- a symmetric collision exception (cab body <->
+        // trailer body ignore each other, BOTH directions, so the low deck+legs don't wall the cab off) PLUS the trailer
+        // layer swap (kills the rear-wheel ride-up). Both are cab<->trailer ONLY: the player/world still hit both, no
+        // holes. Dropped when we leave range. (strawberry 2026-07-15)
         void UpdateTrailerApproach()
         {
-            if (!CanTow || CoupledTrailer != null) return;   // coupled -> the frame is restored + the coupled exception handles overlap (CoupleTo)
-            bool near = false; float best = ApproachReach * ApproachReach;
+            if (!CanTow || CoupledTrailer != null) return;   // coupled -> CoupleTo owns the exception+ghost; leave it
+            Vehicle near = null; float best = ApproachReach * ApproachReach;
             var fw = FifthWheelWorld;
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null && fw.DistanceSquaredTo(v.KingpinWorld) < best) { near = true; break; }
-            if (near != _phasingUnder) { foreach (var cs in _extraShapes) cs.Disabled = near; _phasingUnder = near; }
+                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null && fw.DistanceSquaredTo(v.KingpinWorld) < best) { near = v; break; }
+            if (near == _approachGhost) return;
+            if (_approachGhost != null && IsInstanceValid(_approachGhost) && _approachGhost.CoupledCab != this)
+            { RemoveCollisionExceptionWith(_approachGhost); _approachGhost.SetTowGhost(false); }   // left the one we were lining up under
+            _approachGhost = near;
+            if (near != null) { AddCollisionExceptionWith(near); near.SetTowGhost(true); }
         }
 
         public float ForwardSpeedPct()   // source GetReplicatedForwardSpeedPercentageOfTargetSpeed: forward speed / top speed (0..1) for the DRIVING stealth radius
@@ -1173,13 +1189,16 @@ namespace UnturnedGodot
             return _lookHulls;
         }
 
-        // Does the look segment from..to cross any ENABLED box hull? Each box is tested in its OWN local frame (segment
-        // pushed through the shape's inverse world xf), so the AABB test is exact for an oriented box -- no world-axis bloat.
+        // Does the look segment from..to cross any box hull? Each box is tested in its OWN local frame (segment pushed
+        // through the shape's inverse world xf), so the AABB test is exact for an oriented box -- no world-axis bloat.
+        // NOTE: does NOT skip .Disabled hulls -- look-focus tracks the VISUAL footprint, not physics. A coupled trailer
+        // physics-disables its front hulls (the cab-rear-wheel fix), but the nose is still visibly there + is exactly
+        // where you stand to disconnect, so it must stay look-focusable. (strawberry 2026-07-15)
         public bool LookRayHitsHull(Vector3 from, Vector3 to)
         {
             foreach (var cs in LookHulls())
             {
-                if (!IsInstanceValid(cs) || cs.Disabled || cs.Shape is not BoxShape3D box) continue;
+                if (!IsInstanceValid(cs) || cs.Shape is not BoxShape3D box) continue;
                 var inv = cs.GlobalTransform.AffineInverse();
                 var half = box.Size * 0.5f;
                 if (new Aabb(-half, box.Size).IntersectsSegment(inv * from, inv * to)) return true;
@@ -1187,11 +1206,12 @@ namespace UnturnedGodot
             return false;
         }
 
-        // Enabled look-hull boxes as (world transform, size) -- feeds the debug wireframe overlay (PlayerController "I" toggle).
+        // Look-hull boxes as (world transform, size) -- feeds the debug wireframe overlay (PlayerController "I" toggle).
+        // Includes physics-disabled hulls, matching LookRayHitsHull (the look region == the visual footprint).
         public System.Collections.Generic.IEnumerable<(Transform3D xf, Vector3 size)> LookHullBoxes()
         {
             foreach (var cs in LookHulls())
-                if (IsInstanceValid(cs) && !cs.Disabled && cs.Shape is BoxShape3D box)
+                if (IsInstanceValid(cs) && cs.Shape is BoxShape3D box)
                     yield return (cs.GlobalTransform, box.Size);
         }
 
@@ -1225,8 +1245,12 @@ namespace UnturnedGodot
                 {
                     if (IsTrailer)   // a trailer has no engine -> no fuel/battery; show HP + a clear hitch state (connected / can connect / can't connect) instead
                     {
-                        string hint = CoupledCab != null ? "\n[E] disconnect trailer"
-                            : (CabBackedUnder() ? "\n[E] connect trailer" : "\ncan't connect - back a cab under");   // explicit can/can't feedback (strawberry)
+                        // only surface the connect/disconnect prompt when the player is actually standing in the hitch region (strawberry)
+                        bool inHitchRange = PlayerController.Local != null && IsInstanceValid(PlayerController.Local)
+                            && PlayerController.Local.GlobalPosition.DistanceTo(KingpinWorld) <= HitchReach;
+                        string hint = !inHitchRange ? ""
+                            : CoupledCab != null ? "\n[E] disconnect trailer"
+                            : (CabBackedUnder() ? "\n[E] connect trailer" : "\ncan't connect - back a cab under");   // explicit can/can't feedback
                         _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}{hint}";
                     }
                     else
@@ -1255,7 +1279,7 @@ namespace UnturnedGodot
                 else { QueueFree(); return; }   // 5 min after extinguishing -> despawn the wreck
             }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
-            if (CanTow) UpdateTrailerApproach();     // let an approaching cab phase through a trailer so it can back under to couple
+            if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();

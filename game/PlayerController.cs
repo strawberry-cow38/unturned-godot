@@ -1806,7 +1806,7 @@ namespace UnturnedGodot
         bool TryToggleHitch()
         {
             if (_driving != null) return false;
-            Vehicle trailer = null; float bestD = 3.5f * 3.5f;   // player stands within ~3.5 m of the kingpin (the hitch point)
+            Vehicle trailer = null; float bestD = Vehicle.HitchReach * Vehicle.HitchReach;   // player stands within HitchReach of the kingpin (the hitch point); same gate as the billboard prompt
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle t && t.IsTrailer && !t.Exploded)
                 {
