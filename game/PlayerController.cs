@@ -1091,12 +1091,13 @@ namespace UnturnedGodot
             // Inventory dashboard open -> EAT ALL game input except Tab (to close it) + Escape: no firing / world interactions /
             // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
             if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape })) return;
-            // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no look, fire, aim, reload, etc.
+            // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             if (_driving != null)
             {
                 bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
-                if (!allowedKey && !allowedMouse) return;
+                bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
+                if (!allowedKey && !allowedMouse && !camOrbit) return;
             }
             // clicks belong to an open UI (inventory / crate / dashboard) when the cursor's visible -- don't fire / honk / aim THROUGH them (master)
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
