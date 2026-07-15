@@ -1889,7 +1889,9 @@ namespace UnturnedGodot
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
                 float size = _driving.WorldMeshAabb().Size.Length();          // bounding diagonal -> bigger vehicle, further back
-                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 24f);
+                if (_driving.CoupledTrailer != null && IsInstanceValid(_driving.CoupledTrailer))
+                    size += _driving.CoupledTrailer.WorldMeshAabb().Size.Length() * 0.7f;   // towing -> pull the cam out further so the whole rig stays in frame (strawberry)
+                float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // raised cap so the semi+trailer fits
                 float pitchR = Mathf.DegToRad(_driveCamPitch);
                 Vector3 dir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-fwd);   // behind the heading, orbited by the mouse yaw
                 var eye = vt.Origin + dir * (dist * Mathf.Cos(pitchR)) + Vector3.Up * (dist * Mathf.Sin(pitchR) + size * 0.22f);

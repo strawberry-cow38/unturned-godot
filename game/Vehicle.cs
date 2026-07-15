@@ -27,6 +27,7 @@ namespace UnturnedGodot
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
         AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
+        const float EngineVolumeBoost = 1.5f;   // every engine loop +50% louder (strawberry 2026-07-15) -- amplitude x1.5 = +3.5 dB
         const float IdleRpm = 1000f, MaxRpm = 6000f;   // source EngineIdleRPM / EngineMaxRPM
         public float EngineRpm => _engineRpm;
         public string GearLabel => LinearVelocity.LengthSquared() < 0.25f ? "N" : (LinearVelocity.Dot(-GlobalTransform.Basis.Z) < -0.5f ? "R" : $"G{_gear}");   // N stopped / R reversing / G<n>
@@ -51,6 +52,9 @@ namespace UnturnedGodot
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         public const float ApproachReach = 6f;           // start phasing the cab through a trailer once its fifth wheel is this close to the kingpin (so you can back all the way under to CoupleReach)
         public const float HitchReach = 3.5f;            // on-foot: how close the PLAYER must stand to the kingpin to connect/disconnect (also gates the billboard prompt)
+        const float JackknifeLimit = 90f;                // trailer yaw is clamped to +-this many degrees of the cab heading (no folding into the cab)
+        const float RollDisconnectDeg = 50f;             // cab OR trailer tipped past this from upright -> drop the trailer
+        float _ripTimer;                                 // cab: how long the trailer's velocity has diverged hard from ours (clipped something -> yank it off)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
@@ -368,7 +372,7 @@ namespace UnturnedGodot
         {
             Body = "semi_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
             DefaultPaints = new[] { "#3a5a78" },   // Semi_0's blue cab
-            WheelRadius = 0.55f, Engine = 950f, SteerMax = 22f, SteerMin = 10f, SpeedMax = 14f, SpeedMin = -4f, Brake = 34f,
+            WheelRadius = 0.55f, Engine = 550f, SteerMax = 22f, SteerMin = 10f, SpeedMax = 14f, SpeedMin = -4f, Brake = 34f,   // Engine 950->550: a semi accelerates SLOW + heavy (nerfed further while towing, see Drive) (strawberry 2026-07-15)
             // Cab hull matches the mesh (semi_0.txt): the CAB half (front, mesh Z -2.58..2.0) stands Y 0..1.5 with
             // the tall cab+sleeper as RoofBox("Semi Truck") on top; the REAR chassis (mesh Z 2.0..4.5) is the low
             // BLACK frame, only Y 0..0.96 -- so the trailer's deck overhangs it and the fifth wheel is exposed. The
@@ -376,8 +380,8 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.18f, 1.5f, 4.08f), BoxCenter = new Vector3(0f, 0.75f, -0.54f),   // cab BODY only, Z -2.58..1.5 (front face stays Z -2.58); behind the cab is all the low frame so the trailer nose can nestle down
             ExtraBoxes = new (Vector3, Vector3)[] { (new Vector3(2.5f, 0.96f, 3.0f), new Vector3(0f, 0.48f, 3.0f)) },   // low black rear frame (Y 0..0.96, Z 1.5..4.5) -- carries the fifth wheel, kept LOW so the coupled trailer sits on it, not over a tall box
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
-            Sound = "engine_medium.ogg", IdlePitch = 0.8f, MaxPitch = 1.6f, IdleVolume = 0.85f, MaxVolume = 1.0f,
-            Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_04.ogg",
+            Sound = "engine_large.ogg", IdlePitch = 0.8f, MaxPitch = 1.5f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // engine_large = the SOURCE heavy/truck engine (bus uses it); low pitch = diesel rumble (strawberry 2026-07-15)
+            Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
             SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = new Vector3(0f, 1.1f, -2.4f),
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,   // no separate steering-wheel node in the prop mesh
@@ -389,7 +393,7 @@ namespace UnturnedGodot
                 (-1.28f, 0.55f,  3.50f, false), (1.28f, 0.55f,  3.50f, false),   // rear axle 2 (tandem, drive) -- 1.6 back so the fat tyres clear axle 1
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
-            FifthWheel = new Vector3(0f, 0.62f, 2.6f),   // over the rear drive axles. Y matched to the trailer kingpin's Y (0.62) so the coupled trailer rides LEVEL (kingpin_Y == fifthwheel_Y keeps both bodies at the same ride offset). (strawberry 2026-07-15)
+            FifthWheel = new Vector3(0f, 0.62f, 3.0f),   // over the rear tandem (moved back from 2.6 -> pivot sits further back on the cab, more trailer clearance). Y matched to the trailer kingpin's Y (0.62) so the coupled trailer rides LEVEL. (strawberry 2026-07-15)
         };
 
         // Semi trailer (semi_1 prop -> towable). TOWED, not driven: no engine/steer/drive (Engine=0 -> _engineForce=0
@@ -411,7 +415,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.0f, 1.10f, 12.35f), BoxCenter = new Vector3(0f, 0.70f, 1.9f),   // main flatbed deck (Y 0.15..1.25, Z -4.25..8.1)
             ExtraBoxes = new (Vector3, Vector3)[]
             {
-                (new Vector3(3.0f, 2.35f, 1.0f), new Vector3(0f, 1.325f, -7.5f)),    // front headboard wall (Y 0.15..2.5, Z -8..-7)
+                (new Vector3(3.0f, 1.5f, 0.5f), new Vector3(0f, 1.75f, -7.75f)),     // front headboard wall -- tightened to the MODEL: X±1.5, Y 1.0..2.5, Z -8..-7.5 (was Y0.15..2.5 Z-8..-7, too tall+deep vs the mesh) (strawberry 2026-07-15)
                 (new Vector3(1.9f, 1.10f, 3.6f), new Vector3(0f, 0.70f, -5.7f)),     // gooseneck + kingpin coupler in ONE box (narrow ±0.95, Z -7.5..-3.9) -> the coupling area is a single clean hull, not a pile of overlapping boxes
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,   // unused (no engine) but non-null for the drive logic
@@ -433,7 +437,7 @@ namespace UnturnedGodot
             // Landing gear extended DOWN to Y-0.5 (box Y-0.5..1.5): parked, it props the nose ~0.5 above the body
             // origin so the connection side sits HIGHER than the coupled fifth-wheel height -> the trailer visibly
             // DROPS onto the cab when hitched (legs then retract). The leg VISUAL is stretched to match (see Build).
-            LandingGearSize = new Vector3(2.4f, 2.0f, 0.5f), LandingGearCenter = new Vector3(0f, 0.5f, -4.5f),
+            LandingGearSize = new Vector3(2.24f, 1.63f, 0.5f), LandingGearCenter = new Vector3(0f, 0.315f, -4.13f),   // matches the STRETCHED leg mesh (X±1.12, Y-0.5..1.13, Z-4.38..-3.88); top capped at 1.13 so it no longer pokes above the flatbed top (1.25) (strawberry 2026-07-15)
             // the landing-leg triangles live in a clean mesh band at Z -4.5..-3.8 (feet Y0 up to the deck underside),
             // between the gooseneck (Z -5.7) and the deck front (Z -1) -> split them out so they hide when coupled
             LandingLegZoneMin = new Vector3(-1.25f, -0.05f, -4.55f), LandingLegZoneMax = new Vector3(1.25f, 1.16f, -3.75f),
@@ -898,7 +902,7 @@ namespace UnturnedGodot
             {
                 var ogg = AudioStreamOggVorbis.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.Sound}"));
                 ogg.Loop = true;
-                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume), Autoplay = true };
+                v._engineAudio = new AudioStreamPlayer3D { Stream = ogg, UnitSize = 10f, MaxDistance = 80f, PitchScale = s.IdlePitch, VolumeDb = Mathf.LinearToDb(s.IdleVolume * EngineVolumeBoost), Autoplay = true };
                 v.AddChild(v._engineAudio);   // Autoplay starts the loop when the vehicle enters the scene tree
             }
 
@@ -948,6 +952,7 @@ namespace UnturnedGodot
             bool footBrake = (throttle < 0f && fwd > 0.6f) || (throttle > 0f && fwd < -0.6f);
             bool neutral = handbrake && speed < 0.5f;   // near-stop + handbrake -> NEUTRAL: cut engine force so a slow reverse doesn't fight the brake + jitter (master)
             float eng = (footBrake || neutral) ? 0f : throttle * _engineForce;
+            if (CoupledTrailer != null) eng *= 0.5f;   // towing a loaded trailer halves the pull -> even slower accel while hooked up (strawberry 2026-07-15)
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
@@ -1056,6 +1061,47 @@ namespace UnturnedGodot
             { RemoveCollisionExceptionWith(_approachGhost); _approachGhost.SetTowGhost(false); }   // left the one we were lining up under
             _approachGhost = near;
             if (near != null) { AddCollisionExceptionWith(near); near.SetTowGhost(true); }
+        }
+
+        // Cab-side, every physics frame while COUPLED: keep the rig sane -- drop the trailer on a rollover or a hard
+        // clip, and clamp the jackknife so the trailer can't fold into the cab. (strawberry 2026-07-15)
+        void UpdateCoupled(Vehicle trailer, float delta)
+        {
+            // rollover: cab or trailer tipped past RollDisconnectDeg from upright -> drop the trailer
+            if (TiltDegrees() > RollDisconnectDeg || trailer.TiltDegrees() > RollDisconnectDeg) { Uncouple(); return; }
+            // clipped something: the trailer's SPEED drops hard vs ours while we're moving -> the coupling can't hold it,
+            // so yank it off. Use speed MAGNITUDE difference (not the velocity vector) so hard turns -- where cab+trailer
+            // move at the same speed in different directions -- don't false-rip. Persist ~0.15s so a bump doesn't rip it.
+            float mismatch = Mathf.Abs(LinearVelocity.Length() - trailer.LinearVelocity.Length());
+            if (LinearVelocity.Length() > 3f && mismatch > 7f) _ripTimer += delta; else _ripTimer = 0f;
+            if (_ripTimer > 0.15f) { _ripTimer = 0f; Uncouple(); return; }
+            ClampJackknife(trailer);
+        }
+
+        // total tilt (roll+pitch) of this body from upright: angle between its up axis and world up, in degrees.
+        float TiltDegrees() => Mathf.RadToDeg(GlobalTransform.Basis.Y.AngleTo(Vector3.Up));
+
+        // Clamp the trailer's yaw to +-JackknifeLimit of the cab heading. The PinJoint allows free rotation, so when the
+        // relative yaw exceeds the limit we rotate the trailer back to it about the kingpin (keeps the pin satisfied) and
+        // kill the angular velocity that pushed past -- a wall the trailer can't fold through into the cab.
+        void ClampJackknife(Vehicle trailer)
+        {
+            Vector3 cabF = -GlobalTransform.Basis.Z; cabF.Y = 0f;
+            Vector3 trlF = -trailer.GlobalTransform.Basis.Z; trlF.Y = 0f;
+            if (cabF.LengthSquared() < 1e-4f || trlF.LengthSquared() < 1e-4f) return;
+            cabF = cabF.Normalized(); trlF = trlF.Normalized();
+            float yaw = cabF.SignedAngleTo(trlF, Vector3.Up);
+            float lim = Mathf.DegToRad(JackknifeLimit);
+            if (Mathf.Abs(yaw) <= lim) return;
+            float excess = yaw - Mathf.Sign(yaw) * lim;
+            Vector3 pivot = trailer.KingpinWorld;
+            var rot = new Basis(Vector3.Up, -excess);
+            var xf = trailer.GlobalTransform;
+            xf.Origin = pivot + rot * (xf.Origin - pivot);
+            xf.Basis = (rot * xf.Basis).Orthonormalized();
+            trailer.GlobalTransform = xf;
+            var av = trailer.AngularVelocity;
+            if (Mathf.Sign(av.Y) == Mathf.Sign(yaw)) { av.Y = 0f; trailer.AngularVelocity = av; }   // stop pushing further past the limit
         }
 
         public float ForwardSpeedPct()   // source GetReplicatedForwardSpeedPercentageOfTargetSpeed: forward speed / top speed (0..1) for the DRIVING stealth radius
@@ -1279,7 +1325,8 @@ namespace UnturnedGodot
                 else { QueueFree(); return; }   // 5 min after extinguishing -> despawn the wreck
             }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
-            if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
+            if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
+            else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();
@@ -1340,7 +1387,7 @@ namespace UnturnedGodot
                 {
                     float n = EngineRpmNorm;
                     _engineAudio.PitchScale = Mathf.Lerp(_idlePitch, _maxPitch, n);
-                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n));
+                    _engineAudio.VolumeDb = Mathf.LinearToDb(Mathf.Lerp(_idleVol, _maxVol, n) * EngineVolumeBoost);
                 }
                 else _engineAudio.VolumeDb = -80f;   // engine off -> kill the noise
             }
