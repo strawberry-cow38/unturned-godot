@@ -3,11 +3,12 @@ using Godot;
 namespace UnturnedGodot
 {
     // A tiny main menu shown on the default (exported-build) launch: title + Play / Play (No Zombies) / Quit.
-    // OnPlay(noZombies) hands control back to Main to build the survival game with or without the horde.
+    // "Play" now launches the real PEI world (OnDrivePEI); the old flat-terrain survival mode (OnPlay) was dropped
+    // from the menu but its handler is kept for --flag test harnesses.
     public partial class MainMenu : CanvasLayer
     {
-        public System.Action<bool> OnPlay;
-        public System.Action<bool> OnDrivePEI;   // bool = noZombies
+        public System.Action<bool> OnPlay;        // legacy flat-terrain survival build -- no longer on the menu, still driven by test flags
+        public System.Action<bool> OnDrivePEI;   // bool = noZombies -- the real PEI world; this is what the menu's "Play" buttons call now
 
         public override void _Ready()
         {
@@ -33,10 +34,8 @@ namespace UnturnedGodot
             box.AddChild(sub);
             box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 24) });   // spacer
 
-            AddButton(box, "Drive PEI", () => OnDrivePEI?.Invoke(false));
-            AddButton(box, "Drive PEI — No Zombies", () => OnDrivePEI?.Invoke(true));
-            AddButton(box, "Play", () => OnPlay?.Invoke(false));
-            AddButton(box, "Play — No Zombies", () => OnPlay?.Invoke(true));
+            AddButton(box, "Play", () => OnDrivePEI?.Invoke(false));                 // real PEI world (was "Drive PEI") -- now the primary play mode
+            AddButton(box, "Play — No Zombies", () => OnDrivePEI?.Invoke(true));      // real PEI, horde off (was "Drive PEI — No Zombies")
             AddButton(box, "Quit", () => GetTree().Quit());
         }
 
