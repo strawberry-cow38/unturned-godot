@@ -956,7 +956,7 @@ namespace UnturnedGodot
                 var red = new Color(0.996f, 0f, 0f);
                 v._taillights = new Node3D { Visible = false };
                 foreach (var p in s.TailPos)
-                    v._taillights.AddChild(new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 6f, SpotAngle = 35f, LightColor = red, LightEnergy = 3f });
+                    v._taillights.AddChild(new SpotLight3D { Position = p, RotationDegrees = new Vector3(0f, 180f, 0f), SpotRange = 3f, SpotAngle = 72f, SpotAngleAttenuation = 0.6f, LightColor = red, LightEnergy = 2.2f });   // WIDE + SHORT diffuse red glow, not a focused red-headlight beam (SpotRange 6->3, SpotAngle 35->72, soft edge) (strawberry)
                 v.AddChild(v._taillights);
             }
 
