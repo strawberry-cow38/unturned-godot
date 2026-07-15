@@ -45,6 +45,7 @@ play.avi
 fplaybuild.png
 *.sln.DotSettings.user
 launcher/pub/
+launcher/publish/
 launcher/obj/
 launcher/bin/
 
