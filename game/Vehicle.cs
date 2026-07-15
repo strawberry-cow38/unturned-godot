@@ -409,7 +409,7 @@ namespace UnturnedGodot
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f, 0.65f, 0.65f },   // big semi tyres (mesh scales 1.24x). Axle Y kept at 0.55 so the taller tyre LIFTS the truck (ride height = radius+restLen-axleY). tandem axles spaced >1.5 apart so the fat tyres don't overlap
             Wheels = new (float, float, float, bool)[]
             {
-                (-1.28f, 0.55f, -1.95f, true),  (1.28f, 0.55f, -1.95f, true),    // front axle (steered), under the cab
+                (-1.42f, 0.55f, -1.72f, true),  (1.42f, 0.55f, -1.72f, true),    // front axle (steered): moved OUT 1.28->1.42 (under the fender |X|1.40-1.50) + BACK -1.95->-1.72 to sit central in the wheel-well arch (Z opening ~-2.2..-1.3) (strawberry)
                 (-1.28f, 0.55f,  1.90f, false), (1.28f, 0.55f,  1.90f, false),   // rear axle 1 (drive)
                 (-1.28f, 0.55f,  3.70f, false), (1.28f, 0.55f,  3.70f, false),   // rear axle 2 (tandem, drive) -- moved back 3.5->3.7 (strawberry)
             },
