@@ -365,8 +365,8 @@ namespace UnturnedGodot
             // the tall cab+sleeper as RoofBox("Semi Truck") on top; the REAR chassis (mesh Z 2.0..4.5) is the low
             // BLACK frame, only Y 0..0.96 -- so the trailer's deck overhangs it and the fifth wheel is exposed. The
             // old single Y0..1.5 box ran the full 7.08 length, making the black rear frame 0.54 too tall. (strawberry 2026-07-15)
-            BoxSize = new Vector3(3.18f, 1.5f, 4.58f), BoxCenter = new Vector3(0f, 0.75f, -0.29f),   // cab half only (front face stays Z -2.58)
-            ExtraBoxes = new (Vector3, Vector3)[] { (new Vector3(2.5f, 0.96f, 2.5f), new Vector3(0f, 0.48f, 3.25f)) },   // low black rear frame (Y 0..0.96, mesh Z 2.0..4.5)
+            BoxSize = new Vector3(3.18f, 1.5f, 4.08f), BoxCenter = new Vector3(0f, 0.75f, -0.54f),   // cab BODY only, Z -2.58..1.5 (front face stays Z -2.58); behind the cab is all the low frame so the trailer nose can nestle down
+            ExtraBoxes = new (Vector3, Vector3)[] { (new Vector3(2.5f, 0.96f, 3.0f), new Vector3(0f, 0.48f, 3.0f)) },   // low black rear frame (Y 0..0.96, Z 1.5..4.5) -- carries the fifth wheel, kept LOW so the coupled trailer sits on it, not over a tall box
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.8f, MaxPitch = 1.6f, IdleVolume = 0.85f, MaxVolume = 1.0f,
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_04.ogg",
@@ -380,7 +380,7 @@ namespace UnturnedGodot
                 (-1.28f, 0.55f,  3.15f, false), (1.28f, 0.55f,  3.15f, false),   // rear axle 2 (tandem, drive)
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
-            FifthWheel = new Vector3(0f, 1.3f, 2.6f),   // coupling plate behind the cab, over the rear drive axles (deck height)
+            FifthWheel = new Vector3(0f, 0.4f, 2.6f),   // coupling plate on the LOW rear frame, over the rear drive axles. Y0.4 == the trailer kingpin's own height when the deck is level, so coupling doesn't lift the nose -> the trailer rides level like it does solo (was Y1.3, which yanked the low gooseneck kingpin up and tilted the rig). (strawberry 2026-07-15)
         };
 
         // Semi trailer (semi_1 prop -> towable). TOWED, not driven: no engine/steer/drive (Engine=0 -> _engineForce=0
