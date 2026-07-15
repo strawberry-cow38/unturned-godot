@@ -1,0 +1,2 @@
+# Godot: skip importing this dir. The game loads these assets RAW (Image.LoadFromFile / ParseObj / FileAccess by path),
+# never via GD.Load, so importing them is pure wasted work (was ~3100 of ~3500 first-run imports). (strawberry 2026-07-15)
