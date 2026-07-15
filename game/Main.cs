@@ -427,7 +427,9 @@ namespace UnturnedGodot
             if (veh != null)
             {
                 _rigDir = veh;
-                _rigCaptureFrames = new[] { 45, 90, 150, 210, 280, 340 };   // spread across the driving course (also keeps the movie running the full length)
+                _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_QUICK") == "1"
+                    ? new[] { 48 }                                    // UG_QUICK: ONE settled+moving frame then quit -> ~20s instead of simulating the full course to frame 340 (~2min)
+                    : new[] { 45, 90, 150, 210, 280, 340 };           // spread across the driving course (also keeps the movie running the full length)
                 _vehTest = true;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildVehicleTest(gun ?? "jeep");   // --gun=quad to test the quad
