@@ -43,6 +43,7 @@ namespace UnturnedGodot
         public bool CanTow => FifthWheelLocal != Vector3.Zero;
         public bool IsTrailer => KingpinLocal != Vector3.Zero;
         public Vehicle CoupledTrailer, CoupledCab;       // partner when hitched (cab -> trailer, trailer -> cab)
+        CollisionShape3D _landingGear;                   // trailer's front landing-leg support: enabled (down) when parked, disabled (retracted) while towed
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
@@ -110,6 +111,7 @@ namespace UnturnedGodot
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
             public Vector3 Kingpin;      // trailer: local kingpin point (front); Zero = not a trailer
+            public Vector3 LandingGearSize, LandingGearCenter;   // trailer: front landing-leg support box (holds the nose up when parked); toggled OFF while coupled. Zero size = none
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -400,6 +402,10 @@ namespace UnturnedGodot
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole trailer box; no separate parts
             Kingpin = new Vector3(0f, 0.4f, -7.5f),   // coupling pin under the front of the trailer (front face ~Z -8.0)
+            // Front landing legs: a ground-to-deck support so the nose sits LEVEL when parked (rigid body on rear
+            // wheels + this = level). Placed at Z -4.5, BEHIND where the cab's rear frame reaches under the front
+            // (~Z -5.6 at couple), so the cab can still back all the way under. Toggled OFF the instant it couples.
+            LandingGearSize = new Vector3(2.4f, 1.5f, 0.5f), LandingGearCenter = new Vector3(0f, 0.75f, -4.5f),
         };
 
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
@@ -724,6 +730,11 @@ namespace UnturnedGodot
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
             if (roof.HasValue) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
+            if (s.LandingGearSize != Vector3.Zero)   // trailer front landing legs -> holds the nose level when parked; CoupleTo disables it (retracts) while towed
+            {
+                v._landingGear = new CollisionShape3D { Name = "LandingGear", Shape = new BoxShape3D { Size = s.LandingGearSize }, Position = s.LandingGearCenter };
+                v.AddChild(v._landingGear);
+            }
             v.BodyExtents = s.BoxSize * 0.5f; v.BodyCenter = s.BoxCenter;   // for the zombie swipe-reach
 
             // front bumper trigger (source Bumper): a forward volume that roadkills characters (enemy layer bit 1) the
@@ -922,6 +933,7 @@ namespace UnturnedGodot
             joint.NodeB = joint.GetPathTo(trailer);
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
             AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls
+            if (trailer._landingGear != null) trailer._landingGear.Disabled = true;   // RETRACT the landing legs -> the cab's fifth wheel now carries the nose, legs would just drag
             Sleeping = false; trailer.Wake();                  // wake both; trailer.Wake() also clears its spawn `_parked` so it won't damp/freeze-static and anchor the tow (was the 2mph stall)
             return true;
         }
@@ -935,7 +947,12 @@ namespace UnturnedGodot
             if (cab._hitch != null && IsInstanceValid(cab._hitch)) cab._hitch.QueueFree();
             if (trailer != null && IsInstanceValid(trailer)) cab.RemoveCollisionExceptionWith(trailer);   // restore hull collision once uncoupled
             cab._hitch = null; cab.CoupledTrailer = null;
-            if (trailer != null) { trailer.CoupledCab = null; trailer.Park(); }   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
+            if (trailer != null)
+            {
+                trailer.CoupledCab = null;
+                if (trailer._landingGear != null) trailer._landingGear.Disabled = false;   // DEPLOY the landing legs -> hold the nose level now that the cab's gone (fixes the "front sinks into the ground")
+                trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
+            }
         }
 
         public float ForwardSpeedPct()   // source GetReplicatedForwardSpeedPercentageOfTargetSpeed: forward speed / top speed (0..1) for the DRIVING stealth radius
