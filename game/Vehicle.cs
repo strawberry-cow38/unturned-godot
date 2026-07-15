@@ -114,6 +114,7 @@ namespace UnturnedGodot
             public Vector3 Kingpin;      // trailer: local kingpin point (front); Zero = not a trailer
             public Vector3 LandingGearSize, LandingGearCenter;   // trailer: front landing-leg support box (holds the nose up when parked); toggled OFF while coupled. Zero size = none
             public Vector3 LandingLegZoneMin, LandingLegZoneMax;  // trailer: mesh-space AABB enclosing the landing-leg triangles -> split them into a toggleable MeshInstance so they VANISH when coupled. Min==Max = no split
+            public float LandingLegScaleY, LandingLegPivotY;      // trailer: vertically STRETCH the split-out leg mesh (scale about PivotY) so the feet reach the ground at the nose-up parked height. ScaleY 0/1 = no stretch
             public (Vector3 size, Vector3 center)[] ExtraBoxes;   // extra fixed collision boxes beyond the main box + RoofBox (e.g. the trailer's kingpin/gooseneck, the cab's low rear fifth-wheel deck) -> match the model geometry
         }
 
@@ -424,10 +425,14 @@ namespace UnturnedGodot
             // Front landing legs: a ground-to-deck support so the nose sits LEVEL when parked (rigid body on rear
             // wheels + this = level). Placed at Z -4.5, BEHIND where the cab's rear frame reaches under the front
             // (~Z -5.6 at couple), so the cab can still back all the way under. Toggled OFF the instant it couples.
-            LandingGearSize = new Vector3(2.4f, 1.5f, 0.5f), LandingGearCenter = new Vector3(0f, 0.75f, -4.5f),
+            // Landing gear extended DOWN to Y-0.5 (box Y-0.5..1.5): parked, it props the nose ~0.5 above the body
+            // origin so the connection side sits HIGHER than the coupled fifth-wheel height -> the trailer visibly
+            // DROPS onto the cab when hitched (legs then retract). The leg VISUAL is stretched to match (see Build).
+            LandingGearSize = new Vector3(2.4f, 2.0f, 0.5f), LandingGearCenter = new Vector3(0f, 0.5f, -4.5f),
             // the landing-leg triangles live in a clean mesh band at Z -4.5..-3.8 (feet Y0 up to the deck underside),
             // between the gooseneck (Z -5.7) and the deck front (Z -1) -> split them out so they hide when coupled
             LandingLegZoneMin = new Vector3(-1.25f, -0.05f, -4.55f), LandingLegZoneMax = new Vector3(1.25f, 1.16f, -3.75f),
+            LandingLegScaleY = 1.44f, LandingLegPivotY = 1.13f,   // stretch the legs down ~0.5 (anchored at the deck ~Y1.13) so they reach the ground with the nose propped up 0.5
         };
 
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
@@ -754,6 +759,11 @@ namespace UnturnedGodot
             if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
             {
                 v._landingLegMesh = new MeshInstance3D { Name = "LandingLegs", Mesh = legMesh, MaterialOverride = bodyMat };
+                if (s.LandingLegScaleY > 0f && s.LandingLegScaleY != 1f)   // vertically stretch the legs (about the deck pivot) so the feet reach the ground at the nose-up parked stance
+                {
+                    v._landingLegMesh.Scale = new Vector3(1f, s.LandingLegScaleY, 1f);
+                    v._landingLegMesh.Position = new Vector3(0f, s.LandingLegPivotY * (1f - s.LandingLegScaleY), 0f);
+                }
                 v.AddChild(v._landingLegMesh);
             }
 
