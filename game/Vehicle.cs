@@ -391,7 +391,7 @@ namespace UnturnedGodot
             Sound = "engine_large.ogg", IdlePitch = 0.8f, MaxPitch = 1.5f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // engine_large = the SOURCE heavy/truck engine (bus uses it); low pitch = diesel rumble (strawberry 2026-07-15)
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
             SpotPos = new[] { new Vector3(-1.175f, 0.86f, -2.60f), new Vector3(1.175f, 0.86f, -2.60f) }, OmniPos = Vector3.Zero,   // beam sources CENTERED on the real headlight lenses (X±1.175, Y0.86, front face Z-2.58); no middle omni fill (strawberry)
-            TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
+            TailPos = new[] { new Vector3(-0.82f, 0.65f, 4.45f), new Vector3(0.82f, 0.65f, 4.45f) },   // red spot sources centered on the cab taillight blocks (strawberry)
             HeadlightZoneMin = new Vector3(-1.44f, 0.66f, -2.63f), HeadlightZoneMax = new Vector3(-0.92f, 1.05f, -2.20f),   // LEFT headlight = the CREAM-texel geometry X[-1.40,-0.95] Y[0.71,1.01] near the fender (NOT the grey trim by the grille I was wrongly lighting). Verified: zone catches exactly the 20 cream tris, nothing else. right = auto X-mirror (strawberry)
             TaillightMesh = new[] { new Vector3(-0.82f, 0.65f, 4.45f), new Vector3(0.82f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame; moved closer together again (1.035->0.82) (strawberry). Cab has NO baked taillights so these blocks ARE the cab's
             SeatModelFile = "roadster_seats.txt", SeatModel = new Vector3(0f, 2.2f, 0.3f),   // REAL ripped seats (single 2-seat row) back near the cab rear wall (strawberry: use src, not proc-gen)
@@ -433,7 +433,7 @@ namespace UnturnedGodot
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,   // unused (no engine) but non-null for the drive logic
             Sound = null,   // no engine -> no engine loop
             Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
-            TailPos = new[] { new Vector3(-1.35f, 1.0f, 8.0f), new Vector3(1.35f, 1.0f, 8.0f) },   // taillights at the rear of the 16 m box
+            TailPos = new[] { new Vector3(-1.13f, 1.0f, 8.0f), new Vector3(1.13f, 1.0f, 8.0f) },   // red spot sources centered on the trailer's baked taillights (X±1.13, Y1.0, Z8.0) (strawberry)
             TaillightZoneMin = new Vector3(-1.42f, 0.84f, 7.85f), TaillightZoneMax = new Vector3(-0.84f, 1.17f, 8.15f),   // split the REAL baked red taillights (X[0.88,1.38] Y[0.88,1.13] Z[7.90,8.10]) out -> emissive, driven by the cab pass-through. NO added blocks (was duping the baked ones) (strawberry)
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f },   // big trailer tyres to match the cab. Axle Y kept at 0.55 so the taller tyre lifts the bed (matches the cab's lift, so the coupled deck rises level)
