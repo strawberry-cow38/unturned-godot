@@ -375,6 +375,7 @@ namespace UnturnedGodot
             SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = new Vector3(0f, 1.1f, -2.4f),
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,   // no separate steering-wheel node in the prop mesh
+            WheelRadii = new[] { 0.72f, 0.72f, 0.72f, 0.72f, 0.72f, 0.72f },   // BIG semi tyres (mesh scales wr/WheelRadius=1.31x). Axle Y kept at 0.55 so the taller tyre LIFTS the truck (ride height = radius+restLen-axleY)
             Wheels = new (float, float, float, bool)[]
             {
                 (-1.28f, 0.55f, -1.95f, true),  (1.28f, 0.55f, -1.95f, true),    // front axle (steered), under the cab
@@ -412,6 +413,7 @@ namespace UnturnedGodot
             Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
             TailPos = new[] { new Vector3(-1.35f, 1.0f, 8.0f), new Vector3(1.35f, 1.0f, 8.0f) },   // taillights at the rear of the 16 m box
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
+            WheelRadii = new[] { 0.72f, 0.72f, 0.72f, 0.72f },   // BIG trailer tyres to match the cab. Axle Y kept at 0.55 so the taller tyre lifts the bed (matches the cab's lift, so the coupled deck rises level)
             Wheels = new (float, float, float, bool)[]
             {
                 (-1.30f, 0.55f, 6.0f, false), (1.30f, 0.55f, 6.0f, false),   // rear tandem bogie (no steer, no drive) -- estimated from the bbox
