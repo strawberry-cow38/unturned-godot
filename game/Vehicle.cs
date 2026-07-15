@@ -64,6 +64,7 @@ namespace UnturnedGodot
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
+        bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
         StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
         AudioStreamPlayer3D _hornAudio; float _hornCd;   // horn (LMB): one-shot the .dat HornAudioClip, 0.5s cooldown (source canUseHorn)
         bool _alarmed; float _alarmTimer, _alarmBlip, _alarmCheckT = 0.3f; bool _alarmLit;   // "alarmed" car (5% of spawns): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies (master)
@@ -115,9 +116,13 @@ namespace UnturnedGodot
             public string Name;   // display name (English.dat) for the HUD title
             public Vector3[] SpotPos; public Vector3 OmniPos;   // headlight spot beams + omni fill (prefab "Headlights", Godot space); null = no lights yet
             public Vector3[] TailPos;   // taillight spot positions (prefab "Taillights", rear, Godot space); null = emission-only
+            public Vector3[] HeadlightMesh;   // procedural cream headlight LAMP boxes (front) -> glow (emissive) when 'L' on; for props whose lamps are baked into the body mesh (semi). null = none
+            public Vector3[] TaillightMesh;   // procedural red taillight/brake LAMP boxes (rear) -> red running glow while driven, flare on brake; captured as _taillightMat. null = none
             public string Horn;   // .dat HornAudioClip ogg (one-shot on LMB)
             public Vector3 SteerPivot, SteerAxis;   // steering wheel model pivot (centroid) + rotation axis (disc normal); Zero = don't rotate
             public Vector3 DriverEye;   // FP driving eye offset (local); Zero = the shared default (-0.4,1.85,0.4). Tall cabs (semi) sit HIGHER so you see over the hood
+            public bool ProcInterior;   // build a procedural seat + steering wheel (for props whose body mesh has no interior sub-objects, e.g. semi); the wheel turns via SteerPivot/SteerAxis
+            public Vector3 SeatModel;   // ProcInterior: driver seat-cushion centre (backrest is placed behind it)
             public (float x, float y, float z, bool steer)[] Wheels;
             public (string txt, Color color)[] Parts;   // detail meshes (root-relative) with their real solid colours
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
@@ -138,6 +143,16 @@ namespace UnturnedGodot
         }
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+
+        // a basis whose +Y axis points along `y` (used to orient a TorusMesh -- axis +Y -- so its disc faces a given normal)
+        static Basis AlignYTo(Vector3 y)
+        {
+            y = y.Normalized();
+            Vector3 seed = Mathf.Abs(y.Dot(Vector3.Right)) > 0.9f ? Vector3.Forward : Vector3.Right;
+            Vector3 z = seed.Cross(y).Normalized();
+            Vector3 x = y.Cross(z).Normalized();
+            return new Basis(x, y, z);
+        }
 
         // billboarded smoke/fire burst using the REAL source particle texture (veh_smoke_0/veh_smoke_1/veh_fire,
         // ripped from the vehicle prefab's ParticleSystemRenderer). smoke = grey rising; fire = additive orange.
@@ -386,7 +401,10 @@ namespace UnturnedGodot
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
             SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = Vector3.Zero,   // no middle omni fill -- 2 spot beams only (strawberry: the center source looked like a weird 3rd headlight)
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
-            SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,   // no separate steering-wheel node in the prop mesh
+            HeadlightMesh = new[] { new Vector3(-1.05f, 0.6f, -2.55f), new Vector3(1.05f, 0.6f, -2.55f) },   // cream lamp boxes over the baked front headlights -> glow on 'L' (strawberry)
+            TaillightMesh = new[] { new Vector3(-1.15f, 0.65f, 4.45f), new Vector3(1.15f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame face; hidden under the trailer when towing (pass-through) (strawberry)
+            ProcInterior = true, SeatModel = new Vector3(-0.5f, 1.55f, -0.7f),   // procedural seat + steering wheel: the prop's Model_0 has no interior sub-objects (strawberry)
+            SteerPivot = new Vector3(-0.5f, 1.9f, -1.5f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steering wheel in front of the driver, tilted back ~15deg; turns 1:1 with the wheels
             DriverEye = new Vector3(-0.5f, 2.4f, -0.9f),   // sit HIGH in the tall cab (floor ~Y1.5, roof ~Y3.85) so the view clears the long hood (strawberry: "taller so you can see")
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f, 0.65f, 0.65f },   // big semi tyres (mesh scales 1.24x). Axle Y kept at 0.55 so the taller tyre LIFTS the truck (ride height = radius+restLen-axleY). tandem axles spaced >1.5 apart so the fat tyres don't overlap
             Wheels = new (float, float, float, bool)[]
@@ -425,6 +443,7 @@ namespace UnturnedGodot
             Sound = null,   // no engine -> no engine loop
             Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
             TailPos = new[] { new Vector3(-1.35f, 1.0f, 8.0f), new Vector3(1.35f, 1.0f, 8.0f) },   // taillights at the rear of the 16 m box
+            TaillightMesh = new[] { new Vector3(-1.35f, 0.7f, 8.05f), new Vector3(1.35f, 0.7f, 8.05f) },   // red brake/tail blocks on the trailer rear; driven by the CAB's brake state while coupled (pass-through) (strawberry)
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f },   // big trailer tyres to match the cab. Axle Y kept at 0.55 so the taller tyre lifts the bed (matches the cab's lift, so the coupled deck rises level)
             Wheels = new (float, float, float, bool)[]
@@ -833,6 +852,7 @@ namespace UnturnedGodot
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
+                mi.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // the wheel node handles suspension/steer interp; the mesh's own spin is set at RENDER rate (_Process) -> don't let 50Hz interpolation stutter it
                 w.AddChild(mi);
                 v.AddChild(w);
                 v._wNodes[i] = w; v._wMeshes[i] = mi;
@@ -864,6 +884,60 @@ namespace UnturnedGodot
                     if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); }   // red lens: glow the material + cast a real red light from that side (master)
                     if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); }      // blue lens: material glow + real blue light from the other side
                 }
+            if (s.HeadlightMesh != null)   // procedural cream lamp boxes at the front (props with baked-in headlights, e.g. semi) -> glow when 'L' on, like a car's
+            {
+                var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                var hlMesh = new BoxMesh { Size = new Vector3(0.42f, 0.30f, 0.14f) };
+                foreach (var p in s.HeadlightMesh)
+                {
+                    var mi = new MeshInstance3D { Mesh = hlMesh, Position = p, MaterialOverride = hlMat };
+                    mi.SetMeta("no_outline", true);   // keep the lamp out of the look-at silhouette
+                    v.AddChild(mi);
+                }
+                v._headlightMat = hlMat;   // SetHeadlights toggles emission on this -> the lamps light up
+            }
+            if (s.TaillightMesh != null)   // procedural red lamp boxes at the rear -> red running glow while driven + brake flare; captured for the brake-light logic
+            {
+                var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                var tlMesh = new BoxMesh { Size = new Vector3(0.34f, 0.28f, 0.14f) };
+                foreach (var p in s.TaillightMesh)
+                {
+                    var mi = new MeshInstance3D { Mesh = tlMesh, Position = p, MaterialOverride = tlMat };
+                    mi.SetMeta("no_outline", true);
+                    v.AddChild(mi);
+                }
+                v._taillightMat = tlMat;
+            }
+            if (s.ProcInterior)   // procedural cab interior (seat + steering wheel) for props whose body mesh has no interior sub-objects (semi)
+            {
+                var seatMat = SolidMat(new Color(0.16f, 0.16f, 0.18f));
+                var seat = s.SeatModel;
+                var cushion = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.56f, 0.16f, 0.58f) }, Position = seat, MaterialOverride = seatMat };
+                cushion.SetMeta("no_outline", true); v.AddChild(cushion);
+                var backrest = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.56f, 0.78f, 0.16f) }, Position = seat + new Vector3(0f, 0.46f, 0.30f), MaterialOverride = seatMat };
+                backrest.SetMeta("no_outline", true); v.AddChild(backrest);
+                if (s.SteerAxis != Vector3.Zero)   // steering wheel: torus rim + hub + 3 spokes, wrapped in the steer pivot so it turns 1:1 with the wheels
+                {
+                    var axis = s.SteerAxis.Normalized();
+                    v._steerPivot = new Node3D { Position = s.SteerPivot };
+                    v._steerAxis = axis;
+                    var wheelRoot = new Node3D { Basis = AlignYTo(axis) };   // orient so the torus axis (+Y) = the steer axis -> spinning about it turns the rim in-plane
+                    var wMat = SolidMat(new Color(0.09f, 0.09f, 0.10f));
+                    var rim = new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = 0.20f, OuterRadius = 0.26f, RingSegments = 6 }, MaterialOverride = wMat };
+                    rim.SetMeta("no_outline", true); wheelRoot.AddChild(rim);
+                    var hub = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.06f, BottomRadius = 0.06f, Height = 0.05f }, MaterialOverride = wMat };
+                    hub.SetMeta("no_outline", true); wheelRoot.AddChild(hub);
+                    for (int sp = 0; sp < 3; sp++)   // 3 spokes at 120deg (asymmetric -> the turn actually reads)
+                    {
+                        var spoke = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.03f, 0.04f, 0.22f) }, MaterialOverride = wMat };
+                        spoke.Position = new Vector3(0f, 0f, 0.11f);   // from hub out to the rim, along local +Z
+                        var holder = new Node3D { Basis = new Basis(Vector3.Up, Mathf.DegToRad(sp * 120f)) };
+                        holder.AddChild(spoke); wheelRoot.AddChild(holder);
+                    }
+                    v._steerPivot.AddChild(wheelRoot);
+                    v.AddChild(v._steerPivot);
+                }
+            }
             if (v._sirenMat0 != null)   // emergency vehicle -> looping siren audio (master), silent until the lightbar's toggled on
             {
                 v._sirenAudio = new AudioStreamPlayer3D { Stream = LoadWav("res://content/siren.wav"), UnitSize = 14f, MaxDistance = 120f, VolumeDb = 2f };
@@ -970,7 +1044,8 @@ namespace UnturnedGodot
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
             bool coasting = Mathf.Abs(throttle) < 0.05f && !footBrake;   // no throttle + no brake input -> engine braking drags it down FASTER than pure friction (master: slow faster on its own)
             Brake = handbrake ? _brakeForce * HandbrakeScale : (footBrake ? _brakeForce * FootBrakeScale : (coasting ? _brakeForce * FootBrakeScale * 0.35f : 0f));
-            if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = (handbrake || footBrake) ? 6f : 2f;   // brake lights flare brighter while braking (master); running taillights sit at 2x
+            _braking = handbrake || footBrake;   // remembered for the trailer brake-light pass-through (UpdateCoupled)
+            if (_taillightMat != null && _taillightsOn) _taillightMat.EmissionEnergyMultiplier = _braking ? 6f : 2f;   // brake lights flare brighter while braking (master); running taillights sit at 2x
         }
 
         public void Park()   // driver left: smoothly damp to a stop + straighten (no hard-brake judder), then hold
@@ -1035,6 +1110,7 @@ namespace UnturnedGodot
                 cab._approachGhost = null;
                 if (trailer._landingGear != null) trailer._landingGear.Disabled = false;   // DEPLOY the landing legs -> hold the nose level now that the cab's gone (fixes the "front sinks into the ground")
                 if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = true;   // and show their VISUAL again
+                trailer.DriveTrailerLights(false, false);   // cab no longer drives them -> kill the trailer's brake/tail lights (its own logic resumes now CoupledCab is null)
                 trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
             }
         }
@@ -1083,6 +1159,7 @@ namespace UnturnedGodot
             if (LinearVelocity.Length() > 3f && mismatch > 7f) _ripTimer += delta; else _ripTimer = 0f;
             if (_ripTimer > 0.15f) { _ripTimer = 0f; Uncouple(); return; }
             ClampJackknife(trailer);
+            trailer.DriveTrailerLights(EngineOn && Battery > 0f, _braking);   // pass the cab's running + brake state through to the trailer's brake lights
         }
 
         // total tilt (roll+pitch) of this body from upright: angle between its up axis and world up, in degrees.
@@ -1153,6 +1230,15 @@ namespace UnturnedGodot
                 _taillightMat.EmissionEnabled = on;
                 if (on) { _taillightMat.Emission = new Color(0.56f, 0.13f, 0.13f); _taillightMat.EmissionEnergyMultiplier = 2f; }
             }
+        }
+
+        // Cab drives the TRAILER's tail/brake lights while coupled (the trailer has no engine of its own, so its own
+        // synchronizeTaillights never fires). running = cab powered; braking = cab on the brake -> flare. The trailer skips
+        // its own taillight logic while CoupledCab != null so the two don't fight. (strawberry: brake-light pass-through)
+        public void DriveTrailerLights(bool running, bool braking)
+        {
+            if (_taillightsOn != running) SetTaillights(running);
+            if (_taillightMat != null && running) _taillightMat.EmissionEnergyMultiplier = braking ? 6f : 2f;
         }
 
         // A real colored light cast from a lightbar lens (source Siren_0/Siren_1 are GameObjects with Unity Lights).
@@ -1289,6 +1375,21 @@ namespace UnturnedGodot
             QueueFree();
         }
 
+        public override void _Process(double delta)   // RENDER-rate wheel spin: smooth on a fast wheel (physics is 50Hz + interpolated; spinning there stutters)
+        {
+            if (_wNodes == null || _husk || Freeze) return;   // no wheels / settled wreck / frozen -> no spin
+            for (int i = 0; i < _wNodes.Length; i++)
+            {
+                if (_wMeshes[i] == null) continue;
+                // GetRpm() IS the physical wheel rotation -> apply directly. NO per-side sign: the left wheels' negative-X
+                // mesh scale (mirror) does NOT reverse rotation about X (a YZ-plane reflection commutes with Rx), so the old
+                // _wSign made the two sides spin OPPOSITE ways -> one rolled backward (strawberry). Wrap mod Tau so the euler
+                // angle stays small (no unbounded growth / float-precision jitter over a long drive).
+                _wRoll[i] = (_wRoll[i] + _wNodes[i].GetRpm() * (Mathf.Tau / 60f) * (float)delta) % Mathf.Tau;
+                _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
+            }
+        }
+
         public override void _PhysicsProcess(double delta)
         {
             if (_lookFocused && _infoLabel != null)   // keep the info billboard above the car + live (before any perf early-return)
@@ -1362,15 +1463,8 @@ namespace UnturnedGodot
             bool damping = !towed && (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea"). A towed trailer never damps -- it'd anchor the tow.
             LinearDamp = damping ? 6f : 0f; AngularDamp = damping ? 6f : 0f;
             if (_parked && !Freeze && !towed) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes (never brake a towed trailer)
-            if (!Freeze)   // freeze the wheels' VISUAL spin too when the car is frozen (master)
-                for (int i = 0; i < _wNodes.Length; i++)   // visually spin each wheel mesh by its RPM (steer + suspension are on the node)
-                {
-                    // GetRpm() IS the physical wheel rotation -> apply it directly. NO per-side sign flip: the left wheels'
-                    // X-mesh-mirror (negative scale) does NOT reverse spin about X (a YZ-plane reflection commutes with Rx),
-                    // so the old _wSign made the two sides spin OPPOSITE directions -> one side rolled backward (strawberry).
-                    _wRoll[i] += _wNodes[i].GetRpm() * (Mathf.Tau / 60f) * (float)delta;
-                    _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
-                }
+            // NOTE: the wheels' VISUAL spin is done in _Process (RENDER rate), NOT here. Physics is 50Hz + physics
+            // interpolation is on; a fast wheel spun at 50Hz stutters against a faster refresh. Render-rate spin is smooth.
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
             float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
             float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
@@ -1455,9 +1549,9 @@ namespace UnturnedGodot
                 }
                 else { _sirenMat0.EmissionEnabled = false; _sirenMat1.EmissionEnabled = false; if (_sirenLight0 != null) _sirenLight0.LightEnergy = 0f; if (_sirenLight1 != null) _sirenLight1.LightEnergy = 0f; if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop(); }
             }
-            if (_alarmTimer <= 0f)   // the alarm owns the taillights while blaring (master); otherwise source synchronizeTaillights = isDriven && canTurnOnLights
+            if (_alarmTimer <= 0f && CoupledCab == null)   // the alarm owns the taillights while blaring (master); a COUPLED trailer's lights are driven by the cab (DriveTrailerLights) so it skips its own logic
             {
-                bool tailWant = (EngineOn && Battery > 0f) || _headlightsOn;   // source synchronizeTaillights = isDriven && canTurnOnLights; master's rule ADDS: headlights on -> taillights on too, even parked / no driver
+                bool tailWant = ((EngineOn && Battery > 0f) || _headlightsOn) && CoupledTrailer == null;   // source synchronizeTaillights = isDriven && canTurnOnLights; master ADDS headlights->tail. While TOWING the cab's own tail is off -> the trailer carries the lights (pass-through)
                 if (tailWant != _taillightsOn) SetTaillights(tailWant);
             }
             if (_hornCd > 0f) _hornCd -= (float)delta;
