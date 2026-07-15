@@ -389,7 +389,7 @@ namespace UnturnedGodot
                 (-1.28f, 0.55f,  3.50f, false), (1.28f, 0.55f,  3.50f, false),   // rear axle 2 (tandem, drive) -- 1.6 back so the fat tyres clear axle 1
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole cab; no separate seat/steer/light parts
-            FifthWheel = new Vector3(0f, 0.4f, 2.6f),   // coupling plate on the LOW rear frame, over the rear drive axles. Y0.4 == the trailer kingpin's own height when the deck is level, so coupling doesn't lift the nose -> the trailer rides level like it does solo (was Y1.3, which yanked the low gooseneck kingpin up and tilted the rig). (strawberry 2026-07-15)
+            FifthWheel = new Vector3(0f, 0.62f, 2.6f),   // over the rear drive axles. Y matched to the trailer kingpin's Y (0.62) so the coupled trailer rides LEVEL (kingpin_Y == fifthwheel_Y keeps both bodies at the same ride offset). (strawberry 2026-07-15)
         };
 
         // Semi trailer (semi_1 prop -> towable). TOWED, not driven: no engine/steer/drive (Engine=0 -> _engineForce=0
@@ -426,7 +426,7 @@ namespace UnturnedGodot
                 (-1.30f, 0.55f, 7.3f, false), (1.30f, 0.55f, 7.3f, false),
             },
             Parts = new (string, Color)[] { },   // Model_0 is the whole trailer box; no separate parts
-            Kingpin = new Vector3(0f, 0.4f, -7.5f),   // coupling pin under the front of the trailer (front face ~Z -8.0)
+            Kingpin = new Vector3(0f, 0.62f, -6.6f),   // centered on the round coupler plate under the gooseneck (was a guessed 0.4,-7.5 which sat forward+low of it)
             // Front landing legs: a ground-to-deck support so the nose sits LEVEL when parked (rigid body on rear
             // wheels + this = level). Placed at Z -4.5, BEHIND where the cab's rear frame reaches under the front
             // (~Z -5.6 at couple), so the cab can still back all the way under. Toggled OFF the instant it couples.

@@ -3034,7 +3034,13 @@ namespace UnturnedGodot
                 }
                 if (_pivots)   // --pivots: pin the arrows to the live coupling points; no driving
                 {
-                    if (_vehCam != null) { _vehCam.GlobalPosition = new Vector3(24f, 8.5f, 8f); _vehCam.LookAt(new Vector3(0f, 1.2f, 7f), Vector3.Up); }   // static pulled-back 3/4 view framing both models + arrows
+                    if (_vehCam != null)
+                    {
+                        if (System.Environment.GetEnvironmentVariable("UG_PIVCLOSE") == "1")   // zoom TIGHT on the TRAILER's coupler (~Z6.4 world) to place the kingpin precisely
+                        { _vehCam.GlobalPosition = new Vector3(3.6f, 1.1f, 5.6f); _vehCam.LookAt(new Vector3(0f, 0.62f, 6.4f), Vector3.Up); }
+                        else
+                        { _vehCam.GlobalPosition = new Vector3(24f, 8.5f, 8f); _vehCam.LookAt(new Vector3(0f, 1.2f, 7f), Vector3.Up); }   // pulled-back 3/4 view framing both models
+                    }
                     foreach (var (mark, veh, local) in _pivotMarks)
                         if (IsInstanceValid(mark) && IsInstanceValid(veh)) mark.GlobalPosition = veh.ToGlobal(local);
                 }
