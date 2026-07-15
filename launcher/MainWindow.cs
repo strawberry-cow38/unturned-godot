@@ -17,7 +17,7 @@ public class MainWindow : Window
 
     enum Mode { Busy, Update, Play, Broken }
 
-    readonly string _baseDir, _srcDir, _gameDir;
+    readonly string _baseDir, _srcDir, _gameDir, _builtMarker;
     string _git, _dotnet, _godot;
 
     readonly TextBlock _currentLabel = new() { TextWrapping = TextWrapping.Wrap };
@@ -32,6 +32,7 @@ public class MainWindow : Window
         _baseDir = AppContext.BaseDirectory;
         _srcDir = Path.Combine(_baseDir, "source");
         _gameDir = Path.Combine(_srcDir, "game");
+        _builtMarker = Path.Combine(_srcDir, ".ugh_built");   // records the commit WE last built; untracked, survives reset --hard
 
         Title = "Unturned Godot — Launcher";
         Width = 680; Height = 520; MinWidth = 560; MinHeight = 420;
@@ -114,7 +115,11 @@ public class MainWindow : Window
         string remoteDate = await Capture(_git, new[] { "show", "-s", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", $"origin/{Branch}" });
         string remoteMsg = await Capture(_git, new[] { "show", "-s", "--format=%s", $"origin/{Branch}" });
         int behind = int.TryParse(await Capture(_git, new[] { "rev-list", "--count", $"HEAD..origin/{Branch}" }), out var b) ? b : 0;
-        bool built = Directory.Exists(Path.Combine(_gameDir, ".godot"));
+        // "built" = WE built this exact commit. Do NOT trust game/.godot existing -- the repo may ship a committed
+        // (stale, machine-specific) .godot with pre-built assemblies, which would let a fresh clone "Play" a mismatched
+        // dll and crash with "Cannot instantiate C# script res://Main.cs". Only our own build marker counts.
+        bool built = false;
+        try { built = File.Exists(_builtMarker) && File.ReadAllText(_builtMarker).Trim() == localHash && !string.IsNullOrEmpty(localHash); } catch { }
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -148,6 +153,9 @@ public class MainWindow : Window
         SetBusy("Importing resources…");
         Log("$ godot --headless --import");
         await RunAsync(_godot, new[] { "--path", _gameDir, "--headless", "--import" }, _gameDir);
+
+        string headNow = await Capture(_git, new[] { "rev-parse", "--short", "HEAD" });   // stamp the marker with the commit we just built
+        try { File.WriteAllText(_builtMarker, headNow); } catch (Exception ex) { Log("(couldn't write build marker: " + ex.Message + ")"); }
 
         Log("Update complete.");
         await RefreshAsync();
