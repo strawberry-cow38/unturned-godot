@@ -1001,6 +1001,7 @@ namespace UnturnedGodot
             joint.SetParam(PinJoint3D.Param.Bias, 0.4f);       // holds the centered pivot; the pin's free rotation gives the vertical flex over bumps
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
             foreach (var cs in _extraShapes) cs.Disabled = true;   // drop ONLY the cab's black rear frame (its front overlaps the trailer at the coupling -> would fight the joint). NO full-body exception: the BLUE cab body stays solid, so the trailer still bumps the cabin instead of clipping through it (strawberry)
+            foreach (var cs in trailer._extraShapes) cs.Disabled = true;   // and drop the trailer's FRONT hulls (headboard + gooseneck): coupled, they sit right over the cab's rear drive wheels, so the wheel raycasts ride UP on them and lift the cab's tail. The DECK (main box, well behind the wheels) stays solid, so it still bumps the cabin -> no wheel-vs-trailer collision, anti-clip intact (strawberry 2026-07-15)
             _phasingUnder = false;
             if (trailer._landingGear != null) trailer._landingGear.Disabled = true;   // RETRACT the landing legs -> the cab's fifth wheel now carries the nose, legs would just drag
             if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = false;   // and hide their VISUAL -> legs vanish on hookup
@@ -1021,6 +1022,7 @@ namespace UnturnedGodot
             if (trailer != null)
             {
                 trailer.CoupledCab = null;
+                foreach (var cs in trailer._extraShapes) cs.Disabled = false;   // restore the trailer's front hulls (headboard + gooseneck) now that the cab's rear wheels are no longer under them
                 if (trailer._landingGear != null) trailer._landingGear.Disabled = false;   // DEPLOY the landing legs -> hold the nose level now that the cab's gone (fixes the "front sinks into the ground")
                 if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = true;   // and show their VISUAL again
                 trailer._needsSeparation = true;   // block re-hitch until a cab leaves coupling range -> no accidental instant re-hitch (the kingpin sits right in the cab)

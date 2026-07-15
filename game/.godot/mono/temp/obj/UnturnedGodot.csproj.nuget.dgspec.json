@@ -1,25 +1,26 @@
 {
   "format": 1,
   "restore": {
-    "C:\\claude-workspace\\unturned-godot\\game\\UnturnedGodot.csproj": {}
+    "/home/ec2-user/projects/unturned-godot/game/UnturnedGodot.csproj": {}
   },
   "projects": {
-    "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
+    "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj",
         "projectName": "SDG.Compat",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -37,7 +38,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -53,58 +55,40 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj": {
+    "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj",
         "projectName": "SDG.NetPak",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj"
               }
             }
           }
@@ -118,7 +102,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -134,50 +119,32 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj": {
+    "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/SDG.NetTransport.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/SDG.NetTransport.csproj",
         "projectName": "SDG.NetTransport",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/SDG.NetTransport.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -195,7 +162,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -211,58 +179,40 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj": {
+    "/home/ec2-user/projects/unturned-godot/core/UnturnedDat/UnturnedDat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot/core/UnturnedDat/UnturnedDat.csproj",
         "projectName": "UnturnedDat",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedDat/UnturnedDat.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedDat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj"
               }
             }
           }
@@ -276,7 +226,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -292,61 +243,43 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\UnturnedNet.csproj": {
+    "/home/ec2-user/projects/unturned-godot/core/UnturnedNet/UnturnedNet.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\UnturnedNet.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot/core/UnturnedNet/UnturnedNet.csproj",
         "projectName": "UnturnedNet",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\UnturnedNet.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedNet/UnturnedNet.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedNet/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj"
               },
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/SDG.NetTransport.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/SDG.NetTransport.csproj"
               }
             }
           }
@@ -360,7 +293,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -376,58 +310,40 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj": {
+    "/home/ec2-user/projects/unturned-godot/core/UnturnedSim/UnturnedSim.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot/core/UnturnedSim/UnturnedSim.csproj",
         "projectName": "UnturnedSim",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedSim/UnturnedSim.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedSim/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj"
               }
             }
           }
@@ -441,7 +357,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -457,73 +374,55 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\game\\UnturnedGodot.csproj": {
+    "/home/ec2-user/projects/unturned-godot/game/UnturnedGodot.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\game\\UnturnedGodot.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot/game/UnturnedGodot.csproj",
         "projectName": "UnturnedGodot",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\game\\UnturnedGodot.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\game\\.godot\\mono\\temp\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot/game/UnturnedGodot.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot/game/.godot/mono/temp/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj"
               },
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj"
               },
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetTransport\\SDG.NetTransport.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/SDG.NetTransport.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetTransport/SDG.NetTransport.csproj"
               },
-              "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedDat\\UnturnedDat.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/UnturnedDat/UnturnedDat.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedDat/UnturnedDat.csproj"
               },
-              "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\UnturnedNet.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedNet\\UnturnedNet.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/UnturnedNet/UnturnedNet.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedNet/UnturnedNet.csproj"
               },
-              "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\UnturnedSim\\UnturnedSim.csproj"
+              "/home/ec2-user/projects/unturned-godot/core/UnturnedSim/UnturnedSim.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot/core/UnturnedSim/UnturnedSim.csproj"
               }
             }
           }
@@ -537,7 +436,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -552,6 +452,11 @@
               "target": "Package",
               "version": "[4.6.2, )",
               "autoReferenced": true
+            },
+            "GodotSharpEditor": {
+              "target": "Package",
+              "version": "[4.6.2, )",
+              "autoReferenced": true
             }
           },
           "imports": [
@@ -565,31 +470,12 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.25, 8.0.25]"
-            }
-          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
-        }
-      },
-      "runtimes": {
-        "win-x64": {
-          "#import": []
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     }
