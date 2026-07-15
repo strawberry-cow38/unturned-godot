@@ -138,6 +138,12 @@ namespace UnturnedGodot
         // trailer's landing legs) out of a single mesh so it can be toggled independently. Either mesh may be null
         // if it got no triangles. Same UV V-flip + per-corner normal/uv as ParseObj.
         public static (ArrayMesh outside, ArrayMesh inside) ParseObjSplitByZone(string path, Vector3 min, Vector3 max)
+            => ParseObjSplitByZone(path, new[] { (min, max) });
+
+        // Split by MULTIPLE zones: a triangle is peeled only if all 3 of its verts fall in the SAME zone -> a triangle
+        // straddling two zones (e.g. a strip bridging the L+R headlights) stays in the body, so the split doesn't bleed
+        // across the gap between them.
+        public static (ArrayMesh outside, ArrayMesh inside) ParseObjSplitByZone(string path, (Vector3 min, Vector3 max)[] zones)
         {
             var txt = ReadText(path);
             if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return (null, null); }
@@ -166,13 +172,14 @@ namespace UnturnedGodot
                         break;
                 }
             }
-            bool In(Vector3 v) => v.X >= min.X && v.X <= max.X && v.Y >= min.Y && v.Y <= max.Y && v.Z >= min.Z && v.Z <= max.Z;
+            bool InZone(Vector3 v, (Vector3 min, Vector3 max) z) => v.X >= z.min.X && v.X <= z.max.X && v.Y >= z.min.Y && v.Y <= z.max.Y && v.Z >= z.min.Z && v.Z <= z.max.Z;
+            bool TriInside(Vector3 a, Vector3 b, Vector3 c) { foreach (var z in zones) if (InZone(a, z) && InZone(b, z) && InZone(c, z)) return true; return false; }
             var stOut = new SurfaceTool(); stOut.Begin(Mesh.PrimitiveType.Triangles);
             var stIn = new SurfaceTool(); stIn.Begin(Mesh.PrimitiveType.Triangles);
             int nOut = 0, nIn = 0;
             for (int f = 0; f + 2 < fv.Count; f += 3)
             {
-                bool inside = In(verts[fv[f]]) && In(verts[fv[f + 1]]) && In(verts[fv[f + 2]]);
+                bool inside = TriInside(verts[fv[f]], verts[fv[f + 1]], verts[fv[f + 2]]);
                 var st = inside ? stIn : stOut;
                 if (inside) nIn++; else nOut++;
                 for (int k = 0; k < 3; k++)

@@ -391,10 +391,10 @@ namespace UnturnedGodot
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
             SpotPos = new[] { new Vector3(-1.15f, 1.0f, -2.4f), new Vector3(1.15f, 1.0f, -2.4f) }, OmniPos = Vector3.Zero,   // no middle omni fill -- 2 spot beams only (strawberry: the center source looked like a weird 3rd headlight)
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
-            HeadlightZoneMin = new Vector3(-1.08f, 0.45f, -2.66f), HeadlightZoneMax = new Vector3(1.08f, 1.05f, -2.45f),   // split the REAL baked headlight lenses out of the mesh -> emissive on 'L' (strawberry: they already exist, wire them up)
+            HeadlightZoneMin = new Vector3(-1.08f, 0.45f, -2.66f), HeadlightZoneMax = new Vector3(-0.72f, 1.05f, -2.45f),   // LEFT headlight lens only (right = auto X-mirror); tight X so the grille strip between the lights is NOT split out (strawberry)
             TaillightMesh = new[] { new Vector3(-1.035f, 0.65f, 4.45f), new Vector3(1.035f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame; moved 10% closer together (1.15->1.035) (strawberry)
             SeatModelFile = "roadster_seats.txt", SeatModel = new Vector3(0f, 2.2f, 0.3f),   // REAL ripped seats (single 2-seat row) back near the cab rear wall (strawberry: use src, not proc-gen)
-            SteerModel = "jeep_steer.txt", SteerPivot = new Vector3(-0.5f, 2.1f, -0.55f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // REAL ripped steering wheel in front of the driver; turns 1:1 with the wheels
+            SteerModel = "jeep_steer.txt", SteerPivot = new Vector3(-0.5f, 2.1f, -0.45f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // REAL ripped steering wheel in front of the driver (back a hair -0.55->-0.45); turns 1:1 with the wheels (strawberry)
             DriverEye = new Vector3(-0.5f, 2.5f, 0.05f),   // eye above the seat, looking forward over the hood (floor ~Y1.5, roof ~Y3.85)
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f, 0.65f, 0.65f },   // big semi tyres (mesh scales 1.24x). Axle Y kept at 0.55 so the taller tyre LIFTS the truck (ride height = radius+restLen-axleY). tandem axles spaced >1.5 apart so the fat tyres don't overlap
             Wheels = new (float, float, float, bool)[]
@@ -775,8 +775,12 @@ namespace UnturnedGodot
             ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null;
             if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
                 (bodyMesh, legMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.LandingLegZoneMin, s.LandingLegZoneMax);
-            else if (s.HeadlightZoneMin != s.HeadlightZoneMax)   // split the baked-in headlight LENSES out so the REAL geometry can emit on 'L' (strawberry: they already exist in the mesh, wire them up)
-                (bodyMesh, hlMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.HeadlightZoneMin, s.HeadlightZoneMax);
+            else if (s.HeadlightZoneMin != s.HeadlightZoneMax)   // split the baked-in headlight LENSES out (LEFT zone + its X-mirror) so the REAL geometry emits on 'L'; two zones keep the grille strip BETWEEN the lights out of the split (strawberry)
+            {
+                var lz = (s.HeadlightZoneMin, s.HeadlightZoneMax);
+                var rz = (new Vector3(-s.HeadlightZoneMax.X, s.HeadlightZoneMin.Y, s.HeadlightZoneMin.Z), new Vector3(-s.HeadlightZoneMin.X, s.HeadlightZoneMax.Y, s.HeadlightZoneMax.Z));
+                (bodyMesh, hlMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", new[] { lz, rz });
+            }
             else
                 bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
