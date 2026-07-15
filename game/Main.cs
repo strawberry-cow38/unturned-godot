@@ -1745,7 +1745,7 @@ namespace UnturnedGodot
                             {
                                 vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
                                 {
-                                    0 => (i % 3) switch { 0 => "sedan", 1 => "hatchback", _ => "roadster" },   // Civilian rolls the civilian car pool
+                                    0 => (i % 6) switch { 0 => "sedan", 1 => "hatchback", 2 => "roadster", 3 => "offroader", 4 => "truck", _ => "van" },   // Civilian rolls the civilian car pool (golf is command-only, excluded)
                                     1 => "police",                                                              // Police
                                     2 => "firetruck",                                                           // Fire
                                     3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },            // Military_Canada: humvee + jeep + ural truck, all forest
@@ -1761,7 +1761,7 @@ namespace UnturnedGodot
                             }
                         }
                     }
-                    GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster, Military=humvee, Farm=jeep; Police/Fire/Ambulance=static mesh; air/water/tank skipped)");
+                    GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; golf command-only; air/water/tank skipped)");
                 }
                 // LOOT: PEI's 2470 item spawn points (Spawns/Jars.dat), region/distance-streamed around the player (LootField).
                 {

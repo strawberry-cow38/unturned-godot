@@ -9,9 +9,13 @@ Place the result at origin as a child of the vehicle -- it's already positioned.
 Usage: python extract_vehicle_part.py <prefab-sub> <mesh-name> <out.txt> [node-filter]
   node-filter matches when the mesh's GameObject name == filter, starts with filter, or its parent's name == filter.
 """
-import UnityPy, numpy as np, sys
+import UnityPy, numpy as np, sys, os
 
-env = UnityPy.load(r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle")
+_BUNDLE = os.environ.get("UG_MASTERBUNDLE") or next((p for p in (
+    os.path.expanduser("~/unturned-bundles/Bundles/core.masterbundle"),
+    r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle",
+) if os.path.exists(p)), None)
+env = UnityPy.load(_BUNDLE)
 by_id = {o.path_id: o for o in env.objects}
 
 def comp_of(tt, names):

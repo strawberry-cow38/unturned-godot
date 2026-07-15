@@ -1,5 +1,9 @@
-import UnityPy, sys
-env = UnityPy.load(r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle")
+import UnityPy, sys, os
+_BUNDLE = os.environ.get("UG_MASTERBUNDLE") or next((p for p in (
+    os.path.expanduser("~/unturned-bundles/Bundles/core.masterbundle"),
+    r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle",
+) if os.path.exists(p)), None)
+env = UnityPy.load(_BUNDLE)
 by_id = {o.path_id: o for o in env.objects}
 
 def comps(tt, name):

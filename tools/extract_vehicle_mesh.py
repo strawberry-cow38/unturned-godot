@@ -12,7 +12,12 @@ Usage: python extract_vehicle_mesh.py <prefab-subpath> <mesh-name> <out.txt>
 """
 import UnityPy, numpy as np, sys
 
-env = UnityPy.load(r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle")
+import os
+_BUNDLE = os.environ.get("UG_MASTERBUNDLE") or next((p for p in (
+    os.path.expanduser("~/unturned-bundles/Bundles/core.masterbundle"),
+    r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles\core.masterbundle",
+) if os.path.exists(p)), None)
+env = UnityPy.load(_BUNDLE)
 by_id = {o.path_id: o for o in env.objects}
 
 def comp_of(tt, names):

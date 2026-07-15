@@ -728,6 +728,103 @@ namespace UnturnedGodot
             },
         };
 
+        // Off_Roader.dat: Speed -7..12.5, steer 12->24, AWD 4-wheel buggy, RandomHueOrGrayscale, Health 600, CarHorn_04.
+        // Shares the jeep chassis: identical wheel/headlight/taillight/steer layout (source vehicle.prefab positions match).
+        static readonly Spec _offroader = new()
+        {
+            Body = "offroad_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "offroad_palette.png",
+            RandomHueGray = true,   // source DefaultPaintColor_Mode RandomHueOrGrayscale -> random civilian colour per spawn
+            WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12.5f, SpeedMin = -7f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // jeep-chassis BoxCollider
+            ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 2000f, Health = 600f, Name = "Off_Roader", Horn = "carhorn_04.ogg",
+            SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source Headlights (Z negated)
+            TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source Taillights (Z negated)
+            SteerPivot = new Vector3(-0.465f, 1.022f, -0.923f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // source Steer node centroid + disc normal
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("offroad_seats.txt", new Color(0.25f, 0.25f, 0.25f)),        // seats: dark grey
+                ("offroad_steer.txt", new Color(0.28f, 0.23f, 0.14f)),        // steering wheel: dark brown
+                ("offroad_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // headlights: cream
+                ("offroad_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // taillights: red
+            },
+        };
+
+        // Truck.dat: Speed -6..13.5, steer 12->24, AWD 4-wheel pickup, RandomHueOrGrayscale, Health 550, CarHorn_01. Jeep chassis; round headlights.
+        static readonly Spec _truck = new()
+        {
+            Body = "truck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "truck_palette.png",
+            RandomHueGray = true,
+            WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 13.5f, SpeedMin = -6f, Brake = 40f,
+            BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ForwardGears = new[] { 20f, 14.2f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 1750f, Health = 550f, Name = "Truck", Horn = "carhorn_01.ogg",
+            SpotPos = new[] { new Vector3(-0.979f, 0.741f, -2.511f), new Vector3(0.979f, 0.741f, -2.511f) }, OmniPos = new Vector3(0f, 0.873f, -2.487f),
+            TailPos = new[] { new Vector3(-0.979f, 0.738f, 2.548f), new Vector3(0.979f, 0.738f, 2.548f) },
+            SteerPivot = new Vector3(-0.465f, 1.027f, -1.384f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("truck_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
+                ("truck_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("truck_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
+                ("truck_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
+            },
+        };
+
+        // Van.dat: Speed -5..14.5, steer 12->24, AWD 4-wheel van, RandomHueOrGrayscale, Health 600, CarHorn_01. Jeep chassis; round headlights.
+        static readonly Spec _van = new()
+        {
+            Body = "van_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "van_palette.png",
+            RandomHueGray = true,
+            WheelRadius = 0.6f, Engine = 600f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 14.5f, SpeedMin = -5f, Brake = 35f,
+            BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ForwardGears = new[] { 20f, 14.4f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 1500f, Health = 600f, Name = "Van", Horn = "carhorn_01.ogg",
+            SpotPos = new[] { new Vector3(-0.979f, 0.741f, -2.511f), new Vector3(0.979f, 0.741f, -2.511f) }, OmniPos = new Vector3(0f, 0.873f, -2.487f),
+            TailPos = new[] { new Vector3(-0.979f, 0.815f, 2.548f), new Vector3(0.979f, 0.815f, 2.548f) },
+            SteerPivot = new Vector3(-0.465f, 1.027f, -1.523f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.40f, true), (1.30f, 0.25f, -1.40f, true), (-1.30f, 0.25f, 1.40f, false), (1.30f, 0.25f, 1.40f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("van_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
+                ("van_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("van_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
+                ("van_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
+            },
+        };
+
+        // VW_Golf.dat: Speed -6..16.5 (fast), steer 14->28, FWD 4-wheel hatch, RandomHueOrGrayscale, Health 600, CarHorn_02. Rect headlights. Curated vehicle: 256x256 Albedo_Base (alpha-0 body regions paint via the shared shader). COMMAND-ONLY (no natural PEI spawn).
+        static readonly Spec _golf = new()
+        {
+            Body = "golf_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "golf_palette.png",
+            RandomHueGray = true,
+            WheelRadius = 0.6f, Engine = 600f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
+            BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
+            ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
+            Fuel = 1500f, Health = 600f, Name = "VW_Golf", Horn = "carhorn_02.ogg",
+            SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.588f), new Vector3(0.765f, 0.708f, -2.588f) }, OmniPos = new Vector3(0f, 0.841f, -2.564f),
+            TailPos = new[] { new Vector3(-0.765f, 0.787f, 2.424f), new Vector3(0.765f, 0.787f, 2.424f) },
+            SteerPivot = new Vector3(-0.465f, 0.897f, -1.180f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
+            Wheels = new (float, float, float, bool)[]
+            { (-1.30f, 0.25f, -1.62f, true), (1.30f, 0.25f, -1.62f, true), (-1.30f, 0.25f, 1.38f, false), (1.30f, 0.25f, 1.38f, false) },
+            Parts = new (string, Color)[]
+            {
+                ("golf_seats.txt", new Color(0.25f, 0.25f, 0.25f)),
+                ("golf_steer.txt", new Color(0.28f, 0.23f, 0.14f)),
+                ("golf_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),
+                ("golf_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),
+            },
+        };
+
         public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
         public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
         public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
@@ -742,8 +839,12 @@ namespace UnturnedGodot
         public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant);
         public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant);
         public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant);
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), _ => BuildJeep(variant) };
-        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer" };   // F1 dev-console autocomplete + validation
+        public static Vehicle BuildOffRoader(int variant = 0) => Build(_offroader, variant);
+        public static Vehicle BuildTruck(int variant = 0) => Build(_truck, variant);
+        public static Vehicle BuildVan(int variant = 0) => Build(_van, variant);
+        public static Vehicle BuildGolf(int variant = 0) => Build(_golf, variant);
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), _ => BuildJeep(variant) };
+        public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn)
 
         static Vehicle Build(Spec s, int variant)
         {
