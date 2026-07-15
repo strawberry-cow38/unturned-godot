@@ -96,8 +96,10 @@ public class MainWindow : Window
         if (!Directory.Exists(Path.Combine(_srcDir, ".git")))
         {
             SetBusy("Cloning source…");
-            Log($"$ git clone {RepoUrl} source");
-            if (await RunAsync(_git, new[] { "clone", RepoUrl, _srcDir }, _baseDir) != 0) { Fail("git clone failed (auth set up for the private repo?)."); return; }
+            Log($"$ git clone --depth 1 {RepoUrl} source");
+            // shallow + single-branch: grab ONLY the latest snapshot, not 90+ MiB of history (the launcher always
+            // force-resets to latest anyway, so history is dead weight -- this is the "turbo download" fix).
+            if (await RunAsync(_git, new[] { "clone", "--depth", "1", "--single-branch", "--branch", Branch, RepoUrl, _srcDir }, _baseDir) != 0) { Fail("git clone failed (auth set up for the repo?)."); return; }
         }
         await RefreshAsync();
     }
@@ -105,8 +107,8 @@ public class MainWindow : Window
     async Task RefreshAsync()
     {
         SetBusy("Checking for updates…");
-        Log("$ git fetch origin");
-        await RunAsync(_git, new[] { "fetch", "origin", "--prune" }, _srcDir);
+        Log("$ git fetch --depth 1 origin " + Branch);
+        await RunAsync(_git, new[] { "fetch", "--depth", "1", "origin", Branch }, _srcDir);
 
         string localHash = await Capture(_git, new[] { "rev-parse", "--short", "HEAD" });
         string localDate = await Capture(_git, new[] { "show", "-s", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", "HEAD" });
@@ -114,7 +116,8 @@ public class MainWindow : Window
         string remoteHash = await Capture(_git, new[] { "rev-parse", "--short", $"origin/{Branch}" });
         string remoteDate = await Capture(_git, new[] { "show", "-s", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", $"origin/{Branch}" });
         string remoteMsg = await Capture(_git, new[] { "show", "-s", "--format=%s", $"origin/{Branch}" });
-        int behind = int.TryParse(await Capture(_git, new[] { "rev-list", "--count", $"HEAD..origin/{Branch}" }), out var b) ? b : 0;
+        // shallow clones have no history to rev-list, so compare tips: differ = update available (src is gospel).
+        bool behind = !string.IsNullOrEmpty(remoteHash) && !string.IsNullOrEmpty(localHash) && remoteHash != localHash;
         // "built" = WE built this exact commit. Do NOT trust game/.godot existing -- the repo may ship a committed
         // (stale, machine-specific) .godot with pre-built assemblies, which would let a fresh clone "Play" a mismatched
         // dll and crash with "Cannot instantiate C# script res://Main.cs". Only our own build marker counts.
@@ -127,8 +130,8 @@ public class MainWindow : Window
             _latestLabel.Text = $"Latest build:    {Or(remoteHash, "—")}   ·   {Or(remoteDate, "unknown")}\n   {Or(remoteMsg, "")}";
         });
 
-        if (!built) SetMode(Mode.Update, "Install & Play", $"First run — build needed.");
-        else if (behind > 0) SetMode(Mode.Update, "Update", $"{behind} update{(behind == 1 ? "" : "s")} available.");
+        if (!built) SetMode(Mode.Update, "Install & Play", "First run — build needed.");
+        else if (behind) SetMode(Mode.Update, "Update", "Update available.");
         else SetMode(Mode.Play, "Play", "Up to date.");
     }
 
@@ -141,8 +144,8 @@ public class MainWindow : Window
     async Task DoUpdateAsync()
     {
         SetBusy("Updating…");
-        Log("$ git fetch origin && git reset --hard origin/" + Branch + "   (force — src is gospel)");
-        await RunAsync(_git, new[] { "fetch", "origin", "--prune" }, _srcDir);
+        Log("$ git fetch --depth 1 origin " + Branch + " && git reset --hard origin/" + Branch + "   (force — src is gospel)");
+        await RunAsync(_git, new[] { "fetch", "--depth", "1", "origin", Branch }, _srcDir);
         if (await RunAsync(_git, new[] { "reset", "--hard", $"origin/{Branch}" }, _srcDir) != 0) { Log("!! git reset failed."); await RefreshAsync(); return; }
 
         SetBusy("Building…");
