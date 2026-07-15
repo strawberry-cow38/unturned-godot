@@ -3054,7 +3054,7 @@ namespace UnturnedGodot
                             _veh.Drive(-0.55f, 0f, false);
                             if (_buTrailer != null && _veh.CoupleTo(_buTrailer)) { _buCoupledFrame = _frame; GD.Print($"[backunder] coupled OK at frame {_frame}"); }
                         }
-                        else _veh.Drive(_frame > _buCoupledFrame + 20 ? 1f : 0f, _frame > _buCoupledFrame + 130 ? 0.4f : 0f, false);   // hitched -> drive forward (then a turn) to verify towing isn't locked
+                        else _veh.Drive(_frame > _buCoupledFrame + 50 ? 1f : 0f, _frame > _buCoupledFrame + 160 ? 0.4f : 0f, false);   // hitched -> HOLD ~50 frames (see if the magnetize centered the off-center trailer at rest) then drive forward
                     }
                     else
                     {

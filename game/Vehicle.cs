@@ -987,12 +987,18 @@ namespace UnturnedGodot
             if (!CanTow || trailer == null || !trailer.IsTrailer || CoupledTrailer != null || trailer.CoupledCab != null) return false;
             if (trailer._needsSeparation) return false;   // must move a cab OUT of range after uncoupling before it'll re-hitch (the kingpin sits in the cab, so this stops accidental instant re-hitch)
             if (FifthWheelWorld.DistanceTo(trailer.KingpinWorld) > CoupleReach) return false;   // must be backed under the kingpin
+            // MAGNETIZE: snap the trailer so its kingpin sits exactly under the fifth wheel -> pivot perfectly centered.
+            // A pin joint can't PULL two offset anchors together (it just holds the offset), so the only real way to
+            // center is to align them here. Do it on a WOKEN, zero-velocity body so the teleport adds no jolt -- the
+            // jolt (not the alignment) is what locked driving when this ran on a frozen/moving body before. (strawberry)
+            trailer.Wake(); trailer.LinearVelocity = Vector3.Zero; trailer.AngularVelocity = Vector3.Zero;
+            trailer.GlobalPosition += FifthWheelWorld - trailer.KingpinWorld;
             var joint = new PinJoint3D { Name = "Hitch" };
             GetParent().AddChild(joint);                       // sibling of the two bodies in the world
-            joint.GlobalPosition = (FifthWheelWorld + trailer.KingpinWorld) * 0.5f;   // pin BETWEEN the two points -> the joint pulls the kingpin + fifth wheel together to center (the "magnetization"). A firm pull (not the old hard teleport, which over-constrained + locked driving)
+            joint.GlobalPosition = FifthWheelWorld;            // the coupling point (kingpin now coincident with it)
             joint.NodeA = joint.GetPathTo(this);
             joint.NodeB = joint.GetPathTo(trailer);
-            joint.SetParam(PinJoint3D.Param.Bias, 0.5f);       // firm-ish centre-pull so an off-center trailer actually snaps in (no ImpulseClamp cap, which was throttling the pull); the pin's free rotation gives the vertical flex over bumps
+            joint.SetParam(PinJoint3D.Param.Bias, 0.4f);       // holds the centered pivot; the pin's free rotation gives the vertical flex over bumps
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
             foreach (var cs in _extraShapes) cs.Disabled = true;   // drop ONLY the cab's black rear frame (its front overlaps the trailer at the coupling -> would fight the joint). NO full-body exception: the BLUE cab body stays solid, so the trailer still bumps the cabin instead of clipping through it (strawberry)
             _phasingUnder = false;
