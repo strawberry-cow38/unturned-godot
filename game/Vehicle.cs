@@ -129,6 +129,7 @@ namespace UnturnedGodot
             public Vector3 LandingGearSize, LandingGearCenter;   // trailer: front landing-leg support box (holds the nose up when parked); toggled OFF while coupled. Zero size = none
             public Vector3 LandingLegZoneMin, LandingLegZoneMax;  // trailer: mesh-space AABB enclosing the landing-leg triangles -> split them into a toggleable MeshInstance so they VANISH when coupled. Min==Max = no split
             public Vector3 HeadlightZoneMin, HeadlightZoneMax;    // AABB enclosing the baked-in headlight LENS triangles -> split them into their own mesh with an emissive material so the REAL lenses glow on 'L' (semi). Min==Max = no split
+            public Vector3 TaillightZoneMin, TaillightZoneMax;    // LEFT AABB (right = X-mirror) enclosing the baked-in RED taillight triangles -> split into an emissive _taillightMat mesh so the REAL baked lights glow (trailer). Min==Max = no split
             public float LandingLegScaleY, LandingLegPivotY;      // trailer: vertically STRETCH the split-out leg mesh (scale about PivotY) so the feet reach the ground at the nose-up parked height. ScaleY 0/1 = no stretch
             public (Vector3 size, Vector3 center)[] ExtraBoxes;   // extra fixed collision boxes beyond the main box + RoofBox (e.g. the trailer's kingpin/gooseneck, the cab's low rear fifth-wheel deck) -> match the model geometry
         }
@@ -392,7 +393,7 @@ namespace UnturnedGodot
             SpotPos = new[] { new Vector3(-1.175f, 0.86f, -2.60f), new Vector3(1.175f, 0.86f, -2.60f) }, OmniPos = Vector3.Zero,   // beam sources CENTERED on the real headlight lenses (X±1.175, Y0.86, front face Z-2.58); no middle omni fill (strawberry)
             TailPos = new[] { new Vector3(-1.15f, 1.0f, 4.4f), new Vector3(1.15f, 1.0f, 4.4f) },
             HeadlightZoneMin = new Vector3(-1.44f, 0.66f, -2.63f), HeadlightZoneMax = new Vector3(-0.92f, 1.05f, -2.20f),   // LEFT headlight = the CREAM-texel geometry X[-1.40,-0.95] Y[0.71,1.01] near the fender (NOT the grey trim by the grille I was wrongly lighting). Verified: zone catches exactly the 20 cream tris, nothing else. right = auto X-mirror (strawberry)
-            TaillightMesh = new[] { new Vector3(-1.035f, 0.65f, 4.45f), new Vector3(1.035f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame; moved 10% closer together (1.15->1.035) (strawberry)
+            TaillightMesh = new[] { new Vector3(-0.82f, 0.65f, 4.45f), new Vector3(0.82f, 0.65f, 4.45f) },   // red brake/tail blocks on the rear frame; moved closer together again (1.035->0.82) (strawberry). Cab has NO baked taillights so these blocks ARE the cab's
             SeatModelFile = "roadster_seats.txt", SeatModel = new Vector3(0f, 2.2f, 0.3f),   // REAL ripped seats (single 2-seat row) back near the cab rear wall (strawberry: use src, not proc-gen)
             SteerModel = "jeep_steer.txt", SteerPivot = new Vector3(-0.5f, 2.1f, -0.45f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // REAL ripped steering wheel in front of the driver (back a hair -0.55->-0.45); turns 1:1 with the wheels (strawberry)
             DriverEye = new Vector3(-0.5f, 2.5f, 0.05f),   // eye above the seat, looking forward over the hood (floor ~Y1.5, roof ~Y3.85)
@@ -433,7 +434,7 @@ namespace UnturnedGodot
             Sound = null,   // no engine -> no engine loop
             Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
             TailPos = new[] { new Vector3(-1.35f, 1.0f, 8.0f), new Vector3(1.35f, 1.0f, 8.0f) },   // taillights at the rear of the 16 m box
-            TaillightMesh = new[] { new Vector3(-1.35f, 0.7f, 8.05f), new Vector3(1.35f, 0.7f, 8.05f) },   // red brake/tail blocks on the trailer rear; driven by the CAB's brake state while coupled (pass-through) (strawberry)
+            TaillightZoneMin = new Vector3(-1.42f, 0.84f, 7.85f), TaillightZoneMax = new Vector3(-0.84f, 1.17f, 8.15f),   // split the REAL baked red taillights (X[0.88,1.38] Y[0.88,1.13] Z[7.90,8.10]) out -> emissive, driven by the cab pass-through. NO added blocks (was duping the baked ones) (strawberry)
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
             WheelRadii = new[] { 0.65f, 0.65f, 0.65f, 0.65f },   // big trailer tyres to match the cab. Axle Y kept at 0.55 so the taller tyre lifts the bed (matches the cab's lift, so the coupled deck rises level)
             Wheels = new (float, float, float, bool)[]
@@ -772,8 +773,15 @@ namespace UnturnedGodot
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-            ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null;
-            if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
+            ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
+            // baked taillight zone pair (LEFT + its X-mirror), when the body has REAL red taillights to split out (trailer)
+            (Vector3, Vector3)[] tlZones = s.TaillightZoneMin != s.TaillightZoneMax
+                ? new[] { (s.TaillightZoneMin, s.TaillightZoneMax),
+                          (new Vector3(-s.TaillightZoneMax.X, s.TaillightZoneMin.Y, s.TaillightZoneMin.Z), new Vector3(-s.TaillightZoneMin.X, s.TaillightZoneMax.Y, s.TaillightZoneMax.Z)) }
+                : null;
+            if (s.LandingLegZoneMin != s.LandingLegZoneMax && tlZones != null)   // trailer: peel BOTH the landing legs AND the baked taillights in one pass
+                (bodyMesh, legMesh, tlMesh) = ContentProvider.ParseObjSplit2($"res://content/{s.Body}", new[] { (s.LandingLegZoneMin, s.LandingLegZoneMax) }, tlZones);
+            else if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
                 (bodyMesh, legMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.LandingLegZoneMin, s.LandingLegZoneMax);
             else if (s.HeadlightZoneMin != s.HeadlightZoneMax)   // split the baked-in headlight LENSES out (LEFT zone + its X-mirror) so the REAL geometry emits on 'L'; two zones keep the grille strip BETWEEN the lights out of the split (strawberry)
             {
@@ -800,6 +808,12 @@ namespace UnturnedGodot
                 var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
                 v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat });
                 v._headlightMat = hlMat;
+            }
+            if (tlMesh != null)   // the REAL baked RED taillights as their own mesh -> _taillightMat, so they glow while driven / on brake (trailer: driven by the cab pass-through). No added blocks -> no dupe (strawberry)
+            {
+                var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = tlMesh, MaterialOverride = tlMat });
+                v._taillightMat = tlMat;
             }
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
@@ -888,10 +902,10 @@ namespace UnturnedGodot
             if (s.TaillightMesh != null)   // red lamp boxes at the rear -> red running glow while driven + brake flare; captured for the brake-light logic
             {
                 var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                var tlMesh = new BoxMesh { Size = new Vector3(0.34f, 0.28f, 0.14f) };
+                var tlBox = new BoxMesh { Size = new Vector3(0.34f, 0.28f, 0.14f) };
                 foreach (var p in s.TaillightMesh)
                 {
-                    var mi = new MeshInstance3D { Mesh = tlMesh, Position = p, MaterialOverride = tlMat };
+                    var mi = new MeshInstance3D { Mesh = tlBox, Position = p, MaterialOverride = tlMat };
                     mi.SetMeta("no_outline", true);
                     v.AddChild(mi);
                 }
