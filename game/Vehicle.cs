@@ -22,7 +22,7 @@ namespace UnturnedGodot
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
         public bool Exploded => _exploded;
-        VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes; float[] _wRoll;   // wheels for visual spin
+        VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes;   // wheels: VehicleWheel3D auto-rolls its node (mesh child inherits it), so no manual spin. _wMeshes kept for debris/hide.
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
@@ -377,8 +377,8 @@ namespace UnturnedGodot
         // steer, low top speed, big engine, tandem rear drive axles. Colours from the prop's own 4x2 palette (blue cab).
         static readonly Spec _semi = new()
         {
-            Body = "semi_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
-            DefaultPaints = new[] { "#3a5a78" },   // Semi_0's blue cab
+            Body = "semi_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_palette.png",   // semi_palette = semi_0_albedo with texel0 (the blue body) flagged PAINTABLE (alpha 0) so the cab recolours like every other vehicle -- only the blue panels; metal/red/cream/exhaust stay fixed (strawberry)
+            RandomHueGray = true,   // paintable cab -> random civilian colours per spawn (like sedan/quad/hatchback)
             WheelRadius = 0.55f, Engine = 550f, SteerMax = 22f, SteerMin = 10f, SpeedMax = 14f, SpeedMin = -4f, Brake = 34f,   // Engine 950->550: a semi accelerates SLOW + heavy (nerfed further while towing, see Drive) (strawberry 2026-07-15)
             // Cab hull matches the mesh (semi_0.txt): the CAB half (front, mesh Z -2.58..2.0) stands Y 0..1.5 with
             // the tall cab+sleeper as RoofBox("Semi Truck") on top; the REAR chassis (mesh Z 2.0..4.5) is the low
@@ -837,7 +837,7 @@ namespace UnturnedGodot
                 wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             int nw = s.Wheels.Length;
             v._wheelMeshRef = wheelMesh; v._wheelMatRef = wheelMat; v._wheelR = s.WheelRadius;   // for explosion debris
-            v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw]; v._wRoll = new float[nw];
+            v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw];
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
@@ -1422,12 +1422,11 @@ namespace UnturnedGodot
             bool damping = !towed && (_parked || _handbraking) && !Freeze && LinearVelocity.LengthSquared() < 2.0f;   // slowing to a stop -> DAMP the residual jitter OUT (spring + brake oscillation) instead of just waiting it out (master's "other idea"). A towed trailer never damps -- it'd anchor the tow.
             LinearDamp = damping ? 6f : 0f; AngularDamp = damping ? 6f : 0f;
             if (_parked && !Freeze && !towed) Brake = _brakeForce * HandbrakeScale;   // brake a rolling parked car down until it freezes (never brake a towed trailer)
-            if (!Freeze)   // visually spin each wheel mesh by its physical RPM (steer + suspension are on the node); GetRpm() applied directly, no per-side sign flip (mirror commutes with Rx)
-                for (int i = 0; i < _wNodes.Length; i++)
-                {
-                    _wRoll[i] += _wNodes[i].GetRpm() * (Mathf.Tau / 60f) * (float)delta;
-                    _wMeshes[i].Rotation = new Vector3(_wRoll[i], 0f, 0f);
-                }
+            // NO manual wheel spin: Godot's VehicleWheel3D already bakes the ROLL (+ suspension + steering) into its own
+            // node transform every physics tick, and the wheel MESH is a child that inherits it. An old manual
+            // _wMeshes[i].Rotation added an equal+opposite roll that CANCELLED the node's auto-roll in world space -> the
+            // wheels looked frozen (the local rotation changed, but the world basis was pinned). Verified: node world-Y
+            // rolls full circle, and once the manual spin is gone the mesh world-Y rolls with it. (fable diagnosis)
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
             float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
             float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
