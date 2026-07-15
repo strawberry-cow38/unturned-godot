@@ -112,6 +112,7 @@ namespace UnturnedGodot
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
             public Vector3 Kingpin;      // trailer: local kingpin point (front); Zero = not a trailer
             public Vector3 LandingGearSize, LandingGearCenter;   // trailer: front landing-leg support box (holds the nose up when parked); toggled OFF while coupled. Zero size = none
+            public (Vector3 size, Vector3 center)[] ExtraBoxes;   // extra fixed collision boxes beyond the main box + RoofBox (e.g. the trailer's kingpin/gooseneck, the cab's low rear fifth-wheel deck) -> match the model geometry
         }
 
         static AudioStreamWav LoadWav(string resPath)   // load a PCM wav at runtime (no ffmpeg on the box) as a looping stream for the siren
@@ -360,7 +361,12 @@ namespace UnturnedGodot
             Body = "semi_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
             DefaultPaints = new[] { "#3a5a78" },   // Semi_0's blue cab
             WheelRadius = 0.55f, Engine = 950f, SteerMax = 22f, SteerMin = 10f, SpeedMax = 14f, SpeedMin = -4f, Brake = 34f,
-            BoxSize = new Vector3(3.18f, 1.5f, 7.08f), BoxCenter = new Vector3(0f, 0.75f, 0.96f),   // LOW frame/chassis box (Y 0..1.5); the tall cab-front is a 2nd box via RoofBox("Semi Truck") -> a trailer deck can overhang the low rear fifth-wheel
+            // Cab hull matches the mesh (semi_0.txt): the CAB half (front, mesh Z -2.58..2.0) stands Y 0..1.5 with
+            // the tall cab+sleeper as RoofBox("Semi Truck") on top; the REAR chassis (mesh Z 2.0..4.5) is the low
+            // BLACK frame, only Y 0..0.96 -- so the trailer's deck overhangs it and the fifth wheel is exposed. The
+            // old single Y0..1.5 box ran the full 7.08 length, making the black rear frame 0.54 too tall. (strawberry 2026-07-15)
+            BoxSize = new Vector3(3.18f, 1.5f, 4.58f), BoxCenter = new Vector3(0f, 0.75f, -0.29f),   // cab half only (front face stays Z -2.58)
+            ExtraBoxes = new (Vector3, Vector3)[] { (new Vector3(2.5f, 0.96f, 2.5f), new Vector3(0f, 0.48f, 3.25f)) },   // low black rear frame (Y 0..0.96, mesh Z 2.0..4.5)
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.8f, MaxPitch = 1.6f, IdleVolume = 0.85f, MaxVolume = 1.0f,
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_04.ogg",
@@ -389,7 +395,17 @@ namespace UnturnedGodot
             Body = "trailer_0.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "semi_0_albedo.png",
             DefaultPaints = new[] { "#3a5a78" },   // shares the cab's blue palette
             WheelRadius = 0.55f, Engine = 0f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 0f, SpeedMin = 0f, Brake = 0f,   // towed: no drive/steer/brake of its own
-            BoxSize = new Vector3(3.0f, 1.0f, 16.1f), BoxCenter = new Vector3(0f, 2.0f, 0.05f),   // DECK slab only (Y 1.5..2.5); front underside left open so the cab's low rear frame backs under it to the kingpin
+            // Flatbed hull matches the mesh (trailer_0.txt): the DECK is Y 0.15..1.25 (top surface ~1.25, underside
+            // ~0.15) running the main bed Z -4.25..8.1 -- NOT the old Y 1.5..2.5 slab, which floated ~1.3 above the
+            // real deck. The front steps down to a narrow gooseneck (±0.95) + kingpin coupler, capped by the tall
+            // front headboard wall (Y up to 2.5). ExtraBoxes carry those front features. (strawberry 2026-07-15)
+            BoxSize = new Vector3(3.0f, 1.10f, 12.35f), BoxCenter = new Vector3(0f, 0.70f, 1.9f),   // main flatbed deck (Y 0.15..1.25, Z -4.25..8.1)
+            ExtraBoxes = new (Vector3, Vector3)[]
+            {
+                (new Vector3(3.0f, 2.35f, 1.0f), new Vector3(0f, 1.325f, -7.5f)),    // front headboard wall (Y 0.15..2.5, Z -8..-7)
+                (new Vector3(1.9f, 1.10f, 3.25f), new Vector3(0f, 0.70f, -5.85f)),   // gooseneck neck stepping down to the coupler (narrow ±0.95)
+                (new Vector3(1.5f, 0.9f, 1.3f), new Vector3(0f, 0.55f, -7.0f)),      // kingpin coupler ("circular connection thing") under the nose
+            },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,   // unused (no engine) but non-null for the drive logic
             Sound = null,   // no engine -> no engine loop
             Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
@@ -730,6 +746,8 @@ namespace UnturnedGodot
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
             if (roof.HasValue) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
+            if (s.ExtraBoxes != null) foreach (var (size, center) in s.ExtraBoxes)   // fixed extra hull boxes matching model geometry (trailer flatbed deck/headboard/gooseneck+kingpin, cab's low black rear frame)
+                v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Position = center });
             if (s.LandingGearSize != Vector3.Zero)   // trailer front landing legs -> holds the nose level when parked; CoupleTo disables it (retracts) while towed
             {
                 v._landingGear = new CollisionShape3D { Name = "LandingGear", Shape = new BoxShape3D { Size = s.LandingGearSize }, Position = s.LandingGearCenter };
