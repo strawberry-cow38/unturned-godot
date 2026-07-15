@@ -30,7 +30,7 @@ namespace UnturnedGodot
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch]
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder; Vehicle _buTrailer;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder]
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
@@ -82,6 +82,7 @@ namespace UnturnedGodot
                 else if (arg == "--roadkill") _roadkill = true;   // idle zombies ahead to run over (roadkill demo)
                 else if (arg == "--chain") _chain = true;         // a 2nd car + zombies beside _veh -> blow _veh -> chain reaction (source vehicle-explosion damage)
                 else if (arg == "--hitch") _hitch = true;         // with --gun=semi: back a trailer under the cab + couple it (verify the fifth-wheel hitch + articulation)
+                else if (arg == "--backunder") { _backunder = true; _hitch = false; }   // with --gun=semi: spawn a PARKED trailer behind + reverse the cab UNDER it, couple on proximity (verify the drive-under + phase-through)
                 else if (arg == "--swarm") _swarm = true;         // with --drivetest: a horde mobs the parked car + swipes it (source targetPassengerVehicle)
                 else if (arg == "--drivethru") _drivethru = true; // with --drivetest: driving past distant zombies wakes them (source DRIVING stealth radius)
                 else if (arg == "--nade") _nade = true;           // with --drivetest: lob a grenade onto the parked jeep (source Grenade Vehicle_Damage)
@@ -639,6 +640,13 @@ namespace UnturnedGodot
                 AddChild(trailer);
                 trailer.Position = (_veh.Position + _veh.FifthWheelLocal) - trailer.KingpinLocal;   // line the kingpin up under the fifth-wheel plate
                 GD.Print(_veh.CoupleTo(trailer) ? "[hitch] coupled OK" : "[hitch] couple FAILED (out of reach)");
+            }
+            if (_backunder && _veh.CanTow)   // --backunder: park a trailer ~4m behind the cab's rear, then the cab reverses UNDER it (see the vehTest loop) + couples on proximity
+            {
+                _buTrailer = Vehicle.BuildByName("trailer");
+                AddChild(_buTrailer);
+                // face the same way as the cab; drop it so its kingpin sits ~4m behind the cab's fifth wheel -> the cab reverses to close the gap
+                _buTrailer.Position = new Vector3(0f, 1.2f, _veh.Position.Z + _veh.FifthWheelLocal.Z - _buTrailer.KingpinLocal.Z + 4.0f);
             }
 
             if (_roadkill)   // idle zombies straight ahead (-Z) in the auto-drive path to run over
@@ -3002,9 +3010,18 @@ namespace UnturnedGodot
                 if (_vehTest && _veh != null)
                 {
                     // settle, then auto-drive a course for the video: straight -> right curve -> left curve
+                    if (_backunder)   // reverse straight back UNDER the parked trailer, couple the instant we're in reach
+                    {
+                        bool cpl = _veh.CoupledTrailer != null;
+                        _veh.Drive(cpl ? 0f : -0.55f, 0f, cpl);
+                        if (!cpl && _buTrailer != null && _veh.CoupleTo(_buTrailer)) GD.Print($"[backunder] coupled OK at frame {_frame}");
+                    }
+                    else
+                    {
                     float throttle = (!_chain && _frame > 30) ? 1f : 0f;   // --chain: stay parked so the blast reaches the neighbours
                     float steer = _frame < 120 ? 0f : (_frame < 235 ? 0.45f : -0.45f);
                     _veh.Drive(throttle, steer, false);
+                    }
                     if (_chain && _frame == 20) _veh.TakeDamage(9999f);   // detonate _veh -> ~4 s later it blows -> chains to the car + horde
                     if (_roadkill && _frame == 35) _veh.Honk();   // honk before reaching them -> verify the horn's noise alert (source tellHorn AlertTool.alert 32)
                     if (_demo && (_frame == 45 || _frame == 80 || _frame == 115)) _veh.Honk();   // --demo: a few horn honks

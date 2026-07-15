@@ -46,7 +46,9 @@ namespace UnturnedGodot
         CollisionShape3D _landingGear;                   // trailer's front landing-leg support: enabled (down) when parked, disabled (retracted) while towed
         MeshInstance3D _landingLegMesh;                  // trailer's landing-leg VISUAL (split out of the body mesh) -> hidden while coupled so the legs vanish, shown when parked (mirrors _landingGear)
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
+        Vehicle _approachTrailer;                        // uncoupled trailer the cab is currently phasing through to line up a couple (a temporary collision exception -- the real flatbed deck sits too low for the cab to back under otherwise, and the landing gear is in the path)
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
+        public const float ApproachReach = 6f;           // start phasing the cab through a trailer once its fifth wheel is this close to the kingpin (so you can back all the way under to CoupleReach)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
@@ -975,7 +977,9 @@ namespace UnturnedGodot
             joint.NodeA = joint.GetPathTo(this);
             joint.NodeB = joint.GetPathTo(trailer);
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
-            AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls
+            if (_approachTrailer != null && _approachTrailer != trailer && IsInstanceValid(_approachTrailer)) RemoveCollisionExceptionWith(_approachTrailer);
+            _approachTrailer = null;                            // the approach-phase exception (if this trailer) carries straight into the coupled state
+            AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls (idempotent if approach already added it)
             if (trailer._landingGear != null) trailer._landingGear.Disabled = true;   // RETRACT the landing legs -> the cab's fifth wheel now carries the nose, legs would just drag
             if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = false;   // and hide their VISUAL -> legs vanish on hookup
             Sleeping = false; trailer.Wake();                  // wake both; trailer.Wake() also clears its spawn `_parked` so it won't damp/freeze-static and anchor the tow (was the 2mph stall)
@@ -998,6 +1002,28 @@ namespace UnturnedGodot
                 if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = true;   // and show their VISUAL again
                 trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
             }
+        }
+
+        // While an uncoupled cab is close to a trailer's kingpin, phase THROUGH that trailer (temporary collision
+        // exception) so you can back all the way under it -- the real flatbed deck sits too low and the landing gear
+        // is in the path, so a solid hull would wall the cab off before it ever reaches CoupleReach. The trailer
+        // stays parked/frozen (legs still hold its nose up) the whole time; the exception just lets the cab slide in.
+        // Drops the exception again when the cab leaves ApproachReach (so a passing cab doesn't ghost through it).
+        void UpdateTrailerApproach()
+        {
+            if (!CanTow || CoupledTrailer != null) { _approachTrailer = null; return; }   // coupled -> CoupleTo owns the exception
+            Vehicle near = null; float best = ApproachReach * ApproachReach;
+            var fw = FifthWheelWorld;
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle v && v != this && v.IsTrailer && v.CoupledCab == null)
+                {
+                    float d = fw.DistanceSquaredTo(v.KingpinWorld);
+                    if (d < best) { best = d; near = v; }
+                }
+            if (near == _approachTrailer) return;
+            if (_approachTrailer != null && IsInstanceValid(_approachTrailer)) RemoveCollisionExceptionWith(_approachTrailer);
+            if (near != null) AddCollisionExceptionWith(near);
+            _approachTrailer = near;
         }
 
         public float ForwardSpeedPct()   // source GetReplicatedForwardSpeedPercentageOfTargetSpeed: forward speed / top speed (0..1) for the DRIVING stealth radius
@@ -1166,6 +1192,7 @@ namespace UnturnedGodot
                 else { QueueFree(); return; }   // 5 min after extinguishing -> despawn the wreck
             }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
+            if (CanTow) UpdateTrailerApproach();     // let an approaching cab phase through a trailer so it can back under to couple
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();
