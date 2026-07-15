@@ -15,7 +15,13 @@ namespace UnturnedGodot
         string _shotPath;
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
-        string _mapRoot = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI";   // --map=NAME switches the whole map (terrain + objects + spawns)
+        // Unturned install root -> Maps\<name>. The real map terrain (Landscape heightmaps) is read live from a local
+        // Unturned install (not shipped in-repo). Override the Steam location with the UG_UNTURNED_DIR env var for
+        // NON-default installs, e.g. UG_UNTURNED_DIR="D:\SteamLibrary\steamapps\common\Unturned".
+        static string MapDir(string name) =>
+            (System.Environment.GetEnvironmentVariable("UG_UNTURNED_DIR")?.TrimEnd('\\', '/')
+             ?? @"C:\Program Files (x86)\Steam\steamapps\common\Unturned") + @"\Maps\" + name;
+        string _mapRoot = MapDir("PEI");   // --map=NAME switches the whole map (terrain + objects + spawns)
         string _mapPlace = "placements.txt";   // per-map baked object placements in content/objects/ (non-PEI = placements_<key>.txt)
         int _frame;
         string _rigDir;                              // --rig=DIR : capture a frame strip here
@@ -109,7 +115,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--map="))                // load a DIFFERENT map (e.g. --map="cow tools"): terrain + objects + spawns all follow _mapRoot
                 {
                     string mn = arg["--map=".Length..];
-                    _mapRoot = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\" + mn;
+                    _mapRoot = MapDir(mn);
                     string key = System.Text.RegularExpressions.Regex.Replace(mn, "[^A-Za-z0-9]", "");
                     _mapPlace = mn == "PEI" ? "placements.txt" : "placements_" + key + ".txt";
                 }
@@ -145,7 +151,7 @@ namespace UnturnedGodot
             var ugMap = System.Environment.GetEnvironmentVariable("UG_MAP");
             if (!string.IsNullOrEmpty(ugMap))
             {
-                _mapRoot = @"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\" + ugMap;
+                _mapRoot = MapDir(ugMap);
                 string ugKey = System.Text.RegularExpressions.Regex.Replace(ugMap, "[^A-Za-z0-9]", "");
                 _mapPlace = ugMap == "PEI" ? "placements.txt" : "placements_" + ugKey + ".txt";
             }
@@ -1043,7 +1049,7 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
-            AddChild(Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: false));   // --map= aware (defaults to PEI); any modern-Landscape map renders here
+            { var _t = Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: false); if (_t != null) AddChild(_t); }   // --map= aware (defaults to PEI); any modern-Landscape map renders here
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
@@ -1479,6 +1485,7 @@ namespace UnturnedGodot
             AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
             await Phase("Terrain");
             var terr = Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: true);
+            if (terr == null) return;   // no local Unturned install -> LoadMapMerged logged the UG_UNTURNED_DIR hint; bail the world-build cleanly
             AddChild(terr);
             await Phase("Objects");
 
@@ -1851,10 +1858,11 @@ namespace UnturnedGodot
             var sun = new DirectionalLight3D { LightEnergy = 1.3f, ShadowEnabled = true, RotationDegrees = new Vector3(-55f, 35f, 0f) };
             AddChild(sun);
 
-            var terr = Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: true);
+            var terr = Terrain.LoadMapMerged(MapDir("PEI") + @"\Landscape\Heightmaps", withCollider: true);
+            if (terr == null) return;
             AddChild(terr);
 
-            var pockets = ZombieNav.LoadPockets(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI");
+            var pockets = ZombieNav.LoadPockets(MapDir("PEI"));
             ZombieNav.BuildOrLoad(this, pockets, overlay: true, save: false);   // verify shot: terrain-only, don't overwrite the canonical full-world bake
 
             var cam = new Camera3D { Current = true };
@@ -1907,12 +1915,13 @@ namespace UnturnedGodot
             AddChild(sun);
             AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
 
-            var terr = Terrain.LoadMapMerged(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Landscape\Heightmaps", withCollider: true);
+            var terr = Terrain.LoadMapMerged(MapDir("PEI") + @"\Landscape\Heightmaps", withCollider: true);
+            if (terr == null) return;
             AddChild(terr);
 
             // Zombie navmesh POCKETS (source LevelNavigation Flags): bake a Godot navmesh in each of PEI's 19 POI
             // pockets from the world collision (agent-radius wall buffer), saved + reused. (Phase 1 -- pathing wired next.)
-            { var _pk = ZombieNav.LoadPockets(@"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI"); ZombieNav.BuildOrLoad(this, _pk, overlay: false, save: false); }   // peiplay is terrain-only -> don't save (loads the canonical full-world mesh if --peidrive baked it)
+            { var _pk = ZombieNav.LoadPockets(MapDir("PEI")); ZombieNav.BuildOrLoad(this, _pk, overlay: false, save: false); }   // peiplay is terrain-only -> don't save (loads the canonical full-world mesh if --peidrive baked it)
 
             CharacterModel.LoadBundled();
             var player = new PlayerController();

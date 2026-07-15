@@ -183,6 +183,11 @@ void fragment() {
         // SurfaceTool per-vertex would be far too slow at ~1M verts) with heightfield-gradient normals.
         public static Terrain LoadMapMerged(string heightmapsDir, bool withCollider = true)
         {
+            if (!Directory.Exists(heightmapsDir))   // real map terrain is read live from a local Unturned install (not shipped in-repo)
+            {
+                GD.PrintErr($"[map] Unturned map terrain not found at '{heightmapsDir}'. Install Unturned via Steam, or set the UG_UNTURNED_DIR env var to your Unturned folder if it's in a non-default location.");
+                return null;
+            }
             var tiles = new System.Collections.Generic.Dictionary<(int, int), float[,]>();
             var splats = new System.Collections.Generic.Dictionary<(int, int), byte[,]>();   // dominant splatmap layer per 256x256 texel
             var splatRaw = new System.Collections.Generic.Dictionary<(int, int), byte[]>();   // raw 256x256x8 layer weights per tile, for the blend shader
