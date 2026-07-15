@@ -30,7 +30,7 @@ namespace UnturnedGodot
         bool _vmMelee;                               // --vm target is a melee weapon -> skip the gun aim/fire/reload script (MeleeSwingDriver swings it instead)
         bool _vmAimed; int _vmAimStart; int _vmSettle;
         bool _vmAttach; AttachmentMenu _am;          // --attach : hold the T attachment menu open for the render
-        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder; Vehicle _buTrailer;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder]
+        bool _vehTest; Vehicle _veh; Camera3D _vehCam; int _vehVariant; bool _night, _demo, _crash, _roadkill, _chain, _hitch, _backunder; Vehicle _buTrailer; int _buCoupledFrame = 999999;   // --vehicle=DIR [--variant=N] [--night] [--demo] [--crash] [--roadkill] [--chain] [--hitch] [--backunder]
         bool _driveTest, _swarm, _drivethru, _nade; PlayerController _dtPlayer;      // --drivetest=DIR [--swarm|--drivethru|--nade] : enter/drive a jeep; swarm = mob it; drivethru = loud drive wakes zombies; nade = grenade the parked car
         bool _fireTest; PlayerController _ftPlayer; int _ftFrame;   // --firetest [--supp] : player fires near a distant zombie -> gunshot alert (suppressed = none)
         bool _peiPlay; PlayerController _peiPlayer; int _peiFrame; bool _peiHorde;   // --peiplay [--horde] : drive a jeep on real PEI (--horde = a zombie horde swarms it, vehicle<->zombie loop on real ground)
@@ -3010,11 +3010,14 @@ namespace UnturnedGodot
                 if (_vehTest && _veh != null)
                 {
                     // settle, then auto-drive a course for the video: straight -> right curve -> left curve
-                    if (_backunder)   // reverse straight back UNDER the parked trailer, couple the instant we're in reach
+                    if (_backunder)   // reverse straight back UNDER the parked trailer, couple in reach, then PULL FORWARD to prove the rig drives
                     {
-                        bool cpl = _veh.CoupledTrailer != null;
-                        _veh.Drive(cpl ? 0f : -0.55f, 0f, cpl);
-                        if (!cpl && _buTrailer != null && _veh.CoupleTo(_buTrailer)) GD.Print($"[backunder] coupled OK at frame {_frame}");
+                        if (_veh.CoupledTrailer == null)
+                        {
+                            _veh.Drive(-0.55f, 0f, false);
+                            if (_buTrailer != null && _veh.CoupleTo(_buTrailer)) { _buCoupledFrame = _frame; GD.Print($"[backunder] coupled OK at frame {_frame}"); }
+                        }
+                        else _veh.Drive(_frame > _buCoupledFrame + 20 ? 1f : 0f, _frame > _buCoupledFrame + 130 ? 0.4f : 0f, false);   // hitched -> drive forward (then a turn) to verify towing isn't locked
                     }
                     else
                     {

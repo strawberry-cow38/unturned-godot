@@ -1099,7 +1099,7 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
             // (Q weapon-switch removed -- master: we have the inventory + spawn commands to test weapons now)
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.E })
+            else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.E })   // Echo:false -> ignore OS key-repeat, so HOLDING E can't fire the hitch toggle twice (uncouple then instantly re-couple)
             {
                 if (_driving != null) ExitVehicle();                       // E while driving: hop out
                 else if (TryToggleHitch()) { }                                                             // on foot at a trailer hitch: couple / uncouple

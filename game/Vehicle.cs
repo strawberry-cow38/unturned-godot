@@ -48,6 +48,7 @@ namespace UnturnedGodot
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
         readonly System.Collections.Generic.List<CollisionShape3D> _extraShapes = new();  // the Spec.ExtraBoxes hulls (cab: the low rear frame). A cab DROPS these while lining up under a trailer so only its BOTTOM phases through -- the tall cab body stays solid, so you can't shove the whole cab through the trailer
         bool _phasingUnder;                              // cab: is the low rear frame currently dropped (backing under a nearby trailer)?
+        float _hitchGrace;                               // trailer: short cooldown after uncoupling before it'll re-couple (belt-and-suspenders vs an instant re-hitch)
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         public const float ApproachReach = 6f;           // start phasing the cab through a trailer once its fifth wheel is this close to the kingpin (so you can back all the way under to CoupleReach)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
@@ -983,13 +984,15 @@ namespace UnturnedGodot
         public bool CoupleTo(Vehicle trailer)
         {
             if (!CanTow || trailer == null || !trailer.IsTrailer || CoupledTrailer != null || trailer.CoupledCab != null) return false;
+            if (trailer._hitchGrace > 0f) return false;   // just uncoupled -> brief cooldown so it can't instantly re-hitch
             if (FifthWheelWorld.DistanceTo(trailer.KingpinWorld) > CoupleReach) return false;   // must be backed under the kingpin
-            trailer.GlobalPosition += FifthWheelWorld - trailer.KingpinWorld;   // MAGNETIZE: snap the kingpin exactly under the fifth wheel so the pivot is perfectly centered, not wherever it happened to land within reach
             var joint = new PinJoint3D { Name = "Hitch" };
             GetParent().AddChild(joint);                       // sibling of the two bodies in the world
-            joint.GlobalPosition = FifthWheelWorld;            // pin at the (now coincident) coupling point (after it's in the tree)
+            joint.GlobalPosition = (FifthWheelWorld + trailer.KingpinWorld) * 0.5f;   // pin BETWEEN the two points -> the joint gently pulls the kingpin + fifth wheel together to center (the "magnetization") instead of a hard teleport that over-constrained the rig and locked driving
             joint.NodeA = joint.GetPathTo(this);
             joint.NodeB = joint.GetPathTo(trailer);
+            joint.SetParam(PinJoint3D.Param.Bias, 0.2f);          // soft correction = a gentle centre-pull, not a rigid snap
+            joint.SetParam(PinJoint3D.Param.ImpulseClamp, 40f);   // cap the coupling impulse so the hitch FLEXES (a little vertical give over bumps) instead of rigidly fighting the terrain and stalling the truck
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
             if (_phasingUnder) { foreach (var cs in _extraShapes) cs.Disabled = false; _phasingUnder = false; }   // restore the cab's rear frame -- the coupled exception now handles the overlap
             AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls
@@ -1013,6 +1016,7 @@ namespace UnturnedGodot
                 trailer.CoupledCab = null;
                 if (trailer._landingGear != null) trailer._landingGear.Disabled = false;   // DEPLOY the landing legs -> hold the nose level now that the cab's gone (fixes the "front sinks into the ground")
                 if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = true;   // and show their VISUAL again
+                trailer._hitchGrace = 0.4f;   // brief cooldown so an accidental double-press (or held key) can't instantly re-hitch it
                 trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
             }
         }
@@ -1207,6 +1211,7 @@ namespace UnturnedGodot
             }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
             if (CanTow) UpdateTrailerApproach();     // let an approaching cab phase through a trailer so it can back under to couple
+            if (_hitchGrace > 0f) _hitchGrace -= (float)delta;   // tick down the post-uncouple re-hitch cooldown
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();
