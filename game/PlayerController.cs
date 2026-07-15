@@ -1855,17 +1855,24 @@ namespace UnturnedGodot
         public bool DriveFP { set => _fp = value; }   // test hook: force first-person cam
         public void EnterNearestVehicle() { var v = NearestVehicle(); if (v != null) EnterVehicle(v); }
 
+        // While any menu/cursor UI is up (F1 dev console, inventory, craft, skills, map) the mouse is un-captured. Gate
+        // all POLLED gameplay input on this so the menu is MODAL -- no walking/steering/firing/stance through it. Look +
+        // single-fire already gate on Captured; this closes the movement/auto-fire/driving/stance gaps. Scripted
+        // (harness) input bypasses -- it sets Scripted* directly. (strawberry 2026-07-15)
+        bool UiInputBlocked => Input.MouseMode != Input.MouseModeEnum.Captured;
+
         void DriveVehicle(float delta)
         {
             if (_driving.Exploded) { ExitVehicle(); TakeDamage(150f); return; }   // caught in the blast -> ejected + killed (source explode kills passengers)
             float throttle, steer;
             if (ScriptedDrive.HasValue) { steer = ScriptedDrive.Value.X; throttle = ScriptedDrive.Value.Y; }
+            else if (UiInputBlocked) { throttle = 0f; steer = 0f; }   // menu open -> don't steer/accelerate through it
             else
             {
                 throttle = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
-            _driving.Drive(throttle, steer, Input.IsPhysicalKeyPressed(Key.Space));
+            _driving.Drive(throttle, steer, !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space));
             GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle (the cam is positioned in _Process from the vehicle's INTERPOLATED transform)
         }
 
@@ -1939,18 +1946,18 @@ namespace UnturnedGodot
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
-                else if (_firemode == FireMode.Auto && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
+                else if (_firemode == FireMode.Auto && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
             // Intertwined stance STATE MACHINE (master): X = crouch key, Z = prone key, moving between STAND/CROUCH/PRONE from ANY state.
-            bool xNow = Input.IsPhysicalKeyPressed(Key.X);
+            bool xNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
             if (xNow && !_xHeld) _baseStance = (_baseStance == EPlayerStance.CROUCH) ? EPlayerStance.STAND : EPlayerStance.CROUCH;   // X: stand<->crouch, and prone->crouch
             _xHeld = xNow;
-            bool zNow = Input.IsPhysicalKeyPressed(Key.Z);
+            bool zNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
             if (zNow && !_zHeld) _baseStance = (_baseStance == EPlayerStance.PRONE) ? EPlayerStance.STAND : EPlayerStance.PRONE;    // Z: stand<->prone, and crouch->prone
             _zHeld = zNow;
             var wantStance = ScriptedStance ?? _baseStance;
-            if (wantStance == EPlayerStance.STAND && Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) wantStance = EPlayerStance.SPRINT;   // sprint overlays standing
+            if (wantStance == EPlayerStance.STAND && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) wantStance = EPlayerStance.SPRINT;   // sprint overlays standing
             if (Broken && wantStance == EPlayerStance.SPRINT) wantStance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
             // can't rise into a ceiling: if the target stance is TALLER than the current capsule and there's no headroom, stay low (master)
             float wantH = PlayerMovementDef.HeightForStance(wantStance);
@@ -1961,12 +1968,13 @@ namespace UnturnedGodot
 
             float forward, strafe;
             if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
+            else if (UiInputBlocked) { forward = 0f; strafe = 0f; }   // menu open -> don't walk through it
             else
             {
                 forward = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
                 strafe  = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
-            bool jump = Input.IsPhysicalKeyPressed(Key.Space) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310)
+            bool jump = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310)
 
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;
