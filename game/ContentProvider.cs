@@ -132,5 +132,58 @@ namespace UnturnedGodot
             }
             return st.Commit();
         }
+
+        // Parse an obj and split it into two meshes by an axis-aligned zone: every triangle whose 3 vertices ALL
+        // lie inside [min,max] goes to `inside`, the rest to `outside`. Used to peel a baked-in sub-part (e.g. the
+        // trailer's landing legs) out of a single mesh so it can be toggled independently. Either mesh may be null
+        // if it got no triangles. Same UV V-flip + per-corner normal/uv as ParseObj.
+        public static (ArrayMesh outside, ArrayMesh inside) ParseObjSplitByZone(string path, Vector3 min, Vector3 max)
+        {
+            var txt = ReadText(path);
+            if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return (null, null); }
+            var ci = CultureInfo.InvariantCulture;
+            var verts = new List<Vector3>(); var norms = new List<Vector3>(); var uvs = new List<Vector2>();
+            var fv = new List<int>(); var ft = new List<int>(); var fn = new List<int>();
+            foreach (var raw in txt.Split('\n'))
+            {
+                var line = raw.TrimEnd('\r');
+                if (line.Length == 0 || line[0] == '#') continue;
+                var t = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (t.Length == 0) continue;
+                switch (t[0])
+                {
+                    case "v":  verts.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
+                    case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
+                    case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
+                    case "f":
+                        for (int i = 1; i <= 3 && i < t.Length; i++)
+                        {
+                            var p = t[i].Split('/');
+                            fv.Add(int.Parse(p[0], ci) - 1);
+                            ft.Add(p.Length > 1 && p[1].Length > 0 ? int.Parse(p[1], ci) - 1 : -1);
+                            fn.Add(p.Length > 2 && p[2].Length > 0 ? int.Parse(p[2], ci) - 1 : -1);
+                        }
+                        break;
+                }
+            }
+            bool In(Vector3 v) => v.X >= min.X && v.X <= max.X && v.Y >= min.Y && v.Y <= max.Y && v.Z >= min.Z && v.Z <= max.Z;
+            var stOut = new SurfaceTool(); stOut.Begin(Mesh.PrimitiveType.Triangles);
+            var stIn = new SurfaceTool(); stIn.Begin(Mesh.PrimitiveType.Triangles);
+            int nOut = 0, nIn = 0;
+            for (int f = 0; f + 2 < fv.Count; f += 3)
+            {
+                bool inside = In(verts[fv[f]]) && In(verts[fv[f + 1]]) && In(verts[fv[f + 2]]);
+                var st = inside ? stIn : stOut;
+                if (inside) nIn++; else nOut++;
+                for (int k = 0; k < 3; k++)
+                {
+                    int i = f + k;
+                    if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
+                    if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
+                    st.AddVertex(verts[fv[i]]);
+                }
+            }
+            return (nOut > 0 ? stOut.Commit() : null, nIn > 0 ? stIn.Commit() : null);
+        }
     }
 }

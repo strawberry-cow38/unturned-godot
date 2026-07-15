@@ -44,6 +44,7 @@ namespace UnturnedGodot
         public bool IsTrailer => KingpinLocal != Vector3.Zero;
         public Vehicle CoupledTrailer, CoupledCab;       // partner when hitched (cab -> trailer, trailer -> cab)
         CollisionShape3D _landingGear;                   // trailer's front landing-leg support: enabled (down) when parked, disabled (retracted) while towed
+        MeshInstance3D _landingLegMesh;                  // trailer's landing-leg VISUAL (split out of the body mesh) -> hidden while coupled so the legs vanish, shown when parked (mirrors _landingGear)
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
@@ -112,6 +113,7 @@ namespace UnturnedGodot
             public Vector3 FifthWheel;   // tow vehicle: local fifth-wheel coupling point (behind the cab); Zero = can't tow
             public Vector3 Kingpin;      // trailer: local kingpin point (front); Zero = not a trailer
             public Vector3 LandingGearSize, LandingGearCenter;   // trailer: front landing-leg support box (holds the nose up when parked); toggled OFF while coupled. Zero size = none
+            public Vector3 LandingLegZoneMin, LandingLegZoneMax;  // trailer: mesh-space AABB enclosing the landing-leg triangles -> split them into a toggleable MeshInstance so they VANISH when coupled. Min==Max = no split
             public (Vector3 size, Vector3 center)[] ExtraBoxes;   // extra fixed collision boxes beyond the main box + RoofBox (e.g. the trailer's kingpin/gooseneck, the cab's low rear fifth-wheel deck) -> match the model geometry
         }
 
@@ -421,6 +423,9 @@ namespace UnturnedGodot
             // wheels + this = level). Placed at Z -4.5, BEHIND where the cab's rear frame reaches under the front
             // (~Z -5.6 at couple), so the cab can still back all the way under. Toggled OFF the instant it couples.
             LandingGearSize = new Vector3(2.4f, 1.5f, 0.5f), LandingGearCenter = new Vector3(0f, 0.75f, -4.5f),
+            // the landing-leg triangles live in a clean mesh band at Z -4.5..-3.8 (feet Y0 up to the deck underside),
+            // between the gooseneck (Z -5.7) and the deck front (Z -1) -> split them out so they hide when coupled
+            LandingLegZoneMin = new Vector3(-1.25f, -0.05f, -4.55f), LandingLegZoneMax = new Vector3(1.25f, 1.16f, -3.75f),
         };
 
         // Quad.dat: Speed 13.5, steer 32, front-steered, torque 4.8. X +-0.50, front Z -0.39 / rear 1.44, Y 0.20.
@@ -733,13 +738,22 @@ namespace UnturnedGodot
             };
             v.AddChild(v._infoLabel);
 
-            var bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            ArrayMesh bodyMesh; ArrayMesh legMesh = null;
+            if (s.LandingLegZoneMin != s.LandingLegZoneMax)   // split the baked-in landing legs into their own mesh so they can vanish on couple
+                (bodyMesh, legMesh) = ContentProvider.ParseObjSplitByZone($"res://content/{s.Body}", s.LandingLegZoneMin, s.LandingLegZoneMax);
+            else
+                bodyMesh = ContentProvider.ParseObj($"res://content/{s.Body}");
             v._bodyMesh = new MeshInstance3D { Name = "Body", Mesh = bodyMesh, MaterialOverride = bodyMat };
             v.AddChild(v._bodyMesh);
+            if (legMesh != null)   // the landing legs as a sibling MeshInstance sharing the body material -> toggled with the coupling (visible when parked, hidden when towed)
+            {
+                v._landingLegMesh = new MeshInstance3D { Name = "LandingLegs", Mesh = legMesh, MaterialOverride = bodyMat };
+                v.AddChild(v._landingLegMesh);
+            }
 
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
@@ -951,6 +965,7 @@ namespace UnturnedGodot
             _hitch = joint; CoupledTrailer = trailer; trailer.CoupledCab = this;
             AddCollisionExceptionWith(trailer);                // coupled hulls must NOT collide, or the joint (pulling together) fights the boxes (pushing apart) -> the rig drags/stalls
             if (trailer._landingGear != null) trailer._landingGear.Disabled = true;   // RETRACT the landing legs -> the cab's fifth wheel now carries the nose, legs would just drag
+            if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = false;   // and hide their VISUAL -> legs vanish on hookup
             Sleeping = false; trailer.Wake();                  // wake both; trailer.Wake() also clears its spawn `_parked` so it won't damp/freeze-static and anchor the tow (was the 2mph stall)
             return true;
         }
@@ -968,6 +983,7 @@ namespace UnturnedGodot
             {
                 trailer.CoupledCab = null;
                 if (trailer._landingGear != null) trailer._landingGear.Disabled = false;   // DEPLOY the landing legs -> hold the nose level now that the cab's gone (fixes the "front sinks into the ground")
+                if (trailer._landingLegMesh != null) trailer._landingLegMesh.Visible = true;   // and show their VISUAL again
                 trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
             }
         }
