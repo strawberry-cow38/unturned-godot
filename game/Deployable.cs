@@ -134,6 +134,9 @@ namespace UnturnedGodot
             }
         }
 
+        public bool Hurt => !OnFire && Health < HealthMax;                                  // alive (not on fire) + damaged -> a blowtorch can repair it (src isRepair)
+        public void Repair(float amount) { if (!OnFire) Health = Mathf.Min(HealthMax, Health + amount); }   // blowtorch repair: heal HP up to max, same as a car
+
         // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
         // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
         public void TogglePower() { if (CanTogglePower) _powered = !_powered; }

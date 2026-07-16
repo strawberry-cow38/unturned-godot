@@ -22,7 +22,7 @@ namespace UnturnedGodot
         BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
-        Vehicle _driving; bool _fp;   // vehicle being driven + camera mode: _fp false = 3rd person (default), true = 1st; H toggles (on foot + driving)
+        Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         readonly bool _ugFp = System.Environment.GetEnvironmentVariable("UG_FP") == "1";   // render harness: force 1st-person to screenshot the FP viewmodel
         RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
@@ -252,6 +252,11 @@ namespace UnturnedGodot
                     else v.SetSalvagePrompt($"Salvaging... {Mathf.Clamp((int)(_salvageTimer / SalvageTime * 100f), 0, 99)}%", white);
                 }
                 else { v.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
+            }
+            else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && HasBlowtorch && !_focusDeployable.IsWreck && _focusDeployable.Hurt)   // blowtorch REPAIR a hurt live generator (full-auto heal while LMB held), same as a car
+            {
+                if (lmb) { _focusDeployable.Repair((_melee?.VehicleDamage ?? 10f) * 3f * delta); sparks = true; }   // ~30 HP/s continuous
+                _salvageTimer = 0f;
             }
             else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.IsWreck)   // a burnt-out generator: same blowtorch salvage as a car wreck
             {
@@ -672,7 +677,8 @@ namespace UnturnedGodot
             if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && !_focusDeployable.IsWreck
                 && (_focusDeployable.GlobalPosition - GlobalPosition).Length() < range + 2f)   // looking at a placed generator: melee damages it (a blowtorch is for salvaging the wreck, not smashing)
             {
-                if (!HasBlowtorch) { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
+                if (HasBlowtorch) { if (_focusDeployable.Hurt) _focusDeployable.Repair(_melee?.VehicleDamage ?? 10f); }   // blowtorch repairs a hurt generator (continuous heal is in UpdateSalvage)
+                else { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
