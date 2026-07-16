@@ -1323,7 +1323,8 @@ namespace UnturnedGodot
             {
                 if (AttachMenu != null)   // T (hold): show the weapon-attachment menu while held, release to close
                 {
-                    if (tKey.Pressed && !AttachMenu.IsOpen)
+                    // attachments are gun-only: no menu for melee/fists/consumable/deployable (strawberry)
+                    if (tKey.Pressed && !AttachMenu.IsOpen && _viewmodel != null && _viewmodel.IsGunViewmodel)
                     {
                         AttachMenu.VM = _viewmodel;
                         AttachMenu.Open();
