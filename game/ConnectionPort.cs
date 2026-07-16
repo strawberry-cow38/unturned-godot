@@ -80,6 +80,8 @@ namespace UnturnedGodot
             };
         }
 
+        public bool DebugArrowVisible => _arrow != null && _arrow.Visible;   // L1 test probe (deploy.port_arrows)
+
         // Show/hide the in/out arrow + colour it available (blue) or unavailable (red).
         public void SetArrowState(bool show, bool available)
         {

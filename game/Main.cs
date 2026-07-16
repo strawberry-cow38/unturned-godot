@@ -13,8 +13,6 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath;
-        DeployablePlacer _deployProbePlacer; Camera3D _deployProbeCam; int _deployProbeFrame;   // --deploytest: scripted aim check
-        Wire _wireManageTest;   // UG_WIREMANAGE: the committed test wire, checked at frame 3 (raycast/segment/power)
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
@@ -1139,7 +1137,6 @@ namespace UnturnedGodot
                 var w = new Wire(); AddChild(w);
                 w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
                 w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
-                _wireManageTest = w;     // frame-3 power-drop check (UG_WIREMANAGE)
                 _spotDbg = placedSpot;   // lamp-lit probe at the shot frame
                 if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                 PowerNet.Recompute(GetTree());
@@ -1148,13 +1145,6 @@ namespace UnturnedGodot
                 {
                     placedSpot.DebugStage("wreck"); PowerNet.Recompute(GetTree());
                     GD.Print($"[WRECKTEST] wired spotlight wrecked -> wires+cubes should be gone (visual)");
-                }
-                if (System.Environment.GetEnvironmentVariable("UG_WIREFIRE") == "1")   // on-fire deployables must stop conducting (fable #2A/#5B)
-                {
-                    placedSpot.DebugStage("fire"); PowerNet.Recompute(GetTree());
-                    GD.Print($"[FIRETEST-spot] consumer.powered={cons.Powered} passthrough={pass?.Live:0}w (expect False / 0)");
-                    placedGen.DebugStage("fire"); PowerNet.Recompute(GetTree());
-                    GD.Print($"[FIRETEST-gen] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w (expect False / 0)");
                 }
             }
             // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
@@ -1181,15 +1171,7 @@ namespace UnturnedGodot
                 }
             }
 
-            // scripted aim probe: point a camera down at OPEN ground and verify the ghost computes a VALID placement
-            // (the raycast + wall/overlap logic, which the interactive hold->aim path can't be headless-tested).
-            _deployProbeCam = new Camera3D { Current = false };
-            AddChild(_deployProbeCam);
-            _deployProbeCam.Position = new Vector3(8f, 3f, -6f);
-            _deployProbeCam.LookAt(new Vector3(8f, 0f, -6f), Vector3.Back);
-            _deployProbePlacer = new DeployablePlacer();
-            AddChild(_deployProbePlacer);
-            _deployProbePlacer.SetDef(gen);
+            // (the scripted open-ground aim probe that lived here is now the L1 test deploy.placer_aim)
 
             // UG_DEPLOYFOCUS=1: verify the look-at outline + HP/fuel billboard on the placed generator (as if looked at)
             if (System.Environment.GetEnvironmentVariable("UG_DEPLOYFOCUS") == "1")
@@ -3195,17 +3177,6 @@ namespace UnturnedGodot
                 return;
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
-            if (_deployProbePlacer != null && ++_deployProbeFrame == 3)   // deploytest: verify the aim/valid path against the ground collider
-            {
-                bool v = _deployProbePlacer.Aim(_deployProbeCam);
-                GD.Print($"[DEPLOYPROBE] open-ground valid={v} point={_deployProbePlacer.Point} yaw={_deployProbePlacer.Yaw:0}");
-                if (System.Environment.GetEnvironmentVariable("UG_WIREMANAGE") == "1" && _wireManageTest != null && IsInstanceValid(_wireManageTest))   // clear/unplug power correctness (gated so it doesn't tear down the wire on a plain UG_WIRETEST lamp render)
-                {
-                    var w = _wireManageTest;
-                    var consPort = w.Consumer; w.RemoveFromGroup("wires"); PowerNet.Recompute(GetTree());   // clearing a wire (leaves the group) must unpower the consumer
-                    GD.Print($"[MANAGETEST] consumerPoweredAfterRemove={consPort?.Powered} (expect False)");
-                }
-            }
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot

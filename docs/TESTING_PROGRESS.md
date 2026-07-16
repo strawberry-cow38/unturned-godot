@@ -15,11 +15,23 @@ and phase 2 core (GameTest/TestHost + first 5 ports) landed on `main` earlier.
 All five drivers, their `Build*` scene builders, and their `--flag` dispatch deleted from `Main.cs`.
 Shared helpers live in `game/testing/tests/Rigs.cs` (ground plane + demo player).
 
+### Phase 2b — wire-power/deploy scenarios (batch B)
+- `power.chain_passthrough` — gen → spotA → passthrough → spotB (live/powered/draw down the chain)
+- `power.wreck_drops_wires` ← `UG_WIREWRECK` (shattered spotlight takes its wire + gen load with it)
+- `deploy.damage_stages` ← `UG_DEPLOYDMG` (smoke/heavy/fire/wreck state; the LOOKS stay a golden scene)
+- `deploy.port_arrows` ← `UG_WIREARROWS` state (geometry/colour stays visual); added
+  `ConnectionPort.DebugArrowVisible` probe
+- `deploy.placer_aim` ← the `[DEPLOYPROBE]` scripted aim check (+ sky/overlap/wall rejects; note: the
+  TOP of an obstacle is legitimately placeable, so "occupied ground" is asserted via an ADJACENT box
+  intersecting the clearance sphere, not a box under the ray)
+- `zombie.hear_salience` ← `--heartest`
+
+Deleted from Main.cs: the `UG_WIREMANAGE` + `UG_WIREFIRE` print probes, the `_deployProbePlacer`
+frame-3 check. Kept (phase-4 golden scenes): `UG_WIRETEST` (+`[POWERTEST]`/`[LAMPDBG]` prints),
+`UG_WIREOFF`, `UG_WIREWRECK`, `UG_WIREARROWS`, `UG_DEPLOYDMG`, `UG_DEPLOYFOCUS`, `UG_LOADBAR`.
+
 ## In progress / next
 
-- Batch B: wire-power/deploy scenarios (`UG_WIREMANAGE`/`UG_WIREFIRE` probes → L1, chain passthrough
-  with a 2nd spotlight, `UG_WIREWRECK` shatter-cleanup facts, `UG_DEPLOYDMG` stage state, port arrows,
-  placer aim probe, `--heartest`).
 - Batch C: the inline `--*test` self-tests (dragtest/usetest/consumehold/magtest/crafttest/shelltest/
   farmtest/farmloop/skilltest/craftgate/farmyield/armortest) → L1 GameTests.
 - Phase 3: PowerSolver → core/UnturnedSim + NUnit suite; explosion falloff + stance table extractions.

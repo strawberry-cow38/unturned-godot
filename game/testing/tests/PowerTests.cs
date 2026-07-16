@@ -16,11 +16,18 @@ namespace UnturnedGodot.Testing
             var outp = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
             var cons = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
             var pass = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
-            var w = new Wire(); world.AddChild(w);
-            w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
-            w.SetPoints(new List<Vector3> { outp.GlobalPosition, cons.GlobalPosition }, true);
+            var w = Connect(world, outp, cons);
             return new Built { Gen = gen, Spot = spot, Wire = w, GenOut = outp, ConsA = cons, PassA = pass };
         }
+
+        public static Wire Connect(Node3D world, ConnectionPort source, ConnectionPort consumer)
+        {
+            var w = new Wire(); world.AddChild(w);
+            w.Source = source; w.Consumer = consumer; w.AddToGroup("wires");
+            w.SetPoints(new List<Vector3> { source.GlobalPosition, consumer.GlobalPosition }, true);
+            return w;
+        }
+
         public static bool Approx(float a, float b) => Mathf.Abs(a - b) < 0.5f;
     }
 
@@ -52,6 +59,49 @@ namespace UnturnedGodot.Testing
             T.Check("powered before clear", r.ConsA.Powered);
             r.Wire.RemoveFromGroup("wires"); PowerNet.Recompute(Tree);   // clearing a wire drops it from the group
             T.Check("consumer unpowered after wire cleared", !r.ConsA.Powered);
+        }
+    }
+
+    // The proposal's flagship case: gen -> spotA -> (passthrough) -> spotB. The second consumer runs on spotA's
+    // leftover re-export, and the generator's load traces BOTH consumers down the chain (usage bar + vibration).
+    public class PowerChainPassthrough : GameTest
+    {
+        public override string Name => "power.chain_passthrough";
+        public override IEnumerable<Step> Run()
+        {
+            var r = PowerRig.Build(World);
+            var spotB = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(6f, 0f, 0f), 0f);
+            var consB = spotB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var passB = spotB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+            PowerRig.Connect(World, r.PassA, consB);
+            yield return Ticks(1);
+            r.Gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("first consumer powered", r.ConsA.Powered);
+            T.Check($"second consumer receives the 3750w re-export (got {consB.Live:0})", PowerRig.Approx(consB.Live, 3750f));
+            T.Check("second consumer powered through the chain", consB.Powered);
+            T.Check($"second passthrough re-exports 3500w (got {passB.Live:0})", PowerRig.Approx(passB.Live, 3500f));
+            T.Check($"generator draw traces both consumers = 500w (got {r.GenOut.Draw:0})", PowerRig.Approx(r.GenOut.Draw, 500f));
+        }
+    }
+
+    // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
+    // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
+    public class PowerWreckDropsWires : GameTest
+    {
+        public override string Name => "power.wreck_drops_wires";
+        public override IEnumerable<Step> Run()
+        {
+            var r = PowerRig.Build(World);
+            yield return Ticks(1);
+            r.Gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("powered before wreck", r.ConsA.Powered);
+
+            r.Spot.DebugStage("wreck");   // Explode -> KillPowerHardware (wires snapped, ports retired) -> shatter
+            yield return Ticks(2);        // let the QueueFrees flush out of the tree/groups
+            T.Check("wire freed with the wrecked spotlight", !GodotObject.IsInstanceValid(r.Wire));
+            T.Check("shattered spotlight removed from the tree (no husk)", !GodotObject.IsInstanceValid(r.Spot));
+            PowerNet.Recompute(Tree);
+            T.Check($"generator load back to 0w (got {r.GenOut.Draw:0})", PowerRig.Approx(r.GenOut.Draw, 0f));
         }
     }
 
