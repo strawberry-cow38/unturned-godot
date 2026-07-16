@@ -131,6 +131,7 @@ namespace UnturnedGodot
             LinearDamp = 0.5f;                          // src Rigidbody.drag
             AngularDamp = 0.1f;                         // src Rigidbody.angularDrag
             CanSleep = true;
+            ContinuousCd = true;                        // the terrain collider is a thin TRIMESH -> a small dropped item tunnels straight through it without continuous collision (strawberry: items fall through the ground). Verified: UG_TRIMESH itemtest -> items land WITH this, tunnel through WITHOUT.
             CenterOfMassMode = CenterOfMassModeEnum.Auto;   // COM = box centre (offset from the model origin) so it rests naturally
             CollisionLayer = 1u << 7;                   // worlditem layer (own bit -> player + LOS ray + other items ignore it)
             CollisionMask = (1u << 0) | (1u << 6);      // rest on world/terrain/buildings (bit0) + small/transparent props (bit6)

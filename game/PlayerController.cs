@@ -106,7 +106,7 @@ namespace UnturnedGodot
             q.CollisionMask = 1u << 0;   // ground
             q.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
             var hit = space.IntersectRay(q);
-            if (hit.Count > 0) pos = (Vector3)hit["position"];
+            if (hit.Count > 0) pos = (Vector3)hit["position"] + Vector3.Up * 0.25f;   // drop from just ABOVE the surface, not on it -> the collider doesn't start buried in the trimesh
             pos += new Vector3(_rng.RandfRange(-0.125f, 0.125f), 0f, _rng.RandfRange(-0.125f, 0.125f));
             WorldItem.Spawn(GetParent(), item, pos);
         }
