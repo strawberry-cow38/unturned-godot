@@ -13,6 +13,7 @@ namespace UnturnedGodot
         static bool _dirty = true;
         static int _lastWires = -1, _lastDeployables = -1;
         public static void MarkDirty() => _dirty = true;
+        public static void ResetForTests() { _dirty = true; _lastWires = -1; _lastDeployables = -1; }   // L1 test isolation between sandboxes
 
         public static void RecomputeIfDirty(SceneTree tree)
         {

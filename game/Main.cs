@@ -151,6 +151,11 @@ namespace UnturnedGodot
                 else if (arg == "--farmyield") { RunFarmYieldTest(); GetTree().Quit(); return; }   // agriculture-skill 2nd-yield roll self-test
                 else if (arg == "--consumeholdtest") { RunConsumeHoldTest(); GetTree().Quit(); return; }   // inventory hold->eat->decrement->auto-unequip self-test
                 else if (arg == "--magtest") { RunMagTest(); GetTree().Quit(); return; }   // working-magazine reload-swap self-test
+                else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
+                {
+                    AddChild(new Testing.TestHost { Filter = arg.StartsWith("--tests=") ? arg["--tests=".Length..] : "*" });
+                    return;
+                }
             }
 
             // UG_MAP env var = map name; robust for names with SPACES that get mangled through `--map=` user-args

@@ -13,6 +13,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 RESULTS="${UG_TEST_RESULTS:-.testresults}"
+GODOT="${GODOT:-$HOME/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64}"
 ONLY="*"; FAILFAST=0; RUN_L0=0; RUN_L1=0; RUN_VISUAL=0
 
 while [ $# -gt 0 ]; do
@@ -29,8 +30,8 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# default = the fast, always-available set (currently just L0; becomes --l0 --l1 in phase 2)
-if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ] && [ $RUN_VISUAL -eq 0 ]; then RUN_L0=1; fi
+# default = the fast sub-60s set: engine-free logic (L0) + batched in-engine (L1). --visual (L2) is opt-in.
+if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ] && [ $RUN_VISUAL -eq 0 ]; then RUN_L0=1; RUN_L1=1; fi
 
 rm -rf "$RESULTS"; mkdir -p "$RESULTS"
 TOTAL_PASS=0; TOTAL_FAIL=0; FIRST_FAILURE=""; INFRA_FAIL=0
@@ -70,6 +71,37 @@ run_suite() {  # $1 = suite dir under tests/
   fi
 }
 
+run_l1() {  # batched in-engine tests: build the game once, boot headless godot, run every GameTest, parse its report
+  echo "== L1: in-engine tests (headless godot, one boot) =="
+  if ! dotnet build game/UnturnedGodot.csproj -c Debug -v q -nologo >"$RESULTS/l1_build.log" 2>&1; then
+    echo "[SUITE] L1 | ERROR | game build failed (see $RESULTS/l1_build.log)"
+    grep -E 'error|Build FAILED' "$RESULTS/l1_build.log" | head -3 | sed 's/^/         /'
+    INFRA_FAIL=1; return
+  fi
+  if [ ! -x "$GODOT" ]; then
+    echo "[SUITE] L1 | ERROR | godot binary not found/executable: $GODOT (set \$GODOT)"; INFRA_FAIL=1; return
+  fi
+  local glob=""; [ "$ONLY" != "*" ] && glob="=$ONLY"
+  local log="$RESULTS/l1.log"
+  timeout 300 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1
+  grep -E '^\[TEST\]|^[[:space:]]+✗|^[[:space:]]+repro' "$log"   # per-test detail (human + agent)
+  local summary; summary="$(grep -E '^\[L1\] passed=' "$log" | tail -1)"
+  if [ -z "$summary" ]; then
+    echo "[SUITE] L1 | ERROR | host never reported (boot/hang; see $log)"; INFRA_FAIL=1
+    [ $FAILFAST -eq 1 ] && finish
+    return
+  fi
+  local p f; p="$(sed -E 's/.*passed=([0-9]+).*/\1/' <<<"$summary")"; f="$(sed -E 's/.*failed=([0-9]+).*/\1/' <<<"$summary")"
+  TOTAL_PASS=$((TOTAL_PASS + p)); TOTAL_FAIL=$((TOTAL_FAIL + f))
+  if [ "$f" -eq 0 ]; then
+    echo "[SUITE] L1 in-engine | PASS | $p passed"
+  else
+    echo "[SUITE] L1 in-engine | FAIL | $f failed, $p passed"
+    [ -z "$FIRST_FAILURE" ] && FIRST_FAILURE="$(grep -E '^\[TEST\].*\| FAIL ' "$log" | head -1 | sed -E 's/^\[TEST\][[:space:]]+([^[:space:]]+).*/\1/')"
+    [ $FAILFAST -eq 1 ] && finish
+  fi
+}
+
 finish() {
   local status name
   if [ $INFRA_FAIL -eq 1 ]; then status="INFRA-ERROR"; else [ $TOTAL_FAIL -eq 0 ] && status="ok" || status="FAILURES"; fi
@@ -82,9 +114,7 @@ if [ $RUN_L0 -eq 1 ]; then
   echo "== L0: engine-free unit tests (dotnet test) =="
   for d in tests/*/; do compgen -G "${d}*.csproj" >/dev/null && run_suite "$d"; done
 fi
-if [ $RUN_L1 -eq 1 ]; then
-  echo "== L1: in-engine tests -- NOT BUILT YET (phase 2 of docs/TESTING_PROPOSAL.md) =="
-fi
+if [ $RUN_L1 -eq 1 ]; then run_l1; fi
 if [ $RUN_VISUAL -eq 1 ]; then
   echo "== L2: visual golden tests -- NOT BUILT YET (phase 4 of docs/TESTING_PROPOSAL.md) =="
 fi

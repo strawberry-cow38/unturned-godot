@@ -35,6 +35,7 @@ namespace UnturnedGodot
         Vector3 _velAvg, _angAvg;   // low-pass velocity/spin for settle detection (jitter cancels in the running average)
         float _settleT, _age;
         bool _settled;
+        public bool Settled => _settled;   // L1 tests: has the dropped item come to rest?
         Vector3[] _hitPts;          // hitbox sample points (centre + 8 corners, local) for the full-hitbox LOS cull (master)
         Vector3 _boxCtr;
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
