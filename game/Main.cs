@@ -1150,7 +1150,7 @@ namespace UnturnedGodot
 
             var gen = DeployableDef.Generator; var spot = DeployableDef.Spotlight;
             // back row: PLACED objects (surface = ground; the base is sat on it)
-            Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
+            var placedGen = Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
             Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
             // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
             Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
@@ -1170,6 +1170,16 @@ namespace UnturnedGodot
             _deployProbePlacer = new DeployablePlacer();
             AddChild(_deployProbePlacer);
             _deployProbePlacer.SetDef(gen);
+
+            // UG_DEPLOYFOCUS=1: verify the look-at outline + HP/fuel billboard on the placed generator (as if looked at)
+            if (System.Environment.GetEnvironmentVariable("UG_DEPLOYFOCUS") == "1")
+            {
+                cam.Position = new Vector3(-2.6f, 1.6f, 4.6f);
+                cam.LookAt(new Vector3(-2.6f, 0.9f, 0f), Vector3.Up);
+                cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // main cam must NOT draw the silhouette layer (only the overlay's mask cam does)
+                CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());
+                placedGen.SetLookFocused(true);
+            }
             GD.Print("[DEPLOYTEST] generator+spotlight placed; blue+red ghosts");
         }
 

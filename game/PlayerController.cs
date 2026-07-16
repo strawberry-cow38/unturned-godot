@@ -112,6 +112,7 @@ namespace UnturnedGodot
 
         WorldItem _focusItem;   // the dropped item the player is currently LOOKING AT (glowing + named), pickup target for E
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
+        Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
         MeshInstance3D _lookHullViz; ImmediateMesh _lookHullMesh; bool _showLookHulls;   // I-toggle wireframe of every vehicle's look-focus hulls (culled behind-cam / past LookHullVizRange for fps)
@@ -127,7 +128,7 @@ namespace UnturnedGodot
 
         void UpdateLookFocus()
         {
-            WorldItem hitItem = null; Vehicle hitVeh = null;
+            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null;
             if (!_dead && _driving == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 var space = GetWorld3D().DirectSpaceState;
@@ -140,6 +141,9 @@ namespace UnturnedGodot
                 _lookRayQ.From = from; _lookRayQ.To = from + fwd * LookReach;
                 var rhit = space.IntersectRay(_lookRayQ);
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
+                // a placed deployable (generator) stops the ray on the world layer -> focus it directly from the ray hit
+                // (LOS-correct: a wall in the way stops the ray first). The LookReach IS the look-at radius.
+                if (rhit.Count > 0 && rhit["collider"].As<GodotObject>() is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5), Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
@@ -182,6 +186,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusVehicle)) _focusVehicle.SetLookFocused(false);
                 _focusVehicle = hitVeh;
                 _focusVehicle?.SetLookFocused(true);
+            }
+            if (hitDeploy != _focusDeployable)
+            {
+                if (IsInstanceValid(_focusDeployable)) _focusDeployable.SetLookFocused(false);
+                _focusDeployable = hitDeploy;
+                _focusDeployable?.SetLookFocused(true);
             }
         }
 
