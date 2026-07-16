@@ -53,6 +53,12 @@ Cross-cutting rules:
 
 ### 2.1 Authority + process model
 
+> **DECIDED 2026-07-16 (strawberry):** Fork A = **(b) headless Godot server**. Engine-free / pure-C#
+> collision (validate-by-query, custom BVH) is explicitly **shelved behind the sim-step seam** — the server
+> uses Godot's real physics/collision/nav for v1, and the door to swapping in an engine-free query layer
+> later stays open (§2.5's step seam + the fact that replication moves transforms, not physics internals).
+> Fork B stays as written: one architecture, three run modes (dedicated / SP-loopback / listen).
+
 **Fork A — where does the authoritative sim run?**
 
 - *(a) Engine-free .NET server process (extend the `NetGame.cs` approach).* Maximum testability, no Godot on the server. **Rejected:** vehicles are `VehicleBody3D`/Jolt physics (`game/Vehicle.cs:6-8`), players collide via `MoveAndSlide`, zombies path on `NavigationServer` — reimplementing all of that engine-free is a second game. The toy zombie sim in `NetGame.cs:174` is the ceiling of this approach.
