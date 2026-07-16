@@ -161,6 +161,7 @@ namespace UnturnedGodot
                 _powered = false; _powerLevel = 0f;   // a dying generator cuts out INSTANTLY (no wind-down); the ramp tick stops the audio + settles the mesh
                 if (_fire != null) _fire.Emitting = true;   // a small fire the moment it dies, before Explode() ramps the blaze
                 if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 1.2f; }
+                KillPowerHardware();   // destroyed -> snap its wires + retire its port cubes (also marks the net dirty)
             }
         }
 
@@ -169,7 +170,7 @@ namespace UnturnedGodot
 
         // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
         // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
-        public void TogglePower() { if (CanTogglePower) _powered = !_powered; }
+        public void TogglePower() { if (CanTogglePower) { _powered = !_powered; PowerNet.MarkDirty(); } }   // IsPowered flipped -> the net needs a recompute
 
         void Explode()   // src explode: full fire, char the body, blast nearby, become a burning wreck
         {
@@ -179,6 +180,7 @@ namespace UnturnedGodot
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
             if (_mesh != null) _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred husk
             _burnTime = 0f;
+            KillPowerHardware();   // covers the direct-explode path (DebugStage wreck); idempotent if 0-HP already ran it
             ExplodeDamage();
         }
 
@@ -248,6 +250,15 @@ namespace UnturnedGodot
             foreach (var n in tree.GetNodesInGroup("wires"))
                 if (n is Wire w && IsInstanceValid(w) && (Ports.Contains(w.Source) || Ports.Contains(w.Consumer)))
                     w.QueueFree();
+            PowerNet.MarkDirty();
+        }
+
+        // Destroyed (0 HP / explode) -> snap the wires and retire the port cubes so neither survives on the corpse
+        // (strawberry: a wrecked spotlight shouldn't keep its plugged-in wire + glowing connection cubes).
+        void KillPowerHardware()
+        {
+            DisconnectWires();
+            foreach (var p in Ports) if (IsInstanceValid(p)) p.Deactivate();
         }
 
         // test-only: jump straight to a damage stage for the --deploytest render (smoke / heavy / fire / wreck)
@@ -255,8 +266,9 @@ namespace UnturnedGodot
         {
             if (s == "smoke") Health = HealthMax * 0.4f;                 // light damage smoke
             else if (s == "heavy") Health = HealthMax * 0.15f;           // heavy smoke
-            else if (s == "fire") { Health = 0f; _deadTimer = ExplodeDelay; if (_fire != null) _fire.Emitting = true; if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 1.2f; } }
-            else if (s == "wreck") { Health = 0f; Explode(); }           // full burning charred husk
+            else if (s == "fire") { Health = 0f; _deadTimer = ExplodeDelay; if (_fire != null) _fire.Emitting = true; if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 1.2f; } KillPowerHardware(); }
+            else if (s == "wreck") { Health = 0f; Explode(); }           // full burning charred husk (Explode calls KillPowerHardware)
+            PowerNet.MarkDirty();
         }
 
         public override void _Process(double delta)

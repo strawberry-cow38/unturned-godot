@@ -7,6 +7,21 @@ namespace UnturnedGodot
     // (received - usage) down the next wire. Iterated so chains (genny -> spot -> spot -> ...) settle each tick.
     public static class PowerNet
     {
+        // The graph only changes on discrete events (wire built/cleared, deployable placed/removed, generator toggled,
+        // something catches fire) -- nothing per-frame -- so recompute is event-driven, not every frame. MarkDirty()
+        // flags state changes; the wire/deployable COUNT is a backstop that catches any structural add/remove for free.
+        static bool _dirty = true;
+        static int _lastWires = -1, _lastDeployables = -1;
+        public static void MarkDirty() => _dirty = true;
+
+        public static void RecomputeIfDirty(SceneTree tree)
+        {
+            int w = tree.GetNodeCountInGroup("wires"), d = tree.GetNodeCountInGroup("deployables");
+            if (!_dirty && w == _lastWires && d == _lastDeployables) return;   // idle: nothing changed -> skip the whole O(W*(W+D)) pass
+            _dirty = false; _lastWires = w; _lastDeployables = d;
+            Recompute(tree);
+        }
+
         public static void Recompute(SceneTree tree)
         {
             var deployables = tree.GetNodesInGroup("deployables");
@@ -52,6 +67,6 @@ namespace UnturnedGodot
     // Ticks the power net once a frame. One instance is created lazily by the first placed deployable.
     public partial class PowerManager : Node
     {
-        public override void _Process(double delta) => PowerNet.Recompute(GetTree());
+        public override void _Process(double delta) => PowerNet.RecomputeIfDirty(GetTree());
     }
 }

@@ -52,6 +52,9 @@ namespace UnturnedGodot
             _ => ProviderName,
         };
 
+        // the owning deployable was destroyed -> retire this cube: hide it + drop off the wire look-ray layer
+        public void Deactivate() { Visible = false; CollisionLayer = 0; }
+
         // look-at highlight / selection feedback (brighten + emit)
         public void SetHighlighted(bool on)
         {

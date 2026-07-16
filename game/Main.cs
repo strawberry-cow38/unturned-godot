@@ -1172,6 +1172,11 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                 PowerNet.Recompute(GetTree());
                 GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w");
+                if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1")   // destroy the spotlight -> its wire + port cubes must vanish (strawberry)
+                {
+                    placedSpot.DebugStage("wreck"); PowerNet.Recompute(GetTree());
+                    GD.Print($"[WRECKTEST] wired spotlight wrecked -> wires+cubes should be gone (visual)");
+                }
                 if (System.Environment.GetEnvironmentVariable("UG_WIREFIRE") == "1")   // on-fire deployables must stop conducting (fable #2A/#5B)
                 {
                     placedSpot.DebugStage("fire"); PowerNet.Recompute(GetTree());
