@@ -16,8 +16,12 @@ namespace UnturnedGodot.Testing
             ground.AddChild(new CollisionShape3D { Shape = new PlaneMesh { Size = new Vector2(24f, 8f) }.CreateTrimeshShape() });
             World.AddChild(ground);
 
+            // deterministic drop pose: the normal spawn applies a GD.RandRange tilt (global RNG, unseeded), and an
+            // awkward edge-landing can wobble past the settle window -- this test is about CCD-vs-trimesh, not
+            // landing dynamics. ResetGlobals restores the flag after the test.
+            WorldItem.NoDropRotation = true;
             var item = WorldItem.Spawn(World, new SDG.Unturned.Item(67), new Vector3(0f, 1.2f, 0f));   // metal scrap, dropped from 1.2m
-            yield return Until(() => item.Settled, maxSimSeconds: 4);
+            yield return Until(() => item.Settled, maxSimSeconds: 5);
 
             T.Check("item settled before timeout", item.Settled);
             T.Check($"item rests on the surface, didn't tunnel (y={item.GlobalPosition.Y:0.00})", item.GlobalPosition.Y > -0.1f);

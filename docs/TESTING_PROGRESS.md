@@ -30,10 +30,29 @@ Deleted from Main.cs: the `UG_WIREMANAGE` + `UG_WIREFIRE` print probes, the `_de
 frame-3 check. Kept (phase-4 golden scenes): `UG_WIRETEST` (+`[POWERTEST]`/`[LAMPDBG]` prints),
 `UG_WIREOFF`, `UG_WIREWRECK`, `UG_WIREARROWS`, `UG_DEPLOYDMG`, `UG_DEPLOYFOCUS`, `UG_LOADBAR`.
 
+### Phase 2b — the inline `--*test` self-tests (batch C)
+- `inv.drag_swap_crosspage` ← `--invdragtest` · `vitals.consume_effects` ← `--invusetest` ·
+  `inv.consume_hold_flow` ← `--consumeholdtest` (InventoryTests.cs)
+- `gun.mag_reload` ← `--magtest` · `gun.action_types` ← `--shelltest` (GunTests.cs)
+- `craft.blueprints_resolve` ← `--crafttest` · `craft.skill_gate` ← `--craftgate` (CraftTests.cs)
+- `farm.grow_harvest` ← `--farmtest` · `farm.crops_loop` ← `--farmloop` ·
+  `farm.second_yield_roll` ← `--farmyield` (FarmTests.cs; the yield roll now uses seeded `T.Rng`)
+- `skills.grid_xp_mastery` ← `--skilltest` (SkillTests.cs)
+- `armor.product_aggregation` ← `--armortest` (ArmorTests.cs; safe in the shared boot because
+  `RegisterAll` starts with `Assets.clear()` — the catalog is rebuilt, plus inert test ids 9001-9003)
+
+All 13 `Run*Test` functions + their dispatch deleted from Main.cs (~600 lines).
+`--extractblueprints` kept (it's a content tool, not a test).
+
+Fixes found while porting:
+- The old usetest probed Antibiotics as id **11** behind a `useDisinfectant > 0` guard that silently
+  skipped — real Antibiotics is id **389**; the port asserts it unconditionally.
+- `item.trimesh_no_tunnel` was **flaky**: WorldItem's drop pose uses unseeded `GD.RandRange` tilt and
+  an edge landing can wobble past the settle window. The test now sets `WorldItem.NoDropRotation=true`
+  (deterministic pose — it guards CCD-vs-trimesh, not landing dynamics); ResetGlobals restores it.
+
 ## In progress / next
 
-- Batch C: the inline `--*test` self-tests (dragtest/usetest/consumehold/magtest/crafttest/shelltest/
-  farmtest/farmloop/skilltest/craftgate/farmyield/armortest) → L1 GameTests.
 - Phase 3: PowerSolver → core/UnturnedSim + NUnit suite; explosion falloff + stance table extractions.
 - Phase 4: visual goldens (manifest + tools/visual_tests.py + `--visual` in test.sh).
 - Phase 5: tools/nightly_tests.sh (ready-to-enable, NOT wired to cron).

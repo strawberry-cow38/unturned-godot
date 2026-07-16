@@ -60,7 +60,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null;
             bool deployTest = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false, farmTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -70,9 +70,6 @@ namespace UnturnedGodot
                 else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
-                else if (arg == "--heartest") hearTest = true;   // OFFLINE verify: Phase 3 hearing -> a zombie picks the LOUDEST+CLOSEST sound, ignores out-of-range/too-quiet
-                else if (arg == "--armortest") armorTest = true;   // OFFLINE verify: worn clothing's whole-body fall + explosion armor aggregates as a PRODUCT
-                else if (arg == "--farmtest") farmTest = true;   // OFFLINE verify: a planted crop grows over Growth secs then harvest yields Grow
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
@@ -133,17 +130,7 @@ namespace UnturnedGodot
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--build") buildmode = true;
-                else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
-                else if (arg == "--invusetest") { RunUseTest(); GetTree().Quit(); return; }
-                else if (arg == "--crafttest") { RunCraftTest(); GetTree().Quit(); return; }   // parse an item .dat's Blueprints -> print (crafting parser self-test)
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
-                else if (arg == "--shelltest") { RunShellTest(); GetTree().Quit(); return; }   // shotgun shell-by-shell reload detection + sequence self-test
-                else if (arg == "--farmloop") { RunFarmLoopTest(); GetTree().Quit(); return; }   // plant->grow->harvest loop: crops.tsv<->farms.tsv seed linkage + growth/yield self-test
-                else if (arg == "--skilltest") { RunSkillTest(); GetTree().Quit(); return; }   // PlayerSkills grid + XP cost formula + upgrade/mastery self-test
-                else if (arg == "--craftgate") { RunCraftGateTest(); GetTree().Quit(); return; }   // blueprint CRAFTING-skill gating self-test
-                else if (arg == "--farmyield") { RunFarmYieldTest(); GetTree().Quit(); return; }   // agriculture-skill 2nd-yield roll self-test
-                else if (arg == "--consumeholdtest") { RunConsumeHoldTest(); GetTree().Quit(); return; }   // inventory hold->eat->decrement->auto-unequip self-test
-                else if (arg == "--magtest") { RunMagTest(); GetTree().Quit(); return; }   // working-magazine reload-swap self-test
                 else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
                 {
                     AddChild(new Testing.TestHost { Filter = arg.StartsWith("--tests=") ? arg["--tests=".Length..] : "*" });
@@ -239,9 +226,6 @@ namespace UnturnedGodot
 
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
-            if (hearTest) { RunHearTest(); return; }   // pure logic check, no world needed
-            if (armorTest) { RunArmorTest(); return; }   // pure logic check, no world needed
-            if (farmTest) { RunFarmTest(); return; }   // pure logic check, no world needed
 
             if (navShot != null) { GetWindow().Size = new Vector2I(1280, 720); BuildNavShot(navShot); return; }
 
@@ -1246,131 +1230,9 @@ namespace UnturnedGodot
             GD.Print("[skillsui] opened skills menu with a sample PlayerSkills");
         }
 
-        // --farmloop: validate the plant->grow->harvest loop's DATA (crops.tsv seed id <-> farms.tsv growth/grow) + the
-        // growth timer + harvest yield, without a scene. (The console `plant` + E-harvest INPUT is playtested live.)
-        void RunFarmLoopTest()
-        {
-            CropRegistry.Load();
-            SDG.Unturned.FarmRegistry.Load();
-            int pass = 0, fail = 0;
-            foreach (var cropName in new[] { "carrot", "wheat", "tomato", "potato" })
-            {
-                if (!CropRegistry.TryByName(cropName, out var cd)) { GD.Print($"[farmloop] {cropName}: FAIL no crops.tsv entry"); fail++; continue; }
-                SDG.Unturned.FarmRegistry.TryGet(cd.SeedId, out var def);
-                var crop = new SDG.Unturned.PlantedCrop { Def = def, PlantedAt = 0 };
-                bool young = !crop.IsFullyGrown(1);                         // just planted -> not grown
-                bool grown = def.Growth > 0 && crop.IsFullyGrown(def.Growth + 1);   // after Growth secs -> grown
-                ushort yield = crop.Harvest(def.Growth + 1);               // harvest a grown crop -> Grow item id
-                bool yok = yield == def.Grow && yield != 0;
-                bool ok = young && grown && yok;
-                GD.Print($"[farmloop] {cropName}: seed={cd.SeedId} growth={def.Growth}s grow={def.Grow} | young={young} grown={grown} yield={yield}/{yok} => {(ok ? "PASS" : "FAIL")}");
-                if (ok) pass++; else fail++;
-            }
-            GD.Print($"[farmloop] {pass} PASS / {fail} FAIL");
-        }
 
-        // --skilltest: validate the PlayerSkills grid sizes + the source XP cost formula + upgrade/mastery (data-model self-test).
-        void RunSkillTest()
-        {
-            var sk = new SDG.Unturned.PlayerSkills();
-            int pass = 0, fail = 0;
-            void Check(string name, bool ok) { GD.Print($"[skilltest] {name}: {(ok ? "PASS" : "FAIL")}"); if (ok) pass++; else fail++; }
 
-            Check("OFFENSE has 7", sk.skills[(int)SDG.Unturned.EPlayerSpeciality.OFFENSE].Length == 7);
-            Check("DEFENSE has 7", sk.skills[(int)SDG.Unturned.EPlayerSpeciality.DEFENSE].Length == 7);
-            Check("SUPPORT has 8", sk.skills[(int)SDG.Unturned.EPlayerSpeciality.SUPPORT].Length == 8);
 
-            // cost: AGRICULTURE (max7,base10,diff1.0) L0=10,L1=20 ; CRAFTING (max3,base20,diff1.5) L0=20,L1=50
-            var ag = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
-            Check("AGRICULTURE max 7", ag.max == 7);
-            Check("AGRICULTURE L0 cost 10", ag.Cost == 10);
-            var cr = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.CRAFTING);
-            Check("CRAFTING max 3", cr.max == 3);
-            Check("CRAFTING L0 cost 20", cr.Cost == 20);
-
-            // award 30 XP -> upgrade AGRICULTURE twice (10+20) -> level 2, 0 XP left, 3rd blocked
-            sk.AwardExperience(30);
-            bool u1 = sk.TryUpgrade(SDG.Unturned.EPlayerSupport.AGRICULTURE);   // 10 -> lvl1, 20 left
-            bool u2 = sk.TryUpgrade(SDG.Unturned.EPlayerSupport.AGRICULTURE);   // 20 -> lvl2, 0 left
-            bool u3 = sk.TryUpgrade(SDG.Unturned.EPlayerSupport.AGRICULTURE);   // 30 -> blocked (0 XP)
-            Check("upgrade x2 ok + 3rd blocked", u1 && u2 && !u3);
-            Check("AGRICULTURE level 2", sk.Level(SDG.Unturned.EPlayerSupport.AGRICULTURE) == 2);
-            Check("XP spent to 0", sk.experience == 0);
-            Check("mastery 2/7", Mathf.Abs(ag.Mastery - 2f / 7f) < 0.001f);
-
-            // SHARPSHOOTER recoil/spread multiplier = 1 - mastery*0.4 (lvl0 = 1.0, max7 = 0.6)
-            var ss = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.SHARPSHOOTER);
-            ss.level = 0; Check("sharpshooter mult 1.0 at lvl0", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 1.0f) < 0.001f);
-            ss.level = 7; Check("sharpshooter mult 0.6 at max", Mathf.Abs(sk.SharpshooterRecoilMultiplier() - 0.6f) < 0.001f);
-
-            // STRENGTH fall-damage multiplier = 1 - mastery*0.75 (max STRENGTH lvl 5 -> 0.25)
-            var st = sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.STRENGTH);
-            st.level = 0; Check("strength fall mult 1.0 at lvl0", Mathf.Abs(sk.StrengthFallMultiplier() - 1.0f) < 0.001f);
-            st.level = 5; Check("strength fall mult 0.25 at max", Mathf.Abs(sk.StrengthFallMultiplier() - 0.25f) < 0.001f);
-
-            // survival-sim multipliers at max level (all max 5)
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.VITALITY).level = 5;
-            Check("vitality regen 2.0x at max", Mathf.Abs(sk.VitalityRegenMultiplier() - 2.0f) < 0.001f);
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.SURVIVAL).level = 5;
-            Check("survival drain 0.8x at max", Mathf.Abs(sk.SurvivalDrainMultiplier() - 0.8f) < 0.001f);
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.CARDIO).level = 5;
-            Check("cardio regen 2.0x at max", Mathf.Abs(sk.CardioStaminaRegenMultiplier() - 2.0f) < 0.001f);
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.EXERCISE).level = 5;
-            Check("exercise drain 0.5x at max", Mathf.Abs(sk.ExerciseStaminaDrainMultiplier() - 0.5f) < 0.001f);
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.OVERKILL).level = 7;
-            Check("overkill melee 1.5x at max", Mathf.Abs(sk.OverkillMeleeMultiplier() - 1.5f) < 0.001f);
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.OFFENSE, (int)SDG.Unturned.EPlayerOffense.DEXTERITY).level = 5;
-            Check("dexterity reload 1.5x at max", Mathf.Abs(sk.DexterityReloadSpeed() - 1.5f) < 0.001f);
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.IMMUNITY).level = 5;
-            Check("immunity infection 0.5x at max", Mathf.Abs(sk.ImmunityInfectionMultiplier() - 0.5f) < 0.001f);
-            sk.GetSkill((int)SDG.Unturned.EPlayerSpeciality.DEFENSE, (int)SDG.Unturned.EPlayerDefense.SNEAKYBEAKY).level = 7;
-            Check("sneakybeaky noise 0.25x at max", Mathf.Abs(sk.SneakyBeakyNoiseMultiplier() - 0.25f) < 0.001f);
-
-            GD.Print($"[skilltest] {pass} PASS / {fail} FAIL");
-        }
-
-        // --craftgate: a blueprint requiring CRAFTING level 2 is blocked below it + allowed at/above it (skill-effect self-test).
-        void RunCraftGateTest()
-        {
-            var skills = new SDG.Unturned.PlayerSkills();
-            var bp = new BlueprintDef { Skill = "Craft", SkillLevel = 2 };   // requires CRAFTING >= 2
-            var craft = skills.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.CRAFTING);
-            int pass = 0, fail = 0;
-            void Check(string n, bool ok) { GD.Print($"[craftgate] {n}: {(ok ? "PASS" : "FAIL")}"); if (ok) pass++; else fail++; }
-
-            Check("blocked at CRAFTING 0", !Crafting.MeetsSkill(bp, skills));
-            craft.level = 1;
-            Check("blocked at CRAFTING 1", !Crafting.MeetsSkill(bp, skills));
-            craft.level = 2;
-            Check("allowed at CRAFTING 2", Crafting.MeetsSkill(bp, skills));
-            craft.level = 5;
-            Check("allowed at CRAFTING 5", Crafting.MeetsSkill(bp, skills));
-            Check("no-skill blueprint always ok", Crafting.MeetsSkill(new BlueprintDef { Skill = "", SkillLevel = 0 }, new SDG.Unturned.PlayerSkills()));
-            Check("null skills = ungated", Crafting.MeetsSkill(bp, null));
-
-            GD.Print($"[craftgate] {pass} PASS / {fail} FAIL");
-        }
-
-        // --farmyield: the agriculture-skill 2nd-yield roll (source InteractableFarm: Random.value < mastery(AGRICULTURE)).
-        void RunFarmYieldTest()
-        {
-            var skills = new SDG.Unturned.PlayerSkills();
-            var ag = skills.GetSkill((int)SDG.Unturned.EPlayerSpeciality.SUPPORT, (int)SDG.Unturned.EPlayerSupport.AGRICULTURE);
-            int pass = 0, fail = 0;
-            void Check(string n, bool ok) { GD.Print($"[farmyield] {n}: {(ok ? "PASS" : "FAIL")}"); if (ok) pass++; else fail++; }
-
-            ag.level = 0; Check("mastery 0 at agri 0", ag.Mastery == 0f);
-            ag.level = 7; Check("mastery 1.0 at agri max", Mathf.Abs(ag.Mastery - 1f) < 0.001f);
-            ag.level = 0; int f0 = 0; for (int i = 0; i < 2000; i++) if (GD.Randf() < ag.Mastery) f0++;
-            Check("no 2nd-yield at agri 0", f0 == 0);
-            ag.level = 7; int f1 = 0; for (int i = 0; i < 2000; i++) if (GD.Randf() < ag.Mastery) f1++;
-            Check("always 2nd-yield at agri max", f1 == 2000);
-            ag.level = 4; int f4 = 0; for (int i = 0; i < 4000; i++) if (GD.Randf() < ag.Mastery) f4++;
-            float rate = f4 / 4000f;   // mastery 4/7 ~= 0.571
-            Check($"~57% at agri 4 (got {rate:0.00})", Mathf.Abs(rate - 4f / 7f) < 0.05f);
-
-            GD.Print($"[farmyield] {pass} PASS / {fail} FAIL");
-        }
 
         // --itemtest=ID,ID,...: drop those loot items as real physics WorldItems from a small height onto a ground plane,
         // to eyeball the extracted mesh + primary albedo + best-fit box AND that they FALL + settle (gravity, no float).
@@ -2125,308 +1987,10 @@ namespace UnturnedGodot
             }
         }
 
-        // Headless self-test of PlayerInventory.TryDrag (the ported move/swap): asserts move-to-empty, out-of-bounds
-        // rejection, and drop-onto-item swap, printing PASS/FAIL per case. Verifies the drag MODEL without the mouse.
-        static void RunDragTest()
-        {
-            SDG.Unturned.ItemCatalog.RegisterAll();
-            var inv = new SDG.Unturned.PlayerInventory();
-            var pk = inv.items[2];                              // pockets 5x3
-            pk.tryAddItem(new SDG.Unturned.Item(15));          // Medkit 2x2 -> (0,0)
-            pk.tryAddItem(new SDG.Unturned.Item(14));          // Bottled Water 1x1 -> (2,0)
-            pk.tryAddItem(new SDG.Unturned.Item(95));          // Bandage 1x1 -> (3,0)
-            int pass = 0, fail = 0;
-            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[DRAGTEST] PASS  {n}"); } else { fail++; GD.Print($"[DRAGTEST] FAIL  {n}"); } }
 
-            // 1. move Water (2,0) -> empty (4,2)
-            Check("move-to-empty returns true", inv.TryDrag(2, 2, 0, 2, 4, 2, 0));
-            Check("water now at (4,2)", pk.getItem(4, 2)?.item.id == 14);
-            Check("old cell (2,0) freed", pk.getItem(2, 0) == null);
 
-            // 2. out-of-bounds target rejected, no change
-            Check("OOB move returns false", !inv.TryDrag(2, 4, 2, 2, 10, 10, 0));
-            Check("water still at (4,2)", pk.getItem(4, 2)?.item.id == 14);
 
-            // 3. drop Water (4,2) onto Bandage (3,0) -> swap
-            Check("swap returns true", inv.TryDrag(2, 4, 2, 2, 3, 0, 0));
-            Check("water swapped to (3,0)", pk.getItem(3, 0)?.item.id == 14);
-            Check("bandage swapped to (4,2)", pk.getItem(4, 2)?.item.id == 95);
 
-            // 4. cross-page move Water (3,0) -> backpack, after wearing a bag
-            inv.wearBackpack(new SDG.Unturned.Item(253));      // 8x7
-            Check("cross-page move returns true", inv.TryDrag(2, 3, 0, SDG.Unturned.PlayerInventory.BACKPACK, 5, 5, 0));
-            Check("water now in backpack (5,5)", inv.items[SDG.Unturned.PlayerInventory.BACKPACK].getItem(5, 5)?.item.id == 14);
-            Check("water gone from pockets", pk.getItem(3, 0) == null);
-
-            GD.Print($"[DRAGTEST] RESULT {pass} passed, {fail} failed");
-        }
-
-        // Headless self-test of PlayerController.Consume (the consumable effects). Asserts the real .dat values land
-        // on the vitals: Medkit +75 hp + stops bleeding, Canned Beans +food, Bottled Water +water.
-        static void RunUseTest()
-        {
-            SDG.Unturned.ItemCatalog.RegisterAll();
-            var p = new PlayerController { Health = 20f, Food = 0.1f, Water = 0.1f, Bleeding = true };
-            int pass = 0, fail = 0;
-            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[USETEST] PASS  {n}"); } else { fail++; GD.Print($"[USETEST] FAIL  {n}"); } }
-
-            p.Consume(SDG.Unturned.Assets.find(15));   // Medkit: +75 health, stop bleeding
-            Check("medkit -> health 20+75=95", Mathf.Abs(p.Health - 95f) < 0.01f);
-            Check("medkit -> bleeding cleared", !p.Bleeding);
-            p.Consume(SDG.Unturned.Assets.find(13));   // Canned Beans: +10 health, +55 food
-            Check("beans -> food 0.1+0.55=0.65", Mathf.Abs(p.Food - 0.65f) < 0.01f);
-            Check("beans -> health capped at 100", Mathf.Abs(p.Health - 100f) < 0.01f);   // 95+10 -> clamp 100
-            p.Consume(SDG.Unturned.Assets.find(14));   // Bottled Water: +55 water
-            Check("water -> water 0.1+0.55=0.65", Mathf.Abs(p.Water - 0.65f) < 0.01f);
-
-            // NEW effects loaded from consumable_stats.tsv (the whole catalog, not just 8 hardcoded)
-            p.Stamina = 0.1f; p.Infection = 0.5f;
-            p.Consume(SDG.Unturned.Assets.find(93));   // Bottled Energy: +55 water, +75 energy
-            Check("energy -> stamina 0.1+0.75=0.85", Mathf.Abs(p.Stamina - 0.85f) < 0.01f);
-            var abx = SDG.Unturned.Assets.find(11);    // Antibiotics: disinfectant (lowers infection)
-            if (abx != null && abx.useDisinfectant > 0) { p.Consume(abx); Check("antibiotics -> infection dropped", p.Infection < 0.5f); }
-            var cola = SDG.Unturned.Assets.find(80);   // Canned Cola -- was inert (no hardcoded stats); now works from the .dat
-            Check("previously-inert cola is now IsConsumable", cola != null && cola.IsConsumable);
-            Check("cola has real .dat effects (water/energy)", cola != null && (cola.useWater > 0 || cola.useEnergy > 0));
-
-            GD.Print($"[USETEST] RESULT {pass} passed, {fail} failed");
-        }
-
-        // --consumeholdtest: the full inventory HOLD flow -- equip a consumable to hand, click to eat, decrement the
-        // stack, and auto-unequip back to the gun when the last one is gone (source UseableConsumeable equip->use->remove).
-        static void RunConsumeHoldTest()
-        {
-            SDG.Unturned.ItemCatalog.RegisterAll();
-            var p = new PlayerController { Health = 50f, Food = 0.1f, Water = 0.1f };
-            p.Inventory = new PlayerInventory();
-            p.Inventory.items[2].tryAddItem(new SDG.Unturned.Item(13));   // 2x Canned Beans (id 13) in pockets, each its own grid item
-            p.Inventory.items[2].tryAddItem(new SDG.Unturned.Item(13));
-            int pass = 0, fail = 0;
-            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[HOLDTEST] PASS  {n}"); } else { fail++; GD.Print($"[HOLDTEST] FAIL  {n}"); } }
-
-            var beans = SDG.Unturned.Assets.find(13);
-            Check("beans resolves + IsConsumable", beans != null && beans.IsConsumable);
-            Check("beans has a held mesh in the registry", ConsumableRegistry.Mesh(13) != null);
-            Check("start count = 2", p.Inventory.getItemCount(13) == 2);
-
-            p.EquipHeldConsumable(beans, ConsumableRegistry.Mesh(13));
-            Check("holding after equip", p.HoldingConsumable);
-            Check("no stack spent just by holding", p.Inventory.getItemCount(13) == 2);
-
-            p.StartConsume();                                                 // 1st click -> eat
-            for (int i = 0; i < 200; i++) p.DebugConsumeTick(0.05f);   // 10s > the longest per-item Use clip (bag_chips 7.6s)
-            Check("food rose after 1st eat", p.Food > 0.5f);
-            Check("count -> 1 after 1st eat", p.Inventory.getItemCount(13) == 1);
-            Check("still holding (1 left)", p.HoldingConsumable);
-
-            p.StartConsume();                                                 // 2nd click -> eat the last one
-            for (int i = 0; i < 200; i++) p.DebugConsumeTick(0.05f);   // 10s > the longest per-item Use clip (bag_chips 7.6s)
-            Check("count -> 0 after 2nd eat", p.Inventory.getItemCount(13) == 0);
-            Check("auto-unequipped when depleted", !p.HoldingConsumable);
-
-            // per-item eat/drink archetypes (source: each item plays its own Use clip; useTime = that clip's length)
-            var beansAn = ConsumableRegistry.Anims("canned_beans");
-            var waterAn = ConsumableRegistry.Anims("bottled_water");
-            var medkitAn = ConsumableRegistry.Anims("medkit");
-            Check("beans has a Use archetype clip", !string.IsNullOrEmpty(beansAn.Use));
-            Check("drink clip != eat clip (per-item)", waterAn.Use != beansAn.Use && !string.IsNullOrEmpty(waterAn.Use));
-            Check("syringe/medkit clip != eat clip", medkitAn.Use != beansAn.Use && !string.IsNullOrEmpty(medkitAn.Use));
-            Check("per-item useTime from Use-clip length", waterAn.UseLen > 0f && Mathf.Abs(waterAn.UseLen - beansAn.UseLen) > 0.01f);
-
-            // per-item use/eat/drink SOUND (source ItemConsumeableAsset.use)
-            Check("beans use-sound = eatcanl", ConsumableRegistry.Sound(13) == "eatcanl");
-            Check("water use-sound = drinkswallow", ConsumableRegistry.Sound(14) == "drinkswallow");
-            Check("medkit use-sound = use_medkit", ConsumableRegistry.Sound(15) == "use_medkit");
-            Check("beans WAV loads as 16-bit PCM", PlayerController.DebugCanLoadWav("eatcanl"));
-            Check("water WAV loads as 16-bit PCM", PlayerController.DebugCanLoadWav("drinkswallow"));
-
-            // no-texture consumables use their flat _Color (cheese=yellow, potato=brown), not the gray default
-            Check("cheese has a flat _Color (no texture)", ConsumableRegistry.FlatColor("cheese") is Color cc && cc.G > 0.5f && cc.B < 0.5f);
-            Check("potato has a flat _Color", ConsumableRegistry.FlatColor("potato") != null);
-            Check("textured item (canned_beans) has NO flat color", ConsumableRegistry.FlatColor("canned_beans") == null);
-
-            GD.Print($"[HOLDTEST] beans={beansAn.Use}/{beansAn.UseLen:0.00}s water={waterAn.Use}/{waterAn.UseLen:0.00}s medkit={medkitAn.Use}/{medkitAn.UseLen:0.00}s");
-            GD.Print($"[HOLDTEST] RESULT {pass} passed, {fail} failed");
-        }
-
-        // --magtest: working magazines (Military STANAG) -- reload SWAPS the fullest spare mag in, the old one goes back
-        // keeping its leftover rounds, ammo is conserved, and no spare mag = no reload.
-        static void RunMagTest()
-        {
-            SDG.Unturned.ItemCatalog.RegisterAll();
-            var p = new PlayerController { Inventory = new PlayerInventory() };
-            p.Inventory.wearBackpack(new SDG.Unturned.Item(253));   // Alicepack -> the BACKPACK page has room
-            var bag = p.Inventory.items[PlayerInventory.BACKPACK];
-            bag.tryAddItem(new SDG.Unturned.Item(6, 30));   // 2 full + 1 partial Military mags in the bag
-            bag.tryAddItem(new SDG.Unturned.Item(6, 30));
-            bag.tryAddItem(new SDG.Unturned.Item(6, 12));
-            int pass = 0, fail = 0;
-            void Check(string n, bool ok) { if (ok) { pass++; GD.Print($"[MAGTEST] PASS  {n}"); } else { fail++; GD.Print($"[MAGTEST] FAIL  {n}"); } }
-
-            p.LoadGun("res://content/eaglefire.dat");
-            Check("eaglefire uses magazine items (caliber match)", p.DebugUsesMag());
-            Check("gun starts loaded (Ammo=30)", p.Ammo == 30);
-            Check("3 spare mags = 72 rounds in the bag", p.Inventory.getItemCount(6) == 72);
-            Check("has a spare mag to reload from", p.DebugHasSpareMag());
-
-            p.Ammo = 5;              // fired down to 5 (a round still chambered)
-            p.DebugMagSwap();        // TACTICAL reload -> keep the chambered round
-            Check("tactical reload keeps the chambered round (Ammo=31 = mag+1)", p.Ammo == 31);
-            Check("ammo conserved: spares now 46 (72 - 30 taken + 4 old back, chambered round stayed)", p.Inventory.getItemCount(6) == 46);
-
-            p.Ammo = 0;              // fired dry -> chamber empty
-            p.DebugMagSwap();        // EMPTY reload -> no +1 (the rack chambers one out of the fresh mag)
-            Check("empty reload has no chambered bonus (Ammo=30, not 31)", p.Ammo == 30);
-
-            // empty the bag of mags -> reload must be blocked
-            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++) { var pg = p.Inventory.items[b]; for (int i = pg.getItemCount() - 1; i >= 0; i--) if (pg.getItem((byte)i)?.item?.id == 6) pg.removeItem((byte)i); }
-            Check("no spare mag -> cannot reload", !p.DebugHasSpareMag());
-
-            // masterkey: a BREAK-action double-barrel that feeds from loose 20 Gauge Shells (item 381, stack 32), no +1 chamber
-            int Jars(ushort id) { int n = 0; var pg = p.Inventory.items[PlayerInventory.BACKPACK]; for (byte i = 0; i < pg.getItemCount(); i++) if (pg.getItem(i)?.item?.id == id) n++; return n; }
-            p.LoadGun("res://content/masterkey.dat");
-            Check("masterkey is a shotgun", p.DebugIsShotgun());
-            Check("masterkey break-action is NOT shell-by-shell (loads together)", !p.DebugShellReload());
-            Check("masterkey has no +1 chamber", !p.DebugHasChamber());
-            Check("masterkey feeds from loose shells", p.DebugUsesShells());
-            Check("masterkey fires 8 pellets (from the 20ga shell)", p.DebugPellets() == 8);
-            bag.tryAddItem(new SDG.Unturned.Item(381, 20));
-            bag.tryAddItem(new SDG.Unturned.Item(381, 20));   // 20 + 20 -> merges to 32, overflows 8
-            Check("20 gauge shells stack (40 carried)", p.DebugCountShells() == 40);
-            Check("shells cap at 32/slot (40 -> 32 + 8 = 2 stacks)", Jars(381) == 2);
-            p.Ammo = 0;                 // both barrels empty
-            p.DebugCompleteReload();     // one reload
-            Check("masterkey loads BOTH barrels from the stack (Ammo=2)", p.Ammo == 2);
-            Check("reload consumed 2 shells (40 -> 38)", p.DebugCountShells() == 38);
-            // 12 Gauge Shells (item 113, caliber 8) are a DIFFERENT ammo type -> the caliber-16 masterkey ignores them
-            bag.tryAddItem(new SDG.Unturned.Item(113, 32));
-            Check("12 gauge shells don't count for the 20ga masterkey (still 38)", p.DebugCountShells() == 38);
-            p.LoadGun("res://content/bluntforce.dat");
-            Check("bluntforce (pump) feeds from loose shells", p.DebugUsesShells());
-            Check("bluntforce is shell-by-shell (pump)", p.DebugShellReload());
-            Check("bluntforce sees the 12 gauge shells (32)", p.DebugCountShells() == 32);
-            Check("bluntforce fires 6 pellets (from the 12ga shell)", p.DebugPellets() == 6);
-
-            // bolt/pump per-shot rechamber (source RechamberAfterShotCount): a bolt-action must cycle the bolt before firing again
-            p.LoadGun("res://content/timberwolf.dat");
-            Check("timberwolf (bolt) rechambers after each shot", p.DebugRechamberCount() == 1);
-            p.DebugFireRechamber();
-            Check("after a shot the bolt gun must cycle (blocked)", p.DebugNeedsRechamber());
-            p.DebugRechamberTick(0.30);   // past RechamberAfterShotDelay -> the bolt-cycle animation starts
-            p.DebugRechamberTick(0.60);   // past the cycle -> ready again
-            Check("after cycling the bolt gun can fire again", !p.DebugNeedsRechamber());
-            p.LoadGun("res://content/eaglefire.dat");
-            Check("eaglefire (semi) does NOT rechamber per shot", p.DebugRechamberCount() == 0);
-            p.DebugFireRechamber();
-            Check("semi-auto never needs a per-shot cycle", !p.DebugNeedsRechamber());
-            // world loot: magazines spawn FULL (master)
-            Check("military mag spawns full as loot (30 rounds)", SDG.Unturned.Assets.makeLoot(6).amount == 30);
-            Check("non-mag loot spawns as a single (1)", SDG.Unturned.Assets.makeLoot(13).amount == 1);
-
-            // melee: the strong-swing multiplier + stamina come from the real .dat (source UseableMelee)
-            string knifePath = ProjectSettings.GlobalizePath("res://content/knife_military.dat");
-            if (System.IO.File.Exists(knifePath))
-            {
-                var mk = MeleeDef.FromDatText("knife_military", System.IO.File.ReadAllText(knifePath));
-                Check("melee: knife strong-swing x1.5 (Strength)", System.Math.Abs(mk.Strength - 1.5f) < 0.01f);
-                Check("melee: knife swing costs 15 stamina", System.Math.Abs(mk.Stamina - 15f) < 0.01f);
-                Check("melee: knife is NOT Repeated (keeps normal weak/strong swings)", !mk.Repeated);
-                // blowtorch: source "Repeated" + "Repair" flags (trailing bare flags past the Blueprints block, on a CRLF .dat) -> continuous HOLD tool, no weak/strong swing, no strong (RMB) attack
-                string btPath = ProjectSettings.GlobalizePath("res://content/blowtorch.dat");
-                if (System.IO.File.Exists(btPath))
-                {
-                    var bt = MeleeDef.FromDatText("blowtorch", System.IO.File.ReadAllText(btPath));
-                    Check("melee: blowtorch parses Repeated (no weak/strong swing, you don't punch)", bt.Repeated);
-                    Check("melee: blowtorch parses Repair (continuous heal, not damage)", bt.Repair);
-                }
-            }
-
-            // gun-state persistence: a gun remembers ammo/firemode/mag on its backing item through hands<->inventory<->drop (master)
-            var gunItem = new SDG.Unturned.Item(4);   // an Eaglefire item
-            p.LoadGun("res://content/eaglefire.dat");
-            p.DebugSetHeldItem(gunItem);
-            p.Ammo = 17; p.DebugSetFiremode(2);       // fire some down + flick to Auto
-            p.DebugSaveGunState();
-            Check("item remembers the gun's ammo (17)", gunItem.gunAmmo == 17);
-            Check("item remembers the fire mode (Auto=2)", gunItem.gunFiremode == 2);
-            p.Ammo = 30; p.DebugSetFiremode(1);        // wipe live state (as if a fresh equip)
-            p.DebugRestoreGunState(gunItem);
-            Check("re-equip restores ammo (17)", p.Ammo == 17);
-            Check("re-equip restores fire mode (Auto)", p.DebugFiremodeIdx() == 2);
-            p.Ammo = 25; p.DebugRestoreGunState(new SDG.Unturned.Item(4));   // a fresh item has no saved state
-            Check("fresh gun item keeps live defaults (no clobber)", p.Ammo == 25);
-            GD.Print($"[MAGTEST] RESULT {pass} passed, {fail} failed");
-        }
-
-        // Crafting parser self-test: parse a real item .dat's Blueprints list -> print each (operation, inputs,
-        // outputs, skill, station). Proves BlueprintDef reads the modern nested-GUID blueprint format end to end.
-        static void RunCraftTest()
-        {
-            SDG.Unturned.ItemCatalog.RegisterAll();   // populates the item GUID->id map used to resolve blueprint ingredients
-            string path = ProjectSettings.GlobalizePath("res://content/eaglefire.dat");
-            if (!System.IO.File.Exists(path)) { GD.Print($"[CRAFTTEST] no .dat at {path}"); return; }
-            string text = System.IO.File.ReadAllText(path);
-            SDG.Unturned.IDatDictionary d = new SDG.Unturned.DatParser().Parse(text);
-            var bps = BlueprintDef.ParseAll(d, "4");
-            GD.Print($"[CRAFTTEST] eaglefire.dat -> {bps.Count} blueprint(s):");
-            int resolved = 0, total = 0;
-            foreach (var bp in bps)
-            {
-                GD.Print("[CRAFTTEST]   " + bp.ToString());
-                foreach (var ing in bp.Inputs)
-                {
-                    total++;
-                    var a = SDG.Unturned.Assets.findByGuid(ing.Guid);
-                    if (a != null) { resolved++; GD.Print($"[CRAFTTEST]     in {ing.Guid.Substring(0, 8)} -> id {a.id} \"{a.itemName}\" x{ing.Amount}{(ing.Consume ? "" : " (tool)")}"); }
-                    else GD.Print($"[CRAFTTEST]     in {ing.Guid} -> UNRESOLVED");
-                }
-            }
-            GD.Print($"[CRAFTTEST] resolved {resolved}/{total} ingredient GUIDs -> item ids");
-
-            // craft-LOGIC proof against a mock inventory, using eaglefire's real Repair blueprint (4 Metal Scrap + Blowtorch tool)
-            var repair = bps.Find(b => b.Operation == "RepairTargetItem");
-            bool logicOk = false;
-            if (repair != null)
-            {
-                var inv = new Crafting.DictInv(); inv.Add(67, 4); inv.Add(76, 1);   // Metal Scrap x4 + Blowtorch x1
-                bool can = Crafting.CanCraft(repair, inv, out string why);
-                Crafting.DoCraft(repair, inv);
-                GD.Print($"[CRAFTTEST] logic: CanCraft={can} ({why}); after craft scrap={inv.Count(67)}(exp 0) blowtorch={inv.Count(76)}(exp 1 tool-kept)");
-                var inv2 = new Crafting.DictInv(); inv2.Add(67, 2); inv2.Add(76, 1);
-                bool can2 = Crafting.CanCraft(repair, inv2, out string why2);
-                GD.Print($"[CRAFTTEST] logic: CanCraft(only 2 scrap)={can2}(exp false) ({why2})");
-                // outputs path: a synthetic Craft that turns 2 scrap -> 1 blowtorch
-                var scrapA = SDG.Unturned.Assets.find(67); var torchA = SDG.Unturned.Assets.find(76);
-                var inv3 = new Crafting.DictInv(); inv3.Add(67, 2);
-                if (scrapA != null && torchA != null)
-                {
-                    var synth = new BlueprintDef { Operation = "Craft", Name = "synthetic" };
-                    synth.Inputs.Add(new BlueprintDef.Ingredient { Guid = scrapA.guid, Amount = 2, Consume = true });
-                    synth.Outputs.Add(new BlueprintDef.Ingredient { Guid = torchA.guid, Amount = 1, Consume = true });
-                    Crafting.DoCraft(synth, inv3);
-                    GD.Print($"[CRAFTTEST] logic outputs: 2 scrap -> craft -> scrap={inv3.Count(67)}(exp 0) blowtorch={inv3.Count(76)}(exp 1 produced)");
-                }
-                logicOk = can && !can2 && inv.Count(67) == 0 && inv.Count(76) == 1 && inv3.Count(76) == 1;
-
-                // craft against the REAL grid PlayerInventory via the adapter (in-game integration)
-                var pinv = new SDG.Unturned.PlayerInventory();
-                pinv.tryAddItem(new SDG.Unturned.Item(67, 4));   // Metal Scrap x4
-                pinv.tryAddItem(new SDG.Unturned.Item(76, 1));   // Blowtorch x1
-                var padapt = new Crafting.PlayerInvAdapter(pinv);
-                bool pcan = Crafting.CanCraft(repair, padapt, out _);
-                Crafting.DoCraft(repair, padapt);
-                GD.Print($"[CRAFTTEST] PlayerInventory: CanCraft={pcan}; after craft scrap={pinv.getItemCount(67)}(exp 0) blowtorch={pinv.getItemCount(76)}(exp 1 tool-kept)");
-                logicOk = logicOk && pcan && pinv.getItemCount(67) == 0 && pinv.getItemCount(76) == 1;
-            }
-
-            // blueprint REGISTRY: load the pre-extracted catalog + list what's craftable from a stocked inventory
-            int loaded = BlueprintRegistry.Load();
-            var stock = new Crafting.DictInv(); stock.Add(67, 50); stock.Add(76, 1);   // 50 Metal Scrap + Blowtorch
-            var applic = loaded > 0 ? BlueprintRegistry.Applicable(stock) : new System.Collections.Generic.List<BlueprintDef>();
-            GD.Print($"[CRAFTTEST] registry: {loaded} loaded; {applic.Count} craftable from 50 scrap + blowtorch");
-            for (int i = 0; i < System.Math.Min(6, applic.Count); i++) GD.Print("[CRAFTTEST]   craftable: " + applic[i]);
-            GD.Print($"[CRAFTTEST] RESULT parse {bps.Count}bp, resolve {resolved}/{total}, craft-logic {(logicOk ? "PASS" : "FAIL")}, registry {loaded}bp");
-        }
 
         // --extractblueprints: walk the retail item .dats -> content/blueprints.tsv (the blueprint catalog the
         // BlueprintRegistry loads, since the port bundles only a few item .dats). Reuses the verified BlueprintDef parse.
@@ -2457,29 +2021,6 @@ namespace UnturnedGodot
             GD.Print($"[BPEXTRACT] {items} craftable items, {bps} blueprints -> content/blueprints.tsv");
         }
 
-        // Shotgun shell-by-shell reload self-test: verify Pump/Break guns are detected as ShellReload + show the
-        // incremental load sequence (each shell cancelable by firing). Non-shell guns mag-swap (whole mag at once).
-        static void RunShellTest()
-        {
-            foreach (var g in new[] { "masterkey", "eaglefire", "cobra", "grizzly" })
-            {
-                string path = ProjectSettings.GlobalizePath($"res://content/{g}.dat");
-                if (!System.IO.File.Exists(path)) { GD.Print($"[SHELLTEST] {g}: (no .dat bundled)"); continue; }
-                var gun = GunDef.FromDatText(System.IO.File.ReadAllText(path));
-                GD.Print($"[SHELLTEST] {g}: Action={gun.Action ?? "?"} ShellReload={gun.ShellReload} AmmoMax={gun.AmmoMax}");
-                if (gun.ShellReload)
-                {
-                    var seq = new System.Collections.Generic.List<int>();
-                    for (int a = 0; a < gun.AmmoMax;) { a = System.Math.Min(a + 1, gun.AmmoMax); seq.Add(a); }
-                    GD.Print($"[SHELLTEST]   loads shell-by-shell: {string.Join(" -> ", seq)} (firing mid-reload cancels + shoots what's loaded)");
-                }
-            }
-            // catalog gun-wiring: gun items with gunName set are pick-up-equippable in-game (EquipHeldGun -> viewmodel)
-            SDG.Unturned.ItemCatalog.RegisterAll();
-            int wired = 0; var sample = new System.Collections.Generic.List<string>();
-            foreach (var a in SDG.Unturned.Assets.all()) if (!string.IsNullOrEmpty(a.gunName)) { wired++; if (sample.Count < 8) sample.Add($"{a.id}={a.gunName}"); }
-            GD.Print($"[SHELLTEST] equippable guns (gunName set): {wired} -- {string.Join(", ", sample)}");
-        }
 
         // The melee/fall/stance/broken-legs/grenade self-tests that lived here as frame-scripted drivers are now L1
         // GameTests: player.stance_stealth_radius, player.fall_damage, player.broken_legs_mend, combat.melee_kill,
@@ -2953,78 +2494,8 @@ namespace UnturnedGodot
             GetTree().Quit();
         }
 
-        // --heartest: a zombie should react to the LOUDEST+CLOSEST sound it can hear (salience = loudness - dist),
-        // ignoring sounds outside its HearingRange sphere or too quiet to carry that far (master's hearing rework).
-        void RunHearTest()
-        {
-            var z = new ZombieController();
-            AddChild(z);                       // _Ready: joins the "zombies" group, HearingRange 48
-            z.GlobalPosition = Vector3.Zero;
-            z.Hear(new Vector3(10, 0, 0), 12f);   // dist 10 <= 12 loud  -> heard, salience 2
-            z.Hear(new Vector3(5, 0, 0), 6f);     // dist 5  <= 6  loud  -> heard, salience 1
-            z.Hear(new Vector3(40, 0, 0), 48f);   // dist 40 <= 48 loud  -> heard, salience 8  (LOUD gunshot beats near footsteps)
-            z.Hear(new Vector3(3, 0, 0), 2f);     // dist 3  >  2  loud  -> IGNORED (too quiet to carry)
-            z.Hear(new Vector3(60, 0, 0), 64f);   // dist 60 >  48 range -> IGNORED (outside the ears)
-            var (pos, sal) = z.DebugHeard();
-            bool ok = pos.DistanceTo(new Vector3(40, 0, 0)) < 0.01f && Mathf.Abs(sal - 8f) < 0.01f;
-            GD.Print($"[heartest] winner pos={pos} salience={sal:0.##}  (expected (40,0,0) sal 8)  -> {(ok ? "PASS" : "FAIL")}");
-            GD.Print($"[heartest] loud gunshot(48@40m,sal8) beat near footstep(6@5m,sal1); too-quiet(2@3m) + out-of-range(64@60m) correctly ignored");
-            // stay-on-task gate: while committed to a loud sound (salience 8), a quieter footstep must NOT override, but a louder shot must.
-            bool ignoresFootstep = !z.DebugWouldOverride(8f, new Vector3(5, 0, 0), 6f);    // footstep salience 1 < 8 -> stays on task
-            bool takesLouder     =  z.DebugWouldOverride(8f, new Vector3(10, 0, 0), 48f);   // gunshot salience 38 > 8 -> switches
-            GD.Print($"[heartest] stay-on-task: ignores quieter footstep={ignoresFootstep}, switches to louder shot={takesLouder} -> {(ignoresFootstep && takesLouder ? "PASS" : "FAIL")}");
-            GetTree().Quit();
-        }
 
-        // --armortest: worn clothing's whole-body protection aggregates as a PRODUCT of every worn piece (source
-        // PlayerClothing), for fall (fallingDamageMultiplier) + explosion (explosionArmor). A bare player = 1.0 (no cut).
-        void RunArmorTest()
-        {
-            SDG.Unturned.Assets.clear();
-            SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset { id = 9001, itemName = "Test Vest", type = SDG.Unturned.EItemType.VEST, fallingDamageMultiplier = 0.5f, explosionArmor = 0.7f });
-            SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset { id = 9002, itemName = "Test Hat",  type = SDG.Unturned.EItemType.HAT,  fallingDamageMultiplier = 0.8f });
-            var inv = new SDG.Unturned.PlayerInventory();
-            float bare = inv.FallingDamageMultiplier;                 // nothing worn -> 1.0
-            inv.wearVest(new SDG.Unturned.Item(9001));
-            inv.wearHat(new SDG.Unturned.Item(9002));
-            float fall = inv.FallingDamageMultiplier;                 // 0.5 * 0.8 = 0.40
-            float expl = inv.ExplosionArmor;                          // 0.7 * 1.0 = 0.70
-            bool ok = Mathf.Abs(bare - 1f) < 1e-4f && Mathf.Abs(fall - 0.40f) < 1e-4f && Mathf.Abs(expl - 0.70f) < 1e-4f;
-            GD.Print($"[armortest] bare={bare:0.##}  fall(vest.5 x hat.8)={fall:0.###}  explosion(vest.7)={expl:0.###}  (expect 1 / 0.4 / 0.7) -> {(ok ? "PASS" : "FAIL")}");
-            GD.Print($"[armortest] a 50 m/s fall: {Mathf.RoundToInt(Mathf.Min(101f, 50f))} dmg bare -> {Mathf.RoundToInt(Mathf.Min(101f, 50f * fall))} dmg armored (x{fall:0.##})");
-            // real data: RegisterAll loads the catalog + wires clothing_armor.tsv onto the actual items
-            SDG.Unturned.ItemCatalog.RegisterAll();
-            var boots = SDG.Unturned.Assets.find(1839);   // fall gear (Falling_Damage_Multiplier 0.05)
-            var mil   = SDG.Unturned.Assets.find(2);       // armored top (Armor/Armor_Explosion 0.95)
-            bool data = boots != null && Mathf.Abs(boots.fallingDamageMultiplier - 0.05f) < 1e-3f
-                     && mil != null && Mathf.Abs(mil.explosionArmor - 0.95f) < 1e-3f;
-            GD.Print($"[armortest] real data wired: id1839 fall={boots?.fallingDamageMultiplier:0.###}(exp .05)  id2 expl={mil?.explosionArmor:0.###}(exp .95) -> {(data ? "PASS" : "FAIL")}");
-            // bone-proof: any worn piece with Prevents_Falling_Broken_Bones stops leg-break (source PlayerLife:2436)
-            SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset { id = 9003, itemName = "Test Boots", type = SDG.Unturned.EItemType.PANTS, preventsFallingBoneBreak = true });
-            var inv2 = new SDG.Unturned.PlayerInventory();
-            bool bareBone = inv2.PreventsFallingBoneBreak;                 // nothing worn -> legs CAN break
-            inv2.wearPants(new SDG.Unturned.Item(9003));
-            bool bootBone = inv2.PreventsFallingBoneBreak;                 // boots on -> bones protected
-            GD.Print($"[armortest] bone-proof: bare={bareBone}(want F)  boots={bootBone}(want T) -> {((!bareBone && bootBone) ? "PASS" : "FAIL")}");
-            GetTree().Quit();
-        }
 
-        // --farmtest: a planted crop grows over FarmDef.Growth seconds, then harvest yields FarmDef.Grow (source InteractableFarm).
-        void RunFarmTest()
-        {
-            SDG.Unturned.FarmRegistry.Load();
-            bool isSeed = SDG.Unturned.FarmRegistry.IsSeed(330);            // Carrot seed
-            SDG.Unturned.FarmRegistry.TryGet(330, out var carrot);
-            var crop = new SDG.Unturned.PlantedCrop { Def = carrot, PlantedAt = 0.0 };
-            bool freshOk = !crop.IsFullyGrown(5.0) && crop.Harvest(5.0) == 0;   // just planted -> not grown, no yield
-            double t = carrot.Growth + 1.0;
-            ushort yield = crop.Harvest(t);
-            bool grownOk = crop.IsFullyGrown(t) && yield == carrot.Grow && yield != 0;   // grown -> yields Grow (329)
-            float half = crop.GrowthFraction(carrot.Growth / 2.0);
-            bool ok = isSeed && freshOk && grownOk && Mathf.Abs(half - 0.5f) < 0.01f;
-            GD.Print($"[farmtest] {SDG.Unturned.FarmRegistry.Count} crops; seed330 growth={carrot.Growth}s grow={carrot.Grow}: fresh(nogrow,yield0)={freshOk} grown(yield{yield})={grownOk} half={half:0.##} -> {(ok ? "PASS" : "FAIL")}");
-            GetTree().Quit();
-        }
 
         public override void _Process(double delta)
         {
