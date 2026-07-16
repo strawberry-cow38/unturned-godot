@@ -9,5 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SDG.NetTransport\SDG.NetTransport.csproj" />
     <ProjectReference Include="..\SDG.NetPak\SDG.NetPak.csproj" />
+    <!-- UnityEngine.Vector3 shim, for ReplicationContext.ViewPos (MP_PLAN §2.3/§2.6 interest hook). -->
+    <ProjectReference Include="..\SDG.Compat\SDG.Compat.csproj" />
   </ItemGroup>
 </Project>
