@@ -254,13 +254,14 @@ namespace UnturnedGodot
         public void TryPickup()
         {
             var wi = _focusItem;
-            if (wi != null && IsInstanceValid(wi) && Inventory.tryAddItem(wi.Item))
-            {
-                GD.Print($"[pickup] {wi.Item.GetAsset()?.itemName}");
-                wi.QueueFree();
-                _focusItem = null;
-                _invUI?.Refresh();
-            }
+            if (wi == null || !IsInstanceValid(wi) || !Inventory.tryAddItem(wi.Item)) return;
+            var item = wi.Item; var asset = item.GetAsset();
+            bool wasUnarmed = Unarmed;
+            GD.Print($"[pickup] {asset?.itemName}");
+            wi.QueueFree();
+            _focusItem = null;
+            _invUI?.Refresh();
+            if (wasUnarmed) EquipItemAsset(asset, item);   // picked up with an empty hand -> equip it in the hand (strawberry)
         }
 
         float _meleeCd;
@@ -326,11 +327,50 @@ namespace UnturnedGodot
             byte idx = pg.getIndex(x, y);
             if (idx == byte.MaxValue) return;                          // empty slot -> nothing to equip
             var j = pg.getItem(idx);
-            var asset = j.GetAsset();
-            if (asset == null) return;
-            if (asset.gunName != null) EquipHeldGun(asset.gunName, j.item);
-            else if (asset.meleeName != null) EquipHeldMelee(asset.meleeName);
-            else if (asset.IsConsumable) EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_"));
+            EquipItemAsset(j.GetAsset(), j.item);
+        }
+
+        // Dispatch-equip an item into the hand by its asset type (gun / melee / consumable). True if it equipped.
+        public bool EquipItemAsset(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            if (asset == null) return false;
+            if (asset.gunName != null) { EquipHeldGun(asset.gunName, backing); return true; }
+            if (asset.meleeName != null) { EquipHeldMelee(asset.meleeName); return true; }
+            if (asset.IsConsumable)
+            {
+                _revertEquip = CaptureHeldForRevert();   // remember what to fall back to once this consumable's stack runs out
+                EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_"));
+                return true;
+            }
+            return false;
+        }
+
+        // A closure that re-equips whatever is held RIGHT NOW (used to revert after a consumable stack empties);
+        // a gun/melee reverts only if it's still in the bag, else fists.
+        System.Action _revertEquip;
+        System.Action CaptureHeldForRevert()
+        {
+            if (Gun != null && _melee == null && _heldConsumable == null)
+            {
+                string g = _gunName; var it = _heldItem; ushort? id = it?.id;
+                return () => { if (id == null || (Inventory?.getItemCount(id.Value) ?? 0) > 0) EquipHeldGun(g, it); else EquipUnarmed(); };
+            }
+            if (_melee != null && _melee.Name != "fists") { string m = _heldMeleeName; return () => EquipHeldMelee(m); }
+            return EquipUnarmed;   // was fists / unarmed -> back to fists
+        }
+
+        // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && (_melee == null || _melee.Name == "fists");
+
+        // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
+        public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
+        {
+            if (asset == null) return false;
+            if (Gun != null && _melee == null && _heldConsumable == null && _deployable == null)
+                return item != null ? ReferenceEquals(_heldItem, item) : (_heldItem != null && _heldItem.id == asset.id);
+            if (_melee != null && _melee.Name != "fists") return asset.meleeName != null && asset.meleeName == _heldMeleeName;
+            if (_heldConsumable != null) return _heldConsumable.id == asset.id;
+            return false;
         }
 
         // --- Consumables held in hand (food/drink/medical): equip -> hold -> LMB eats/drinks -> effects apply (source UseableConsumeable). ---
@@ -396,7 +436,7 @@ namespace UnturnedGodot
                 if ((Inventory?.getItemCount(id) ?? 0) > 0)
                     EquipHeldConsumable(asset, mesh);   // still have another of the same type -> auto-equip a FRESH one (must re-click to eat it) -- master
                 else
-                    EquipHeldGun(string.IsNullOrEmpty(_gunName) ? "eaglefire" : _gunName);   // out of them -> back to the gun/fists
+                    (_revertEquip ?? EquipUnarmed)();   // stack empty -> revert to the last-held item if still valid, else fists (strawberry)
             }
         }
 

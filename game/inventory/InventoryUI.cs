@@ -255,14 +255,19 @@ namespace UnturnedGodot
             desc.AddThemeFontSizeOverride("font_size", 13);
             panel.AddChild(desc);
 
-            // right-bottom: actions (Use for a consumable; Equip for a gun in a grid; Drop; Close)
+            // right-bottom: actions. ONE state-aware hand button (strawberry): if this item is the one in hand
+            // -> "Dequip" (back to fists); else "Equip" (gun/melee) or "Hold" (consumable). Then Drop + Close.
             float by = 150;
-            if (asset.IsConsumable)
-            { AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected); by += 44; }   // hold it in-hand -> LMB to eat/drink (source: consumables are held then used, not used instantly)
-            if (asset.gunName != null || asset.meleeName != null)   // a GUN or a MELEE weapon can be equipped to hand (was gun-only -> melees had no Equip button, master)
-            { AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected); by += 44; }
-            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable)   // dequip whatever's in hand -> empty hands (master)
-            { AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); }); by += 44; }
+            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable)
+            {
+                if (Player != null && Player.IsHeld(asset, jar.item))
+                    AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); });
+                else if (asset.IsConsumable)
+                    AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected);   // hold it in-hand -> LMB to eat/drink
+                else
+                    AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
+                by += 44;
+            }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
@@ -319,10 +324,12 @@ namespace UnturnedGodot
             byte idx = pg.getIndex(_selX, _selY);
             if (idx != byte.MaxValue)
             {
-                var item = pg.getItem(idx).item;
+                var jar = pg.getItem(idx); var item = jar.item;
+                bool wasHeld = Player != null && Player.IsHeld(jar.GetAsset(), item);   // dropping the HELD item -> go unarmed (strawberry)
                 pg.removeItem(idx);
                 if (Player != null && item != null)   // spawn it in the world just in front of the player
                     Player.DropWorldItem(item, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
+                if (wasHeld) Player?.EquipUnarmed();
             }
             CloseSelection();
             Refresh();
