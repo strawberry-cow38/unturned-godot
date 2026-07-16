@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "kg2hE4DXk1M=",
+  "dgSpecHash": "l471EbE4zi8=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj",
+  "projectFilePath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.NetPak/SDG.NetPak.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

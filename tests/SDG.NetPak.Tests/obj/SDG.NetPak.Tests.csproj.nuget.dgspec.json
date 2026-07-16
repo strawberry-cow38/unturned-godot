@@ -1,25 +1,26 @@
 {
   "format": 1,
   "restore": {
-    "C:\\claude-workspace\\unturned-godot\\tests\\SDG.NetPak.Tests\\SDG.NetPak.Tests.csproj": {}
+    "/home/ec2-user/projects/unturned-godot-testing/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj": {}
   },
   "projects": {
-    "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
+    "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/SDG.Compat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/SDG.Compat.csproj",
         "projectName": "SDG.Compat",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/SDG.Compat.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -37,7 +38,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -58,34 +60,35 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj": {
+    "/home/ec2-user/projects/unturned-godot-testing/core/SDG.NetPak/SDG.NetPak.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.NetPak/SDG.NetPak.csproj",
         "projectName": "SDG.NetPak",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.NetPak/SDG.NetPak.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.NetPak/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/SDG.Compat.csproj"
               }
             }
           }
@@ -99,7 +102,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -120,37 +124,38 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     },
-    "C:\\claude-workspace\\unturned-godot\\tests\\SDG.NetPak.Tests\\SDG.NetPak.Tests.csproj": {
+    "/home/ec2-user/projects/unturned-godot-testing/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\claude-workspace\\unturned-godot\\tests\\SDG.NetPak.Tests\\SDG.NetPak.Tests.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot-testing/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
         "projectName": "SDG.NetPak.Tests",
-        "projectPath": "C:\\claude-workspace\\unturned-godot\\tests\\SDG.NetPak.Tests\\SDG.NetPak.Tests.csproj",
-        "packagesPath": "C:\\Users\\claude-admin\\.nuget\\packages\\",
-        "outputPath": "C:\\claude-workspace\\unturned-godot\\tests\\SDG.NetPak.Tests\\obj\\",
+        "projectPath": "/home/ec2-user/projects/unturned-godot-testing/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
+        "packagesPath": "/home/ec2-user/.nuget/packages/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot-testing/tests/SDG.NetPak.Tests/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\claude-admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "/home/ec2-user/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
         ],
         "sources": {
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.Compat\\SDG.Compat.csproj"
+              "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.Compat/SDG.Compat.csproj"
               },
-              "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj": {
-                "projectPath": "C:\\claude-workspace\\unturned-godot\\core\\SDG.NetPak\\SDG.NetPak.csproj"
+              "/home/ec2-user/projects/unturned-godot-testing/core/SDG.NetPak/SDG.NetPak.csproj": {
+                "projectPath": "/home/ec2-user/projects/unturned-godot-testing/core/SDG.NetPak/SDG.NetPak.csproj"
               }
             }
           }
@@ -164,7 +169,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "net8.0": {
@@ -199,7 +205,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.118/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

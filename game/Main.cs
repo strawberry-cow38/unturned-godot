@@ -62,7 +62,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null;
             bool deployTest = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false, farmTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false, farmTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -133,11 +133,6 @@ namespace UnturnedGodot
                 else if (arg == "--invdrop") invdrop = true;
                 else if (arg == "--invloot") invloot = true;
                 else if (arg == "--invcrate") invcrate = true;
-                else if (arg == "--meleedemo") meleedemo = true;
-                else if (arg == "--falldemo") falldemo = true;
-                else if (arg == "--pronetest") pronetest = true;
-                else if (arg == "--brokentest") brokentest = true;
-                else if (arg == "--grenadetest") grenadetest = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--invdragtest") { RunDragTest(); GetTree().Quit(); return; }
@@ -337,36 +332,6 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildLootDemo(gun);
-                return;
-            }
-
-            if (meleedemo)  // melee self-test: a zombie in reach, the player swings until it drops (log-verifiable)
-            {
-                BuildMeleeDemo(gun);
-                return;
-            }
-
-            if (falldemo)   // fall-damage self-test: drop the player from height, expect damage on landing
-            {
-                BuildFallDemo(gun);
-                return;
-            }
-
-            if (pronetest)  // stance self-test: force each stance, check the stealth detection radius (incl. new PRONE)
-            {
-                BuildProneTest(gun);
-                return;
-            }
-
-            if (brokentest) // broken-legs self-test: fall breaks legs -> blocks sprint -> Medkit mends -> sprint restored
-            {
-                BuildBrokenTest(gun);
-                return;
-            }
-
-            if (grenadetest) // grenade explosion self-test: check the distance falloff on zombies at known ranges
-            {
-                BuildGrenadeTest(gun);
                 return;
             }
 
@@ -2534,112 +2499,9 @@ namespace UnturnedGodot
             GD.Print($"[SHELLTEST] equippable guns (gunName set): {wired} -- {string.Join(", ", sample)}");
         }
 
-        // Melee self-test: a NORMAL zombie (100 HP) stands ~1.4 m ahead; a driver swings the player's melee every
-        // frame (cooldown gates it to ~0.45 s, 45 dmg). Log-verifiable headless -- expect three [melee] hits then a
-        // kill. Proximity-based, so unlike the fast-bullet raycast it registers reliably.
-        void BuildMeleeDemo(string gunPath)
-        {
-            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
-            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            AddChild(ground);
-
-            var player = new PlayerController { CaptureMouse = false };
-            player.EquipHeldMelee(gunPath ?? "knife_military");   // --gun=<melee name> (knife_military | sledgehammer | machete...) -> real .dat range/damage
-            AddChild(player);                       // _Ready builds the FP camera used to aim the swing
-            player.GlobalPosition = new Vector3(0, 1.0f, 0);
-
-            var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
-            AddChild(z);
-            z.GlobalPosition = player.GlobalPosition + new Vector3(0f, 0.2f, -1.4f);   // dead ahead, in reach
-
-            AddChild(new MeleeTestDriver { P = player, Z = z });
-            GD.Print("[MELEE] demo: NORMAL zombie ~1.4m ahead; swinging the equipped melee weapon (weapon-specific dmg/range)");
-        }
-
-        // Fall-damage self-test: drop the player from 40 m onto the ground plane. Expect PlayerLife.onLanded to fire
-        // on the landing frame (impact speed well over the 22 m/s threshold) and cut health. Log-verifiable headless.
-        void BuildFallDemo(string gunPath)
-        {
-            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
-            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            AddChild(ground);
-
-            var player = new PlayerController { CaptureMouse = false };
-            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
-            AddChild(player);
-            player.GlobalPosition = new Vector3(0, 40f, 0);   // 40 m up -> a hard landing
-
-            AddChild(new FallTestDriver { P = player });
-            GD.Print("[FALL] demo: player dropped from 40 m; expect fall damage on landing");
-        }
-
-        // Stance self-test: force each stance via ScriptedStance and read GetStealthDetectionRadius (the value the
-        // zombie AI senses the player by). Verifies the new PRONE case (DETECT_PRONE=3) + regresses the others.
-        void BuildProneTest(string gunPath)
-        {
-            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
-            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            AddChild(ground);
-
-            var player = new PlayerController { CaptureMouse = false };
-            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
-            AddChild(player);
-            player.GlobalPosition = new Vector3(0, 1.0f, 0);
-
-            AddChild(new PronetestDriver { P = player });
-            GD.Print("[PRONE] stance stealth-radius self-test: STAND/CROUCH/PRONE/SPRINT (stationary)");
-        }
-
-        // Broken-legs self-test: drop the player 40 m (breaks legs on landing), confirm a forced SPRINT is demoted
-        // (radius 12 not 20), heal with a Medkit (Bones_Modifier Heal), confirm sprint works again (radius 20).
-        void BuildBrokenTest(string gunPath)
-        {
-            SDG.Unturned.ItemCatalog.RegisterAll();   // so Assets.find(15) resolves the Medkit (with useHealBroken)
-            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
-            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            AddChild(ground);
-
-            var player = new PlayerController { CaptureMouse = false };
-            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
-            AddChild(player);
-            player.GlobalPosition = new Vector3(0, 40f, 0);   // 40 m drop -> legs break on landing
-
-            AddChild(new BrokenTestDriver { P = player });
-            GD.Print("[BROKEN] self-test: 40m fall -> legs break -> sprint blocked -> Medkit mends -> sprint restored");
-        }
-
-        // Grenade explosion self-test: NORMAL zombies at increasing ranges from a blast point; detonate radius-8 /
-        // 175-damage and confirm each zombie's health matches the linear falloff 175*(1 - range/8). Player parked far
-        // away so the zombies stay idle (out of sense range) and take no self-damage.
-        void BuildGrenadeTest(string gunPath)
-        {
-            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
-            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            AddChild(ground);
-
-            var player = new PlayerController { CaptureMouse = false };
-            player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
-            AddChild(player);
-            player.GlobalPosition = new Vector3(100, 1f, 0);
-
-            var ranges = new float[] { 4f, 6f, 7.5f, 9f };
-            var zs = new ZombieController[ranges.Length];
-            for (int i = 0; i < ranges.Length; i++)
-            {
-                var z = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
-                AddChild(z);
-                z.GlobalPosition = new Vector3(ranges[i], 0f, 0f);
-                zs[i] = z;
-            }
-            // a separate zombie by the (parked) player, killed via an actual FUSED thrown grenade -- exercises the
-            // full Grenade fly+fuse+detonate chain, not just a direct Explode() call.
-            var zThrow = new ZombieController { Target = player, Speciality = ZombieController.ESpeciality.NORMAL };
-            AddChild(zThrow);
-            zThrow.GlobalPosition = new Vector3(100f, 0f, -2f);
-
-            AddChild(new GrenadeTestDriver { P = player, Zs = zs, ZThrow = zThrow });
-            GD.Print("[GRENADE] explosion falloff self-test: zombies at r=4/6/7.5/9, blast r=8 dmg=175 (linear falloff)");
-        }
+        // The melee/fall/stance/broken-legs/grenade self-tests that lived here as frame-scripted drivers are now L1
+        // GameTests: player.stance_stealth_radius, player.fall_damage, player.broken_legs_mend, combat.melee_kill,
+        // combat.grenade_falloff (game/testing/tests/) -- run via `./test.sh` or `godot --headless -- --tests`.
 
         // Render an item's 3D model to a flat icon (ItemTool.captureIcon-style: ortho camera + flat unshaded albedo).
         // Orient by the model's AABB -- camera along the SHORTEST extent, up = the MIDDLE extent, so the LONGEST lies
@@ -3392,147 +3254,6 @@ namespace UnturnedGodot
         }
     }
 
-    public partial class MeleeTestDriver : Node3D
-    {
-        public PlayerController P;
-        public ZombieController Z;   // re-anchored dead-ahead each frame so the swing always has an in-reach target (the demo player physics-drifts)
-        int _frames; bool _done;
-
-        public override void _PhysicsProcess(double delta)
-        {
-            _frames++;
-            if (Z != null && P != null && !Z.Dead) Z.GlobalPosition = P.GlobalPosition + new Vector3(0f, 0f, -1.2f);   // keep it 1.2 m dead ahead of the (facing -Z) player
-            if (_frames > 5 && P != null) P.MeleeAttack();
-            if (!_done && P != null && P.Kills > 0)
-            {
-                _done = true;
-                GD.Print($"[MELEE] zombie killed by melee -- Kills={P.Kills} at frame {_frames}");
-                GetTree().Quit();
-            }
-            if (_frames > 200) { GD.Print("[MELEE] timeout: no kill within 200 frames"); GetTree().Quit(); }
-        }
-    }
-
-    // Drives the fall-damage self-test: records starting health, then quits when the landing cuts it (the [fall] line
-    // reports the impact speed + damage) or after a timeout.
-    public partial class FallTestDriver : Node3D
-    {
-        public PlayerController P;
-        int _frames; float _startHp = -1f;
-
-        public override void _PhysicsProcess(double delta)
-        {
-            _frames++;
-            if (_startHp < 0f && P != null) _startHp = P.Health;
-            if (P != null && _startHp > 0f && P.Health < _startHp)
-            {
-                GD.Print($"[FALL] health {_startHp} -> {P.Health} after landing (frame {_frames})");
-                GetTree().Quit();
-            }
-            if (_frames > 300) { GD.Print($"[FALL] timeout: no fall damage, health={P?.Health}"); GetTree().Quit(); }
-        }
-    }
-
-    // Drives the stance self-test: sets each stance via ScriptedStance (let it apply a few frames), then logs the
-    // resulting stealth detection radius against the source constants.
-    public partial class PronetestDriver : Node3D
-    {
-        public PlayerController P;
-        int _i, _wait;
-        readonly SDG.Unturned.EPlayerStance[] _stances =
-            { SDG.Unturned.EPlayerStance.STAND, SDG.Unturned.EPlayerStance.CROUCH, SDG.Unturned.EPlayerStance.PRONE, SDG.Unturned.EPlayerStance.SPRINT };
-        readonly float[] _expect = { 12f, 6f, 3f, 20f };
-
-        public override void _PhysicsProcess(double delta)
-        {
-            if (P == null) return;
-            if (_wait > 0) { _wait--; return; }
-            if (_i > 0)   // the stance set last visit has applied; read + check its radius
-            {
-                var st = _stances[_i - 1]; float r = P.GetStealthDetectionRadius(); float e = _expect[_i - 1];
-                GD.Print($"[PRONE] {st} radius={r:F1} expect={e:F1} {(Mathf.Abs(r - e) < 0.01f ? "PASS" : "FAIL")}");
-            }
-            if (_i >= _stances.Length) { GetTree().Quit(); return; }
-            P.ScriptedStance = _stances[_i];
-            _i++; _wait = 3;
-        }
-    }
-
-    // Drives the broken-legs self-test through its phases (see BuildBrokenTest).
-    public partial class BrokenTestDriver : Node3D
-    {
-        public PlayerController P;
-        int _phase, _wait, _frames;
-        void Chk(string n, bool ok) => GD.Print($"[BROKEN] {n} -> {(ok ? "PASS" : "FAIL")}");
-
-        public override void _PhysicsProcess(double delta)
-        {
-            if (P == null) return;
-            _frames++;
-            if (_wait > 0) { _wait--; return; }
-            switch (_phase)
-            {
-                case 0:   // wait for the 40 m drop to land + break legs
-                    if (P.Broken) { Chk($"fall broke legs (health={P.Health})", true); P.ScriptedStance = SDG.Unturned.EPlayerStance.SPRINT; _wait = 3; _phase = 1; }
-                    else if (_frames > 200) { Chk("fall broke legs (TIMEOUT)", false); GetTree().Quit(); }
-                    break;
-                case 1:   // broken + forcing SPRINT -> demoted to STAND (radius 12, not the SPRINT 20)
-                    Chk($"broken legs block sprint (radius {P.GetStealthDetectionRadius():F0})", Mathf.Abs(P.GetStealthDetectionRadius() - 12f) < 0.01f);
-                    P.ScriptedStance = null;
-                    P.Consume(SDG.Unturned.Assets.find(15));   // Medkit: Bones_Modifier Heal
-                    _wait = 2; _phase = 2;
-                    break;
-                case 2:   // mended
-                    Chk($"Medkit mended legs (Broken={P.Broken})", !P.Broken);
-                    P.ScriptedStance = SDG.Unturned.EPlayerStance.SPRINT; _wait = 3; _phase = 3;
-                    break;
-                case 3:   // no longer broken + SPRINT -> radius 20 (sprint restored)
-                    Chk($"sprint restored after heal (radius {P.GetStealthDetectionRadius():F0})", Mathf.Abs(P.GetStealthDetectionRadius() - 20f) < 0.01f);
-                    GetTree().Quit();
-                    break;
-            }
-        }
-    }
-
-    // Drives the grenade explosion self-test: captures each zombie's range at detonation, blasts, then checks its
-    // health against the source linear falloff 175*(1 - range/8).
-    public partial class GrenadeTestDriver : Node3D
-    {
-        public PlayerController P;
-        public ZombieController[] Zs;
-        public ZombieController ZThrow;
-        int _frames;
-        float[] _rangeAtBlast;
-
-        public override void _PhysicsProcess(double delta)
-        {
-            _frames++;
-            if (_frames == 4)   // detonate directly at origin (the 4 falloff zombies)
-            {
-                _rangeAtBlast = new float[Zs.Length];
-                for (int i = 0; i < Zs.Length; i++) _rangeAtBlast[i] = Zs[i].GlobalPosition.DistanceTo(Vector3.Zero);
-                P.Explode(Vector3.Zero, 8f, 175f, 175f, 100f);
-            }
-            else if (_frames == 6)   // check the falloff, then arm a real FUSED grenade on ZThrow
-            {
-                for (int i = 0; i < Zs.Length; i++)
-                {
-                    float r = _rangeAtBlast[i];
-                    float expDmg = r > 8f ? 0f : 175f * (1f - r / 8f);
-                    float expHp = 100f - expDmg;
-                    float hp = Zs[i].Dead ? 0f : Zs[i].Health;
-                    bool ok = Mathf.Abs(hp - expHp) < 0.6f;
-                    GD.Print($"[GRENADE] range={r:F2} dmg~{expDmg:F1} -> health={hp:F1} expect~{expHp:F1} -> {(ok ? "PASS" : "FAIL")}");
-                }
-                var g = new Grenade { Thrower = P, Fuse = 0.2f, Vel = Vector3.Zero };   // point-blank, short fuse
-                P.GetParent().AddChild(g);
-                g.GlobalPosition = ZThrow.GlobalPosition + Vector3.Up * 0.2f;
-            }
-            else if (_frames == 20)   // by now the fuse fired -> ZThrow should be dead
-            {
-                GD.Print($"[GRENADE] fused throw killed point-blank zombie -> {(ZThrow.Dead ? "PASS" : "FAIL")}");
-                GetTree().Quit();
-            }
-        }
-    }
+    // (The MeleeTest/FallTest/Pronetest/BrokenTest/GrenadeTest frame-scripted drivers that lived here are now L1
+    //  GameTests under game/testing/tests/ -- see PlayerTests.cs + CombatTests.cs.)
 }
