@@ -228,17 +228,23 @@ namespace UnturnedGodot
             _lookHullMesh.SurfaceEnd();
         }
 
-        // --- Wire tool: look at a connection cube -> highlight it + show its provider/power info (phase 2). ---
-        const float WireReach = 5.5f;   // how far you can look at / reach a connection cube (the wire's look-at radius)
-        ConnectionPort _wirePort;       // the connection cube currently looked at (with the wire tool out)
-        PhysicsRayQueryParameters3D _wireRayQ;
+        // --- Wire tool: look at a connection cube (highlight + info, phase 2) and build wires (select/route/place, phase 3). ---
+        const float WireReach = 5.5f, WirePlaceReach = 6f;   // look-at reach for cubes / place reach for node points
+        const int MaxWireNodes = 20; const float MaxWireLen = 40f;   // limits (strawberry)
+        ConnectionPort _wirePort;       // the connection cube currently looked at
+        bool _wiring; ConnectionPort _wireSrc;
+        readonly System.Collections.Generic.List<Vector3> _wireNodes = new();   // placed node points (world) between the source and the free end
+        Wire _wirePreview;              // the live wire being routed
+        PhysicsRayQueryParameters3D _wireRayQ, _wirePlaceRayQ;
         CanvasLayer _wireHudLayer; Label _wireHudLabel;
-        public ConnectionPort WireLookPort => _wirePort;   // for the wiring interaction (phase 3)
+        public ConnectionPort WireLookPort => _wirePort;
 
         void UpdateWireLook()
         {
+            if (!HoldingWireTool) { if (_wiring) CancelWire(); if (IsInstanceValid(_wirePort)) _wirePort.SetHighlighted(false); _wirePort = null; WireHudSet(null); return; }
+            // the connection cube currently aimed at
             ConnectionPort port = null;
-            if (HoldingWireTool && _cam != null && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            if (_cam != null && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 var space = GetWorld3D().DirectSpaceState;
                 Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
@@ -247,14 +253,81 @@ namespace UnturnedGodot
                 var hit = space.IntersectRay(_wireRayQ);
                 if (hit.Count > 0 && hit["collider"].As<GodotObject>() is ConnectionPort cp && IsInstanceValid(cp)) port = cp;
             }
-            if (port != _wirePort)
+            if (port != _wirePort) { if (IsInstanceValid(_wirePort)) _wirePort.SetHighlighted(false); _wirePort = port; _wirePort?.SetHighlighted(true); }
+
+            if (_wiring)
             {
-                if (IsInstanceValid(_wirePort)) _wirePort.SetHighlighted(false);
-                _wirePort = port;
-                _wirePort?.SetHighlighted(true);
+                if (!IsInstanceValid(_wireSrc)) { CancelWire(); WireHudSet(null); return; }   // source deployable gone -> drop the wire
+                bool snapConsumer = _wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc.Owner;
+                Vector3 end = snapConsumer ? _wirePort.GlobalPosition : WirePlacePoint();
+                var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
+                pts.AddRange(_wireNodes); pts.Add(end);
+                float len = PolyLen(pts);
+                bool overLimit = _wireNodes.Count >= MaxWireNodes || len > MaxWireLen;
+                _wirePreview?.SetPoints(pts, valid: snapConsumer || !overLimit);
+                WireHudSet($"nodes {_wireNodes.Count}/{MaxWireNodes}    {len:0.0}/{MaxWireLen:0}m" + (overLimit && !snapConsumer ? "   -- LIMIT" : ""));
             }
-            WireHudSet(_wirePort?.InfoLine());
+            else WireHudSet(_wirePort?.InfoLine());
         }
+
+        // LMB with the wire tool: pick an OUTPUT to start, place a node while routing, or complete on a CONSUMER.
+        void WireLmb()
+        {
+            if (!_wiring)
+            {
+                if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Output)
+                {
+                    _wiring = true; _wireSrc = _wirePort; _wireNodes.Clear();
+                    _wirePreview = new Wire(); GetParent().AddChild(_wirePreview);
+                    GD.Print($"[wire] started from {_wirePort.InfoLine()}");
+                }
+                return;
+            }
+            if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc?.Owner) { CompleteWire(_wirePort); return; }
+            Vector3 lp = WirePlacePoint();
+            var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition }; pts.AddRange(_wireNodes); pts.Add(lp);
+            if (_wireNodes.Count >= MaxWireNodes || PolyLen(pts) > MaxWireLen) return;   // hitting the limit blocks placing (strawberry)
+            _wireNodes.Add(lp);
+        }
+
+        // RMB with the wire tool while routing: undo the last node, or cancel+delete the wire if none placed yet.
+        void WireRmb()
+        {
+            if (!_wiring) return;   // phase 5: click a completed wire to unplug a section
+            if (_wireNodes.Count == 0) CancelWire();
+            else _wireNodes.RemoveAt(_wireNodes.Count - 1);
+        }
+
+        void CompleteWire(ConnectionPort consumer)
+        {
+            if (_wirePreview == null || !IsInstanceValid(_wireSrc)) { CancelWire(); return; }
+            var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
+            pts.AddRange(_wireNodes); pts.Add(consumer.GlobalPosition);
+            _wirePreview.Source = _wireSrc; _wirePreview.Consumer = consumer;
+            _wirePreview.SetPoints(pts, valid: true);
+            _wirePreview.AddToGroup("wires");
+            GD.Print($"[wire] connected {_wireSrc.ProviderName} -> {consumer.ProviderName} ({_wireNodes.Count} nodes)");
+            _wirePreview = null; _wiring = false; _wireSrc = null; _wireNodes.Clear();
+        }
+
+        void CancelWire()
+        {
+            _wirePreview?.QueueFree(); _wirePreview = null;
+            _wiring = false; _wireSrc = null; _wireNodes.Clear();
+        }
+
+        Vector3 WirePlacePoint()   // the free end / node drop = your look point (raycast to world/props), else max reach
+        {
+            if (_cam == null) return GlobalPosition;
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            _wirePlaceRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 6), Exclude = new Godot.Collections.Array<Rid> { GetRid() } };
+            _wirePlaceRayQ.From = from; _wirePlaceRayQ.To = from + fwd * WirePlaceReach;
+            var hit = space.IntersectRay(_wirePlaceRayQ);
+            return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * WirePlaceReach;
+        }
+
+        static float PolyLen(System.Collections.Generic.List<Vector3> pts) { float s = 0f; for (int i = 0; i + 1 < pts.Count; i++) s += pts[i].DistanceTo(pts[i + 1]); return s; }
 
         void WireHudSet(string text)
         {
@@ -1363,6 +1436,7 @@ namespace UnturnedGodot
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
+                else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
@@ -1373,6 +1447,7 @@ namespace UnturnedGodot
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
+                else if (HoldingWireTool) { if (rmb.Pressed) WireRmb(); }   // wire tool: undo last node / cancel the wire
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)

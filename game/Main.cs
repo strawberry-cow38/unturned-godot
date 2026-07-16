@@ -1154,7 +1154,13 @@ namespace UnturnedGodot
             var gen = DeployableDef.Generator; var spot = DeployableDef.Spotlight;
             // back row: PLACED objects (surface = ground; the base is sat on it)
             var placedGen = Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
-            Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
+            var placedSpot = Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
+            if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1" && placedGen.Ports.Count > 0 && placedSpot.Ports.Count > 0)
+            {   // build a wire generator-output -> mid node -> spotlight-consumer to verify the Wire segment rendering
+                var a = placedGen.Ports[0].GlobalPosition; var b = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer)?.GlobalPosition ?? placedSpot.Ports[0].GlobalPosition;
+                var w = new Wire(); AddChild(w);
+                w.SetPoints(new System.Collections.Generic.List<Vector3> { a, new Vector3(0f, 1.6f, -1.2f), b }, valid: true);
+            }
             // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
             Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
             Ghost(spot, false, new Vector3(2.6f, 0f, 4.2f), 0f);
