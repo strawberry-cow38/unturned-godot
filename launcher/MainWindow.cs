@@ -21,7 +21,7 @@ public class MainWindow : Window
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 3;
+    const int LauncherVersion = 4;
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
     // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
@@ -216,8 +216,8 @@ public class MainWindow : Window
         string headNow = await Capture(_git, new[] { "rev-parse", "--short", "HEAD" });   // stamp the marker with the commit we just built
         try { File.WriteAllText(_builtMarker, headNow); } catch (Exception ex) { Log("(couldn't write build marker: " + ex.Message + ")"); }
 
-        Log("Update complete.");
-        await RefreshAsync();
+        Log("Update complete — launching.");
+        await LaunchGame();   // strawberry: after an update/install finishes, go straight into the game (no second click)
     }
 
     async Task LaunchGame()
@@ -250,7 +250,7 @@ public class MainWindow : Window
             // hand off to the game process (it's detached), then close the launcher window -> quits the app (strawberry)
             Dispatcher.UIThread.Post(async () => { await Task.Delay(600); Close(); });
         }
-        catch (Exception ex) { Log("!! launch failed: " + ex.Message); }
+        catch (Exception ex) { Log("!! launch failed: " + ex.Message); await RefreshAsync(); }   // recover to a clickable state
     }
 
     // ---- helpers ----
