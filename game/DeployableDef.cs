@@ -24,18 +24,29 @@ namespace UnturnedGodot
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
 
+        // --- power connection points (nodes). A wire runs OUTPUT -> ... -> CONSUMER; a CONSUMER may also have a
+        //     PASSTHROUGH that re-exports (input - usage). Pos is in the flat authored mesh frame (stands up with the model). ---
+        public enum PortKind { Output, Consumer, Passthrough }
+        public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
+        public Port[] Ports = System.Array.Empty<Port>();
+
         // src Generator_Small.dat: id 458, Useable Barricade, Build Generator, footprint 2x2x0.5, Offset 0.75
         public static readonly DeployableDef Generator = new()
         {
             Id = 458, Name = "Generator", Model = "Generator_0",
             HoldMesh = "generator_hold.obj", HoldAlbedo = "generator_hold_tex.png", PlaceSound = "metalplacement",   // src Generator_Small.dat PlacementAudioClip Sounds/MetalPlacement.mp3
             Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 2000f,   // src Generator_Small.dat Capacity 2000
+            Ports = new[] { new Port { Kind = PortKind.Output, Pos = new Vector3(0.4f, 0.6f, 0.05f), Watts = 4000f } },   // output on the gray-face mid-right (flat frame; tuned visually)
         };
         // src Spotlight.dat: id 459, Useable Barricade, Build Spot, footprint 2x2x0.55, Offset 1.12
         public static readonly DeployableDef Spotlight = new()
         {
             Id = 459, Name = "Spotlight", Model = "Spotlight_deploy", PlaceSound = "metalplacement",   // src Spotlight.dat PlacementAudioClip Sounds/MetalPlacement.mp3
             Size = new Vector3(2f, 2f, 0.55f), Offset = 1.12f, Radius = 0.5f, Range = 4f, Health = 300f,
+            Ports = new[] {   // consumer on the back of the central pillar, passthrough on the front (flat frame; tuned visually)
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, -0.35f, 0f), Watts = 250f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f, 0.35f, 0f), Watts = 0f },
+            },
         };
 
         public static readonly DeployableDef[] All = { Generator, Spotlight };

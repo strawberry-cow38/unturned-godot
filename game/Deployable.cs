@@ -9,6 +9,7 @@ namespace UnturnedGodot
     public partial class Deployable : StaticBody3D
     {
         public DeployableDef Def;
+        public readonly System.Collections.Generic.List<ConnectionPort> Ports = new();   // power connection cubes (output/consumer/passthrough)
         public float Health, HealthMax;
         public float Fuel, FuelMax;   // src InteractableGenerator: fuel drawn from Capacity; a fresh build starts FULL (matches vehicle spawn) until the refuel/power pass
 
@@ -67,6 +68,12 @@ namespace UnturnedGodot
             d.Position = surface + Vector3.Up * DeployableDef.GroundLift(ab);   // base sits on the surface
             d.Basis = DeployableDef.StandBasis(yawDeg);   // yaw + the stand-up
             d.AddToGroup("deployables");
+            foreach (var pdef in def.Ports)   // power connection cubes (children -> stand up with the model)
+            {
+                var port = ConnectionPort.Create(d, pdef, def.Name);
+                d.AddChild(port);
+                d.Ports.Add(port);
+            }
             d._firePos = surface + Vector3.Up * Mathf.Max(0.6f, def.Size.Z * 1.4f);   // fire from the top of the object (Size.Z = flat-frame height that stands up)
 
             // fire/smoke rig (TopLevel = world space, so it rises straight up regardless of the stood-up body basis).

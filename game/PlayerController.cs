@@ -228,6 +228,51 @@ namespace UnturnedGodot
             _lookHullMesh.SurfaceEnd();
         }
 
+        // --- Wire tool: look at a connection cube -> highlight it + show its provider/power info (phase 2). ---
+        const float WireReach = 5.5f;   // how far you can look at / reach a connection cube (the wire's look-at radius)
+        ConnectionPort _wirePort;       // the connection cube currently looked at (with the wire tool out)
+        PhysicsRayQueryParameters3D _wireRayQ;
+        CanvasLayer _wireHudLayer; Label _wireHudLabel;
+        public ConnectionPort WireLookPort => _wirePort;   // for the wiring interaction (phase 3)
+
+        void UpdateWireLook()
+        {
+            ConnectionPort port = null;
+            if (HoldingWireTool && _cam != null && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            {
+                var space = GetWorld3D().DirectSpaceState;
+                Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+                _wireRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = ConnectionPort.PortLayer };
+                _wireRayQ.From = from; _wireRayQ.To = from + fwd * WireReach;
+                var hit = space.IntersectRay(_wireRayQ);
+                if (hit.Count > 0 && hit["collider"].As<GodotObject>() is ConnectionPort cp && IsInstanceValid(cp)) port = cp;
+            }
+            if (port != _wirePort)
+            {
+                if (IsInstanceValid(_wirePort)) _wirePort.SetHighlighted(false);
+                _wirePort = port;
+                _wirePort?.SetHighlighted(true);
+            }
+            WireHudSet(_wirePort?.InfoLine());
+        }
+
+        void WireHudSet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) { if (_wireHudLabel != null) _wireHudLabel.Visible = false; return; }
+            if (_wireHudLabel == null)
+            {
+                _wireHudLayer = new CanvasLayer { Layer = 40 }; AddChild(_wireHudLayer);
+                _wireHudLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+                _wireHudLabel.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+                _wireHudLabel.AnchorLeft = 0.5f; _wireHudLabel.AnchorRight = 0.5f; _wireHudLabel.OffsetTop = 90f; _wireHudLabel.OffsetLeft = -300f; _wireHudLabel.OffsetRight = 300f;
+                _wireHudLabel.AddThemeFontSizeOverride("font_size", 26);
+                _wireHudLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 0.9f));
+                _wireHudLabel.AddThemeConstantOverride("outline_size", 6);
+                _wireHudLayer.AddChild(_wireHudLabel);
+            }
+            _wireHudLabel.Text = text; _wireHudLabel.Visible = true;
+        }
+
         // Wreck salvage (master): a focused wreck shows a state prompt -- red "Too hot" while burning, red "Requires blowtorch"
         // if you have none, white "Hold LMB to salvage" with a blowtorch equipped. Holding LMB breaks it into scrap + despawns it.
         void UpdateSalvage(float delta)
@@ -1948,6 +1993,7 @@ namespace UnturnedGodot
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
+            UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
