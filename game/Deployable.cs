@@ -176,16 +176,37 @@ namespace UnturnedGodot
         // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
         public void TogglePower() { if (CanTogglePower) { _powered = !_powered; PowerNet.MarkDirty(); } }   // IsPowered flipped -> the net needs a recompute
 
-        void Explode()   // src explode: full fire, char the body, blast nearby, become a burning wreck
+        void Explode()   // src explode: blast nearby, then either shatter into pieces (spotlight) or become a burning salvageable wreck (generator)
         {
             _exploded = true;
             _deadTimer = -1f;
+            KillPowerHardware();   // covers the direct-explode path (DebugStage wreck); idempotent if 0-HP already ran it
+            ExplodeDamage();
+            if (Def != null && Def.ShatterOnDeath) { SpawnDebris(); QueueFree(); return; }   // spotlight: breaks into flying pieces + vanishes -- no husk, no salvage, no drop (strawberry)
             if (_fire != null) _fire.Emitting = true;
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
             if (_mesh != null) _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred husk
             _burnTime = 0f;
-            KillPowerHardware();   // covers the direct-explode path (DebugStage wreck); idempotent if 0-HP already ran it
-            ExplodeDamage();
+        }
+
+        // ShatterOnDeath: fling a burst of small chunks that outlive the (removed) body, so it visibly breaks apart.
+        void SpawnDebris()
+        {
+            var parent = GetParent();
+            if (parent == null) return;
+            var chunks = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Amount = 16, Lifetime = 1.5f, Explosiveness = 1f, TopLevel = true,
+                Mesh = new BoxMesh { Size = Vector3.One * 0.13f },
+                Direction = Vector3.Up, Spread = 55f, Gravity = new Vector3(0f, -9.8f, 0f),
+                InitialVelocityMin = 2.6f, InitialVelocityMax = 5.8f,
+                AngularVelocityMin = -420f, AngularVelocityMax = 420f,
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.13f, 0.13f, 0.14f), Roughness = 1f },
+            };
+            parent.AddChild(chunks);
+            chunks.GlobalPosition = GlobalPosition + Vector3.Up * 0.5f;
+            var t = GetTree()?.CreateTimer(3f);
+            if (t != null) t.Timeout += () => { if (IsInstanceValid(chunks)) chunks.QueueFree(); };
         }
 
         // src generator/barricade explode: a smaller blast than a car (radius 5, ~120 dmg) -> hurts nearby
