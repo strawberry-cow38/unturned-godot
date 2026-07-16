@@ -337,6 +337,8 @@ namespace UnturnedGodot
             if (asset.gunName != null) { EquipHeldGun(asset.gunName, backing); return true; }
             if (asset.meleeName != null) { EquipHeldMelee(asset.meleeName); return true; }
             if (asset.IsConsumable) { EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true; }   // EquipHeldConsumable snapshots the revert target itself
+            var deploy = DeployableDef.ById(asset.id);
+            if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
             return false;
         }
 
@@ -365,6 +367,7 @@ namespace UnturnedGodot
                 return item != null ? ReferenceEquals(_heldItem, item) : (_heldItem != null && _heldItem.id == asset.id);
             if (_melee != null && _melee.Name != "fists") return asset.meleeName != null && asset.meleeName == _heldMeleeName;
             if (_heldConsumable != null) return _heldConsumable.id == asset.id;
+            if (_deployable != null) return _deployable.Id == asset.id;
             return false;
         }
 
@@ -378,6 +381,7 @@ namespace UnturnedGodot
 
         // --- Deployables held in hand (generator / spotlight): equip -> aim shows a placement ghost -> LMB plants it. ---
         DeployableDef _deployable;      // held deployable (null = none)
+        SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
         DeployablePlacer _placer;       // the world-space ghost preview
         float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
         Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
@@ -442,13 +446,14 @@ namespace UnturnedGodot
 
         // Equip a deployable to the hands: empty-hand carry + a world-space placement ghost that follows your aim
         // (blue valid / red invalid). LMB plants a real object. (src UseableBarricade equip/tick/startPrimary.)
-        public void EquipHeldDeployable(DeployableDef def)
+        public void EquipHeldDeployable(DeployableDef def, SDG.Unturned.Item backing = null)
         {
             if (def == null) return;
             SaveGunState();
+            if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false;
-            _deployable = def; _placeTimer = 0f;
+            _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { EmptyHands = true };   // first pass: no in-hand carry model yet, the ghost is the feedback
             AddChild(_viewmodel);
@@ -464,7 +469,7 @@ namespace UnturnedGodot
         void ClearDeployable()
         {
             if (_deployable == null && _placer == null) return;
-            _deployable = null; _placeTimer = 0f;
+            _deployable = null; _deployItem = null; _placeTimer = 0f;
             _placer?.QueueFree(); _placer = null;
         }
 
@@ -491,6 +496,13 @@ namespace UnturnedGodot
                 {
                     Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw);
                     GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
+                    // consume one from the bag (like a placed barricade). Console `deploy` has no backing item -> infinite.
+                    if (_deployItem != null && Inventory != null)
+                    {
+                        ushort id = _deployItem.id;
+                        Inventory.removeItemAmount(id, 1);
+                        if (Inventory.getItemCount(id) <= 0) (_revertEquip ?? EquipUnarmed)();   // stack empty -> revert to last-held / fists
+                    }
                 }
                 return;
             }
