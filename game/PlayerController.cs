@@ -235,8 +235,12 @@ namespace UnturnedGodot
         bool _wiring; ConnectionPort _wireSrc;
         readonly System.Collections.Generic.List<Vector3> _wireNodes = new();   // placed node points (world) between the source and the free end
         Wire _wirePreview;              // the live wire being routed
-        PhysicsRayQueryParameters3D _wireRayQ, _wirePlaceRayQ;
+        PhysicsRayQueryParameters3D _wireRayQ, _wirePlaceRayQ, _wireManageRayQ;
         CanvasLayer _wireHudLayer; Label _wireHudLabel;
+        // phase 5 -- manage a COMPLETED wire you're looking at (not routing): hold RMB to clear it, tap RMB to unplug a section
+        Wire _manageWire; float _wireClearHold; bool _rmbHeldOnWire;
+        const float WireClearTime = 1.0f;   // hold RMB this long over a wire to clear it
+        const float WireClickMax = 0.28f;   // release within this = a tap -> unplug (longer, released early = an aborted clear -> nothing)
         public ConnectionPort WireLookPort => _wirePort;
 
         void UpdateWireLook()
@@ -317,6 +321,7 @@ namespace UnturnedGodot
             _wirePreview.Source = _wireSrc; _wirePreview.Consumer = consumer;
             _wirePreview.SetPoints(pts, valid: true);
             _wirePreview.AddToGroup("wires");
+            _wirePreview.BuildInteractBody();   // now look-selectable for phase-5 clear/unplug
             GD.Print($"[wire] connected {_wireSrc.ProviderName} -> {consumer.ProviderName} ({_wireNodes.Count} nodes)");
             _wirePreview = null; _wiring = false; _wireSrc = null; _wireNodes.Clear();
         }
@@ -325,6 +330,83 @@ namespace UnturnedGodot
         {
             _wirePreview?.QueueFree(); _wirePreview = null;
             _wiring = false; _wireSrc = null; _wireNodes.Clear();
+        }
+
+        // Phase 5: manage a COMPLETED wire the player is looking at (only while the tool is out AND not mid-route).
+        // Hold RMB -> clear the whole wire (progress readout). Tap RMB -> unplug the section: the wire is picked
+        // back up for re-routing from the node point just before the section you aimed at (src "unplug"). RMB while
+        // routing stays undo (WireRmb, event-driven) -- this per-frame poll only runs when _wiring is false.
+        void ClearManage()   // drop the manage target + un-highlight it
+        {
+            if (IsInstanceValid(_manageWire)) _manageWire.SetHighlighted(false);
+            _manageWire = null; _wireClearHold = 0f; _rmbHeldOnWire = false;
+        }
+
+        void UpdateWireManage(float delta)
+        {
+            if (!HoldingWireTool || _wiring || _dead || _driving != null || Input.MouseMode != Input.MouseModeEnum.Captured)
+            { ClearManage(); return; }
+
+            var (wire, hitPos) = LookedAtWire();
+            if (wire == null) { ClearManage(); return; }
+            if (wire != _manageWire) { ClearManage(); _manageWire = wire; wire.SetHighlighted(true); }
+
+            bool rmb = Input.IsMouseButtonPressed(MouseButton.Right);
+            if (rmb)
+            {
+                _rmbHeldOnWire = true;
+                _wireClearHold += delta;
+                if (_wireClearHold >= WireClearTime)   // held long enough -> clear the whole wire
+                {
+                    wire.QueueFree();
+                    _manageWire = null; _wireClearHold = 0f; _rmbHeldOnWire = false;
+                    WireHudSet(null);
+                    return;
+                }
+                WireHudSet($"clearing wire... {Mathf.Clamp((int)(_wireClearHold / WireClearTime * 100f), 0, 99)}%");
+            }
+            else
+            {
+                if (_rmbHeldOnWire && _wireClearHold <= WireClickMax) UnplugWireAt(wire, hitPos);   // a tap -> unplug the aimed section
+                _rmbHeldOnWire = false; _wireClearHold = 0f;
+                if (_wiring) return;   // unplug re-entered routing; UpdateWireLook owns the HUD from here
+                WireHudSet("[RMB] tap: unplug section    hold: clear wire");
+            }
+        }
+
+        // The completed wire currently under the crosshair (raycast WireLayer), plus the world hit point. null if none.
+        (Wire, Vector3) LookedAtWire()
+        {
+            if (_cam == null) return (null, Vector3.Zero);
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            _wireManageRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = Wire.WireLayer };
+            _wireManageRayQ.From = from; _wireManageRayQ.To = from + fwd * WireReach;
+            var hit = space.IntersectRay(_wireManageRayQ);
+            if (hit.Count > 0 && hit["collider"].As<GodotObject>() is Node n)
+            {
+                Wire w = n as Wire ?? n.GetParent() as Wire;   // the hit collider is the wire's StaticBody, whose parent is the Wire
+                if (w != null && IsInstanceValid(w)) return (w, (Vector3)hit["position"]);
+            }
+            return (null, Vector3.Zero);
+        }
+
+        // Unplug a completed wire at the aimed section: keep source..the previous node point, drop the rest + the
+        // consumer link, and pick it back up as a routing preview from that node (src "unplug ... from the section").
+        void UnplugWireAt(Wire wire, Vector3 hitPos)
+        {
+            if (wire == null || !IsInstanceValid(wire) || !IsInstanceValid(wire.Source)) { wire?.QueueFree(); return; }
+            wire.SetHighlighted(false);   // back to a plain routing preview
+            int seg = wire.NearestSegment(hitPos);   // section Points[seg]..Points[seg+1]; the previous node point is Points[seg]
+            _wireSrc = wire.Source;
+            _wireNodes.Clear();
+            for (int i = 1; i <= seg && i < wire.Points.Count - 1; i++) _wireNodes.Add(wire.Points[i]);   // nodes up to (and incl.) the section's start node; exclude the consumer point
+            wire.Consumer = null;
+            wire.RemoveFromGroup("wires");   // stop delivering power immediately
+            wire.FreeInteractBody();         // a routing preview isn't look-selectable
+            _wirePreview = wire; _wiring = true;
+            _manageWire = null;
+            GD.Print($"[wire] unplugged at section {seg} -> routing from {_wireNodes.Count} kept nodes");
         }
 
         Vector3 WirePlacePoint()   // the free end / node drop = your look point (raycast to world/props), else max reach
@@ -2080,6 +2162,7 @@ namespace UnturnedGodot
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
+            UpdateWireManage((float)delta);                                                   // wire tool (phase 5): look at a completed wire -> hold RMB clear / tap RMB unplug
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),

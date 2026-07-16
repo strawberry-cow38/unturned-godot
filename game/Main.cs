@@ -14,6 +14,7 @@ namespace UnturnedGodot
 
         string _shotPath;
         DeployablePlacer _deployProbePlacer; Camera3D _deployProbeCam; int _deployProbeFrame;   // --deploytest: scripted aim check
+        Wire _wireManageTest;   // UG_WIREMANAGE: the committed test wire, checked at frame 3 (raycast/segment/power)
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         // Unturned install root -> Maps\<name>. The real map terrain (Landscape heightmaps) is read live from a local
@@ -1164,6 +1165,8 @@ namespace UnturnedGodot
                 var w = new Wire(); AddChild(w);
                 w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
                 w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
+                w.BuildInteractBody();   // phase 5: make the committed wire look-selectable
+                _wireManageTest = w;     // frame-3 raycast/segment/power checks (UG_WIREMANAGE)
                 if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                 PowerNet.Recompute(GetTree());
                 GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w");
@@ -3297,6 +3300,23 @@ namespace UnturnedGodot
             {
                 bool v = _deployProbePlacer.Aim(_deployProbeCam);
                 GD.Print($"[DEPLOYPROBE] open-ground valid={v} point={_deployProbePlacer.Point} yaw={_deployProbePlacer.Yaw:0}");
+                if (_wireManageTest != null && IsInstanceValid(_wireManageTest))   // phase-5 checks (physics has stepped by now)
+                {
+                    var w = _wireManageTest;
+                    Vector3 mid = w.Points[1];   // the routed node
+                    // 1) a WireLayer raycast aimed at the wire resolves back to the Wire (look-select path)
+                    var space = _deployProbeCam.GetWorld3D().DirectSpaceState;
+                    var q = new PhysicsRayQueryParameters3D { CollisionMask = Wire.WireLayer, From = mid + new Vector3(0f, 2f, 0f), To = mid + new Vector3(0f, -0.5f, 0f) };
+                    var hit = space.IntersectRay(q);
+                    GodotObject col = hit.Count > 0 ? hit["collider"].As<GodotObject>() : null;
+                    bool hitWire = col is Wire || (col as Node)?.GetParent() is Wire;
+                    // 2) NearestSegment: a point near the source end picks segment 0, near the consumer end picks segment 1
+                    int segSrc = w.NearestSegment(w.Points[0].Lerp(w.Points[1], 0.5f));
+                    int segCons = w.NearestSegment(w.Points[1].Lerp(w.Points[2], 0.5f));
+                    // 3) removing the wire from the net unpowers the consumer
+                    var consPort = w.Consumer; w.RemoveFromGroup("wires"); PowerNet.Recompute(GetTree());
+                    GD.Print($"[MANAGETEST] hitWire={hitWire} segSrc={segSrc} segCons={segCons} consumerPoweredAfterRemove={consPort?.Powered}");
+                }
             }
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
