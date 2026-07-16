@@ -42,9 +42,14 @@ launcher/   Differential git-pull launcher (pull → dotnet build → godot --im
 # Build the game (C# only — content changes don't need this)
 dotnet build game/UnturnedGodot.sln -c Debug
 
-# Core lib tests
-dotnet test tests/UnturnedSim.Tests   # (likewise NetPak / UnturnedDat / UnturnedNet / NetTransport)
+# Run the whole test suite (one command, one grep-able report, exits non-zero on failure)
+./test.sh                       # default = L0 (engine-free unit tests); ~1s, ~1100 tests
+./test.sh --only 'UnturnedSim*' # run one suite; ./test.sh --failfast; ./test.sh --help
 ```
+
+`test.sh` prints `[SUITE] <name> | PASS/FAIL | ...` per suite then `[SUMMARY] TOTAL: P passed, F failed | first failure: <name>`; a failing suite lists the failed test names + a copy-pasteable `repro:` line, and names the *first* failure to debug. TRX artifacts land in `.testresults/`. Exit codes: 0 clean, 1 test failure, 2 infra/build failure. It's the layered runner from `docs/TESTING_PROPOSAL.md`: **L0** (this, engine-free `dotnet test`) is live; **L1** (batched in-engine `--tests` host) and **L2** (visual golden PNGs) are later phases and currently no-op with a note.
+
+**Regression rule (Factorio-style):** every bug that reaches `main` ships a test that reproduces it, in the same commit as the fix, in the cheapest layer that can express it (engine-free logic → an L0 NUnit test under `tests/`; needs nodes/physics → an L1 test once that host exists). A fix without a guarding test is unfinished.
 
 Godot binary on this box:
 

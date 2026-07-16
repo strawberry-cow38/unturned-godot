@@ -3,6 +3,7 @@ bin/
 obj/
 *.import
 shot.png
+.testresults/
 shot.avi
 *.avi
 demo.avi
