@@ -12,7 +12,7 @@ namespace UnturnedGodot
         public ConnectionPort Source, Consumer;
         public List<Vector3> Points = new();
         const float Radius = 0.018f;
-        static readonly Color OkColor = new Color(0.55f, 0.35f, 0.12f);   // copper
+        static readonly Color OkColor = new Color(0.06f, 0.06f, 0.07f);   // very dark grey / black (strawberry)
         static readonly Color BadColor = new Color(0.90f, 0.20f, 0.15f);  // over-limit / invalid
 
         readonly List<MeshInstance3D> _segs = new();
