@@ -1180,6 +1180,13 @@ namespace UnturnedGodot
                 CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());
                 placedGen.SetLookFocused(true);
             }
+            // UG_DEPLOYDMG=smoke|heavy|fire|wreck: force the generator to a damage stage to verify the smoke/fire/wreck visuals
+            if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") is string dmgStage)
+            {
+                cam.Position = new Vector3(-2.6f, 2.4f, 6.0f);
+                cam.LookAt(new Vector3(-2.6f, 1.2f, 0f), Vector3.Up);
+                placedGen.DebugStage(dmgStage);
+            }
             GD.Print("[DEPLOYTEST] generator+spotlight placed; blue+red ghosts");
         }
 
@@ -3275,6 +3282,7 @@ namespace UnturnedGodot
             else if (_fireTest) { if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit
             else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
+            else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (++_frame < 6) return; // let the renderer settle
             var img = GetViewport().GetTexture().GetImage();
             if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(); return; }

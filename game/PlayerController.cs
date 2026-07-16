@@ -252,6 +252,20 @@ namespace UnturnedGodot
                 }
                 else { v.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
             }
+            else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.IsWreck)   // a burnt-out generator: same blowtorch salvage as a car wreck
+            {
+                Color red = new Color(0.90f, 0.25f, 0.20f), white = new Color(0.95f, 0.95f, 0.95f);
+                var dp = _focusDeployable;
+                if (dp.WreckOnFire) { dp.SetSalvagePrompt("Too hot to salvage", red); _salvageTimer = 0f; }
+                else if (!HasBlowtorch) { dp.SetSalvagePrompt("Requires blowtorch to salvage", red); _salvageTimer = 0f; }
+                else if (lmb)
+                {
+                    _salvageTimer += delta; sparks = true;
+                    if (_salvageTimer >= SalvageTime) { dp.Salvage(); _focusDeployable = null; _salvageTimer = 0f; sparks = false; }
+                    else dp.SetSalvagePrompt($"Salvaging... {Mathf.Clamp((int)(_salvageTimer / SalvageTime * 100f), 0, 99)}%", white);
+                }
+                else { dp.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
+            }
             else _salvageTimer = 0f;
             // Repeated tool: drive the continuous-use ANIM off the LMB edge -- Start_Swing (loops) on press, Stop_Swing on release (source startSwing/stopSwing)
             bool wantTorch = IsRepeatedMelee && lmb;
@@ -637,6 +651,12 @@ namespace UnturnedGodot
             {
                 if (HasBlowtorch) { if (_focusVehicle.Hurt) _focusVehicle.Repair(_melee?.VehicleDamage ?? 10f); }
                 else { _focusVehicle.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusVehicle.DisplayName} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
+                return;
+            }
+            if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && !_focusDeployable.IsWreck
+                && (_focusDeployable.GlobalPosition - GlobalPosition).Length() < range + 2f)   // looking at a placed generator: melee damages it (a blowtorch is for salvaging the wreck, not smashing)
+            {
+                if (!HasBlowtorch) { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill

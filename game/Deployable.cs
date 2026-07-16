@@ -2,15 +2,25 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // A placed deployable in the world (the result of planting a held barricade). Mesh + a box collider
-    // hugging it + health/fuel, in group "deployables". Look-at gets the same screen-space outline + info
-    // billboard (name / HP / fuel gauge) as vehicles. First pass: inert -- no power/light behaviour yet
-    // (that's the next pass; src runtime = InteractableGenerator / InteractableSpot).
+    // A placed deployable in the world (the result of planting a held barricade). Mesh + a box collider + health/fuel,
+    // in group "deployables". Look-at gets the same screen-space outline + info billboard (name / HP / fuel) as
+    // vehicles, and the same damage lifecycle: smoke at low HP, fire + explosion at 0 HP, a burning wreck that cools
+    // into a blowtorch-salvageable husk (src runtime InteractableGenerator + the shared vehicle explode/salvage path).
     public partial class Deployable : StaticBody3D
     {
         public DeployableDef Def;
         public float Health, HealthMax;
-        public float Fuel, FuelMax;   // src InteractableGenerator: fuel drawn from Capacity; a fresh build starts FULL here (matches how vehicles spawn: Fuel = FuelMax) until the refuel/power pass
+        public float Fuel, FuelMax;   // src InteractableGenerator: fuel drawn from Capacity; a fresh build starts FULL (matches vehicle spawn) until the refuel/power pass
+
+        // --- damage / fire / wreck lifecycle (mirrors Vehicle) ---
+        bool _exploded;
+        float _deadTimer = -1f;   // >=0: counting down from 0 HP to the blast (src EXPLODE 4s)
+        float _burnTime = -1f;    // seconds since the wreck caught fire: 0-40 full burn, 40-60 dying down, 60 out, 360 despawn
+        CpuParticles3D _smoke, _smoke0, _fire;
+        OmniLight3D _fireLight;
+        MeshInstance3D _mesh;      // the body mesh (charred on explode)
+        Vector3 _firePos;          // world-space fire/smoke origin (top of the object); particles are TopLevel so they rise in WORLD up despite the stood-up body basis
+        const float ExplodeDelay = 4f, SmokeFrac = 0.45f, HeavyFrac = 0.22f;   // light smoke < 45% HP, heavy < 22% (vehicle uses ~200/100 of ~600)
 
         bool _lookFocused;
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
@@ -33,6 +43,7 @@ namespace UnturnedGodot
         {
             var d = new Deployable { Def = def, Health = def.Health, HealthMax = def.Health, Fuel = def.Fuel, FuelMax = def.Fuel };
             var mi = BuildMesh(def, out Aabb ab);
+            d._mesh = mi;
             d.AddChild(mi);
             // collider hugs the real mesh (in the same flat frame as the mesh, so it stands up with the node)
             d.AddChild(new CollisionShape3D
@@ -43,6 +54,18 @@ namespace UnturnedGodot
             d.Position = surface + Vector3.Up * DeployableDef.GroundLift(ab);   // base sits on the surface
             d.Basis = DeployableDef.StandBasis(yawDeg);   // yaw + the stand-up
             d.AddToGroup("deployables");
+            d._firePos = surface + Vector3.Up * Mathf.Max(0.6f, def.Size.Z * 1.4f);   // fire from the top of the object (Size.Z = flat-frame height that stands up)
+
+            // fire/smoke rig (TopLevel = world space, so it rises straight up regardless of the stood-up body basis).
+            // Smaller + fewer than a car's engine-bay plume -- a generator is a ~0.8m object.
+            d._smoke  = Vehicle.MakeSmoke("veh_smoke_1.png", new Color(0.55f, 0.55f, 0.55f), 2.0f, 1.8f, 12, false, 0.8f, 1.6f);   // light damage smoke (< 45% HP)
+            d._smoke0 = Vehicle.MakeSmoke("veh_smoke_0.png", new Color(0.30f, 0.29f, 0.27f), 2.6f, 2.2f, 16, false, 0.8f, 1.6f);   // heavy smoke (< 22% HP)
+            d._fire   = Vehicle.MakeSmoke("veh_fire.png",   new Color(1f, 0.72f, 0.32f),    0.6f, 3.0f, 20, true,  0.6f, 1.3f);    // fire (0 HP + wreck)
+            foreach (var p in new[] { d._smoke, d._smoke0, d._fire }) { p.TopLevel = true; d.AddChild(p); }
+            d._fireLight = new OmniLight3D { TopLevel = true, OmniRange = 6f, LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = 0f, Visible = false };
+            d._fireLight.AddToGroup("dynlight");   // a burning wreck spills onto the FP gun (light-scan)
+            d.AddChild(d._fireLight);
+
             // look-at info billboard (name / HP / fuel), TopLevel so it floats in world space above the object
             d._infoLabel = new Label3D
             {
@@ -52,6 +75,7 @@ namespace UnturnedGodot
             };
             d.AddChild(d._infoLabel);
             parent.AddChild(d);
+            foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
             return d;
         }
 
@@ -82,14 +106,119 @@ namespace UnturnedGodot
             if (_infoLabel != null) _infoLabel.Visible = on;
         }
 
-        public void TakeDamage(float amount) => Health = Mathf.Max(0f, Health - amount);
+        // src askDamage: reduce health; at 0 the EXPLODE timer starts + a small fire lights immediately.
+        public void TakeDamage(float amount)
+        {
+            if (_exploded || amount <= 0f || _deadTimer >= 0f) return;
+            Health = Mathf.Max(0f, Health - amount);
+            if (Health <= 0f)
+            {
+                _deadTimer = ExplodeDelay;
+                if (_fire != null) _fire.Emitting = true;   // a small fire the moment it dies, before Explode() ramps the blaze
+                if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 1.2f; }
+            }
+        }
+
+        void Explode()   // src explode: full fire, char the body, blast nearby, become a burning wreck
+        {
+            _exploded = true;
+            _deadTimer = -1f;
+            if (_fire != null) _fire.Emitting = true;
+            if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
+            if (_mesh != null) _mesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.05f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // charred husk
+            _burnTime = 0f;
+            ExplodeDamage();
+        }
+
+        // src generator/barricade explode: a smaller blast than a car (radius 5, ~120 dmg) -> hurts nearby
+        // zombies/players/vehicles/deployables, chaining a row of gennies. Half a car's radius/damage.
+        void ExplodeDamage()
+        {
+            const float R = 5f;
+            Vector3 p = GlobalPosition;
+            PlayerController.Local?.FlinchFromExplosion(p, 18f, 28f);
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))
+                if (n is ZombieController z && !z.Dead)
+                {
+                    float d = z.GlobalPosition.DistanceTo(p);
+                    if (d <= R) z.DamageHit(120f * (1f - d / R), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
+                }
+            foreach (var n in GetTree().GetNodesInGroup("players"))
+                if (n is PlayerController pl)
+                {
+                    float d = pl.GlobalPosition.DistanceTo(p);
+                    if (d <= R) pl.TakeDamage(120f * (1f - d / R));
+                }
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle v && !v.Exploded)
+                {
+                    float d = v.GlobalPosition.DistanceTo(p);
+                    if (d <= R) v.TakeDamage(120f * (1f - d / R));
+                }
+            foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                if (n is Deployable dep && dep != this && !dep._exploded)
+                {
+                    float d = dep.GlobalPosition.DistanceTo(p);
+                    if (d <= R) dep.TakeDamage(120f * (1f - d / R));   // chain: blow the next generator too
+                }
+        }
+
+        // --- wreck salvage (mirror Vehicle): a burnt-out generator cools, then a blowtorch breaks it into scrap ---
+        public bool IsWreck => _exploded;
+        public bool WreckOnFire => _exploded && _burnTime >= 0f && _burnTime < 60f;   // still burning -> too hot to salvage
+        public bool WreckSalvageable => _exploded && _burnTime >= 60f;                // fire's out -> blowtorch-salvageable
+        public void SetSalvagePrompt(string line2, Color color) { if (_infoLabel != null) { _infoLabel.Text = $"{Def?.Name}\n{line2}"; _infoLabel.Modulate = color; } }
+
+        public void Salvage()   // blowtorch teardown: the cold husk breaks into Metal Scrap (item 67), then despawns
+        {
+            var parent = GetParent();
+            if (parent != null)
+                for (int i = 0; i < 2; i++)   // a generator yields a couple of Metal Scrap (fewer than a car)
+                    WorldItem.Spawn(parent, new SDG.Unturned.Item(67), GlobalPosition + new Vector3((i - 0.5f) * 0.6f, 0.5f, 0f));
+            QueueFree();
+        }
+
+        // test-only: jump straight to a damage stage for the --deploytest render (smoke / heavy / fire / wreck)
+        public void DebugStage(string s)
+        {
+            if (s == "smoke") Health = HealthMax * 0.4f;                 // light damage smoke
+            else if (s == "heavy") Health = HealthMax * 0.15f;           // heavy smoke
+            else if (s == "fire") { Health = 0f; _deadTimer = ExplodeDelay; if (_fire != null) _fire.Emitting = true; if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 1.2f; } }
+            else if (s == "wreck") { Health = 0f; Explode(); }           // full burning charred husk
+        }
 
         public override void _Process(double delta)
         {
-            if (!_lookFocused || _infoLabel == null) return;   // only the focused one keeps its billboard live
+            // damage/burn lifecycle runs ALWAYS (not just when focused): 0-HP explosion delay + the wreck fire arc.
+            if (_deadTimer >= 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }
+            if (_burnTime >= 0f)   // wreck fire: 0-40s full, 40-60s dying down, out at 60s (+ light killed), sits 5 min, then despawns
+            {
+                _burnTime += (float)delta;
+                if (_burnTime < 40f) { if (_fireLight != null) _fireLight.LightEnergy = 3f; }
+                else if (_burnTime < 60f)
+                {
+                    float f = 1f - (_burnTime - 40f) / 20f;   // 1 -> 0 fade
+                    if (_fireLight != null) _fireLight.LightEnergy = 3f * f;
+                }
+                else if (_burnTime < 360f)
+                {
+                    if (_fire != null && _fire.Emitting) _fire.Emitting = false;
+                    if (_fireLight != null && _fireLight.Visible) { _fireLight.Visible = false; _fireLight.LightEnergy = 0f; }
+                }
+                else { QueueFree(); return; }
+            }
+            // smoke thresholds (src updateFires): light smoke while damaged/burning, heavy smoke when badly hurt or wrecked.
+            if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * SmokeFrac);
+            if (_smoke0 != null) _smoke0.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * HeavyFrac);
+
+            if (!_lookFocused || _infoLabel == null) return;   // only the focused one keeps its billboard live (a wreck's prompt is set by PlayerController -- it knows the blowtorch)
             _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
-            string fuelLine = FuelMax > 0f ? $"\nFuel {Fuel:0}/{FuelMax:0}" : "";
-            _infoLabel.Text = $"{Def?.Name}\nHP {Health:0}/{HealthMax:0}{fuelLine}";
+            if (!_exploded)
+            {
+                _infoLabel.Modulate = OutlineColor;
+                string fuelLine = FuelMax > 0f ? $"\nFuel {Fuel:0}/{FuelMax:0}" : "";
+                _infoLabel.Text = $"{Def?.Name}\nHP {Health:0}/{HealthMax:0}{fuelLine}";
+            }
         }
     }
 }

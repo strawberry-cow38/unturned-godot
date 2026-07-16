@@ -149,7 +149,7 @@ namespace UnturnedGodot
 
         // billboarded smoke/fire burst using the REAL source particle texture (veh_smoke_0/veh_smoke_1/veh_fire,
         // ripped from the vehicle prefab's ParticleSystemRenderer). smoke = grey rising; fire = additive orange.
-        static CpuParticles3D MakeSmoke(string texName, Color c, float life, float vel, int amount, bool fire, float sizeMin, float sizeMax)
+        public static CpuParticles3D MakeSmoke(string texName, Color c, float life, float vel, int amount, bool fire, float sizeMin, float sizeMax)
         {
             var mat = new StandardMaterial3D
             {
@@ -272,6 +272,12 @@ namespace UnturnedGodot
                 {
                     float d = v.GlobalPosition.DistanceTo(p);
                     if (d <= R) v.TakeDamage(500f * (1f - d / R));   // chain: 500 easily blows the next car too
+                }
+            foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                if (n is Deployable dep && !dep.IsWreck)
+                {
+                    float d = dep.GlobalPosition.DistanceTo(p);
+                    if (d <= R) dep.TakeDamage(500f * (1f - d / R));   // a car blast wrecks a nearby generator too
                 }
             foreach (var n in GetTree().GetNodesInGroup("players"))
                 if (n is PlayerController pl)
