@@ -297,7 +297,7 @@ namespace UnturnedGodot
             {
                 var pos = _wMeshes[i].GlobalPosition;
                 var mat = (StandardMaterial3D)_wheelMatRef.Duplicate();   // per-debris material so the 10s fade doesn't touch the car's own wheels
-                var rb = new WheelDebris { Mass = 18f, Mat = mat };       // lives ~10s, fades its last second, then despawns (master)
+                var rb = new WheelDebris { Mass = 18f, Mat = mat, CollisionLayer = 1u << 2, CollisionMask = 1u << 0 };   // debris on its own bit, masks GROUND only -> lands + rolls but never collides with the player (bit3 masks 0/6, not 2) (strawberry)
                 rb.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = _wheelR } });
                 rb.AddChild(new MeshInstance3D { Mesh = _wheelMeshRef, MaterialOverride = mat, Scale = _wMeshes[i].Scale });
                 scene.AddChild(rb);
