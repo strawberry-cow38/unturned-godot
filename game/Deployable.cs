@@ -265,10 +265,9 @@ namespace UnturnedGodot
             {
                 _infoLabel.Modulate = OutlineColor;
                 string fuelLine = FuelMax > 0f ? $"\nFuel {Fuel:0}/{FuelMax:0}" : "";
-                // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. Mid-ramp -> a status instead of the prompt (also signals the buffer).
-                string powerLine = Def != null && Def.Fuel > 0f && !_exploded
-                    ? (PowerSettled ? $"\n[F] Turn {(_powered ? "Off" : "On")}" : (_powered ? "\nwarming up..." : "\ncooling down..."))
-                    : "";
+                // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. _powered is the target, so this reads as
+                // the next action even mid-ramp (strawberry: don't change the prompt during warmup/cooldown).
+                string powerLine = Def != null && Def.Fuel > 0f && !_exploded ? $"\n[F] Turn {(_powered ? "Off" : "On")}" : "";
                 _infoLabel.Text = $"{Def?.Name}\nHP {Health:0}/{HealthMax:0}{fuelLine}{powerLine}";
             }
         }
