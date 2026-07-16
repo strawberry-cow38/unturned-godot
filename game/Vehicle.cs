@@ -83,7 +83,7 @@ namespace UnturnedGodot
         // look-at focus (master): same system as items -- a screen-space outline + an info billboard (name/HP/fuel/battery)
         bool _lookFocused; System.Collections.Generic.List<MeshInstance3D> _outlineMeshes; Label3D _infoLabel;
         Color _outlineColor = new Color(0.82f, 0.83f, 0.90f);   // vehicle outline/label tint (no per-vehicle rarity in the port yet)
-        const float InfoH = 2.35f;
+        const float InfoH = 1.1f;   // billboard sits INSIDE the car (cabin height), not floating above the roof (strawberry)
 
         // source's 2nd body BoxCollider (a slab at roof height, Godot space -- Z already negated) = the roof/frame
         // collision the port was missing (master). Jeep/Quad/Tractor are open-top -> null.

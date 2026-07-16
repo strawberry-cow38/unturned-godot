@@ -25,17 +25,20 @@ namespace UnturnedGodot
         // --- power (src InteractableGenerator: F toggles isPowered; while on + fuelled the "Engine" node is active =
         //     the looping engine AudioSource). The src has NO vibration animation (the Engine node is just an
         //     AudioSource) -- the small shake here is a non-source touch (strawberry asked for it). ---
-        bool _powered;
+        bool _powered;             // target state (F toggles it)
+        float _powerLevel;         // 0 = off .. 1 = running; ramps up over WarmupTime / down over CooldownTime -- the shake + engine spin-up follow it
         AudioStreamPlayer3D _engineAudio;
         float _vibePhase;
-        public bool CanTogglePower => !_exploded && Def != null && Def.Fuel > 0f;   // only a fuelled generator toggles (spotlight draws from a wired generator)
+        const float WarmupTime = 1.3f, CooldownTime = 1.1f;   // spin-up / wind-down; doubles as the anti-spam buffer (can't re-toggle mid-ramp)
+        bool PowerSettled => Mathf.Abs(_powerLevel - (_powered ? 1f : 0f)) < 0.001f;
+        public bool CanTogglePower => !_exploded && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled generator toggles, and only once the ramp has settled (buffer)
         public bool IsPowered => _powered;
 
         bool _lookFocused;
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
         Label3D _infoLabel;
         static readonly Color OutlineColor = new Color(0.82f, 0.83f, 0.90f);   // same neutral tint as vehicles (no per-deployable rarity yet)
-        const float InfoH = 1.6f;   // billboard height above the base (generators are short)
+        const float InfoH = 0.5f;   // billboard sits INSIDE the generator body (strawberry), not floating above it
 
         // Build the mesh + material for a def, returning the MeshInstance and its local AABB (in the flat
         // authored frame, before the -90 X stand-up). Shared by the placed object and the placement ghost.
@@ -129,24 +132,15 @@ namespace UnturnedGodot
             if (Health <= 0f)
             {
                 _deadTimer = ExplodeDelay;
-                if (_powered) SetPowered(false);   // a dying generator cuts out
+                _powered = false; _powerLevel = 0f;   // a dying generator cuts out INSTANTLY (no wind-down); the ramp tick stops the audio + settles the mesh
                 if (_fire != null) _fire.Emitting = true;   // a small fire the moment it dies, before Explode() ramps the blaze
                 if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 1.2f; }
             }
         }
 
-        // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked generator responds.
-        public void TogglePower() { if (CanTogglePower) SetPowered(!_powered); }
-        void SetPowered(bool on)
-        {
-            _powered = on;   // src updateWire: the Engine node (looping AudioSource) is active while isPowered && fuel > 0
-            if (_engineAudio != null)
-            {
-                if (on && FuelMax > 0f && Fuel > 0f) { if (!_engineAudio.Playing) _engineAudio.Play(); }
-                else _engineAudio.Stop();
-            }
-            if (!on && _mesh != null) _mesh.Position = Vector3.Zero;   // stop the shake -> settle back to rest
-        }
+        // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
+        // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
+        public void TogglePower() { if (CanTogglePower) _powered = !_powered; }
 
         void Explode()   // src explode: full fire, char the body, blast nearby, become a burning wreck
         {
@@ -240,12 +234,29 @@ namespace UnturnedGodot
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * SmokeFrac);
             if (_smoke0 != null) _smoke0.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * HeavyFrac);
 
-            // running generator: a subtle high-freq body shake. NON-source (the src Engine node is just an AudioSource,
-            // no vibration anim) -- added because strawberry asked; ~6mm so it reads as "running" without looking broken.
-            if (_powered && !_exploded && _mesh != null)
+            // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
+            // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
+            float pTarget = (_powered && !_exploded && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;
+            if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
+            else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
+            if (_engineAudio != null)
             {
-                _vibePhase += (float)delta * 90f;
-                _mesh.Position = new Vector3(Mathf.Sin(_vibePhase * 1.3f), Mathf.Sin(_vibePhase), Mathf.Sin(_vibePhase * 0.7f)) * 0.006f;
+                if (_powerLevel > 0.01f)
+                {
+                    if (!_engineAudio.Playing) _engineAudio.Play();
+                    _engineAudio.PitchScale = 0.6f + 0.4f * _powerLevel;        // spin up 0.6 -> 1.0
+                    _engineAudio.VolumeDb = Mathf.Lerp(-26f, -6f, _powerLevel); // fade in as it warms
+                }
+                else if (_engineAudio.Playing) _engineAudio.Stop();
+            }
+            if (_mesh != null)   // NON-source shake (src Engine node has no anim) -- ~6mm, scaled by the ramp
+            {
+                if (_powerLevel > 0.01f && !_exploded)
+                {
+                    _vibePhase += (float)delta * 90f;
+                    _mesh.Position = new Vector3(Mathf.Sin(_vibePhase * 1.3f), Mathf.Sin(_vibePhase), Mathf.Sin(_vibePhase * 0.7f)) * 0.006f * _powerLevel;
+                }
+                else if (_mesh.Position != Vector3.Zero) _mesh.Position = Vector3.Zero;
             }
 
             if (!_lookFocused || _infoLabel == null) return;   // only the focused one keeps its billboard live (a wreck's prompt is set by PlayerController -- it knows the blowtorch)
@@ -254,7 +265,10 @@ namespace UnturnedGodot
             {
                 _infoLabel.Modulate = OutlineColor;
                 string fuelLine = FuelMax > 0f ? $"\nFuel {Fuel:0}/{FuelMax:0}" : "";
-                string powerLine = CanTogglePower ? $"\n[F] Turn {(_powered ? "Off" : "On")}" : "";   // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off
+                // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. Mid-ramp -> a status instead of the prompt (also signals the buffer).
+                string powerLine = Def != null && Def.Fuel > 0f && !_exploded
+                    ? (PowerSettled ? $"\n[F] Turn {(_powered ? "Off" : "On")}" : (_powered ? "\nwarming up..." : "\ncooling down..."))
+                    : "";
                 _infoLabel.Text = $"{Def?.Name}\nHP {Health:0}/{HealthMax:0}{fuelLine}{powerLine}";
             }
         }
