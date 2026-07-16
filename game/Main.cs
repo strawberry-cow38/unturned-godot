@@ -1478,13 +1478,31 @@ namespace UnturnedGodot
             // phase's elapsed ms, advances the bar, sets the label, and yields a frame so the overlay actually paints
             // before the next (blocking) chunk of work runs.
             var loading = new LoadingScreen(); AddChild(loading); loading.SetTotal(11);
+            // Guarantee the overlay is actually PRESENTED before any blocking asset load. A single
+            // process_frame resumes mid-frame (before the draw), so the first + heaviest phase (Terrain)
+            // would otherwise block on the previous frame and the loading screen would never show. Wait
+            // for a real drawn frame (FramePostDraw fires after present) so the map-choice hands straight
+            // to a visible loading screen. (--bakenav loads fully synchronously -> no yields.)
+            if (!_bakeNav)
+            {
+                loading.SetStatus("Loading…");
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            }
             var timings = new System.Collections.Generic.Dictionary<string, double>();
             string curPhase = null; var phaseSw = System.Diagnostics.Stopwatch.StartNew();
             async System.Threading.Tasks.Task Phase(string name)
             {
                 if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading.Advance(); }
                 curPhase = name; loading.SetStatus(name + "…"); phaseSw.Restart();
-                if (!_bakeNav) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);   // --bakenav: skip the per-phase frame-yield so the WHOLE world loads synchronously -> we can bake offline
+                // Wait for a real DRAWN frame (not just process_frame, which resumes before the present) so
+                // each bar/status update is actually visible before this phase's blocking work runs.
+                // --bakenav: skip the frame-yield so the WHOLE world loads synchronously -> we can bake offline.
+                if (!_bakeNav)
+                {
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                }
             }
             // REAL PEI lighting via DayNightCycle (src Lighting.dat: ported sky shader + warm ambient + sun per time-of-day)
             // -- replaces the ProceduralSky + sky-tinted ambient that didn't match the source palette. "Drive PEI"
