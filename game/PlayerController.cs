@@ -242,6 +242,7 @@ namespace UnturnedGodot
         float _wireClearHold;
         const float WireClearTime = 1.0f;   // hold RMB this long over a wired port to clear its wire
         const float WireClickMax = 0.28f;   // release within this = a tap -> unplug (longer, released early = an aborted clear -> nothing)
+        bool _wireArrowsOn;   // in/out port arrows currently shown (only while the wire tool is out)
         public ConnectionPort WireLookPort => _wirePort;
 
         void UpdateWireLook()
@@ -391,6 +392,22 @@ namespace UnturnedGodot
             wire.RemoveFromGroup("wires"); PowerNet.MarkDirty();   // stop delivering power immediately
             _wirePreview = wire; _wiring = true;
             GD.Print($"[wire] unplugged -> routing from source with {_wireNodes.Count} kept nodes");
+        }
+
+        // In/out arrows on every connection point while the wire tool is out: blue where you can wire, red where the
+        // port is occupied or on a wrecked deployable (the placement-ghost arrows are handled by DeployablePlacer).
+        void UpdateWireArrows()
+        {
+            bool show = HoldingWireTool && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
+            if (!show)
+            {
+                if (_wireArrowsOn) { foreach (var n in GetTree().GetNodesInGroup("ports")) if (n is ConnectionPort p && IsInstanceValid(p)) p.SetArrowState(false, false); _wireArrowsOn = false; }
+                return;
+            }
+            _wireArrowsOn = true;
+            foreach (var n in GetTree().GetNodesInGroup("ports"))
+                if (n is ConnectionPort p && IsInstanceValid(p))
+                    p.SetArrowState(true, p.Usable && !PortWired(p));
         }
 
         Vector3 WirePlacePoint()   // the free end / node drop = your look point (raycast to world/props), else max reach
@@ -2147,7 +2164,8 @@ namespace UnturnedGodot
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
-            UpdateWireManage((float)delta);                                                   // wire tool (phase 5): look at a completed wire -> hold RMB clear / tap RMB unplug
+            UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
+            UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),

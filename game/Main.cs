@@ -1158,6 +1158,9 @@ namespace UnturnedGodot
             // back row: PLACED objects (surface = ground; the base is sat on it)
             var placedGen = Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
             var placedSpot = Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
+            if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")   // force the in/out port arrows on to verify their geometry/colour
+                foreach (var dep in new[] { placedGen, placedSpot })
+                    foreach (var pt in dep.Ports) pt.SetArrowState(true, true);
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1" && placedGen.Ports.Count > 0 && placedSpot.Ports.Count > 0)
             {   // wire generator-output -> mid node -> spotlight-consumer, power the generator, verify rendering + power flow
                 var outp = placedGen.Ports[0];
@@ -1243,6 +1246,11 @@ namespace UnturnedGodot
             g.MaterialOverride = valid ? DeployablePlacer.ValidMat : DeployablePlacer.InvalidMat;
             AddChild(g);
             g.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw), surface + Vector3.Up * DeployableDef.GroundLift(ab));
+            if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")   // mirror DeployablePlacer: in/out port arrows on the ghost (blueprint blue/red)
+            {
+                var mat = ConnectionPort.ArrowMaterial(valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed);
+                foreach (var p in def.Ports) g.AddChild(ConnectionPort.MakeArrow(p, mat, p.Pos));
+            }
         }
 
         // --croptest=NAME: a farm crop showcase -- the YOUNG (Foliage_0) crop left, the GROWN (Foliage_1) crop right,

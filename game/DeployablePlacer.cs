@@ -16,6 +16,7 @@ namespace UnturnedGodot
 
         MeshInstance3D _ghost;
         Aabb _localAabb;
+        StandardMaterial3D _arrowMat;   // shared by the ghost's in/out port arrows; recoloured blue/red with validity
 
         public static readonly StandardMaterial3D ValidMat = Ghost(new Color(0.30f, 0.62f, 1f, 0.45f));   // blue
         public static readonly StandardMaterial3D InvalidMat = Ghost(new Color(1f, 0.28f, 0.28f, 0.45f)); // red
@@ -35,6 +36,9 @@ namespace UnturnedGodot
             _ghost = Deployable.BuildMesh(def, out _localAabb);
             _ghost.MaterialOverride = InvalidMat;
             AddChild(_ghost);
+            _arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowRed);   // in/out arrows on the ghost's ports (stand up with it)
+            foreach (var p in def.Ports)
+                _ghost.AddChild(ConnectionPort.MakeArrow(p, _arrowMat, p.Pos));
         }
 
         public void SetGhostVisible(bool v) { if (_ghost != null) _ghost.Visible = v; }
@@ -80,6 +84,7 @@ namespace UnturnedGodot
             _ghost.GlobalTransform = new Transform3D(DeployableDef.StandBasis(Yaw),
                 Point + Vector3.Up * DeployableDef.GroundLift(_localAabb));   // base sits on the surface point
             _ghost.MaterialOverride = Valid ? ValidMat : InvalidMat;
+            if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
 
         // Pin the ghost at a committed point/yaw (blue) while the place gesture plays -- ignores aim.
@@ -91,6 +96,7 @@ namespace UnturnedGodot
             _ghost.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw),
                 point + Vector3.Up * DeployableDef.GroundLift(_localAabb));
             _ghost.MaterialOverride = ValidMat;
+            if (_arrowMat != null) { var c = ConnectionPort.ArrowBlue; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
     }
 }
