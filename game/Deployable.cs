@@ -97,6 +97,8 @@ namespace UnturnedGodot
             d.AddChild(d._info);
             parent.AddChild(d);
             foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
+            if (d.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole power net
+            { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
             return d;
         }
 

@@ -1156,10 +1156,16 @@ namespace UnturnedGodot
             var placedGen = Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
             var placedSpot = Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1" && placedGen.Ports.Count > 0 && placedSpot.Ports.Count > 0)
-            {   // build a wire generator-output -> mid node -> spotlight-consumer to verify the Wire segment rendering
-                var a = placedGen.Ports[0].GlobalPosition; var b = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer)?.GlobalPosition ?? placedSpot.Ports[0].GlobalPosition;
+            {   // wire generator-output -> mid node -> spotlight-consumer, power the generator, verify rendering + power flow
+                var outp = placedGen.Ports[0];
+                var cons = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+                var pass = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
                 var w = new Wire(); AddChild(w);
-                w.SetPoints(new System.Collections.Generic.List<Vector3> { a, new Vector3(0f, 1.6f, -1.2f), b }, valid: true);
+                w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
+                w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
+                placedGen.TogglePower();                    // turn the generator ON
+                PowerNet.Recompute(GetTree());
+                GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w");
             }
             // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
             Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);

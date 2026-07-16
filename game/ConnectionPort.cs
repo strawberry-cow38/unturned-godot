@@ -12,8 +12,10 @@ namespace UnturnedGodot
 
         public Deployable Owner;
         public DeployableDef.PortKind Kind;
-        public float Watts;
+        public float Watts;         // output: produced; consumer: drawn; passthrough: unused
         public string ProviderName;
+        public float Live;          // live power (recomputed by PowerNet): output = produced now, consumer = received, passthrough = exported now
+        public bool Powered;        // consumer: is it getting at least its usage?
 
         MeshInstance3D _cube;
         StandardMaterial3D _mat;
@@ -40,12 +42,12 @@ namespace UnturnedGodot
             return cp;
         }
 
-        // Info line for the wire-tool look-at HUD: "Generator — 4000w output".
+        // Info line for the wire-tool look-at HUD -- reflects the LIVE power flowing through this port.
         public string InfoLine() => Kind switch
         {
-            DeployableDef.PortKind.Output => $"{ProviderName} — {Watts:0}w output",
-            DeployableDef.PortKind.Consumer => $"{ProviderName} — {Watts:0}w consumer",
-            DeployableDef.PortKind.Passthrough => $"{ProviderName} — passthrough",
+            DeployableDef.PortKind.Output => $"{ProviderName} — {Live:0}w output",
+            DeployableDef.PortKind.Consumer => $"{ProviderName} — {Watts:0}w consumer ({(Powered ? $"powered, {Live:0}w in" : "unpowered")})",
+            DeployableDef.PortKind.Passthrough => $"{ProviderName} — {Live:0}w passthrough",
             _ => ProviderName,
         };
 
