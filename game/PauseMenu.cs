@@ -38,6 +38,10 @@ namespace UnturnedGodot
             resume.Pressed += Close;
             vbox.AddChild(resume);
 
+            var toMenu = new Button { Text = "Exit to Menu", CustomMinimumSize = new Vector2(0, 46) };
+            toMenu.Pressed += ExitToMenu;
+            vbox.AddChild(toMenu);
+
             var hint = new Label { Text = "esc to resume", HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1f, 1f, 1f, 0.5f) };
             vbox.AddChild(hint);
         }
@@ -62,5 +66,14 @@ namespace UnturnedGodot
         }
         public void Toggle() { if (Visible) Close(); else Open(); }
         public bool IsOpen => Visible;
+
+        // Tear the whole game down and go back to the main menu: reload Main.tscn (launched with no mode args ->
+        // Main._Ready rebuilds the default MainMenu). Unpause first so the fresh scene doesn't start frozen.
+        void ExitToMenu()
+        {
+            GetTree().Paused = false;
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+            GetTree().ReloadCurrentScene();
+        }
     }
 }
