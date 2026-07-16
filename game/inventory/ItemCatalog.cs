@@ -24,6 +24,8 @@ namespace SDG.Unturned
             Add(95,  "Bandage",       1, 1, EItemType.MEDICAL,  EItemRarity.UNCOMMON,  0, 0, "Medium quality cloth for stopping bleeding, and recovering.", uh: 15, ub: true);
             Add(14,  "Bottled Water", 1, 1, EItemType.WATER,    EItemRarity.COMMON,    0, 0, "Overpriced tap water.", uw: 55);
             Add(13,  "Canned Beans",  1, 1, EItemType.FOOD,     EItemRarity.COMMON,    0, 0, "Very tactically packed for maximum taste.", uh: 10, uf: 55);
+            // deployables: shorten the tile name so it reads cleanly + `give generator` matches by name (strawberry)
+            { var g = Assets.find(458); if (g != null) g.itemName = "Generator"; }
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

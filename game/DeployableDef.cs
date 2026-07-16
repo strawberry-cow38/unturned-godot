@@ -24,7 +24,7 @@ namespace UnturnedGodot
         // src Generator_Small.dat: id 458, Useable Barricade, Build Generator, footprint 2x2x0.5, Offset 0.75
         public static readonly DeployableDef Generator = new()
         {
-            Id = 458, Name = "Portable Generator", Model = "Generator_0",
+            Id = 458, Name = "Generator", Model = "Generator_0",
             Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f,
         };
         // src Spotlight.dat: id 459, Useable Barricade, Build Spot, footprint 2x2x0.55, Offset 1.12

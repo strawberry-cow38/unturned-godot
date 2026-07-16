@@ -256,14 +256,17 @@ namespace UnturnedGodot
             panel.AddChild(desc);
 
             // right-bottom: actions. ONE state-aware hand button (strawberry): if this item is the one in hand
-            // -> "Dequip" (back to fists); else "Equip" (gun/melee) or "Hold" (consumable). Then Drop + Close.
+            // -> "Dequip" (back to fists); else "Equip" (gun/melee/deployable) or "Hold" (consumable). Then Drop + Close.
             float by = 150;
-            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable)
+            bool isDeploy = DeployableDef.ById(asset.id) != null;   // generator/spotlight -> equip into placement mode
+            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable || isDeploy)
             {
                 if (Player != null && Player.IsHeld(asset, jar.item))
                     AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); });
                 else if (asset.IsConsumable)
                     AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected);   // hold it in-hand -> LMB to eat/drink
+                else if (isDeploy)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), PlaceSelected);   // equip the deployable -> close inventory, aim the ghost, LMB plants it
                 else
                     AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
                 by += 44;
@@ -310,6 +313,22 @@ namespace UnturnedGodot
             Player?.EquipHeldConsumable(asset, mesh);
             CloseSelection();
             Close();   // leave the inventory so the player can click to eat/drink
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+
+        // Equip a deployable (generator/spotlight) -> close the inventory so the player aims the placement ghost and
+        // LMB plants it. The item is NOT spent here; it's decremented when a placement actually lands (TickDeploy).
+        void PlaceSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var def = DeployableDef.ById(jar.GetAsset()?.id ?? 0);
+            if (def == null) return;
+            Player?.EquipHeldDeployable(def, jar.item);
+            CloseSelection();
+            Close();   // leave the inventory so the player can aim + click to place
             Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 

@@ -1341,7 +1341,22 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
             {
-                if (PauseMenu != null)   // ESC opens the pause menu (freezes the sim; the menu handles ESC-to-resume itself since we're then paused)
+                // ESC backs out of an open menu FIRST -- close the inventory/crafting/skills dashboard rather than
+                // stacking the pause menu on top of it (strawberry). Only when nothing's open does ESC pause.
+                if (_invUI != null && _invUI.IsOpen)
+                {
+                    SaveGunState(); CloseCrate(); _invUI.Close();
+                    Input.MouseMode = Input.MouseModeEnum.Captured;
+                }
+                else if (_craftUI != null && _craftUI.IsOpen)
+                {
+                    _craftUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
+                }
+                else if (_skillsUI != null && _skillsUI.IsOpen)
+                {
+                    _skillsUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured;
+                }
+                else if (PauseMenu != null)   // nothing open -> ESC opens the pause menu (freezes the sim; the menu handles ESC-to-resume itself since we're then paused)
                 {
                     if (!PauseMenu.IsOpen) PauseMenu.Open();   // Open() sets Paused + frees the mouse
                 }
