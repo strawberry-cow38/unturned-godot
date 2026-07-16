@@ -39,7 +39,11 @@ namespace UnturnedGodot
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
+        readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
         ConnectionPort _consumerPort;
+        float _lampLevel;                    // 0..1 lamp envelope, ramps with power over WarmupTime/CooldownTime
+        float _lampFlicker = 1f, _lampFlickerT;   // while the source spins up/down (mid-ramp) the lamp stutters (strawberry)
+        static readonly bool DbgFlicker = System.Environment.GetEnvironmentVariable("UG_WIREFLICKER") == "1";
 
         bool _lookFocused;
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
@@ -90,10 +94,10 @@ namespace UnturnedGodot
                     lamp = s;
                 }
                 else lamp = new OmniLight3D { OmniRange = ldef.Range };
-                lamp.Position = ldef.Pos; lamp.LightColor = ldef.Color; lamp.LightEnergy = ldef.Energy; lamp.Visible = false;
+                lamp.Position = ldef.Pos; lamp.LightColor = ldef.Color; lamp.LightEnergy = 0f; lamp.Visible = false;
                 lamp.AddToGroup("dynlight");   // the lit beam spills onto the FP gun (light-scan), like the fire light
                 d.AddChild(lamp);
-                d._lamps.Add(lamp);
+                d._lamps.Add(lamp); d._lampBase.Add(ldef.Energy);
             }
             d._firePos = surface + Vector3.Up * Mathf.Max(0.6f, def.Size.Z * 1.4f);   // fire from the top of the object (Size.Z = flat-frame height that stands up)
 
@@ -320,13 +324,32 @@ namespace UnturnedGodot
                 else if (_mesh.Position != Vector3.Zero) _mesh.Position = Vector3.Zero;
             }
 
-            // consumer lamps (spotlight): src updateLights -> on = wired && powered. PowerNet only flags the consumer
-            // Powered once it's wired AND receiving >= its usage, so that one flag IS the whole on-condition. Runs
-            // every frame (not just focused) so a wired spotlight lights up whether or not you're looking at it.
+            // consumer lamps (spotlight): src updateLights -> on = wired && powered (PowerNet flags the consumer Powered
+            // only when wired AND receiving >= its usage). The lamp rides a 0..1 ENVELOPE that ramps up/down with power;
+            // while the envelope is mid-ramp -- i.e. the source is spinning up or winding down -- the lamp FLICKERS
+            // (strawberry). Steady state is full brightness. Runs every frame (not just focused).
             if (_lamps.Count > 0)
             {
-                bool lit = !OnFire && _consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered;
-                foreach (var lamp in _lamps) if (IsInstanceValid(lamp) && lamp.Visible != lit) lamp.Visible = lit;
+                bool energized = !OnFire && _consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered;
+                float target = energized ? 1f : 0f;
+                if (_lampLevel < target) _lampLevel = Mathf.Min(target, _lampLevel + (float)delta / WarmupTime);
+                else if (_lampLevel > target) _lampLevel = Mathf.Max(target, _lampLevel - (float)delta / CooldownTime);
+                bool ramping = _lampLevel > 0.02f && _lampLevel < 0.98f;   // source warming up / cooling down -> stutter
+                if (ramping)
+                {
+                    _lampFlickerT -= (float)delta;
+                    if (_lampFlickerT <= 0f) { _lampFlicker = GD.Randf() < 0.5f ? 0.2f + GD.Randf() * 0.5f : 1f; _lampFlickerT = 0.035f + GD.Randf() * 0.07f; }   // irregular dips ~15-45 Hz
+                }
+                else _lampFlicker = 1f;
+                float disp = _lampLevel * _lampFlicker;
+                bool vis = disp > 0.04f;
+                for (int i = 0; i < _lamps.Count; i++)
+                    if (IsInstanceValid(_lamps[i]))
+                    {
+                        if (_lamps[i].Visible != vis) _lamps[i].Visible = vis;
+                        _lamps[i].LightEnergy = _lampBase[i] * disp;
+                    }
+                if (DbgFlicker) GD.Print($"[FLICK] lvl={_lampLevel:0.00} disp={disp:0.00} vis={vis}");
             }
 
             if (!_lookFocused || _info == null) return;   // only the focused one keeps its billboard live (a wreck's prompt is set by PlayerController -- it knows the blowtorch)
