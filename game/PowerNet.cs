@@ -1,10 +1,11 @@
 using Godot;
+using SDG.Unturned;
 
 namespace UnturnedGodot
 {
-    // Power propagation over the wire graph: a producing generator OUTPUT pushes its watts down a wire to a CONSUMER;
-    // the consumer is powered if it receives at least its usage, and its PASSTHROUGH re-exports the leftover
-    // (received - usage) down the next wire. Iterated so chains (genny -> spot -> spot -> ...) settle each tick.
+    // Power propagation over the wire graph. The ALGORITHM lives engine-free in core/UnturnedSim/PowerSolver.cs
+    // (tested under tests/UnturnedSim.Tests); this is the thin adapter: walk the "deployables"/"wires" groups into
+    // plain PowerDevice/PowerPort/PowerWire records, Solve, and write Live/Powered/Draw back to the port nodes.
     public static class PowerNet
     {
         // The graph only changes on discrete events (wire built/cleared, deployable placed/removed, generator toggled,
@@ -25,72 +26,43 @@ namespace UnturnedGodot
 
         public static void Recompute(SceneTree tree)
         {
-            var deployables = tree.GetNodesInGroup("deployables");
-            var wires = tree.GetNodesInGroup("wires");
-
-            // reset: outputs produce (if their source is on); consumer/passthrough start at 0
-            foreach (var n in deployables)
+            var devices = new System.Collections.Generic.List<PowerDevice>();
+            var portMap = new System.Collections.Generic.Dictionary<ConnectionPort, PowerPort>();
+            foreach (var n in tree.GetNodesInGroup("deployables"))
                 if (n is Deployable d)
+                {
+                    var dev = new PowerDevice { Producing = d.IsPowered, OnFire = d.OnFire };
                     foreach (var p in d.Ports)
                     {
                         if (p == null || !GodotObject.IsInstanceValid(p)) continue;
-                        if (p.Kind == DeployableDef.PortKind.Output) p.Live = d.IsPowered ? p.Watts : 0f;
-                        else { p.Live = 0f; p.Powered = false; }
+                        portMap[p] = dev.AddPort(Kind(p.Kind), p.Watts);
                     }
+                    devices.Add(dev);
+                }
 
-            // propagate one hop per pass; wires.Count+1 passes fully settles any chain
-            int passes = wires.Count + 1;
-            for (int k = 0; k < passes; k++)
+            var wires = new System.Collections.Generic.List<PowerWire>();
+            foreach (var n in tree.GetNodesInGroup("wires"))
+                if (n is Wire w
+                    && GodotObject.IsInstanceValid(w.Source) && GodotObject.IsInstanceValid(w.Consumer)
+                    && portMap.TryGetValue(w.Source, out var src) && portMap.TryGetValue(w.Consumer, out var cons))
+                    wires.Add(new PowerWire(src, cons));
+
+            PowerSolver.Solve(devices, wires);
+
+            foreach (var kv in portMap)   // write the solved state back onto the port nodes
             {
-                foreach (var n in wires)
-                    if (n is Wire w && GodotObject.IsInstanceValid(w.Source) && GodotObject.IsInstanceValid(w.Consumer))
-                        w.Consumer.Live = w.Source.Live;   // the consumer receives whatever the source is exporting
-                foreach (var n in deployables)
-                    if (n is Deployable d)
-                    {
-                        ConnectionPort cons = null, pass = null;
-                        foreach (var p in d.Ports)
-                        {
-                            if (p == null || !GodotObject.IsInstanceValid(p)) continue;
-                            if (p.Kind == DeployableDef.PortKind.Consumer) cons = p;
-                            else if (p.Kind == DeployableDef.PortKind.Passthrough) pass = p;
-                        }
-                        if (cons != null)
-                        {
-                            cons.Powered = !d.OnFire && cons.Watts > 0f && cons.Live >= cons.Watts;   // a burning/wrecked consumer stops conducting (its passthrough dies with it)
-                            if (pass != null) pass.Live = cons.Powered ? cons.Live - cons.Watts : 0f;   // re-export the leftover
-                        }
-                    }
+                kv.Key.Live = kv.Value.Live;
+                kv.Key.Powered = kv.Value.Powered;
+                kv.Key.Draw = kv.Value.Draw;
             }
-
-            // per-output LOAD: trace each output's chain (output -> wire -> consumer -> that consumer's passthrough -> ...)
-            // and sum the usage of every powered consumer it feeds. This is the generator's draw (usage bar + vibration).
-            foreach (var n in deployables)
-                if (n is Deployable d)
-                    foreach (var p in d.Ports)
-                        if (p != null && GodotObject.IsInstanceValid(p) && p.Kind == DeployableDef.PortKind.Output)
-                            p.Draw = TraceLoad(p, wires);
         }
 
-        static float TraceLoad(ConnectionPort output, Godot.Collections.Array<Node> wires)
+        static PowerPortKind Kind(DeployableDef.PortKind k) => k switch
         {
-            float draw = 0f;
-            var seen = new System.Collections.Generic.HashSet<ConnectionPort>();
-            ConnectionPort src = output;
-            while (src != null && seen.Add(src))
-            {
-                ConnectionPort consumer = null;
-                foreach (var wn in wires)   // the wire fed by this source
-                    if (wn is Wire w && GodotObject.IsInstanceValid(w) && w.Source == src && GodotObject.IsInstanceValid(w.Consumer)) { consumer = w.Consumer; break; }
-                if (consumer == null) break;
-                if (consumer.Powered) draw += consumer.Watts;
-                src = null;   // next hop = this consumer's owner's passthrough (re-exports downstream)
-                if (consumer.Owner != null && GodotObject.IsInstanceValid(consumer.Owner))
-                    foreach (var pp in consumer.Owner.Ports)
-                        if (pp != null && GodotObject.IsInstanceValid(pp) && pp.Kind == DeployableDef.PortKind.Passthrough) { src = pp; break; }
-            }
-            return draw;
-        }
+            DeployableDef.PortKind.Output => PowerPortKind.Output,
+            DeployableDef.PortKind.Consumer => PowerPortKind.Consumer,
+            _ => PowerPortKind.Passthrough,
+        };
     }
 
     // Ticks the power net once a frame. One instance is created lazily by the first placed deployable.

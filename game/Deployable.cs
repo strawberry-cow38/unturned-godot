@@ -223,25 +223,25 @@ namespace UnturnedGodot
                 if (n is ZombieController z && !z.Dead)
                 {
                     float d = z.GlobalPosition.DistanceTo(p);
-                    if (d <= R) z.DamageHit(120f * (1f - d / R), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
+                    if (d <= R) z.DamageHit(SDG.Unturned.ExplosionMath.Linear(120f, d, R), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
                 }
             foreach (var n in GetTree().GetNodesInGroup("players"))
                 if (n is PlayerController pl)
                 {
                     float d = pl.GlobalPosition.DistanceTo(p);
-                    if (d <= R) pl.TakeDamage(120f * (1f - d / R));
+                    if (d <= R) pl.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle v && !v.Exploded)
                 {
                     float d = v.GlobalPosition.DistanceTo(p);
-                    if (d <= R) v.TakeDamage(120f * (1f - d / R));
+                    if (d <= R) v.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));
                 }
             foreach (var n in GetTree().GetNodesInGroup("deployables"))
                 if (n is Deployable dep && dep != this && !dep._exploded)
                 {
                     float d = dep.GlobalPosition.DistanceTo(p);
-                    if (d <= R) dep.TakeDamage(120f * (1f - d / R));   // chain: blow the next generator too
+                    if (d <= R) dep.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));   // chain: blow the next generator too
                 }
         }
 

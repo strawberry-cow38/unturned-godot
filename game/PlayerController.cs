@@ -935,11 +935,9 @@ namespace UnturnedGodot
         // Leg-breaking (source breakLegs) is now gated by worn clothing's Prevents_Falling_Broken_Bones (PlayerLife:2436) -- WIRED.
         void CheckFallDamage(float verticalVel)
         {
-            const float threshold = 22.0f;
-            if (verticalVel >= -threshold) return;             // a normal jump lands at ~7 m/s -> no damage
-            Broken = !(Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
-            float armored = Mathf.Abs(verticalVel) * (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier();   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
-            int dmg = Mathf.RoundToInt(Mathf.Min(101f, armored));   // RoundAndClampToByte; damage <= 101
+            if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
+            Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
+            int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
             if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
         }
 
@@ -957,9 +955,8 @@ namespace UnturnedGodot
                     float range = z.GlobalPosition.DistanceTo(point);
                     if (range > radius) continue;
                     if (ExplosionBlocked(point, z.GlobalPosition)) continue;   // a wall between the blast and the zombie stops it (source LineOfSightTest)
-                    float times = 1f - range / radius;
                     bool wd = z.Dead;
-                    z.DamageHit(zombieDamage * times, z.GlobalPosition, (z.GlobalPosition - point).Normalized());
+                    z.DamageHit(ExplosionMath.Linear(zombieDamage, range, radius), z.GlobalPosition, (z.GlobalPosition - point).Normalized());
                     if (!wd && z.Dead) Kills++;
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))   // source DamageTool.explode also damages vehicles (Grenade.dat Vehicle_Damage 100)
@@ -968,10 +965,10 @@ namespace UnturnedGodot
                     float range = v.GlobalPosition.DistanceTo(point);
                     if (range > radius) continue;
                     if (ExplosionBlocked(point, v.GlobalPosition)) continue;
-                    v.TakeDamage(vehicleDamage * (1f - range / radius));   // linear falloff (port's simplified explosion model)
+                    v.TakeDamage(ExplosionMath.Linear(vehicleDamage, range, radius));   // linear falloff (port's simplified explosion model)
                 }
             float pr = GlobalPosition.DistanceTo(point);
-            if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = 1f - (pr / radius) * (pr / radius); if (t > 0f) TakeDamage(playerDamage * t * (Inventory?.ExplosionArmor ?? 1f)); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
+            if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = ExplosionMath.Squared(playerDamage, pr, radius); if (t > 0f) TakeDamage(t * (Inventory?.ExplosionArmor ?? 1f)); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
             Local?.FlinchFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
             GD.Print($"[explode] r={radius} at {point}");
         }
@@ -1072,16 +1069,8 @@ namespace UnturnedGodot
         // clamps it to [1, 64]. Crouch-walking (or crawling prone) is how you sneak past a horde.
         public float GetStealthDetectionRadius()
         {
-            if (IsDriving) return Mathf.Clamp(48f * _driving.ForwardSpeedPct(), 1f, 64f);   // source DRIVING: DETECT_FORWARD(48) * fwd-speed% -> loud at speed, ~silent when parked
-            float move = Moving ? 1.1f : 1f;                       // DETECT_MOVE
-            float r = _move.Stance switch
-            {
-                EPlayerStance.SPRINT => 20f * move,                // DETECT_SPRINT
-                EPlayerStance.CROUCH => 6f * move,                 // DETECT_CROUCH
-                EPlayerStance.PRONE  => 3f * move,                 // DETECT_PRONE
-                _ => 12f * move,                                   // DETECT_STAND
-            };
-            return Mathf.Clamp(r, 1f, 64f);
+            if (IsDriving) return StealthDetection.DrivingRadius(_driving.ForwardSpeedPct());   // source DRIVING: DETECT_FORWARD(48) * fwd-speed% -> loud at speed, ~silent when parked
+            return StealthDetection.Radius(_move.Stance, Moving);   // the DETECT_* table lives in core/UnturnedSim/CombatMath.cs (L0-tested)
         }
 
         // When set (e.g. by a recorded demo or a net-driven bot), overrides keyboard input: x=strafe, y=forward.

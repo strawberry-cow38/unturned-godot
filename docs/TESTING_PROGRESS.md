@@ -51,9 +51,24 @@ Fixes found while porting:
   an edge landing can wobble past the settle window. The test now sets `WorldItem.NoDropRotation=true`
   (deterministic pose — it guards CCD-vs-trimesh, not landing dynamics); ResetGlobals restores it.
 
+### Phase 3 — pure-logic extractions to L0
+- `core/UnturnedSim/PowerSolver.cs` — the wire-power algorithm on plain `PowerDevice`/`PowerPort`/
+  `PowerWire` records; `PowerNet.Recompute` is now a thin group-walk → Solve → write-back adapter.
+  `tests/UnturnedSim.Tests/PowerSolverTests.cs` (11 tests): chains, 10-deep chain, over-draw,
+  mid-chain fire, two-generators-one-consumer (pins the last-wire-wins overwrite semantic), and wire
+  cycles (terminate; can't self-power — the loop-back wire overwrites the feed).
+- `core/UnturnedSim/CombatMath.cs` — `ExplosionMath` (linear zombie/vehicle + squared player
+  falloffs), `FallMath` (22 m/s threshold, min(101,|v|)×armor, bone-break gate), `StealthDetection`
+  (the DETECT_* stance table + driving radius). Call sites rewired: PlayerController (Explode,
+  CheckFallDamage, GetStealthDetectionRadius), Deployable.ExplodeDamage, Vehicle explosion.
+  `tests/UnturnedSim.Tests/CombatMathTests.cs` (16 tests).
+- Behavior verified identical: the L1 power/grenade/fall/stance tests pass unchanged.
+- Adapter note: wires whose endpoint ports aren't on a grouped, valid deployable are now skipped
+  (the old code half-processed them); unreachable in practice since KillPowerHardware/DisconnectWires
+  free such wires the same frame.
+
 ## In progress / next
 
-- Phase 3: PowerSolver → core/UnturnedSim + NUnit suite; explosion falloff + stance table extractions.
 - Phase 4: visual goldens (manifest + tools/visual_tests.py + `--visual` in test.sh).
 - Phase 5: tools/nightly_tests.sh (ready-to-enable, NOT wired to cron).
 
