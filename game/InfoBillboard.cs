@@ -11,6 +11,7 @@ namespace UnturnedGodot
     {
         public static readonly Color HealthColor = new Color(0xbf / 255f, 0x1f / 255f, 0x1f / 255f);   // Palette.COLOR_R
         public static readonly Color FuelColor = new Color(0xdc / 255f, 0xb4 / 255f, 0x13 / 255f);     // Palette.COLOR_Y
+        public static readonly Color LoadColor = new Color(0x35 / 255f, 0xc0 / 255f, 0xe0 / 255f);     // electric cyan: generator power draw
         static readonly Color BgColor = new Color(0f, 0f, 0f, 0.55f);   // SleekProgress background box
 
         const int VW = 320, VH = 232, BarW = 210, BarH = 22, Pad = 14, IconSz = 26;

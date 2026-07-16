@@ -40,7 +40,8 @@ namespace UnturnedGodot
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
         readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
-        ConnectionPort _consumerPort;
+        ConnectionPort _consumerPort, _outputPort;
+        public float LoadFraction => _outputPort != null && GodotObject.IsInstanceValid(_outputPort) && _outputPort.Watts > 0f ? Mathf.Clamp(_outputPort.Draw / _outputPort.Watts, 0f, 1f) : 0f;   // generator: 0..1 of capacity currently drawn
         float _lampLevel;                    // 0..1 lamp envelope, ramps with power over WarmupTime/CooldownTime
         float _lampFlicker = 1f, _lampFlickerT;   // while the source spins up/down (mid-ramp) the lamp stutters (strawberry)
         static readonly bool DbgFlicker = System.Environment.GetEnvironmentVariable("UG_WIREFLICKER") == "1";
@@ -83,6 +84,7 @@ namespace UnturnedGodot
                 d.AddChild(port);
                 d.Ports.Add(port);
                 if (pdef.Kind == DeployableDef.PortKind.Consumer) d._consumerPort = port;   // this consumer's Powered flag lights the lamps
+                else if (pdef.Kind == DeployableDef.PortKind.Output) d._outputPort = port;   // this output's Draw drives the load bar + vibration
             }
             foreach (var ldef in def.Lights)   // consumer lamps (spotlight): children in the flat frame -> stand up with the model, off until powered
             {
@@ -325,22 +327,23 @@ namespace UnturnedGodot
             float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
             if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
+            float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)
             if (_engineAudio != null)
             {
                 if (_powerLevel > 0.01f)
                 {
                     if (!_engineAudio.Playing) _engineAudio.Play();
-                    _engineAudio.PitchScale = 0.6f + 0.4f * _powerLevel;        // spin up 0.6 -> 1.0
-                    _engineAudio.VolumeDb = Mathf.Lerp(-26f, -6f, _powerLevel); // fade in as it warms
+                    _engineAudio.PitchScale = (0.6f + 0.4f * _powerLevel) - load * 0.22f * _powerLevel;   // spin up 0.6->1.0, then bog DOWN in pitch under load
+                    _engineAudio.VolumeDb = Mathf.Lerp(-26f, -6f, _powerLevel) + load * 3.5f * _powerLevel; // and work louder
                 }
                 else if (_engineAudio.Playing) _engineAudio.Stop();
             }
-            if (_mesh != null)   // NON-source shake (src Engine node has no anim) -- ~6mm, scaled by the ramp
+            if (_mesh != null)   // NON-source shake (src Engine node has no anim) -- ~6mm at idle, up to ~3.5x harder + faster under full load
             {
                 if (_powerLevel > 0.01f && !_exploded)
                 {
-                    _vibePhase += (float)delta * 90f;
-                    _mesh.Position = new Vector3(Mathf.Sin(_vibePhase * 1.3f), Mathf.Sin(_vibePhase), Mathf.Sin(_vibePhase * 0.7f)) * 0.006f * _powerLevel;
+                    _vibePhase += (float)delta * (90f + load * 70f);
+                    _mesh.Position = new Vector3(Mathf.Sin(_vibePhase * 1.3f), Mathf.Sin(_vibePhase), Mathf.Sin(_vibePhase * 0.7f)) * 0.006f * _powerLevel * (1f + load * 2.5f);
                 }
                 else if (_mesh.Position != Vector3.Zero) _mesh.Position = Vector3.Zero;
             }
@@ -380,7 +383,7 @@ namespace UnturnedGodot
                 _info.SetName(Def?.Name, OutlineColor);
                 _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
                 _info.SetBar(1, FuelMax > 0f ? Fuel / FuelMax : 0f, InfoBillboard.FuelColor, FuelMax > 0f);   // fuel bar (yellow); hidden if no tank
-                _info.SetBar(2, 0f, InfoBillboard.FuelColor, false);   // no battery on a deployable
+                _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null);   // usage bar (cyan): load / capacity -- generators only
                 // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. _powered is the target -> reads as the next
                 // action even mid-ramp. No prompt once it's on fire.
                 _info.SetPrompt(Def != null && Def.Fuel > 0f && !OnFire ? $"[F] Turn {(_powered ? "Off" : "On")}" : "", OutlineColor);

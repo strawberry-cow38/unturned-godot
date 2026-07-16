@@ -1171,7 +1171,7 @@ namespace UnturnedGodot
                 _spotDbg = placedSpot;   // lamp-lit probe at the shot frame
                 if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                 PowerNet.Recompute(GetTree());
-                GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w");
+                GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w draw={outp.Draw:0}w load={placedGen.LoadFraction:0.00}");
                 if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1")   // destroy the spotlight -> its wire + port cubes must vanish (strawberry)
                 {
                     placedSpot.DebugStage("wreck"); PowerNet.Recompute(GetTree());
@@ -1199,6 +1199,14 @@ namespace UnturnedGodot
                 dirLight.LightEnergy = 0.06f;
                 cam.Position = new Vector3(2.6f, 2.3f, 6.8f);
                 cam.LookAt(new Vector3(2.6f, 1.0f, 0f), Vector3.Up);
+                if (System.Environment.GetEnvironmentVariable("UG_LOADBAR") == "1")   // instead aim at the powered generator + focus it -> HP/fuel/LOAD bars
+                {
+                    cam.Position = new Vector3(-2.6f, 1.7f, 4.4f);
+                    cam.LookAt(new Vector3(-2.6f, 0.95f, 0f), Vector3.Up);
+                    cam.CullMask &= ~OutlineOverlay.OutlineLayer;
+                    CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());
+                    placedGen.SetLookFocused(true);
+                }
             }
 
             // scripted aim probe: point a camera down at OPEN ground and verify the ghost computes a VALID placement

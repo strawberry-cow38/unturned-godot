@@ -61,6 +61,34 @@ namespace UnturnedGodot
                         }
                     }
             }
+
+            // per-output LOAD: trace each output's chain (output -> wire -> consumer -> that consumer's passthrough -> ...)
+            // and sum the usage of every powered consumer it feeds. This is the generator's draw (usage bar + vibration).
+            foreach (var n in deployables)
+                if (n is Deployable d)
+                    foreach (var p in d.Ports)
+                        if (p != null && GodotObject.IsInstanceValid(p) && p.Kind == DeployableDef.PortKind.Output)
+                            p.Draw = TraceLoad(p, wires);
+        }
+
+        static float TraceLoad(ConnectionPort output, Godot.Collections.Array<Node> wires)
+        {
+            float draw = 0f;
+            var seen = new System.Collections.Generic.HashSet<ConnectionPort>();
+            ConnectionPort src = output;
+            while (src != null && seen.Add(src))
+            {
+                ConnectionPort consumer = null;
+                foreach (var wn in wires)   // the wire fed by this source
+                    if (wn is Wire w && GodotObject.IsInstanceValid(w) && w.Source == src && GodotObject.IsInstanceValid(w.Consumer)) { consumer = w.Consumer; break; }
+                if (consumer == null) break;
+                if (consumer.Powered) draw += consumer.Watts;
+                src = null;   // next hop = this consumer's owner's passthrough (re-exports downstream)
+                if (consumer.Owner != null && GodotObject.IsInstanceValid(consumer.Owner))
+                    foreach (var pp in consumer.Owner.Ports)
+                        if (pp != null && GodotObject.IsInstanceValid(pp) && pp.Kind == DeployableDef.PortKind.Passthrough) { src = pp; break; }
+            }
+            return draw;
         }
     }
 

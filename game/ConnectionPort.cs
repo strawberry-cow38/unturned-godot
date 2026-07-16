@@ -16,6 +16,7 @@ namespace UnturnedGodot
         public string ProviderName;
         public float Live;          // live power (recomputed by PowerNet): output = produced now, consumer = received, passthrough = exported now
         public bool Powered;        // consumer: is it getting at least its usage?
+        public float Draw;          // output only: total wattage actually drawn by the powered consumers down its chain (the load)
         public bool Usable => Owner != null && GodotObject.IsInstanceValid(Owner) && !Owner.OnFire;   // a burning/wrecked deployable's ports can't start or accept a wire
 
         MeshInstance3D _cube;
@@ -46,7 +47,7 @@ namespace UnturnedGodot
         // Info line for the wire-tool look-at HUD -- reflects the LIVE power flowing through this port.
         public string InfoLine() => Kind switch
         {
-            DeployableDef.PortKind.Output => $"{ProviderName} — {Live:0}w output",
+            DeployableDef.PortKind.Output => $"{ProviderName} — {Watts:0}w output · {Draw:0}w drawn",
             DeployableDef.PortKind.Consumer => $"{ProviderName} — {Watts:0}w consumer ({(Powered ? $"powered, {Live:0}w in" : "unpowered")})",
             DeployableDef.PortKind.Passthrough => $"{ProviderName} — {Live:0}w passthrough",
             _ => ProviderName,
