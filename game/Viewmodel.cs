@@ -232,6 +232,7 @@ namespace UnturnedGodot
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
                 _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // generic (knife) melee fallback clips play once
+                _arms.SetClipLoop("Punch_Left", false); _arms.SetClipLoop("Punch_Right", false);   // bare-fists jabs play once (ported from Punch.fbx)
                 if (_meleeCap != null)   // this melee's OWN ripped clips ALL play once and hold (source animator.play plays non-looping); a Repeated tool's continuous "blowtorching" is the spark EMISSION while held, NOT a looping Start_Swing
                     foreach (var c in new[] { "_Equip", "_Weak", "_Strong", "_Start_Swing", "_Stop_Swing", "_Inspect" }) _arms.SetClipLoop(_meleeCap + c, false);
                 string equipClip = (EmptyHands || Fists) ? "Melee_Equip"   // unarmed / carry: the generic melee READY hold (one-shot, no loop) -- NOT the 3P Idle_Hands_0 that was looping ("grab off back")
@@ -387,6 +388,7 @@ namespace UnturnedGodot
 
         public void SwingMelee(bool strong = false)   // play this melee's OWN Weak/Strong swing (source UseableMelee), falling back to the generic knife clip if it wasn't ripped
         {
+            if (Fists) { _arms?.Play(strong ? "Punch_Right" : "Punch_Left"); return; }   // bare fists: the real src jab (LMB=left / RMB=right, ported from Punch.fbx)
             string own = _meleeCap + (strong ? "_Strong" : "_Weak");
             _arms?.Play(_meleeCap != null && _arms.ClipLength(own) > 0f ? own : (strong ? "Melee_Strong" : "Melee_Weak"));
         }
@@ -394,6 +396,7 @@ namespace UnturnedGodot
         public float MeleeSwingLength(bool strong)
         {
             if (_arms == null) return 0f;
+            if (Fists) return _arms.ClipLength(strong ? "Punch_Right" : "Punch_Left");
             if (_meleeCap != null) { float l = _arms.ClipLength(_meleeCap + (strong ? "_Strong" : "_Weak")); if (l > 0f) return l; }
             return _arms.ClipLength(strong ? "Melee_Strong" : "Melee_Weak");
         }
