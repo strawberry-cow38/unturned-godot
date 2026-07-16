@@ -340,6 +340,7 @@ namespace UnturnedGodot
         DeployableDef _deployable;      // held deployable (null = none)
         DeployablePlacer _placer;       // the world-space ghost preview
         float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
+        Vector3 _placePoint; float _placeYaw;   // target FROZEN at click -> the object drops there even if you look away
         const float PlaceTime = 0.45f;  // src UseableBarricade builds over the Use-clip length; a short stand-in here
         public bool HoldingDeployable => _deployable != null;
 
@@ -425,30 +426,35 @@ namespace UnturnedGodot
             _placer?.QueueFree(); _placer = null;
         }
 
-        // LMB while holding a deployable: if the current aim is valid, start the brief place gesture.
+        // LMB while holding a deployable: if the current aim is valid, FREEZE the target (point+yaw) at the click
+        // and start the brief place gesture -- the object drops there even if you look away during the delay.
         void TryPlaceDeployable()
         {
             if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
+            _placePoint = _placer.Point; _placeYaw = _placer.Yaw;   // FROZEN at click (strawberry: don't drift with the mouse)
             _placeTimer = PlaceTime;
         }
 
-        // Ticked each frame while holding a deployable: run the ghost aim, and finish a pending place.
+        // Ticked each frame while holding a deployable: follow the aim with the ghost, or -- mid-place -- hold the
+        // ghost frozen at the click point and drop the object there when the gesture finishes.
         void TickDeploy(float dt)
         {
             if (_deployable == null || _placer == null) return;
+            if (_placeTimer > 0f)   // FROZEN: ghost stays at the click point, aim is ignored until the object drops
+            {
+                _placer.Freeze(_placePoint, _placeYaw);
+                _placeTimer -= dt;
+                if (_placeTimer <= 0f)
+                {
+                    Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw);
+                    GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
+                }
+                return;
+            }
             bool active = !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured && !(_invUI?.IsOpen ?? false);
             _placer.SetGhostVisible(active);
             if (active) _placer.Aim(_cam);
-            if (_placeTimer > 0f)
-            {
-                _placeTimer -= dt;
-                if (_placeTimer <= 0f && _placer.Aim(_cam))   // re-check validity at the drop
-                {
-                    Deployable.Spawn(GetParent(), _deployable, _placer.Point, _placer.Yaw);
-                    GD.Print($"[deploy] placed {_deployable.Name} at {_placer.Point}");
-                }
-            }
         }
         public static bool DebugCanLoadWav(string stem) => LoadWavOneShot($"res://content/sounds/{stem}.wav") != null;   // test: the exported WAV parses as 16-bit PCM
         public bool DebugUsesMag() => UsesMagItem;           // test: does the equipped gun use magazine items
@@ -1190,11 +1196,15 @@ namespace UnturnedGodot
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
+                else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.R })
-            { if (HasGunOut) StartReload(); }   // no reload without a gun out (master)
+            {
+                if (HoldingDeployable && _placer != null) _placer.YawOffset += 90f;   // R rotates the deployable ghost 90 deg (strawberry)
+                else if (HasGunOut) StartReload();   // no reload without a gun out (master)
+            }
             else if (@event is InputEventKey { Pressed: true } hk && hk.Keycode >= Key.Key1 && hk.Keycode <= Key.Key9)
                 EquipHotbar((int)hk.Keycode - (int)Key.Key0);   // hotbar keys (bag CLOSED): 1/2 = primary/secondary slot, 3-9 = bound item. Binding (RMB item + 3-9) is handled in InventoryUI while the bag's open.
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.V })

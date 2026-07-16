@@ -12,6 +12,7 @@ namespace UnturnedGodot
         public bool Valid { get; private set; }
         public Vector3 Point { get; private set; }
         public float Yaw { get; private set; }
+        public float YawOffset;   // R adds 90 deg here; the ghost yaw = aim yaw + this (src rotate_y)
 
         MeshInstance3D _ghost;
         Aabb _localAabb;
@@ -42,7 +43,7 @@ namespace UnturnedGodot
         public bool Aim(Camera3D cam)
         {
             if (Def == null || cam == null) return false;
-            Yaw = Mathf.RadToDeg(cam.GlobalRotation.Y);   // ghost yaw follows aim yaw (src angle_y = look.yaw)
+            Yaw = Mathf.RadToDeg(cam.GlobalRotation.Y) + YawOffset;   // aim yaw + the R-accumulated rotate (src angle_y + rotate_y)
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = cam.GlobalPosition, dir = -cam.GlobalTransform.Basis.Z;
             var rq = PhysicsRayQueryParameters3D.Create(from, from + dir * Def.Range);
@@ -79,6 +80,17 @@ namespace UnturnedGodot
             _ghost.GlobalTransform = new Transform3D(DeployableDef.StandBasis(Yaw),
                 Point + Vector3.Up * DeployableDef.GroundLift(_localAabb));   // base sits on the surface point
             _ghost.MaterialOverride = Valid ? ValidMat : InvalidMat;
+        }
+
+        // Pin the ghost at a committed point/yaw (blue) while the place gesture plays -- ignores aim.
+        public void Freeze(Vector3 point, float yaw)
+        {
+            Valid = true; Point = point; Yaw = yaw;
+            if (_ghost == null) return;
+            _ghost.Visible = true;
+            _ghost.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw),
+                point + Vector3.Up * DeployableDef.GroundLift(_localAabb));
+            _ghost.MaterialOverride = ValidMat;
         }
     }
 }
