@@ -250,6 +250,17 @@ namespace UnturnedGodot
 
         static readonly System.Collections.Generic.Dictionary<string, RigData> _rigCache = new();   // per-path (player/deer/pig/cow rigs coexist)
 
+        // Built-once, shared across every character of the same rig+variant. The 316-clip AnimationLibrary is the
+        // dominant per-build cost (each clip inserts per-bone rot/pos/scale keyframes) -- rebuilding it on every
+        // `new Viewmodel` was the big equip frame-hitch. The skinned geometry (ArrayMesh + Skin) is identical too.
+        // Keyed by (RigData ref, armsOnly): RigData is cached per-path so the player/viewmodel/zombies share one ref;
+        // armsOnly separates the arms library (has consumable clips + one-shot equip overrides) from the full-body one
+        // (has _body's Idle_Drive PlayLoop override) so their loop-mode mutations never collide. Sharing is safe:
+        // AnimationPlayer playback state is per-instance; the only clip mutations are consistent within each variant;
+        // MeshInstance3D material/tint and the face decal stay per-instance (built fresh below).
+        static readonly System.Collections.Generic.Dictionary<(RigData, bool), (AnimationLibrary lib, string[] names)> _animCache = new();
+        static readonly System.Collections.Generic.Dictionary<(RigData, bool), (ArrayMesh mesh, Skin skin)> _skinCache = new();
+
         // The 36+36 distinct consumable Equip/Use clips (CE_n/CU_n) live in their OWN file so rig.json stays lean.
         // Only the 1P arms viewmodel needs them, so they're merged in for armsOnly builds (not the 3P body/zombies).
         static System.Collections.Generic.Dictionary<string, ClipData> _consumableAnims;
@@ -296,44 +307,53 @@ namespace UnturnedGodot
             root.Skeleton = skel;
 
             // ---- skinned mesh (raw arrays; arms-only variant for the 1P viewmodel) ----
-            var m = (armsOnly && rig.arms != null) ? rig.arms
-                : new MeshData { vcount = rig.vcount, positions = rig.positions, normals = rig.normals, uvs = rig.uvs, skin_index = rig.skin_index, skin_weight = rig.skin_weight, faces = rig.faces };
-            int vc = m.vcount;
-            var verts = new Vector3[vc]; var norms = new Vector3[vc]; var uvs = new Vector2[vc];
-            var bones = new int[vc * 4]; var weights = new float[vc * 4];
-            for (int v = 0; v < vc; v++)
+            // Geometry (ArrayMesh) + Skin are identical for every character of this rig+variant, so build once and
+            // share the resources. Material/tint is set per-instance below via mi.MaterialOverride (never on the mesh).
+            if (!_skinCache.TryGetValue((rig, armsOnly), out var geom))
             {
-                verts[v] = new Vector3((float)m.positions[v][0], (float)m.positions[v][1], (float)m.positions[v][2]);
-                norms[v] = new Vector3((float)m.normals[v][0], (float)m.normals[v][1], (float)m.normals[v][2]);
-                uvs[v] = new Vector2((float)m.uvs[v][0], (float)m.uvs[v][1]);
-                bones[v * 4 + 0] = m.skin_index[v][0];
-                bones[v * 4 + 1] = m.skin_index[v][1];
-                float w0 = (float)m.skin_weight[v][0], w1 = (float)m.skin_weight[v][1];
-                float sum = w0 + w1; if (sum < 1e-6f) { w0 = 1f; w1 = 0f; sum = 1f; }
-                weights[v * 4 + 0] = w0 / sum; weights[v * 4 + 1] = w1 / sum;
-            }
-            var idx = new int[m.faces.Length];
-            Array.Copy(m.faces, idx, m.faces.Length);
+                var m = (armsOnly && rig.arms != null) ? rig.arms
+                    : new MeshData { vcount = rig.vcount, positions = rig.positions, normals = rig.normals, uvs = rig.uvs, skin_index = rig.skin_index, skin_weight = rig.skin_weight, faces = rig.faces };
+                int vc = m.vcount;
+                var verts = new Vector3[vc]; var norms = new Vector3[vc]; var uvs = new Vector2[vc];
+                var bones = new int[vc * 4]; var weights = new float[vc * 4];
+                for (int v = 0; v < vc; v++)
+                {
+                    verts[v] = new Vector3((float)m.positions[v][0], (float)m.positions[v][1], (float)m.positions[v][2]);
+                    norms[v] = new Vector3((float)m.normals[v][0], (float)m.normals[v][1], (float)m.normals[v][2]);
+                    uvs[v] = new Vector2((float)m.uvs[v][0], (float)m.uvs[v][1]);
+                    bones[v * 4 + 0] = m.skin_index[v][0];
+                    bones[v * 4 + 1] = m.skin_index[v][1];
+                    float w0 = (float)m.skin_weight[v][0], w1 = (float)m.skin_weight[v][1];
+                    float sum = w0 + w1; if (sum < 1e-6f) { w0 = 1f; w1 = 0f; sum = 1f; }
+                    weights[v * 4 + 0] = w0 / sum; weights[v * 4 + 1] = w1 / sum;
+                }
+                var idx = new int[m.faces.Length];
+                Array.Copy(m.faces, idx, m.faces.Length);
 
-            var arr = new Godot.Collections.Array();
-            arr.Resize((int)Mesh.ArrayType.Max);
-            arr[(int)Mesh.ArrayType.Vertex] = verts;
-            arr[(int)Mesh.ArrayType.Normal] = norms;
-            arr[(int)Mesh.ArrayType.TexUV] = uvs;
-            arr[(int)Mesh.ArrayType.Bones] = bones;
-            arr[(int)Mesh.ArrayType.Weights] = weights;
-            arr[(int)Mesh.ArrayType.Index] = idx;
-            var mesh = new ArrayMesh();
-            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+                var arr = new Godot.Collections.Array();
+                arr.Resize((int)Mesh.ArrayType.Max);
+                arr[(int)Mesh.ArrayType.Vertex] = verts;
+                arr[(int)Mesh.ArrayType.Normal] = norms;
+                arr[(int)Mesh.ArrayType.TexUV] = uvs;
+                arr[(int)Mesh.ArrayType.Bones] = bones;
+                arr[(int)Mesh.ArrayType.Weights] = weights;
+                arr[(int)Mesh.ArrayType.Index] = idx;
+                var builtMesh = new ArrayMesh();
+                builtMesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
 
-            // ---- skin: mesh blend index j -> skeleton bone + bind pose ----
-            var skin = new Skin();
-            skin.SetBindCount(rig.skin.Length);
-            for (int j = 0; j < rig.skin.Length; j++)
-            {
-                skin.SetBindBone(j, rig.skin[j].bone);
-                skin.SetBindPose(j, Xf(rig.skin[j].pos, rig.skin[j].rot, rig.skin[j].scale));
+                // ---- skin: mesh blend index j -> skeleton bone + bind pose ----
+                var builtSkin = new Skin();
+                builtSkin.SetBindCount(rig.skin.Length);
+                for (int j = 0; j < rig.skin.Length; j++)
+                {
+                    builtSkin.SetBindBone(j, rig.skin[j].bone);
+                    builtSkin.SetBindPose(j, Xf(rig.skin[j].pos, rig.skin[j].rot, rig.skin[j].scale));
+                }
+                geom = (builtMesh, builtSkin);
+                _skinCache[(rig, armsOnly)] = geom;
             }
+            var mesh = geom.mesh;
+            var skin = geom.skin;
 
             var mi = new MeshInstance3D { Name = "Body", Mesh = mesh, VisibilityRangeEnd = 95f };   // horde perf: don't draw a skinned body past ~95m (player/arms always near, never culled)
             root.Body = mi;
@@ -392,22 +412,31 @@ namespace UnturnedGodot
             }
 
             // ---- animations ----
+            // The library (316 clips, each with per-bone keyframe tracks) is the dominant per-build cost and is
+            // identical for every character of this rig+variant -- build it once and share the resource across every
+            // AnimationPlayer. Playback position is per-player; loop-mode overrides (SetClipLoop/PlayLoop) are
+            // consistent within a variant, so the shared clips converge correctly. This is what kills the equip hitch.
             var ap = new AnimationPlayer { Name = "Anim" };
             root.AddChild(ap);
-            var lib = new AnimationLibrary();
-            var names = new List<string>();
-            if (rig.anims != null)
-                foreach (var kv in rig.anims)
-                {
-                    lib.AddAnimation(kv.Key, BuildAnim(kv.Value));
-                    names.Add(kv.Key);
-                }
-            if (armsOnly)   // viewmodel: also load the per-item consumable eat/drink clips (CE_n/CU_n)
-                foreach (var kv in ConsumableAnims())
-                    if (!names.Contains(kv.Key)) { lib.AddAnimation(kv.Key, BuildAnim(kv.Value)); names.Add(kv.Key); }
-            ap.AddAnimationLibrary("", lib);
+            if (!_animCache.TryGetValue((rig, armsOnly), out var built))
+            {
+                var lib = new AnimationLibrary();
+                var names = new List<string>();
+                if (rig.anims != null)
+                    foreach (var kv in rig.anims)
+                    {
+                        lib.AddAnimation(kv.Key, BuildAnim(kv.Value));
+                        names.Add(kv.Key);
+                    }
+                if (armsOnly)   // viewmodel: also load the per-item consumable eat/drink clips (CE_n/CU_n)
+                    foreach (var kv in ConsumableAnims())
+                        if (!names.Contains(kv.Key)) { lib.AddAnimation(kv.Key, BuildAnim(kv.Value)); names.Add(kv.Key); }
+                built = (lib, names.ToArray());
+                _animCache[(rig, armsOnly)] = built;
+            }
+            ap.AddAnimationLibrary("", built.lib);
             root._ap = ap;
-            root.ClipNames = names.ToArray();
+            root.ClipNames = built.names;
             root._rag = rig.ragdoll;
             if (armsOnly) root.SetupAimAdditive();   // viewmodel: bake the Gun_Aim additive ADS layer
             return root;
