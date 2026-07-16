@@ -369,6 +369,7 @@ namespace UnturnedGodot
             if (asset.IsConsumable) { EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true; }   // EquipHeldConsumable snapshots the revert target itself
             var deploy = DeployableDef.ById(asset.id);
             if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
+            if (asset.id == 65) { EquipWireTool(backing); return true; }   // Wire (item 65) = the wiring tool
             return false;
         }
 
@@ -387,7 +388,7 @@ namespace UnturnedGodot
         }
 
         // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
-        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && (_melee == null || _melee.Name == "fists");
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && (_melee == null || _melee.Name == "fists");
 
         // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
         public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
@@ -398,6 +399,7 @@ namespace UnturnedGodot
             if (_melee != null && _melee.Name != "fists") return asset.meleeName != null && asset.meleeName == _heldMeleeName;
             if (_heldConsumable != null) return _heldConsumable.id == asset.id;
             if (_deployable != null) return _deployable.Id == asset.id;
+            if (HoldingWireTool) return asset.id == 65;
             return false;
         }
 
@@ -410,6 +412,7 @@ namespace UnturnedGodot
         public bool HoldingConsumable => _heldConsumable != null;
 
         // --- Deployables held in hand (generator / spotlight): equip -> aim shows a placement ghost -> LMB plants it. ---
+        public bool HoldingWireTool => _viewmodel != null && _viewmodel.IsWireViewmodel;   // Wire tool (item 65) in hand -> wiring mode (LMB/RMB build/cancel wires); derived from the viewmodel so no state to clear
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
         DeployablePlacer _placer;       // the world-space ghost preview
@@ -495,6 +498,21 @@ namespace UnturnedGodot
             GetParent().AddChild(_placer);      // world space: the ghost stays put in the world, not glued to the player
             _placer.SetDef(def);
             GD.Print($"[deploy] holding {def.Name} -- aim, LMB to place");
+        }
+
+        // Equip the Wire tool (item 65): the wiring tool held in hand. Wiring interaction (select node / route / place /
+        // cancel / undo) lands in later phases; this just puts it in the hand (HoldingWireTool drives the mode).
+        public void EquipWireTool(SDG.Unturned.Item backing = null)
+        {
+            SaveGunState();
+            if (!HoldingWireTool) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _reloading = false; _torchAnimOn = false; ClearDeployable();
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f) };   // wire's flat _Color 0.647 grey
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print("[wire] holding the Wire tool");
         }
 
         // Put the held deployable away (called whenever another item is equipped).

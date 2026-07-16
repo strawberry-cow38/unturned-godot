@@ -93,6 +93,7 @@ namespace UnturnedGodot
         public string ConsumableEquipClip, ConsumableUseClip;   // this item's OWN archetype clips (CE_n/CU_n from consumable_anims), e.g. drink vs eat vs syringe; empty -> generic fallback
         public Color? ConsumableColor;   // flat _Color for a no-texture consumable (cheese=yellow, potato=brown) -> used instead of the gray default
         public string DeployableMesh, DeployableAlbedo;   // set (instead of GunName) to HOLD a deployable (generator/spotlight): item.prefab carry mesh + palette, Deploy_Equip hold + Deploy_Use place anim, no gun FX
+        public string ToolMesh; public Color? ToolColor;   // set (instead of GunName) to HOLD a tool in-hand (the Wire wiring tool): static mesh + generic ready hold, flat colour, no gun/deploy FX
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
         // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
         // gun's own AudioClips (the assault rifles share the Eaglefire's).
@@ -237,6 +238,7 @@ namespace UnturnedGodot
                 if (_meleeCap != null)   // this melee's OWN ripped clips ALL play once and hold (source animator.play plays non-looping); a Repeated tool's continuous "blowtorching" is the spark EMISSION while held, NOT a looping Start_Swing
                     foreach (var c in new[] { "_Equip", "_Weak", "_Strong", "_Start_Swing", "_Stop_Swing", "_Inspect" }) _arms.SetClipLoop(_meleeCap + c, false);
                 string equipClip = (EmptyHands || Fists) ? "Melee_Equip"   // unarmed / carry: the generic melee READY hold (one-shot, no loop) -- NOT the 3P Idle_Hands_0 that was looping ("grab off back")
+                                 : ToolMesh != null ? "Melee_Equip"   // held tool (wire): the generic one-hand ready hold
                                  : DeployableMesh != null ? (_arms.ClipLength("Deploy_Equip") > 0f ? "Deploy_Equip" : "Melee_Equip")   // deployable: the src barricade "Equip" raise-to-hold (UseableBarricade.equip plays "Equip")
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
@@ -253,7 +255,9 @@ namespace UnturnedGodot
                     var att = new BoneAttachment3D { Name = "GunAttach" };
                     skel.AddChild(att);
                     att.BoneName = skel.GetBoneName(hb);
-                    var gv = DeployableMesh != null
+                    var gv = ToolMesh != null
+                        ? new GunVisual { Gun = ToolMesh, Albedo = null, Ejects = false, AlbedoTint = ToolColor ?? new Color(0.647f, 0.647f, 0.647f) }   // held tool (wire): flat-colour mesh, no texture
+                        : DeployableMesh != null
                         ? new GunVisual { Gun = DeployableMesh, Albedo = DeployableAlbedo, Ejects = false, AlbedoTint = new Color(1, 1, 1) }   // deployable: item.prefab carry mesh + palette texture, no gun FX
                         : ConsumableMesh != null
                         ? new GunVisual { Gun = ConsumableMesh, Albedo = ConsumableAlbedo, Ejects = false, AlbedoTint = ConsumableColor ?? new Color(1, 1, 1) }   // consumable: mesh + albedo; AlbedoTint carries the flat _Color for no-texture items (cheese/potato)
@@ -274,7 +278,7 @@ namespace UnturnedGodot
                     var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
                     var tex = LoadTex($"res://content/{gv.Albedo}");
                     // no albedo texture: a consumable uses its real flat _Color (cheese/potato); anything else falls back to the neutral gray.
-                    if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = ConsumableMesh != null ? gv.AlbedoTint : new Color(0.24f, 0.24f, 0.26f);
+                    if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = (ConsumableMesh != null || ToolMesh != null) ? gv.AlbedoTint : new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
@@ -603,7 +607,8 @@ namespace UnturnedGodot
         static readonly string[] AttachSlots = { "Sight", "Tactical", "Grip", "Barrel", "Magazine" };
         // True only when this viewmodel is actually showing a GUN (not fists / a melee / a consumable / empty hands).
         // GetAttachMask is meaningless on a non-gun viewmodel -> callers must gate on this before saving a gun's mask.
-        public bool IsGunViewmodel => !EmptyHands && !Fists && MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null;
+        public bool IsGunViewmodel => !EmptyHands && !Fists && MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
+        public bool IsWireViewmodel => ToolMesh != null;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
         public void ApplyAttachMask(int mask) { for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i])) SetSlotAttached(AttachSlots[i], (mask & (1 << i)) != 0); }
         // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to
@@ -722,7 +727,7 @@ namespace UnturnedGodot
 
             if (_inspecting) { _inspectTimer -= (float)delta; if (_inspectTimer <= 0f) _inspecting = false; }
             if (_hammering) { _hammerViewTimer -= (float)delta; if (_hammerViewTimer <= 0f) { _hammering = false; _hammerCapture = false; } }   // rack over -> stop following the bone, gun snaps back to barrel-lock
-            if (_gun != null && DeployableMesh != null && _gun.GetParent() is Node3D datt)
+            if (_gun != null && (DeployableMesh != null || ToolMesh != null) && _gun.GetParent() is Node3D datt)
             {
                 // Deployable: FOLLOW THE HAND BONE so the Deploy_Equip raise + Deploy_Use place anims move the carry model
                 // (same as consumable/melee). Held-model localRotation = Euler(0,0,90) (source PlayerEquipment.firstModel), tunable via UG_DROLL.
@@ -734,7 +739,7 @@ namespace UnturnedGodot
                 // The generator is a big object centered on the hand -> it hangs mostly below the view. Lift it into
                 // frame in VIEW space (the arms live in the SubViewport, whose world axes are the camera axes: +Y up,
                 // -Z forward). Tunable via UG_DPOS="x,y,z".
-                Vector3 dpos = new Vector3(0f, 0.30f, -0.10f);
+                Vector3 dpos = ToolMesh != null ? new Vector3(0f, 0.02f, 0.04f) : new Vector3(0f, 0.30f, -0.10f);   // a small tool sits in the hand; the big generator gets lifted into frame
                 if (System.Environment.GetEnvironmentVariable("UG_DPOS") is string _dp && _dp.Split(',').Length == 3)
                 { var pp = _dp.Split(','); dpos = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 _gun.GlobalTransform = new Transform3D(datt.GlobalTransform.Basis * drollB, datt.GlobalPosition + dpos);

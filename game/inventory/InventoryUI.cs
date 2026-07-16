@@ -259,7 +259,8 @@ namespace UnturnedGodot
             // -> "Dequip" (back to fists); else "Equip" (gun/melee/deployable) or "Hold" (consumable). Then Drop + Close.
             float by = 150;
             bool isDeploy = DeployableDef.ById(asset.id) != null;   // generator/spotlight -> equip into placement mode
-            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable || isDeploy)
+            bool isWire = asset.id == 65;   // the Wire tool -> equip into wiring mode
+            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable || isDeploy || isWire)
             {
                 if (Player != null && Player.IsHeld(asset, jar.item))
                     AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); });
@@ -267,6 +268,8 @@ namespace UnturnedGodot
                     AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected);   // hold it in-hand -> LMB to eat/drink
                 else if (isDeploy)
                     AddActionButton(panel, "Equip", new Vector2(228, by), PlaceSelected);   // equip the deployable -> close inventory, aim the ghost, LMB plants it
+                else if (isWire)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), WireSelected);   // equip the wire tool -> close inventory, wiring mode
                 else
                     AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
                 by += 44;
@@ -329,6 +332,20 @@ namespace UnturnedGodot
             Player?.EquipHeldDeployable(def, jar.item);
             CloseSelection();
             Close();   // leave the inventory so the player can aim + click to place
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+
+        // Equip the Wire tool -> close the inventory so the player is in wiring mode.
+        void WireSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            if (jar.GetAsset()?.id != 65) return;
+            Player?.EquipWireTool(jar.item);
+            CloseSelection();
+            Close();
             Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 

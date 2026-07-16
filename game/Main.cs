@@ -433,7 +433,7 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
-                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight";
+                bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire";
                 _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
                     ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
                     : deployVm
@@ -627,15 +627,18 @@ namespace UnturnedGodot
             bool isMelee = System.IO.File.Exists(ProjectSettings.GlobalizePath($"res://content/{gunName}.txt")) && !System.IO.File.Exists(ProjectSettings.GlobalizePath($"res://content/{gunName}_gun.txt"));
             bool isFists = gunName == "fists" || gunName == "unarmed";
             bool isDeploy = gunName == "generator" || gunName == "spot" || gunName == "spotlight";
+            bool isWire = gunName == "wire";
             _vm = isFists
                 ? new Viewmodel { Fists = true }                                                  // bare-fists unarmed state (arms + melee ready hold, no mesh)
+                : isWire
+                ? new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f) }   // wire tool in-hand
                 : isDeploy
                 ? new Viewmodel { DeployableMesh = "generator_hold.obj", DeployableAlbedo = "generator_hold_tex.png" }   // deployable carry model in-hand + Deploy_Equip/Use
                 : isMelee
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
             AddChild(_vm);
-            _vmMelee = isMelee || isFists || isDeploy;
+            _vmMelee = isMelee || isFists || isDeploy || isWire;
             if (isMelee) AddChild(new MeleeSwingDriver { VM = _vm });   // periodic swings so the --vm render shows the melee swing anim
             if (isDeploy) AddChild(new DeployUseDriver { VM = _vm });   // periodic place motion so the --vm render shows the Deploy_Use anim
             if (_vmAttach) { _am = new AttachmentMenu(); AddChild(_am); _am.VM = _vm; }   // --attach: show the T menu over the gun
