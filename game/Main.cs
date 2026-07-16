@@ -3013,8 +3013,8 @@ namespace UnturnedGodot
             {
                 _frame++;
                 // switch to anchor i, then capture ~45 frames later once the glide has settled (title gets a longer slow pan)
-                int[] switchAt = { 0, 100, 160, 220, 280 };
-                int[] shotAt = { 90, 145, 205, 265, 325 };
+                int[] switchAt = { 0, 20, 40, 60, 80 };
+                int[] shotAt = { 15, 35, 55, 75, 95 };
                 if (_menuShotIdx < switchAt.Length && _frame == switchAt[_menuShotIdx]) _menuShotMenu.ShowTab(_menuShotIdx);
                 if (_menuShotIdx < shotAt.Length && _frame == shotAt[_menuShotIdx])
                 {

@@ -20,13 +20,22 @@ namespace UnturnedGodot
 
         // --- camera anchors (framings of the barn). Tuned against the render; index 0 = Title (idle). ---
         // pos + look-at, world space. Title is a pulled-back 3/4 hero shot; each tab reframes the barn.
+        // The whole menu takes place INSIDE the barn (interior ~ X[-7.5,7.5] Z[-10.5,10.5] Y[0,15.9],
+        // gable ends at Z=+-10.5). Camera sits near the back gable and looks down the length toward the
+        // far gable; each tab reframes that interior. Barn material is CullMode.Disabled so the walls
+        // read from the inside.
         static readonly (Vector3 pos, Vector3 look)[] Anchors =
         {
-            (new Vector3( 19f,  9f,  27f), new Vector3(0f, 5f, 0f)),   // 0 Title  -- wide 3/4 hero
-            (new Vector3(-19f,  7f,  23f), new Vector3(0f, 6f, 0f)),   // 1 Play   -- swing left
-            (new Vector3( 21f,  6f,  19f), new Vector3(0f, 5f, 0f)),   // 2 Survivors -- swing right along the long wall
-            (new Vector3( 11f, 17f,  24f), new Vector3(0f, 3f, 0f)),   // 3 Configuration -- high overview
-            (new Vector3( -3f,  2.5f,25f), new Vector3(0f, 9f, 0f)),   // 4 Workshop -- low hero, looking up at the whole barn
+            // This barn only reads from above (door + brown floor + framing posts show on a down-angle;
+            // at standing height it's a green-ground red box) AND has support columns at x~+-1.5..2 that
+            // the centred camera threads between. So every anchor stays in the centre aisle (|x|<1) and
+            // above the y~5-7 loft/beam band -- variety comes from dolly (z), height, and pitch, not from
+            // swinging sideways (that clips a column).
+            (new Vector3( 0f,   8.5f,  8f),   new Vector3( 0f,   1.2f, -8f)),   // 0 Title  -- mid-distance elevated door hero (idle default)
+            (new Vector3( 0.9f, 8f,    6.5f), new Vector3( 0f,   1.2f, -8.5f)), // 1 Play   -- pushed in, door bigger
+            (new Vector3(-0.9f, 8.2f,  9.3f), new Vector3( 0f,   1.4f, -8f)),   // 2 Survivors -- pulled back, wider
+            (new Vector3( 0f,   9.5f,  5f),   new Vector3( 0f,   0.2f, -8f)),   // 3 Configuration -- highest, steep top-down
+            (new Vector3( 0f,   7.8f,  7.5f), new Vector3( 0.3f, 2.2f, -9f)),   // 4 Workshop -- flatter pitch, door + far wall/loft
         };
 
         Camera3D _cam;
@@ -41,9 +50,10 @@ namespace UnturnedGodot
         {
             BuildWorld();
             BuildUI();
-            // start the camera pulled further back + higher than Title and slow-pan in (the vanilla intro)
+            // start the camera pulled back toward the near gable + a touch higher, then slow-pan in
+            // (the vanilla intro) -- kept inside the barn so it doesn't clip through the back wall
             var t = Anchors[0];
-            _cam.Position = t.pos + new Vector3(6f, 4f, 9f);
+            _cam.Position = t.pos + new Vector3(1.5f, 1.5f, 1.8f);
             _cam.LookAt(t.look, Vector3.Up);
         }
 
@@ -63,8 +73,11 @@ namespace UnturnedGodot
             {
                 BackgroundMode = Godot.Environment.BGMode.Sky,
                 Sky = new Sky { SkyMaterial = sky },
-                AmbientLightSource = Godot.Environment.AmbientSource.Sky,
-                AmbientLightSkyContribution = 1f,
+                // flat ambient (not sky IBL): the roof occludes the sky so downward-facing interior faces
+                // -- the rafters + ceiling -- would go pure black. A uniform fill lifts them off zero.
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.52f, 0.53f, 0.55f),
+                AmbientLightEnergy = 1.35f,
                 TonemapMode = Godot.Environment.ToneMapper.Filmic,
                 SsaoEnabled = true,
             };
@@ -81,6 +94,17 @@ namespace UnturnedGodot
                 ShadowEnabled = true,
             };
             AddChild(sun);
+
+            // interior fill: the roof occludes the sky, so the inside would be a black box. A warm omni
+            // hung near the ridge fakes the "light coming through the barn" glow so the space reads.
+            AddChild(new OmniLight3D
+            {
+                Position = new Vector3(0f, 8.5f, 0f),
+                LightColor = new Color(1f, 0.90f, 0.74f),
+                LightEnergy = 3.0f,
+                OmniRange = 34f,
+                OmniAttenuation = 0.6f,
+            });
 
             // grassy ground
             var ground = new MeshInstance3D
