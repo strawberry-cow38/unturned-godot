@@ -1265,7 +1265,7 @@ namespace UnturnedGodot
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             if (_driving != null)
             {
-                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.E || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);
+                bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); H cam, L lights, Ctrl siren, Esc pause
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
                 bool camOrbit = @event is InputEventMouseMotion;   // mouse MOTION must pass through -> it orbits the 3rd-person chase cam (this guard was silently eating it, so the cam sat fixed) (strawberry 2026-07-15)
                 if (!allowedKey && !allowedMouse && !camOrbit) return;
