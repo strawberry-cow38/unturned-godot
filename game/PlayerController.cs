@@ -610,7 +610,7 @@ namespace UnturnedGodot
 
         // Runtime one-shot WAV loader: walk the RIFF chunks for fmt+data (UnityPy exports may carry extra chunks, so the
         // fixed-44-byte-header assumption in Vehicle.LoadWav isn't safe here). 16-bit PCM only; anything else -> no sound.
-        static AudioStreamWav LoadWavOneShot(string resPath)
+        public static AudioStreamWav LoadWavOneShot(string resPath, bool loop = false)
         {
             string p = ProjectSettings.GlobalizePath(resPath);
             if (!System.IO.File.Exists(p)) return null;
@@ -627,7 +627,8 @@ namespace UnturnedGodot
             }
             if (dataOff < 0 || bits != 16) return null;
             byte[] pcm = new byte[dataLen]; System.Array.Copy(b, dataOff, pcm, 0, dataLen);
-            return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2, LoopMode = AudioStreamWav.LoopModeEnum.Disabled };
+            return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
+                                        LoopMode = loop ? AudioStreamWav.LoopModeEnum.Forward : AudioStreamWav.LoopModeEnum.Disabled, LoopEnd = loop ? dataLen / (channels * bits / 8) : 0 };
         }
 
         // G: melee swing -- hit the nearest zombie in front within the weapon's reach (proximity, not a raycast). Reuses
@@ -1331,6 +1332,7 @@ namespace UnturnedGodot
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusItem != null) TryPickup();                  // looking at an item: pick it up
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
+                else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.CanTogglePower) _focusDeployable.TogglePower();  // looking at a generator: toggle its power (src InteractableGenerator.use)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (OpenNearestCrate()) { }                           // open a nearby storage crate
                 else if (_melee != null) _viewmodel?.PlayMeleeInspect();   // nothing to interact with -> inspect (melee plays its own Inspect clip)
