@@ -50,3 +50,7 @@ launcher/publish/
 launcher/obj/
 launcher/bin/
 
+
+# python bytecode from tools/
+__pycache__/
+*.pyc

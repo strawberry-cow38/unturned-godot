@@ -13,7 +13,10 @@ Usage:
   tools/visual_tests.py --update NAME   re-baseline one
 
 Manifest entry: { "name": str, "args": [...], "env": {...}, "tolerance": float,
-                  "capture": "rig_00.png" (optional; default = the {OUT} shot path) }
+                  "capture": "rig_00.png" (optional; default = the {OUT} shot path),
+                  "angles": [0, 45, -45] (optional; deploytest scenes only -- render the same scene from
+                            several camera yaws. 0 == the base golden; each non-zero deg orbits via UG_CAMYAW
+                            and bakes its own golden <name>@yaw<+deg>.png) }
 Placeholders in args: {OUT} = the capture png path, {TMP} = the per-test work dir.
 Exit codes match test.sh: 0 clean, 1 golden mismatch, 2 infrastructure failure.
 """
@@ -68,6 +71,27 @@ def compare(captured, golden, diff_out):
     return mae, changed, None
 
 
+def expand_angles(entries):
+    """A manifest entry with "angles":[deg,...] becomes one entry per angle. Angle 0 keeps the base name
+    (== the current framing == the committed golden, so nothing to re-bake); each non-zero angle orbits the
+    deploytest camera via UG_CAMYAW and gets its own golden <name>@yaw<+deg>. Entries without "angles" pass
+    through untouched."""
+    out = []
+    for e in entries:
+        angles = e.get("angles")
+        if not angles:
+            out.append(e); continue
+        for a in angles:
+            sub = dict(e); sub.pop("angles", None)
+            if a == 0:
+                out.append(sub)                                    # base framing -> existing golden
+            else:
+                sub["name"] = f"{e['name']}@yaw{a:+d}"
+                sub["env"] = dict(e.get("env", {}), UG_CAMYAW=str(a))
+                out.append(sub)
+    return out
+
+
 def main():
     only, update = "*", None
     argv = sys.argv[1:]
@@ -79,7 +103,7 @@ def main():
         else: print(f"unknown arg: {a} (see --help)"); return 2
     if not os.path.isfile(MANIFEST):
         print(f"[VISUAL] no manifest at {MANIFEST}"); return 2
-    entries = [e for e in json.load(open(MANIFEST)) if fnmatch.fnmatch(e["name"], only)]
+    entries = [e for e in expand_angles(json.load(open(MANIFEST))) if fnmatch.fnmatch(e["name"], only)]
     if update and update != "all":
         entries = [e for e in entries if e["name"] == update]
     if not entries:

@@ -36,8 +36,8 @@ HEAD_SHA="$(git rev-parse --short HEAD)"
 LASTGOOD="$(cat "$LASTGOOD_FILE" 2>/dev/null || true)"
 say "testing origin/main @ $HEAD_SHA (last good: ${LASTGOOD:-unknown})"
 
-# --- the one command ---
-./test.sh --all >"$LOG" 2>&1
+# --- the one command (--report refreshes the claw.bitvox.me/ugtests/ dashboard) ---
+./test.sh --all --report >"$LOG" 2>&1
 CODE=$?
 
 SUMMARY="$(grep -E '^\[SUMMARY\]' "$LOG" | tail -1)"

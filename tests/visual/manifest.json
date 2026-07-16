@@ -1,11 +1,13 @@
 [
   { "name": "deploy.ghosts",
     "args": ["--deploytest", "--shot={OUT}"],
+    "angles": [0, 45],
     "tolerance": 0.01 },
 
   { "name": "deploy.port_arrows",
     "args": ["--deploytest", "--shot={OUT}"],
     "env": { "UG_WIREARROWS": "1" },
+    "angles": [0, 45, -45],
     "tolerance": 0.01 },
 
   { "name": "deploy.focus_outline",
@@ -16,6 +18,7 @@
   { "name": "power.lamps_on",
     "args": ["--deploytest", "--shot={OUT}"],
     "env": { "UG_WIRETEST": "1" },
+    "angles": [0, 40],
     "tolerance": 0.015 },
 
   { "name": "power.lamps_off_dark",
@@ -36,6 +39,7 @@
   { "name": "deploy.dmg_wreck",
     "args": ["--deploytest", "--shot={OUT}"],
     "env": { "UG_DEPLOYDMG": "wreck" },
+    "angles": [0, 45],
     "tolerance": 0.04 },
 
   { "name": "vehicle.jeep_vside",

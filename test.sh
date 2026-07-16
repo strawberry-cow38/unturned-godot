@@ -9,13 +9,16 @@
 # (one headless boot). L2 = visual golden PNGs (xvfb+lavapipe renders diffed vs tests/visual/golden;
 # opt-in via --visual/--all, ~30s/scene; re-baseline with tools/visual_tests.py --update <name>).
 #
-# Usage: ./test.sh [--l0] [--l1] [--visual] [--all] [--only <glob>] [--failfast] [-h]
+# --report renders the run to a static HTML dashboard (tools/gen_report.py) after it finishes --
+# served via Caddy at claw.bitvox.me/ugtests/ for at-a-glance review (UG_REPORT_DIR overrides the dir).
+#
+# Usage: ./test.sh [--l0] [--l1] [--visual] [--all] [--only <glob>] [--failfast] [--report] [-h]
 set -uo pipefail
 cd "$(dirname "$0")"
 
 RESULTS="${UG_TEST_RESULTS:-.testresults}"
 GODOT="${GODOT:-$HOME/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64}"
-ONLY="*"; FAILFAST=0; RUN_L0=0; RUN_L1=0; RUN_VISUAL=0
+ONLY="*"; FAILFAST=0; RUN_L0=0; RUN_L1=0; RUN_VISUAL=0; REPORT=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -25,6 +28,7 @@ while [ $# -gt 0 ]; do
     --all) RUN_L0=1; RUN_L1=1; RUN_VISUAL=1 ;;
     --only) ONLY="$2"; shift ;;
     --failfast) FAILFAST=1 ;;
+    --report) REPORT=1 ;;
     -h|--help)
       grep -E '^# ' "$0" | sed 's/^# //'; exit 0 ;;
     *) echo "unknown arg: $1 (see --help)"; exit 2 ;;
@@ -136,10 +140,21 @@ finish() {
   [ $TOTAL_FAIL -eq 0 ] && exit 0 || exit 1
 }
 
-if [ $RUN_L0 -eq 1 ]; then
-  echo "== L0: engine-free unit tests (dotnet test) =="
-  for d in tests/*/; do compgen -G "${d}*.csproj" >/dev/null && run_suite "$d"; done
+# Run the whole suite inside a group piped to tee, so the machine-readable grammar lands in
+# run.log for gen_report.py. The left side of a pipe is a subshell, so finish()'s exit (and the
+# failfast exits) terminate the run cleanly; PIPESTATUS[0] carries the real exit code back out.
+{
+  if [ $RUN_L0 -eq 1 ]; then
+    echo "== L0: engine-free unit tests (dotnet test) =="
+    for d in tests/*/; do compgen -G "${d}*.csproj" >/dev/null && run_suite "$d"; done
+  fi
+  if [ $RUN_L1 -eq 1 ]; then run_l1; fi
+  if [ $RUN_VISUAL -eq 1 ]; then run_visual; fi
+  finish
+} 2>&1 | tee "$RESULTS/run.log"
+CODE=${PIPESTATUS[0]}
+
+if [ $REPORT -eq 1 ]; then
+  if python3 tools/gen_report.py; then :; else echo "[REPORT] generation failed (non-fatal)"; fi
 fi
-if [ $RUN_L1 -eq 1 ]; then run_l1; fi
-if [ $RUN_VISUAL -eq 1 ]; then run_visual; fi
-finish
+exit "$CODE"

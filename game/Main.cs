@@ -1137,18 +1137,21 @@ namespace UnturnedGodot
 
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f };
             AddChild(cam);
+            var look = new Vector3(0f, 0.7f, 2f);                 // tracked look-at target so UG_CAMYAW can orbit around it
             cam.Position = new Vector3(0f, 3.2f, 11f);
-            cam.LookAt(new Vector3(0f, 0.7f, 2f), Vector3.Up);
+            cam.LookAt(look, Vector3.Up);
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read
                 env.AmbientLightEnergy = 0.05f; env.BackgroundColor = new Color(0.02f, 0.02f, 0.04f);
                 dirLight.LightEnergy = 0.06f;
+                look = new Vector3(2.6f, 1.0f, 0f);
                 cam.Position = new Vector3(2.6f, 2.3f, 6.8f);
-                cam.LookAt(new Vector3(2.6f, 1.0f, 0f), Vector3.Up);
+                cam.LookAt(look, Vector3.Up);
                 if (System.Environment.GetEnvironmentVariable("UG_LOADBAR") == "1")   // instead aim at the powered generator + focus it -> HP/fuel/LOAD bars
                 {
+                    look = new Vector3(-2.6f, 0.95f, 0f);
                     cam.Position = new Vector3(-2.6f, 1.7f, 4.4f);
-                    cam.LookAt(new Vector3(-2.6f, 0.95f, 0f), Vector3.Up);
+                    cam.LookAt(look, Vector3.Up);
                     cam.CullMask &= ~OutlineOverlay.OutlineLayer;
                     CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());
                     placedGen.SetLookFocused(true);
@@ -1160,8 +1163,9 @@ namespace UnturnedGodot
             // UG_DEPLOYFOCUS=1: verify the look-at outline + HP/fuel billboard on the placed generator (as if looked at)
             if (System.Environment.GetEnvironmentVariable("UG_DEPLOYFOCUS") == "1")
             {
+                look = new Vector3(-2.6f, 0.9f, 0f);
                 cam.Position = new Vector3(-2.6f, 1.6f, 4.6f);
-                cam.LookAt(new Vector3(-2.6f, 0.9f, 0f), Vector3.Up);
+                cam.LookAt(look, Vector3.Up);
                 cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // main cam must NOT draw the silhouette layer (only the overlay's mask cam does)
                 CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());
                 placedGen.SetLookFocused(true);
@@ -1169,12 +1173,40 @@ namespace UnturnedGodot
             // UG_DEPLOYDMG=smoke|heavy|fire|wreck: force the generator to a damage stage to verify the smoke/fire/wreck visuals
             if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") is string dmgStage)
             {
+                look = new Vector3(-2.6f, 1.2f, 0f);
                 cam.Position = new Vector3(-2.6f, 2.4f, 6.0f);
-                cam.LookAt(new Vector3(-2.6f, 1.2f, 0f), Vector3.Up);
+                cam.LookAt(look, Vector3.Up);
                 placedGen.DebugStage(dmgStage);
             }
+            // UG_CAMYAW=<deg>: orbit the camera horizontally around its look target so one scene can be shot from
+            // several angles (a break that hides from the front shows from the side). Applied last, over whatever
+            // per-mode framing ran above. UG_CAMPITCH raises/lowers the eye by the same orbit for a higher/lower view.
+            ApplyCamOrbit(cam, look);
             GD.Print("[DEPLOYTEST] generator+spotlight placed; blue+red ghosts");
         }
+
+        // Orbit a camera around its look target so one scene can be captured from several angles.
+        // UG_CAMYAW=<deg> swings the eye horizontally around the target; UG_CAMPITCH=<deg> raises/lowers it.
+        // Both default to 0 (no change), so an unset scene renders exactly as before. Re-aims at the target after.
+        static void ApplyCamOrbit(Camera3D cam, Vector3 look)
+        {
+            float yaw = ReadDeg("UG_CAMYAW"), pitch = ReadDeg("UG_CAMPITCH");
+            if (Mathf.Abs(yaw) < 0.01f && Mathf.Abs(pitch) < 0.01f) return;
+            var offset = cam.Position - look;
+            if (Mathf.Abs(yaw) > 0.01f) offset = offset.Rotated(Vector3.Up, Mathf.DegToRad(yaw));
+            if (Mathf.Abs(pitch) > 0.01f)
+            {   // tilt about the horizontal axis perpendicular to the (post-yaw) view direction
+                var flat = new Vector3(offset.X, 0f, offset.Z);
+                var axis = flat.LengthSquared() > 1e-6f ? flat.Normalized().Cross(Vector3.Up) : Vector3.Right;
+                offset = offset.Rotated(axis.Normalized(), Mathf.DegToRad(pitch));
+            }
+            cam.Position = look + offset;
+            cam.LookAt(look, Vector3.Up);
+        }
+
+        static float ReadDeg(string name) =>
+            System.Environment.GetEnvironmentVariable(name) is string s
+            && float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : 0f;
 
         void Ghost(DeployableDef def, bool valid, Vector3 surface, float yaw)
         {
