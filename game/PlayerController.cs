@@ -258,7 +258,7 @@ namespace UnturnedGodot
             if (_wiring)
             {
                 if (!IsInstanceValid(_wireSrc)) { CancelWire(); WireHudSet(null); return; }   // source deployable gone -> drop the wire
-                bool snapConsumer = _wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc.Owner;
+                bool snapConsumer = _wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc.Owner && !PortWired(_wirePort);   // an already-wired consumer won't accept a snap
                 Vector3 end = snapConsumer ? _wirePort.GlobalPosition : WirePlacePoint();
                 var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
                 pts.AddRange(_wireNodes); pts.Add(end);
@@ -267,15 +267,26 @@ namespace UnturnedGodot
                 _wirePreview?.SetPoints(pts, valid: snapConsumer || !overLimit);
                 WireHudSet($"nodes {_wireNodes.Count}/{MaxWireNodes}    {len:0.0}/{MaxWireLen:0}m" + (overLimit && !snapConsumer ? "   -- LIMIT" : ""));
             }
-            else WireHudSet(_wirePort?.InfoLine());
+            else WireHudSet(_wirePort == null ? null : _wirePort.InfoLine() + (PortWired(_wirePort) ? "   (wired)" : ""));
         }
 
-        // LMB with the wire tool: pick an OUTPUT to start, place a node while routing, or complete on a CONSUMER.
+        // is this port already an endpoint of a committed wire? (max 1 wire per connection point -- strawberry)
+        bool PortWired(ConnectionPort p)
+        {
+            if (p == null) return false;
+            foreach (var n in GetTree().GetNodesInGroup("wires"))
+                if (n is Wire w && GodotObject.IsInstanceValid(w) && (w.Source == p || w.Consumer == p)) return true;
+            return false;
+        }
+        // a SOURCE end: an output, or a passthrough re-exporting its leftover (daisy-chaining the next spotlight)
+        static bool IsSourcePort(ConnectionPort p) => p != null && (p.Kind == DeployableDef.PortKind.Output || p.Kind == DeployableDef.PortKind.Passthrough);
+
+        // LMB with the wire tool: pick a SOURCE (output/passthrough) to start, place a node while routing, or complete on a CONSUMER.
         void WireLmb()
         {
             if (!_wiring)
             {
-                if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Output)
+                if (IsSourcePort(_wirePort) && !PortWired(_wirePort))   // 1 wire/port: a source already feeding a wire can't start another
                 {
                     _wiring = true; _wireSrc = _wirePort; _wireNodes.Clear();
                     _wirePreview = new Wire(); GetParent().AddChild(_wirePreview);
@@ -283,7 +294,7 @@ namespace UnturnedGodot
                 }
                 return;
             }
-            if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc?.Owner) { CompleteWire(_wirePort); return; }
+            if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc?.Owner && !PortWired(_wirePort)) { CompleteWire(_wirePort); return; }   // 1 wire/port: an already-wired consumer can't accept another
             Vector3 lp = WirePlacePoint();
             var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition }; pts.AddRange(_wireNodes); pts.Add(lp);
             if (_wireNodes.Count >= MaxWireNodes || PolyLen(pts) > MaxWireLen) return;   // hitting the limit blocks placing (strawberry)

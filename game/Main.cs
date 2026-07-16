@@ -1141,7 +1141,8 @@ namespace UnturnedGodot
                 AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+            var dirLight = new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true };
+            AddChild(dirLight);
             AddChild(new MeshInstance3D
             {
                 Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) },
@@ -1163,7 +1164,7 @@ namespace UnturnedGodot
                 var w = new Wire(); AddChild(w);
                 w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
                 w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
-                placedGen.TogglePower();                    // turn the generator ON
+                if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                 PowerNet.Recompute(GetTree());
                 GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w");
             }
@@ -1175,6 +1176,13 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(0f, 3.2f, 11f);
             cam.LookAt(new Vector3(0f, 0.7f, 2f), Vector3.Up);
+            if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
+            {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read
+                env.AmbientLightEnergy = 0.05f; env.BackgroundColor = new Color(0.02f, 0.02f, 0.04f);
+                dirLight.LightEnergy = 0.06f;
+                cam.Position = new Vector3(2.6f, 2.3f, 6.8f);
+                cam.LookAt(new Vector3(2.6f, 1.0f, 0f), Vector3.Up);
+            }
 
             // scripted aim probe: point a camera down at OPEN ground and verify the ghost computes a VALID placement
             // (the raycast + wall/overlap logic, which the interactive hold->aim path can't be headless-tested).

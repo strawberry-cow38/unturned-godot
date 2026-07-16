@@ -36,6 +36,10 @@ namespace UnturnedGodot
         public bool CanTogglePower => !OnFire && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled, NOT-on-fire generator toggles, and only once the ramp has settled (buffer)
         public bool IsPowered => _powered;
 
+        // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
+        readonly System.Collections.Generic.List<Light3D> _lamps = new();
+        ConnectionPort _consumerPort;
+
         bool _lookFocused;
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
         InfoBillboard _info;
@@ -73,6 +77,22 @@ namespace UnturnedGodot
                 var port = ConnectionPort.Create(d, pdef, def.Name);
                 d.AddChild(port);
                 d.Ports.Add(port);
+                if (pdef.Kind == DeployableDef.PortKind.Consumer) d._consumerPort = port;   // this consumer's Powered flag lights the lamps
+            }
+            foreach (var ldef in def.Lights)   // consumer lamps (spotlight): children in the flat frame -> stand up with the model, off until powered
+            {
+                Light3D lamp;
+                if (ldef.Spot)
+                {
+                    var s = new SpotLight3D { SpotRange = ldef.Range, SpotAngle = ldef.AngleDeg };
+                    s.Basis = Basis.LookingAt(ldef.Dir, Vector3.Back);   // -Z (Godot spot forward) points along the src beam dir (flat frame)
+                    lamp = s;
+                }
+                else lamp = new OmniLight3D { OmniRange = ldef.Range };
+                lamp.Position = ldef.Pos; lamp.LightColor = ldef.Color; lamp.LightEnergy = ldef.Energy; lamp.Visible = false;
+                lamp.AddToGroup("dynlight");   // the lit beam spills onto the FP gun (light-scan), like the fire light
+                d.AddChild(lamp);
+                d._lamps.Add(lamp);
             }
             d._firePos = surface + Vector3.Up * Mathf.Max(0.6f, def.Size.Z * 1.4f);   // fire from the top of the object (Size.Z = flat-frame height that stands up)
 
@@ -271,6 +291,15 @@ namespace UnturnedGodot
                     _mesh.Position = new Vector3(Mathf.Sin(_vibePhase * 1.3f), Mathf.Sin(_vibePhase), Mathf.Sin(_vibePhase * 0.7f)) * 0.006f * _powerLevel;
                 }
                 else if (_mesh.Position != Vector3.Zero) _mesh.Position = Vector3.Zero;
+            }
+
+            // consumer lamps (spotlight): src updateLights -> on = wired && powered. PowerNet only flags the consumer
+            // Powered once it's wired AND receiving >= its usage, so that one flag IS the whole on-condition. Runs
+            // every frame (not just focused) so a wired spotlight lights up whether or not you're looking at it.
+            if (_lamps.Count > 0)
+            {
+                bool lit = !OnFire && _consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered;
+                foreach (var lamp in _lamps) if (IsInstanceValid(lamp) && lamp.Visible != lit) lamp.Visible = lit;
             }
 
             if (!_lookFocused || _info == null) return;   // only the focused one keeps its billboard live (a wreck's prompt is set by PlayerController -- it knows the blowtorch)

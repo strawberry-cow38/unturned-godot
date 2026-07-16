@@ -30,6 +30,13 @@ namespace UnturnedGodot
         public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();
 
+        // --- lamps a CONSUMER lights up when powered (src InteractableSpot: the "Spots" node of Light children,
+        //     toggled on when isWired && isPowered). Pos/Dir are in the flat authored frame (stand up with the model);
+        //     Godot SpotAngle is the HALF-angle so it's src m_SpotAngle/2. ---
+        public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; }
+        public DeployLight[] Lights = System.Array.Empty<DeployLight>();
+        static readonly Color LampWarm = new Color(0.9706f, 0.9612f, 0.835f);   // src Lamp m_Color (warm white)
+
         // src Generator_Small.dat: id 458, Useable Barricade, Build Generator, footprint 2x2x0.5, Offset 0.75
         public static readonly DeployableDef Generator = new()
         {
@@ -46,6 +53,13 @@ namespace UnturnedGodot
             Ports = new[] {   // consumer on the back of the central pillar, passthrough on the front (flat frame; tuned visually)
                 new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, -0.35f, 0f), Watts = 250f },
                 new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f, 0.35f, 0f), Watts = 0f },
+            },
+            // src barricade.prefab "Spots": two point lamps (bulb glow) + a spot beam. Positions/dir from the prefab,
+            // z-negated into our rip frame; the spot's src full angle 60 -> Godot half-angle 30.
+            Lights = new[] {
+                new DeployLight { Spot = false, Pos = new Vector3(-0.48f, -0.416f, -1.351f), Range = 4f, Energy = 2.4f, Color = LampWarm },
+                new DeployLight { Spot = false, Pos = new Vector3( 0.48f, -0.416f, -1.351f), Range = 4f, Energy = 2.4f, Color = LampWarm },
+                new DeployLight { Spot = true, Pos = new Vector3(0f, -0.427f, -1.472f), Dir = new Vector3(0f, -0.966f, 0.259f), Range = 30f, AngleDeg = 30f, Energy = 4f, Color = LampWarm },
             },
         };
 
