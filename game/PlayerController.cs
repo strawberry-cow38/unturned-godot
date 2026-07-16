@@ -336,12 +336,7 @@ namespace UnturnedGodot
             if (asset == null) return false;
             if (asset.gunName != null) { EquipHeldGun(asset.gunName, backing); return true; }
             if (asset.meleeName != null) { EquipHeldMelee(asset.meleeName); return true; }
-            if (asset.IsConsumable)
-            {
-                _revertEquip = CaptureHeldForRevert();   // remember what to fall back to once this consumable's stack runs out
-                EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_"));
-                return true;
-            }
+            if (asset.IsConsumable) { EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true; }   // EquipHeldConsumable snapshots the revert target itself
             return false;
         }
 
@@ -394,8 +389,10 @@ namespace UnturnedGodot
         public bool HasGunOut => Gun != null && _melee == null && _heldConsumable == null && _deployable == null;
 
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
-        public void EquipHeldConsumable(ItemAsset asset, string meshName)
+        // captureRevert=false only for the auto-re-equip of the NEXT of the same stack (keeps the original revert target).
+        public void EquipHeldConsumable(ItemAsset asset, string meshName, bool captureRevert = true)
         {
+            if (captureRevert && _heldConsumable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a consumable -> remember what to fall back to when the stack empties
             if (string.IsNullOrEmpty(meshName)) meshName = "canned_beans";   // generic held stand-in so an unmapped consumable never shows a null/broken mesh
             _heldConsumable = asset;
             _heldConsumableMesh = meshName;   // remembered so consuming one can auto-equip another of the same type (master)
@@ -434,7 +431,7 @@ namespace UnturnedGodot
                 _heldConsumable = null;             // one use per item: this one leaves the hand + is deleted (master)
                 Inventory?.removeItemAmount(id, 1);  // delete the one that was eaten
                 if ((Inventory?.getItemCount(id) ?? 0) > 0)
-                    EquipHeldConsumable(asset, mesh);   // still have another of the same type -> auto-equip a FRESH one (must re-click to eat it) -- master
+                    EquipHeldConsumable(asset, mesh, captureRevert: false);   // still have another of the same type -> auto-equip a FRESH one (keep the original revert target)
                 else
                     (_revertEquip ?? EquipUnarmed)();   // stack empty -> revert to the last-held item if still valid, else fists (strawberry)
             }
@@ -848,7 +845,7 @@ namespace UnturnedGodot
         int _loadedMagId;           // the magazine item loaded in the gun (its ammo = Ammo); set to Gun.MagazineId on equip
         SDG.Unturned.Item _heldItem;   // the inventory/world Item backing the held gun -> where its ammo/firemode/mag PERSIST (master)
         // Mirror the held gun's live state onto its backing item so it survives hands<->inventory<->drop (source: equipment.state).
-        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }
+        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
         void RestoreGunState(SDG.Unturned.Item item)
         {
             if (item == null || item.gunAmmo < 0) return;   // a fresh gun with no saved state keeps its LoadGun defaults
