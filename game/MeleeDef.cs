@@ -18,6 +18,15 @@ namespace UnturnedGodot
         public bool Repeated;   // .dat "Repeated": a continuous HOLD-to-use tool (blowtorch, chainsaw). Source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks" -> LMB = continuous use (no weak click / no punch), RMB = nothing.
         public bool Repair;     // .dat "Repair": the continuous action REPAIRS the target (blowtorch) rather than damaging it.
 
+        // Bare FISTS = the src's hardcoded empty-hand punch (PlayerEquipment.simulate_PunchInput): LMB left / RMB right,
+        // 15 base dmg (x hit-zone), 1.75 m reach, ~every 0.1 s, no strong-swing multiplier (both fists equal).
+        public static MeleeDef Fists => new()
+        {
+            Name = "fists", Range = 1.75f,
+            ZombieDamage = 15f, PlayerDamage = 15f, VehicleDamage = 0f, StructureDamage = 2f, ResourceDamage = 20f,
+            Strong = 0.5f, Strength = 1f, Stamina = 0f,
+        };
+
         public static MeleeDef FromDatText(string name, string datText)
         {
             IDatDictionary d = new DatParser().Parse(datText);

@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -148,7 +148,14 @@ namespace UnturnedGodot
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy");
+            else if (verb == "unarmed")
+            {
+                // unarmed  -- go to the bare-fists state (LMB weak / RMB strong punch)
+                if (Player == null) { Log("no player"); return; }
+                Player.EquipUnarmed();
+                Log("unarmed -> fists (LMB/RMB to punch)");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed");
         }
 
         static ItemAsset ResolveItem(string arg)

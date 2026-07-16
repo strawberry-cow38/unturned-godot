@@ -290,19 +290,24 @@ namespace UnturnedGodot
             GD.Print($"[melee] equipped {_melee.Name} (range {_melee.Range}, zombie dmg {_melee.ZombieDamage}, stamina {_melee.Stamina})");
         }
 
-        // Put whatever's in hand AWAY -> empty hands (master: dequip option). Gun state is saved to its backing item first.
-        public void Dequip()
+        // Put whatever's in hand away -> UNARMED (bare fists). The src has no "holding nothing" combat state: empty
+        // hands ARE fists (PlayerEquipment hardcodes the punch), so dequipping lands you on the fists melee.
+        public void Dequip() => EquipUnarmed();
+
+        // Unarmed = bare fists: arms in the melee ready hold, LMB weak / RMB strong punch, no weapon mesh.
+        public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _heldConsumable = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _torchAnimOn = false; _pendingMeleeHit = -1f;
+            _melee = MeleeDef.Fists; _heldMeleeName = "fists";   // fists ARE a melee -> the existing LMB/RMB swing path punches
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };
+            _viewmodel = new Viewmodel { Fists = true };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print("[equip] dequipped -> empty hands");
+            GD.Print("[equip] unarmed -> fists (LMB/RMB to punch)");
         }
 
         // Hotbar (master): 1 = primary slot, 2 = secondary slot; RMB an item + 3-9 binds that key to it, then the key equips it.
