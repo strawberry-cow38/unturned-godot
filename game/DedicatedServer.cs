@@ -24,7 +24,8 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             Server = new NetWorldServer(TransportOverride ?? new UdpServerTransport(Port),
-                (conn, reason, isError) => GD.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"));
+                (conn, reason, isError) => GD.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
+                contentHash: NetContent.Hash);   // §2.2: joiners with a different content identity are rejected
             Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
             Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
 

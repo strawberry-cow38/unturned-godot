@@ -1,0 +1,159 @@
+using NUnit.Framework;
+using SDG.NetTransport.Mem;
+using SDG.Unturned;
+using UnityEngine;
+using UnturnedGodot.Net;
+
+namespace UnturnedNet.Tests
+{
+    // Prediction v1 (MP_PLAN §4 Phase 4 / §2.5b): the client integrates its own input immediately through
+    // THE SAME sim-core the server runs (PlayerReplication.IntegrateFlat), records per input seq, and each
+    // snapshot's lastProcessedInputSeq + authoritative transform reconciles the residual -- smoothed below
+    // the snap threshold, snapped above it. The convergence sims run a real server + predicted client over
+    // MemTransport with link latency; mispredictions are injected client-side (the client predicts with
+    // different axes than it sent) and must smooth out, never accumulate.
+    [TestFixture]
+    public class PredictionTests
+    {
+        const float Dt = 0.02f;
+
+        // ---- reconciler unit behavior ----
+
+        [Test]
+        public void Reconciler_SmoothsBelowThreshold_DecaysToExactZero()
+        {
+            var r = new PredictionReconciler();
+            r.Record(7, new Vector3(0f, 0f, 0f));
+            Assert.That(r.OnAuthoritative(7, new Vector3(1f, 0f, 0f)), Is.False, "1 m error is below the 2 m snap threshold");
+            Assert.That(r.Snaps, Is.EqualTo(0));
+
+            float prev = 1f;
+            for (int i = 0; i < 200 && r.PendingError != Vector3.zero; i++)
+            {
+                r.Step(Dt);
+                float mag = r.PendingError.magnitude;
+                Assert.That(mag, Is.LessThan(prev), "error decays monotonically");
+                prev = mag;
+            }
+            Assert.That(r.PendingError, Is.EqualTo(Vector3.zero), "tiny tail is consumed whole -> exact zero");
+        }
+
+        [Test]
+        public void Reconciler_SnapsAboveThreshold_AndIgnoresStaleAcks()
+        {
+            var r = new PredictionReconciler();
+            r.Record(5, Vector3.zero);
+            r.Record(6, Vector3.zero);
+            Assert.That(r.OnAuthoritative(6, new Vector3(3f, 0f, 0f)), Is.True, "3 m error demands a snap");
+            Assert.That(r.Snaps, Is.EqualTo(1));
+            Assert.That(r.TakeAll().x, Is.EqualTo(3f).Within(1e-5f), "TakeAll hands the caller the whole error");
+            Assert.That(r.PendingError, Is.EqualTo(Vector3.zero));
+
+            Assert.That(r.OnAuthoritative(5, new Vector3(9f, 0f, 0f)), Is.False, "an OLDER ack (5 after 6) is stale -> ignored");
+            Assert.That(r.PendingError, Is.EqualTo(Vector3.zero), "stale ack didn't poison the pending error");
+            Assert.That(r.OnAuthoritative(0, new Vector3(9f, 0f, 0f)), Is.False, "seq 0 = server processed nothing yet");
+        }
+
+        // ---- full-stack convergence sims (server + predicted client over MemTransport with latency) ----
+
+        sealed class PredictedHarness
+        {
+            public readonly MemNetwork Net;
+            public readonly NetWorldServer Server;
+            public readonly NetWorldClient Client;
+
+            public PredictedHarness(int seed, int latencyTicks)
+            {
+                Net = new MemNetwork(seed);
+                Net.ClientToServer = new FaultyLinkConfig { LatencyTicks = latencyTicks };
+                Net.ServerToClient = new FaultyLinkConfig { LatencyTicks = latencyTicks };
+                Server = new NetWorldServer(new MemServerTransport(Net));
+                Client = new NetWorldClient(new MemClientTransport(Net), "predicted");
+                Client.Connect();
+                // pump (with idle inputs) until connected AND the reliable join snapshot seeded the spawn --
+                // prediction starts from the adopted authoritative spawn, aligned with the server's stream
+                for (int i = 0; i < 100 && !Client.Prediction.Spawned; i++) Step(0f, 0f, 0f);
+                Assert.That(Client.State, Is.EqualTo(NetSessionState.Connected), $"client connected (seed={seed})");
+                Assert.That(Client.Prediction.Spawned, Is.True, $"join snapshot adopted (seed={seed})");
+            }
+
+            /// <summary>One 50 Hz tick: send input, predict (optionally with DIFFERENT axes -- an injected
+            /// misprediction), then advance transport + sessions + server sim + replication (§2.5 order).</summary>
+            public void Step(float moveX, float moveY, float yaw, float? predictMoveY = null)
+            {
+                ushort seq = Client.SendMoveInput(moveX, moveY, yaw);
+                Client.Prediction.PredictAndRecord(seq, moveX, predictMoveY ?? moveY, yaw, Dt);
+                Net.Tick();
+                Client.Tick();
+                Server.TickSimulation();
+                Server.TickReplication();
+            }
+
+            public Vector3 ServerPos()
+            {
+                Assert.That(Server.Players.TryGetByOwner(Client.PlayerId, out var e), Is.True);
+                return e.Pos;
+            }
+
+            public float Error() => (ServerPos() - Client.Prediction.Pos).magnitude;
+        }
+
+        [Test]
+        public void CleanPrediction_TracksServerExactly_WhileMoving()
+        {
+            var h = new PredictedHarness(seed: 31337, latencyTicks: 3);
+            // walk a weave: same sim-core + same (wire-quantized) inputs => the predicted trajectory is
+            // bit-identical to the authoritative one, so every ack measures EXACT zero error
+            for (int t = 0; t < 200; t++) h.Step(0f, 1f, (t * 7) % 360);
+            Assert.That(h.Client.Prediction.Reconciler.AcksApplied, Is.GreaterThan(50), "acks flowed");
+            Assert.That(h.Client.Prediction.Reconciler.PendingError.magnitude, Is.EqualTo(0f),
+                        "identical sim-core + identical inputs -> zero prediction error, even mid-motion");
+            Assert.That(h.Client.Prediction.Reconciler.Snaps, Is.EqualTo(0));
+
+            // stop; both fixed points must agree exactly (positions are wire-quantized at both ends)
+            for (int t = 0; t < 30; t++) h.Step(0f, 0f, 0f);
+            Assert.That(h.Error(), Is.LessThan(1e-4f), "predicted position == authoritative position at rest");
+        }
+
+        [Test]
+        public void Misprediction_SmoothsOut_NoSnap_BelowThreshold()
+        {
+            var h = new PredictedHarness(seed: 555, latencyTicks: 3);
+            for (int t = 0; t < 60; t++) h.Step(0f, 1f, 90f);
+
+            // 10 ticks of misprediction (predicts standing still while actually walking = ~0.9 m of drift),
+            // then correct prediction resumes; watch the residual the acks measure across the whole window
+            float peak = 0f;
+            for (int t = 0; t < 10; t++) { h.Step(0f, 1f, 90f, predictMoveY: 0f); peak = System.MathF.Max(peak, h.Client.Prediction.Reconciler.PendingError.magnitude); }
+            for (int t = 0; t < 10; t++) { h.Step(0f, 1f, 90f); peak = System.MathF.Max(peak, h.Client.Prediction.Reconciler.PendingError.magnitude); }
+            Assert.That(peak, Is.GreaterThan(0.2f), "misprediction produced a measurable residual");
+            Assert.That(peak, Is.LessThan(2f), "but stayed under the snap threshold");
+            Assert.That(h.Client.Prediction.Reconciler.Snaps, Is.EqualTo(0), "under the threshold nothing snaps");
+
+            // the residual smooths out while STILL moving
+            for (int t = 0; t < 60; t++) h.Step(0f, 1f, 90f);
+            Assert.That(h.Client.Prediction.Reconciler.PendingError.magnitude, Is.LessThan(0.02f),
+                        "error effectively gone while walking (smooth exponential correction)");
+            Assert.That(h.Client.Prediction.Reconciler.Snaps, Is.EqualTo(0), "the whole correction was smooth");
+
+            for (int t = 0; t < 40; t++) h.Step(0f, 0f, 90f);
+            Assert.That(h.Error(), Is.LessThan(1e-3f), "predicted and authoritative positions converged");
+        }
+
+        [Test]
+        public void LargeDivergence_Snaps_ThenConverges()
+        {
+            var h = new PredictedHarness(seed: 9001, latencyTicks: 3);
+            for (int t = 0; t < 60; t++) h.Step(0f, 1f, 0f);
+
+            // a 10 m client-side divergence in one tick (hiccup/teleport-sized -- way past the 2 m
+            // threshold): the next acks must SNAP the prediction back, not glide it
+            h.Client.Prediction.Pos += new Vector3(10f, 0f, 0f);
+            for (int t = 0; t < 20; t++) h.Step(0f, 1f, 0f);
+            Assert.That(h.Client.Prediction.Reconciler.Snaps, Is.GreaterThan(0), "beyond the threshold the client snaps instead of gliding");
+
+            for (int t = 0; t < 60; t++) h.Step(0f, 0f, 0f);
+            Assert.That(h.Error(), Is.LessThan(1e-3f), "post-snap the prediction re-converges to the authority");
+        }
+    }
+}

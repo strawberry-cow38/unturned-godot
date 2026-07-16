@@ -260,7 +260,7 @@ namespace UnturnedGodot
         {
             const float R = 8f;
             Vector3 p = GlobalPosition;
-            PlayerController.Local?.FlinchFromExplosion(p, 32f, 45f);   // big vehicle blast -> strong camera shake (src Bomb_0-like: radius 32 / mag 45)
+            PlayerRegistry.FlinchAllFromExplosion(p, 32f, 45f);   // big vehicle blast -> strong camera shake, every player, distance-gated (src Bomb_0-like: radius 32 / mag 45)
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {
@@ -1495,9 +1495,10 @@ namespace UnturnedGodot
                     if (IsTrailer)   // a trailer has no engine -> no fuel/battery; show HP + a clear hitch state (connected / can connect / can't connect) instead
                     {
                         _info.SetBar(1, 0f, InfoBillboard.FuelColor, false); _info.SetBar(2, 0f, InfoBillboard.FuelColor, false);
-                        // only surface the connect/disconnect prompt when the player is actually standing in the hitch region (strawberry)
-                        bool inHitchRange = PlayerController.Local != null && IsInstanceValid(PlayerController.Local)
-                            && PlayerController.Local.GlobalPosition.DistanceTo(KingpinWorld) <= HitchReach;
+                        // only surface the connect/disconnect prompt when a player is actually standing in the hitch region (strawberry)
+                        var hitchPlayer = PlayerRegistry.Nearest(KingpinWorld);   // nearest-player query (the old Local static is gone)
+                        bool inHitchRange = hitchPlayer != null
+                            && hitchPlayer.GlobalPosition.DistanceTo(KingpinWorld) <= HitchReach;
                         string hint = !inHitchRange ? ""
                             : CoupledCab != null ? "[F] disconnect trailer"
                             : (CabBackedUnder() ? "[F] connect trailer" : "can't connect - back a cab under");   // explicit can/can't feedback

@@ -44,13 +44,15 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
+            // Re-goldened for Version=2 (Phase 4 handshake change: Connect gained contentHash) -- the only
+            // byte that moved is the version byte, per the §6 re-golden-with-version-bump discipline.
             byte[] captured = null;
             int capturedLen = 0;
             var session = new NetSession((buf, len) => { captured = (byte[])buf.Clone(); capturedLen = len; });
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750108000000000000002800"));
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750208000000000000002800"));
         }
 
         [Test]

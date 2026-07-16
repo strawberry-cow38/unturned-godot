@@ -10,7 +10,7 @@ namespace UnturnedGodot
     public partial class PlayerController : CharacterBody3D
     {
         readonly PlayerMovementSim _move = new PlayerMovementSim();
-        bool _xHeld, _zHeld; EPlayerStance _baseStance = EPlayerStance.STAND;   // intertwined stance state machine: X = crouch key, Z = prone key (master)
+        readonly PlayerStanceSim _stance = new PlayerStanceSim();   // intertwined stance state machine (X = crouch, Z = prone), extracted to the engine-free sim-core (MP_PLAN §3.4)
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
         Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
@@ -35,8 +35,12 @@ namespace UnturnedGodot
         public int Ammo = 30;
         public int Kills { get; private set; }
 
-        public float Health = 100f;
-        public float MaxHealth = 100f;
+        // Vitals live in the engine-free PlayerVitalsSim (MP_PLAN §3.4 sim-core: one per player, steppable
+        // headless on the server). The shell exposes them through properties so every existing reader/writer
+        // (HUD, DevConsole, Consume, tests) keeps its exact surface.
+        readonly PlayerVitalsSim _vitals = new PlayerVitalsSim();
+        public float Health { get => _vitals.Health; set => _vitals.Health = value; }
+        public float MaxHealth { get => _vitals.MaxHealth; set => _vitals.MaxHealth = value; }
         public int Deaths;
         public bool Bleeding;      // HUD status indicator: set briefly after taking a hit (PlayerLifeUI's bleedingBox)
         double _bleedTimer;
@@ -44,10 +48,11 @@ namespace UnturnedGodot
         // Survival vitals (0..1), shown live on the HUD. Rates are config-driven in Unturned (modeConfigData); these
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
         // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
-        public float Stamina = 1f, Food = 1f, Water = 1f;
+        public float Stamina { get => _vitals.Stamina; set => _vitals.Stamina = value; }
+        public float Food { get => _vitals.Food; set => _vitals.Food = value; }
+        public float Water { get => _vitals.Water; set => _vitals.Water = value; }
         public static bool SurvivalDrain = false;   // hunger/thirst drain OFF by default; F1 console `survival on|off` toggles it (strawberry)
-        float _staminaRegenDelay;   // seconds to wait after releasing sprint before stamina regenerates
-        public float Infection;   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
+        public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
 
         // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals.
@@ -877,7 +882,7 @@ namespace UnturnedGodot
             if (IsRepeatedMelee) return;   // Repeated tools (blowtorch/chainsaw) have NO weak/strong swing -- you don't punch with them; their use is the continuous LMB-hold (source UseableMelee.startPrimary/startSecondary)
             float staminaCost = strong ? (_melee?.Stamina ?? 0f) / 100f : 0f;   // only the STRONG (RMB) swing costs stamina; the WEAK (LMB) attack is free (master)
             if (staminaCost > 0f && Stamina < staminaCost) return;   // too winded for a strong swing
-            if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _staminaRegenDelay = 1f; }
+            if (staminaCost > 0f) { Stamina = Mathf.Max(0f, Stamina - staminaCost); _vitals.StaminaRegenDelay = 1f; }
             // cooldown = this weapon's actual swing-anim length (per-weapon: knife fast, sledge slow) so click-spam can't
             // out-pace the swing cadence + the rate matches the animation (master). Fallback for fists / a missing clip.
             _meleeCd = _viewmodel?.MeleeSwingLength(strong) ?? 0f;
@@ -969,7 +974,7 @@ namespace UnturnedGodot
                 }
             float pr = GlobalPosition.DistanceTo(point);
             if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = ExplosionMath.Squared(playerDamage, pr, radius); if (t > 0f) TakeDamage(t * (Inventory?.ExplosionArmor ?? 1f)); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
-            Local?.FlinchFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
+            PlayerRegistry.FlinchAllFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
             GD.Print($"[explode] r={radius} at {point}");
         }
 
@@ -986,7 +991,8 @@ namespace UnturnedGodot
         // Explosion camera shake -- src: EffectManager.cs:1615 -> PlayerLook.FlinchFromExplosion. A flinch rotation toward the
         // blast (axis = Cross(up, dir-from-blast-to-cam), in cam-local space) with EXPONENTIAL distance falloff 1-(dist/radius)^2;
         // magnitude in degrees from the explosion EffectAsset's CameraShake (real Bomb_* values: radius 6-32, mag 2-45).
-        public static PlayerController Local;   // the interactive player (set in _Ready); explosions shake THIS camera
+        // (Explosion call sites reach every player through PlayerRegistry.FlinchAllFromExplosion -- the old
+        // PlayerController.Local static is gone, MP_PLAN §5 item 7.)
         public void FlinchFromExplosion(Vector3 point, float radius, float magnitudeDegrees)
         {
             if (_cam == null) return;
@@ -1075,6 +1081,9 @@ namespace UnturnedGodot
 
         // When set (e.g. by a recorded demo or a net-driven bot), overrides keyboard input: x=strafe, y=forward.
         public UnityEngine.Vector2? ScriptedInput;
+        // The move axes THIS shell captured on its last physics tick (x=strafe, y=forward) -- what the
+        // MP loopback/client host sends as MoveInput so the wire carries exactly what the sim consumed.
+        public UnityEngine.Vector2 LastMoveInput;
         // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
         public EPlayerStance? ScriptedStance;
 
@@ -1355,28 +1364,22 @@ namespace UnturnedGodot
             }
         }
 
-        // Survival sim driving the live HUD vitals. The mechanism is source-accurate (PlayerLife: stamina burns while
-        // sprinting + regens otherwise; health regenerates only while fed AND hydrated; you take damage when food or
-        // water bottoms out). The RATES are stand-ins -- Unturned's real ones live in server modeConfigData, not the
-        // binary -- so they're tuned to be visible, not eyeballed from the game.
+        // Survival sim driving the live HUD vitals -- the stepping itself lives in the engine-free
+        // PlayerVitalsSim (MP_PLAN §3.4 sim-core); the shell computes sprinting, feeds the skill multipliers
+        // (PlayerSkills is game-layer), and owns what death means. Mechanism source-accurate, RATES are the
+        // same stand-ins as before (Unturned's real ones live in server modeConfigData, not the binary).
         void UpdateVitals(bool moving, float dt)
         {
             if (_dead) return;
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
-            if (sprinting) { Stamina = Mathf.Max(0f, Stamina - 0.22f * dt * Skills.ExerciseStaminaDrainMultiplier()); _staminaRegenDelay = 1f; }   // EXERCISE slows the drain; hold regen 1s after releasing sprint
-            else { _staminaRegenDelay = Mathf.Max(0f, _staminaRegenDelay - dt); if (_staminaRegenDelay <= 0f) Stamina = Mathf.Min(1f, Stamina + 0.33f * dt * Skills.CardioStaminaRegenMultiplier()); }   // CARDIO speeds the regen
-            if (SurvivalDrain)   // hunger/thirst OFF by default (strawberry); F1 console `survival` toggles it
+            bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
             {
-                Food  = Mathf.Max(0f, Food  - 0.0050f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows hunger
-                Water = Mathf.Max(0f, Water - 0.0070f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows thirst
-            }
-            Infection = Mathf.Max(0f, Infection - 0.01f * dt);       // virus slowly clears if you stop getting bitten
-            bool sick = Infection > 0.75f;                           // heavy infection makes you ill (loses health)
-            if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick)
-                Health = Mathf.Min(MaxHealth, Health + 2f * dt * Skills.VitalityRegenMultiplier());     // VITALITY speeds regen while fed + hydrated (blocked while sick)
-            else if (Food <= 0f || Water <= 0f || sick)
-                Health = Mathf.Max(0f, Health - (sick ? 2f : 1.5f) * dt);   // starve / dehydrate / infection sickness
-            if (Health <= 0f) { Deaths++; Die(); }
+                ExerciseStaminaDrain = Skills.ExerciseStaminaDrainMultiplier(),   // EXERCISE slows the drain
+                CardioStaminaRegen = Skills.CardioStaminaRegenMultiplier(),       // CARDIO speeds the regen
+                SurvivalDrain = Skills.SurvivalDrainMultiplier(),                 // SURVIVAL slows hunger/thirst
+                VitalityRegen = Skills.VitalityRegenMultiplier(),                 // VITALITY speeds regen while fed + hydrated
+            });
+            if (died) { Deaths++; Die(); }
         }
 
         public Camera3D Camera => _cam;
@@ -1428,6 +1431,11 @@ namespace UnturnedGodot
             GD.Print($"[gun] holding {_gunName}");
         }
 
+        // Every player is queryable through PlayerRegistry (nearest-player / iterate-players -- the
+        // replacement for the old Local static). _ExitTree fires on QueueFree, so teardown self-cleans.
+        public override void _EnterTree() => PlayerRegistry.Register(this);
+        public override void _ExitTree() => PlayerRegistry.Unregister(this);
+
         public override void _Ready()
         {
             AddToGroup("players");     // so vehicle explosions (+ future area effects) can find nearby players
@@ -1459,7 +1467,6 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = new Color(0.2f, 1f, 0.4f), VertexColorUseAsAlbedo = true, NoDepthTest = true },
             };
             AddChild(_lookHullViz);
-            if (CaptureMouse) Local = this;   // the interactive (mouse-captured) player -> explosions shake this camera
 
             _body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // live 3rd-person body
             if (_body != null) { _body.Visible = false; CallDeferred(Node.MethodName.AddSibling, _body); }
@@ -2334,7 +2341,7 @@ namespace UnturnedGodot
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }
-            if (_driving != null) { _interpReady = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
+            if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
@@ -2342,6 +2349,7 @@ namespace UnturnedGodot
             {
                 _deathTimer -= delta;
                 Velocity = Vector3.Zero;
+                LastMoveInput = UnityEngine.Vector2.zero;
                 if (_deathTimer <= 0) Respawn();
                 return;
             }
@@ -2381,21 +2389,12 @@ namespace UnturnedGodot
                 else if (_firemode == FireMode.Auto && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
             }
 
-            // Intertwined stance STATE MACHINE (master): X = crouch key, Z = prone key, moving between STAND/CROUCH/PRONE from ANY state.
+            // Stance FSM: the shell polls the keys, the engine-free PlayerStanceSim owns the state machine
+            // (X = crouch, Z = prone, sprint overlay, broken-legs demotion, headroom gate -- MP_PLAN §3.4).
             bool xNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
-            if (xNow && !_xHeld) _baseStance = (_baseStance == EPlayerStance.CROUCH) ? EPlayerStance.STAND : EPlayerStance.CROUCH;   // X: stand<->crouch, and prone->crouch
-            _xHeld = xNow;
             bool zNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
-            if (zNow && !_zHeld) _baseStance = (_baseStance == EPlayerStance.PRONE) ? EPlayerStance.STAND : EPlayerStance.PRONE;    // Z: stand<->prone, and crouch->prone
-            _zHeld = zNow;
-            var wantStance = ScriptedStance ?? _baseStance;
-            if (wantStance == EPlayerStance.STAND && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift) && Stamina > 0.05f) wantStance = EPlayerStance.SPRINT;   // sprint overlays standing
-            if (Broken && wantStance == EPlayerStance.SPRINT) wantStance = EPlayerStance.STAND;   // broken legs can't sprint (PlayerStance.cs:703)
-            // can't rise into a ceiling: if the target stance is TALLER than the current capsule and there's no headroom, stay low (master)
-            float wantH = PlayerMovementDef.HeightForStance(wantStance);
-            if (wantH > _capStance + 0.01f && _capStance > 0f && !HeadroomFor(wantH))
-                wantStance = _baseStance = (_capStance <= PlayerMovementDef.HEIGHT_PRONE + 0.01f) ? EPlayerStance.PRONE : EPlayerStance.CROUCH;   // blocked overhead -> stay in the stance that fits
-            _move.Stance = wantStance;
+            bool sprintNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
+            _move.Stance = _stance.Step(xNow, zNow, sprintNow, Stamina, Broken, ScriptedStance, _capStance, HeadroomFor);
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
 
             float forward, strafe;
@@ -2407,6 +2406,8 @@ namespace UnturnedGodot
                 strafe  = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
             bool jump = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310)
+
+            LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
 
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;

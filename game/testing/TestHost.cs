@@ -114,6 +114,7 @@ namespace UnturnedGodot.Testing
         static void ResetGlobals()
         {
             PowerNet.ResetForTests();
+            PlayerRegistry.ResetForTests();   // _ExitTree self-cleans, this is belt-and-braces vs a leaked node
             WorldItem.NoDropRotation = false;
             Engine.TimeScale = 1.0;
         }

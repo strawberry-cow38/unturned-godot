@@ -18,10 +18,10 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            _server = new NetWorldServer(new UdpServerTransport(Port));
+            _server = new NetWorldServer(new UdpServerTransport(Port), contentHash: NetContent.Hash);
             _server.Session.PeerConnected += peer => GD.Print($"[SERVER] player {peer.PlayerId} '{peer.Name}' joined ({_server.Session.Peers.Count} online)");
             _server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[SERVER] player {peer.PlayerId} left ({reason})");
-            _bot = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "bot");
+            _bot = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "bot", contentHash: NetContent.Hash);
             _bot.Connect();
 
             var sim = new SimDriver();

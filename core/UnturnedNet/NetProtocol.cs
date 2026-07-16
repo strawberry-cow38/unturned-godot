@@ -29,6 +29,7 @@ namespace UnturnedGodot.Net
         None = 0,
         VersionMismatch = 1,
         ServerFull = 2,
+        ContentMismatch = 3,   // Connect carried a content hash that isn't ours (Phase 4 join gate)
     }
 
     public enum NetDisconnectReason : byte
@@ -50,7 +51,7 @@ namespace UnturnedGodot.Net
     public static class NetProtocol
     {
         public const byte Magic = 0x75; // 'u'
-        public const byte Version = 1;
+        public const byte Version = 2;  // v2 (Phase 4): Connect carries contentHash:u64 after the name; v1 = Phases 1-3
 
         /// <summary>Conservative internet-safe datagram budget (MP_PLAN §2.2): no session datagram exceeds this.</summary>
         public const int MaxDatagramBytes = 1200;

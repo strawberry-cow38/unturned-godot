@@ -17,6 +17,9 @@ namespace UnturnedGodot.Net
 
         // CommandRegistry id space (0 = snapshot ack, reserved)
         public const byte CommandMoveInput = 1;
+
+        // EventRegistry id space (server -> client, ReliableOrdered)
+        public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
     }
 
     /// <summary>
@@ -80,6 +83,10 @@ namespace UnturnedGodot.Net
             internal PlayerMovementSim Sim;
             internal MoveInput CurrentInput;
             internal bool HasInput;
+            // true once ServerDrive has taken over this entity: an in-process shell (the listen-server /
+            // SP-loopback local player, MP_PLAN §4 Phase 4) steps the REAL sim-core + physics and writes
+            // the result here; the internal flat-ground integration must not fight it.
+            internal bool ExternallyDriven;
         }
 
         public byte SystemId => ReplicationIds.SystemPlayers;
@@ -148,24 +155,17 @@ namespace UnturnedGodot.Net
 
         /// <summary>One 50 Hz authoritative movement step for every server-owned player. Held-key model:
         /// the latest received input keeps applying every tick until replaced (single loss costs nothing).
-        /// Local axes rotate by yaw with forward = +Z at yaw 0, yaw increasing counter-clockwise.</summary>
+        /// Externally-driven entities (ServerDrive) are skipped -- their shell already stepped the real
+        /// sim-core + physics this tick.</summary>
         public void ServerStep(long tick, float dt)
         {
             foreach (uint id in SortedIds())
             {
                 _players.TryGet(new NetId(id), out var e);
-                if (e.Sim == null || !e.HasInput) continue;
+                if (e.Sim == null || !e.HasInput || e.ExternallyDriven) continue;
 
                 var input = e.CurrentInput;
-                var vel = e.Sim.Step(new Vector2(input.MoveX, input.MoveY), wantJump: false, grounded: true, dt);
-                float yawRad = input.YawDegrees * (Mathf.PI / 180f);
-                float sin = Mathf.Sin(yawRad), cos = Mathf.Cos(yawRad);
-                var worldDelta = new Vector3(
-                    (vel.x * cos + vel.z * sin) * dt,
-                    0f,
-                    (vel.z * cos - vel.x * sin) * dt);
-
-                var newPos = Quantize(e.Pos + worldDelta);
+                var newPos = IntegrateFlat(e.Sim, in input, e.Pos, dt);
                 float newYaw = NetQuantization.QuantizeDegrees(input.YawDegrees, NetQuantization.YawBits);
                 bool changed = newPos != e.Pos || newYaw != e.YawDegrees || input.Seq != e.LastProcessedInputSeq;
                 e.Pos = newPos;
@@ -175,7 +175,43 @@ namespace UnturnedGodot.Net
             }
         }
 
-        static Vector3 Quantize(Vector3 pos) => new Vector3(
+        /// <summary>THE shared movement integration -- one tick of PlayerMovementSim on flat ground,
+        /// local axes rotated by yaw (forward = +Z at yaw 0, yaw counter-clockwise), result quantized to
+        /// the wire grid. The server's ServerStep and the client's prediction (ClientPrediction,
+        /// MP_PLAN §2.5b "server runs the same inputs through the same sim-core") both call THIS, so a
+        /// predicted trajectory is bit-identical to the authoritative one under identical inputs.</summary>
+        public static Vector3 IntegrateFlat(PlayerMovementSim sim, in MoveInput input, Vector3 pos, float dt)
+        {
+            var vel = sim.Step(new Vector2(input.MoveX, input.MoveY), wantJump: false, grounded: true, dt);
+            float yawRad = input.YawDegrees * (Mathf.PI / 180f);
+            float sin = Mathf.Sin(yawRad), cos = Mathf.Cos(yawRad);
+            var worldDelta = new Vector3(
+                (vel.x * cos + vel.z * sin) * dt,
+                0f,
+                (vel.z * cos - vel.x * sin) * dt);
+            return Quantize(pos + worldDelta);
+        }
+
+        /// <summary>Authoritative write-through for an entity whose sim runs OUTSIDE this class -- the
+        /// listen-server / SP-loopback local player, whose PlayerController shell steps the same sim-core
+        /// plus real collision in-process (MP_PLAN §2.1: SP = the server world + loopback; prediction is a
+        /// pass-through). Marks the entity externally driven so ServerStep stops integrating it.</summary>
+        public void ServerDrive(ushort ownerPlayerId, Vector3 pos, float yawDegrees, ushort lastProcessedInputSeq, long tick)
+        {
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return;
+            e.ExternallyDriven = true;
+            var newPos = Quantize(pos);
+            float newYaw = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits);
+            bool changed = newPos != e.Pos || newYaw != e.YawDegrees || lastProcessedInputSeq != e.LastProcessedInputSeq;
+            e.Pos = newPos;
+            e.YawDegrees = newYaw;
+            e.LastProcessedInputSeq = lastProcessedInputSeq;
+            if (changed) e.LastChangedTick = tick;
+        }
+
+        /// <summary>Round a position through the exact wire encoding -- authoritative state and client
+        /// prediction both live on this grid so parity checks are exact equality, never a tolerance.</summary>
+        public static Vector3 Quantize(Vector3 pos) => new Vector3(
             NetQuantization.QuantizeClampedFloat(pos.x, NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits),
             NetQuantization.QuantizeClampedFloat(pos.y, NetQuantization.PositionYIntBits, NetQuantization.PositionYFracBits),
             NetQuantization.QuantizeClampedFloat(pos.z, NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits));

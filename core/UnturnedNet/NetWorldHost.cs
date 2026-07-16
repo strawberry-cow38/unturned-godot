@@ -27,16 +27,32 @@ namespace UnturnedGodot.Net
 
         public NetWorldServer(IServerTransport transport,
                               ServerTransportConnectionFailureCallback connectionFailureCallback = null,
-                              int maxPeers = 32)
+                              int maxPeers = 32,
+                              ulong contentHash = 0)
         {
-            Session = new NetServerSession(transport, connectionFailureCallback, maxPeers: maxPeers);
+            Session = new NetServerSession(transport, connectionFailureCallback, maxPeers: maxPeers, contentHash: contentHash);
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players });
             Composer.RegisterAck(Commands);
             Commands.Register<MoveInput>(ReplicationIds.CommandMoveInput, MoveInput.TryRead,
                 (sender, cmd) => Players.ServerQueueInput(sender, cmd));
 
             Session.PeerConnected += peer =>
-                Players.ServerSpawn(Ids.Mint(), peer.PlayerId, SpawnPosition(peer.PlayerId), Session.CurrentTick);
+            {
+                var e = Players.ServerSpawn(Ids.Mint(), peer.PlayerId, SpawnPosition(peer.PlayerId), Session.CurrentTick);
+                // The join flow (MP_PLAN §4 Phase 4): Accept -> reliable FULL snapshot -> deltas. The full
+                // snapshot rides ReliableOrdered where fragmentation is safe (§2.2) -- a lost datagram
+                // retransmits instead of the client waiting out unreliable full-resends. Composed HERE so
+                // the joiner's own freshly-spawned avatar is inside it.
+                var joinSnapshot = Composer.Compose(Session.CurrentTick, peer.PlayerId, e.Pos);
+                peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventJoinSnapshot, w =>
+                {
+                    // explicit byteLen prefix: NetPakReader.RemainingSegmentLength is imprecise (the reader
+                    // pre-buffers 32-bit words), so like every other frame on this stack the payload carries
+                    // its own length
+                    w.WriteUInt16((ushort)joinSnapshot.Length);
+                    w.WriteBytes(joinSnapshot, 0, joinSnapshot.Length);
+                }, bufferSize: joinSnapshot.Length + 8));
+            };
             Session.PeerDisconnected += (peer, reason) =>
             {
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
@@ -60,12 +76,16 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>Compose + send snapshots. Registered LAST on the tick so it captures this tick's final
-        /// state; viewPos is the owning player's position (the §2.6 interest hook, policy AllRelevant v1).</summary>
+        /// state; viewPos is the owning player's position (the §2.6 interest hook, policy AllRelevant v1).
+        /// A peer with no acked baseline yet is mid-join: its world state is the reliable join snapshot
+        /// already in flight (retransmitted until acked), so unreliable snapshots hold off until the first
+        /// ack -- the join path is reliable BY CONSTRUCTION, not by racing the unreliable stream.</summary>
         public void TickReplication()
         {
             if (SnapshotDivisorTicks > 1 && (Session.CurrentTick % SnapshotDivisorTicks) != 0) return;
             foreach (var peer in Session.Peers)
             {
+                if (Composer.GetClientBaseline(peer.PlayerId) == 0) continue;   // join snapshot not acked yet
                 Vector3 viewPos = Players.TryGetByOwner(peer.PlayerId, out var e) ? e.Pos : Vector3.zero;
                 peer.SendUnreliableSequenced(Composer.Compose(Session.CurrentTick, peer.PlayerId, viewPos));
             }
@@ -75,22 +95,41 @@ namespace UnturnedGodot.Net
     }
 
     /// <summary>
-    /// The client side: NetClientSession + PlayerReplication replica + SnapshotApplier + the ack piggyback.
-    /// Tick() once per 50 Hz tick; SendMoveInput() each tick while connected (the held-keys input model --
-    /// the server keeps applying the latest input, so single loss costs nothing).
+    /// The client side: NetClientSession + PlayerReplication replica + SnapshotApplier + the ack piggyback,
+    /// plus the event plane (first consumer: the reliable join snapshot) and the predicted local player
+    /// (MP_PLAN §2.5b -- the shell calls SendMoveInput then Prediction.PredictAndRecord with the returned
+    /// seq). Tick() once per 50 Hz tick.
     /// </summary>
     public sealed class NetWorldClient
     {
         public readonly NetClientSession Session;
         public readonly PlayerReplication Players = new PlayerReplication();
         public readonly SnapshotApplier Applier;
+        public readonly EventRegistry Events = new EventRegistry();
+        public readonly ClientPrediction Prediction = new ClientPrediction();
+
+        public long JoinSnapshotsApplied { get; private set; }   // reliable join-path proof for tests
 
         ushort _inputSeq;
 
-        public NetWorldClient(IClientTransport transport, string playerName = "")
+        public NetWorldClient(IClientTransport transport, string playerName = "", ulong contentHash = 0)
         {
-            Session = new NetClientSession(transport, playerName);
+            Session = new NetClientSession(transport, playerName, contentHash: contentHash);
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players });
+            Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
+            {
+                if (!reader.ReadUInt16(out ushort len) || len == 0) return;
+                var snapshot = new byte[len];
+                if (!reader.ReadBytes(snapshot, len)) return;
+                // Cross-channel staleness guard: unreliable snapshots may beat a (retransmitted) reliable
+                // join snapshot; applying the older FULL one would roll the replica back and deltas against
+                // a newer server baseline would then miss its changes. Peek the tick, drop if stale.
+                var peek = new NetPakReader();
+                peek.Reset();   // SetBufferSegment alone does not reset the cursor
+                peek.SetBufferSegment(snapshot, len);
+                if (!peek.ReadUInt32(out uint tick) || tick < (uint)Applier.LastAppliedServerTick) return;
+                if (ApplySnapshot(snapshot, len)) JoinSnapshotsApplied++;
+            });
         }
 
         public NetSessionState State => Session.State;
@@ -102,22 +141,31 @@ namespace UnturnedGodot.Net
         {
             Session.Tick();
             while (Session.TryReceiveUnreliable(out byte[] msg))
-            {
-                if (Applier.Apply(msg, msg.Length))
-                {
-                    // ack the applied tick so the server can send deltas against it (SnapshotComposer baseline)
-                    Session.SendUnreliableSequenced(NetMessagePak.Pack(SnapshotComposer.AckCommandId,
-                        w => w.WriteUInt32((uint)Applier.LastAppliedServerTick)));
-                }
-            }
-            while (Session.TryReceiveReliable(out byte[] _)) { } // no reliable app messages yet (events land in Phase 5+)
+                ApplySnapshot(msg, msg.Length);
+            while (Session.TryReceiveReliable(out byte[] msg))
+                Events.TryDispatch(msg);   // reliable app messages are events (join snapshot now, Phase 5 facts later)
+            // ack the newest applied tick EVERY tick (newest-wins, ~5 bytes): the server holds unreliable
+            // snapshots until the first ack lands, so a lost ack datagram must never be able to stall the
+            // join -- the next tick re-acks
+            if (Session.State == NetSessionState.Connected && Applier.LastAppliedServerTick > 0)
+                Session.SendUnreliableSequenced(NetMessagePak.Pack(SnapshotComposer.AckCommandId,
+                    w => w.WriteUInt32((uint)Applier.LastAppliedServerTick)));
+            // reconcile the predicted local player against the newest own-entity authoritative state
+            if (Session.State == NetSessionState.Connected)
+                Prediction.Reconcile(Players, Session.PlayerId);
         }
 
-        public void SendMoveInput(float moveX, float moveY, float yawDegrees)
+        bool ApplySnapshot(byte[] data, int length) => Applier.Apply(data, length);
+
+        /// <summary>Send this tick's movement intent; returns the input seq (0 = not connected, nothing
+        /// sent) so the shell can record its prediction under the same seq.</summary>
+        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees)
         {
-            if (Session.State != NetSessionState.Connected) return;
+            if (Session.State != NetSessionState.Connected) return 0;
             var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees };
+            if (_inputSeq == 0) cmd.Seq = ++_inputSeq;   // seq 0 is the reconciler's "none" sentinel; skip it on wrap
             Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandMoveInput, cmd.Write));
+            return cmd.Seq;
         }
 
         public void Disconnect() => Session.Disconnect();

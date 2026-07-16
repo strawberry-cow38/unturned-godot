@@ -6,14 +6,17 @@ namespace UnturnedGodot.Net
 {
     /// <summary>
     /// Client side of the session layer: one NetSession over an IClientTransport, plus the connect
-    /// handshake (MP_PLAN §2.2 lifecycle): Connect{name} retried every 0.5 s -> Accept{playerId, serverTick}
-    /// or Reject{reason}; then 1 Hz keepalives and a 5 s silence timeout. Tick() once per 50 Hz tick.
+    /// handshake (MP_PLAN §2.2 lifecycle): Connect{name, contentHash} retried every 0.5 s ->
+    /// Accept{playerId, serverTick} or Reject{reason}; then 1 Hz keepalives and a 5 s silence timeout.
+    /// Tick() once per 50 Hz tick. The content hash (wire v2, Phase 4) is the map/content identity --
+    /// a server whose hash differs rejects the join with ContentMismatch before any state flows.
     /// </summary>
     public sealed class NetClientSession
     {
         readonly IClientTransport _transport;
         readonly NetSession _session;
         readonly string _playerName;
+        readonly ulong _contentHash;
         readonly byte[] _rx = new byte[NetProtocol.MaxDatagramBytes];
 
         long _tick;
@@ -28,10 +31,12 @@ namespace UnturnedGodot.Net
         public long CurrentTick => _tick;
         public NetSession Session => _session;
 
-        public NetClientSession(IClientTransport transport, string playerName = "", byte protocolVersion = NetProtocol.Version)
+        public NetClientSession(IClientTransport transport, string playerName = "", byte protocolVersion = NetProtocol.Version,
+                                ulong contentHash = 0)
         {
             _transport = transport;
             _playerName = playerName ?? "";
+            _contentHash = contentHash;
             _session = new NetSession((buffer, length) => _transport.Send(buffer, length, ENetReliability.Unreliable), protocolVersion);
             _session.ControlReceived += OnControl;
             _transport.Initialize(null, OnTransportFailure);
@@ -57,7 +62,11 @@ namespace UnturnedGodot.Net
 
         void SendConnect()
         {
-            _session.SendControl(NetControlType.Connect, w => w.WriteString(_playerName));
+            _session.SendControl(NetControlType.Connect, w =>
+            {
+                w.WriteString(_playerName);
+                w.WriteUInt64(_contentHash);   // wire v2: content identity, validated server-side (§2.2)
+            });
             _lastConnectSendTick = _tick;
         }
 

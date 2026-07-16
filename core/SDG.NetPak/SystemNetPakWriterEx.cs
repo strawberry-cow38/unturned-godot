@@ -100,7 +100,12 @@ namespace SDG.NetPak
 			{
 				int intValue = Mathf.FloorToInt(value);
 				// Identical to WriteSignedInt, inlined because we already calculated absMinValue.
-				bool result = writer.WriteBits((uint) (value + absMinValue), intBitCount);
+				// MUST bias the FLOORED intValue, not the raw float: float addition (value + absMinValue)
+				// rounds to the nearest representable float, so a value within epsilon BELOW an integer
+				// (e.g. 2.9999976f + 1024f == 1027.0f exactly) carried the int field up by one while the
+				// fraction below still encoded ~0.996 against floor(value) -- decoding +1.0 off (found by
+				// the Phase 4 ServerDrive tests; the unsigned variant above always did this correctly).
+				bool result = writer.WriteBits((uint) (intValue + absMinValue), intBitCount);
 
 				// Specialized rather than using UNorm because we want [0,1) exclusive not [0,1] inclusive.
 				// e.g. with fracBitCount of 2 we can represent 0.0, 0.25, 0.5, or 0.75

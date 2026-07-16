@@ -11,6 +11,7 @@
     <Compile Include="NetPakTests.cs" /><Compile Include="StringNetPakTests.cs" />
     <Compile Include="NetPakAngleTests.cs" /><Compile Include="NetPakDeferReadTests.cs" />
     <Compile Include="NetPakReadOverrunTests.cs" /><Compile Include="NetPakWriteOverrunTests.cs" />
+    <Compile Include="NetPakClampedFloatTests.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />

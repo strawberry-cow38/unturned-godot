@@ -46,6 +46,21 @@ namespace UnturnedGodot.Net
             return result;
         }
 
+        /// <summary>Same idea as QuantizeClampedFloat, for WriteSignedNormalizedFloat -- what MoveInput's
+        /// move axes go through on the wire. The client-side predictor quantizes its OWN input through this
+        /// before integrating, so it consumes exactly the bytes the server will read (MP_PLAN §2.5b).</summary>
+        public static float QuantizeSignedNormalizedFloat(float value, int bitCount)
+        {
+            var w = new NetPakWriter { buffer = new byte[8] };
+            w.Reset();
+            w.WriteSignedNormalizedFloat(value, bitCount);
+            w.Flush();
+            var r = new NetPakReader();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            r.ReadSignedNormalizedFloat(bitCount, out float result);
+            return result;
+        }
+
         /// <summary>Same idea as QuantizeClampedFloat, for WriteDegrees/ReadDegrees.</summary>
         public static float QuantizeDegrees(float value, int bitCount)
         {

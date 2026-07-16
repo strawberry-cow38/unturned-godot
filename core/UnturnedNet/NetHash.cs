@@ -27,5 +27,22 @@ namespace UnturnedGodot.Net
         public static ulong MixUInt32(ulong hash, uint value) => MixUInt64(hash, value);
         public static ulong MixByte(ulong hash, byte value) => MixUInt64(hash, value);
         public static ulong MixFloat(ulong hash, float value) => MixUInt32(hash, System.BitConverter.SingleToUInt32Bits(value));
+
+        /// <summary>FNV-1a over a string's UTF-16 code units -- the content-identity hash the Phase 4
+        /// handshake carries (map/content version string -> u64). Deterministic across builds/processes,
+        /// unlike string.GetHashCode.</summary>
+        public static ulong HashString(string s)
+        {
+            ulong hash = FnvOffset;
+            if (s != null)
+                foreach (char c in s)
+                {
+                    hash ^= (byte)c;
+                    hash *= FnvPrime;
+                    hash ^= (byte)(c >> 8);
+                    hash *= FnvPrime;
+                }
+            return hash;
+        }
     }
 }

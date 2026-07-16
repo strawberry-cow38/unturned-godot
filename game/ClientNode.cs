@@ -7,9 +7,10 @@ using UnturnedGodot.Net;
 namespace UnturnedGodot
 {
     // Multiplayer demo CLIENT, re-founded on the Phase 1-3 stack: a NetWorldClient that joins a --server /
-    // --dedicated host, sends MoveInput commands each 50 Hz tick, and renders EVERY player -- including
-    // itself -- from the server's snapshots (server-authoritative round trip made visible; blue = self,
-    // orange = remote). The local avatar is a puppet of the replica on purpose: prediction is Phase 4.
+    // --dedicated host, sends MoveInput commands each 50 Hz tick, and renders every player (blue = self,
+    // orange = remote). Phase 4: the LOCAL avatar is PREDICTED -- each input integrates immediately
+    // through the same sim-core the server runs (ClientPrediction), and snapshot acks smooth-correct the
+    // residual (§2.5b). Remote avatars stay replica puppets.
     public partial class ClientNode : Node3D
     {
         public string Host = "127.0.0.1";
@@ -23,7 +24,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            _client = new NetWorldClient(new UdpClientTransport(Host, Port), "player");
+            _client = new NetWorldClient(new UdpClientTransport(Host, Port), "player", contentHash: NetContent.Hash);
             _client.Connect();
 
             var layer = new CanvasLayer();
@@ -34,7 +35,13 @@ namespace UnturnedGodot
 
             var sim = new SimDriver();
             AddChild(sim);
-            sim.Sim.Add(new DelegateSimStep((tick, dt) => _client.SendMoveInput(0f, 1f, (float)(tick * dt) * -30f), "client.input"));   // walk a circle, opposite the server bot
+            sim.Sim.Add(new DelegateSimStep((tick, dt) =>
+            {
+                // walk a circle, opposite the server bot; predict the result immediately under the sent seq
+                float yaw = (float)(tick * dt) * -30f;
+                ushort seq = _client.SendMoveInput(0f, 1f, yaw);
+                _client.Prediction.PredictAndRecord(seq, 0f, 1f, yaw, (float)dt);
+            }, "client.input"));
             sim.Sim.Add(new DelegateSimStep((t, dt) => _client.Tick(), "client.session"));
         }
 
@@ -42,17 +49,21 @@ namespace UnturnedGodot
         {
             foreach (var e in _client.Players.All)
             {
+                bool self = e.OwnerPlayerId == _client.PlayerId;
                 if (!_avatars.TryGetValue(e.OwnerPlayerId, out var av))
                 {
-                    var tint = e.OwnerPlayerId == _client.PlayerId ? new Color(0.60f, 0.72f, 1.00f) : new Color(1.00f, 0.72f, 0.45f);
+                    var tint = self ? new Color(0.60f, 0.72f, 1.00f) : new Color(1.00f, 0.72f, 0.45f);
                     av = CharacterModel.Loaded
                         ? CharacterModel.Build(tint)
                         : Humanoid.Build(Skin, tint, tint * 0.6f);
                     AddChild(av);
                     _avatars[e.OwnerPlayerId] = av;
                 }
-                av.Position = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);   // feet-based, like the humanoid
-                av.Rotation = new Vector3(0f, Mathf.DegToRad(e.YawDegrees), 0f);
+                // self renders from the PREDICTION (immediate, smooth-corrected); remotes from the replica
+                var pos = self && _client.Prediction.Spawned ? _client.Prediction.Pos : e.Pos;
+                float yawDeg = self && _client.Prediction.Spawned ? _client.Prediction.YawDegrees : e.YawDegrees;
+                av.Position = new Vector3(pos.x, pos.y, pos.z);   // feet-based, like the humanoid
+                av.Rotation = new Vector3(0f, Mathf.DegToRad(yawDeg), 0f);
             }
 
             if (_avatars.Count > _client.Players.Count)   // a player left -> free the stale avatar

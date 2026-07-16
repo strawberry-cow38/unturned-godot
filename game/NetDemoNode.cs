@@ -25,9 +25,9 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            _server = new NetWorldServer(new UdpServerTransport(Port));
-            _local = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "local");
-            _bot = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "bot");
+            _server = new NetWorldServer(new UdpServerTransport(Port), contentHash: NetContent.Hash);
+            _local = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "local", contentHash: NetContent.Hash);
+            _bot = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "bot", contentHash: NetContent.Hash);
             _local.Connect();
             _bot.Connect();
 

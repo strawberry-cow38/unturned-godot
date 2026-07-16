@@ -105,6 +105,7 @@ namespace UnturnedGodot
                 else if (arg == "--netdemo") netdemo = true;
                 else if (arg == "--server") server = true;
                 else if (arg == "--dedicated") dedicated = true;   // headless dedicated server: the REAL world (WorldBuilder dedicated mode) + NetServerSession on UDP
+                else if (arg == "--mploopback") _mpLoopback = true;   // OPT-IN (MP_PLAN §4 Phase 4): SP runs as an in-process listen-server + local client over MemTransport; without the flag SP keeps the direct path
                 else if (arg == "--client") client = true;
                 else if (arg.StartsWith("--connect=")) { client = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP
                 else if (arg == "--smoke") smoke = true;
@@ -1482,7 +1483,15 @@ namespace UnturnedGodot
             _pdPlayer = res.Player;   // UG_AUTOFIRE terrain-impact verification
             _ztField = res.Zombies;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
+            AttachMpLoopback(res);    // --mploopback only; default SP is untouched
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+        }
+
+        bool _mpLoopback;   // --mploopback: opt-in SP listen-server over MemTransport (MP_PLAN §4 Phase 4)
+        void AttachMpLoopback(WorldBuildResult res)
+        {
+            if (!_mpLoopback || res.Player == null || res.Sim == null) return;
+            AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim });
         }
 
         // --navshot=OUT: a VERIFY screenshot for the zombie nav rework -- synchronous world (loads reliably offline),
@@ -1546,6 +1555,7 @@ namespace UnturnedGodot
         {
             var res = WorldBuilder.BuildPeiPlayWorld(this, MapDir("PEI"), _peiHorde);
             _peiPlayer = res.Player;
+            AttachMpLoopback(res);   // --mploopback only; default SP is untouched
         }
 
 

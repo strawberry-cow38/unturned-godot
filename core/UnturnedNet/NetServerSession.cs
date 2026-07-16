@@ -35,6 +35,7 @@ namespace UnturnedGodot.Net
         readonly ServerTransportConnectionFailureCallback _connectionFailure;
         readonly byte _version;
         readonly int _maxPeers;
+        readonly ulong _contentHash;
         readonly byte[] _rx = new byte[NetProtocol.MaxDatagramBytes];
         readonly NetPakReader _peekReader = new NetPakReader();
         readonly NetPakWriter _rawWriter = new NetPakWriter { buffer = new byte[NetProtocol.MaxDatagramBytes] };
@@ -55,12 +56,14 @@ namespace UnturnedGodot.Net
         public NetServerSession(IServerTransport transport,
                                 ServerTransportConnectionFailureCallback connectionFailureCallback = null,
                                 byte protocolVersion = NetProtocol.Version,
-                                int maxPeers = 32)
+                                int maxPeers = 32,
+                                ulong contentHash = 0)
         {
             _transport = transport;
             _connectionFailure = connectionFailureCallback;
             _version = protocolVersion;
             _maxPeers = maxPeers;
+            _contentHash = contentHash;
             _transport.Initialize(connectionFailureCallback);
         }
 
@@ -139,6 +142,16 @@ namespace UnturnedGodot.Net
                     if (peer.Name == null)
                     {
                         reader.ReadString(out string name);
+                        // Phase 4 join gate (§2.2 "version + content hash -> Accept"): the client's content
+                        // hash must equal ours. A truncated payload (older build with no hash) fails the
+                        // read and lands on the same mismatch path.
+                        if (!reader.ReadUInt64(out ulong contentHash) || contentHash != _contentHash)
+                        {
+                            for (int i = 0; i < 3; i++)   // best-effort blast, like the other Reject paths
+                                peer.Session.SendControl(NetControlType.Reject, w => w.WriteUInt8((byte)NetRejectReason.ContentMismatch));
+                            RemovePeer(peer, NetDisconnectReason.Rejected);
+                            return;
+                        }
                         peer.Name = name ?? "";
                         PeerConnected?.Invoke(peer);
                     }
@@ -196,7 +209,10 @@ namespace UnturnedGodot.Net
             if (!_peersByConn.Remove(peer.Connection)) return false;
             _peers.Remove(peer);
             peer.Session.KeepAliveEnabled = false;
-            PeerDisconnected?.Invoke(peer, reason);
+            // PeerDisconnected only balances a PeerConnected: a peer dropped before completing the
+            // handshake (content-hash reject, or a malformed Connect that idles into the timeout) never
+            // announced a join, so it doesn't announce a leave.
+            if (peer.Name != null) PeerDisconnected?.Invoke(peer, reason);
             return true;
         }
 

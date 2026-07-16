@@ -218,7 +218,7 @@ namespace UnturnedGodot
         {
             const float R = 5f;
             Vector3 p = GlobalPosition;
-            PlayerController.Local?.FlinchFromExplosion(p, 18f, 28f);
+            PlayerRegistry.FlinchAllFromExplosion(p, 18f, 28f);   // every player's camera; distance-gated per player
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {
