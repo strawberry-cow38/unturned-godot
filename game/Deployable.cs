@@ -198,15 +198,16 @@ namespace UnturnedGodot
             if (parent == null) return;
             var chunks = new CpuParticles3D
             {
-                Emitting = true, OneShot = true, Amount = 16, Lifetime = 1.5f, Explosiveness = 1f, TopLevel = true,
-                Mesh = new BoxMesh { Size = Vector3.One * 0.13f },
-                Direction = Vector3.Up, Spread = 55f, Gravity = new Vector3(0f, -9.8f, 0f),
-                InitialVelocityMin = 2.6f, InitialVelocityMax = 5.8f,
-                AngularVelocityMin = -420f, AngularVelocityMax = 420f,
+                Emitting = true, OneShot = true, Amount = 20, Lifetime = 2.6f, Explosiveness = 1f, TopLevel = true,
+                Mesh = new BoxMesh { Size = Vector3.One * 0.12f },
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = new Vector3(0.4f, 0.7f, 0.4f),   // pieces originate ACROSS the body, then fall
+                Direction = Vector3.Up, Spread = 80f, Gravity = new Vector3(0f, -9.8f, 0f),
+                InitialVelocityMin = 0.3f, InitialVelocityMax = 1.5f,   // gentle scatter -> it COLLAPSES, gravity does the rest (not a launch)
+                AngularVelocityMin = -180f, AngularVelocityMax = 180f,
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.13f, 0.13f, 0.14f), Roughness = 1f },
             };
             parent.AddChild(chunks);
-            chunks.GlobalPosition = GlobalPosition + Vector3.Up * 0.5f;
+            chunks.GlobalPosition = GlobalPosition + Vector3.Up * 0.7f;
             var t = GetTree()?.CreateTimer(3f);
             if (t != null) t.Timeout += () => { if (IsInstanceValid(chunks)) chunks.QueueFree(); };
         }
