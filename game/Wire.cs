@@ -36,11 +36,13 @@ namespace UnturnedGodot
             for (int i = 0; i < _segs.Count; i++)
             {
                 if (i >= segCount) { _segs[i].Visible = false; continue; }
-                _segs[i].Visible = true;
                 Vector3 a = pts[i], b = pts[i + 1], dir = b - a;
                 float len = dir.Length();
                 if (len < 1e-4f) { _segs[i].Visible = false; continue; }
-                _segs[i].GlobalTransform = new Transform3D(AlignY(dir / len).Scaled(new Vector3(1f, len, 1f)), (a + b) * 0.5f);   // cylinder's +Y axis is its length
+                _segs[i].Visible = true;
+                // rotate the cylinder's local +Y to point along the segment, THEN stretch its local Y to the length.
+                // `rot * FromScale` scales in the cylinder's OWN frame (Basis.Scaled would scale in world axes -> wrong).
+                _segs[i].GlobalTransform = new Transform3D(RotateYTo(dir / len) * Basis.FromScale(new Vector3(1f, len, 1f)), (a + b) * 0.5f);
             }
         }
 
@@ -51,12 +53,13 @@ namespace UnturnedGodot
             return s;
         }
 
-        // basis whose +Y points along `y` (unit); the cylinder mesh is authored along +Y
-        static Basis AlignY(Vector3 y)
+        // orthonormal rotation mapping the mesh's +Y axis onto the unit direction `u` (axis-angle, unambiguous)
+        static Basis RotateYTo(Vector3 u)
         {
-            Vector3 x = Mathf.Abs(y.Dot(Vector3.Right)) < 0.95f ? y.Cross(Vector3.Right).Normalized() : y.Cross(Vector3.Forward).Normalized();
-            Vector3 z = x.Cross(y).Normalized();
-            return new Basis(x, y, z);
+            float d = Vector3.Up.Dot(u);
+            if (d > 0.9999f) return Basis.Identity;
+            if (d < -0.9999f) return new Basis(Vector3.Right, Mathf.Pi);
+            return new Basis(Vector3.Up.Cross(u).Normalized(), Mathf.Acos(Mathf.Clamp(d, -1f, 1f)));
         }
     }
 }
