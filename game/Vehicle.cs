@@ -81,7 +81,7 @@ namespace UnturnedGodot
         public bool HeadlightsOn => _headlightsOn;
 
         // look-at focus (master): same system as items -- a screen-space outline + an info billboard (name/HP/fuel/battery)
-        bool _lookFocused; System.Collections.Generic.List<MeshInstance3D> _outlineMeshes; Label3D _infoLabel;
+        bool _lookFocused; System.Collections.Generic.List<MeshInstance3D> _outlineMeshes; InfoBillboard _info;
         Color _outlineColor = new Color(0.82f, 0.83f, 0.90f);   // vehicle outline/label tint (no per-vehicle rarity in the port yet)
         const float InfoH = 1.1f;   // billboard sits INSIDE the car (cabin height), not floating above the roof (strawberry)
 
@@ -871,13 +871,8 @@ namespace UnturnedGodot
             v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
             if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
             v._outlineColor = ItemAsset.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
-            v._infoLabel = new Label3D   // look-at info billboard (name/HP/fuel/battery), TopLevel so it floats above in world space
-            {
-                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, TopLevel = true, Visible = false,
-                Modulate = v._outlineColor, PixelSize = 0.0055f, NoDepthTest = true, FontSize = 52, OutlineSize = 8,
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            v.AddChild(v._infoLabel);
+            v._info = new InfoBillboard { TopLevel = true };   // look-at info billboard: name + HP/fuel/battery BARS, world-space at the cabin
+            v.AddChild(v._info);
 
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
             Material bodyMat = s.Palette != null
@@ -1380,7 +1375,7 @@ namespace UnturnedGodot
                 if (IsInstanceValid(mi))   // guard freed husk meshes -- else the loop threw + aborted, leaving later meshes stuck ON the layer (outline "never reset", master)
                     mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
             if (on) WorldItem.FocusColor = _outlineColor;   // OutlineOverlay tints the rim with this
-            if (_infoLabel != null) _infoLabel.Visible = on;
+            _info?.SetActive(on);
         }
 
         static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)
@@ -1474,7 +1469,7 @@ namespace UnturnedGodot
         // Set the look-at prompt for a focused wreck (name + salvage line) with a state colour; PlayerController drives it (it knows the blowtorch).
         public void SetSalvagePrompt(string line2, Color color)
         {
-            if (_infoLabel != null) { _infoLabel.Text = $"{DisplayName}\n{line2}"; _infoLabel.Modulate = color; }
+            if (_info != null) { _info.SetName(DisplayName, color); _info.SetBar(0, 0f, InfoBillboard.HealthColor, false); _info.SetBar(1, 0f, InfoBillboard.FuelColor, false); _info.SetBar(2, 0f, InfoBillboard.FuelColor, false); _info.SetPrompt(line2, color); }
             if (_lookFocused) WorldItem.FocusColor = color;   // recolour the screen-space outline (red = can't, white = salvageable)
         }
         public bool Hurt => !_exploded && Health < HealthMax;   // alive-but-damaged -> a blowtorch can repair it (source isRepair, master)
@@ -1490,23 +1485,30 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            if (_lookFocused && _infoLabel != null)   // keep the info billboard above the car + live (before any perf early-return)
+            if (_lookFocused && _info != null)   // keep the info billboard at the cabin + live (before any perf early-return)
             {
-                _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
-                if (!_exploded)   // alive car: HP/fuel/battery. A WRECK's salvage prompt is set by PlayerController (it knows the blowtorch).
+                _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
+                if (!_exploded)   // alive car: HP/fuel/battery bars. A WRECK's salvage prompt is set by PlayerController (it knows the blowtorch).
                 {
+                    _info.SetName(DisplayName, _outlineColor);
+                    _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
                     if (IsTrailer)   // a trailer has no engine -> no fuel/battery; show HP + a clear hitch state (connected / can connect / can't connect) instead
                     {
+                        _info.SetBar(1, 0f, InfoBillboard.FuelColor, false); _info.SetBar(2, 0f, InfoBillboard.FuelColor, false);
                         // only surface the connect/disconnect prompt when the player is actually standing in the hitch region (strawberry)
                         bool inHitchRange = PlayerController.Local != null && IsInstanceValid(PlayerController.Local)
                             && PlayerController.Local.GlobalPosition.DistanceTo(KingpinWorld) <= HitchReach;
                         string hint = !inHitchRange ? ""
-                            : CoupledCab != null ? "\n[F] disconnect trailer"
-                            : (CabBackedUnder() ? "\n[F] connect trailer" : "\ncan't connect - back a cab under");   // explicit can/can't feedback
-                        _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}{hint}";
+                            : CoupledCab != null ? "[F] disconnect trailer"
+                            : (CabBackedUnder() ? "[F] connect trailer" : "can't connect - back a cab under");   // explicit can/can't feedback
+                        _info.SetPrompt(hint, _outlineColor);
                     }
                     else
-                        _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}\nFuel {Fuel:0}/{FuelMax:0}   Battery {Battery / BatteryMax * 100f:0}%";
+                    {
+                        _info.SetBar(1, FuelNorm, InfoBillboard.FuelColor);                 // fuel bar (yellow)
+                        _info.SetBar(2, Battery / BatteryMax, InfoBillboard.FuelColor);     // battery bar (yellow)
+                        _info.SetPrompt("", _outlineColor);
+                    }
                 }
             }
             if (_burnTime >= 0f)   // wreck fire lifecycle (master): 0-40s full burn, 40-60s dying down, out at 60s (+ light killed), sits 5 min, then despawns

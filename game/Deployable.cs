@@ -37,7 +37,7 @@ namespace UnturnedGodot
 
         bool _lookFocused;
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
-        Label3D _infoLabel;
+        InfoBillboard _info;
         static readonly Color OutlineColor = new Color(0.82f, 0.83f, 0.90f);   // same neutral tint as vehicles (no per-deployable rarity yet)
         const float InfoH = 0.5f;   // billboard sits INSIDE the generator body (strawberry), not floating above it
 
@@ -85,14 +85,9 @@ namespace UnturnedGodot
                 if (eng != null) { d._engineAudio = new AudioStreamPlayer3D { Stream = eng, VolumeDb = -6f, UnitSize = 8f, MaxDistance = 45f }; d.AddChild(d._engineAudio); }
             }
 
-            // look-at info billboard (name / HP / fuel), TopLevel so it floats in world space above the object
-            d._infoLabel = new Label3D
-            {
-                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, TopLevel = true, Visible = false,
-                Modulate = OutlineColor, PixelSize = 0.0055f, NoDepthTest = true, FontSize = 52, OutlineSize = 8,
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            d.AddChild(d._infoLabel);
+            // look-at info billboard (name + HP/fuel BARS), TopLevel so it floats in world space at the object
+            d._info = new InfoBillboard { TopLevel = true };
+            d.AddChild(d._info);
             parent.AddChild(d);
             foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
             return d;
@@ -122,7 +117,7 @@ namespace UnturnedGodot
                 if (IsInstanceValid(mi))
                     mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
             if (on) WorldItem.FocusColor = OutlineColor;   // OutlineOverlay tints the rim with this
-            if (_infoLabel != null) _infoLabel.Visible = on;
+            _info?.SetActive(on);
         }
 
         // src askDamage: reduce health; at 0 the EXPLODE timer starts + a small fire lights immediately.
@@ -191,7 +186,13 @@ namespace UnturnedGodot
         public bool IsWreck => _exploded;
         public bool WreckOnFire => _exploded && _burnTime >= 0f && _burnTime < 60f;   // still burning -> too hot to salvage
         public bool WreckSalvageable => _exploded && _burnTime >= 60f;                // fire's out -> blowtorch-salvageable
-        public void SetSalvagePrompt(string line2, Color color) { if (_infoLabel != null) { _infoLabel.Text = $"{Def?.Name}\n{line2}"; _infoLabel.Modulate = color; } }
+        public void SetSalvagePrompt(string line2, Color color)   // a wreck: name + salvage prompt, no bars
+        {
+            if (_info == null) return;
+            _info.SetName(Def?.Name, color);
+            _info.SetBar(0, 0f, InfoBillboard.HealthColor, false); _info.SetBar(1, 0f, InfoBillboard.FuelColor, false);
+            _info.SetPrompt(line2, color);
+        }
 
         public void Salvage()   // blowtorch teardown: the cold husk breaks into Metal Scrap (item 67), then despawns
         {
@@ -260,16 +261,17 @@ namespace UnturnedGodot
                 else if (_mesh.Position != Vector3.Zero) _mesh.Position = Vector3.Zero;
             }
 
-            if (!_lookFocused || _infoLabel == null) return;   // only the focused one keeps its billboard live (a wreck's prompt is set by PlayerController -- it knows the blowtorch)
-            _infoLabel.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
+            if (!_lookFocused || _info == null) return;   // only the focused one keeps its billboard live (a wreck's prompt is set by PlayerController -- it knows the blowtorch)
+            _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
             if (!_exploded)
             {
-                _infoLabel.Modulate = OutlineColor;
-                string fuelLine = FuelMax > 0f ? $"\nFuel {Fuel:0}/{FuelMax:0}" : "";
-                // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. _powered is the target, so this reads as
-                // the next action even mid-ramp (strawberry: don't change the prompt during warmup/cooldown).
-                string powerLine = Def != null && Def.Fuel > 0f && !OnFire ? $"\n[F] Turn {(_powered ? "Off" : "On")}" : "";   // no turn on/off prompt once it's on fire
-                _infoLabel.Text = $"{Def?.Name}\nHP {Health:0}/{HealthMax:0}{fuelLine}{powerLine}";
+                _info.SetName(Def?.Name, OutlineColor);
+                _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
+                _info.SetBar(1, FuelMax > 0f ? Fuel / FuelMax : 0f, InfoBillboard.FuelColor, FuelMax > 0f);   // fuel bar (yellow); hidden if no tank
+                _info.SetBar(2, 0f, InfoBillboard.FuelColor, false);   // no battery on a deployable
+                // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. _powered is the target -> reads as the next
+                // action even mid-ramp. No prompt once it's on fire.
+                _info.SetPrompt(Def != null && Def.Fuel > 0f && !OnFire ? $"[F] Turn {(_powered ? "Off" : "On")}" : "", OutlineColor);
             }
         }
     }
