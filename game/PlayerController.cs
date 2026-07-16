@@ -523,6 +523,7 @@ namespace UnturnedGodot
                 if (_placeTimer <= 0f)
                 {
                     Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw);
+                    PlayPlaceSound(_deployable.PlaceSound, _placePoint);   // src: playSound(barricadeAsset.use) on build -- the .dat PlacementAudioClip
                     GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
                     // consume one from the bag (like a placed barricade). Console `deploy` has no backing item -> infinite.
                     if (_deployItem != null && Inventory != null)
@@ -594,6 +595,19 @@ namespace UnturnedGodot
             _consumeAudio.Stream = stream;
             _consumeAudio.Play();
         }
+        // Deployable placement sound (src: playSound(barricadeAsset.use) on build) -- a positional one-shot at the spot.
+        void PlayPlaceSound(string stem, Vector3 at)
+        {
+            if (string.IsNullOrEmpty(stem)) return;
+            var stream = LoadWavOneShot($"res://content/sounds/{stem}.wav");
+            if (stream == null) return;
+            var p = new AudioStreamPlayer3D { Stream = stream, UnitSize = 6f };
+            GetParent().AddChild(p);
+            p.GlobalPosition = at;   // world pos only valid once in the tree
+            p.Play();
+            p.Finished += p.QueueFree;   // self-cleanup after the one-shot
+        }
+
         // Runtime one-shot WAV loader: walk the RIFF chunks for fmt+data (UnityPy exports may carry extra chunks, so the
         // fixed-44-byte-header assumption in Vehicle.LoadWav isn't safe here). 16-bit PCM only; anything else -> no sound.
         static AudioStreamWav LoadWavOneShot(string resPath)
@@ -1618,6 +1632,7 @@ namespace UnturnedGodot
                     if (collider is ZombieController z) { bool head = z.IsHeadshot(point); SpawnFleshImpact(point, hdir); bool wd = z.Dead; z.DamageHit(b.Damage, point, hdir); if (!wd && z.Dead) Kills++; HitmarkerHUD.Instance?.Show(head); }   // hitmarker: white body / red headshot (source EPlayerHit)
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car
+                    else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage
                     else   // world/prop/terrain -> material impact; terrain samples its splatmap PER-POINT (sand/road/dirt/grass) for the real ground material
                     {
                         Surf sf = Surf.Concrete;
