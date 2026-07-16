@@ -1,0 +1,52 @@
+[
+  { "name": "deploy.ghosts",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "tolerance": 0.01 },
+
+  { "name": "deploy.port_arrows",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "env": { "UG_WIREARROWS": "1" },
+    "tolerance": 0.01 },
+
+  { "name": "deploy.focus_outline",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "env": { "UG_DEPLOYFOCUS": "1" },
+    "tolerance": 0.01 },
+
+  { "name": "power.lamps_on",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "env": { "UG_WIRETEST": "1" },
+    "tolerance": 0.015 },
+
+  { "name": "power.lamps_off_dark",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "env": { "UG_WIRETEST": "1", "UG_WIREOFF": "1" },
+    "tolerance": 0.015 },
+
+  { "name": "power.gen_loadbar",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "env": { "UG_WIRETEST": "1", "UG_LOADBAR": "1" },
+    "tolerance": 0.015 },
+
+  { "name": "deploy.dmg_fire",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "env": { "UG_DEPLOYDMG": "fire" },
+    "tolerance": 0.04 },
+
+  { "name": "deploy.dmg_wreck",
+    "args": ["--deploytest", "--shot={OUT}"],
+    "env": { "UG_DEPLOYDMG": "wreck" },
+    "tolerance": 0.04 },
+
+  { "name": "vehicle.jeep_vside",
+    "args": ["--vehicle={TMP}"],
+    "env": { "UG_QUICK": "1", "UG_VSIDE": "2" },
+    "capture": "rig_00.png",
+    "tolerance": 0.015 },
+
+  { "name": "vehicle.jeep_night_lights",
+    "args": ["--vehicle={TMP}", "--night"],
+    "env": { "UG_QUICK": "1", "UG_VSIDE": "2" },
+    "capture": "rig_00.png",
+    "tolerance": 0.02 }
+]

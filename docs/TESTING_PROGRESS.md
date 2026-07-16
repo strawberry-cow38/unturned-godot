@@ -67,9 +67,18 @@ Fixes found while porting:
   (the old code half-processed them); unreachable in practice since KillPowerHardware/DisconnectWires
   free such wires the same frame.
 
+### Phase 4 — visual golden-image tests (L2)
+- `tools/visual_tests.py` + `tests/visual/manifest.json` + `tests/visual/golden/*.png` (10 scenes,
+  760K committed): deploy ghosts / port arrows / focus outline, lamps on / off-dark / loadbar,
+  damage fire / wreck, jeep 3/4-side day + night lights.
+- `./test.sh --visual` (or `--all`) runs it; `--only` globs scene names; `--update <name|all>`
+  re-baselines. Same `[TEST]`/`[SUITE]` grammar; diff PNGs land in `.testresults/visual/`.
+- Determinism measured on this box: 8/10 scenes byte-identical run-to-run (lavapipe is a software
+  raster); the two CPUParticles scenes (dmg_fire/dmg_wreck) vary ~0.009 MAE vs their 0.04 tolerance.
+- ~30s/scene, ~5 min for the full set — nightly + on-demand, not the inner loop.
+
 ## In progress / next
 
-- Phase 4: visual goldens (manifest + tools/visual_tests.py + `--visual` in test.sh).
 - Phase 5: tools/nightly_tests.sh (ready-to-enable, NOT wired to cron).
 
 ## Deferred / notes

@@ -5,8 +5,9 @@
 #   [SUMMARY] TOTAL: <P> passed, <F> failed | first failure: <name> | trx: <dir>
 # Exit: 0 = clean, 1 = test failure, 2 = infrastructure failure (build/dotnet error).
 #
-# Layers (fable's proposal): L0 = engine-free `dotnet test` (this phase). L1 = batched in-engine
-# TestHost (phase 2, not built yet). L2 = visual golden PNGs (phase 4, not built yet).
+# Layers (fable's proposal): L0 = engine-free `dotnet test`. L1 = batched in-engine TestHost
+# (one headless boot). L2 = visual golden PNGs (xvfb+lavapipe renders diffed vs tests/visual/golden;
+# opt-in via --visual/--all, ~30s/scene; re-baseline with tools/visual_tests.py --update <name>).
 #
 # Usage: ./test.sh [--l0] [--l1] [--visual] [--all] [--only <glob>] [--failfast] [-h]
 set -uo pipefail
@@ -102,6 +103,31 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   fi
 }
 
+run_visual() {  # L2 golden-image tests: render each manifest scene via xvfb+lavapipe, diff vs the committed golden
+  echo "== L2: visual golden tests (xvfb + lavapipe, ~30s/scene) =="
+  local only=(); [ "$ONLY" != "*" ] && only=(--only "$ONLY")
+  local log="$RESULTS/visual.log"
+  GODOT="$GODOT" python3 tools/visual_tests.py "${only[@]}" | tee "$log"
+  local summary; summary="$(grep -E '^\[VISUAL\] passed=' "$log" | tail -1)"
+  if [ -z "$summary" ]; then
+    echo "[SUITE] L2 visual | ERROR | runner never reported (see $log)"; INFRA_FAIL=1; return
+  fi
+  local p f i
+  p="$(sed -E 's/.*passed=([0-9]+).*/\1/' <<<"$summary")"
+  f="$(sed -E 's/.*failed=([0-9]+).*/\1/' <<<"$summary")"
+  i="$(sed -E 's/.*infra=([0-9]+).*/\1/' <<<"$summary")"
+  TOTAL_PASS=$((TOTAL_PASS + p)); TOTAL_FAIL=$((TOTAL_FAIL + f))
+  if [ "$i" -gt 0 ]; then
+    echo "[SUITE] L2 visual | ERROR | $i scene(s) failed to render"; INFRA_FAIL=1
+  elif [ "$f" -eq 0 ]; then
+    echo "[SUITE] L2 visual | PASS | $p passed"
+  else
+    echo "[SUITE] L2 visual | FAIL | $f failed, $p passed"
+    [ -z "$FIRST_FAILURE" ] && FIRST_FAILURE="$(grep -E '^\[TEST\].*\| FAIL ' "$log" | head -1 | sed -E 's/^\[TEST\][[:space:]]+([^[:space:]]+).*/\1/')"
+    [ $FAILFAST -eq 1 ] && finish
+  fi
+}
+
 finish() {
   local status name
   if [ $INFRA_FAIL -eq 1 ]; then status="INFRA-ERROR"; else [ $TOTAL_FAIL -eq 0 ] && status="ok" || status="FAILURES"; fi
@@ -115,7 +141,5 @@ if [ $RUN_L0 -eq 1 ]; then
   for d in tests/*/; do compgen -G "${d}*.csproj" >/dev/null && run_suite "$d"; done
 fi
 if [ $RUN_L1 -eq 1 ]; then run_l1; fi
-if [ $RUN_VISUAL -eq 1 ]; then
-  echo "== L2: visual golden tests -- NOT BUILT YET (phase 4 of docs/TESTING_PROPOSAL.md) =="
-fi
+if [ $RUN_VISUAL -eq 1 ]; then run_visual; fi
 finish
