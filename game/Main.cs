@@ -1166,8 +1166,7 @@ namespace UnturnedGodot
                 var w = new Wire(); AddChild(w);
                 w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
                 w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
-                w.BuildInteractBody();   // phase 5: make the committed wire look-selectable
-                _wireManageTest = w;     // frame-3 raycast/segment/power checks (UG_WIREMANAGE)
+                _wireManageTest = w;     // frame-3 power-drop check (UG_WIREMANAGE)
                 _spotDbg = placedSpot;   // lamp-lit probe at the shot frame
                 if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                 PowerNet.Recompute(GetTree());
@@ -3322,22 +3321,11 @@ namespace UnturnedGodot
             {
                 bool v = _deployProbePlacer.Aim(_deployProbeCam);
                 GD.Print($"[DEPLOYPROBE] open-ground valid={v} point={_deployProbePlacer.Point} yaw={_deployProbePlacer.Yaw:0}");
-                if (System.Environment.GetEnvironmentVariable("UG_WIREMANAGE") == "1" && _wireManageTest != null && IsInstanceValid(_wireManageTest))   // phase-5 checks (physics has stepped by now); gated so it doesn't tear down the wire on a plain UG_WIRETEST lamp render
+                if (System.Environment.GetEnvironmentVariable("UG_WIREMANAGE") == "1" && _wireManageTest != null && IsInstanceValid(_wireManageTest))   // clear/unplug power correctness (gated so it doesn't tear down the wire on a plain UG_WIRETEST lamp render)
                 {
                     var w = _wireManageTest;
-                    Vector3 mid = w.Points[1];   // the routed node
-                    // 1) a WireLayer raycast aimed at the wire resolves back to the Wire (look-select path)
-                    var space = _deployProbeCam.GetWorld3D().DirectSpaceState;
-                    var q = new PhysicsRayQueryParameters3D { CollisionMask = Wire.WireLayer, From = mid + new Vector3(0f, 2f, 0f), To = mid + new Vector3(0f, -0.5f, 0f) };
-                    var hit = space.IntersectRay(q);
-                    GodotObject col = hit.Count > 0 ? hit["collider"].As<GodotObject>() : null;
-                    bool hitWire = col is Wire || (col as Node)?.GetParent() is Wire;
-                    // 2) NearestSegment: a point near the source end picks segment 0, near the consumer end picks segment 1
-                    int segSrc = w.NearestSegment(w.Points[0].Lerp(w.Points[1], 0.5f));
-                    int segCons = w.NearestSegment(w.Points[1].Lerp(w.Points[2], 0.5f));
-                    // 3) removing the wire from the net unpowers the consumer
-                    var consPort = w.Consumer; w.RemoveFromGroup("wires"); PowerNet.Recompute(GetTree());
-                    GD.Print($"[MANAGETEST] hitWire={hitWire} segSrc={segSrc} segCons={segCons} consumerPoweredAfterRemove={consPort?.Powered}");
+                    var consPort = w.Consumer; w.RemoveFromGroup("wires"); PowerNet.Recompute(GetTree());   // clearing a wire (leaves the group) must unpower the consumer
+                    GD.Print($"[MANAGETEST] consumerPoweredAfterRemove={consPort?.Powered} (expect False)");
                 }
             }
             if (_shotPath == null) return;
