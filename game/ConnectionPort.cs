@@ -16,6 +16,7 @@ namespace UnturnedGodot
         public string ProviderName;
         public float Live;          // live power (recomputed by PowerNet): output = produced now, consumer = received, passthrough = exported now
         public bool Powered;        // consumer: is it getting at least its usage?
+        public bool Usable => Owner != null && GodotObject.IsInstanceValid(Owner) && !Owner.OnFire;   // a burning/wrecked deployable's ports can't start or accept a wire
 
         MeshInstance3D _cube;
         StandardMaterial3D _mat;

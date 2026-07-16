@@ -9,7 +9,7 @@ namespace UnturnedGodot
     // Source/Consumer/Points off it.
     public partial class Wire : Node3D
     {
-        public const uint WireLayer = 1u << 9;   // committed wires collide here so the wire tool's look-ray can pick them (phase 5 manage)
+        public const uint WireLayer = 1u << 10;   // committed wires collide here (own bit -- bit 9 is bullets/water, bit 8 is ports) so the wire tool's look-ray picks them without blocking shots
         public ConnectionPort Source, Consumer;
         public List<Vector3> Points = new();
         const float Radius = 0.018f;

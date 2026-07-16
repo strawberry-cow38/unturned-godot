@@ -41,7 +41,7 @@ namespace UnturnedGodot
                         }
                         if (cons != null)
                         {
-                            cons.Powered = cons.Watts > 0f && cons.Live >= cons.Watts;
+                            cons.Powered = !d.OnFire && cons.Watts > 0f && cons.Live >= cons.Watts;   // a burning/wrecked consumer stops conducting (its passthrough dies with it)
                             if (pass != null) pass.Live = cons.Powered ? cons.Live - cons.Watts : 0f;   // re-export the leftover
                         }
                     }

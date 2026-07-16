@@ -31,10 +31,11 @@ namespace UnturnedGodot
         AudioStreamPlayer3D _engineAudio;
         float _vibePhase;
         const float WarmupTime = 1.3f, CooldownTime = 1.1f;   // spin-up / wind-down; doubles as the anti-spam buffer (can't re-toggle mid-ramp)
-        bool PowerSettled => Mathf.Abs(_powerLevel - (_powered ? 1f : 0f)) < 0.001f;
-        bool OnFire => _deadTimer >= 0f || _exploded;   // catching fire at 0 HP (deadTimer) through the burning wreck -> a dead/dying generator, can't be run
+        public bool OnFire => _deadTimer >= 0f || _exploded;   // catching fire at 0 HP (deadTimer) through the burning wreck -> a dead/dying generator, can't be run (PowerNet reads this)
+        float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
+        bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
         public bool CanTogglePower => !OnFire && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled, NOT-on-fire generator toggles, and only once the ramp has settled (buffer)
-        public bool IsPowered => _powered;
+        public bool IsPowered => RunTarget > 0.5f;   // the OUTPUT produces only while the engine is effectively running (not just the F toggle) -- PowerNet reads this
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
@@ -216,6 +217,8 @@ namespace UnturnedGodot
 
         // --- wreck salvage (mirror Vehicle): a burnt-out generator cools, then a blowtorch breaks it into scrap ---
         public bool IsWreck => _exploded;
+        public bool DebugLampsLit => _lamps.Count > 0 && IsInstanceValid(_lamps[0]) && _lamps[0].Visible;   // render-harness probe (UG_WIRETEST)
+        public bool DebugConsumerPowered => _consumerPort != null && _consumerPort.Powered;
         public bool WreckOnFire => _exploded && _burnTime >= 0f && _burnTime < 60f;   // still burning -> too hot to salvage
         public bool WreckSalvageable => _exploded && _burnTime >= 60f;                // fire's out -> blowtorch-salvageable
         public void SetSalvagePrompt(string line2, Color color)   // a wreck: name + salvage prompt, no bars
@@ -232,7 +235,19 @@ namespace UnturnedGodot
             if (parent != null)
                 for (int i = 0; i < 2; i++)   // a generator yields a couple of Metal Scrap (fewer than a car)
                     WorldItem.Spawn(parent, new SDG.Unturned.Item(67), GlobalPosition + new Vector3((i - 0.5f) * 0.6f, 0.5f, 0f));
+            DisconnectWires();
             QueueFree();
+        }
+
+        // Free any wire plugged into one of our ports (called before this deployable despawns) so wires don't dangle
+        // in the scene + "wires" group with a dead endpoint (rendering, holding a collider, blocking a re-wire).
+        void DisconnectWires()
+        {
+            var tree = GetTree();
+            if (tree == null) return;
+            foreach (var n in tree.GetNodesInGroup("wires"))
+                if (n is Wire w && IsInstanceValid(w) && (Ports.Contains(w.Source) || Ports.Contains(w.Consumer)))
+                    w.QueueFree();
         }
 
         // test-only: jump straight to a damage stage for the --deploytest render (smoke / heavy / fire / wreck)
@@ -262,7 +277,7 @@ namespace UnturnedGodot
                     if (_fire != null && _fire.Emitting) _fire.Emitting = false;
                     if (_fireLight != null && _fireLight.Visible) { _fireLight.Visible = false; _fireLight.LightEnergy = 0f; }
                 }
-                else { QueueFree(); return; }
+                else { DisconnectWires(); QueueFree(); return; }   // wreck fully despawned -> take its wires with it
             }
             // smoke thresholds (src updateFires): light smoke while damaged/burning, heavy smoke when badly hurt or wrecked.
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * SmokeFrac);
@@ -270,7 +285,7 @@ namespace UnturnedGodot
 
             // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
             // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
-            float pTarget = (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // an on-fire generator's engine is dead regardless of _powered
+            float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
             if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
             if (_engineAudio != null)

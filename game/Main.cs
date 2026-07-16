@@ -15,6 +15,7 @@ namespace UnturnedGodot
         string _shotPath;
         DeployablePlacer _deployProbePlacer; Camera3D _deployProbeCam; int _deployProbeFrame;   // --deploytest: scripted aim check
         Wire _wireManageTest;   // UG_WIREMANAGE: the committed test wire, checked at frame 3 (raycast/segment/power)
+        Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         // Unturned install root -> Maps\<name>. The real map terrain (Landscape heightmaps) is read live from a local
@@ -1167,9 +1168,17 @@ namespace UnturnedGodot
                 w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
                 w.BuildInteractBody();   // phase 5: make the committed wire look-selectable
                 _wireManageTest = w;     // frame-3 raycast/segment/power checks (UG_WIREMANAGE)
+                _spotDbg = placedSpot;   // lamp-lit probe at the shot frame
                 if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
                 PowerNet.Recompute(GetTree());
                 GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w");
+                if (System.Environment.GetEnvironmentVariable("UG_WIREFIRE") == "1")   // on-fire deployables must stop conducting (fable #2A/#5B)
+                {
+                    placedSpot.DebugStage("fire"); PowerNet.Recompute(GetTree());
+                    GD.Print($"[FIRETEST-spot] consumer.powered={cons.Powered} passthrough={pass?.Live:0}w (expect False / 0)");
+                    placedGen.DebugStage("fire"); PowerNet.Recompute(GetTree());
+                    GD.Print($"[FIRETEST-gen] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w (expect False / 0)");
+                }
             }
             // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
             Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
@@ -3300,7 +3309,7 @@ namespace UnturnedGodot
             {
                 bool v = _deployProbePlacer.Aim(_deployProbeCam);
                 GD.Print($"[DEPLOYPROBE] open-ground valid={v} point={_deployProbePlacer.Point} yaw={_deployProbePlacer.Yaw:0}");
-                if (_wireManageTest != null && IsInstanceValid(_wireManageTest))   // phase-5 checks (physics has stepped by now)
+                if (System.Environment.GetEnvironmentVariable("UG_WIREMANAGE") == "1" && _wireManageTest != null && IsInstanceValid(_wireManageTest))   // phase-5 checks (physics has stepped by now); gated so it doesn't tear down the wire on a plain UG_WIRETEST lamp render
                 {
                     var w = _wireManageTest;
                     Vector3 mid = w.Points[1];   // the routed node
@@ -3327,6 +3336,7 @@ namespace UnturnedGodot
             else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (++_frame < 6) return; // let the renderer settle
+            if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             var img = GetViewport().GetTexture().GetImage();
             if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(); return; }
             img.SavePng(_shotPath);

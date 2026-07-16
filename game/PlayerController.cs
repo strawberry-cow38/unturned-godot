@@ -238,7 +238,9 @@ namespace UnturnedGodot
         PhysicsRayQueryParameters3D _wireRayQ, _wirePlaceRayQ, _wireManageRayQ;
         CanvasLayer _wireHudLayer; Label _wireHudLabel;
         // phase 5 -- manage a COMPLETED wire you're looking at (not routing): hold RMB to clear it, tap RMB to unplug a section
-        Wire _manageWire; float _wireClearHold; bool _rmbHeldOnWire;
+        Wire _manageWire;    // the committed wire currently highlighted under the crosshair
+        Wire _clearWire;     // the wire an RMB hold is acting on -- ARMED by the mouse-press event, so a press that began while routing (cancel/undo) never leaks into a manage action
+        float _wireClearHold;
         const float WireClearTime = 1.0f;   // hold RMB this long over a wire to clear it
         const float WireClickMax = 0.28f;   // release within this = a tap -> unplug (longer, released early = an aborted clear -> nothing)
         public ConnectionPort WireLookPort => _wirePort;
@@ -262,14 +264,14 @@ namespace UnturnedGodot
             if (_wiring)
             {
                 if (!IsInstanceValid(_wireSrc)) { CancelWire(); WireHudSet(null); return; }   // source deployable gone -> drop the wire
-                bool snapConsumer = _wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc.Owner && !PortWired(_wirePort);   // an already-wired consumer won't accept a snap
+                bool snapConsumer = _wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Usable && _wirePort.Owner != _wireSrc.Owner && !PortWired(_wirePort);   // an already-wired / burning consumer won't accept a snap
                 Vector3 end = snapConsumer ? _wirePort.GlobalPosition : WirePlacePoint();
                 var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
                 pts.AddRange(_wireNodes); pts.Add(end);
                 float len = PolyLen(pts);
                 bool overLimit = _wireNodes.Count >= MaxWireNodes || len > MaxWireLen;
-                _wirePreview?.SetPoints(pts, valid: snapConsumer || !overLimit);
-                WireHudSet($"nodes {_wireNodes.Count}/{MaxWireNodes}    {len:0.0}/{MaxWireLen:0}m" + (overLimit && !snapConsumer ? "   -- LIMIT" : ""));
+                _wirePreview?.SetPoints(pts, valid: !overLimit);   // over-limit paints RED even when snapping -> completion is blocked too
+                WireHudSet($"nodes {_wireNodes.Count}/{MaxWireNodes}    {len:0.0}/{MaxWireLen:0}m" + (overLimit ? "   -- LIMIT" : ""));
             }
             else WireHudSet(_wirePort == null ? null : _wirePort.InfoLine() + (PortWired(_wirePort) ? "   (wired)" : ""));
         }
@@ -288,9 +290,10 @@ namespace UnturnedGodot
         // LMB with the wire tool: pick a SOURCE (output/passthrough) to start, place a node while routing, or complete on a CONSUMER.
         void WireLmb()
         {
+            if (_dead) return;   // no wiring from the death cam
             if (!_wiring)
             {
-                if (IsSourcePort(_wirePort) && !PortWired(_wirePort))   // 1 wire/port: a source already feeding a wire can't start another
+                if (IsSourcePort(_wirePort) && _wirePort.Usable && !PortWired(_wirePort))   // 1 wire/port + not on a burning/wrecked deployable
                 {
                     _wiring = true; _wireSrc = _wirePort; _wireNodes.Clear();
                     _wirePreview = new Wire(); GetParent().AddChild(_wirePreview);
@@ -298,7 +301,12 @@ namespace UnturnedGodot
                 }
                 return;
             }
-            if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Owner != _wireSrc?.Owner && !PortWired(_wirePort)) { CompleteWire(_wirePort); return; }   // 1 wire/port: an already-wired consumer can't accept another
+            if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Usable && _wirePort.Owner != _wireSrc?.Owner && !PortWired(_wirePort))
+            {   // complete on a fresh consumer -- but only if the finished wire is within the same 20-node/40m budget as node placement
+                var cpts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition }; cpts.AddRange(_wireNodes); cpts.Add(_wirePort.GlobalPosition);
+                if (_wireNodes.Count <= MaxWireNodes && PolyLen(cpts) <= MaxWireLen) CompleteWire(_wirePort);
+                return;
+            }
             Vector3 lp = WirePlacePoint();
             var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition }; pts.AddRange(_wireNodes); pts.Add(lp);
             if (_wireNodes.Count >= MaxWireNodes || PolyLen(pts) > MaxWireLen) return;   // hitting the limit blocks placing (strawberry)
@@ -308,8 +316,8 @@ namespace UnturnedGodot
         // RMB with the wire tool while routing: undo the last node, or cancel+delete the wire if none placed yet.
         void WireRmb()
         {
-            if (!_wiring) return;   // phase 5: click a completed wire to unplug a section
-            if (_wireNodes.Count == 0) CancelWire();
+            if (!_wiring) return;   // phase 5 (a completed wire) is armed via WireManageArm off the press event, not here
+            if (_dead || _wireNodes.Count == 0) CancelWire();
             else _wireNodes.RemoveAt(_wireNodes.Count - 1);
         }
 
@@ -336,42 +344,49 @@ namespace UnturnedGodot
         // Hold RMB -> clear the whole wire (progress readout). Tap RMB -> unplug the section: the wire is picked
         // back up for re-routing from the node point just before the section you aimed at (src "unplug"). RMB while
         // routing stays undo (WireRmb, event-driven) -- this per-frame poll only runs when _wiring is false.
-        void ClearManage()   // drop the manage target + un-highlight it
+        void ClearManage()   // un-highlight + drop any in-progress clear/unplug (tool left the wire or changed state)
         {
             if (IsInstanceValid(_manageWire)) _manageWire.SetHighlighted(false);
-            _manageWire = null; _wireClearHold = 0f; _rmbHeldOnWire = false;
+            _manageWire = null; _clearWire = null; _wireClearHold = 0f;
         }
 
+        // RMB PRESS with the wire tool while NOT routing: arm a clear/unplug on the wire under the crosshair. Arming
+        // off the press EDGE (this event) is what makes it robust -- a press that began during routing (an undo/cancel)
+        // can't become a manage action, and sweeping the crosshair onto a wire mid-hold doesn't arm one either.
+        void WireManageArm()
+        {
+            if (_dead || _driving != null || !HoldingWireTool || Input.MouseMode != Input.MouseModeEnum.Captured) return;
+            var (wire, _) = LookedAtWire();
+            if (wire != null) { _clearWire = wire; _wireClearHold = 0f; }
+        }
+
+        // Per-frame: highlight the looked-at wire, and drive an ARMED RMB hold -- held to WireClearTime clears the whole
+        // wire; released quickly (<= WireClickMax) unplugs the aimed section; released mid-hold does nothing.
         void UpdateWireManage(float delta)
         {
-            if (!HoldingWireTool || _wiring || _dead || _driving != null || Input.MouseMode != Input.MouseModeEnum.Captured)
-            { ClearManage(); return; }
+            bool active = HoldingWireTool && !_wiring && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
+            (Wire look, Vector3 hitPos) = active ? LookedAtWire() : (null, Vector3.Zero);
 
-            var (wire, hitPos) = LookedAtWire();
-            if (wire == null) { ClearManage(); return; }
-            if (wire != _manageWire) { ClearManage(); _manageWire = wire; wire.SetHighlighted(true); }
+            if (look != _manageWire) { if (IsInstanceValid(_manageWire)) _manageWire.SetHighlighted(false); _manageWire = look; look?.SetHighlighted(true); }
 
-            bool rmb = Input.IsMouseButtonPressed(MouseButton.Right);
-            if (rmb)
+            if (_clearWire != null)
             {
-                _rmbHeldOnWire = true;
-                _wireClearHold += delta;
-                if (_wireClearHold >= WireClearTime)   // held long enough -> clear the whole wire
+                if (!active || !IsInstanceValid(_clearWire) || look != _clearWire) { _clearWire = null; _wireClearHold = 0f; }   // left the wire / state changed -> abort the hold
+                else if (Input.IsMouseButtonPressed(MouseButton.Right))
                 {
-                    wire.QueueFree();
-                    _manageWire = null; _wireClearHold = 0f; _rmbHeldOnWire = false;
-                    WireHudSet(null);
+                    _wireClearHold += delta;
+                    if (_wireClearHold >= WireClearTime)   // held long enough -> clear the whole wire
+                    {
+                        _clearWire.RemoveFromGroup("wires"); _clearWire.QueueFree();   // drop the group THIS frame so power + PortWired update immediately
+                        _clearWire = null; _wireClearHold = 0f; WireHudSet(null); return;
+                    }
+                    WireHudSet($"clearing wire... {Mathf.Clamp((int)(_wireClearHold / WireClearTime * 100f), 0, 99)}%");
                     return;
                 }
-                WireHudSet($"clearing wire... {Mathf.Clamp((int)(_wireClearHold / WireClearTime * 100f), 0, 99)}%");
+                else { if (_wireClearHold <= WireClickMax) UnplugWireAt(_clearWire, hitPos); _clearWire = null; _wireClearHold = 0f; }   // released quick -> tap-unplug
             }
-            else
-            {
-                if (_rmbHeldOnWire && _wireClearHold <= WireClickMax) UnplugWireAt(wire, hitPos);   // a tap -> unplug the aimed section
-                _rmbHeldOnWire = false; _wireClearHold = 0f;
-                if (_wiring) return;   // unplug re-entered routing; UpdateWireLook owns the HUD from here
-                WireHudSet("[RMB] tap: unplug section    hold: clear wire");
-            }
+
+            if (_manageWire != null && _clearWire == null && !_wiring) WireHudSet("[RMB] tap: unplug section    hold: clear wire");
         }
 
         // The completed wire currently under the crosshair (raycast WireLayer), plus the world hit point. null if none.
@@ -1323,6 +1338,7 @@ namespace UnturnedGodot
             _dead = true;
             _deathTimer = 3.5;
             _burstLeft = 0;   // death cancels any in-progress burst (no resume after respawn)
+            if (_wiring) CancelWire();   // death drops any in-progress wire (no stale preview / death-cam nodes)
             Velocity = Vector3.Zero;
 
             _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
@@ -1540,7 +1556,7 @@ namespace UnturnedGodot
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
-                else if (HoldingWireTool) { if (rmb.Pressed) WireRmb(); }   // wire tool: undo last node / cancel the wire
+                else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
