@@ -77,14 +77,27 @@ Fixes found while porting:
   raster); the two CPUParticles scenes (dmg_fire/dmg_wreck) vary ~0.009 MAE vs their 0.04 tolerance.
 - ~30s/scene, ~5 min for the full set — nightly + on-demand, not the inner loop.
 
-## In progress / next
-
-- Phase 5: tools/nightly_tests.sh (ready-to-enable, NOT wired to cron).
+### Phase 5 — robotic manager
+- `tools/nightly_tests.sh`: dedicated clone under `~/.cache/unturned-godot-nightly` (never touches a
+  dev tree), fetch+reset to `origin/main`, `./test.sh --all`, last-good sha tracked; on failure it
+  prints a ready-to-post report (the `[SUMMARY]` line, first failing test + repro, and the
+  `git log --oneline lastgood..HEAD` blame range). Verified end-to-end against real origin/main
+  (GREEN @ 98a361c). **NOT wired to cron on purpose** — the enable snippet is in the script header
+  (`17 9 * * *` UTC suggested).
+- Extra: `smoke.content_loads` tier-0 gate (item catalog registers + runtime OBJ parse yields
+  geometry) — the old `--smoke` GUID GATE needs `res://content/manifest.json`, a rip-pipeline
+  artifact not in the repo, so it stays a dev-box check.
 
 ## Deferred / notes
 
 - `--navpathtest` / `--zombietest` need the real PEI map + baked navmesh (async world build, big
-  content); they stay as manual harnesses for now. Candidate for an L1 Tier-2 composite later.
+  content); they stay as manual harnesses for now. Candidate for an L1 Tier-2 composite later
+  (the proposal's `world.pei_smoke`).
+- Coverlet coverage on `core/` deferred: the five test csprojs carry no coverage collector package,
+  and adding one is restore/package churn for a nice-to-have — `dotnet add package coverlet.collector`
+  per test project + `--collect:"XPlat Code Coverage"` in run_suite when someone wants it.
+- gdUnit4Net evaluation (proposal §2) still deliberately deferred.
+- L1 sharding not needed: the whole 29-test suite is one ~10s boot.
 - `MeleeSwingDriver` / `DeployUseDriver` in Main.cs are render-demo drivers (used by `--vm` visuals),
   not tests — intentionally kept.
 - `UG_WIRETEST`/`UG_DEPLOYDMG`/`UG_WIREWRECK`/`UG_WIREARROWS`/`UG_WIREOFF` env scenes stay in
