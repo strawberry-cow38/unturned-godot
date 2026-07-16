@@ -156,7 +156,7 @@ namespace UnturnedGodot
                         float d = wi.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestI) { bestI = d; hitItem = wi; }
                     }
-                    else if (c is Vehicle v && IsInstanceValid(v))   // alive car (E to enter) OR a wreck (blowtorch salvage) -- both focusable (master)
+                    else if (c is Vehicle v && IsInstanceValid(v))   // alive car (F to enter) OR a wreck (blowtorch salvage) -- both focusable (master)
                     {
                         float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestV) { bestV = d; hitVeh = v; }
@@ -260,7 +260,7 @@ namespace UnturnedGodot
             _viewmodel?.SetTorchSparks(sparks);   // blue welding-arc sparks fly from the torch while lit (master)
         }
 
-        // E: pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
+        // F (interact): pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
         public void TryPickup()
         {
             var wi = _focusItem;
@@ -1283,14 +1283,6 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.H })
                 _fp = !_fp;   // H: toggle 3rd / 1st person camera (on foot + driving)
             // (Q weapon-switch removed -- master: we have the inventory + spawn commands to test weapons now)
-            else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.E })   // Echo:false -> ignore OS key-repeat, so HOLDING E can't fire the hitch toggle twice (uncouple then instantly re-couple)
-            {
-                if (_driving != null) ExitVehicle();                       // E while driving: hop out
-                else if (TryToggleHitch()) { }                                                             // on foot at a trailer hitch: couple / uncouple
-                else if (_focusItem != null) TryPickup();                                                  // looking at an item: pick it up
-                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
-                else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
-            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.L })
             {
                 if (_driving != null) _driving.ToggleHeadlights();         // L while driving: toggle headlights
@@ -1299,8 +1291,17 @@ namespace UnturnedGodot
             {
                 if (_driving != null && _driving.HasSiren) _driving.ToggleSiren();   // Ctrl while driving an emergency vehicle: toggle siren/lightbar (master)
             }
-            else if (@event is InputEventKey { Pressed: true, Keycode: Key.F })
-                { if (!OpenNearestCrate()) { if (_melee != null) _viewmodel?.PlayMeleeInspect(); else _viewmodel?.PlayInspect(); } }   // F: open a nearby crate, else inspect the held weapon (melee plays its own Inspect clip, gun its own)
+            else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F })   // F = INTERACT (moved off E, strawberry): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact with -> inspect the held weapon. Echo:false so HOLDING F can't double-fire the hitch toggle (uncouple then instantly re-couple).
+            {
+                if (_driving != null) ExitVehicle();                       // hop out of the vehicle
+                else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
+                else if (_focusItem != null) TryPickup();                  // looking at an item: pick it up
+                else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
+                else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
+                else if (OpenNearestCrate()) { }                           // open a nearby storage crate
+                else if (_melee != null) _viewmodel?.PlayMeleeInspect();   // nothing to interact with -> inspect (melee plays its own Inspect clip)
+                else _viewmodel?.PlayInspect();                            // ...or the gun's own inspect
+            }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.C })
@@ -1942,7 +1943,7 @@ namespace UnturnedGodot
             _body.Tick(delta);
         }
 
-        // --- Vehicle enter/exit (source: InteractableVehicle). E enters the nearest vehicle's driver seat / exits. ---
+        // --- Vehicle enter/exit (source: InteractableVehicle). F enters the nearest vehicle's driver seat / exits. ---
         public bool IsDriving => _driving != null;
         public Vehicle Driving => _driving;   // the vehicle being driven (for zombies to swipe at, source targetPassengerVehicle)
         public void SetSuppressor(bool on) => _viewmodel?.SetSlotAttached("Barrel", on);   // test hook: toggle the silenced barrel
@@ -1951,7 +1952,7 @@ namespace UnturnedGodot
         {
             Vehicle best = null; float bestD = 4.0f * 4.0f;   // within ~4 m
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle v && !v.Exploded)   // a wrecked car can't be entered (master); E near only a wreck falls through to pickup
+                if (n is Vehicle v && !v.Exploded)   // a wrecked car can't be entered (master); F near only a wreck falls through to pickup
                 {
                     float d = GlobalPosition.DistanceSquaredTo(v.GlobalPosition);
                     if (d < bestD) { bestD = d; best = v; }

@@ -38,7 +38,7 @@ namespace UnturnedGodot
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
         public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP driving eye (local); tall cabs override higher so the view clears the hood
 
-        // --- trailer hitch (master steer: back the cab under the trailer, hop out, walk to the hitch, E to couple; then
+        // --- trailer hitch (master steer: back the cab under the trailer, hop out, walk to the hitch, F to couple; then
         // the trailer swings behind on the pin like a real rig). A PinJoint3D pins the cab's fifth-wheel to the trailer
         // kingpin -> a ball joint that lets the trailer articulate (yaw through turns) around the coupling point. ---
         public Vector3 FifthWheelLocal, KingpinLocal;   // local coupling points (cab plate / trailer kingpin); Zero = none
@@ -1162,7 +1162,7 @@ namespace UnturnedGodot
         public Vector3 FifthWheelWorld => ToGlobal(FifthWheelLocal);
         public Vector3 KingpinWorld => ToGlobal(KingpinLocal);
 
-        // an uncoupled cab whose fifth wheel is within CoupleReach of THIS trailer's kingpin -> it's backed under, ready to hitch (drives the "[E] connect trailer" billboard prompt)
+        // an uncoupled cab whose fifth wheel is within CoupleReach of THIS trailer's kingpin -> it's backed under, ready to hitch (drives the "[F] connect trailer" billboard prompt)
         bool CabBackedUnder()
         {
             var kp = KingpinWorld;
@@ -1495,8 +1495,8 @@ namespace UnturnedGodot
                         bool inHitchRange = PlayerController.Local != null && IsInstanceValid(PlayerController.Local)
                             && PlayerController.Local.GlobalPosition.DistanceTo(KingpinWorld) <= HitchReach;
                         string hint = !inHitchRange ? ""
-                            : CoupledCab != null ? "\n[E] disconnect trailer"
-                            : (CabBackedUnder() ? "\n[E] connect trailer" : "\ncan't connect - back a cab under");   // explicit can/can't feedback
+                            : CoupledCab != null ? "\n[F] disconnect trailer"
+                            : (CabBackedUnder() ? "\n[F] connect trailer" : "\ncan't connect - back a cab under");   // explicit can/can't feedback
                         _infoLabel.Text = $"{DisplayName}\nHP {Health:0}/{HealthMax:0}{hint}";
                     }
                     else

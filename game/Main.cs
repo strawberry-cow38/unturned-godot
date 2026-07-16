@@ -941,7 +941,7 @@ namespace UnturnedGodot
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
             AddChild(new LootSpawner());   // scatter loot to find in the world
 
-            var jeep = Vehicle.BuildByName("jeep");   // a drivable jeep parked nearby -- walk up + press E to get in
+            var jeep = Vehicle.BuildByName("jeep");   // a drivable jeep parked nearby -- walk up + press F to get in
             jeep.GlobalPosition = new Vector3(7f, 1.5f, 4f);
             jeep.AddToGroup("vehicles");
             AddChild(jeep);
@@ -1732,7 +1732,7 @@ namespace UnturnedGodot
             if (_peiPlayable)
             {
                 await Phase("Player");
-                // menu "Drive PEI": drop the player + jeep on open grass with REAL controls (WASD + mouse look, E to enter/drive the jeep)
+                // menu "Drive PEI": drop the player + jeep on open grass with REAL controls (WASD + mouse look, F to enter/drive the jeep)
                 float sx = 0f, sz = -350f, spawnYaw = 0f;
                 // player spawn: PEI's REAL regular spawn points (Spawns/Players.dat = u8 ver, u8 count, per point Vector3 + u8 angle*2 + bool isAlt if v>3;
                 // source LevelPlayers.getSpawn picks a random NON-alt spawn). Falls back to the inland-grass scan if the file's missing.
@@ -1787,7 +1787,7 @@ namespace UnturnedGodot
                 _pdPlayer = player;   // UG_AUTOFIRE terrain-impact verification
                 player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
                 AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> / plant <crop> spawns at the look-orb (master)
-                AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, E to harvest)
+                AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, F to harvest)
                 AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
                 player.RotationDegrees = new Vector3(0f, spawnYaw, 0f);   // face the spawn point's angle
@@ -2057,7 +2057,7 @@ namespace UnturnedGodot
                 player.AddChild(tl);
                 tl.Position = new Vector3(1.1f, 0.1f, 0f);   // relative to the player: hard RIGHT -> gun should light on its right (outer) side if the transform is correct
             }
-            AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, E to harvest)
+            AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, F to harvest)
             // auto-pick a grassy, well-inland spawn so the jeep drives on real green PEI land, not the coastal water-splat
             float sx = 0f, sz = -350f; int bestMargin = -1; float bestDist = float.MaxValue;
             for (float cz = -1800f; cz <= 1800f; cz += 50f)
