@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -155,7 +155,16 @@ namespace UnturnedGodot
                 Player.EquipUnarmed();
                 Log("unarmed -> fists (LMB/RMB to punch)");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed");
+            else if (verb == "survival" || verb == "hunger")
+            {
+                // survival [on|off]  -- toggle hunger/thirst drain (OFF by default). Bare `survival` flips it.
+                string a = arg.Trim().ToLowerInvariant();
+                PlayerController.SurvivalDrain = a == "on" || a == "1" || a == "true" ? true
+                                               : a == "off" || a == "0" || a == "false" ? false
+                                               : !PlayerController.SurvivalDrain;
+                Log($"hunger/thirst {(PlayerController.SurvivalDrain ? "ENABLED" : "disabled")}");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival");
         }
 
         static ItemAsset ResolveItem(string arg)

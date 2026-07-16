@@ -45,6 +45,7 @@ namespace UnturnedGodot
         // are sensible stand-ins: stamina drains while sprinting + regens otherwise; food/water slowly decay; health
         // regenerates while fed + hydrated (PlayerLife gates regen on food/water) or bleeds while starved/dehydrated.
         public float Stamina = 1f, Food = 1f, Water = 1f;
+        public static bool SurvivalDrain = false;   // hunger/thirst drain OFF by default; F1 console `survival on|off` toggles it (strawberry)
         float _staminaRegenDelay;   // seconds to wait after releasing sprint before stamina regenerates
         public float Infection;   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
@@ -1138,8 +1139,11 @@ namespace UnturnedGodot
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
             if (sprinting) { Stamina = Mathf.Max(0f, Stamina - 0.22f * dt * Skills.ExerciseStaminaDrainMultiplier()); _staminaRegenDelay = 1f; }   // EXERCISE slows the drain; hold regen 1s after releasing sprint
             else { _staminaRegenDelay = Mathf.Max(0f, _staminaRegenDelay - dt); if (_staminaRegenDelay <= 0f) Stamina = Mathf.Min(1f, Stamina + 0.33f * dt * Skills.CardioStaminaRegenMultiplier()); }   // CARDIO speeds the regen
-            Food  = Mathf.Max(0f, Food  - 0.0050f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows hunger
-            Water = Mathf.Max(0f, Water - 0.0070f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows thirst
+            if (SurvivalDrain)   // hunger/thirst OFF by default (strawberry); F1 console `survival` toggles it
+            {
+                Food  = Mathf.Max(0f, Food  - 0.0050f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows hunger
+                Water = Mathf.Max(0f, Water - 0.0070f * dt * Skills.SurvivalDrainMultiplier());   // SURVIVAL slows thirst
+            }
             Infection = Mathf.Max(0f, Infection - 0.01f * dt);       // virus slowly clears if you stop getting bitten
             bool sick = Infection > 0.75f;                           // heavy infection makes you ill (loses health)
             if (Food > 0.30f && Water > 0.30f && Health < MaxHealth && !sick)
