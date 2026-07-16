@@ -4,7 +4,7 @@ namespace UnturnedGodot
 {
     // A blocky low-poly humanoid (head/torso/arms/legs as boxes) built feet-at-origin. Matches Unturned's
     // angular character style, and its box layout mirrors the per-limb HITBOX model the server uses for
-    // location-based damage (see NetServer.Hitscan zones). Honest stand-in for the full modular-skinned
+    // location-based damage (head/torso/leg hit zones). Honest stand-in for the full modular-skinned
     // ripped character (Phase 2 to assemble); the hitbox/zone structure is the real gameplay part.
     public static class Humanoid
     {

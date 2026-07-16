@@ -11,5 +11,7 @@
     <ProjectReference Include="..\SDG.NetPak\SDG.NetPak.csproj" />
     <!-- UnityEngine.Vector3 shim, for ReplicationContext.ViewPos (MP_PLAN §2.3/§2.6 interest hook). -->
     <ProjectReference Include="..\SDG.Compat\SDG.Compat.csproj" />
+    <!-- SimClock tick constants + PlayerMovementSim, for the Phase 3 server world host (MP_PLAN §4). -->
+    <ProjectReference Include="..\UnturnedSim\UnturnedSim.csproj" />
   </ItemGroup>
 </Project>

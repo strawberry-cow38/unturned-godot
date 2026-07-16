@@ -17,7 +17,7 @@ namespace UnturnedGodot.Net
 
     /// <summary>
     /// Client -> server plane (MP_PLAN §2.3). Typed messages with hand-written Write/Read (the
-    /// PlayerState.Write pattern, NetGame.cs), dispatched by an explicit append-only byte id -- no reflection
+    /// MoveInput.Write pattern, PlayerReplication.cs), dispatched by an explicit append-only byte id -- no reflection
     /// RPC. This is also the one validation choke point the plan calls for: TryDispatch takes the sender's
     /// identity as a parameter supplied by the CALLER (the connection/peer that delivered the bytes), never
     /// read out of the payload itself -- a command cannot claim to be from anyone but the connection that

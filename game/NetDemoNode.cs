@@ -1,55 +1,81 @@
 using Godot;
 using System.Collections.Generic;
+using SDG.NetTransport.Udp;
+using SDG.Unturned;
 using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
-    // In-process 2-player NETWORK demo: a real NetServer + two real NetClients over loopback UDP. Player A
-    // (local, id 1) + player B (a bot, id 2) each send their position every physics tick; the authoritative
-    // server broadcasts the world; we render a capsule per synced player id, positioned from what the LOCAL
-    // client received back THROUGH THE SERVER. The orange capsule's position literally travelled
-    // bot -> UDP -> server -> UDP -> local client -> render. Co-located in one process only so a single
-    // frame captures both peers; the networking (sockets, NetPak, server authority) is genuine.
+    // In-process 2-player NETWORK demo, re-founded on the Phase 1-3 stack: a real NetWorldServer
+    // (NetServerSession + snapshot/command planes) + two NetWorldClients over loopback UDP. Each 50 Hz
+    // sim tick the clients send MoveInput commands (the first real Cmd); the server integrates them
+    // authoritatively (PlayerReplication, the first real IReplicatedSystem) and snapshots back at 25 Hz.
+    // The orange capsule's position literally travelled bot input -> UDP -> server sim -> snapshot ->
+    // UDP -> local client -> render. Stepping rides the SimRoot spine in MP_PLAN §2.5 order: inputs,
+    // server simulation, client apply -- with the server's replication send registered LAST.
     public partial class NetDemoNode : Node3D
     {
-        public NetServer Server;
-        public NetClient Local;   // becomes server id 1 (connects first)
-        public NetClient Bot;     // becomes server id 2
+        public ushort Port = 47871;
 
-        float _t;
-        readonly Dictionary<byte, MeshInstance3D> _avatars = new();
+        NetWorldServer _server;
+        NetWorldClient _local;   // playerId 1 (connects first)
+        NetWorldClient _bot;     // playerId 2
 
-        public override void _PhysicsProcess(double delta)
+        readonly Dictionary<ushort, MeshInstance3D> _avatars = new();
+
+        public override void _Ready()
         {
-            _t += (float)delta;
+            _server = new NetWorldServer(new UdpServerTransport(Port));
+            _local = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "local");
+            _bot = new NetWorldClient(new UdpClientTransport("127.0.0.1", Port), "bot");
+            _local.Connect();
+            _bot.Connect();
 
-            var localPos = new Vector3(Mathf.Cos(_t * 0.9f) * 4f, 1f, Mathf.Sin(_t * 0.9f) * 4f);
-            var botPos = new Vector3(Mathf.Cos(_t * 0.7f + 3.14159f) * 6.5f, 1f, Mathf.Sin(_t * 0.7f + 3.14159f) * 6.5f);
+            var sim = new SimDriver();
+            AddChild(sim);
+            sim.Sim.Add(new DelegateSimStep(FeedInputs, "netdemo.inputs"));
+            sim.Sim.Add(new DelegateSimStep((t, dt) => _server.TickSimulation(), "net.server.sim"));
+            sim.Sim.Add(new DelegateSimStep((t, dt) => { _local.Tick(); _bot.Tick(); }, "netdemo.clients"));
+            sim.Sim.Add(new DelegateSimStep((t, dt) => _server.TickReplication(), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
+        }
 
-            Local.SendState(new PlayerState { X = localPos.X, Y = localPos.Y, Z = localPos.Z, Yaw = _t });
-            Bot.SendState(new PlayerState { X = botPos.X, Y = botPos.Y, Z = botPos.Z, Yaw = -_t });
+        // Both players walk a circle by holding "forward" while the facing sweeps -- opposite directions,
+        // so the demo shows two independent server-authoritative movers.
+        void FeedInputs(long tick, double dt)
+        {
+            float t = (float)(tick * dt);
+            _local.SendMoveInput(0f, 1f, t * 40f);            // ~6.4 m radius circle at walk speed
+            _bot.SendMoveInput(0f, 1f, 180f - t * 40f);       // mirrored circle
+        }
 
-            Server.Poll();
-            Server.Broadcast();
-            Local.Poll();
-            Bot.Poll();
-
-            foreach (var kv in Local.Remote)
+        public override void _Process(double delta)
+        {
+            // render whatever the LOCAL client's replica store says -- every position came through the server
+            foreach (var e in _local.Players.All)
             {
-                if (!_avatars.TryGetValue(kv.Key, out var av))
+                if (!_avatars.TryGetValue(e.OwnerPlayerId, out var av))
                 {
-                    var color = kv.Key == 1 ? new Color(0.30f, 0.55f, 0.95f)   // "me" (blue)
-                                            : new Color(0.95f, 0.55f, 0.20f);  // remote player (orange)
+                    var color = e.OwnerPlayerId == _local.PlayerId
+                        ? new Color(0.30f, 0.55f, 0.95f)    // "me" (blue)
+                        : new Color(0.95f, 0.55f, 0.20f);   // remote player (orange)
                     av = new MeshInstance3D
                     {
                         Mesh = new CapsuleMesh { Height = 1.8f, Radius = 0.4f },
                         MaterialOverride = new StandardMaterial3D { AlbedoColor = color },
                     };
                     AddChild(av);
-                    _avatars[kv.Key] = av;
+                    _avatars[e.OwnerPlayerId] = av;
                 }
-                av.Position = new Vector3(kv.Value.X, kv.Value.Y, kv.Value.Z);
+                av.Position = new Vector3(e.Pos.x, e.Pos.y + 0.9f, e.Pos.z);   // replicated pos is feet; capsule origin is its middle
+                av.Rotation = new Vector3(0f, Mathf.DegToRad(e.YawDegrees), 0f);
             }
+        }
+
+        public override void _ExitTree()
+        {
+            _local?.Disconnect();
+            _bot?.Disconnect();
+            _server?.TearDown();
         }
     }
 }

@@ -1,105 +1,72 @@
 using Godot;
 using System.Collections.Generic;
+using SDG.NetTransport.Udp;
+using SDG.Unturned;
 using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
-    // Multiplayer CLIENT: local player = a real PlayerController (ported movement), synced to the server.
-    // Renders every entity as a blocky HUMANOID (players + zombies) instead of capsules, and fires at the
-    // nearest zombie's HEAD so the server's per-zone hit-reg (headshot 3x) shows. Feet-based positions.
+    // Multiplayer demo CLIENT, re-founded on the Phase 1-3 stack: a NetWorldClient that joins a --server /
+    // --dedicated host, sends MoveInput commands each 50 Hz tick, and renders EVERY player -- including
+    // itself -- from the server's snapshots (server-authoritative round trip made visible; blue = self,
+    // orange = remote). The local avatar is a puppet of the replica on purpose: prediction is Phase 4.
     public partial class ClientNode : Node3D
     {
-        public NetClient Client;
+        public string Host = "127.0.0.1";
+        public ushort Port = 47872;
 
-        PlayerController _player;
+        NetWorldClient _client;
         Label _hud;
-        float _fireCd;
-        readonly Dictionary<byte, Node3D> _avatars = new();
-        readonly List<Node3D> _zombieAvatars = new();
+        readonly Dictionary<ushort, Node3D> _avatars = new();
 
         static readonly Color Skin = new Color(0.85f, 0.70f, 0.55f);
 
         public override void _Ready()
         {
-            _player = new PlayerController { CaptureMouse = false };
-            AddChild(_player);
-            _player.GlobalPosition = new Vector3(0f, 1f, 0f);
-            _player.Camera.Current = false; // overview camera (BuildClient) is the demo view
+            _client = new NetWorldClient(new UdpClientTransport(Host, Port), "player");
+            _client.Connect();
 
             var layer = new CanvasLayer();
             _hud = new Label { Position = new Vector2(24, 22) };
             _hud.AddThemeFontSizeOverride("font_size", 22);
             layer.AddChild(_hud);
             AddChild(layer);
+
+            var sim = new SimDriver();
+            AddChild(sim);
+            sim.Sim.Add(new DelegateSimStep((tick, dt) => _client.SendMoveInput(0f, 1f, (float)(tick * dt) * -30f), "client.input"));   // walk a circle, opposite the server bot
+            sim.Sim.Add(new DelegateSimStep((t, dt) => _client.Tick(), "client.session"));
         }
 
-        public override void _PhysicsProcess(double delta)
+        public override void _Process(double delta)
         {
-            var zs = Client.Zombies;
-            Vector3 me = _player.GlobalPosition;
-
-            int nearest = -1; float bd = float.MaxValue;
-            for (int i = 0; i < zs.Count; i++)
+            foreach (var e in _client.Players.All)
             {
-                float d = new Vector3(zs[i].X, zs[i].Y, zs[i].Z).DistanceTo(me);
-                if (d < bd) { bd = d; nearest = i; }
-            }
-
-            if (nearest >= 0)
-            {
-                var flat = new Vector3(zs[nearest].X, me.Y, zs[nearest].Z);
-                if (flat.DistanceTo(me) > 0.3f) _player.LookAt(flat, Vector3.Up);
-            }
-            _player.ScriptedInput = new UnityEngine.Vector2(0.5f, bd < 7f ? -0.7f : 0.15f);
-
-            // send FEET position (the humanoid + the server hitboxes are feet-based)
-            Client.SendState(new PlayerState { X = me.X, Y = me.Y, Z = me.Z, Yaw = _player.Rotation.Y });
-            Client.Poll();
-
-            // fire at the nearest zombie's HEAD -> server per-zone hit-reg (headshot). damage ~Eaglefire.
-            _fireCd -= (float)delta;
-            if (_fireCd <= 0f && nearest >= 0)
-            {
-                var cam = _player.Camera;
-                Vector3 o = cam.GlobalPosition;
-                Vector3 head = new Vector3(zs[nearest].X, zs[nearest].Y + 1.6f, zs[nearest].Z);
-                Vector3 dir = (head - o).Normalized();
-                Client.SendFire(o.X, o.Y, o.Z, dir.X, dir.Y, dir.Z, 40f);
-                _fireCd = 0.22f;
-            }
-
-            // players as humanoids (blue = self via SelfId, orange = remote)
-            foreach (var kv in Client.Remote)
-            {
-                if (!_avatars.TryGetValue(kv.Key, out var av))
+                if (!_avatars.TryGetValue(e.OwnerPlayerId, out var av))
                 {
-                    var tint = kv.Key == Client.SelfId ? new Color(0.60f, 0.72f, 1.00f) : new Color(1.00f, 0.72f, 0.45f);
+                    var tint = e.OwnerPlayerId == _client.PlayerId ? new Color(0.60f, 0.72f, 1.00f) : new Color(1.00f, 0.72f, 0.45f);
                     av = CharacterModel.Loaded
                         ? CharacterModel.Build(tint)
                         : Humanoid.Build(Skin, tint, tint * 0.6f);
                     AddChild(av);
-                    _avatars[kv.Key] = av;
+                    _avatars[e.OwnerPlayerId] = av;
                 }
-                av.Position = new Vector3(kv.Value.X, kv.Value.Y, kv.Value.Z);
-                av.Rotation = new Vector3(0f, kv.Value.Yaw, 0f);
+                av.Position = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);   // feet-based, like the humanoid
+                av.Rotation = new Vector3(0f, Mathf.DegToRad(e.YawDegrees), 0f);
             }
 
-            // zombies as green humanoids, pooled
-            while (_zombieAvatars.Count < zs.Count)
+            if (_avatars.Count > _client.Players.Count)   // a player left -> free the stale avatar
             {
-                var zTint = new Color(0.55f, 0.95f, 0.55f);
-                var zh = CharacterModel.Loaded ? CharacterModel.Build(zTint)
-                                               : Humanoid.Build(new Color(0.50f, 0.60f, 0.45f), zTint, zTint * 0.6f);
-                AddChild(zh);
-                _zombieAvatars.Add(zh);
-            }
-            for (int i = 0; i < _zombieAvatars.Count; i++)
-            {
-                _zombieAvatars[i].Visible = i < zs.Count;
-                if (i < zs.Count) _zombieAvatars[i].Position = new Vector3(zs[i].X, zs[i].Y, zs[i].Z);
+                var live = new HashSet<ushort>();
+                foreach (var e in _client.Players.All) live.Add(e.OwnerPlayerId);
+                var stale = new List<ushort>();
+                foreach (var kv in _avatars) if (!live.Contains(kv.Key)) stale.Add(kv.Key);
+                foreach (var id in stale) { _avatars[id].QueueFree(); _avatars.Remove(id); }
             }
 
-            _hud.Text = $"MULTIPLAYER   ·   players {Client.Remote.Count}   ·   horde {zs.Count}   ·   zombies killed {Client.Kills}";
+            _hud.Text = $"MULTIPLAYER   ·   {_client.State}   ·   players {_client.Players.Count}   ·   applied tick {_client.Applier.LastAppliedServerTick}";
         }
+
+        public override void _ExitTree() => _client?.Disconnect();
     }
 }
