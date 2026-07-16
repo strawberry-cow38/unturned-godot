@@ -276,7 +276,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null; _heldConsumable = null;   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
+            SaveGunState(); _heldItem = null; _heldConsumable = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -293,7 +293,7 @@ namespace UnturnedGodot
         // Put whatever's in hand AWAY -> empty hands (master: dequip option). Gun state is saved to its backing item first.
         public void Dequip()
         {
-            SaveGunState();
+            SaveGunState(); ClearDeployable();
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
@@ -335,9 +335,17 @@ namespace UnturnedGodot
         const float ConsumeUseTime = 2.2f;   // default eat/drink duration (fallback when an item has no mapped Use-clip length)
         float _consumeUseLen = ConsumeUseTime;   // THIS item's eat/drink duration = source useTime = its Use-clip length (per-item)
         public bool HoldingConsumable => _heldConsumable != null;
+
+        // --- Deployables held in hand (generator / spotlight): equip -> aim shows a placement ghost -> LMB plants it. ---
+        DeployableDef _deployable;      // held deployable (null = none)
+        DeployablePlacer _placer;       // the world-space ghost preview
+        float _placeTimer;              // >0 while the brief place gesture runs; the object drops at 0
+        const float PlaceTime = 0.45f;  // src UseableBarricade builds over the Use-clip length; a short stand-in here
+        public bool HoldingDeployable => _deployable != null;
+
         // A gun is genuinely OUT only when one is loaded AND nothing else is in hand. A melee/held item is mutually
         // exclusive with the gun, so it fully disarms: no firing, no ammo HUD, no reload/firemode logic (master).
-        public bool HasGunOut => Gun != null && _melee == null && _heldConsumable == null;
+        public bool HasGunOut => Gun != null && _melee == null && _heldConsumable == null && _deployable == null;
 
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
         public void EquipHeldConsumable(ItemAsset asset, string meshName)
@@ -346,7 +354,7 @@ namespace UnturnedGodot
             _heldConsumable = asset;
             _heldConsumableMesh = meshName;   // remembered so consuming one can auto-equip another of the same type (master)
             _consumeTimer = 0f;
-            _melee = null;
+            _melee = null; ClearDeployable();
             var an = ConsumableRegistry.Anims(meshName);   // this item's own eat/drink archetype clips + source useTime (Use-clip length)
             _consumeUseLen = an.UseLen > 0f ? an.UseLen : ConsumeUseTime;
             _viewmodel?.QueueFree();
@@ -388,6 +396,60 @@ namespace UnturnedGodot
 
         // test-only: drive the eat/drink timer from a headless self-test (--consumeholdtest)
         public void DebugConsumeTick(float dt) => TickConsume(dt);
+
+        // Equip a deployable to the hands: empty-hand carry + a world-space placement ghost that follows your aim
+        // (blue valid / red invalid). LMB plants a real object. (src UseableBarricade equip/tick/startPrimary.)
+        public void EquipHeldDeployable(DeployableDef def)
+        {
+            if (def == null) return;
+            SaveGunState();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _reloading = false; _torchAnimOn = false;
+            _deployable = def; _placeTimer = 0f;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { EmptyHands = true };   // first pass: no in-hand carry model yet, the ghost is the feedback
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            _placer?.QueueFree();
+            _placer = new DeployablePlacer();
+            GetParent().AddChild(_placer);      // world space: the ghost stays put in the world, not glued to the player
+            _placer.SetDef(def);
+            GD.Print($"[deploy] holding {def.Name} -- aim, LMB to place");
+        }
+
+        // Put the held deployable away (called whenever another item is equipped).
+        void ClearDeployable()
+        {
+            if (_deployable == null && _placer == null) return;
+            _deployable = null; _placeTimer = 0f;
+            _placer?.QueueFree(); _placer = null;
+        }
+
+        // LMB while holding a deployable: if the current aim is valid, start the brief place gesture.
+        void TryPlaceDeployable()
+        {
+            if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
+            if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
+            _placeTimer = PlaceTime;
+        }
+
+        // Ticked each frame while holding a deployable: run the ghost aim, and finish a pending place.
+        void TickDeploy(float dt)
+        {
+            if (_deployable == null || _placer == null) return;
+            bool active = !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured && !(_invUI?.IsOpen ?? false);
+            _placer.SetGhostVisible(active);
+            if (active) _placer.Aim(_cam);
+            if (_placeTimer > 0f)
+            {
+                _placeTimer -= dt;
+                if (_placeTimer <= 0f && _placer.Aim(_cam))   // re-check validity at the drop
+                {
+                    Deployable.Spawn(GetParent(), _deployable, _placer.Point, _placer.Yaw);
+                    GD.Print($"[deploy] placed {_deployable.Name} at {_placer.Point}");
+                }
+            }
+        }
         public static bool DebugCanLoadWav(string stem) => LoadWavOneShot($"res://content/sounds/{stem}.wav") != null;   // test: the exported WAV parses as 16-bit PCM
         public bool DebugUsesMag() => UsesMagItem;           // test: does the equipped gun use magazine items
         public void DebugMagSwap() => DoMagSwap();           // test: run one reload magazine swap
@@ -1017,7 +1079,7 @@ namespace UnturnedGodot
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
-            _melee = null; _heldConsumable = null; _heldMeleeName = null;   // equipping a gun REPLACES the held consumable/melee (not a layer) -- master
+            _melee = null; _heldConsumable = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -1119,6 +1181,7 @@ namespace UnturnedGodot
             {
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
+                else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (IsRepeatedMelee) { }                          // Repeated tool (blowtorch/chainsaw): LMB is a continuous HOLD driven by the use-tick (UpdateSalvage), never a swing/punch (source UseableMelee.startPrimary: isRepeated -> startSwing)
                 else if (_melee != null) MeleeAttack(false);            // LMB with a normal melee = WEAK swing (source UseableMelee)
@@ -1983,6 +2046,7 @@ namespace UnturnedGodot
             _viewmodel?.SetLocomotion(moving, _move.Stance);
             UpdateVitals(moving, (float)delta);
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
+            TickDeploy((float)delta);    // deployable: follow the aim with the ghost + finish a pending place
             if (_viewmodel != null && _worldSun != null && _viewmodel.WorldSun == null) RelinkViewmodelLighting();   // safety: any viewmodel created before/without a link (Drive PEI timing, vehicle exit) still takes the world lighting
             ScanWorldLights();   // mirror nearby dynamic world lights (muzzle/headlights/flares) onto the gun
 

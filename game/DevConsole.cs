@@ -14,7 +14,7 @@ namespace UnturnedGodot
         public PlayerController Player;
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -136,7 +136,19 @@ namespace UnturnedGodot
                 Player.Skills.AwardExperience(amt);
                 Log($"+{amt} XP (now {Player.Skills.experience}) -- open skills with J");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp");
+            else if (verb == "deploy")
+            {
+                // deploy <generator|spot>  -- hold a deployable; aim shows a blue(valid)/red(invalid) ghost, LMB plants it
+                string a = arg.Trim().ToLowerInvariant();
+                DeployableDef def = (a.StartsWith("gen") || a == "458") ? DeployableDef.Generator
+                                  : (a.StartsWith("spot") || a == "459") ? DeployableDef.Spotlight
+                                  : null;
+                if (def == null) { Log("usage: deploy <generator|spot>"); return; }
+                if (Player == null) { Log("no player"); return; }
+                Player.EquipHeldDeployable(def);
+                Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy");
         }
 
         static ItemAsset ResolveItem(string arg)

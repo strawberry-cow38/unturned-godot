@@ -13,6 +13,7 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath;
+        DeployablePlacer _deployProbePlacer; Camera3D _deployProbeCam; int _deployProbeFrame;   // --deploytest: scripted aim check
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
         // Unturned install root -> Maps\<name>. The real map terrain (Landscape heightmaps) is read live from a local
@@ -57,6 +58,7 @@ namespace UnturnedGodot
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null;
+            bool deployTest = false;
             bool skillsui = false;
             bool play = false, demo = false, netdemo = false, server = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, meleedemo = false, falldemo = false, pronetest = false, brokentest = false, grenadetest = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, hearTest = false, armorTest = false, farmTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
@@ -73,6 +75,7 @@ namespace UnturnedGodot
                 else if (arg == "--farmtest") farmTest = true;   // OFFLINE verify: a planted crop grows over Growth secs then harvest yields Grow
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
+                else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
@@ -256,6 +259,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildPropTest(proptest);
+                return;
+            }
+
+            if (deployTest)   // deployables showcase: both placed on a ground plane + a valid(blue)/invalid(red) ghost
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildDeployTest();
                 return;
             }
 
@@ -1102,6 +1113,62 @@ namespace UnturnedGodot
             cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
             cam.LookAt(c, Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
+        // placement GHOST (front row) -> verify the ripped models stand up right (palette, -90 X), the collider,
+        // and the ghost materials. The interactive hold->aim->LMB flow needs a live player, tested in-game.
+        void BuildDeployTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f },
+            });
+            var groundBody = new StaticBody3D();   // a real collider under the plane so the aim raycast has something to hit
+            groundBody.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(groundBody);
+
+            var gen = DeployableDef.Generator; var spot = DeployableDef.Spotlight;
+            // back row: PLACED objects (surface = ground; the base is sat on it)
+            Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
+            Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
+            // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
+            Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
+            Ghost(spot, false, new Vector3(2.6f, 0f, 4.2f), 0f);
+
+            var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = new Vector3(0f, 3.2f, 11f);
+            cam.LookAt(new Vector3(0f, 0.7f, 2f), Vector3.Up);
+
+            // scripted aim probe: point a camera down at OPEN ground and verify the ghost computes a VALID placement
+            // (the raycast + wall/overlap logic, which the interactive hold->aim path can't be headless-tested).
+            _deployProbeCam = new Camera3D { Current = false };
+            AddChild(_deployProbeCam);
+            _deployProbeCam.Position = new Vector3(8f, 3f, -6f);
+            _deployProbeCam.LookAt(new Vector3(8f, 0f, -6f), Vector3.Back);
+            _deployProbePlacer = new DeployablePlacer();
+            AddChild(_deployProbePlacer);
+            _deployProbePlacer.SetDef(gen);
+            GD.Print("[DEPLOYTEST] generator+spotlight placed; blue+red ghosts");
+        }
+
+        void Ghost(DeployableDef def, bool valid, Vector3 surface, float yaw)
+        {
+            var g = Deployable.BuildMesh(def, out Aabb ab);
+            g.MaterialOverride = valid ? DeployablePlacer.ValidMat : DeployablePlacer.InvalidMat;
+            AddChild(g);
+            g.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw), surface + Vector3.Up * DeployableDef.GroundLift(ab));
         }
 
         // --croptest=NAME: a farm crop showcase -- the YOUNG (Foliage_0) crop left, the GROWN (Foliage_1) crop right,
@@ -3176,6 +3243,11 @@ namespace UnturnedGodot
                 return;
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
+            if (_deployProbePlacer != null && ++_deployProbeFrame == 3)   // deploytest: verify the aim/valid path against the ground collider
+            {
+                bool v = _deployProbePlacer.Aim(_deployProbeCam);
+                GD.Print($"[DEPLOYPROBE] open-ground valid={v} point={_deployProbePlacer.Point} yaw={_deployProbePlacer.Yaw:0}");
+            }
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
