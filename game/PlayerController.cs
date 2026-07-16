@@ -1807,14 +1807,11 @@ namespace UnturnedGodot
         bool TryToggleHitch()
         {
             if (_driving != null) return false;
-            Vehicle trailer = null; float bestD = Vehicle.HitchReach * Vehicle.HitchReach;   // player stands within HitchReach of the kingpin (the hitch point); same gate as the billboard prompt
-            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle t && t.IsTrailer && !t.Exploded)
-                {
-                    float d = GlobalPosition.DistanceSquaredTo(t.KingpinWorld);
-                    if (d < bestD) { bestD = d; trailer = t; }
-                }
-            if (trailer == null) return false;
+            // Must be LOOKING AT the trailer AND standing within HitchReach of its kingpin (strawberry: look +
+            // zone + E). This now matches the billboard prompt, which only surfaces while look-focused AND in range.
+            var trailer = _focusVehicle;
+            if (trailer == null || !IsInstanceValid(trailer) || !trailer.IsTrailer || trailer.Exploded) return false;
+            if (GlobalPosition.DistanceSquaredTo(trailer.KingpinWorld) > Vehicle.HitchReach * Vehicle.HitchReach) return false;   // in the hitch zone
             if (trailer.CoupledCab != null) { trailer.Uncouple(); return true; }   // already hitched -> disconnect
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle cab && cab.CanTow && cab.CoupledTrailer == null && cab.CoupleTo(trailer)) return true;   // a cab backed under -> couple

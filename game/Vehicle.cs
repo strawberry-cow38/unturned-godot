@@ -50,6 +50,8 @@ namespace UnturnedGodot
         PinJoint3D _hitch;                               // the coupling constraint (owned by the cab; freed on uncouple)
         readonly System.Collections.Generic.List<CollisionShape3D> _extraShapes = new();  // the Spec.ExtraBoxes hulls (cab: the low rear frame; trailer: headboard + gooseneck) -- kept SOLID; a towed trailer ghosts vs the cab by a layer swap, not by disabling shapes (would hole the player)
         uint _baseCollisionLayer;                        // the un-ghosted body layer (bit0|bit5); a towed/backing-under trailer swaps bit0->bit6 so the cab (mask bit0) phases it while the player (mask bit6) still collides
+        uint _baseCollisionMask;                         // the un-ghosted body mask; a ghosted trailer also adds bit6 so a towing cab's separate sleeper hull (layer bit6) still blocks it
+        StaticBody3D _sleeperHull;                        // tow-cab only: a copy of the roof hull on a SEPARATE body (layer bit6), so the sleeper blocks the coupled trailer even though the whole cab body is excepted from it (anti-clip)
         public const float CoupleReach = 1.6f;           // max fifth-wheel<->kingpin world gap to allow a couple (back it under)
         public const float ApproachReach = 6f;           // start phasing the cab through a trailer once its fifth wheel is this close to the kingpin (so you can back all the way under to CoupleReach)
         public const float HitchReach = 3.5f;            // on-foot: how close the PLAYER must stand to the kingpin to connect/disconnect (also gates the billboard prompt)
@@ -95,7 +97,7 @@ namespace UnturnedGodot
             "Ambulance"         => (new Vector3(2.5f, 0.254f, 4.815f), new Vector3(0f, 2.0f, 0.087f)),
             "Firetruck"         => (new Vector3(2.5f, 0.262f, 6.803f), new Vector3(0f, 2.256f, 0.104f)),
             "Ural"              => (new Vector3(2.5f, 0.255f, 3.169f), new Vector3(0f, 2.257f, 1.570f)),
-            "Semi Truck"        => (new Vector3(3.18f, 2.35f, 3.6f), new Vector3(0f, 2.675f, -0.9f)),   // tall cab+sleeper at the FRONT (Y 1.5..3.85); the rest of the length stays the low frame box so a trailer interlocks over the rear
+            "Semi Truck"        => (new Vector3(2.5f, 2.34f, 3.95f), new Vector3(0f, 2.67f, -0.605f)),   // tall cab+sleeper, tightened to the mesh (X±1.25, Y 1.5..3.84, Z -2.58..1.37): was ±1.59 wide + poking forward over the hood + stopping short of the sleeper back; the rest of the length stays the low frame box so a trailer interlocks over the rear
             _ => null,
         };
 
@@ -385,8 +387,8 @@ namespace UnturnedGodot
             // the tall cab+sleeper as RoofBox("Semi Truck") on top; the REAR chassis (mesh Z 2.0..4.5) is the low
             // BLACK frame, only Y 0..0.96 -- so the trailer's deck overhangs it and the fifth wheel is exposed. The
             // old single Y0..1.5 box ran the full 7.08 length, making the black rear frame 0.54 too tall. (strawberry 2026-07-15)
-            BoxSize = new Vector3(3.18f, 1.5f, 4.08f), BoxCenter = new Vector3(0f, 0.75f, -0.54f),   // cab BODY only, Z -2.58..1.5 (front face stays Z -2.58); behind the cab is all the low frame so the trailer nose can nestle down
-            ExtraBoxes = new (Vector3, Vector3)[] { (new Vector3(2.5f, 0.96f, 3.0f), new Vector3(0f, 0.48f, 3.0f)) },   // low black rear frame (Y 0..0.96, Z 1.5..4.5) -- carries the fifth wheel, kept LOW so the coupled trailer sits on it, not over a tall box
+            BoxSize = new Vector3(3.18f, 1.35f, 4.08f), BoxCenter = new Vector3(0f, 0.825f, -0.54f),   // cab BODY only, Z -2.58..1.5 (front face stays Z -2.58); floor raised 0->0.15 to the mesh underside (was hanging 0.15 below the chassis); behind the cab is all the low frame so the trailer nose can nestle down
+            ExtraBoxes = new (Vector3, Vector3)[] { (new Vector3(2.5f, 0.76f, 3.0f), new Vector3(0f, 0.58f, 3.0f)) },   // low black rear frame (Y 0.2..0.96, Z 1.5..4.5) -- floor raised 0->0.2 to the rear-chassis underside; carries the fifth wheel, kept LOW so the coupled trailer sits on it, not over a tall box
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_large.ogg", IdlePitch = 0.8f, MaxPitch = 1.5f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // engine_large = the SOURCE heavy/truck engine (bus uses it); low pitch = diesel rumble (strawberry 2026-07-15)
             Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
@@ -851,6 +853,7 @@ namespace UnturnedGodot
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v._baseCollisionLayer = v.CollisionLayer;   // remember the un-ghosted layer (bit0|bit5) so a towed trailer can swap bit0->bit6 and restore it
+            v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask, so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
@@ -920,7 +923,17 @@ namespace UnturnedGodot
             // source BoxCollider hull (Godot space), not the mesh AABB (which wrongly included the roll bar)
             v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
             var roof = RoofBox(s.Name);   // source 2nd body box (roof slab): the port only had the main box, so the roof had no collision (master); jeep/quad/tractor are open, no roof
-            if (roof.HasValue) v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
+            if (roof.HasValue)
+            {
+                v.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
+                if (v.CanTow)   // a tow-cab excepts its WHOLE body from the coupled trailer (CoupleTo) so the low coupling area doesn't fight the pin joint -- which also lets the trailer phase through the sleeper. Put a COPY of the roof hull on a SEPARATE static body (layer bit6) so the sleeper still blocks the trailer deck/headboard (anti-clip). The coupled trailer scans bit6 (SetTowGhost), so it hits this; the cab (mask bit0) never scans bit6, so it can't fight its own child hull. (strawberry 2026-07-16)
+                {
+                    var sleeper = new StaticBody3D { Name = "SleeperHull", CollisionLayer = 1u << 6, CollisionMask = 0 };
+                    sleeper.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = roof.Value.size }, Position = roof.Value.center });
+                    v.AddChild(sleeper);
+                    v._sleeperHull = sleeper;
+                }
+            }
             if (s.ExtraBoxes != null) foreach (var (size, center) in s.ExtraBoxes)   // fixed extra hull boxes matching model geometry (trailer flatbed deck/headboard/gooseneck+kingpin, cab's low black rear frame)
             {
                 var cs = new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Position = center };
@@ -1210,8 +1223,13 @@ namespace UnturnedGodot
         // player (mask bit6) still collides, so no hole. Idempotent. (strawberry 2026-07-15)
         public void SetTowGhost(bool ghost)
         {
-            uint want = ghost ? (_baseCollisionLayer & ~(1u << 0)) | (1u << 6) : _baseCollisionLayer;
-            if (CollisionLayer != want) CollisionLayer = want;
+            uint wantLayer = ghost ? (_baseCollisionLayer & ~(1u << 0)) | (1u << 6) : _baseCollisionLayer;
+            if (CollisionLayer != wantLayer) CollisionLayer = wantLayer;
+            // Also SCAN bit6 while ghosted so the towing cab's separate sleeper hull (layer bit6) still blocks this
+            // trailer -> the deck/headboard can't phase through the sleeper (anti-clip). The cab body never scans bit6,
+            // so ghosting the two bodies from each other is untouched. (strawberry 2026-07-16)
+            uint wantMask = ghost ? _baseCollisionMask | (1u << 6) : _baseCollisionMask;
+            if (CollisionMask != wantMask) CollisionMask = wantMask;
         }
 
         Vehicle _approachGhost;   // cab-side: the uncoupled trailer this cab is currently ghosting itself against to back under
