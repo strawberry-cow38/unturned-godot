@@ -455,7 +455,9 @@ namespace UnturnedGodot
             _reloading = false; _torchAnimOn = false;
             _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };   // first pass: no in-hand carry model yet, the ghost is the feedback
+            _viewmodel = def.HoldMesh != null
+                ? new Viewmodel { DeployableMesh = def.HoldMesh, DeployableAlbedo = def.HoldAlbedo }   // carry model in-hand + Deploy_Equip raise; LMB plays Deploy_Use
+                : new Viewmodel { EmptyHands = true };   // no extracted carry model yet (spotlight) -> ghost-only feedback
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             _placer?.QueueFree();
@@ -480,7 +482,9 @@ namespace UnturnedGodot
             if (_placer == null || _deployable == null || _placeTimer > 0f || _dead) return;
             if (!_placer.Aim(_cam)) return;   // only from a VALID (blue) spot
             _placePoint = _placer.Point; _placeYaw = _placer.Yaw;   // FROZEN at click (strawberry: don't drift with the mouse)
-            _placeTimer = PlaceTime;
+            _viewmodel?.PlayDeployUse();   // arms play the src "Use" place motion; the object drops when it finishes
+            float useLen = _viewmodel?.DeployUseLength() ?? 0f;
+            _placeTimer = useLen > 0f ? useLen : PlaceTime;   // build over the Use-clip length (src useTime), else the short stand-in
         }
 
         // Ticked each frame while holding a deployable: follow the aim with the ghost, or -- mid-place -- hold the
@@ -501,8 +505,9 @@ namespace UnturnedGodot
                     {
                         ushort id = _deployItem.id;
                         Inventory.removeItemAmount(id, 1);
-                        if (Inventory.getItemCount(id) <= 0) (_revertEquip ?? EquipUnarmed)();   // stack empty -> revert to last-held / fists
+                        if (Inventory.getItemCount(id) <= 0) { (_revertEquip ?? EquipUnarmed)(); return; }   // stack empty -> revert to last-held / fists
                     }
+                    _viewmodel?.PlayDeployHold();   // still holding one -> arms settle back to the carry hold (not stuck at the end of Deploy_Use)
                 }
                 return;
             }
