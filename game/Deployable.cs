@@ -31,7 +31,8 @@ namespace UnturnedGodot
         float _vibePhase;
         const float WarmupTime = 1.3f, CooldownTime = 1.1f;   // spin-up / wind-down; doubles as the anti-spam buffer (can't re-toggle mid-ramp)
         bool PowerSettled => Mathf.Abs(_powerLevel - (_powered ? 1f : 0f)) < 0.001f;
-        public bool CanTogglePower => !_exploded && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled generator toggles, and only once the ramp has settled (buffer)
+        bool OnFire => _deadTimer >= 0f || _exploded;   // catching fire at 0 HP (deadTimer) through the burning wreck -> a dead/dying generator, can't be run
+        public bool CanTogglePower => !OnFire && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled, NOT-on-fire generator toggles, and only once the ramp has settled (buffer)
         public bool IsPowered => _powered;
 
         bool _lookFocused;
@@ -236,7 +237,7 @@ namespace UnturnedGodot
 
             // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
             // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
-            float pTarget = (_powered && !_exploded && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;
+            float pTarget = (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // an on-fire generator's engine is dead regardless of _powered
             if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
             if (_engineAudio != null)
@@ -267,7 +268,7 @@ namespace UnturnedGodot
                 string fuelLine = FuelMax > 0f ? $"\nFuel {Fuel:0}/{FuelMax:0}" : "";
                 // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. _powered is the target, so this reads as
                 // the next action even mid-ramp (strawberry: don't change the prompt during warmup/cooldown).
-                string powerLine = Def != null && Def.Fuel > 0f && !_exploded ? $"\n[F] Turn {(_powered ? "Off" : "On")}" : "";
+                string powerLine = Def != null && Def.Fuel > 0f && !OnFire ? $"\n[F] Turn {(_powered ? "Off" : "On")}" : "";   // no turn on/off prompt once it's on fire
                 _infoLabel.Text = $"{Def?.Name}\nHP {Health:0}/{HealthMax:0}{fuelLine}{powerLine}";
             }
         }
