@@ -51,7 +51,7 @@ namespace UnturnedGodot.Net
     public static class NetProtocol
     {
         public const byte Magic = 0x75; // 'u'
-        public const byte Version = 3;  // v3 (PEI client C2): MoveInput gained the buttons byte (bit 0 = jump); v2 (Phase 4) = Connect carries contentHash:u64; v1 = Phases 1-3
+        public const byte Version = 4;  // v4 (mp-exitfix): VehicleExitedEvent carries the authoritative exit spot (float32 x3); v3 (PEI client C2): MoveInput gained the buttons byte (bit 0 = jump); v2 (Phase 4) = Connect carries contentHash:u64; v1 = Phases 1-3
 
         /// <summary>Conservative internet-safe datagram budget (MP_PLAN §2.2): no session datagram exceeds this.</summary>
         public const int MaxDatagramBytes = 1200;

@@ -231,24 +231,30 @@ namespace UnturnedGodot
             GD.Print($"[CLIENT] shell spawned at server-adopted spawn ({me.Pos.x:0.0},{me.Pos.y:0.0},{me.Pos.z:0.0}) -- first-person, predicted, reconciled");
         }
 
-        // C6 exit: unhide the shell BESIDE THE DOOR. The server already teleported our entity there
-        // (ServerVehicles.ServerExit), but that position rides a 25 Hz snapshot -- the reliable exit fact
-        // usually lands first. So compute the SAME spot from the vehicle replica (pos + right*2.4 + 1 up,
-        // the identical formula + the identical §7 risk 6 terrain clamp the server applies) and place the
-        // shell immediately; the resumed MoveInput/reconcile loop absorbs any residual within a few acks.
+        // C6 exit: unhide the shell BESIDE THE DOOR -- at the AUTHORITATIVE spot the event carries
+        // (ServerExit computes it beside the REAL car, post-AdjustExitSpot, and the fact rides
+        // ReliableOrdered), so the exit lands right even when the snapshot stream is starved or held and
+        // the vehicle replica is stale (docs/EXIT_POSITION_ROOTCAUSE.md: a 7ce2305 recovery hold froze
+        // every replica at hold-start ≈ drive start, and the old replica-computed spot put the driver
+        // back at his ENTRY). Fallbacks, in order: evt.Pos zero (the vehicle despawned server-side before
+        // the exit computed a spot) -> the old replica computation; no replica either -> exit in place
+        // (the shell rode the puppet). The terrain clamp stays as belt-and-braces -- the server already
+        // clamped, so it normally no-ops.
         void OnVehicleExited(VehicleExitedEvent evt)
         {
             if (evt.PlayerId != Client.PlayerId || evt.NetId != _ridingNetId) return;
             _ridingNetId = 0;
             if (Shell == null || !IsInstanceValid(Shell) || !Shell.IsRiding) return;
             Vector3 exit;
-            if (Client.Vehicles.TryGet(evt.NetId, out var v))
+            if (evt.Pos != UnityEngine.Vector3.zero)
+                exit = new Vector3(evt.Pos.x, evt.Pos.y, evt.Pos.z);
+            else if (Client.Vehicles.TryGet(evt.NetId, out var v))
             {
                 float yawRad = Mathf.DegToRad(v.YawDegrees);
                 var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));   // Godot yaw basis: right = (cos, 0, -sin)
                 exit = new Vector3(v.Pos.x, v.Pos.y, v.Pos.z) + right * 2.4f + Vector3.Up * 1.0f;
             }
-            else exit = Shell.GlobalPosition;   // vehicle despawned under us -- exit in place (the shell rode along)
+            else exit = Shell.GlobalPosition;   // no spot, no replica -- exit in place (the shell rode along)
             if (Terr != null)
             {
                 float h = Terr.SampleHeight(exit.X, exit.Z);

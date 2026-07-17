@@ -44,7 +44,8 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
-            // Re-goldened for Version=3 (PEI client C2: MoveInput gained the buttons byte); before that for
+            // Re-goldened for Version=4 (mp-exitfix: VehicleExitedEvent gained the authoritative exit
+            // spot); before that for Version=3 (PEI client C2: MoveInput gained the buttons byte) and
             // Version=2 (Phase 4: Connect gained contentHash) -- each time the only byte that moved is the
             // version byte, per the §6 re-golden-with-version-bump discipline.
             byte[] captured = null;
@@ -53,7 +54,7 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750308000000000000002800"));
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750408000000000000002800"));
         }
 
         [Test]

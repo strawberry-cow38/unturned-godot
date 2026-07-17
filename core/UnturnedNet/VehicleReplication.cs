@@ -412,13 +412,25 @@ namespace UnturnedGodot.Net
     {
         public uint NetId;
         public ushort PlayerId;
-        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteUInt16(PlayerId); }
+        /// <summary>The AUTHORITATIVE exit spot (ServerExit's beside-the-door teleport, post-AdjustExitSpot).
+        /// Rides the event so the exiting client places its shell correctly even when the snapshot stream is
+        /// starved/held and its vehicle replica is stale (docs/EXIT_POSITION_ROOTCAUSE.md). Raw float32 x3
+        /// (12 bytes, exact -- the terrain clamp's height must survive the wire verbatim) on a rare
+        /// ReliableOrdered event. Vector3.zero = no spot (the vehicle despawned before the exit); consumers
+        /// fall back locally. Wire shape change -> NetProtocol.Version 4.</summary>
+        public Vector3 Pos;
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt32(NetId); w.WriteUInt16(PlayerId);
+            w.WriteFloat(Pos.x); w.WriteFloat(Pos.y); w.WriteFloat(Pos.z);
+        }
         public static bool TryRead(NetPakReader r, out VehicleExitedEvent evt)
         {
             evt = default;
             if (!r.ReadUInt32(out uint id)) return false;
             if (!r.ReadUInt16(out ushort player)) return false;
-            evt = new VehicleExitedEvent { NetId = id, PlayerId = player };
+            if (!r.ReadFloat(out float x) || !r.ReadFloat(out float y) || !r.ReadFloat(out float z)) return false;
+            evt = new VehicleExitedEvent { NetId = id, PlayerId = player, Pos = new Vector3(x, y, z) };
             return true;
         }
     }
@@ -506,6 +518,7 @@ namespace UnturnedGodot.Net
             if (!_drivenByPlayer.TryGetValue(playerId, out uint netId)) return false;
             _drivenByPlayer.Remove(playerId);
             long tick = _tick();
+            var spot = Vector3.zero;   // zero = no spot (vehicle already despawned) -> clients fall back locally
             if (_vehicles.TryGet(new NetId(netId), out var v))
             {
                 _vehicles.ServerSetDriver(new NetId(netId), 0, tick);
@@ -513,11 +526,13 @@ namespace UnturnedGodot.Net
                 float yawRad = v.YawDegrees * (Mathf.PI / 180f);
                 // Godot yaw basis: right (basis.X) = (cos yaw, 0, -sin yaw)
                 var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
-                var spot = v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f);
+                spot = v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f);
                 if (AdjustExitSpot != null) spot = AdjustExitSpot(spot);   // §7 risk 6: terrain-snap a below-ground slope exit
                 _players.ServerTeleport(playerId, spot, tick);
             }
-            var evt = new VehicleExitedEvent { NetId = netId, PlayerId = playerId };
+            // the event carries the final (post-clamp) spot: the exiting client's replica may be frozen
+            // by a snapshot starvation/hold, but this fact rides ReliableOrdered and always arrives
+            var evt = new VehicleExitedEvent { NetId = netId, PlayerId = playerId, Pos = spot };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventVehicleExited, evt.Write));
             return true;
         }

@@ -17,6 +17,11 @@ namespace UnturnedGodot
 
         const float GlideRate = 12f;      // 1/s exponential approach to the dead-reckoned target
         const float SnapDistance = 8f;    // beyond this a glide would read as skating -> snap
+        // Dead-reckoning horizon: past this a starved replica visibly FREEZES instead of gliding along its
+        // last velocity forever (docs/EXIT_POSITION_ROOTCAUSE.md §5 hardening -- the unbounded glide masked
+        // a total snapshot blackout as a normal-looking drive). Healthy 25 Hz flow resets SinceSnap every
+        // ~0.04 s, so this only ever bites during a stall/hold.
+        const float MaxExtrapolationSeconds = 0.5f;
 
         sealed class Tracked
         {
@@ -61,7 +66,7 @@ namespace UnturnedGodot
                 else t.SinceSnap += dt;
 
                 var vel = new Vector3(e.LinVel.x, e.LinVel.y, e.LinVel.z);
-                var target = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z) + vel * t.SinceSnap;   // dead-reckoned between snapshots
+                var target = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z) + vel * Mathf.Min(t.SinceSnap, MaxExtrapolationSeconds);   // dead-reckoned between snapshots, bounded horizon
                 var pos = t.Node.GlobalPosition;
                 t.Node.GlobalPosition = pos.DistanceTo(target) > SnapDistance ? target : pos.Lerp(target, a);
 

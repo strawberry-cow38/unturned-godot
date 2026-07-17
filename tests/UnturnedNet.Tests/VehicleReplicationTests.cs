@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using NUnit.Framework;
+using SDG.NetPak;
 using SDG.NetTransport.Mem;
 using UnityEngine;
 using UnturnedGodot.Net;
@@ -179,6 +180,65 @@ namespace UnturnedNet.Tests
             h.Server.Players.TryGetByOwner(a.PlayerId, out var outside);
             var expected = PlayerReplication.Quantize(moved + new Vector3(2.4f, 1.0f, 0f));
             Assert.That((outside.Pos - expected).magnitude, Is.LessThan(0.05f), "exit placed the avatar beside the seat");
+        }
+
+        [Test]
+        public void ExitEvent_CarriesTheAuthoritativeSpot_PostAdjust()
+        {
+            // Regression for docs/EXIT_POSITION_ROOTCAUSE.md: the exit spot must ride the reliable
+            // VehicleExited fact itself (the exiting client's replica can be frozen by a snapshot
+            // starvation hold, so a replica-derived spot is only as good as the stream's health). The
+            // event's Pos must be the FINAL server spot: beside-the-door THEN AdjustExitSpot (§7 risk 6).
+            var h = new Harness(7007).Connected("a");
+            var a = h.Clients[0];
+            uint veh = h.SpawnVehicle(new Vector3(1f, 0f, 0f));
+            a.SendEnterVehicle(veh);
+            Assert.That(h.StepUntil(() => Driver(h, veh) == a.PlayerId), Is.True, "seated");
+
+            // drive the entity away from the entry (authority publish, as VehicleNetSync would)
+            var moved = new Vector3(40f, 0f, -25f);
+            h.Server.Vehicles.ServerPublish(new NetId(veh), moved, Vector3.zero, Vector3.zero, Vector3.zero,
+                                            0f, 0f, 0f, 0f, 0, h.Server.Session.CurrentTick);
+            // a visible clamp so the test proves the POST-adjust spot is what rides the wire
+            h.Server.VehicleHost.AdjustExitSpot = p => new Vector3(p.x, p.y + 2.5f, p.z);
+
+            VehicleExitedEvent? got = null;
+            a.VehicleExited += evt => { if (evt.PlayerId == a.PlayerId) got = evt; };
+            a.SendExitVehicle();
+            Assert.That(h.StepUntil(() => got.HasValue), Is.True, "the exited fact reached the client");
+
+            var expected = moved + new Vector3(2.4f, 1.0f, 0f) + new Vector3(0f, 2.5f, 0f);   // yaw 0 -> right = +X, then the adjust
+            Assert.That((got.Value.Pos - expected).magnitude, Is.LessThan(0.001f),
+                        "the event carries the exact post-AdjustExitSpot exit spot");
+            Assert.That(h.Server.Players.TryGetByOwner(a.PlayerId, out var outside), Is.True);
+            Assert.That((outside.Pos - PlayerReplication.Quantize(expected)).magnitude, Is.LessThan(0.05f),
+                        "...and it matches where the server actually teleported the entity");
+        }
+
+        [Test]
+        public void ExitEvent_WireRoundTrip_And_LegacyPayloadFailsClosed()
+        {
+            // Round-trip: the float32 x3 spot survives the wire exactly (the terrain clamp's height must
+            // arrive verbatim -- no quantization on this rare reliable event).
+            var evt = new VehicleExitedEvent { NetId = 0xDEAD01u, PlayerId = 7, Pos = new Vector3(1912.53f, 41.0625f, -755.19f) };
+            byte[] packed = NetMessagePak.Pack(ReplicationIds.EventVehicleExited, evt.Write);
+            var r = new SDG.NetPak.NetPakReader();
+            r.SetBufferSegment(packed, packed.Length);
+            r.ReadUInt8(out _);   // the id byte, as EventRegistry.TryDispatch consumes it
+            Assert.That(VehicleExitedEvent.TryRead(r, out var read), Is.True);
+            Assert.That(read.NetId, Is.EqualTo(evt.NetId));
+            Assert.That(read.PlayerId, Is.EqualTo(evt.PlayerId));
+            Assert.That(read.Pos, Is.EqualTo(evt.Pos), "float32 x3 is byte-exact");
+
+            // Fail-closed: a LEGACY (pre-v4) payload without the spot must be refused, never misparsed --
+            // the EventRegistry then counts it MalformedSkipped and drops it. (Cross-build sessions can't
+            // reach this point anyway: the NetProtocol.Version 3->4 bump rejects them at connect.)
+            var legacy = NetMessagePak.Pack(ReplicationIds.EventVehicleExited,
+                w => { w.WriteUInt32(evt.NetId); w.WriteUInt16(evt.PlayerId); });
+            var lr = new SDG.NetPak.NetPakReader();
+            lr.SetBufferSegment(legacy, legacy.Length);
+            lr.ReadUInt8(out _);
+            Assert.That(VehicleExitedEvent.TryRead(lr, out _), Is.False, "a truncated/legacy payload fails the read cleanly");
         }
 
         [Test]

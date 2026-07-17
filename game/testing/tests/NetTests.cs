@@ -750,6 +750,148 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Regression for the MP "driver exits at his ENTRY position" bug (docs/EXIT_POSITION_ROOTCAUSE.md):
+    // during a 7ce2305 recovery hold the server sends this client ZERO unreliable snapshots, so every
+    // replica freezes at the hold-start state while unbounded dead-reckoning keeps the car gliding
+    // convincingly on screen; the reliable VehicleExited fact still flows, and the exit spot used to be
+    // computed CLIENT-SIDE from the FROZEN vehicle replica -- placing the driver back near where he got
+    // in, tens of meters from the real (server) car. The fix carries the server-computed spot IN the
+    // event. This test reproduces the exact live profile the ackgap test misses (it only exits AFTER
+    // recovery): a ClientWorldSession driver on the over-budget 41-vehicle world, an inbound-only
+    // blackout (the client keeps ticking + sending -- the WAN-loss shape, so DriveInput streams and the
+    // real car keeps driving) long enough to latch the recovery hold, an exit requested MID-HOLD, and
+    // the assertion that when the fact finally applies the shell re-appears beside the SERVER car.
+    public class NetVehicleExitDuringAckGap : GameTest
+    {
+        public override string Name => "net.vehicle_exit_during_ackgap";
+        public override int Tier => 2;
+        public override double TimeoutSimSeconds => 40;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260731);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);   // datagram delivery before the session's Client.Tick each tick
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "exitdriver" };
+            World.AddChild(sess);      // registers net.client.pump + client.shell (before the server's steps, §2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            // the PEI-scale precondition (the ackgap rig): 40 parked phantom entities push the full
+            // vehicles block past the unreliable budget, so the starvation-recovery full MUST ride the
+            // reliable channel (7ce2305) -- and its hold blacks out the whole snapshot stream
+            for (int i = 0; i < 40; i++)
+                ded.Server.Vehicles.ServerSpawn(ded.Server.Ids.Mint(), typeId: 0, variant: 0,
+                    new UnityEngine.Vector3(60f + (i % 8) * 8f, 0.5f, -60f - (i / 8) * 8f),
+                    ded.Server.Session.CurrentTick);
+
+            // the driven vehicle: a REAL jeep ~4 m in front of the spawn -- inside EnterReach (6 m),
+            // clear of the shell's body
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(0f, 1.2f, -4f);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned (joined)", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Until(() => sess.Client.Vehicles.Count == 41, 5);
+            T.Check($"all 41 vehicles replicated (40 phantoms + the jeep; client has {sess.Client.Vehicles.Count})",
+                    sess.Client.Vehicles.Count == 41);
+            uint netId = 0;
+            foreach (var e in sess.Client.Vehicles.All)
+                if (e.Pos.magnitude < 10f) { netId = e.NetIdValue; break; }
+            T.Check("found the jeep's replicated entity by its spawn position", netId != 0);
+            yield return Ticks(50);   // let the spawn drop settle onto the fallback ground
+
+            // enter (raw request; the seat fact latches ride mode through ShellStep) + drive up to speed
+            sess.Client.SendEnterVehicle(netId);
+            yield return Until(() => sess.Shell.IsRiding, 5);
+            T.Check("seat handoff: riding, server DriverPlayerId == the peer", sess.Shell.IsRiding &&
+                    ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == sess.Client.PlayerId);
+            sess.Shell.ScriptedDrive = new Vector2(0f, 1f);   // (steer, throttle): straight ahead, full throttle
+            yield return Ticks(100);
+
+            // INBOUND-ONLY blackout, the live WAN profile: the driver keeps ticking + sending (DriveInput
+            // streams, so the real server car keeps driving) but receives NOTHING for 200 ticks -- past
+            // the 64-tick ack-gap latch, under the 250-tick session timeout. The recovery full + hold
+            // latch mid-window; everything reliable queues behind the wall.
+            bool haveRep = sess.Client.Vehicles.TryGet(netId, out var repAtBlackout);
+            var frozenAt = haveRep ? repAtBlackout.Pos : default;
+            long fullsBefore = ded.Server.Composer.Diag.FullSnapshotsComposed;
+            net.ServerToClient.HoldUntilTick = net.CurrentTick + 200;
+
+            yield return Ticks(160);
+            bool stillFrozen = sess.Client.Vehicles.TryGet(netId, out var repMid) && (repMid.Pos - frozenAt).magnitude < 0.01f;
+            T.Check("mid-blackout: the driver's replica froze at the blackout-start state", haveRep && stillFrozen);
+            float diverged = jeep.GlobalPosition.DistanceTo(new Vector3(frozenAt.x, frozenAt.y, frozenAt.z));
+            T.Check($"...while the SERVER car kept driving under the streamed input ({diverged:0.0} m past the frozen state)", diverged > 15f);
+            T.Check($"the recovery full latched during the blackout (fulls +{ded.Server.Composer.Diag.FullSnapshotsComposed - fullsBefore})",
+                    ded.Server.Composer.Diag.FullSnapshotsComposed > fullsBefore);
+
+            // capture the exit THE INSTANT the fact applies (ClientWorldSession's own handler runs first
+            // -- subscription order -- so ExitPuppet has already placed the shell): where the shell
+            // landed, where the frozen replica was, and where the server's authority actually put him
+            bool exitSpotAdjusted = false;
+            ded.Server.VehicleHost.AdjustExitSpot = p => { exitSpotAdjusted = true; return p; };   // §7 risk 6 seam probe (fallback world has no Terr)
+            bool captured = false;
+            Vector3 exitShellPos = default, serverCarPos = default;
+            UnityEngine.Vector3 frozenRepPos = default, evtPos = default;
+            sess.Client.VehicleExited += evt =>
+            {
+                if (captured || evt.PlayerId != sess.Client.PlayerId) return;
+                captured = true;
+                evtPos = evt.Pos;
+                exitShellPos = sess.Shell.GlobalPosition;
+                if (sess.Client.Vehicles.TryGet(evt.NetId, out var vv)) frozenRepPos = vv.Pos;
+                serverCarPos = jeep.GlobalPosition;
+            };
+
+            // EXIT while the hold is live: the reliable request flows out fine; the server frees the
+            // seat and teleports the entity beside the REAL car; the exited fact queues behind the wall
+            sess.Shell.ScriptedDrive = new Vector2(0f, 0f);
+            T.Check("the exit seam fired mid-blackout", sess.Shell.RequestExitPuppet());
+            yield return Ticks(25);
+            T.Check("server freed the seat while the client is still blind",
+                    ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
+            T.Check("the exited fact is HELD -- the client still thinks it's riding", !captured && sess.Shell.IsRiding);
+            T.Check("the exit teleport routed through AdjustExitSpot (§7 risk 6 seam)", exitSpotAdjusted);
+
+            // blackout lifts -> the queued reliable burst delivers (recovery full first, then the exited
+            // fact, ReliableOrdered) and the shell re-appears. THE regression: beside the SERVER CAR
+            // (the real vehicle node), not beside the frozen replica ≈ where he entered. The reference is
+            // deliberately the NODE, not the player entity: the entity is re-written from the RemoteAvatars
+            // body post-exit, and the seated body's own physics history is not what this bug is about.
+            yield return Until(() => captured, 5);
+            T.Check("the exited fact applied after the blackout lifted", captured && !sess.Shell.IsRiding);
+            float exitToCar = exitShellPos.DistanceTo(serverCarPos);
+            float exitToFrozen = (ToU(exitShellPos) - frozenRepPos).magnitude;
+            float frozenToCar = serverCarPos.DistanceTo(new Vector3(frozenRepPos.x, frozenRepPos.y, frozenRepPos.z));
+            T.Check($"the frozen replica really is far from the server car at exit time ({frozenToCar:0.0} m) -- the assert below discriminates",
+                    frozenToCar > 10f);
+            T.Check($"EXIT LANDS BESIDE THE SERVER CAR, not the frozen replica (to car {exitToCar:0.00} m, to frozen replica {exitToFrozen:0.0} m, evt spot ({evtPos.x:0.0},{evtPos.y:0.0},{evtPos.z:0.0}))",
+                    exitToCar < 3.5f);
+
+            // stream recovery intact: the resumed walk/reconcile loop re-converges the shell onto its
+            // server entity. (Deliberately NOT asserting WHERE they converge: the entity is written back
+            // from the RemoteAvatars body, whose seated-physics history is its own story -- this test
+            // owns the exit PLACEMENT, the convergence check owns post-hold stream health.)
+            yield return Ticks(150);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e2);
+            float healErr = own ? (e2.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"post-recovery the shell converged on its server entity (err {healErr:0.###} m)", own && healErr < 0.05f);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // PEI_CLIENT_PLAN §3 Phase C2: server players live on REAL collision, not the flat demo integration.
     // A dedicated world (fallback ground) with RemoteAvatars on gets a ramp placed in the walker's path;
     // a remote client joins and (a) holds the MoveInput v2 JUMP bit standing still -- the replicated Y
