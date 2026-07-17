@@ -72,7 +72,17 @@ namespace SDG.NetTransport.Udp
         readonly IPEndPoint _server;
         Socket _socket;
 
-        public UdpClientTransport(string host, ushort port) { _server = new IPEndPoint(IPAddress.Parse(host), port); }
+        public UdpClientTransport(string host, ushort port) { _server = new IPEndPoint(ResolveHost(host), port); }
+
+        // Accept a literal IP ("127.0.0.1") OR a hostname ("claw.bitvox.me"). IPAddress.Parse throws a
+        // FormatException on a name, so fall back to DNS and prefer an IPv4 address to match the
+        // InterNetwork (IPv4) socket created in Initialize.
+        static IPAddress ResolveHost(string host)
+        {
+            if (IPAddress.TryParse(host, out var literal)) return literal;
+            var resolved = Dns.GetHostAddresses(host);
+            return System.Array.Find(resolved, a => a.AddressFamily == AddressFamily.InterNetwork) ?? resolved[0];
+        }
 
         public void Initialize(ClientTransportReady callback, ClientTransportFailure failureCallback)
         {
