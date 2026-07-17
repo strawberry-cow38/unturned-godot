@@ -88,6 +88,7 @@ namespace UnturnedGodot.Net
         readonly List<IReplicatedSystem> _systems = new List<IReplicatedSystem>();
         readonly Dictionary<ushort, ClientState> _clients = new Dictionary<ushort, ClientState>();
         readonly int[] _orderScratch;
+        readonly bool[] _oversizeWarnedOnce;   // one "this block can NEVER fit this budget" warn per system
         // Buffers sized far past the unreliable budget: blocks WRITE cleanly at any entity count, then the
         // per-block budget check below decides whether they fit the datagram (see OversizedBlocksSkipped).
         const int BufferBytes = 256 * 1024;
@@ -108,6 +109,7 @@ namespace UnturnedGodot.Net
             if (_systems.Count > 64)
                 throw new InvalidOperationException("SnapshotComposer: included-mask tracking supports up to 64 systems");
             _orderScratch = new int[_systems.Count];
+            _oversizeWarnedOnce = new bool[_systems.Count];
         }
 
         // ---- desync detection (hardening pass, Part C) ----
@@ -254,6 +256,15 @@ namespace UnturnedGodot.Net
                 int blockLen = _scratch.writeByteIndex;
                 if (_writer.writeByteIndex + 4 + blockLen > maxBytes)
                 {
+                    // Hardening (DRIVE_DRIVER_VIEW_ROOTCAUSE.md §5): a block too big for even an EMPTY
+                    // datagram of this budget can never be delivered at this size -- only the reliable
+                    // recovery/join full can carry it (NetWorldServer routes those). This condition used
+                    // to be silent, which is how the driver-freeze wedge went unseen; warn once per system.
+                    if (NetLog.Enabled && !_oversizeWarnedOnce[idx] && 8 + 4 + blockLen > maxBytes)
+                    {
+                        _oversizeWarnedOnce[idx] = true;
+                        NetLog.Warn($"snapshot system {system.SystemId} block ({blockLen} B) exceeds the {maxBytes} B budget outright -- deliverable only via a reliable full");
+                    }
                     blockLen = 0;
                     Diag.OversizedBlocksSkipped++;
                     cs.Priority[idx] += 1f;

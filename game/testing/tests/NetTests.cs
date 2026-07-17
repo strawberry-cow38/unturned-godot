@@ -543,6 +543,10 @@ namespace UnturnedGodot.Testing
             World.AddChild(ded);
             var view = new VehicleReplicaView { Client = observer };
             World.AddChild(view);
+            // the DRIVER renders through the same puppet path (§3.6 v1: no driver-side prediction) -- its
+            // own view must track too, not just the observer's (the live driver-freeze hid in this gap)
+            var driverView = new VehicleReplicaView { Client = driver };
+            World.AddChild(driverView);
             driver.Connect();
             observer.Connect();
 
@@ -575,12 +579,14 @@ namespace UnturnedGodot.Testing
             // drive forward ~4 s of sim; the observer's puppet must exist and TRACK the server node
             drivingVeh = netId;
             throttle = 1f;
-            yield return Until(() => view.TryGetPuppet(netId, out _), 5);
+            yield return Until(() => view.TryGetPuppet(netId, out _) && driverView.TryGetPuppet(netId, out _), 5);
             // VehiclePuppet is a plain Node3D by type -- the compiler itself guarantees no VehicleBody3D here
             bool havePuppet = view.TryGetPuppet(netId, out var pup);
             T.Check("the observer materialized a mesh-only puppet (no VehicleBody3D)", havePuppet);
+            bool haveDriverPuppet = driverView.TryGetPuppet(netId, out var dpup);
+            T.Check("the DRIVER materialized its own puppet too", haveDriverPuppet);
             var start = jeep.GlobalPosition;
-            float maxErr = 0f, maxStep = 0f;
+            float maxErr = 0f, maxStep = 0f, dMaxErr = 0f;
             Vector3 prev = pup.GlobalPosition;
             for (int i = 0; i < 200; i++)
             {
@@ -588,19 +594,26 @@ namespace UnturnedGodot.Testing
                 var now = pup.GlobalPosition;
                 maxStep = Mathf.Max(maxStep, now.DistanceTo(prev));
                 prev = now;
-                if (i > 50) maxErr = Mathf.Max(maxErr, now.DistanceTo(jeep.GlobalPosition));   // measure once the glide latched
+                if (i > 50)
+                {
+                    maxErr = Mathf.Max(maxErr, now.DistanceTo(jeep.GlobalPosition));   // measure once the glide latched
+                    dMaxErr = Mathf.Max(dMaxErr, dpup.GlobalPosition.DistanceTo(jeep.GlobalPosition));
+                }
             }
             float driven = jeep.GlobalPosition.DistanceTo(start);
             T.Check($"the server NODE physically drove under the remote DriveInput ({driven:0.0} m)", driven > 8f);
             T.Check($"the puppet converged on the driven vehicle (max err {maxErr:0.00} m, dead-reckoned)", maxErr < 2.5f);
+            T.Check($"the DRIVER's own puppet tracked its driven vehicle (max err {dMaxErr:0.00} m)", dMaxErr < 2.5f);
             T.Check($"the puppet moved by interpolation, not teleports (max per-tick step {maxStep:0.00} m)", maxStep > 0f && maxStep < 1.5f);
 
-            // brake to a stop -> at rest the puppet parks on the node's exact transform
+            // brake to a stop -> at rest the puppets park on the node's exact transform
             throttle = 0f;
             handbrake = true;
             yield return Ticks(150);
             float restErr = pup.GlobalPosition.DistanceTo(jeep.GlobalPosition);
             T.Check($"at rest the puppet sits on the server transform (err {restErr:0.00} m)", restErr < 0.6f);
+            float dRestErr = dpup.GlobalPosition.DistanceTo(jeep.GlobalPosition);
+            T.Check($"at rest the DRIVER's puppet sits on the server transform (err {dRestErr:0.00} m)", dRestErr < 0.6f);
 
             // exit frees the seat and parks the node (SP exit side effects through the sync)
             drivingVeh = 0;
@@ -611,6 +624,126 @@ namespace UnturnedGodot.Testing
             T.Check("the node parked (engine off) after exit", !jeep.EngineOn);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            driver.Disconnect();
+            observer.Disconnect();
+        }
+    }
+
+    // Regression for the live "driven vehicle frozen on the DRIVER's own client" bug
+    // (docs/DRIVE_DRIVER_VIEW_ROOTCAUSE.md): with a PEI-scale vehicle population the full vehicles block
+    // (~35 B per vehicle) exceeds the 1187-byte unreliable snapshot budget, so one >=64-tick gap in a
+    // client's acks (a render hitch, a WAN stall) used to latch that client into a PERMANENT full-snapshot
+    // wedge in which the vehicles block is budget-skipped on every compose -- its replica frozen forever
+    // while every other client tracks fine. The fix routes the starvation-recovery full over the RELIABLE
+    // channel with the join budget (once per wedge, unreliable stream held until acked). This test drives
+    // the real end-to-end path: real jeep node + DriveInput, a 41-vehicle world over budget, an 80-tick
+    // driver-client stall mid-drive, and asserts the driver's replica AND puppet recover afterwards.
+    public class NetVehicleDriveSyncAckGap : GameTest
+    {
+        public override string Name => "net.vehicle_drive_sync_ackgap";
+        public override int Tier => 2;
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(74748);
+            var driver = new NetWorldClient(new MemClientTransport(net), "driver", contentHash: NetContent.Hash);
+            var observer = new NetWorldClient(new MemClientTransport(net), "observer", contentHash: NetContent.Hash);
+            uint drivingVeh = 0;
+            float throttle = 0f;
+            bool driverStalled = false;   // the hitch: no receive, no apply, no acks -- the client's frame stall
+            var pump = new DelegateSimStep((t, dt) =>
+            {
+                net.Tick();
+                if (!driverStalled)
+                {
+                    driver.Tick();
+                    if (drivingVeh != 0) driver.SendDriveInput(drivingVeh, throttle, 0f, false);
+                }
+                observer.Tick();
+            }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + vehicle sync + replicate stay after/LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+
+            // pad the world past the unreliable budget BEFORE anyone joins: 40 parked phantom vehicle
+            // entities (no nodes -- VehicleNetSync only reconciles entities it minted from nodes, so they
+            // stand). 41 vehicles x ~35 B ≈ 1.4 KB > MaxUnreliablePayload (1187): a full vehicles block
+            // can never ride an unreliable snapshot -- the wedge's PEI-scale precondition, and they all
+            // ride each client's reliable join snapshot like the real server boot.
+            for (int i = 0; i < 40; i++)
+                ded.Server.Vehicles.ServerSpawn(ded.Server.Ids.Mint(), typeId: 0, variant: 0,
+                    new UnityEngine.Vector3(60f + (i % 8) * 8f, 0.5f, -60f - (i / 8) * 8f),
+                    ded.Server.Session.CurrentTick);
+
+            // the DRIVER's own render path -- the exact view the live freeze hid in
+            var driverView = new VehicleReplicaView { Client = driver };
+            World.AddChild(driverView);
+            driver.Connect();
+            observer.Connect();
+
+            // the driven vehicle: a REAL jeep node beside the (0,0,0) spawn area
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(1f, 1.2f, 0f);
+
+            yield return Until(() => driver.State == NetSessionState.Connected && observer.State == NetSessionState.Connected, 5);
+            T.Check("both clients joined", driver.State == NetSessionState.Connected && observer.State == NetSessionState.Connected);
+            yield return Until(() => driver.Vehicles.Count == 41 && observer.Vehicles.Count == 41, 5);
+            T.Check($"all 41 vehicles replicated (40 phantoms + the jeep; driver has {driver.Vehicles.Count})",
+                    driver.Vehicles.Count == 41 && observer.Vehicles.Count == 41);
+            // the jeep's entity is the one near the origin; the phantom pad is parked out at x >= 60
+            uint netId = 0;
+            foreach (var e in driver.Vehicles.All)
+                if (e.Pos.magnitude < 10f) { netId = e.NetIdValue; break; }
+            T.Check("found the jeep's replicated entity by its spawn position", netId != 0);
+
+            yield return Ticks(50);   // let the spawn drop settle onto the fallback ground before driving
+
+            driver.SendEnterVehicle(netId);
+            yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == driver.PlayerId, 5);
+            T.Check("the Enter command took the seat server-side",
+                    ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == driver.PlayerId);
+
+            // drive; the driver's puppet must be tracking BEFORE the stall so the recovery assert is honest
+            drivingVeh = netId;
+            throttle = 1f;
+            yield return Until(() => driverView.TryGetPuppet(netId, out _), 5);
+            T.Check("the driver materialized its own puppet", driverView.TryGetPuppet(netId, out var dpup));
+            yield return Ticks(100);
+            float preErr = dpup.GlobalPosition.DistanceTo(jeep.GlobalPosition);
+            T.Check($"pre-stall: the driver's puppet tracks its own drive (err {preErr:0.00} m)", preErr < 2.5f);
+
+            // the hitch: 80 ticks (1.6 s) past the 64-tick dirty ring, mid-drive. The held server-side
+            // DriveInput keeps the node driving the whole time (held-input model).
+            driverStalled = true;
+            yield return Ticks(80);
+            driverStalled = false;
+
+            // acks resume -> the driver's replica and puppet must RECOVER and track again
+            yield return Ticks(150);
+
+            ded.Server.Vehicles.TryGet(netId, out var srvE);
+            float obsErr = observer.Vehicles.TryGet(netId, out var oRep) ? (oRep.Pos - srvE.Pos).magnitude : float.MaxValue;
+            float repErr = driver.Vehicles.TryGet(netId, out var dRep) ? (dRep.Pos - srvE.Pos).magnitude : float.MaxValue;
+            float pupErr = dpup.GlobalPosition.DistanceTo(jeep.GlobalPosition);
+            var diag = ded.Server.Composer.Diag;
+            T.Check($"control: the never-stalled observer's replica tracked throughout (err {obsErr:0.00} m)", obsErr < 2.5f);
+            T.Check($"after the ack gap the DRIVER's replica recovered (err {repErr:0.00} m; server x {srvE.Pos.x:0.0} vs replica x {(dRep != null ? dRep.Pos.x : float.NaN):0.0}; composer fulls {diag.FullSnapshotsComposed} deltas {diag.DeltaSnapshotsComposed} skips {diag.OversizedBlocksSkipped})",
+                    repErr < 2.5f);
+            T.Check($"after the ack gap the DRIVER's own puppet recovered (err {pupErr:0.00} m)", pupErr < 2.5f);
+
+            // stop + teardown
+            drivingVeh = 0;
+            driver.SendExitVehicle();
+            yield return Ticks(5);
             world.Sim.Sim.Remove(pump);
             driver.Disconnect();
             observer.Disconnect();

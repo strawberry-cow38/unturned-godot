@@ -117,6 +117,7 @@ namespace UnturnedGodot.Net
                 Skills.ServerRemove(peer.PlayerId);
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
+                _pendingRecoveryFulls.Remove(peer.PlayerId);   // a reused playerId must not inherit a stale hold
                 // Phase 8 rejoin hardening: per-client relevancy sets must not leak to a recycled playerId
                 Zombies.ForgetClient(peer.PlayerId);
                 WorldItems.ForgetClient(peer.PlayerId);
@@ -209,6 +210,32 @@ namespace UnturnedGodot.Net
 
         readonly System.Collections.Generic.List<NetPeer> _pendingJoinSnapshots = new System.Collections.Generic.List<NetPeer>();
 
+        // Starvation recovery (docs/DRIVE_DRIVER_VIEW_ROOTCAUSE.md): peers with a reliable recovery FULL
+        // in flight -> the tick it was composed at. Unreliable snapshots hold until the client's ack
+        // reaches that tick (mirroring the join hold below), then normal delta flow resumes.
+        readonly System.Collections.Generic.Dictionary<ushort, long> _pendingRecoveryFulls = new System.Collections.Generic.Dictionary<ushort, long>();
+
+        /// <summary>Compose + send one FULL snapshot on the ReliableOrdered channel with the join-path
+        /// budget (fragmentation is safe there, §2.2). Used by the join flow and by starvation recovery:
+        /// a full snapshot is the loss-RECOVERY mechanism, so it must never be composed under a datagram
+        /// budget smaller than the world it has to carry -- a full block over the unreliable budget is
+        /// skipped from EVERY unreliable compose, its pinned baseline then never advances, and
+        /// WillSendFull latches forever (the live "driven vehicle frozen on the driver's own client"
+        /// wedge). The client applies it through the same EventJoinSnapshot handler (stale-tick guarded).</summary>
+        void SendReliableFullSnapshot(NetPeer peer, Vector3 viewPos)
+        {
+            var snapshot = Composer.Compose(Session.CurrentTick, peer.PlayerId, viewPos,
+                                            maxBytes: NetProtocol.MaxReliableMessageBytes / 2);
+            peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventJoinSnapshot, w =>
+            {
+                // explicit byteLen prefix: NetPakReader.RemainingSegmentLength is imprecise (the
+                // reader pre-buffers 32-bit words), so like every other frame on this stack the
+                // payload carries its own length
+                w.WriteUInt16((ushort)snapshot.Length);
+                w.WriteBytes(snapshot, 0, snapshot.Length);
+            }, bufferSize: snapshot.Length + 8));
+        }
+
         /// <summary>Compose + send snapshots. Registered LAST on the tick so it captures this tick's final
         /// state; viewPos is the owning player's position (the §2.6 interest hook, policy AllRelevant v1).
         /// A peer with no acked baseline yet is mid-join: its world state is the reliable join snapshot
@@ -223,16 +250,7 @@ namespace UnturnedGodot.Net
                 foreach (var peer in _pendingJoinSnapshots)
                 {
                     Vector3 spawnPos = Players.TryGetByOwner(peer.PlayerId, out var pe) ? pe.Pos : Vector3.zero;
-                    var joinSnapshot = Composer.Compose(Session.CurrentTick, peer.PlayerId, spawnPos,
-                                                        maxBytes: NetProtocol.MaxReliableMessageBytes / 2);
-                    peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventJoinSnapshot, w =>
-                    {
-                        // explicit byteLen prefix: NetPakReader.RemainingSegmentLength is imprecise (the
-                        // reader pre-buffers 32-bit words), so like every other frame on this stack the
-                        // payload carries its own length
-                        w.WriteUInt16((ushort)joinSnapshot.Length);
-                        w.WriteBytes(joinSnapshot, 0, joinSnapshot.Length);
-                    }, bufferSize: joinSnapshot.Length + 8));
+                    SendReliableFullSnapshot(peer, spawnPos);
                 }
                 _pendingJoinSnapshots.Clear();
             }
@@ -241,7 +259,28 @@ namespace UnturnedGodot.Net
             foreach (var peer in Session.Peers)
             {
                 if (Composer.GetClientBaseline(peer.PlayerId) == 0) continue;   // join snapshot not acked yet
+                // a reliable recovery full is in flight: hold the unreliable stream (the join hold, again)
+                // until the client acks the recovery tick -- that ack provably advances every system's
+                // baseline (the reliable full carried them all), which clears WillSendFull
+                if (_pendingRecoveryFulls.TryGetValue(peer.PlayerId, out long recoveryTick))
+                {
+                    if (Composer.GetClientBaseline(peer.PlayerId) < recoveryTick) continue;
+                    _pendingRecoveryFulls.Remove(peer.PlayerId);
+                }
                 Vector3 viewPos = Players.TryGetByOwner(peer.PlayerId, out var e) ? e.Pos : Vector3.zero;
+                if (Composer.WillSendFull(peer.PlayerId, Session.CurrentTick))
+                {
+                    // Starvation-recovery fulls must ride the RELIABLE channel (the fix of
+                    // docs/DRIVE_DRIVER_VIEW_ROOTCAUSE.md §5): under the 1187-byte unreliable budget a
+                    // full world block that outgrew the datagram (PEI's vehicles block is ~2.9 KB) is
+                    // budget-skipped from every compose, so the client this full is meant to RESYNC can
+                    // never receive exactly the system it lost -- the permanent per-client freeze. Sent
+                    // ONCE per wedge; the hold above keeps the reliable/unreliable streams from racing.
+                    SendReliableFullSnapshot(peer, viewPos);
+                    _pendingRecoveryFulls[peer.PlayerId] = Session.CurrentTick;
+                    if (NetLog.Enabled) NetLog.Sink($"[NET] reliable recovery full -> player {peer.PlayerId} (ack gap or starved system at tick {Session.CurrentTick})");
+                    continue;
+                }
                 peer.SendUnreliableSequenced(Composer.Compose(Session.CurrentTick, peer.PlayerId, viewPos));
             }
         }
