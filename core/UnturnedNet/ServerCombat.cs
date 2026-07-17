@@ -487,11 +487,17 @@ namespace UnturnedGodot.Net
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerDied, evt.Write));
         }
 
+        /// <summary>Phase 6 (§3.2) XP-award seam: fires on every credited kill -- zombie AND player, since
+        /// bullet/melee/grenade/PvP all funnel through CreditKill. The host decides the award; unset = no
+        /// coupling.</summary>
+        public Action<ushort> KillCredited;
+
         void CreditKill(ushort playerId, long tick)
         {
             if (!_state.TryGet(playerId, out var cs)) return;
             cs.Kills++;
             _state.MarkDirty(cs, tick);
+            KillCredited?.Invoke(playerId);
         }
 
         void SendHitConfirm(ushort shooter, ushort seq, HitTargetKind kind, uint targetId, float damage, bool killed, bool headshot)

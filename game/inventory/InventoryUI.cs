@@ -238,7 +238,7 @@ namespace UnturnedGodot
             iconBox.AddChild(tile);
 
             // right-top: name (rarity-coloured) + info line
-            Color rar = ItemAsset.RarityColorUI(asset.rarity);
+            Color rar = ItemTool.RarityColorUI(asset.rarity);
             var name = new Label { Text = asset.itemName, Position = new Vector2(228, 14), Size = new Vector2(258, 28) };
             name.AddThemeColorOverride("font_color", rar);
             name.AddThemeFontSizeOverride("font_size", 19);
@@ -524,7 +524,7 @@ namespace UnturnedGodot
         {
             var asset = jar.GetAsset();
             bool rotated = ((rotParam >= 0 ? rotParam : jar.rot) % 2) == 1;   // drawn rotated? (the drag preview passes the live _dragRot)
-            Color rar = asset != null ? ItemAsset.RarityColorUI(asset.rarity) : Colors.White;
+            Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
             Color bg = new Color(rar.R * 0.22f, rar.G * 0.22f, rar.B * 0.22f, 0.97f);   // BackgroundIfLight(rarity)
 
             var tile = new Panel { Size = new Vector2(w, h), ClipContents = true };

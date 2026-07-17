@@ -13,11 +13,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/ec2-user/projects/unturned-godot-mp5/core/SDG.Compat/SDG.Compat.csproj",
+      "projectUniqueName": "/home/ec2-user/projects/unturned-godot-mp6/core/SDG.Compat/SDG.Compat.csproj",
       "projectName": "SDG.Compat",
-      "projectPath": "/home/ec2-user/projects/unturned-godot-mp5/core/SDG.Compat/SDG.Compat.csproj",
+      "projectPath": "/home/ec2-user/projects/unturned-godot-mp6/core/SDG.Compat/SDG.Compat.csproj",
       "packagesPath": "/home/ec2-user/.nuget/packages/",
-      "outputPath": "/home/ec2-user/projects/unturned-godot-mp5/core/SDG.Compat/obj/",
+      "outputPath": "/home/ec2-user/projects/unturned-godot-mp6/core/SDG.Compat/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/home/ec2-user/.nuget/NuGet/NuGet.Config"

@@ -167,6 +167,112 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // MP_PLAN §4 Phase 6: the transactional showcase end to end on the real world path (§3.1). Client A
+    // console-gives itself a generator + spotlight (ConsoleCommand -- the server-gated cheat plane), places
+    // both and wires them by COMMAND; the server validates against the replicated def schema + A's server
+    // inventory, owns the graph, and broadcasts the topology facts; client B -- who typed nothing -- mirrors
+    // the graph, runs the SAME pure PowerSolver on its replica, and its DeployableReplicaView materializes
+    // real Deployable/Wire nodes whose local PowerNet pass LIGHTS THE LAMP. No solver output ever crossed
+    // the wire.
+    public class NetDeployWirePower : GameTest
+    {
+        public override string Name => "net.deploy_wire_power";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // `give 458` resolves against the real catalog (2x2 -> fits pockets)
+
+            var net = new MemNetwork(6060);
+            var a = new NetWorldClient(new MemClientTransport(net), "placer", contentHash: NetContent.Hash);
+            var b = new NetWorldClient(new MemClientTransport(net), "observer", contentHash: NetContent.Hash);
+            DeployableNetSchema.RegisterAll(a.Deployables.Schema);
+            DeployableNetSchema.RegisterAll(b.Deployables.Schema);
+            string consoleReply = null;
+            a.ConsoleResult += e => consoleReply = e.Text;
+
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); a.Tick(); b.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + replicate stay after/LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+            var view = new DeployableReplicaView { Client = b };   // B's node mirror -- the lamp that must light
+            World.AddChild(view);
+            a.Connect();
+            b.Connect();
+
+            yield return Until(() => a.State == NetSessionState.Connected && b.State == NetSessionState.Connected, 5);
+            T.Check("both clients joined", a.State == NetSessionState.Connected && b.State == NetSessionState.Connected);
+
+            // A stocks up through the SERVER-GATED console (§2.3 "including DevConsole")
+            a.SendConsole("give 458");
+            a.SendConsole("give 459");
+            yield return Until(() =>
+            {
+                if (!ded.Server.Inventories.TryGet(a.PlayerId, out var inv)) return false;
+                return inv.Inventory.getItemCount(458) == 1 && inv.Inventory.getItemCount(459) == 1;
+            }, 5);
+            T.Check($"console gave A both deployable items server-side (reply: {consoleReply})",
+                    ded.Server.Inventories.TryGet(a.PlayerId, out var aInv)
+                    && aInv.Inventory.getItemCount(458) == 1 && aInv.Inventory.getItemCount(459) == 1);
+
+            // A builds the rig by command: gen at (-2,0,0), spot at (+2,0,0), wire output->consumer, toggle on
+            a.SendPlaceDeployable(458, new UnityEngine.Vector3(-2f, 0f, 0f), 0f);
+            a.SendPlaceDeployable(459, new UnityEngine.Vector3(2f, 0f, 0f), 0f);
+            yield return Until(() => a.Deployables.Count == 2, 5);
+            uint genId = 0, spotId = 0;
+            foreach (var e in a.Deployables.All)
+            {
+                if (e.DefId == 458) genId = e.NetIdValue;
+                if (e.DefId == 459) spotId = e.NetIdValue;
+            }
+            T.Check("A's placements replicated back with NetIds", genId != 0 && spotId != 0);
+            T.Check("placing consumed A's items (server grid)",
+                    ded.Server.Inventories.TryGet(a.PlayerId, out var aInv2)
+                    && aInv2.Inventory.getItemCount(458) == 0 && aInv2.Inventory.getItemCount(459) == 0);
+
+            a.SendConnectWire(genId, 0, spotId, 0);
+            a.SendToggleDeployable(genId, true);
+            yield return Until(() => b.Deployables.WireCount == 1
+                                  && b.Deployables.TryGet(genId, out var g) && g.ToggledOn, 5);
+            T.Check("B mirrors the full graph (2 deployables + 1 wire + toggle) from events alone",
+                    b.Deployables.Count == 2 && b.Deployables.WireCount == 1);
+            T.Check("graph parity: A == server", a.Deployables.StateHash() == ded.Server.Deployables.StateHash());
+            T.Check("graph parity: B == server", b.Deployables.StateHash() == ded.Server.Deployables.StateHash());
+
+            // the §3.1 payoff: both sides SOLVE the replicated inputs and agree -- no output crossed the wire
+            ded.Server.Deployables.Solve();
+            b.Deployables.Solve();
+            ded.Server.Deployables.TryGet(spotId, out var sSpot);
+            b.Deployables.TryGet(spotId, out var bSpot);
+            T.Check("server solve: consumer powered", sSpot.Solved[0].Powered);
+            T.Check("B replica solve: consumer powered (same pure PowerSolver, same inputs)", bSpot.Solved[0].Powered);
+            ded.Server.Deployables.TryGet(genId, out var sGen);
+            b.Deployables.TryGet(genId, out var bGen);
+            T.Check($"both sides agree on generator load (server {sGen.Solved[0].Draw:0} W, B {bGen.Solved[0].Draw:0} W)",
+                    sGen.Solved[0].Draw == bGen.Solved[0].Draw && bGen.Solved[0].Draw == 250f);
+
+            // and B's WORLD shows it: the replica view's nodes run the local PowerNet pass -> the lamp LIGHTS
+            yield return Until(() => view.NodeCount == 2, 5);
+            T.Check("B's replica view materialized both deployable nodes", view.NodeCount == 2);
+            yield return Until(() => view.TryGetNode(spotId, out var d) && d.DebugConsumerPowered, 5);
+            bool nodePowered = view.TryGetNode(spotId, out var spotNode) && spotNode.DebugConsumerPowered;
+            T.Check("B's spotlight node consumer is powered through the node-graph solve", nodePowered);
+            yield return Until(() => view.TryGetNode(spotId, out var d) && d.DebugLampsLit, 5);
+            T.Check("B's lamp is LIT (warmup envelope past the visibility floor)",
+                    view.TryGetNode(spotId, out var litNode) && litNode.DebugLampsLit);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            a.Disconnect();
+            b.Disconnect();
+        }
+    }
+
     // MP_PLAN §4 Phase 5: the zombie brain/puppet split, end to end on the real world path. The SERVER runs
     // a real ZombieController brain (sensing/vision/nav chase) against a real PlayerController avatar it
     // acquires through PlayerRegistry (no Target wired -- the §3.5 generalization); ZombieNetSync (inside

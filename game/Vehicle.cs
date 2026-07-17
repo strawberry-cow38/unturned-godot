@@ -1,5 +1,5 @@
 using Godot;
-using SDG.Unturned;   // ItemAsset.RarityColorUI + EItemRarity (vehicle look-at outline colour)
+using SDG.Unturned;   // ItemTool.RarityColorUI + EItemRarity (vehicle look-at outline colour)
 
 namespace UnturnedGodot
 {
@@ -870,7 +870,7 @@ namespace UnturnedGodot
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
             v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
             if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
-            v._outlineColor = ItemAsset.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
+            v._outlineColor = ItemTool.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
             v._info = new InfoBillboard { TopLevel = true };   // look-at info billboard: name + HP/fuel/battery BARS, world-space at the cabin
             v.AddChild(v._info);
 

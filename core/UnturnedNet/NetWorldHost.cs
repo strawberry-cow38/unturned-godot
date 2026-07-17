@@ -27,10 +27,21 @@ namespace UnturnedGodot.Net
         public readonly PlayerCombatReplication CombatState = new PlayerCombatReplication();
         public readonly ZombieReplication Zombies = new ZombieReplication();
         public readonly ProjectileReplication Projectiles = new ProjectileReplication();
+        // Phase 6 -- the transactional slice (MP_PLAN §4 Phase 6)
+        public readonly SkillsReplication Skills = new SkillsReplication();
+        public readonly DeployableReplication Deployables = new DeployableReplication();
+        public readonly InventoryReplication Inventories = new InventoryReplication();
+        public readonly WorldItemReplication WorldItems = new WorldItemReplication();
         public readonly ServerCombat Combat;
+        public readonly ServerTransactions Transactions;
         public readonly SnapshotComposer Composer;
 
         public int SnapshotDivisorTicks = 2; // 25 Hz at the 50 Hz tick (MP_PLAN §2.5)
+
+        /// <summary>XP per credited kill (the §3.2 award hook, wired through ServerCombat.KillCredited).
+        /// Default 0 = award nothing, because the SP port awards no kill XP yet either -- MP must not
+        /// out-reward the direct path. Bump both together when kill XP lands in SP.</summary>
+        public uint KillExperience = 0;
 
         public NetWorldServer(IServerTransport transport,
                               ServerTransportConnectionFailureCallback connectionFailureCallback = null,
@@ -38,9 +49,14 @@ namespace UnturnedGodot.Net
                               ulong contentHash = 0)
         {
             Session = new NetServerSession(transport, connectionFailureCallback, maxPeers: maxPeers, contentHash: contentHash);
-            Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles });
+            Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
+                                                                      Skills, Deployables, Inventories, WorldItems });
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
+            Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
+                                                  Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
+            Transactions.Register(Commands);
+            Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
             Commands.Register<MoveInput>(ReplicationIds.CommandMoveInput, MoveInput.TryRead,
                 (sender, cmd) => Players.ServerQueueInput(sender, cmd),
                 validate: (sender, cmd) => CombatState.IsAlive(sender));   // a corpse's inputs drop at the choke point
@@ -58,6 +74,10 @@ namespace UnturnedGodot.Net
                 var spawn = SpawnPosition(peer.PlayerId);
                 var e = Players.ServerSpawn(Ids.Mint(), peer.PlayerId, spawn, Session.CurrentTick);
                 CombatState.ServerAdd(peer.PlayerId, e.Pos, Combat.GunFor(peer.PlayerId).MagCapacity, Session.CurrentTick);
+                // Phase 6 per-player authoritative state -- added BEFORE the join snapshot composes below,
+                // so the joiner's own owner-only skills/inventory blocks ride the join snapshot too.
+                Skills.ServerAdd(peer.PlayerId, Session.CurrentTick);
+                Inventories.ServerAdd(peer.PlayerId, Session.CurrentTick);
                 // The join flow (MP_PLAN §4 Phase 4): Accept -> reliable FULL snapshot -> deltas. The full
                 // snapshot rides ReliableOrdered where fragmentation is safe (§2.2) -- a lost datagram
                 // retransmits instead of the client waiting out unreliable full-resends. Composed HERE so
@@ -78,6 +98,8 @@ namespace UnturnedGodot.Net
             {
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
+                Skills.ServerRemove(peer.PlayerId);
+                Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
             };
         }
@@ -109,6 +131,8 @@ namespace UnturnedGodot.Net
             }
             Players.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
             Combat.Step(Session.CurrentTick);
+            // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
+            Inventories.ServerCommitDirty(Session.CurrentTick);
         }
 
         /// <summary>Compose + send snapshots. Registered LAST on the tick so it captures this tick's final
@@ -143,6 +167,12 @@ namespace UnturnedGodot.Net
         public readonly PlayerCombatReplication CombatState = new PlayerCombatReplication();
         public readonly ZombieReplication Zombies = new ZombieReplication();
         public readonly ProjectileReplication Projectiles = new ProjectileReplication();
+        // Phase 6 replicas: skills/inventory arrive owner-only (only MY entry ever fills in); the
+        // deployable graph + world items are world state every client mirrors and solves locally (§3.1).
+        public readonly SkillsReplication Skills = new SkillsReplication();
+        public readonly DeployableReplication Deployables = new DeployableReplication();
+        public readonly InventoryReplication Inventories = new InventoryReplication();
+        public readonly WorldItemReplication WorldItems = new WorldItemReplication();
         public readonly SnapshotApplier Applier;
         public readonly EventRegistry Events = new EventRegistry();
         public readonly ClientPrediction Prediction = new ClientPrediction();
@@ -160,13 +190,30 @@ namespace UnturnedGodot.Net
         public event System.Action<AttackSwingEvent> ZombieSwung;
         public event System.Action<GrenadeExplodedEvent> GrenadeExploded;
 
+        // Phase 6 transactional facts (already applied to the replicas above when these fire -- the game
+        // layer subscribes for fx/UI, e.g. DeployableReplicaView rebuilds nodes, the HUD pings XP).
+        public event System.Action<XpAwardedEvent> XpAwarded;
+        public event System.Action<DeployablePlacedEvent> DeployablePlaced;
+        public event System.Action<DeployableRemovedEvent> DeployableRemoved;
+        public event System.Action<WireConnectedEvent> WireConnected;
+        public event System.Action<WireRemovedEvent> WireRemoved;
+        public event System.Action<DeployableToggledEvent> DeployableToggled;
+        public event System.Action<WorldItemSpawnedEvent> WorldItemSpawned;
+        public event System.Action<WorldItemSettledEvent> WorldItemSettled;
+        public event System.Action<WorldItemRemovedEvent> WorldItemRemoved;
+        public event System.Action<ItemPickupDeniedEvent> ItemPickupDenied;
+        public event System.Action<ConsoleResultEvent> ConsoleResult;
+        public event System.Action<StorageOpenedEvent> StorageOpened;
+        public event System.Action<StorageClosedEvent> StorageClosed;
+
         ushort _inputSeq;
         ushort _combatSeq;
 
         public NetWorldClient(IClientTransport transport, string playerName = "", ulong contentHash = 0)
         {
             Session = new NetClientSession(transport, playerName, contentHash: contentHash);
-            Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles });
+            Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
+                                                                    Skills, Deployables, Inventories, WorldItems });
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
                 if (!reader.ReadUInt16(out ushort len) || len == 0) return;
@@ -189,6 +236,29 @@ namespace UnturnedGodot.Net
             Events.Register<ZombieDiedEvent>(ReplicationIds.EventZombieDied, ZombieDiedEvent.TryRead, e => ZombieDied?.Invoke(e));
             Events.Register<AttackSwingEvent>(ReplicationIds.EventAttackSwing, AttackSwingEvent.TryRead, e => ZombieSwung?.Invoke(e));
             Events.Register<GrenadeExplodedEvent>(ReplicationIds.EventGrenadeExploded, GrenadeExplodedEvent.TryRead, e => GrenadeExploded?.Invoke(e));
+            // Phase 6: topology/world-item facts apply straight onto the replicas (idempotent -- a delta
+            // snapshot may have carried the same state first), then surface for the game layer.
+            Events.Register<XpAwardedEvent>(ReplicationIds.EventXpAwarded, XpAwardedEvent.TryRead, e => XpAwarded?.Invoke(e));
+            Events.Register<DeployablePlacedEvent>(ReplicationIds.EventDeployablePlaced, DeployablePlacedEvent.TryRead,
+                e => { Deployables.ApplyPlaced(e, Applier.LastAppliedServerTick); DeployablePlaced?.Invoke(e); });
+            Events.Register<DeployableRemovedEvent>(ReplicationIds.EventDeployableRemoved, DeployableRemovedEvent.TryRead,
+                e => { Deployables.ApplyRemoved(e, Applier.LastAppliedServerTick); DeployableRemoved?.Invoke(e); });
+            Events.Register<WireConnectedEvent>(ReplicationIds.EventWireConnected, WireConnectedEvent.TryRead,
+                e => { Deployables.ApplyWireConnected(e, Applier.LastAppliedServerTick); WireConnected?.Invoke(e); });
+            Events.Register<WireRemovedEvent>(ReplicationIds.EventWireRemoved, WireRemovedEvent.TryRead,
+                e => { Deployables.ApplyWireRemoved(e, Applier.LastAppliedServerTick); WireRemoved?.Invoke(e); });
+            Events.Register<DeployableToggledEvent>(ReplicationIds.EventDeployableToggled, DeployableToggledEvent.TryRead,
+                e => { Deployables.ApplyToggled(e, Applier.LastAppliedServerTick); DeployableToggled?.Invoke(e); });
+            Events.Register<WorldItemSpawnedEvent>(ReplicationIds.EventWorldItemSpawned, WorldItemSpawnedEvent.TryRead,
+                e => { WorldItems.ApplySpawned(e, Applier.LastAppliedServerTick); WorldItemSpawned?.Invoke(e); });
+            Events.Register<WorldItemSettledEvent>(ReplicationIds.EventWorldItemSettled, WorldItemSettledEvent.TryRead,
+                e => { WorldItems.ApplySettled(e, Applier.LastAppliedServerTick); WorldItemSettled?.Invoke(e); });
+            Events.Register<WorldItemRemovedEvent>(ReplicationIds.EventWorldItemRemoved, WorldItemRemovedEvent.TryRead,
+                e => { WorldItems.ApplyRemoved(e, Applier.LastAppliedServerTick); WorldItemRemoved?.Invoke(e); });
+            Events.Register<ItemPickupDeniedEvent>(ReplicationIds.EventItemPickupDenied, ItemPickupDeniedEvent.TryRead, e => ItemPickupDenied?.Invoke(e));
+            Events.Register<ConsoleResultEvent>(ReplicationIds.EventConsoleResult, ConsoleResultEvent.TryRead, e => ConsoleResult?.Invoke(e));
+            Events.Register<StorageOpenedEvent>(ReplicationIds.EventStorageOpened, StorageOpenedEvent.TryRead, e => StorageOpened?.Invoke(e));
+            Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
         }
 
         public NetSessionState State => Session.State;
@@ -267,6 +337,61 @@ namespace UnturnedGodot.Net
             if (++_combatSeq == 0) _combatSeq = 1;
             return _combatSeq;
         }
+
+        // ---- Phase 6 transactional commands (all ReliableOrdered -- §2.3). Each returns false when not
+        // connected (nothing sent); results come back as owner-block snapshots and/or events. ----
+
+        bool SendCommand(byte commandId, System.Action<SDG.NetPak.NetPakWriter> write)
+        {
+            if (Session.State != NetSessionState.Connected) return false;
+            Session.SendReliable(NetMessagePak.Pack(commandId, write));
+            return true;
+        }
+
+        public bool SendUpgradeSkill(byte speciality, byte index)
+            => SendCommand(ReplicationIds.CommandUpgradeSkill, new UpgradeSkillCommand { Speciality = speciality, Index = index }.Write);
+
+        public bool SendPlaceDeployable(ushort defId, Vector3 pos, float yawDegrees)
+            => SendCommand(ReplicationIds.CommandPlaceDeployable, new PlaceDeployableCommand { DefId = defId, Pos = pos, YawDegrees = yawDegrees }.Write);
+
+        public bool SendSalvageDeployable(uint netId)
+            => SendCommand(ReplicationIds.CommandSalvageDeployable, new SalvageDeployableCommand { NetId = netId }.Write);
+
+        public bool SendConnectWire(uint srcId, byte srcPort, uint dstId, byte dstPort)
+            => SendCommand(ReplicationIds.CommandConnectWire, new ConnectWireCommand { SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort }.Write);
+
+        public bool SendRemoveWire(uint wireId)
+            => SendCommand(ReplicationIds.CommandRemoveWire, new RemoveWireCommand { WireId = wireId }.Write);
+
+        public bool SendToggleDeployable(uint netId, bool on)
+            => SendCommand(ReplicationIds.CommandToggleDeployable, new ToggleDeployableCommand { NetId = netId, On = on }.Write);
+
+        public bool SendMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
+            => SendCommand(ReplicationIds.CommandMoveItem, new MoveItemCommand { Page0 = page0, X0 = x0, Y0 = y0, Page1 = page1, X1 = x1, Y1 = y1, Rot1 = rot1 }.Write);
+
+        public bool SendDropItem(byte page, byte x, byte y)
+            => SendCommand(ReplicationIds.CommandDropItem, new DropItemCommand { Page = page, X = x, Y = y }.Write);
+
+        public bool SendPickupItem(uint netId)
+            => SendCommand(ReplicationIds.CommandPickupItem, new PickupItemCommand { NetId = netId }.Write);
+
+        public bool SendEquipItem(byte fromPage, byte x, byte y, byte slot)
+            => SendCommand(ReplicationIds.CommandEquipItem, new EquipItemCommand { FromPage = fromPage, X = x, Y = y, Slot = slot }.Write);
+
+        public bool SendCraft(ushort blueprintIndex)
+            => SendCommand(ReplicationIds.CommandCraft, new CraftCommand { BlueprintIndex = blueprintIndex }.Write);
+
+        public bool SendConsume(byte page, byte x, byte y)
+            => SendCommand(ReplicationIds.CommandConsume, new ConsumeCommand { Page = page, X = x, Y = y }.Write);
+
+        public bool SendOpenStorage(uint netId)
+            => SendCommand(ReplicationIds.CommandOpenStorage, new OpenStorageCommand { NetId = netId }.Write);
+
+        public bool SendCloseStorage()
+            => SendCommand(ReplicationIds.CommandCloseStorage, new CloseStorageCommand().Write);
+
+        public bool SendConsole(string text)
+            => SendCommand(ReplicationIds.CommandConsole, new ConsoleCommand { Text = text }.Write);
 
         public void Disconnect() => Session.Disconnect();
     }

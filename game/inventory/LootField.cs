@@ -107,28 +107,54 @@ namespace UnturnedGodot
             return ids[(int)(r1 * ids.Length) % ids.Length];
         }
 
+        // Proximity is ANY player's, via PlayerRegistry (MP_PLAN §3.3: the rolls are server-side and must
+        // key on every avatar, not the local one). Single-player has exactly one registry entry, so this
+        // resolves to the identical behavior Player-keyed streaming had. The Player field stays as the
+        // fallback for worlds that pass a bare camera target without a registered PlayerController.
+        readonly List<Vector3> _anchors = new();
+
+        List<Vector3> GatherAnchors()
+        {
+            _anchors.Clear();
+            foreach (var p in PlayerRegistry.All)
+                if (IsInstanceValid(p)) _anchors.Add(p.GlobalPosition);
+            if (_anchors.Count == 0 && Player != null && IsInstanceValid(Player)) _anchors.Add(Player.GlobalPosition);
+            return _anchors;
+        }
+
+        static bool WithinAnyXZ(List<Vector3> anchors, float x, float z, float r)
+        {
+            float r2 = r * r;
+            foreach (var a in anchors)
+            {
+                float dx = x - a.X, dz = z - a.Z;
+                if (dx * dx + dz * dz <= r2) return true;
+            }
+            return false;
+        }
+
         public override void _Process(double delta)
         {
             _acc += delta;
-            if (_acc < 0.35 || Player == null || Terr == null) return;
+            if (_acc < 0.35 || Terr == null) return;
+            var anchors = GatherAnchors();
+            if (anchors.Count == 0) return;
             _acc = 0;
-            var pp = Player.GlobalPosition;
 
-            var drop = new List<int>();                             // detect pickups + despawn far
+            var drop = new List<int>();                             // detect pickups + despawn far (from ALL players)
             foreach (var kv in _live)
             {
                 if (!IsInstanceValid(kv.Value)) { _taken.Add(kv.Key); drop.Add(kv.Key); continue; }
-                float dx = kv.Value.GlobalPosition.X - pp.X, dz = kv.Value.GlobalPosition.Z - pp.Z;
-                if (dx * dx + dz * dz > DespawnR * DespawnR) { kv.Value.QueueFree(); drop.Add(kv.Key); }
+                var ip = kv.Value.GlobalPosition;
+                if (!WithinAnyXZ(anchors, ip.X, ip.Z, DespawnR)) { kv.Value.QueueFree(); drop.Add(kv.Key); }
             }
             foreach (var k in drop) _live.Remove(k);
 
-            for (int idx = 0; idx < _pts.Count; idx++)               // spawn near
+            for (int idx = 0; idx < _pts.Count; idx++)               // spawn near ANY player
             {
                 if (_live.ContainsKey(idx) || _taken.Contains(idx)) continue;
                 var p = _pts[idx];
-                float dx = p.X - pp.X, dz = p.Z - pp.Z;
-                if (dx * dx + dz * dz > SpawnR * SpawnR) continue;
+                if (!WithinAnyXZ(anchors, p.X, p.Z, SpawnR)) continue;
                 if (_live.Count >= MaxLive) break;
                 int id = Roll(idx, p.Type);
                 var item = id >= 0 ? Assets.makeLoot((ushort)id) : null;   // magazines spawn full (master)

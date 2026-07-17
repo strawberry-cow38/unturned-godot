@@ -20,6 +20,7 @@ namespace UnturnedGodot
 
         public NetWorldServer Server { get; private set; }
         public ZombieNetSync ZombieSync { get; private set; }
+        public WorldItemNetSync WorldItemSync { get; private set; }
 
         long _lastStatusTick;
 
@@ -30,6 +31,10 @@ namespace UnturnedGodot
                 contentHash: NetContent.Hash);   // §2.2: joiners with a different content identity are rejected
             Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
             Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
+            // Phase 6: the transactional slice's def tables -- the same DeployableDef/blueprint data every
+            // client build carries (content-hash-matched), feeding placement validation + the server solve.
+            DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
+            Server.Transactions.Blueprints = BlueprintRegistry.All;
             // Phase 5 combat hooks: server bullets/blasts stop at the world's real geometry, grenades
             // bounce on real ground height. Both are optional seams on the engine-free ServerCombat.
             Server.Combat.WorldRay = GodotWorldRay;
@@ -39,6 +44,9 @@ namespace UnturnedGodot
             // zombie brains -> ZombieReplication at 12.5 Hz (§3.5), BEFORE the snapshot send
             ZombieSync = new ZombieNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ZombieSync.Tick(), "net.zombies.publish"));
+            // world-item nodes (LootField streaming etc.) -> WorldItemReplication at 5 Hz (§3.3)
+            WorldItemSync = new WorldItemNetSync(Server, this);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }
 

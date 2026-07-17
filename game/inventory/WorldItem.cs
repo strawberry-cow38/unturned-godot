@@ -122,7 +122,7 @@ namespace UnturnedGodot
             _excludeSelf = new Godot.Collections.Array<Rid> { GetRid() };
             var asset = Item?.GetAsset();
             string nm;
-            if (asset != null) { _rar = ItemAsset.RarityColorUI(asset.rarity); nm = asset.itemName; }
+            if (asset != null) { _rar = ItemTool.RarityColorUI(asset.rarity); nm = asset.itemName; }
             else if (FallbackColor.HasValue) { _rar = FallbackColor.Value; nm = FallbackName ?? "?"; }
             else { _rar = Colors.White; nm = "?"; }
 

@@ -61,16 +61,8 @@ namespace SDG.Unturned
         public int stackSize = 1;   // max per-slot stack (Unturned items = 1; ammo like shotgun shells stack, e.g. 32)
         public int pellets = 1;     // ItemMagazineAsset.Pellets: rays fired per shot from THIS ammo (12ga shells = 6, 20ga = 8; slugs = 1)
 
-        // ItemTool.getRarityColorUI: the exact per-rarity UI colours
-        public static Godot.Color RarityColorUI(EItemRarity r) => r switch
-        {
-            EItemRarity.UNCOMMON  => new Godot.Color(0.12156863f, 0.5294118f, 0.12156863f),
-            EItemRarity.RARE      => new Godot.Color(0.29411766f, 20f / 51f, 50f / 51f),
-            EItemRarity.EPIC      => new Godot.Color(0.5882353f, 0.29411766f, 50f / 51f),
-            EItemRarity.LEGENDARY => new Godot.Color(40f / 51f, 10f / 51f, 50f / 51f),
-            EItemRarity.MYTHICAL  => new Godot.Color(50f / 51f, 10f / 51f, 5f / 51f),
-            _ => Godot.Colors.White,
-        };
+        // (ItemTool.getRarityColorUI lives game-side as ItemTool.RarityColorUI -- it returns a Godot.Color,
+        // and this file moved engine-free to core for the MP_PLAN §3.3 inventory replication.)
 
         // parse the grid size the way ItemAsset.cs does: Size_X/Size_Y default 0 then clamped to >=1
         public static byte ParseSize(IDatDictionary d, string key)

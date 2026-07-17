@@ -17,6 +17,10 @@ namespace UnturnedGodot.Net
         public const byte SystemPlayerCombat = 2;   // Phase 5: alive/coarse-health/kills/deaths (CombatReplication.cs)
         public const byte SystemZombies = 3;        // Phase 5: transform + anim byte + speciality @12.5 Hz (ZombieReplication.cs)
         public const byte SystemProjectiles = 4;    // Phase 5: server-spawned grenades in flight
+        public const byte SystemSkills = 5;         // Phase 6: owner-only experience + level bytes (SkillsReplication.cs, §3.2)
+        public const byte SystemDeployables = 6;    // Phase 6: the power-graph inputs -- entities/wires/scalars (DeployableReplication.cs, §3.1)
+        public const byte SystemInventory = 7;      // Phase 6: owner-only full-grid block (InventoryReplication.cs, §3.3)
+        public const byte SystemWorldItems = 8;     // Phase 6: dropped/loot items as NetId entities (WorldItemReplication.cs, §3.3)
 
         // CommandRegistry id space (0 = snapshot ack, reserved)
         public const byte CommandMoveInput = 1;
@@ -24,6 +28,21 @@ namespace UnturnedGodot.Net
         public const byte CommandMelee = 3;
         public const byte CommandGrenade = 4;
         public const byte CommandReload = 5;
+        public const byte CommandUpgradeSkill = 6;     // Phase 6 (§3.2)
+        public const byte CommandPlaceDeployable = 7;  // Phase 6 (§3.1)
+        public const byte CommandSalvageDeployable = 8;
+        public const byte CommandConnectWire = 9;
+        public const byte CommandRemoveWire = 10;
+        public const byte CommandToggleDeployable = 11;
+        public const byte CommandMoveItem = 12;        // Phase 6 (§3.3)
+        public const byte CommandDropItem = 13;
+        public const byte CommandPickupItem = 14;
+        public const byte CommandEquipItem = 15;
+        public const byte CommandCraft = 16;
+        public const byte CommandConsume = 17;
+        public const byte CommandOpenStorage = 18;
+        public const byte CommandCloseStorage = 19;
+        public const byte CommandConsole = 20;         // Phase 6: DevConsole mutations, server-gated (§2.3 "including DevConsole")
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -35,6 +54,19 @@ namespace UnturnedGodot.Net
         public const byte EventZombieDied = 7;
         public const byte EventAttackSwing = 8;
         public const byte EventGrenadeExploded = 9;
+        public const byte EventXpAwarded = 10;         // Phase 6 (§3.2, to the owner)
+        public const byte EventDeployablePlaced = 11;  // Phase 6 (§3.1, topology = reliable facts)
+        public const byte EventDeployableRemoved = 12;
+        public const byte EventWireConnected = 13;
+        public const byte EventWireRemoved = 14;
+        public const byte EventDeployableToggled = 15;
+        public const byte EventWorldItemSpawned = 16;  // Phase 6 (§3.3)
+        public const byte EventWorldItemSettled = 17;
+        public const byte EventWorldItemRemoved = 18;
+        public const byte EventItemPickupDenied = 19;  // to the requester: pickup validated but the grid was full
+        public const byte EventConsoleResult = 20;     // to the sender: the server's console verdict line
+        public const byte EventStorageOpened = 21;     // to the opener (open/close arbitration, §3.7)
+        public const byte EventStorageClosed = 22;
     }
 
     /// <summary>

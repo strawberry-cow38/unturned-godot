@@ -440,9 +440,8 @@ namespace UnturnedGodot
             else if (mode == WorldMode.Dedicated)
             {
                 // Server world content (MP_PLAN §2.1 fork A(b)): everything with collision the sim needs --
-                // roads + tree trunks -- but no player/camera/HUD/viewmodel, and no player-keyed streamers
-                // (ZombieField/LootField/AnimalField key spawning on the LOCAL player; they join the server
-                // world in their own phases, 5/6, once "any player's proximity" replaces PlayerController).
+                // roads + tree trunks -- but no player/camera/HUD/viewmodel. ZombieField/AnimalField still
+                // key spawning on the LOCAL PlayerController and stay out until their streamers generalize.
                 // FoliageField (visual-only grass, 612K instances) is skipped as dedicated fx hygiene (§5).
                 {
                     await Phase("Roads");
@@ -455,6 +454,17 @@ namespace UnturnedGodot
                     var rsf = new ResourceField();
                     root.AddChild(rsf);
                     rsf.LoadResources(activeHoliday);
+                }
+                // LOOT (Phase 6, §3.3): the rolls run server-side now that LootField keys spawn/despawn on
+                // ANY player's proximity via PlayerRegistry (no local player exists here). The catalog must
+                // load first -- nothing else registers items on a headless boot. WorldItemNetSync
+                // (DedicatedServer) publishes the streamed nodes as replicated world-item entities.
+                {
+                    await Phase("Loot");
+                    SDG.Unturned.ItemCatalog.RegisterAll();
+                    var loot = new LootField { Terr = terr };
+                    loot.LoadFromPei(mapRoot);
+                    root.AddChild(loot);
                 }
             }
             else

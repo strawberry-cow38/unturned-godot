@@ -26,6 +26,11 @@ namespace UnturnedGodot
         {
             _client = new NetWorldClient(new UdpClientTransport(Host, Port), "player", contentHash: NetContent.Hash);
             _client.Connect();
+            // Phase 6: mirror the replicated deployable graph as real nodes (the local PowerSolver pass
+            // lights the lamps, §3.1), and gate console cheats through the server (§2.3).
+            DeployableNetSchema.RegisterAll(_client.Deployables.Schema);
+            AddChild(new DeployableReplicaView { Client = _client });
+            DevConsole.RemoteClient = _client;
 
             var layer = new CanvasLayer();
             _hud = new Label { Position = new Vector2(24, 22) };
@@ -78,6 +83,10 @@ namespace UnturnedGodot
             _hud.Text = $"MULTIPLAYER   ·   {_client.State}   ·   players {_client.Players.Count}   ·   applied tick {_client.Applier.LastAppliedServerTick}";
         }
 
-        public override void _ExitTree() => _client?.Disconnect();
+        public override void _ExitTree()
+        {
+            if (DevConsole.RemoteClient == _client) DevConsole.RemoteClient = null;
+            _client?.Disconnect();
+        }
     }
 }

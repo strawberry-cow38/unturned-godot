@@ -11,6 +11,9 @@
   <ItemGroup>
     <!-- UnityEngine.Vector2/3 shims for the movement model (same types the ported game code uses). -->
     <ProjectReference Include="..\SDG.Compat\SDG.Compat.csproj" />
+    <!-- DatParser/IDatDictionary for BlueprintDef + ItemAsset.ParseSize (the inventory model layer moved
+         here engine-free from game/inventory for MP_PLAN 3.3: the grid logic IS the server validator). -->
+    <ProjectReference Include="..\UnturnedDat\UnturnedDat.csproj" />
   </ItemGroup>
 
 </Project>

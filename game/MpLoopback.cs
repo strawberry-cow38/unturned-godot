@@ -24,6 +24,7 @@ namespace UnturnedGodot
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
         public ZombieNetSync ZombieSync { get; private set; }
+        public WorldItemNetSync WorldItemSync { get; private set; }
 
         public override void _Ready()
         {
@@ -32,6 +33,11 @@ namespace UnturnedGodot
             Client = new NetWorldClient(new MemClientTransport(Net), "local", contentHash: NetContent.Hash);
             Client.Connect();
             Server.Combat.WorldRay = GodotWorldRay;   // Phase 5: remote joiners' server bullets stop at real world geometry
+            // Phase 6 def tables (see DedicatedServer): remote joiners' place/wire/craft commands validate
+            // against these; the LOCAL player keeps the direct SP paths (the listen-server IS the authority).
+            DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
+            DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
+            Server.Transactions.Blueprints = BlueprintRegistry.All;
 
             Remotes = new RemotePlayers { Client = Client };
             AddChild(Remotes);
@@ -43,6 +49,10 @@ namespace UnturnedGodot
             // (no ZombiePuppets here -- puppets are for worlds that don't own the brains).
             ZombieSync = new ZombieNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ZombieSync.Tick(), "net.zombies.publish"));
+            // Phase 6: the loopback world's dropped/loot items publish as entities too (§3.3) -- every SP
+            // session soaks the world-item wire the same way it soaks the zombie wire.
+            WorldItemSync = new WorldItemNetSync(Server, this);
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }

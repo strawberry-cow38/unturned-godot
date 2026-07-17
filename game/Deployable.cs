@@ -178,6 +178,10 @@ namespace UnturnedGodot
         // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
         public void TogglePower() { if (CanTogglePower) { _powered = !_powered; PowerNet.MarkDirty(); } }   // IsPowered flipped -> the net needs a recompute
 
+        // MP replica apply (DeployableReplicaView): the server already validated this toggle, so it lands
+        // without the local CanTogglePower interaction gating. The warmup/cooldown ramp still runs locally.
+        public void NetSetPowered(bool on) { if (_powered != on) { _powered = on; PowerNet.MarkDirty(); } }
+
         void Explode()   // src explode: blast nearby, then either shatter into pieces (spotlight) or become a burning salvageable wreck (generator)
         {
             _exploded = true;

@@ -12,6 +12,16 @@ namespace UnturnedGodot
     public partial class DevConsole : CanvasLayer
     {
         public PlayerController Player;
+
+        // MP (Phase 6, §2.3 "all state mutation goes through commands -- including DevConsole"): when this
+        // process is a REMOTE client of some server, the state-mutating cheat verbs are sent as a
+        // ConsoleCommand and the SERVER validates + applies them against its authoritative state; the
+        // ConsoleResult event echoes the verdict back into this log. SP and the listen-server host leave it
+        // null -- the local process IS the authority there, so the direct paths below stay byte-identical.
+        public static UnturnedGodot.Net.NetWorldClient RemoteClient;
+        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill" };
+        bool _resultHooked;
+
         LineEdit _input;
         Label _log;
         static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival" };
@@ -71,6 +81,18 @@ namespace UnturnedGodot
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
             if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
+
+            if (RemoteClient != null && System.Array.IndexOf(ServerGatedVerbs, verb) >= 0)
+            {
+                if (!_resultHooked)
+                {
+                    _resultHooked = true;
+                    RemoteClient.ConsoleResult += e => { if (IsInstanceValid(this)) Log(e.Text); };
+                }
+                Log(RemoteClient.SendConsole(cmd) ? "-> sent to server" : "not connected");
+                return;
+            }
+
             Vector3 at = Player?.LookPoint() ?? Vector3.Zero;
 
             if (verb == "give")

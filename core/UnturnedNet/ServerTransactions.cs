@@ -1,0 +1,414 @@
+using System;
+using System.Collections.Generic;
+using SDG.Unturned;
+using UnityEngine;
+using UnturnedGodot;   // Crafting + BlueprintDef (engine-free, core/UnturnedSim)
+
+namespace UnturnedGodot.Net
+{
+    /// <summary>Counters for the Phase 6 grid/craft paths whose feasibility check IS the mutation (TryDrag,
+    /// DoCraft): they can't be split into the registry's validate-then-apply, so rejections are counted
+    /// here instead of CommandRegistryDiagnostics.ValidationRejected. Tests assert on these.</summary>
+    public sealed class ServerTransactionsDiagnostics
+    {
+        public long GridMovesApplied;
+        public long GridMovesRejected;      // the server grid said no (illegal cell/overlap/out-of-bounds)
+        public long CraftsApplied;
+        public long CraftsRejected;         // missing supplies / skill gate / station gate / non-Craft op
+        public long ConsumesApplied;
+        public long ConsumesRejected;
+        public long PickupsDenied;          // legal pickup, full grid -> ItemPickupDenied went back
+        public long ConsoleApplied;
+        public long ConsoleRejected;        // unknown verb / cheats disabled / bad args
+    }
+
+    /// <summary>
+    /// The Phase 6 transactional slice, server side (MP_PLAN §4 Phase 6): registers every §3.1/§3.2/§3.3
+    /// command on the ONE validation choke point (§2.3 -- sender identity always from the connection) and
+    /// coordinates the cross-system effects: placement consumes the deployable item, salvage drops scrap
+    /// world items, pickup/drop move items between a grid and the world, consume heals the combat state,
+    /// and the DevConsole's cheats run HERE, against authoritative state, or not at all.
+    /// </summary>
+    public sealed class ServerTransactions
+    {
+        /// <summary>Server-side pickup reach: SP picks up by eye-ray focus at arm's length; the server
+        /// bounds it generously (grid-quantized feet positions, no eye trace).</summary>
+        public const float PickupReach = 6f;
+
+        /// <summary>Dev/cheat console verbs (give/xp/skill) apply only while true -- a public dedicated
+        /// server would flip this off (admin gating is deferred policy, the choke point is the mechanism).</summary>
+        public bool AllowCheats = true;
+
+        /// <summary>The blueprint catalog the Craft command indexes into. The HOST supplies it (game:
+        /// BlueprintRegistry.All; tests: fixtures); both sides must load the same list -- guaranteed by the
+        /// same content-hash handshake that guarantees item defs match.</summary>
+        public IReadOnlyList<BlueprintDef> Blueprints = Array.Empty<BlueprintDef>();
+
+        public ServerTransactionsDiagnostics Diag { get; } = new ServerTransactionsDiagnostics();
+
+        readonly PlayerReplication _players;
+        readonly PlayerCombatReplication _combat;
+        readonly SkillsReplication _skills;
+        readonly InventoryReplication _inventories;
+        readonly WorldItemReplication _worldItems;
+        readonly DeployableReplication _deployables;
+        readonly NetIdMinter _ids;
+        readonly Func<long> _tick;
+        readonly Action<byte[]> _broadcast;
+        readonly Action<ushort, byte[]> _sendTo;
+
+        public ServerTransactions(PlayerReplication players, PlayerCombatReplication combat,
+                                  SkillsReplication skills, InventoryReplication inventories,
+                                  WorldItemReplication worldItems, DeployableReplication deployables,
+                                  NetIdMinter ids, Func<long> tick,
+                                  Action<byte[]> broadcast, Action<ushort, byte[]> sendTo)
+        {
+            _players = players; _combat = combat;
+            _skills = skills; _inventories = inventories; _worldItems = worldItems; _deployables = deployables;
+            _ids = ids; _tick = tick; _broadcast = broadcast; _sendTo = sendTo;
+        }
+
+        public void Register(CommandRegistry commands)
+        {
+            commands.Register<UpgradeSkillCommand>(ReplicationIds.CommandUpgradeSkill, UpgradeSkillCommand.TryRead,
+                (sender, cmd) => _skills.ServerTryUpgrade(sender, cmd.Speciality, cmd.Index, _tick()),
+                validate: (sender, cmd) => _skills.TryGet(sender, out _) && cmd.Speciality < PlayerSkills.SPECIALITIES);
+
+            commands.Register<PlaceDeployableCommand>(ReplicationIds.CommandPlaceDeployable, PlaceDeployableCommand.TryRead,
+                OnPlaceDeployable,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _deployables.CanPlace(cmd.DefId, cmd.Pos, pos)
+                                        && SenderInventory(sender)?.getItemCount(cmd.DefId) > 0);   // placing spends the held item
+
+            commands.Register<SalvageDeployableCommand>(ReplicationIds.CommandSalvageDeployable, SalvageDeployableCommand.TryRead,
+                OnSalvageDeployable,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _deployables.TryGet(cmd.NetId, out var e)
+                                        && e.OnFire   // only a dead/burning wreck tears down (SP: blowtorch a cooled wreck)
+                                        && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
+
+            commands.Register<ConnectWireCommand>(ReplicationIds.CommandConnectWire, ConnectWireCommand.TryRead,
+                OnConnectWire,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _deployables.CanConnectWire(cmd.SrcId, cmd.SrcPort, cmd.DstId, cmd.DstPort, pos));
+
+            commands.Register<RemoveWireCommand>(ReplicationIds.CommandRemoveWire, RemoveWireCommand.TryRead,
+                OnRemoveWire,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _deployables.TryGetWire(cmd.WireId, out var w)
+                                        && _deployables.TryGet(w.SrcId, out var src)
+                                        && (src.Pos - pos).magnitude <= DeployableReplication.WireReach);
+
+            commands.Register<ToggleDeployableCommand>(ReplicationIds.CommandToggleDeployable, ToggleDeployableCommand.TryRead,
+                OnToggleDeployable,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _deployables.CanToggle(cmd.NetId, out var e)
+                                        && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
+
+            commands.Register<MoveItemCommand>(ReplicationIds.CommandMoveItem, MoveItemCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    // TryDrag both validates (checkSpaceDrag/checkSpaceSwap -- the ported cell math) and
+                    // applies; a false mutates nothing (§3.3 "the grid logic IS the validator").
+                    bool ok = SenderInventory(sender)?.TryDrag(cmd.Page0, cmd.X0, cmd.Y0, cmd.Page1, cmd.X1, cmd.Y1, cmd.Rot1) == true;
+                    if (ok) Diag.GridMovesApplied++; else Diag.GridMovesRejected++;
+                },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _));
+
+            commands.Register<DropItemCommand>(ReplicationIds.CommandDropItem, DropItemCommand.TryRead,
+                OnDropItem,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<PickupItemCommand>(ReplicationIds.CommandPickupItem, PickupItemCommand.TryRead,
+                OnPickupItem,
+                validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && _inventories.TryGet(sender, out _)
+                                        && _worldItems.TryGet(cmd.NetId, out var e)
+                                        && (e.Pos - pos).magnitude <= PickupReach);
+
+            commands.Register<EquipItemCommand>(ReplicationIds.CommandEquipItem, EquipItemCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    bool ok = SenderInventory(sender)?.TryDrag(cmd.FromPage, cmd.X, cmd.Y, cmd.Slot, 0, 0, 0) == true;
+                    if (ok) Diag.GridMovesApplied++; else Diag.GridMovesRejected++;
+                },
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Slot < PlayerInventory.SLOTS);
+
+            commands.Register<CraftCommand>(ReplicationIds.CommandCraft, CraftCommand.TryRead,
+                OnCraft,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.BlueprintIndex < Blueprints.Count);
+
+            commands.Register<ConsumeCommand>(ReplicationIds.CommandConsume, ConsumeCommand.TryRead,
+                OnConsume,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _) && cmd.Page < PlayerInventory.PAGES);
+
+            commands.Register<OpenStorageCommand>(ReplicationIds.CommandOpenStorage, OpenStorageCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    if (!TryGetSenderPos(sender, out var pos)) return;
+                    if (_inventories.ServerOpenStorage(sender, cmd.NetId, pos, _tick())
+                        && _inventories.TryGetCrate(cmd.NetId, out var crate))
+                    {
+                        var evt = new StorageOpenedEvent { NetId = cmd.NetId, Width = crate.Width, Height = crate.Height };
+                        _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageOpened, evt.Write));
+                    }
+                });
+
+            commands.Register<CloseStorageCommand>(ReplicationIds.CommandCloseStorage, CloseStorageCommand.TryRead,
+                (sender, cmd) =>
+                {
+                    uint crateId = _inventories.TryGet(sender, out var e) ? e.OpenCrateId : 0;
+                    if (_inventories.ServerCloseStorage(sender, _tick()))
+                    {
+                        var evt = new StorageClosedEvent { NetId = crateId };
+                        _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventStorageClosed, evt.Write));
+                    }
+                });
+
+            commands.Register<ConsoleCommand>(ReplicationIds.CommandConsole, ConsoleCommand.TryRead, OnConsole,
+                validate: (sender, cmd) => cmd.Text != null && cmd.Text.Length <= 128);
+        }
+
+        // ---- cross-system handlers ----
+
+        void OnPlaceDeployable(ushort sender, PlaceDeployableCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            inv.removeItemAmount(cmd.DefId, 1);   // the deployable item is spent (SP: planting consumes it)
+            var e = _deployables.ServerPlace(_ids.Mint(), cmd.DefId, sender, cmd.Pos, cmd.YawDegrees, _tick());
+            if (e == null) return;
+            var evt = new DeployablePlacedEvent { NetId = e.NetIdValue, DefId = e.DefId, OwnerPlayerId = sender, Pos = e.Pos, YawDegrees = e.YawDegrees };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployablePlaced, evt.Write));
+        }
+
+        void OnSalvageDeployable(ushort sender, SalvageDeployableCommand cmd)
+        {
+            _deployables.TryGet(cmd.NetId, out var e);
+            _deployables.Schema.TryGet(e.DefId, out var def);
+            var cascaded = _deployables.ServerRemove(cmd.NetId, _tick());
+            var evt = new DeployableRemovedEvent { NetId = cmd.NetId };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableRemoved, evt.Write));
+            foreach (uint wid in cascaded)
+            {
+                var wevt = new WireRemovedEvent { WireId = wid };
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventWireRemoved, wevt.Write));
+            }
+            // the wreck breaks into scrap on the ground (SP Deployable.Salvage: 2x Metal Scrap)
+            if (def != null && def.SalvageItemId != 0)
+                for (int i = 0; i < def.SalvageCount; i++)
+                    SpawnWorldItem(new Item(def.SalvageItemId), e.Pos + new Vector3((i - 0.5f) * 0.6f, 0.5f, 0f), Vector3.zero);
+        }
+
+        void OnConnectWire(ushort sender, ConnectWireCommand cmd)
+        {
+            var w = _deployables.ServerConnectWire(_ids.Mint(), cmd.SrcId, cmd.SrcPort, cmd.DstId, cmd.DstPort, _tick());
+            var evt = new WireConnectedEvent { WireId = w.NetIdValue, SrcId = w.SrcId, SrcPort = w.SrcPort, DstId = w.DstId, DstPort = w.DstPort };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventWireConnected, evt.Write));
+        }
+
+        void OnRemoveWire(ushort sender, RemoveWireCommand cmd)
+        {
+            if (!_deployables.ServerRemoveWire(cmd.WireId, _tick())) return;
+            var evt = new WireRemovedEvent { WireId = cmd.WireId };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventWireRemoved, evt.Write));
+        }
+
+        void OnToggleDeployable(ushort sender, ToggleDeployableCommand cmd)
+        {
+            if (!_deployables.ServerToggle(cmd.NetId, cmd.On, _tick())) return;
+            var evt = new DeployableToggledEvent { NetId = cmd.NetId, On = cmd.On };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableToggled, evt.Write));
+        }
+
+        void OnDropItem(ushort sender, DropItemCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv.items[cmd.Page];
+            byte index = page.getIndex(cmd.X, cmd.Y);
+            if (index == byte.MaxValue) return;
+            var jar = page.getItem(index);
+            if (jar?.item == null) return;
+            page.removeItem(index);
+
+            // drop it just ahead of the avatar with a small toss -- clients run the cosmetic tumble (§3.3)
+            _players.TryGetByOwner(sender, out var p);
+            float yawRad = (p?.YawDegrees ?? 0f) * (Mathf.PI / 180f);
+            var fwd = new Vector3(Mathf.Sin(yawRad), 0f, Mathf.Cos(yawRad));
+            var origin = (p?.Pos ?? Vector3.zero) + fwd * 1.2f + new Vector3(0f, 1.0f, 0f);
+            SpawnWorldItem(jar.item, origin, fwd * 2.5f + new Vector3(0f, 2f, 0f));
+        }
+
+        void OnPickupItem(ushort sender, PickupItemCommand cmd)
+        {
+            _worldItems.TryGet(cmd.NetId, out var e);
+            var inv = SenderInventory(sender);
+            if (inv.tryAddItem(e.ServerItem))
+            {
+                RemoveWorldItem(cmd.NetId);
+            }
+            else
+            {
+                // legal but no room. tryAddItem may have partially merged a stack (SP TryPickup behaves the
+                // same) -- publish the reduced amount so replicas agree with the server's remainder.
+                if (e.ServerItem != null && e.Amount != e.ServerItem.amount)
+                {
+                    e.Amount = e.ServerItem.amount;
+                    e.LastChangedTick = _tick();
+                }
+                Diag.PickupsDenied++;
+                var evt = new ItemPickupDeniedEvent { NetId = cmd.NetId };
+                _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventItemPickupDenied, evt.Write));
+            }
+        }
+
+        void OnCraft(ushort sender, CraftCommand cmd)
+        {
+            var bp = Blueprints[cmd.BlueprintIndex];
+            // station proximity and target-item operations (RepairTargetItem/Ammo/Salvage) are deferred --
+            // reject rather than mis-apply (the SP crafting UI drives those flows locally).
+            if (bp.RequiresStation || bp.Operation != "Craft") { Diag.CraftsRejected++; return; }
+            _skills.TryGet(sender, out var skillsEntry);
+            if (!Crafting.MeetsSkill(bp, skillsEntry?.Skills)) { Diag.CraftsRejected++; return; }
+            var adapter = new Crafting.PlayerInvAdapter(SenderInventory(sender));
+            if (Crafting.DoCraft(bp, adapter)) Diag.CraftsApplied++; else Diag.CraftsRejected++;
+        }
+
+        void OnConsume(ushort sender, ConsumeCommand cmd)
+        {
+            var inv = SenderInventory(sender);
+            var page = inv.items[cmd.Page];
+            byte index = page.getIndex(cmd.X, cmd.Y);
+            var jar = index == byte.MaxValue ? null : page.getItem(index);
+            var asset = jar?.item != null ? Assets.find(jar.item.id) : null;
+            if (asset == null || !asset.IsConsumable) { Diag.ConsumesRejected++; return; }
+            inv.removeItemAmount(asset.id, 1);   // the SP consume path removes by id (PlayerController.TickConsume)
+            Diag.ConsumesApplied++;
+
+            // vitals: the server-side combat state carries health; food/water/stamina/infection have no
+            // server model yet (Phase 5 replicated coarse health only) -- deferred with the vitals split.
+            if (asset.useHealth > 0 && _combat.TryGet(sender, out var ce) && ce.Alive)
+            {
+                ce.HealthExact = Mathf.Min(100f, ce.HealthExact + asset.useHealth);
+                ce.Health = (byte)Mathf.RoundToInt(ce.HealthExact);
+                _combat.MarkDirty(ce, _tick());
+            }
+        }
+
+        void OnConsole(ushort sender, ConsoleCommand cmd)
+        {
+            string reply = RunConsole(sender, cmd.Text ?? "");
+            var evt = new ConsoleResultEvent { Text = reply };
+            _sendTo(sender, NetMessagePak.Pack(ReplicationIds.EventConsoleResult, evt.Write));
+        }
+
+        /// <summary>The server-gated DevConsole verbs (§2.3: "one server-side validation choke point. No
+        /// client ever writes authoritative state directly" -- including cheats). Returns the result line.</summary>
+        public string RunConsole(ushort sender, string text)
+        {
+            var parts = text.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) { Diag.ConsoleRejected++; return "usage: give <item> | xp <n> | skill <name> [level]"; }
+            string verb = parts[0].ToLowerInvariant();
+            string arg = parts.Length > 1 ? parts[1].Trim() : "";
+            if (!AllowCheats) { Diag.ConsoleRejected++; return "console commands are disabled on this server"; }
+
+            if (verb == "give" && arg.Length > 0)
+            {
+                var asset = ResolveItem(arg);
+                if (asset == null) { Diag.ConsoleRejected++; return $"no item matching '{arg}'"; }
+                var item = Assets.makeLoot(asset.id);
+                var inv = SenderInventory(sender);
+                if (inv == null) { Diag.ConsoleRejected++; return "no inventory"; }
+                Diag.ConsoleApplied++;
+                if (inv.tryAddItem(item)) return $"gave {asset.itemName} (#{asset.id}) -> bag";
+                _players.TryGetByOwner(sender, out var p);
+                SpawnWorldItem(item, (p?.Pos ?? Vector3.zero) + new Vector3(0f, 2f, 0f), Vector3.zero);
+                return $"gave {asset.itemName} (#{asset.id}) -> dropped at your feet";
+            }
+            if (verb == "xp" && uint.TryParse(arg.Split(' ')[0], out uint amount))
+            {
+                if (!_skills.TryGet(sender, out _)) { Diag.ConsoleRejected++; return "no skills"; }
+                Diag.ConsoleApplied++;
+                uint total = AwardXp(sender, amount);
+                return $"+{amount} XP (now {total})";
+            }
+            if (verb == "skill" && arg.Length > 0)
+            {
+                var pp = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                int target = pp.Length > 1 && int.TryParse(pp[1], out int lv) ? lv : int.MaxValue;   // no level = max is SP's +1; server default = explicit
+                if (target == int.MaxValue && _skills.TryGet(sender, out var se) && se.Skills.TryFind(pp[0], out var sk, out _))
+                    target = sk.level + 1;   // bare `skill <name>` bumps one level, like the SP console
+                if (!_skills.ServerSetSkillLevel(sender, pp[0], target, _tick(), out string label, out byte applied))
+                { Diag.ConsoleRejected++; return $"no skill '{pp[0]}'"; }
+                Diag.ConsoleApplied++;
+                return $"{label} skill -> level {applied}";
+            }
+            Diag.ConsoleRejected++;
+            return $"unknown command '{verb}' -- give / xp / skill";
+        }
+
+        /// <summary>Server-computed XP award (the §3.2 hook: kills/harvests/crafts/console feed this).
+        /// Fires the owner's XpAwarded HUD event and returns the new total.</summary>
+        public uint AwardXp(ushort playerId, uint amount)
+        {
+            uint total = _skills.ServerAward(playerId, amount, _tick());
+            var evt = new XpAwardedEvent { Amount = amount, TotalExperience = total };
+            _sendTo(playerId, NetMessagePak.Pack(ReplicationIds.EventXpAwarded, evt.Write));
+            return total;
+        }
+
+        /// <summary>Server-spawned world item + its broadcast fact (drop/salvage/loot all funnel here).</summary>
+        public WorldItemReplication.WorldItemEntity SpawnWorldItem(Item item, Vector3 pos, Vector3 vel)
+        {
+            var e = _worldItems.ServerSpawn(_ids.Mint(), item, pos, _tick());
+            var evt = new WorldItemSpawnedEvent { NetId = e.NetIdValue, ItemId = e.ItemId, Amount = e.Amount, Quality = e.Quality, Pos = e.Pos, Vel = vel };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventWorldItemSpawned, evt.Write));
+            return e;
+        }
+
+        /// <summary>Server-side world-item removal + its broadcast fact (pickup, despawn, node teardown).
+        /// Idempotent -- false if the entity was already gone.</summary>
+        public bool RemoveWorldItem(uint netId)
+        {
+            if (!_worldItems.ServerRemove(netId, _tick())) return false;
+            var evt = new WorldItemRemovedEvent { NetId = netId };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventWorldItemRemoved, evt.Write));
+            return true;
+        }
+
+        /// <summary>The settled-transform fact (§3.3): the server's physics froze the item here.</summary>
+        public void SettleWorldItem(uint netId, Vector3 pos)
+        {
+            if (!_worldItems.TryGet(netId, out var e) || e.Settled) return;
+            _worldItems.ServerSettle(netId, pos, _tick());
+            var evt = new WorldItemSettledEvent { NetId = netId, Pos = e.Pos };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventWorldItemSettled, evt.Write));
+        }
+
+        // mirror of the SP DevConsole item resolution: numeric id, exact name, then shortest prefix
+        static ItemAsset ResolveItem(string arg)
+        {
+            if (ushort.TryParse(arg, out ushort id)) return Assets.find(id);
+            string squashed = arg.Replace(" ", "");
+            ItemAsset best = null;
+            foreach (var a in Assets.all())
+            {
+                if (string.IsNullOrEmpty(a.itemName)) continue;
+                if (string.Equals(a.itemName, arg, StringComparison.OrdinalIgnoreCase)) return a;
+                if (a.itemName.Replace(" ", "").StartsWith(squashed, StringComparison.OrdinalIgnoreCase)
+                    && (best == null || a.itemName.Length < best.itemName.Length))
+                    best = a;
+            }
+            return best;
+        }
+
+        PlayerInventory SenderInventory(ushort sender) => _inventories.TryGet(sender, out var e) ? e.Inventory : null;
+
+        bool TryGetSenderPos(ushort sender, out Vector3 pos)
+        {
+            pos = Vector3.zero;
+            if (!_players.TryGetByOwner(sender, out var p)) return false;
+            pos = p.Pos;
+            return true;
+        }
+    }
+}
