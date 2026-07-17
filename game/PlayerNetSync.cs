@@ -1,5 +1,6 @@
 using Godot;
 using System.Collections.Generic;
+using SDG.Unturned;
 using UnturnedGodot.Net;
 
 namespace UnturnedGodot
@@ -12,8 +13,11 @@ namespace UnturnedGodot
     //      (paired with the seq of the input that PRODUCED that position, so lastProcessedInputSeq acks
     //      stay honest), which marks the entity ExternallyDriven -- ServerStep's flat demo integration
     //      never touches it again;
-    //   3. then injects the peer's held MoveInput (yaw + axes + the v2 jump bit) through the Scripted*
-    //      seams; the body MoveAndSlides on real terrain/objects on its own physics tick.
+    //   3. then injects the peer's held MoveInput (yaw + axes + the v2 jump bit + the stance bits) through
+    //      the Scripted* seams; the body MoveAndSlides on real terrain/objects on its own physics tick.
+    //      Stance MUST ride along (the mp-inchworm fix): the client shell predicts at its stance's speed,
+    //      so the avatar has to integrate at the SAME one -- a sprinting shell against a stand-walking
+    //      avatar grows (SPRINT-STAND)*dt of error every tick and the reconciler drags it back as a lurch.
     // Seated peers (VehicleHost.IsDriver) are NEVER written back -- the seat teleport owns the entity
     // (§3.6); the body parks under the seat by FOLLOWING the entity. Any other external entity move
     // (vehicle-exit teleport, combat respawn, console teleport) is adopted the same way: whenever the
@@ -70,6 +74,7 @@ namespace UnturnedGodot
                     body.Spawn = body.GlobalPosition;           // never the default (0,1,0) -- underground on PEI
                     body.ScriptedInput = UnityEngine.Vector2.zero;   // never fall through to keyboard polling
                     body.ScriptedJump = false;
+                    body.ScriptedStance = EPlayerStance.STAND;       // wire-driven from the first held input on
                     t = new Tracked { Body = body, LastDrivenPos = e.Pos };
                     _tracked[e.OwnerPlayerId] = t;
                 }
@@ -113,12 +118,14 @@ namespace UnturnedGodot
                     t.Body.RotationDegrees = new Vector3(0f, inp.YawDegrees, 0f);
                     t.Body.ScriptedInput = new UnityEngine.Vector2(inp.MoveX, inp.MoveY);
                     t.Body.ScriptedJump = inp.Jump;
+                    t.Body.ScriptedStance = inp.Stance;   // integrate at the stance the shell predicted at (the inchworm fix)
                     t.LastInputSeq = inp.Seq;
                 }
                 else
                 {
                     t.Body.ScriptedInput = UnityEngine.Vector2.zero;
                     t.Body.ScriptedJump = false;
+                    t.Body.ScriptedStance = EPlayerStance.STAND;
                 }
             }
 

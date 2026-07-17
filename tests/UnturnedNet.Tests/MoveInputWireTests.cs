@@ -1,6 +1,7 @@
 using System.Text;
 using NUnit.Framework;
 using SDG.NetPak;
+using SDG.Unturned;
 using UnturnedGodot.Net;
 
 namespace UnturnedNet.Tests
@@ -53,6 +54,32 @@ namespace UnturnedNet.Tests
             r.SetBufferSegment(w.buffer, w.writeByteIndex);
             Assert.That(MoveInput.TryRead(r, out var idle), Is.True);
             Assert.That(idle.Jump, Is.False);
+        }
+
+        [Test]
+        public void MoveInput_StanceBits_RoundTrip_AndNoWireBreak()
+        {
+            // the mp-inchworm fix: the RESULTING on-foot stance rides buttons bits 1-2 so the server
+            // avatar integrates at the speed the shell predicted. Same byte, same layout -- NOT a wire
+            // break (the golden above still holds); this locks the codec + the jump bit's independence.
+            var w = new NetPakWriter { buffer = new byte[64] };
+            var r = new NetPakReader();
+            foreach (var stance in new[] { EPlayerStance.STAND, EPlayerStance.SPRINT, EPlayerStance.CROUCH, EPlayerStance.PRONE })
+            {
+                w.Reset();
+                new MoveInput { Seq = 5, MoveY = 1f, Buttons = (byte)(MoveInput.ButtonJump | MoveInput.PackStance(stance)) }.Write(w);
+                w.Flush();
+                r.Reset();
+                r.SetBufferSegment(w.buffer, w.writeByteIndex);
+                Assert.That(MoveInput.TryRead(r, out var read), Is.True);
+                Assert.That(read.Stance, Is.EqualTo(stance), $"stance {stance} must survive the round trip");
+                Assert.That(read.Jump, Is.True, "the jump bit must be unaffected by the stance bits");
+            }
+            // only the four on-foot stances exist on the wire; anything else degrades to STAND
+            Assert.That(new MoveInput { Buttons = MoveInput.PackStance(EPlayerStance.DRIVING) }.Stance, Is.EqualTo(EPlayerStance.STAND));
+            // buttons = 0 (idle / any pre-stance payload) decodes as STAND -- the old stand-walk meaning
+            Assert.That(new MoveInput { Buttons = 0 }.Stance, Is.EqualTo(EPlayerStance.STAND));
+            Assert.That(new MoveInput { Buttons = MoveInput.ButtonJump }.Stance, Is.EqualTo(EPlayerStance.STAND));
         }
 
         [Test]

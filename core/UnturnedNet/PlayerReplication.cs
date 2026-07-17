@@ -94,17 +94,52 @@ namespace UnturnedGodot.Net
     /// </summary>
     public struct MoveInput
     {
-        // v2 buttons bitfield (PEI_CLIENT_PLAN §3 C2): bit 0 = jump; bits 1-7 headroom (sprint/crouch/prone
-        // ride here when stance goes over the wire). Adding a bit is NOT a wire break; widening the field is.
+        // v2 buttons bitfield (PEI_CLIENT_PLAN §3 C2): bit 0 = jump; bits 1-2 = the on-foot stance the
+        // client sim consumed (the mp-inchworm fix: without it a sprinting shell predicted SPEED_SPRINT
+        // while the server avatar integrated STAND-WALK -- the reconciler dragged the gap back every tick).
+        // The RESULTING stance rides, not the X/Z/Shift key edges: state self-corrects over the latest-wins
+        // unreliable channel after a drop, edges don't. 0 = STAND so a buttons-less MoveInput keeps the old
+        // stand-walk meaning. Bits 3-7 headroom. Adding a bit is NOT a wire break; widening the field is.
         public const byte ButtonJump = 1 << 0;
+        const int StanceShift = 1;
+        const byte StanceMask = 0b11;
 
         public ushort Seq;        // client-local, monotonically increasing (wrap-around via NetSeq)
         public float MoveX;       // strafe axis [-1,1] (quantized to 8 bits on the wire)
         public float MoveY;       // forward axis [-1,1]
         public float YawDegrees;  // facing, wrapped into [0,360) by the wire encoding
-        public byte Buttons;      // v2: held-button bits (ButtonJump | ...)
+        public byte Buttons;      // v2: held-button bits (ButtonJump | PackStance(...))
 
         public bool Jump => (Buttons & ButtonJump) != 0;
+
+        /// <summary>The on-foot stance carried in buttons bits 1-2 -- what the server avatar must
+        /// integrate at so client-predicted and server-integrated per-tick distances match.</summary>
+        public EPlayerStance Stance
+        {
+            get
+            {
+                switch ((Buttons >> StanceShift) & StanceMask)
+                {
+                    case 1: return EPlayerStance.SPRINT;
+                    case 2: return EPlayerStance.CROUCH;
+                    case 3: return EPlayerStance.PRONE;
+                    default: return EPlayerStance.STAND;
+                }
+            }
+        }
+
+        /// <summary>Encode an on-foot stance into buttons bits 1-2. Only the four wire stances exist;
+        /// anything else (DRIVING/SITTING never send MoveInput anyway) degrades to STAND.</summary>
+        public static byte PackStance(EPlayerStance stance)
+        {
+            switch (stance)
+            {
+                case EPlayerStance.SPRINT: return 1 << StanceShift;
+                case EPlayerStance.CROUCH: return 2 << StanceShift;
+                case EPlayerStance.PRONE:  return 3 << StanceShift;
+                default: return 0;
+            }
+        }
 
         public void Write(NetPakWriter w)
         {

@@ -2624,7 +2624,8 @@ namespace UnturnedGodot
 
             // Stance FSM: the shell polls the keys, the engine-free PlayerStanceSim owns the state machine
             // (X = crouch, Z = prone, sprint overlay, broken-legs demotion, headroom gate -- MP_PLAN §3.4).
-            // NetAvatar never polls the keys (stance stays STAND until stance rides the wire, post-C2).
+            // NetAvatar never polls the keys -- PlayerNetSync forces ScriptedStance from the MoveInput
+            // stance bits instead, so the avatar integrates at the stance the client shell predicted at.
             bool xNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
             bool zNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
             bool sprintNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);

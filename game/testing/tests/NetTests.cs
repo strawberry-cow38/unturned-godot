@@ -831,6 +831,109 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The mp-inchworm regression (branch mp-inchworm-fix): a SPRINTING shell predicted at SPEED_SPRINT (7)
+    // but MoveInput carried no stance, so the server's C2 avatar (PlayerNetSync sets only ScriptedInput --
+    // a NetAvatar never polls Shift) integrated at STAND-WALK (4.5). The gap grew ~(7-4.5)*dt per tick,
+    // blew the 2 m SnapThreshold in under a second, and TakeAll teleported the shell back: the visible
+    // "inchworm" lurch, at ZERO latency -- a missing-wire-field bug, not a jitter bug. The fix rides the
+    // shell's RESULTING stance in the MoveInput buttons byte (bits 1-2 -- state, not key edges, so the
+    // latest-wins unreliable channel self-corrects after a drop) and PlayerNetSync forces it through the
+    // avatar's ScriptedStance, so client-predicted and server-integrated per-tick distances match. The
+    // shell sprints here through the SAME seam the Shift overlay resolves to (PlayerStanceSim.Step's
+    // scriptedStance -> wantStance = SPRINT), so the prediction is genuinely sprint-speed. Asserts: sprint
+    // GROUND IS KEPT (> 15 m in 3 s -- inchworm nets only ~walk distance), the avatar body integrated at
+    // SPRINT, ZERO snaps, PendingError bounded small; then the same sprint stays smooth over a mild
+    // adverse link (latency 3 ticks, jitter 2, 2% loss both ways); then stop -> exact convergence.
+    public class NetShellSprintReconcile : GameTest
+    {
+        public override string Name => "net.shell_sprint_reconcile";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(31313);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "sprinter" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            // sprint forward ~3 s at ZERO latency: the exact repro. Pre-fix this snaps ~3 times and the
+            // shell nets only ~walk distance (every snap hands back the sprint-vs-walk gap).
+            sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            var start = sess.Shell.TruePhysicsPosition;
+            float maxPending = 0f;
+            int hotTicks = 0;   // ticks with pending error above the sustained-mismatch floor -- pre-fix the
+                                // sprint-vs-walk gap holds an ~0.35 m equilibrium the smoother drags at every
+                                // tick (the inchworm sawtooth); post-fix pending is a start transient only
+            for (int i = 0; i < 150; i++)
+            {
+                yield return Ticks(1);
+                float p = sess.Reconciler.PendingError.magnitude;
+                maxPending = Mathf.Max(maxPending, p);
+                if (p > 0.15f) hotTicks++;
+            }
+            float sprinted = start.DistanceTo(sess.Shell.TruePhysicsPosition);
+            GD.Print($"[sprint-repro] clean link: sprinted={sprinted:0.0} m, snaps={sess.Reconciler.Snaps}, maxPending={maxPending:0.###} m, hotTicks={hotTicks}/150");
+            T.Check($"sprint ground KEPT ({sprinted:0.0} m in 3 s -- walk-speed would be <= 13.5)", sprinted > 15f);
+            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
+            T.Check("server avatar integrated at SPRINT (stance rode the wire)",
+                    haveBody && body.Stance == EPlayerStance.SPRINT);
+            T.Check($"ZERO snaps during a steady zero-latency sprint (snaps {sess.Reconciler.Snaps})", sess.Reconciler.Snaps == 0);
+            T.Check($"no SUSTAINED mismatch drag ({hotTicks}/150 ticks with pending > 0.15 m)", hotTicks < 15);
+            T.Check($"PendingError stayed transient-small (max {maxPending:0.###} m)", maxPending < 0.25f);
+            T.Check("corrections actually flowed (acks applied)", sess.Reconciler.AcksApplied > 0);
+
+            // hardening: keep sprinting over a mild adverse link -- the fix must hold under real-ish
+            // jitter, not just the zero-latency ideal (snaps stay reserved for genuine >2 m divergence)
+            net.ClientToServer.LatencyTicks = 3; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.02;
+            net.ServerToClient.LatencyTicks = 3; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.02;
+            long snapsBefore = sess.Reconciler.Snaps;
+            float maxPendingJitter = 0f;
+            for (int i = 0; i < 150; i++)
+            {
+                yield return Ticks(1);
+                maxPendingJitter = Mathf.Max(maxPendingJitter, sess.Reconciler.PendingError.magnitude);
+            }
+            GD.Print($"[sprint-repro] jittery link: snaps={sess.Reconciler.Snaps - snapsBefore} new, maxPending={maxPendingJitter:0.###} m");
+            T.Check($"still ZERO snaps sprinting over the jittery link ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
+            T.Check($"PendingError bounded over the jittery link (max {maxPendingJitter:0.###} m)", maxPendingJitter < 1.5f);
+
+            // stop on a clean link again (drain the in-flight tail) -> exact wire-grid convergence,
+            // and the avatar drops back to STAND with the shell (stance follows the wire both ways)
+            net.ClientToServer.LatencyTicks = 0; net.ClientToServer.ReorderJitterTicks = 0; net.ClientToServer.LossProbability = 0;
+            net.ServerToClient.LatencyTicks = 0; net.ServerToClient.ReorderJitterTicks = 0; net.ServerToClient.LossProbability = 0;
+            sess.Shell.ScriptedStance = null;
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the sprint (err {err:0.###} m)", own && err < 0.05f);
+            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.01f);
+            T.Check("avatar back to STAND after the sprint ended", haveBody && body.Stance == EPlayerStance.STAND);
+            T.Check($"DESYNC-QUIET across the whole sprint run ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // PEI_CLIENT_PLAN §3 Phase C4: ZombieField streams on ANY registered player -- and the SP path stays
     // byte-identical. Two NetAvatar PlayerControllers (the C2 server-avatar construction) register at far
     // apart positions; three synthetic pockets (the DebugAddPocket seam -- no map data on CI) sit near A,

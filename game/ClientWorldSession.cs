@@ -185,10 +185,12 @@ namespace UnturnedGodot
 
             // 2) this tick's captured input over the wire (held-keys model), THEN record the
             //    post-correction TRUE physics position under the sent seq (the Record contract:
-            //    record AFTER the tick's correction slice, replace semantics, no double-count)
+            //    record AFTER the tick's correction slice, replace semantics, no double-count).
+            //    The stance the sim consumed rides in the buttons bits (the mp-inchworm fix): the
+            //    server avatar must integrate at the SAME speed this shell just predicted at.
             float yaw = Shell.RotationDegrees.Y;
-            ushort seq = Client.SendMoveInput(Shell.LastMoveInput.x, Shell.LastMoveInput.y, yaw,
-                                              Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0);
+            byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance));
+            ushort seq = Client.SendMoveInput(Shell.LastMoveInput.x, Shell.LastMoveInput.y, yaw, buttons);
             if (seq != 0)
             {
                 var p = Shell.TruePhysicsPosition;
