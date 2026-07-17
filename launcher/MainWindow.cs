@@ -21,7 +21,7 @@ public class MainWindow : Window
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 6;   // v6: fix the "--" separator so --connect actually reaches the game
+    const int LauncherVersion = 7;   // v7: removed the "Multiplayer test" checkbox -- MP is now an in-game main-menu button
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
     // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
@@ -41,8 +41,8 @@ public class MainWindow : Window
     readonly TextBlock _status = new() { Foreground = Brushes.Gray };
     readonly TextBox _log;
     readonly Button _action = new() { MinWidth = 150, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Right, FontSize = 16, IsEnabled = false };
-    // When checked, Play launches the game with --connect=claw.bitvox.me to join the shared test server.
-    readonly CheckBox _mpTest = new() { Content = "Multiplayer test", FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse("#c8d0d8")) };
+    // (The old "Multiplayer test" checkbox was removed -- MP is now a top-level "Multiplayer" button on the
+    // in-game main menu, which connects to claw.bitvox.me itself. Server browser later.)
     Mode _mode = Mode.Busy;
 
     public MainWindow()
@@ -90,9 +90,8 @@ public class MainWindow : Window
         var logHeader = new TextBlock { Text = "Debug console", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#7a828c")), Margin = new Avalonia.Thickness(2, 0, 0, 3) };
 
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Avalonia.Thickness(0, 10, 0, 0) };
-        // right side: the "Multiplayer test" checkbox sits just left of the Play button.
-        var rightSide = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, VerticalAlignment = VerticalAlignment.Center, Children = { _mpTest, _action } };
-        ToolTip.SetTip(_mpTest, "Launch connected to the claw.bitvox.me test server (adds --connect=claw.bitvox.me)");
+        // right side: just the Play button (the MP-test checkbox moved in-game).
+        var rightSide = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, VerticalAlignment = VerticalAlignment.Center, Children = { _action } };
         Grid.SetColumn(_status, 0); Grid.SetColumn(rightSide, 1);
         _status.VerticalAlignment = VerticalAlignment.Center;
         footer.Children.Add(_status); footer.Children.Add(rightSide);
@@ -249,15 +248,7 @@ public class MainWindow : Window
             var psi = new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = _gameDir };
             psi.ArgumentList.Add("--path");
             psi.ArgumentList.Add(_gameDir);
-            if (_mpTest.IsChecked == true)   // "Multiplayer test" ticked -> join the shared claw test server
-            {
-                // The game reads OS.GetCmdlineUserArgs() -- args AFTER a "--" separator. Without it Godot
-                // treats --connect as an (unknown) ENGINE arg and the game never sees it, so it just opens
-                // the main menu. The "--" is what routes the flag to Main's parser.
-                psi.ArgumentList.Add("--");
-                psi.ArgumentList.Add("--connect=claw.bitvox.me");
-                Log("Multiplayer test ON — connecting to claw.bitvox.me");
-            }
+            // (MP test connect moved in-game: the main menu's "Multiplayer" button connects to claw.bitvox.me.)
             Process.Start(psi);
             Log($"Launched: {Path.GetFileName(exe)} --path game — handing off, closing launcher.");
             SetBusy("Handing off to game…");
