@@ -364,6 +364,8 @@ namespace UnturnedGodot
     // built by WorldItem.BuildItemPuppet, toggled by PlayerController.UpdateLookFocus. No pickup physics.
     public partial class WorldItemPuppet : Node3D, IPuppetFocusable
     {
+        public uint NetId;   // the server world-item entity this puppet mirrors (VehiclePuppet.NetId pattern) -- the F-chain pickup request addresses the server by this id
+
         MeshInstance3D _glow;
         Label3D _label;
         Color _rar = Colors.White;

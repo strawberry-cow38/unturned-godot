@@ -53,6 +53,7 @@ namespace UnturnedGodot
         Label _status;
         Label _desyncLabel;
         string _desyncAlert = "";
+        Label _toast; float _toastT;   // brief interaction feedback line (pickup denied, etc.)
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
 
@@ -124,6 +125,13 @@ namespace UnturnedGodot
                 // the SP blast "fx" is the camera flinch (PlayerController.Explode -> FlinchAllFromExplosion,
                 // same params) -- fx only, zero damage: the server already applied the authoritative damage
                 PlayerRegistry.FlinchAllFromExplosion(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), Mathf.Max(e.Radius * 2f, 12f), 30f);
+            Client.ItemPickupDenied += e =>
+            {
+                // a LEGAL pickup the server grid had no room for -- the item stays in the world; tell the
+                // player "no room" instead of silence (the request made no local change to roll back)
+                GD.Print($"[CLIENT] pickup denied (world item {e.NetId}) -- no room in the bag");
+                if (_toast != null) { _toast.Text = "No room in inventory"; _toastT = 2.5f; }
+            };
 
             // pre-join status: there is NO camera until the shell spawns (its first-person cam IS the
             // view) -- surface the session state so an unreachable server isn't a silent black screen
@@ -134,6 +142,9 @@ namespace UnturnedGodot
             _desyncLabel = new Label { Position = new Vector2(24, 54), Modulate = new Color(1f, 0.35f, 0.30f) };
             _desyncLabel.AddThemeFontSizeOverride("font_size", 20);
             _statusLayer.AddChild(_desyncLabel);
+            _toast = new Label { Position = new Vector2(24, 86), Modulate = new Color(1f, 0.85f, 0.4f) };
+            _toast.AddThemeFontSizeOverride("font_size", 20);
+            _statusLayer.AddChild(_toast);
             AddChild(_statusLayer);
 
             // §2.5 step order on the world's SimRoot: net pump FIRST (receive datagrams + apply snapshots
@@ -225,6 +236,10 @@ namespace UnturnedGodot
             shell.NetMelee = (strong, yaw) => Client.SendMelee(strong, yaw);
             shell.NetGrenade = (origin, vel) => Client.SendGrenade(ToU(origin), ToU(vel));
             shell.NetReload = () => Client.SendReload();
+            // Phase 6 pickup: F on a focused WorldItemPuppet is a REQUEST -- "the client never pockets the
+            // item itself": the bag fills only when the owner-block echo lands, the puppet despawns only
+            // when WorldItemRemoved broadcasts (WorldItemReplicaView is already diff-driven).
+            shell.NetPickupItem = netId => Client.SendPickupItem(netId);
             Shell = shell;
             if (System.Environment.GetEnvironmentVariable("UG_MPWALK") == "1")   // scripted-walk hook for headless connect-and-render checks (the UG_AUTOFIRE spirit)
                 shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
@@ -268,6 +283,7 @@ namespace UnturnedGodot
             if (_status != null)
                 _status.Text = Shell == null ? $"connecting to {Host}:{Port}   ·   {Client.State}   ·   players {Client.Players.Count}" : "";
             if (_desyncLabel != null) _desyncLabel.Text = _desyncAlert;
+            if (_toast != null && _toastT > 0f) { _toastT -= (float)delta; if (_toastT <= 0f) _toast.Text = ""; }
         }
 
         public override void _ExitTree()

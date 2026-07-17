@@ -9,9 +9,10 @@ namespace UnturnedGodot
     // streaming, player drops, salvage scrap) as STATIC visual props in the joined client's world. Reuses
     // the WorldItem model cache (mesh/texture by item id) but deliberately NOT the WorldItem node itself:
     // replicas carry no RigidBody3D physics (the server's physics owns the transform -- Pos mirrors it,
-    // spawn point first, then the settled rest point), never join the "worlditems" group (no pickup focus,
-    // and a listen-server's WorldItemNetSync must never re-mint them), and despawn only when the server
-    // retires the entity. Pickup over the wire is deferred (§6) -- these are visible-only.
+    // spawn point first, then the settled rest point), never join the "worlditems" group (no SP pickup
+    // focus, and a listen-server's WorldItemNetSync must never re-mint them), and despawn only when the
+    // server retires the entity. Pickup rides the wire: each puppet carries its entity NetId and F on a
+    // focused puppet sends PickupItemCommand (PlayerController.RequestPickupFocusedPuppet).
     //
     // Diff-driven per physics tick like DeployableReplicaView: idempotent against event/snapshot races and
     // join snapshots -- the replica registry IS the truth, the nodes follow.
@@ -72,6 +73,7 @@ namespace UnturnedGodot
             // focusable puppet: replica visual + a look-detection box + a glow silhouette + name tag, so the client's
             // look-ray can highlight AND name the drop (a bare Node3D was invisible to the raycast -> no outline in MP)
             var node = WorldItem.BuildItemPuppet(e.ItemId, rarity, asset?.itemName);
+            node.NetId = e.NetIdValue;   // pickup requests address the server entity by this id
             // the SP drop pose (+90 X lays the model flat right-side-up) with a NetId-derived yaw for
             // variety -- deterministic, since the server's actual rest orientation never crosses the wire
             node.RotationDegrees = new Vector3(90f, (e.NetIdValue * 137u) % 360u, 0f);

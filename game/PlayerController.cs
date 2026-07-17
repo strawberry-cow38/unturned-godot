@@ -1156,6 +1156,7 @@ namespace UnturnedGodot
         public System.Action<bool, float> NetMelee;          // (strong, yawDegrees) -> Client.SendMelee
         public System.Action<Vector3, Vector3> NetGrenade;   // (origin, velocity) -> Client.SendGrenade
         public System.Action NetReload;                      // -> Client.SendReload (server ammo/reload clock tracks the local one)
+        public System.Action<uint> NetPickupItem;            // wired by ClientWorldSession: F on a focused WorldItemPuppet asks the server for the item (Client.SendPickupItem)
 
         VehiclePuppet NearestPuppet()
         {
@@ -1179,6 +1180,23 @@ namespace UnturnedGodot
             var p = NearestPuppet();
             if (p == null) return false;
             NetEnterVehicle(p.NetId);
+            return true;
+        }
+
+        /// <summary>The MP pickup interact seam: F while LOOKING AT a replicated dropped item asks the
+        /// server for it. Focus-driven like SP pickup (UpdateLookFocus already sets _focusPuppet from the
+        /// eye-ray), unlike the proximity-driven vehicle enter. False when not an MP shell or the focus
+        /// isn't an item puppet, so F falls through to the next interaction.</summary>
+        public bool RequestPickupFocusedPuppet() => _focusPuppet is WorldItemPuppet wp && RequestPickupPuppet(wp);
+
+        /// <summary>The request itself -- a REQUEST only, no local state changes: the pickup lands when the
+        /// server's WorldItemRemoved + owner-block echo come back (or ItemPickupDenied keeps the item).
+        /// Public + puppet-typed so the L1 net tests can drive it without the focus raycast (the same
+        /// pattern net.shell_drive uses to drive ride mode).</summary>
+        public bool RequestPickupPuppet(WorldItemPuppet wp)
+        {
+            if (NetPickupItem == null || wp == null || !IsInstanceValid(wp)) return false;
+            NetPickupItem(wp.NetId);
             return true;
         }
 
@@ -1808,6 +1826,7 @@ namespace UnturnedGodot
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusItem != null) TryPickup();                  // looking at an item: pick it up
+                else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
                 else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.CanTogglePower) _focusDeployable.TogglePower();  // looking at a generator: toggle its power (src InteractableGenerator.use)

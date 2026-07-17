@@ -2258,4 +2258,73 @@ namespace UnturnedGodot.Testing
             bystander.Disconnect();
         }
     }
+
+    // MP pickup denial (ITEM_PICKUP_WIRING_PLAN Step 3): a LEGAL pickup into a FULL server grid --
+    // ItemPickupDenied comes back to the requester only, the entity + puppet stay in the world, and
+    // neither grid changes (the request made no local mutation to roll back). The L0
+    // pickup_into_a_full_grid_is_denied_but_stays recipe, driven through the real shell seam.
+    public class NetShellPickupDeniedStays : GameTest
+    {
+        public override string Name => "net.shell_pickup_denied_stays";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260809);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "hoarder" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            // pack the SERVER grid completely full (1x1 bandages into every free cell -- the authority
+            // seeding its own state, the TransactionalHarness.Grant pattern)
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            T.Check("server inventory exists for the peer", sHave);
+            int filled = 0;
+            while (sInv.Inventory.tryAddItem(new SDG.Unturned.Item(95))) filled++;
+            T.Check($"server grid packed FULL ({filled} filler items)", filled > 0);
+
+            var fwd = -sess.Shell.GlobalTransform.Basis.Z;
+            var e = ded.Server.Transactions.SpawnWorldItem(new SDG.Unturned.Item(13), ToU(sess.Shell.GlobalPosition + fwd * 2f), UnityEngine.Vector3.zero);
+            yield return Until(() => sess.Items.TryGetNode(e.NetIdValue, out _), 5);
+            bool haveNode = sess.Items.TryGetNode(e.NetIdValue, out var node);
+            T.Check("the item puppet materialized", haveNode);
+            yield return Ticks(10);   // let the fill's owner-block echo settle before capturing baselines
+            int serverBeans = sInv.Inventory.getItemCount(13);
+            int localBeans = sess.Shell.Inventory.getItemCount(13);
+
+            bool denied = false;
+            sess.Client.ItemPickupDenied += ev => denied |= ev.NetId == e.NetIdValue;
+            long deniedBefore = ded.Server.Transactions.Diag.PickupsDenied;
+            T.Check("the pickup request fired through the seam", sess.Shell.RequestPickupPuppet(node as WorldItemPuppet));
+
+            yield return Until(() => denied, 5);
+            T.Check("ItemPickupDenied reached the requester", denied);
+            T.Check("Diag.PickupsDenied bumped (legal-but-full, not a validation reject)",
+                    ded.Server.Transactions.Diag.PickupsDenied == deniedBefore + 1);
+            T.Check("the world-item entity STAYED", ded.Server.WorldItems.Count == 1);
+            yield return Ticks(15);   // a (wrong) removal broadcast/echo would land within this window
+            T.Check("the puppet STAYED in the joined world", sess.Items.TryGetNode(e.NetIdValue, out _));
+            T.Check("server grid unchanged (the item never entered it)", sInv.Inventory.getItemCount(13) == serverBeans);
+            T.Check("the shell's bag unchanged", sess.Shell.Inventory.getItemCount(13) == localBeans);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
 }
