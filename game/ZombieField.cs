@@ -13,6 +13,11 @@ namespace UnturnedGodot
     // in-pocket on a cooldown. This replaces the old island-wide distance stream, which spawned wilderness zombies the real game never would.
     public partial class ZombieField : Node3D
     {
+        // Streaming anchor (C4, the LootField precedent): an explicitly-set Player is the SP path and is
+        // honored EXACTLY -- the single anchor, the registry never consulted. Player == null (server worlds,
+        // where nobody wires one) streams on EVERY registered player via PlayerRegistry instead, mirroring
+        // ZombieController's Target-less fallback. Spawned brains keep Target = Player verbatim, so SP
+        // zombies chase the local player exactly as before and server brains (null) registry-hunt.
         public PlayerController Player;
         public Terrain Terr;
 
@@ -85,20 +90,42 @@ namespace UnturnedGodot
             return -1;
         }
 
+        // The anchor set one streaming pass keys on: [Player.GlobalPosition] when Player is set (the SP
+        // path, byte-identical to the old single-Player gate), else every valid PlayerRegistry entry.
+        readonly List<Vector3> _anchors = new();
+
+        List<Vector3> GatherAnchors()
+        {
+            _anchors.Clear();
+            if (Player != null) { _anchors.Add(Player.GlobalPosition); return _anchors; }
+            foreach (var p in PlayerRegistry.All)
+                if (IsInstanceValid(p)) _anchors.Add(p.GlobalPosition);
+            return _anchors;
+        }
+
+        // Nearest-any-anchor distance to a pocket's box -- with one anchor this IS the old DistToBoxXZ(pp).
+        static float DistToBoxAnyXZ(List<Vector3> anchors, NavPocket np)
+        {
+            float best = float.MaxValue;
+            foreach (var a in anchors) best = Mathf.Min(best, DistToBoxXZ(a, np));
+            return best;
+        }
+
         public override void _Process(double delta)
         {
             _clock += delta;
             _acc += delta;
-            if (_acc < 0.4 || Player == null || Terr == null) return;
+            if (_acc < 0.4 || Terr == null) return;
+            var anchors = GatherAnchors();
+            if (anchors.Count == 0) return;   // nobody to stream around (pre-join server) -- same as the old Player == null gate
             _acc = 0;
-            var pp = Player.GlobalPosition;
 
             int liveTotal = 0;
             foreach (var p in _pockets) liveTotal += CountLive(p);
 
             foreach (var p in _pockets)
             {
-                float d = DistToBoxXZ(pp, p.Nav);
+                float d = DistToBoxAnyXZ(anchors, p.Nav);
                 if (!p.Active && d <= ActivateR) { p.Active = true; Populate(p, ref liveTotal); }
                 else if (p.Active && d >= DeactivateR) { Despawn(p); p.Active = false; }
                 else if (p.Active) MaintainRespawn(p, ref liveTotal);
@@ -179,5 +206,21 @@ namespace UnturnedGodot
         }
 
         public int PocketCount => _pockets.Count;
+
+        // TEST SEAMS (net.zombiefield_anyplayer, same style as DebugPlanSpawns): a synthetic pocket -- no
+        // map data on CI -- plus probes for the exact anchor set / per-pocket distance / activation state
+        // the streaming pass keys on. pts are used verbatim (the caller supplies terrain-height'd points).
+        public int DebugAddPocket(Vector3 center, Vector3 halfExtent, Vector3[] pts, int cap)
+        {
+            var p = new Pocket { Nav = new NavPocket { Center = center, HalfExtent = halfExtent, MaxZombies = cap, SpawnZombies = true }, Cap = cap };
+            p.Pts.AddRange(pts);
+            _pockets.Add(p);
+            return _pockets.Count - 1;
+        }
+        public List<Vector3> DebugAnchors() => GatherAnchors();
+        public float DebugPocketDist(int pocket) => DistToBoxAnyXZ(GatherAnchors(), _pockets[pocket].Nav);
+        public bool DebugPocketActive(int pocket) => _pockets[pocket].Active;
+        public int DebugLiveCount(int pocket) => CountLive(_pockets[pocket]);
+        public List<ZombieController> DebugLive(int pocket) { CountLive(_pockets[pocket]); return _pockets[pocket].Live; }
     }
 }

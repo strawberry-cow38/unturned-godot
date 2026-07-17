@@ -1907,6 +1907,9 @@ namespace UnturnedGodot
         }
 
         const ushort NetPort = 47872;
+        // UG_PORT: run a second dedicated server / client pair beside a live one on the same box (dev
+        // smoke, C4) -- overrides the port for --dedicated and --connect; unset = the standard 47872.
+        static ushort PortEnv() => ushort.TryParse(System.Environment.GetEnvironmentVariable("UG_PORT"), out var p) && p != 0 ? p : NetPort;
         string _connectHost = "127.0.0.1";   // --connect=<ip>: the dedicated server to join (default = same-machine loopback)
         bool _playableClient;                // --connect= (vs bare --client): attach the C3 ClientWorldSession (predicted shell) instead of the ClientNode demo renderer
 
@@ -1921,13 +1924,16 @@ namespace UnturnedGodot
             try
             {
                 var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
-                    noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
-                AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
+                    // C4: the dedicated world is POPULATED -- zombies ON by default for the test server;
+                    // --nozombies or UG_DEDICATED_NOZOMBIES=1 gives a quiet server, no code change
+                    noZombies: _noZombies || System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1",
+                    syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
+                AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
                     DayNight = res.DayNight, Resources = res.Resources, MapRoot = _mapRoot,          // Phase 8: tick-derived clock + resource bitmap + nav-pocket relevancy cells (§3.7/§2.6)
                     RemoteAvatars = true,                                                            // C2: remote peers get real avatar bodies (real spawns/collision/jump) on this world
                     AllowCheats = System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1" });   // test server: give/xp/skill console cheats ON (useful for testing); set UG_DEDICATED_NOCHEATS=1 to lock them off, no code change (review C1 toggle)
                 _worldReady = res.Ready;
-                GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {NetPort}");
+                GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {PortEnv()}");
             }
             catch (System.Exception e)
             {
@@ -1984,8 +1990,8 @@ namespace UnturnedGodot
                 _worldReady = res.Ready;
                 if (_playableClient)   // --connect= (C3): the predicted first-person shell -- its camera is the view once the join snapshot seeds the spawn
                 {
-                    AddChild(new ClientWorldSession { Host = _connectHost, Port = NetPort, Driver = res.Sim, Sun = res.Sun, Env = res.Env });
-                    GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{NetPort} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
+                    AddChild(new ClientWorldSession { Host = _connectHost, Port = PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env });
+                    GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
                 {

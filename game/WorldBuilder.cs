@@ -6,8 +6,9 @@ namespace UnturnedGodot
     // and dedicated server, or the three modes drift forever).
     //   Aerial    = --objects: the placed world viewed from a survey camera (no player, no colliders).
     //   Playable  = --peidrive / menu "Drive PEI": full world + local player + streamers + HUD.
-    //   Dedicated = headless server world: terrain/objects/roads/trees WITH colliders + nav, but no
-    //               camera, no HUD, no viewmodel, no local player, no loading UI (§2.1 fork A(b)).
+    //   Dedicated = headless server world: terrain/objects/roads/trees WITH colliders + nav, plus the
+    //               authoritative population (loot + zombies + vehicles, streamed/published to clients --
+    //               C4), but no camera, no HUD, no viewmodel, no local player, no loading UI (§2.1 fork A(b)).
     //   Client    = joined MP client (PEI_CLIENT_PLAN §2.1): the world as scenery + physics -- terrain +
     //               objects + colliders + roads/foliage/trees + day-night, but NO local player, NO camera,
     //               NO local-authority spawns (zombies/loot/animals/vehicles/jeep/crops) and NO navmesh
@@ -19,7 +20,7 @@ namespace UnturnedGodot
         public SimDriver Sim;              // the 50 Hz sim spine (SimRoot host), present in every world
         public Terrain Terr;               // null if the map couldn't load (no local Unturned install)
         public PlayerController Player;    // Playable/PeiPlay only
-        public ZombieField Zombies;        // Playable only (and only when zombies are enabled)
+        public ZombieField Zombies;        // Playable/Dedicated (and only when zombies are enabled; C4 populated the server)
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public DirectionalLight3D Sun;     // world sun + env (C3: the client session LinkWorldLightings its late-spawned shell)
@@ -267,6 +268,82 @@ namespace UnturnedGodot
                 }
             }
 
+            // VEHICLE SPAWNS -- ONE extraction shared verbatim by Playable and Dedicated (PEI_CLIENT_PLAN §3
+            // C4: call-site-identical for Playable -- same order, same params, same variant math -- so SP
+            // stays byte-identical; the dedicated server calls it too and VehicleNetSync publishes the nodes).
+            // Spawns/Vehicles.dat (source LevelVehicles River: u8 ver, [SteamID if 1<v<3], u8 tableCount,
+            // per table [color 3B, name str, tableID u16 if v>3, u8 tierCount, per tier: name str, chance f32, u8 spawnCount, per spawn u16],
+            // u16 pointCount, per point: u8 type, Vector3, u8 angle*2). type = table index: 0 Civilian, 1 Police, 2 Fire, 3 Military,
+            // 4 Medic, 5 Farm, 6-11 air/water/tank. LAND (0-5): Civilian=car pool, Police/Fire/Medic=static mesh, Military=humvee, Farm=jeep stand-in.
+            async System.Threading.Tasks.Task SpawnPeiVehicles()
+            {
+                await Phase("Vehicles");
+                string vpath = mapRoot + "/Spawns/Vehicles.dat";
+                int nv = 0;
+                if (System.IO.File.Exists(vpath))
+                {
+                    var vd = System.IO.File.ReadAllBytes(vpath); int vp = 0;
+                    byte U8() => vd[vp++];
+                    ushort U16() { var v = System.BitConverter.ToUInt16(vd, vp); vp += 2; return v; }
+                    float F32() { var v = System.BitConverter.ToSingle(vd, vp); vp += 4; return v; }
+                    void RStr() { int n = U8(); vp += n; }
+                    byte ver = U8();
+                    if (ver > 1 && ver < 3) vp += 8;   // SteamID
+                    byte tcount = U8();
+                    for (int t = 0; t < tcount; t++)
+                    {
+                        vp += 3; RStr();                 // color + table name
+                        if (ver > 3) vp += 2;            // tableID
+                        byte tiers = U8();
+                        for (int ti = 0; ti < tiers; ti++) { RStr(); vp += 4; byte sc = U8(); vp += sc * 2; }
+                    }
+                    ushort pcount = U16();
+                    for (int i = 0; i < pcount; i++)
+                    {
+                        byte type = U8();
+                        float px = F32(); vp += 4; float pz = F32();   // point.x, skip point.y, point.z
+                        float ang = U8() * 2f;
+                        if (type > 5) continue;          // skip air/boat/tank (6-11) until those models exist
+                        float gz = -pz;                  // Unity Z -> port negate-Z
+                        var vpos = new Vector3(px, terr.SampleHeight(px, gz) + 1.2f, gz);
+                        var vyaw = new Basis(Vector3.Up, Mathf.DegToRad(-ang));   // spawn yaw (negate for negate-Z)
+                        string vn = null;   // all PEI service vehicles (Police / Fire / Medic) are drivable now, no static meshes
+                        if (vn != null)   // real static vehicle mesh (Police / Firetruck / Ambulance) + collider
+                        {
+                            if (!cache.TryGetValue(vn, out var vm)) { vm = ObjMesh.Load(dir + vn + ".obj"); cache[vn] = vm; }
+                            if (vm != null)
+                            {
+                                var rpos = new Vector3(px, terr.SampleHeight(px, gz) - vm.GetAabb().Position.Y, gz);   // sit the mesh's bottom on the terrain
+                                root.AddChild(new MeshInstance3D { Mesh = vm, MaterialOverride = MatFor(vn), Transform = new Transform3D(vyaw, rpos) });
+                                if (!shapeCache.TryGetValue(vn, out var vs)) { vs = vm.CreateTrimeshShape(); shapeCache[vn] = vs; }
+                                if (vs != null) { var vb = new StaticBody3D { Transform = new Transform3D(vyaw, rpos) }; vb.AddChild(new CollisionShape3D { Shape = vs }); root.AddChild(vb); }
+                                if (!result.HasVehicleAim) { result.VehicleAim = rpos; result.HasVehicleAim = true; }
+                                nv++;
+                            }
+                        }
+                        else   // drivable: Civilian -> real civilian-car pool, Military -> humvee, Farm -> jeep stand-in (no tractor mesh yet)
+                        {
+                            vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
+                            {
+                                0 => (i % 6) switch { 0 => "sedan", 1 => "hatchback", 2 => "roadster", 3 => "offroader", 4 => "truck", _ => "van" },   // Civilian rolls the civilian car pool (golf is command-only, excluded)
+                                1 => "police",                                                              // Police
+                                2 => "firetruck",                                                           // Fire
+                                3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },            // Military_Canada: humvee + jeep + ural truck, all forest
+                                4 => "ambulance",                                                           // Medic -> drivable ambulance
+                                5 => "tractor",                                                             // Farm -> drivable tractor
+                                _ => "quad",                                                                // fallback
+                            };
+                            var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
+                            root.AddChild(veh);
+                            veh.GlobalPosition = vpos;
+                            veh.RotationDegrees = new Vector3(0f, -ang, 0f);
+                            nv++;
+                        }
+                    }
+                }
+                GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; golf command-only; air/water/tank skipped)");
+            }
+
             if (mode == WorldMode.Playable)
             {
                 await Phase("Player");
@@ -331,77 +408,8 @@ namespace UnturnedGodot
                     result.Zombies = zf;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
                 }
 
-                // VEHICLE SPAWNS: Spawns/Vehicles.dat (source LevelVehicles River: u8 ver, [SteamID if 1<v<3], u8 tableCount,
-                // per table [color 3B, name str, tableID u16 if v>3, u8 tierCount, per tier: name str, chance f32, u8 spawnCount, per spawn u16],
-                // u16 pointCount, per point: u8 type, Vector3, u8 angle*2). type = table index: 0 Civilian, 1 Police, 2 Fire, 3 Military,
-                // 4 Medic, 5 Farm, 6-11 air/water/tank. LAND (0-5): Civilian=car pool, Police/Fire/Medic=static mesh, Military=humvee, Farm=jeep stand-in.
-                {
-                    await Phase("Vehicles");
-                    string vpath = mapRoot + "/Spawns/Vehicles.dat";
-                    int nv = 0;
-                    if (System.IO.File.Exists(vpath))
-                    {
-                        var vd = System.IO.File.ReadAllBytes(vpath); int vp = 0;
-                        byte U8() => vd[vp++];
-                        ushort U16() { var v = System.BitConverter.ToUInt16(vd, vp); vp += 2; return v; }
-                        float F32() { var v = System.BitConverter.ToSingle(vd, vp); vp += 4; return v; }
-                        void RStr() { int n = U8(); vp += n; }
-                        byte ver = U8();
-                        if (ver > 1 && ver < 3) vp += 8;   // SteamID
-                        byte tcount = U8();
-                        for (int t = 0; t < tcount; t++)
-                        {
-                            vp += 3; RStr();                 // color + table name
-                            if (ver > 3) vp += 2;            // tableID
-                            byte tiers = U8();
-                            for (int ti = 0; ti < tiers; ti++) { RStr(); vp += 4; byte sc = U8(); vp += sc * 2; }
-                        }
-                        ushort pcount = U16();
-                        for (int i = 0; i < pcount; i++)
-                        {
-                            byte type = U8();
-                            float px = F32(); vp += 4; float pz = F32();   // point.x, skip point.y, point.z
-                            float ang = U8() * 2f;
-                            if (type > 5) continue;          // skip air/boat/tank (6-11) until those models exist
-                            float gz = -pz;                  // Unity Z -> port negate-Z
-                            var vpos = new Vector3(px, terr.SampleHeight(px, gz) + 1.2f, gz);
-                            var vyaw = new Basis(Vector3.Up, Mathf.DegToRad(-ang));   // spawn yaw (negate for negate-Z)
-                            string vn = null;   // all PEI service vehicles (Police / Fire / Medic) are drivable now, no static meshes
-                            if (vn != null)   // real static vehicle mesh (Police / Firetruck / Ambulance) + collider
-                            {
-                                if (!cache.TryGetValue(vn, out var vm)) { vm = ObjMesh.Load(dir + vn + ".obj"); cache[vn] = vm; }
-                                if (vm != null)
-                                {
-                                    var rpos = new Vector3(px, terr.SampleHeight(px, gz) - vm.GetAabb().Position.Y, gz);   // sit the mesh's bottom on the terrain
-                                    root.AddChild(new MeshInstance3D { Mesh = vm, MaterialOverride = MatFor(vn), Transform = new Transform3D(vyaw, rpos) });
-                                    if (!shapeCache.TryGetValue(vn, out var vs)) { vs = vm.CreateTrimeshShape(); shapeCache[vn] = vs; }
-                                    if (vs != null) { var vb = new StaticBody3D { Transform = new Transform3D(vyaw, rpos) }; vb.AddChild(new CollisionShape3D { Shape = vs }); root.AddChild(vb); }
-                                    if (!result.HasVehicleAim) { result.VehicleAim = rpos; result.HasVehicleAim = true; }
-                                    nv++;
-                                }
-                            }
-                            else   // drivable: Civilian -> real civilian-car pool, Military -> humvee, Farm -> jeep stand-in (no tractor mesh yet)
-                            {
-                                vn = type switch   // reuse the outer vn (null here); the static-mesh branch above handled Police/Fire/Medic
-                                {
-                                    0 => (i % 6) switch { 0 => "sedan", 1 => "hatchback", 2 => "roadster", 3 => "offroader", 4 => "truck", _ => "van" },   // Civilian rolls the civilian car pool (golf is command-only, excluded)
-                                    1 => "police",                                                              // Police
-                                    2 => "firetruck",                                                           // Fire
-                                    3 => (i % 3) switch { 0 => "humvee", 1 => "jeep", _ => "ural" },            // Military_Canada: humvee + jeep + ural truck, all forest
-                                    4 => "ambulance",                                                           // Medic -> drivable ambulance
-                                    5 => "tractor",                                                             // Farm -> drivable tractor
-                                    _ => "quad",                                                                // fallback
-                                };
-                                var veh = Vehicle.BuildByName(vn, i);   // variant=i -> deterministic paint variety per spawn point
-                                root.AddChild(veh);
-                                veh.GlobalPosition = vpos;
-                                veh.RotationDegrees = new Vector3(0f, -ang, 0f);
-                                nv++;
-                            }
-                        }
-                    }
-                    GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; golf command-only; air/water/tank skipped)");
-                }
+                // VEHICLE SPAWNS: Spawns/Vehicles.dat -- the shared extraction above (identical order/params/variants)
+                await SpawnPeiVehicles();
                 // LOOT: PEI's 2470 item spawn points (Spawns/Jars.dat), region/distance-streamed around the player (LootField).
                 {
                     await Phase("Loot");
@@ -444,8 +452,9 @@ namespace UnturnedGodot
             else if (mode == WorldMode.Dedicated)
             {
                 // Server world content (MP_PLAN §2.1 fork A(b)): everything with collision the sim needs --
-                // roads + tree trunks -- but no player/camera/HUD/viewmodel. ZombieField/AnimalField still
-                // key spawning on the LOCAL PlayerController and stay out until their streamers generalize.
+                // roads + tree trunks -- but no player/camera/HUD/viewmodel. AnimalField still keys spawning
+                // on the LOCAL PlayerController and stays out until its streamer generalizes (C4 generalized
+                // ZombieField + LootField to PlayerRegistry -- both live here now).
                 // FoliageField (visual-only grass, 612K instances) is skipped as dedicated fx hygiene (§5).
                 {
                     await Phase("Roads");
@@ -473,6 +482,22 @@ namespace UnturnedGodot
                     loot.LoadFromPei(mapRoot);
                     root.AddChild(loot);
                 }
+                // ZOMBIES (C4, §3): the SAME pocket-streamed ZombieField as Playable, with NO Player wired --
+                // streaming keys on every registered player (the C2 avatar bodies) via PlayerRegistry, and
+                // each spawned brain's null Target falls back to PlayerRegistry.Nearest (ZombieController's
+                // §3.5 generalization). Same noZombies gate as Playable (--nozombies / UG_DEDICATED_NOZOMBIES).
+                if (!noZombies)
+                {
+                    await Phase("Zombies");
+                    var zf = new ZombieField { Terr = terr };
+                    zf.LoadFromPei(mapRoot);
+                    root.AddChild(zf);
+                    result.Zombies = zf;
+                }
+                // VEHICLES (C4, §3): the shared Spawns/Vehicles.dat pass, after ItemCatalog.RegisterAll (the
+                // Loot block above). VehicleNetSync publishes every "vehicles"-group node this spawns -- the
+                // net layer needs nothing else.
+                await SpawnPeiVehicles();
             }
             else if (mode == WorldMode.Client)
             {

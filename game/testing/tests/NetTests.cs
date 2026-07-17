@@ -830,4 +830,213 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+
+    // PEI_CLIENT_PLAN §3 Phase C4: ZombieField streams on ANY registered player -- and the SP path stays
+    // byte-identical. Two NetAvatar PlayerControllers (the C2 server-avatar construction) register at far
+    // apart positions; three synthetic pockets (the DebugAddPocket seam -- no map data on CI) sit near A,
+    // near B, and far from both. With Player EXPLICITLY set to A (the SP shape), streaming keys on A ALONE:
+    // B's pocket must NOT populate even though B is registered -- the SP guard. With Player = null (the
+    // dedicated shape), the PlayerRegistry fallback streams per-pocket on the NEAREST player: A's and B's
+    // pockets are both live (spawned brains carry Target = null -> the ZombieController registry hunt), the
+    // far pocket stays empty, and moving B away despawns B's pocket through the same nearest-any query.
+    public class NetZombieFieldAnyPlayer : GameTest
+    {
+        public override string Name => "net.zombiefield_anyplayer";
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var terr = new Terrain();   // inert instance: the field only null-gates on Terr (points carry their own Y)
+            World.AddChild(terr);
+
+            // the two registered avatars: A at the origin, B 400 m north (far outside every hysteresis radius)
+            var a = new PlayerController { NetAvatar = true, CaptureMouse = false };
+            World.AddChild(a);
+            a.GlobalPosition = new Vector3(0f, 1.1f, 0f);
+            var b = new PlayerController { NetAvatar = true, CaptureMouse = false };
+            World.AddChild(b);
+            b.GlobalPosition = new Vector3(0f, 1.1f, 400f);
+            yield return Ticks(2);
+            T.Check("both NetAvatar controllers registered (PlayerRegistry)", PlayerRegistry.Count == 2);
+
+            var field = new ZombieField { Player = a, Terr = terr };   // SP shape first: Player EXPLICITLY set
+            World.AddChild(field);
+            Vector3[] PtsAround(float cx, float cz) => new[]
+            {
+                new Vector3(cx - 3f, 0.5f, cz - 3f), new Vector3(cx + 3f, 0.5f, cz - 3f),
+                new Vector3(cx - 3f, 0.5f, cz + 3f), new Vector3(cx + 3f, 0.5f, cz + 3f),
+            };
+            var half = new Vector3(10f, 50f, 10f);
+            int pkA = field.DebugAddPocket(new Vector3(0f, 0f, 20f), half, PtsAround(0f, 20f), cap: 2);    // 10 m from A / 370 m from B
+            int pkB = field.DebugAddPocket(new Vector3(0f, 0f, 380f), half, PtsAround(0f, 380f), cap: 2);  // 370 m from A / 10 m from B
+            int pkFar = field.DebugAddPocket(new Vector3(0f, 0f, 200f), half, PtsAround(0f, 200f), cap: 2); // 170/190 m -- outside ActivateR for both
+
+            // ---- SP guard: Player set -> streaming keys on A ALONE, the registry is never consulted ----
+            yield return Ticks(40);   // > the 0.4 s streaming cadence
+            T.Check("SP path: exactly ONE anchor (the explicit Player) despite 2 registered players", field.DebugAnchors().Count == 1);
+            T.Check($"SP path: A's pocket activated + populated to cap ({field.DebugLiveCount(pkA)})",
+                    field.DebugPocketActive(pkA) && field.DebugLiveCount(pkA) == 2);
+            T.Check("SP path: B's pocket did NOT activate (registered B is invisible while Player is set)",
+                    !field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 0);
+            T.Check("far pocket inactive", !field.DebugPocketActive(pkFar));
+            bool spTargets = true;
+            foreach (var z in field.DebugLive(pkA)) spTargets &= z.Target == a;
+            T.Check("SP path: spawned brains carry Target = Player EXACTLY (the old Spawn shape)", spTargets);
+            T.Check($"SP path: B's pocket distance is B-blind ({field.DebugPocketDist(pkB):0} m)", field.DebugPocketDist(pkB) > 300f);
+
+            // ---- dedicated shape: Player = null -> nearest-ANY-player per pocket via PlayerRegistry ----
+            field.Player = null;
+            yield return Ticks(40);
+            T.Check("anyplayer: both registered players are anchors", field.DebugAnchors().Count == 2);
+            T.Check($"anyplayer: B's pocket distance keys on the NEAREST player ({field.DebugPocketDist(pkB):0} m)", field.DebugPocketDist(pkB) < 90f);
+            T.Check($"anyplayer: B's pocket activated + populated to cap ({field.DebugLiveCount(pkB)})",
+                    field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 2);
+            T.Check("anyplayer: A's pocket stays live (A is still near it)",
+                    field.DebugPocketActive(pkA) && field.DebugLiveCount(pkA) == 2);
+            T.Check("far pocket STILL inactive (nearest of both anchors is outside ActivateR)", !field.DebugPocketActive(pkFar));
+            bool nullTargets = true;
+            foreach (var z in field.DebugLive(pkB)) nullTargets &= z.Target == null;
+            T.Check("anyplayer: spawned brains carry Target = null (the ZombieController registry-hunt fallback)", nullTargets);
+
+            // ---- hysteresis under anyplayer: B leaves -> B's pocket despawns through the same query ----
+            // (ApplyNetCorrection, not a bare GlobalPosition write -- the body's manual-interp restore
+            // would undo the latter next tick, the §7 risk 5 seam)
+            b.ApplyNetCorrection(new Vector3(0f, 0f, 600f));   // B: z 400 -> 1000, ~610 m from its pocket
+            yield return Ticks(40);
+            T.Check("anyplayer: B's pocket despawned once its nearest player left (40 m hysteresis passed)",
+                    !field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 0);
+            T.Check("anyplayer: A's pocket unaffected by B leaving", field.DebugPocketActive(pkA) && field.DebugLiveCount(pkA) == 2);
+        }
+    }
+
+    // PEI_CLIENT_PLAN §3 Phase C4 verify (review fold): a POPULATED dedicated world is DESYNC-QUIET and its
+    // join snapshot FITS. The population is built server-side BEFORE anyone joins (the real dedicated boot
+    // order): real Vehicle nodes + real ZombieController brains (published by VehicleNetSync/ZombieNetSync),
+    // plus PEI-scale wire entities spawned directly into the replication systems (120 vehicles / 96 zombies /
+    // 300 world items -- the §7 risk 3 worst case, everything inside the joiner's relevancy rings). The
+    // interaction under test: vehicles are AllRelevant -> IN the EnableSyncCheck set (NetWorldHost.cs
+    // EnableSyncCheck lists SystemVehicles), so the client's vehicle replica must hash-converge; zombies are
+    // relevancy-filtered -> EXCLUDED from the check by design, and actively-churning brains must not trip it
+    // either. Then a FRESH joiner lands against the full population: everything arrives in ONE reliable join
+    // snapshot, the composer never budget-drops a block (OversizedBlocksSkipped == 0), and a join-shaped
+    // probe compose measures the actual bytes against the reliable budget (plan §7 risk 3 -- report numbers).
+    public class NetPopulatedWorldQuiet : GameTest
+    {
+        public override string Name => "net.populated_world_quiet";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            // a walkable navmesh for the brains (the net.zombie_chase_sync rig)
+            var nm = new NavigationMesh();
+            nm.Vertices = new[] { new Vector3(-60f, 0f, -60f), new Vector3(-60f, 0f, 60f), new Vector3(60f, 0f, 60f), new Vector3(60f, 0f, -60f) };
+            nm.AddPolygon(new int[] { 0, 1, 2, 3 });
+            World.AddChild(new NavigationRegion3D { NavigationMesh = nm });
+
+            var net = new MemNetwork(20260719);
+            var clients = new List<NetWorldClient>();
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); for (int i = 0; i < clients.Count; i++) clients[i].Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + publishes + replicate stay after/LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            // ---- POPULATE (before any join -- the C4 dedicated boot order) ----
+            // real nodes: 6 vehicles across the spec pool + 8 zombie brains (they idle until a player registers)
+            string[] specs = { "jeep", "sedan", "police", "ambulance", "humvee", "truck" };
+            for (int i = 0; i < specs.Length; i++)
+            {
+                var v = Vehicle.BuildByName(specs[i], i);
+                World.AddChild(v);
+                v.GlobalPosition = new Vector3(-25f + i * 9f, 1.2f, -18f);
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                float ang = i * 2.39996f;
+                var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
+                World.AddChild(z);
+                z.GlobalPosition = new Vector3(18f * Mathf.Cos(ang), 0.3f, 18f * Mathf.Sin(ang) + 25f);
+            }
+            yield return Ticks(10);   // one publish round: VehicleNetSync/ZombieNetSync mint the node entities
+            T.Check("node population minted (6 vehicles / 8 zombies tracked server-side)",
+                    ded.Server.Vehicles.Count == 6 && ded.Server.Zombies.Count == 8);
+
+            // PEI-scale wire entities, directly into the replication systems (wire size needs no nodes):
+            // vehicles -> 126 total (PEI spawns ~100), zombies -> 104 total (the 96 GlobalMaxLive cap + the
+            // 8 brains), world items -> 300 (a LootField-heavy town). ALL inside the joiner's rings
+            // (zombies 192 m / items 128 m; vehicles are AllRelevant regardless).
+            long tick = ded.Server.Session.CurrentTick;
+            for (int i = 0; i < 120; i++)
+                ded.Server.Vehicles.ServerSpawn(ded.Server.Ids.Mint(), (byte)(i % Vehicle.SpecNames.Length), (byte)i,
+                                                new UnityEngine.Vector3(-60f + (i % 16) * 8f, 0.6f, -60f + (i / 16) * 8f), tick);
+            for (int i = 0; i < 96; i++)
+                ded.Server.Zombies.ServerSpawn(ded.Server.Ids.Mint(), 0,
+                                               new UnityEngine.Vector3(-40f + (i % 12) * 7f, 0.3f, 40f + (i / 12) * 7f), tick);
+            for (int i = 0; i < 300; i++)
+                ded.Server.WorldItems.ServerSpawn(ded.Server.Ids.Mint(), new Item((ushort)(1 + i % 50), 1, 100),
+                                                  new UnityEngine.Vector3(-50f + (i % 25) * 4f, 0.1f, -50f + (i / 25) * 4f), tick);
+            T.Check("PEI-scale wire population stands (126 vehicles / 104 zombies / 300 items)",
+                    ded.Server.Vehicles.Count == 126 && ded.Server.Zombies.Count == 104 && ded.Server.WorldItems.Count == 300);
+
+            // ---- a client joins the POPULATED world; walks; the desync detector must stay silent ----
+            var a = new NetWorldClient(new MemClientTransport(net), "walker", contentHash: NetContent.Hash);
+            int desyncs = 0;
+            a.DesyncDetected += _ => desyncs++;
+            clients.Add(a);
+            a.Connect();
+            yield return Until(() => a.State == NetSessionState.Connected && a.JoinSnapshotsApplied >= 1, 5);
+            T.Check("walker joined the populated world (reliable join snapshot applied)",
+                    a.State == NetSessionState.Connected && a.JoinSnapshotsApplied >= 1);
+            T.Check($"the ONE join snapshot carried the WHOLE population (v={a.Vehicles.Count} z={a.Zombies.Count} i={a.WorldItems.Count})",
+                    a.Vehicles.Count == 126 && a.Zombies.Count == 104 && a.WorldItems.Count == 300);
+
+            // walk for 10 s of sim among chasing brains + publishing vehicles: >= 10 sync-check rounds
+            // (EnableSyncCheck default 50-tick interval, on for every DedicatedServer)
+            var walkStep = new DelegateSimStep((t, dt) => a.SendMoveInput(0f, 1f, (float)((t / 100) % 4) * 90f), "l1.walk");
+            world.Sim.Sim.Add(walkStep);
+            yield return Ticks(500);
+            world.Sim.Sim.Remove(walkStep);
+            yield return Ticks(100);   // input-quiet settle: vehicles at rest, snapshots flushed
+            T.Check($"sync-check blocks actually flowed ({ded.Server.Composer.Diag.SyncCheckBlocksWritten})",
+                    ded.Server.Composer.Diag.SyncCheckBlocksWritten > 0);
+            T.Check($"DESYNC-QUIET: zero DesyncDetected across the populated-world walk ({desyncs} fired)", desyncs == 0);
+            // vehicles are IN the sync-check set (AllRelevant): the replica must hash-converge on the server
+            T.Check("vehicles replica == server (StateHash parity -- the checked system converged)",
+                    a.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
+            // zombies are relevancy-filtered -> excluded from the check set BY DESIGN; the churning brains
+            // replicated fine and never tripped the detector (desyncs == 0 above covers the whole run)
+            T.Check($"zombie replicas flowed throughout ({a.Zombies.Count})", a.Zombies.Count == 104);
+
+            // ---- join-snapshot size (plan §7 risk 3): a FRESH joiner against the full population ----
+            long skippedBefore = ded.Server.Composer.Diag.OversizedBlocksSkipped;
+            T.Check("no block was EVER budget-dropped so far (join + 25 Hz stream)", skippedBefore == 0);
+            var late = new NetWorldClient(new MemClientTransport(net), "latecomer", contentHash: NetContent.Hash);
+            clients.Add(late);
+            late.Connect();
+            yield return Until(() => late.State == NetSessionState.Connected && late.JoinSnapshotsApplied >= 1, 5);
+            T.Check($"latecomer's ONE reliable join snapshot carried everything (v={late.Vehicles.Count} z={late.Zombies.Count} i={late.WorldItems.Count})",
+                    late.JoinSnapshotsApplied >= 1 && late.Vehicles.Count == 126 && late.Zombies.Count == 104 && late.WorldItems.Count == 300);
+            T.Check("the latecomer's join dropped NO system block (composer truncation never fired)",
+                    ded.Server.Composer.Diag.OversizedBlocksSkipped == skippedBefore);
+
+            // measure the join-shaped FULL compose (baseline 0, the exact reliable budget) for a probe id
+            int budget = NetProtocol.MaxReliableMessageBytes / 2;
+            var probe = ded.Server.Composer.Compose(ded.Server.Session.CurrentTick, 9999, default, maxBytes: budget);
+            GD.Print($"[C4] populated join snapshot: {probe.Length} B of {budget} B reliable budget ({100.0 * probe.Length / budget:0.00}%) -- 126 vehicles / 104 zombies / 300 items / 2 players");
+            T.Check($"populated join snapshot MEASURED: {probe.Length} B of {budget} B reliable budget ({100.0 * probe.Length / budget:0.0}%)",
+                    probe.Length > 2000 && probe.Length < budget);
+            T.Check("the probe compose dropped nothing either",
+                    ded.Server.Composer.Diag.OversizedBlocksSkipped == skippedBefore);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            a.Disconnect();
+            late.Disconnect();
+        }
+    }
 }
