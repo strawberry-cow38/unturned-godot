@@ -26,6 +26,23 @@ namespace UnturnedGodot
         public Color OutlineColor = new Color(0.82f, 0.83f, 0.90f);   // default vehicle tint; BuildPuppetByName overrides from spec rarity
         bool _lookFocused;
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
+        Label3D _nameLabel;
+        const float InfoH = 1.1f;   // name tag sits at cabin height (matches the real Vehicle's InfoBillboard)
+
+        /// <summary>Attach the look-at name tag (hidden until focused). A billboard child at cabin height, so it
+        /// follows the puppet as it's dead-reckoned (unlike the item tag, the car moves).</summary>
+        public void SetNameLabel(string name, Color color)
+        {
+            _nameLabel = new Label3D
+            {
+                Text = string.IsNullOrEmpty(name) ? "?" : name,
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                Modulate = color.Lerp(Colors.White, 0.35f),
+                PixelSize = 0.01f, NoDepthTest = true, FontSize = 64, OutlineSize = 10,
+                Visible = false, Position = new Vector3(0, InfoH, 0),
+            };
+            AddChild(_nameLabel);
+        }
 
         public void SetLookFocused(bool on)
         {
@@ -40,6 +57,7 @@ namespace UnturnedGodot
                 if (IsInstanceValid(mi))
                     mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
             if (on) WorldItem.FocusColor = OutlineColor;   // OutlineOverlay tints the rim with this
+            if (_nameLabel != null && IsInstanceValid(_nameLabel)) _nameLabel.Visible = on;
         }
 
         static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)

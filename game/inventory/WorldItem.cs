@@ -132,7 +132,7 @@ namespace UnturnedGodot
         /// Mirrors the real WorldItem's look-at highlight so the joined client can see + aim at replicated drops --
         /// a bare replica node (WorldItemReplicaView's old shape) is invisible to the look-ray. Bit 7 + mask 0 ->
         /// it never blocks movement (player mask is bit0|bit6) or catches bullets (bit 7 isn't in the bullet mask).</summary>
-        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity)
+        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity, string name)
         {
             var p = new WorldItemPuppet();
             var visual = BuildReplicaVisual(itemId, rarity);
@@ -154,7 +154,19 @@ namespace UnturnedGodot
                 MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
             };
             p.AddChild(glow);
-            p.Configure(glow, rarity);
+
+            // name tag (hidden until focused) -- same style as the real WorldItem's _label. TopLevel so it floats in
+            // WORLD space above the item, ignoring the puppet's 90deg drop rotation.
+            var label = new Label3D
+            {
+                Text = string.IsNullOrEmpty(name) ? "?" : name,
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                Modulate = rarity.Lerp(Colors.White, 0.35f),
+                PixelSize = 0.006f, NoDepthTest = true, FontSize = 64, OutlineSize = 10,
+                Visible = false, TopLevel = true,
+            };
+            p.AddChild(label);
+            p.Configure(glow, label, rarity);
             return p;
         }
 
@@ -353,10 +365,12 @@ namespace UnturnedGodot
     public partial class WorldItemPuppet : Node3D, IPuppetFocusable
     {
         MeshInstance3D _glow;
+        Label3D _label;
         Color _rar = Colors.White;
         bool _focused;
+        const float LabelH = 0.4f;   // name tag floats this far above the item (matches the real WorldItem)
 
-        public void Configure(MeshInstance3D glow, Color rarity) { _glow = glow; _rar = rarity; }
+        public void Configure(MeshInstance3D glow, Label3D label, Color rarity) { _glow = glow; _label = label; _rar = rarity; }
 
         public void SetLookFocused(bool on)
         {
@@ -364,6 +378,11 @@ namespace UnturnedGodot
             _focused = on;
             if (on) WorldItem.FocusColor = _rar;   // OutlineOverlay tints the rim with the item's rarity
             if (_glow != null && IsInstanceValid(_glow)) _glow.Visible = on;
+            if (_label != null && IsInstanceValid(_label))
+            {
+                _label.Visible = on;
+                if (on) _label.GlobalPosition = GlobalPosition + Vector3.Up * LabelH;   // TopLevel -> place it in world space (a settled drop doesn't move)
+            }
         }
     }
 }

@@ -69,9 +69,9 @@ namespace UnturnedGodot
         {
             var asset = Assets.find(e.ItemId);
             var rarity = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
-            // focusable puppet: replica visual + a look-detection box + a glow silhouette, so the client's
-            // look-ray can highlight the drop (a bare Node3D was invisible to the raycast -> no outline in MP)
-            var node = WorldItem.BuildItemPuppet(e.ItemId, rarity);
+            // focusable puppet: replica visual + a look-detection box + a glow silhouette + name tag, so the client's
+            // look-ray can highlight AND name the drop (a bare Node3D was invisible to the raycast -> no outline in MP)
+            var node = WorldItem.BuildItemPuppet(e.ItemId, rarity, asset?.itemName);
             // the SP drop pose (+90 X lays the model flat right-side-up) with a NetId-derived yaw for
             // variety -- deterministic, since the server's actual rest orientation never crosses the wire
             node.RotationDegrees = new Vector3(90f, (e.NetIdValue * 137u) % 360u, 0f);

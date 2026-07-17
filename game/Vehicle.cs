@@ -875,6 +875,8 @@ namespace UnturnedGodot
         // Build(), but NO VehicleBody3D/VehicleWheel3D/collision/audio/particles. Puppets are interpolated
         // visuals (VehicleReplicaView dead-reckons them); the server owns the physics. Wheel pivots are
         // exposed on the returned node for steer/spin dressing.
+        const float WheelRestDrop = 0.25f;   // = the real VehicleWheel3D WheelRestLength (~line 1044): suspension rest drop below the axle mount
+
         public static VehiclePuppet BuildPuppetByName(string name, int variant)
         {
             var s = SpecFor(name);
@@ -903,12 +905,16 @@ namespace UnturnedGodot
                 var (x, y, z, steer) = s.Wheels[i];
                 float wr = s.WheelRadii != null ? s.WheelRadii[i] : s.WheelRadius;
                 float wscale = wr / s.WheelRadius;
-                var pivot = new Node3D { Position = new Vector3(x, y, z) };
+                // drop the wheel by the suspension rest length: the real VehicleWheel3D (WheelRestLength=0.25, Vehicle.cs
+                // ~1044) hangs the wheel this far below the axle mount at rest, so the body sits at ride height with wheels
+                // ON the ground. The puppet has no suspension -> place the wheel where the real one rests, else it floats.
+                var pivot = new Node3D { Position = new Vector3(x, y - WheelRestDrop, z) };
                 pivot.AddChild(new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) });
                 p.AddChild(pivot);
                 p.Wheels[i] = new VehiclePuppet.WheelDress { Pivot = pivot, Steer = steer, Radius = wr };
             }
             p.OutlineColor = ItemTool.RarityColorUI(s.Rarity);   // match the real vehicle's look-at rim colour (line 931)
+            p.SetNameLabel(s.Name, p.OutlineColor);              // look-at name tag (hidden until focused), like the real Vehicle's InfoBillboard title
             // look-detection collider (client-only): the vehicle-layer box (bit 5) so the player's look-ray/sphere finds
             // the puppet and outlines it. CollisionMask 0 + NO bit 0 -> it never blocks movement (player mask is bit0|bit6)
             // and it isn't the physics body the SP car is; detection only, mirroring the real vehicle's bit-5 hull.
