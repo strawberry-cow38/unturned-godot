@@ -1039,4 +1039,120 @@ namespace UnturnedGodot.Testing
             late.Disconnect();
         }
     }
+
+    // PEI_CLIENT_PLAN §3 Phase C5: the client-session world views on the fallback world. The server spawns
+    // a world item (the drop path), fells + respawns a resource index, and configures the clock; the
+    // session's views must (a) materialize a STATIC item visual, (b) mirror the alive-bitmap onto the
+    // client's ResourceField -- trunk collider included (§7 risk 7), (c) anchor the client DayNightCycle on
+    // the tick-derived time (§7 risk 8 glide), and (d) puppet a replicated zombie. Server and client each
+    // get their OWN ResourceField/DayNightCycle instance (same committed content -> same §3.7 index space),
+    // so a mirrored flip is unambiguously the VIEW's work, not the server sync's. All views are read-only
+    // replica consumers, so the desync detector must stay silent throughout -- the accidental-mutation guard.
+    public class NetClientWorldViews : GameTest
+    {
+        public override string Name => "net.client_world_views";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            // server-side world state: a headless ResourceField (the dedicated shape) + a distinctive clock
+            var serverField = new ResourceField { VisualInstances = false };
+            World.AddChild(serverField);
+            serverField.LoadResources("NONE");
+            T.Check($"committed resource content loaded server-side ({serverField.InstanceCount})", serverField.InstanceCount > 0);
+            world.DayNight.Time = 0.80f;   // distinctive (default 0.35) -- the client must ADOPT this off the wire
+
+            // client-side world state the views drive
+            var clientField = new ResourceField { VisualInstances = false };
+            World.AddChild(clientField);
+            clientField.LoadResources("NONE");
+            T.Check("client + server fields agree on the index space (§3.7)", clientField.InstanceCount == serverField.InstanceCount);
+            var clientDnc = new DayNightCycle();   // default Time 0.35 / DayLength 120 -- BOTH must be adopted off the wire
+            World.AddChild(clientDnc);
+
+            var net = new MemNetwork(20260721);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net),
+                                                PlayerName = "viewer", DayNight = clientDnc, Resources = clientField };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net),
+                                            RemoteAvatars = true, DayNight = world.DayNight, Resources = serverField };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned (its _Ready registered the ItemCatalog the item view needs)", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            // (a) the server spawns a world item over the drop path; the view materializes a STATIC visual
+            var item = ded.Server.Transactions.SpawnWorldItem(new Item(13, 1, 100),
+                new UnityEngine.Vector3(3f, 0.4f, 2f), UnityEngine.Vector3.zero);
+            T.Check("server minted the world-item entity", item != null);
+            yield return Until(() => sess.Items.NodeCount == 1, 5);
+            bool haveNode = sess.Items.TryGetNode(item.NetIdValue, out var itemNode);
+            T.Check("(a) the item view materialized a node for the replicated entity", haveNode);
+            T.Check("the replica is VISUAL-ONLY (no RigidBody3D, not in the worlditems group)",
+                    haveNode && itemNode is not RigidBody3D && !itemNode.IsInGroup("worlditems"));
+            // settle it 1.5 m away (the LootField/drop physics path publishes exactly this): the visual follows
+            ded.Server.Transactions.SettleWorldItem(item.NetIdValue, new UnityEngine.Vector3(4.5f, 0.2f, 2f));
+            var rest = new Vector3(4.5f, 0.2f, 2f);
+            yield return Until(() => haveNode && itemNode.GlobalPosition.DistanceTo(rest) < 0.02f, 5);
+            T.Check($"the settle event moved the visual to the server's rest transform ({itemNode.GlobalPosition})",
+                    itemNode.GlobalPosition.DistanceTo(rest) < 0.02f);
+
+            // (b) fell a TREE index server-side: the client field drops the instance AND its trunk collider
+            int treeIdx = -1;
+            for (int i = 0; i < clientField.InstanceCount; i++)
+                if (clientField.DebugTrunk(i) != null) { treeIdx = i; break; }
+            T.Check($"a tree index exists in the committed content (idx {treeIdx})", treeIdx >= 0);
+            T.Check("server transaction felled the resource", ded.ResourceSync.SetAlive(treeIdx, false));
+            yield return Until(() => !clientField.IsAlive(treeIdx), 5);
+            T.Check("(b) the alive-bitmap mirrored onto the CLIENT field (SetAlive(i,false) ran)", !clientField.IsAlive(treeIdx));
+            T.Check("the felled tree's client trunk collider is OFF (§7 risk 7)", clientField.DebugTrunk(treeIdx).CollisionLayer == 0);
+            ded.ResourceSync.SetAlive(treeIdx, true);
+            yield return Until(() => clientField.IsAlive(treeIdx), 5);
+            T.Check("respawn restores the client instance + collider",
+                    clientField.IsAlive(treeIdx) && clientField.DebugTrunk(treeIdx).CollisionLayer != 0);
+
+            // (c) the clock view anchored the client cycle on the tick-derived time. Tolerance 0.005 of a
+            // day (~1.5 s of the 300 s day) -- generous vs the 0.45-of-a-day default gap it had to jump,
+            // and well over the re-anchor epsilon + one 2-tick snapshot interval (1.3e-4) of steady drift.
+            T.Check($"client adopted the replicated day length ({clientDnc.DayLength})",
+                    clientDnc.DayLength == ded.Server.Clock.DayLengthSeconds);
+            float derived = sess.Client.Clock.TimeOfDayAt(sess.Client.Applier.LastAppliedServerTick);
+            float clockErr = Mathf.Abs(Mathf.PosMod(clientDnc.Time - derived + 0.5f, 1f) - 0.5f);
+            T.Check($"(c) DayNightCycle.Time anchored to the tick-derived value (err {clockErr:0.####} of a day)", clockErr < 0.005f);
+            T.Check($"...and that value is the SERVER's 0.80 clock, not the 0.35 default ({derived:0.###})",
+                    Mathf.Abs(Mathf.PosMod(derived - 0.80f + 0.5f, 1f) - 0.5f) < 0.02f);
+
+            // (d) a replicated zombie gets an interpolated puppet (the ZombiePuppets attach)
+            ded.Server.Zombies.ServerSpawn(ded.Server.Ids.Mint(), 0,
+                new UnityEngine.Vector3(6f, 0.3f, 6f), ded.Server.Session.CurrentTick);
+            yield return Until(() => sess.Puppets.PuppetCount == 1, 5);
+            bool havePuppet = sess.Puppets.PuppetCount == 1;
+            T.Check("(d) the replicated zombie got a puppet in the session's world", havePuppet);
+
+            // remove the item -> the visual retires
+            ded.Server.Transactions.RemoveWorldItem(item.NetIdValue);
+            yield return Until(() => sess.Items.NodeCount == 0, 5);
+            T.Check("the removal retired the item visual", sess.Items.NodeCount == 0);
+
+            // the views are READ-ONLY replica consumers: >= 2 more sync-check rounds, still desync-quiet
+            yield return Ticks(120);
+            T.Check($"sync-check blocks flowed ({ded.Server.Composer.Diag.SyncCheckBlocksWritten})",
+                    ded.Server.Composer.Diag.SyncCheckBlocksWritten > 0);
+            T.Check($"DESYNC-QUIET with every C5 view attached ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
 }

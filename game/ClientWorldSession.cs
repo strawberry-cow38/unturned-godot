@@ -31,10 +31,14 @@ namespace UnturnedGodot
         public SimDriver Driver;                    // the world's sim spine (WorldBuildResult.Sim) -- steps registered here in §2.5 order
         public DirectionalLight3D Sun;              // world lighting (WorldBuildResult.Sun/Env): the late-spawned shell's FP gun links to it, like Playable
         public Godot.Environment Env;
+        public DayNightCycle DayNight;              // the client world's clock (WorldBuildResult.DayNight) -- C5: WorldClockView anchors it on the replicated clock
+        public ResourceField Resources;             // the client world's trees/rocks (WorldBuildResult.Resources) -- C5: ResourceAliveView mirrors the alive-bitmap
         public IClientTransport TransportOverride;  // tests inject MemClientTransport; null = real UDP to Host:Port
 
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
+        public ZombiePuppets Puppets { get; private set; }        // C5: server zombies as interpolated puppets
+        public WorldItemReplicaView Items { get; private set; }   // C5: replicated world items as static visuals
         public PlayerController Shell { get; private set; }   // null until the first authoritative own-entity sample
         // The session's OWN reconciler -- NOT Client.Prediction.Reconciler: NetWorldClient.Tick feeds that
         // one through ClientPrediction.Reconcile (the headless-walker path), which would consume the snap
@@ -72,6 +76,15 @@ namespace UnturnedGodot
             AddChild(Remotes);
             AddChild(new DeployableReplicaView { Client = Client });
             AddChild(new VehicleReplicaView { Client = Client });   // server vehicles as dead-reckoned puppets (§3.6)
+            // C5 (§3): the remaining world-state views -- all read-only replica consumers. Zombie puppets,
+            // world items as static visuals, the synced clock anchoring the local sky, and server-felled
+            // resources dropping their client visual + trunk collider (§7 risk 7).
+            Puppets = new ZombiePuppets { Client = Client };
+            AddChild(Puppets);
+            Items = new WorldItemReplicaView { Client = Client };
+            AddChild(Items);
+            AddChild(new WorldClockView { Client = Client, DayNight = DayNight });
+            AddChild(new ResourceAliveView { Client = Client, Field = Resources });
 
             // pre-join status: there is NO camera until the shell spawns (its first-person cam IS the
             // view) -- surface the session state so an unreachable server isn't a silent black screen

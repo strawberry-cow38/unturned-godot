@@ -38,6 +38,10 @@ namespace UnturnedGodot
 
         public bool IsAlive(int index) => index >= 0 && index < _instances.Count && _instances[index].Alive;
 
+        /// <summary>Test seam: the tree-trunk StaticBody3D for an instance (null for non-trees) -- L1s
+        /// assert the §7-risk-7 collider toggle without reaching into the registry.</summary>
+        public StaticBody3D DebugTrunk(int index) => index >= 0 && index < _instances.Count ? _instances[index].Trunk : null;
+
         /// <summary>Fell (false) or respawn (true) one resource instance by its load-order index: the visual
         /// leaves/enters its MultiMesh (zero-scale -- MultiMesh has no per-instance visibility) and a tree's
         /// trunk collider toggles with it. Idempotent; never called on the SP direct path.</summary>

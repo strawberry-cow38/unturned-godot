@@ -107,6 +107,26 @@ namespace UnturnedGodot
             return m;
         }
 
+        /// <summary>C5 (PEI_CLIENT_PLAN §3): VISUAL-ONLY reuse of the shared item-model cache for the
+        /// joined client's WorldItemReplicaView -- the same mesh/texture/flat-colour the physical prop
+        /// shows, with the rarity marker box fallback for ids without a model. No RigidBody3D, no
+        /// collider, no pickup -- the replica view owns transform + lifecycle.</summary>
+        public static MeshInstance3D BuildReplicaVisual(ushort itemId, Color rarity)
+        {
+            var model = itemId > 0 ? GetModel(itemId) : null;
+            if (model != null && model.Ok)
+                return new MeshInstance3D
+                {
+                    Mesh = model.Mesh,
+                    MaterialOverride = model.Mat ?? new StandardMaterial3D { AlbedoColor = model.FlatColor ?? rarity, Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                };
+            return new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = new Vector3(0.24f, 0.24f, 0.24f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = rarity, Roughness = 0.55f },
+            };
+        }
+
         public static WorldItem Spawn(Node parent, Item item, Vector3 pos, Color? fallbackColor = null, string fallbackName = null)
         {
             var wi = new WorldItem { Item = item, FallbackColor = fallbackColor, FallbackName = fallbackName };
