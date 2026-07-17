@@ -191,6 +191,18 @@ namespace UnturnedGodot.Net
             internal PlayerMovementSim Sim;
             internal MoveInput CurrentInput;
             internal bool HasInput;
+            // -- the mp-inputbuffer fix: the per-peer in-order MoveInput queue (real Unturned's
+            //    serversidePackets, PlayerInput.cs:1054) the C2 avatar driver consumes ONE input per tick
+            //    from (TryConsumeInput), so the server integrates the same input stream, in the same order
+            //    and count, the client predicted. CurrentInput above stays the latest-RECEIVED (the
+            //    ServerStep held-keys demo path reads it); AppliedInput is the latest CONSUMED -- what the
+            //    avatar coasts on when the queue starves.
+            internal Queue<MoveInput> PendingInputs;
+            internal MoveInput AppliedInput;
+            internal bool HasApplied;
+            internal ushort LastConsumedSeq;
+            internal byte PrimeWait;
+            internal bool Primed;
             // true once ServerDrive has taken over this entity: an in-process shell (the listen-server /
             // SP-loopback local player, MP_PLAN §4 Phase 4) steps the REAL sim-core + physics and writes
             // the result here; the internal flat-ground integration must not fight it.
@@ -255,8 +267,9 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>The peer's currently-held MoveInput (the held-keys model's latest). False when none is
-        /// held -- never received one yet, or cleared by death/vehicle-enter (ServerClearInput). This is the
-        /// C2 seam PlayerNetSync reads each tick to drive the server avatar body.</summary>
+        /// held -- never received one yet, or cleared by death/vehicle-enter (ServerClearInput). ServerStep's
+        /// flat demo integration reads this view; the C2 avatar driver consumes TryConsumeInput instead
+        /// (in-order, count-preserving -- the mp-inputbuffer fix).</summary>
         public bool TryGetHeldInput(ushort ownerPlayerId, out MoveInput input)
         {
             input = default;
@@ -265,14 +278,94 @@ namespace UnturnedGodot.Net
             return true;
         }
 
+        // ---- the mp-inputbuffer jitter buffer (the sprint-stop yank fix) ----
+        // MoveInput rides UnreliableSequenced at one per client tick; the avatar driver must integrate
+        // that stream in the same order and COUNT the client predicted, or the integrated-tick counts
+        // drift under jitter (two inputs in one server-tick window / a stale re-integration) and the
+        // accumulated gap resolves as one hard correction the instant the player stops. Tunables:
+
+        /// <summary>Queue depth cap: arrivals beyond this drop the OLDEST queued input (a hitch burst must
+        /// bound added input latency and memory, and the freshest intent matters most).</summary>
+        public const int MaxQueuedInputs = 8;
+        /// <summary>Backlog above this consumes TWO inputs in a tick (one skipped) -- bounded catch-up so
+        /// a hitch's backlog drains instead of becoming permanent input lag.</summary>
+        public const int CatchUpQueueDepth = 4;
+        /// <summary>Seq holes at most this size (dropped datagrams) substitute one coast tick per missing
+        /// input, keeping the integration count aligned; bigger jumps (hitch / cap drops) adopt directly
+        /// and let the reconciler absorb the difference.</summary>
+        public const int MaxGapCoastTicks = 2;
+        /// <summary>Consumption starts once this many inputs are buffered (or after an equal number of
+        /// ticks with anything queued, so a sparse sender is never stalled) -- the shallow standing buffer
+        /// that absorbs arrival jitter of the same magnitude. Costs its depth in ticks of added input
+        /// latency (~40 ms), invisible locally behind client-side prediction.</summary>
+        public const int PrimeDepth = 2;
+
         /// <summary>Latest-wins input queue: MoveInput rides UnreliableSequenced, so a reordered stale
-        /// command must never override a newer one already applied.</summary>
+        /// command must never override a newer one already applied. Also appends to the in-order
+        /// PendingInputs queue TryConsumeInput drains (the guard keeps queued seqs strictly increasing;
+        /// the depth cap drops the oldest).</summary>
         public void ServerQueueInput(ushort ownerPlayerId, in MoveInput input)
         {
             if (!TryGetByOwner(ownerPlayerId, out var e) || e.Sim == null) return;
             if (e.HasInput && !NetSeq.IsNewer(input.Seq, e.CurrentInput.Seq)) return;
             e.CurrentInput = input;
             e.HasInput = true;
+            e.PendingInputs ??= new Queue<MoveInput>();
+            if (e.PendingInputs.Count >= MaxQueuedInputs) e.PendingInputs.Dequeue();
+            e.PendingInputs.Enqueue(input);
+        }
+
+        /// <summary>One tick's input for the avatar driver (PlayerNetSync) -- the in-order consume that
+        /// replaces reading the held latest. Dequeues exactly one queued input per call; when the queue
+        /// is starved it COASTS on the last consumed input (the held-keys model's virtue on an unreliable
+        /// wire: a lost datagram's axes are almost always the held ones), and a small seq hole substitutes
+        /// one coast tick per missing input so the count stays aligned with the client's prediction.
+        /// False = nothing to integrate (no input since spawn/clear) -- stand still, like TryGetHeldInput.
+        /// The returned Seq is the ack the caller must pair with the produced position (during a coast it
+        /// repeats the last consumed seq, which the client's reconciler already treats as stale).</summary>
+        public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input)
+        {
+            input = default;
+            if (!TryGetByOwner(ownerPlayerId, out var e) || e.Sim == null) return false;
+            var q = e.PendingInputs;
+            if (q == null || q.Count == 0)
+            {
+                input = e.AppliedInput;   // starved: coast (or false while nothing consumed yet)
+                return e.HasApplied;
+            }
+            if (!e.Primed)
+            {
+                // fill the shallow jitter buffer before the first consume; the tick counter keeps a
+                // sparse sender (a single held input) from waiting forever
+                if (q.Count < PrimeDepth + 1 && ++e.PrimeWait <= PrimeDepth)
+                {
+                    input = e.AppliedInput;
+                    return e.HasApplied;
+                }
+                e.Primed = true;
+            }
+            if (q.Count > CatchUpQueueDepth)
+                e.LastConsumedSeq = q.Dequeue().Seq;   // bounded catch-up: skip one (closes its hole too)
+            int dist = (ushort)(q.Peek().Seq - e.LastConsumedSeq);
+            if (e.HasApplied && dist > 1 && dist <= MaxGapCoastTicks + 1)
+            {
+                // a dropped datagram's tick: coast in its place so the count stays aligned -- and CLAIM
+                // the hole's seq (the client predicted and recorded it; the sequenced channel can never
+                // deliver it late once a newer seq got through). Pairing the coast tick's position with
+                // the substituted seq keeps every published (pos, seq) ack exact -- returning the stale
+                // seq here let the 25 Hz snapshot sampler pair coast-advanced positions with an
+                // already-predicted seq, a phantom one-tick correction at every substitution.
+                e.LastConsumedSeq++;
+                e.AppliedInput.Seq = e.LastConsumedSeq;
+                input = e.AppliedInput;
+                return true;
+            }
+            var inp = q.Dequeue();
+            e.LastConsumedSeq = inp.Seq;
+            e.AppliedInput = inp;
+            e.HasApplied = true;
+            input = inp;
+            return true;
         }
 
         /// <summary>One 50 Hz authoritative movement step for every server-owned player. Held-key model:
@@ -344,10 +437,17 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>Drop the held-keys input (Phase 5 death: a corpse must stop integrating the victim's
-        /// last MoveInput; fresh inputs are rejected at the dispatch gate until respawn).</summary>
+        /// last MoveInput; fresh inputs are rejected at the dispatch gate until respawn). Also drains the
+        /// in-order queue and coast state -- stale queued walk intents must not keep an avatar moving
+        /// after death/vehicle-enter -- and re-arms the jitter-buffer prime for the resumed stream.</summary>
         public void ServerClearInput(ushort ownerPlayerId)
         {
-            if (TryGetByOwner(ownerPlayerId, out var e)) e.HasInput = false;
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return;
+            e.HasInput = false;
+            e.HasApplied = false;
+            e.PendingInputs?.Clear();
+            e.Primed = false;
+            e.PrimeWait = 0;
         }
 
         /// <summary>Round a position through the exact wire encoding -- authoritative state and client

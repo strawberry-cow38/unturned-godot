@@ -953,6 +953,103 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // THE mp-inputbuffer regression (branch mp-inputbuffer-fix): the server used to apply the client's
+    // LATEST-held MoveInput once per tick (TryGetHeldInput) instead of consuming the input stream in seq
+    // order. Under jitter/reorder/loss on the input channel the number of distinct input-ticks the server
+    // integrates drifts from the number the client predicted: two inputs landing in one server-tick window
+    // integrate only the newest (a predicted tick of motion is skipped), a gap re-integrates a stale input.
+    // At sprint speed one tick is ~0.14 m, so a 1-3 tick count mismatch is a 0.15-0.4 m gap -- invisible
+    // while moving (the same held axes integrate either way), then resolving as ONE hard correction the
+    // instant the player stops: the "sprint then stop suddenly, hits hard" yank. The fix mirrors real
+    // Unturned (PlayerInput.cs serversidePackets :1054/:1487/:1734): a per-peer in-order queue consumed one
+    // input per tick (PlayerReplication.TryConsumeInput) behind a ~2-tick jitter buffer, coasting on the
+    // last consumed input when starved and substituting a coast tick for small seq holes so the server
+    // integrates the SAME input stream, in the same order and count, the client predicted. This test runs
+    // 5 sprint-then-STOP cycles over a jittery+lossy input link (the exact repro, seeded/deterministic) and
+    // asserts every stop lands SOFT: pending spike and applied correction in each stop window stay bounded
+    // small, zero snaps. Pre-fix the worst stop window spikes ~0.2-0.4 m of correction -- the yank.
+    public class NetShellSprintStopJitter : GameTest
+    {
+        public override string Name => "net.shell_sprint_stop_jitter";
+        public override double TimeoutSimSeconds => 60;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(41414);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "stopper" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            // the repro link: latency + reorder-jitter + loss on the INPUT channel only (snapshots ride
+            // back clean, so what's measured is the movement pipeline, not ack noise)
+            net.ClientToServer.LatencyTicks = 3;
+            net.ClientToServer.ReorderJitterTicks = 2;
+            net.ClientToServer.LossProbability = 0.03;
+
+            long snapsStart = sess.Reconciler.Snaps;
+            float worstStopPending = 0f, worstStopCorr = 0f;
+            for (int cycle = 0; cycle < 5; cycle++)
+            {
+                // sprint ~2 s under the faulty link
+                sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+                sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                yield return Ticks(100);
+
+                // STOP SUDDENLY (input -> 0): the moment any accumulated integration-count gap resolves.
+                // Pre-fix a 0.2-0.4 m correction rips through the stationary shell right here.
+                sess.Shell.ScriptedStance = null;
+                sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                float corrBefore = sess.Reconciler.CorrectionAppliedMeters;
+                float maxPend = 0f;
+                for (int i = 0; i < 60; i++)
+                {
+                    yield return Ticks(1);
+                    maxPend = Mathf.Max(maxPend, sess.Reconciler.PendingError.magnitude);
+                }
+                float corr = sess.Reconciler.CorrectionAppliedMeters - corrBefore;
+                GD.Print($"[sprint-stop] cycle {cycle}: stop-window maxPending={maxPend:0.###} m, corrApplied={corr:0.###} m, snaps={sess.Reconciler.Snaps - snapsStart}");
+                worstStopPending = Mathf.Max(worstStopPending, maxPend);
+                worstStopCorr = Mathf.Max(worstStopCorr, corr);
+            }
+
+            GD.Print($"[sprint-stop] WORST of 5 cycles: maxPending={worstStopPending:0.###} m, corrApplied={worstStopCorr:0.###} m");
+            T.Check($"every sprint-stop landed SOFT (worst stop-window pending {worstStopPending:0.###} m -- pre-fix ~0.2-0.4)",
+                    worstStopPending < 0.15f);
+            T.Check($"post-stop correction stayed small (worst {worstStopCorr:0.###} m applied in a stop window)",
+                    worstStopCorr < 0.20f);
+            T.Check($"ZERO snaps across all stop cycles ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);
+
+            // settle on a clean link -> exact wire-grid convergence, the standard closing bar
+            net.ClientToServer.LatencyTicks = 0; net.ClientToServer.ReorderJitterTicks = 0; net.ClientToServer.LossProbability = 0;
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the stop cycles (err {err:0.###} m)", own && err < 0.05f);
+            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.01f);
+            T.Check($"DESYNC-QUIET across the whole run ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // THE mp-rubberband regression (branch mp-rubberband-fix): the client shell and the server avatar are
     // SEPARATE CharacterBody3Ds, and pre-fix the grounded bool feeding PlayerMovementSim.Step was each
     // body's own IsOnFloor() -- a physics-engine contact state that DISAGREES between the two bodies on a

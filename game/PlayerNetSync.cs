@@ -13,8 +13,10 @@ namespace UnturnedGodot
     //      (paired with the seq of the input that PRODUCED that position, so lastProcessedInputSeq acks
     //      stay honest), which marks the entity ExternallyDriven -- ServerStep's flat demo integration
     //      never touches it again;
-    //   3. then injects the peer's held MoveInput (yaw + axes + the v2 jump bit + the stance bits) through
-    //      the Scripted* seams; the body MoveAndSlides on real terrain/objects on its own physics tick.
+    //   3. then consumes the peer's next queued MoveInput in seq order (yaw + axes + the v2 jump bit + the
+    //      stance bits) through the Scripted* seams -- one per tick from the PlayerReplication jitter
+    //      buffer (the mp-inputbuffer fix), coasting on the last consumed input when the queue starves;
+    //      the body MoveAndSlides on real terrain/objects on its own physics tick.
     //      Stance MUST ride along (the mp-inchworm fix): the client shell predicts at its stance's speed,
     //      so the avatar has to integrate at the SAME one -- a sprinting shell against a stand-walking
     //      avatar grows (SPRINT-STAND)*dt of error every tick and the reconciler drags it back as a lurch.
@@ -113,9 +115,13 @@ namespace UnturnedGodot
                     t.LastDrivenPos = e.Pos;   // ServerDrive just stamped the quantized pos onto the entity
                 }
 
-                // 2) inject this tick's held input (held-keys model: the latest keeps applying until
-                // replaced); no input held -> stand still (death/enter-vehicle cleared it, or none yet)
-                if (_server.Players.TryGetHeldInput(e.OwnerPlayerId, out var inp))
+                // 2) consume this tick's input IN SEQ ORDER (the mp-inputbuffer fix, real Unturned's
+                // serversidePackets model): one dequeue per tick so the avatar integrates the same input
+                // stream, in the same order and count, the shell predicted -- the held-latest model
+                // skipped/re-integrated ticks under jitter and the count gap resolved as the sprint-stop
+                // yank. Starvation coasts on the last consumed input inside TryConsumeInput; false means
+                // nothing to integrate at all -> stand still (death/enter-vehicle cleared it, or none yet)
+                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp))
                 {
                     t.Body.RotationDegrees = new Vector3(0f, inp.YawDegrees, 0f);
                     t.Body.ScriptedInput = new UnityEngine.Vector2(inp.MoveX, inp.MoveY);
