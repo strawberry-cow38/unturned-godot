@@ -21,7 +21,7 @@ public class MainWindow : Window
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 7;   // v7: removed the "Multiplayer test" checkbox -- MP is now an in-game main-menu button
+    const int LauncherVersion = 8;   // v8: crash-log to disk + verify the self-update download before swapping (v7 self-update could brick on a bad swap)
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
     // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
@@ -142,6 +142,14 @@ public class MainWindow : Window
             Log($"Launcher update v{LauncherVersion} -> v{remote}. Downloading…");
             SetBusy("Updating launcher…");
             var bytes = await Http.GetByteArrayAsync(ExeUrl);
+            // VERIFY before swapping: a truncated download, a redirect/HTML error body, or a partial write must NEVER
+            // overwrite a working launcher (that bricks it -- exactly the failure this guards). A real self-contained
+            // exe is ~75 MB and starts with the PE "MZ" magic. Anything else -> abort, keep running the current one.
+            if (bytes.Length < 10_000_000 || bytes[0] != (byte)'M' || bytes[1] != (byte)'Z')
+            {
+                Log($"(launcher self-update ABORTED: got {bytes.Length} bytes, not a valid exe — keeping the current launcher)");
+                return false;
+            }
             string newExe = exePath + ".new";
             await File.WriteAllBytesAsync(newExe, bytes);
             int pid = Environment.ProcessId;
