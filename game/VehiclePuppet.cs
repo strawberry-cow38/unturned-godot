@@ -20,6 +20,24 @@ namespace UnturnedGodot
         public string SpecKey = "jeep";
         public WheelDress[] Wheels = System.Array.Empty<WheelDress>();
 
+        // C6 ride mode (PEI_CLIENT_PLAN §3 C6): the puppet is the shell's ENTER TARGET and drive-cam anchor.
+        public uint NetId;                    // the replicated vehicle entity id (set by VehicleReplicaView at spawn) -- what SendEnterVehicle takes
+        public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP ride-cam eye; same default + per-spec override as Vehicle
+        public Vector3 SeatOffset;            // driver seat (prefab Seat_0) for the 3rd-person seated body pose
+
+        float _meshSize;
+        /// <summary>Bounding diagonal for the chase-cam auto-zoom (the Vehicle.WorldMeshAabb analogue).
+        /// The Body mesh alone -- it spans the vehicle's footprint, and the cam distance clamps anyway.</summary>
+        public float MeshSize
+        {
+            get
+            {
+                if (_meshSize <= 0f)
+                    _meshSize = GetNodeOrNull<MeshInstance3D>("Body")?.GetAabb().Size.Length() ?? 6f;
+                return _meshSize;
+            }
+        }
+
         /// <summary>Wheel dressing: front wheels yaw to the replicated steer, every wheel rolls at the
         /// rolling-contact rate for the replicated forward speed (forward = -Z -> negative roll about X,
         /// the VehicleWheel3D convention).</summary>

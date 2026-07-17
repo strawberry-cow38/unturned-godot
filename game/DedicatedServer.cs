@@ -57,6 +57,15 @@ namespace UnturnedGodot
             // bounce on real ground height. Both are optional seams on the engine-free ServerCombat.
             Server.Combat.WorldRay = GodotWorldRay;
             if (Terr != null) Server.Combat.GroundHeight = (x, z) => Terr.SampleHeight(x, z);
+            // C6 (§7 risk 6): the vehicle-exit teleport spot has no ground snap in core -- on a hillside the
+            // beside-the-door point can land INSIDE the slope and drop the avatar through the world. Lift a
+            // below-terrain exit onto the surface; an above-ground exit (bridge, crest) just falls, like SP.
+            if (Terr != null)
+                Server.VehicleHost.AdjustExitSpot = p =>
+                {
+                    float h = Terr.SampleHeight(p.x, p.z);
+                    return p.y < h + 0.1f ? new UnityEngine.Vector3(p.x, h + 0.5f, p.z) : p;
+                };
 
             // Phase 8 interest policy (§2.6): distance rings for the world entities, plus the 19 PEI nav
             // pockets as relevancy cells -- a town's whole horde stays relevant while a client is in that

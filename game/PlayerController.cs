@@ -135,7 +135,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null;
-            if (!_dead && _driving == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 var space = GetWorld3D().DirectSpaceState;
                 Vector3 from = _cam.GlobalPosition;
@@ -1107,6 +1107,104 @@ namespace UnturnedGodot
         // Likewise forces jump (bypassing Space) -- PlayerNetSync injects the MoveInput v2 jump bit here.
         public bool? ScriptedJump;
 
+        // C6 MP RIDE MODE (PEI_CLIENT_PLAN §3 C6 / MP_PLAN §3.6 v1): driving a REPLICATED vehicle -- a
+        // mesh-only VehiclePuppet the server dead-reckons, not a local Vehicle. Session-only: SP never
+        // wires the callbacks and never seats a puppet, so _riding stays null and every riding guard
+        // below is inert (the direct _driving path is untouched). While riding, the shell hides/freezes
+        // exactly like SP driving, captures WASD/space as drive INTENT (LastDriveInput), and the session
+        // streams it to the server (SendDriveInput @50 Hz); the server's Vehicle node does the physics.
+        VehiclePuppet _riding;
+        public bool IsRiding => _riding != null;
+        public VehiclePuppet RidingPuppet => _riding;
+        public UnityEngine.Vector2 LastDriveInput;   // captured while riding: x=steer, y=throttle (the DriveVehicle axes)
+        public bool LastHandbrakeInput;
+        public System.Action<uint> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for the seat
+        public System.Action NetExitVehicle;         // F while riding asks the server to free it (exit teleport follows)
+
+        VehiclePuppet NearestPuppet()
+        {
+            if (NetEnterVehicle == null) return null;   // not an MP shell -> no puppets to consider (SP fast-out)
+            VehiclePuppet best = null; float bestD = 4.0f * 4.0f;   // the NearestVehicle prompt range
+            foreach (var n in GetTree().GetNodesInGroup("vehicle_puppets"))
+                if (n is VehiclePuppet p && IsInstanceValid(p))
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(p.GlobalPosition);
+                    if (d < bestD) { bestD = d; best = p; }
+                }
+            return best;
+        }
+
+        /// <summary>The C6 interact seam: ask the server for the seat of the nearest replicated vehicle
+        /// (~4 m, the SP NearestVehicle range). The server validates reach/occupancy/alive at the §2.3
+        /// choke point; the seat lands via the VehicleEntered fact -> EnterPuppet. False when not an MP
+        /// shell or nothing is near, so F falls through to the next interaction.</summary>
+        public bool RequestEnterNearestPuppet()
+        {
+            var p = NearestPuppet();
+            if (p == null) return false;
+            NetEnterVehicle(p.NetId);
+            return true;
+        }
+
+        /// <summary>F while riding: ask the server to free the seat (exit lands via VehicleExited -> ExitPuppet).</summary>
+        public bool RequestExitPuppet()
+        {
+            if (_riding == null || NetExitVehicle == null) return false;
+            NetExitVehicle();
+            return true;
+        }
+
+        /// <summary>Seat CONFIRMED (VehicleEntered for self): the SP EnterVehicle local effects, minus the
+        /// vehicle-side ones (engine/fuel/HUD box live on the server's Vehicle node, not the puppet).</summary>
+        public void EnterPuppet(VehiclePuppet pup)
+        {
+            _riding = pup;
+            _burstLeft = 0;                                    // entering cancels an in-progress burst, like SP
+            _viewmodel?.SetShown(false);
+            if (_cam != null) _cam.TopLevel = true;            // free the camera into world space (chase cam)
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = true;   // the hidden shell must not shove the world
+            Visible = false;
+            Velocity = Vector3.Zero;
+            LastDriveInput = UnityEngine.Vector2.zero;
+            LastHandbrakeInput = false;
+        }
+
+        /// <summary>Seat FREED (VehicleExited for self): restore the shell at the server's exit teleport
+        /// spot (the session computes it from the replica + terrain-snaps it, §7 risk 6).</summary>
+        public void ExitPuppet(Vector3 exitPos)
+        {
+            _riding = null;
+            GlobalPosition = exitPos;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = false;
+            Visible = true;
+            Velocity = Vector3.Zero;
+            _viewmodel?.SetShown(true);
+            if (_cam != null) { _cam.TopLevel = false; _cam.Position = new Vector3(0f, 1.6f, 0f); _cam.Rotation = Vector3.Zero; }
+            _pitchDeg = 0f;
+            LastDriveInput = UnityEngine.Vector2.zero;
+            LastHandbrakeInput = false;
+        }
+
+        // The DriveVehicle shape for a puppet seat: capture drive INTENT only (the session streams it;
+        // the server's Vehicle node does the physics) and ride along with the dead-reckoned puppet.
+        void RidePuppet()
+        {
+            if (!IsInstanceValid(_riding)) return;   // puppet retired mid-ride (despawn) -- hold; the VehicleExited fact restores the shell
+            float throttle, steer;
+            if (ScriptedDrive.HasValue) { steer = ScriptedDrive.Value.X; throttle = ScriptedDrive.Value.Y; }
+            else if (UiInputBlocked) { throttle = 0f; steer = 0f; }   // menu open -> don't steer/accelerate through it
+            else
+            {
+                throttle = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
+                steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
+            }
+            LastDriveInput = new UnityEngine.Vector2(steer, throttle);
+            LastHandbrakeInput = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
+            GlobalPosition = _riding.GlobalPosition;   // ride along so the exit fallback + 3P seated body land at the vehicle
+        }
+
         // Headless SERVER AVATAR construction (PEI_CLIENT_PLAN §2.3 / C2): a remote peer's body on the
         // dedicated world. Keeps the capsule / MoveAndSlide / floor tuning / PlayerRegistry registration +
         // the Scripted* input seams; skips the whole client-only subtree (camera-current, viewmodel,
@@ -1542,7 +1640,8 @@ namespace UnturnedGodot
             // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
             if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape })) return;
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
-            if (_driving != null)
+            // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
+            if (_driving != null || _riding != null)
             {
                 bool allowedKey = @event is InputEventKey { Pressed: true } dk && (dk.Keycode == Key.F || dk.Keycode == Key.H || dk.Keycode == Key.L || dk.Keycode == Key.Ctrl || dk.Keycode == Key.Escape);   // F = exit (interact key moved off E); H cam, L lights, Ctrl siren, Esc pause
                 bool allowedMouse = @event is InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right };
@@ -1553,12 +1652,12 @@ namespace UnturnedGodot
             if (@event is InputEventMouseButton && Input.MouseMode != Input.MouseModeEnum.Captured) return;
             if (@event is InputEventMouseMotion mm && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
-                if (_driving != null && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
+                if ((_driving != null || _riding != null) && !_fp)   // driving in 3rd person: the mouse ORBITS the chase cam around the car instead of turning the driver (master)
                 {
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
                 }
-                else if (_driving == null)
+                else if (_driving == null && _riding == null)
                 {
                     RotateY(Mathf.DegToRad(-mm.Relative.X * MouseSensitivity));
                     _pitchDeg = Mathf.Clamp(_pitchDeg - mm.Relative.Y * MouseSensitivity, -89f, 89f);
@@ -1568,6 +1667,7 @@ namespace UnturnedGodot
             else if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
+                else if (_riding != null) { }                          // riding a replicated vehicle: no net horn in v1
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
@@ -1579,6 +1679,7 @@ namespace UnturnedGodot
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
+                else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
@@ -1609,9 +1710,11 @@ namespace UnturnedGodot
             else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F })   // F = INTERACT (moved off E, strawberry): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact with -> inspect the held weapon. Echo:false so HOLDING F can't double-fire the hitch toggle (uncouple then instantly re-couple).
             {
                 if (_driving != null) ExitVehicle();                       // hop out of the vehicle
+                else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusItem != null) TryPickup();                  // looking at an item: pick it up
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
+                else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
                 else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.CanTogglePower) _focusDeployable.TogglePower();  // looking at a generator: toggle its power (src InteractableGenerator.use)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (OpenNearestCrate()) { }                           // open a nearby storage crate
@@ -2205,6 +2308,8 @@ namespace UnturnedGodot
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
+            if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
+                PositionRideCam(_riding.GlobalTransform);
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
@@ -2228,7 +2333,7 @@ namespace UnturnedGodot
             // denormalized, and Godot's Slerp/Basis assert IsNormalized -> that was the "Quaternion is not normalized" spam.
             if (!_flinch.IsFinite() || _flinch.LengthSquared() < 1e-6f) _flinch = Quaternion.Identity;
             _flinch = _flinch.Normalized().Slerp(Quaternion.Identity, 4f * (float)delta);
-            if (_cam != null && !_dead && _driving == null)   // while driving, DriveVehicle (in _PhysicsProcess) owns the cam
+            if (_cam != null && !_dead && _driving == null && _riding == null)   // while driving/riding, the drive cam above owns the view
             {
                 if (_ugFp) _fp = true;   // render harness (UG_FP=1): force 1st-person so the FP viewmodel is captured
                 if (_fp)
@@ -2252,7 +2357,7 @@ namespace UnturnedGodot
         // live 3rd-person body: shown when !_fp; stands at the player (facing the body yaw, animated by ground speed) or sits in the driver seat
         void UpdateBody(double delta)
         {
-            if (_viewmodel != null) _viewmodel.SetShown(_fp && _driving == null && !_dead);   // FP gun arms: first-person on foot only
+            if (_viewmodel != null) _viewmodel.SetShown(_fp && _driving == null && _riding == null && !_dead);   // FP gun arms: first-person on foot only
             if (_body == null) return;
             _body.Visible = !_fp && !_dead;   // dead -> the corpse ragdoll handles the body
             if (_fp || _dead) { return; }
@@ -2260,6 +2365,11 @@ namespace UnturnedGodot
             {
                 _body.GlobalTransform = _driving.GlobalTransform * new Transform3D(Basis.Identity, _driving.SeatOffset);   // per-vehicle driver seat (prefab Seat_0)
                 _body.PlayLoop(_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit");   // seated DRIVING pose (hands on the wheel) instead of a standing idle (master)
+            }
+            else if (_riding != null && IsInstanceValid(_riding))   // C6: same seated pose on the replicated puppet's seat
+            {
+                _body.GlobalTransform = _riding.GlobalTransform * new Transform3D(Basis.Identity, _riding.SeatOffset);
+                _body.PlayLoop(_body.ClipLength("Idle_Drive") > 0f ? "Idle_Drive" : "Idle_Sit");
             }
             else   // on foot: at the player's feet, facing the body yaw, locomotion by horizontal speed
             {
@@ -2360,22 +2470,33 @@ namespace UnturnedGodot
             GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle (the cam is positioned in _Process from the vehicle's INTERPOLATED transform)
         }
 
-        void PositionDriveCam(Transform3D vt)   // FP / chase cam from the (interpolated) vehicle transform. Full global transform atomically
-        {                                        // (position + orientation): a LookAt updated pos but not rotation through turns -> car slid out of frame.
+        void PositionDriveCam(Transform3D vt)   // SP driving: the cam math below, fed by the driven Vehicle's eye + size
+        {
+            float size = 0f;
+            if (!_fp)
+            {
+                size = _driving.WorldMeshAabb().Size.Length();          // bounding diagonal -> bigger vehicle, further back
+                if (_driving.CoupledTrailer != null && IsInstanceValid(_driving.CoupledTrailer))
+                    size += _driving.CoupledTrailer.WorldMeshAabb().Size.Length() * 0.7f;   // towing -> pull the cam out further so the whole rig stays in frame (strawberry)
+            }
+            PositionVehicleCam(vt, _driving.DriverEyeLocal, size);
+        }
+
+        // C6 ride mode: the same cam anchored on the replicated puppet (no trailer towing over the wire in v1)
+        void PositionRideCam(Transform3D vt) => PositionVehicleCam(vt, _riding.DriverEyeLocal, _fp ? 0f : _riding.MeshSize);
+
+        void PositionVehicleCam(Transform3D vt, Vector3 eyeL, float size)   // FP / chase cam from the (interpolated) vehicle transform. Full global transform atomically
+        {                                                                    // (position + orientation): a LookAt updated pos but not rotation through turns -> car slid out of frame.
             if (_cam == null) return;
             var fwd = -vt.Basis.Z; fwd.Y = 0f;
             fwd = fwd.LengthSquared() > 0.001f ? fwd.Normalized() : Vector3.Forward;
-            if (_fp)   // first-person from the driver's head, looking forward over the hood
+            if (_fp)   // first-person from the driver's head, looking forward over the hood (eyeL per-vehicle: tall cabs sit higher so the view clears a long hood)
             {
-                var eyeL = _driving.DriverEyeLocal;   // per-vehicle: tall cabs sit higher so the view clears a long hood
                 var eye = vt * eyeL;
                 _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
-                float size = _driving.WorldMeshAabb().Size.Length();          // bounding diagonal -> bigger vehicle, further back
-                if (_driving.CoupledTrailer != null && IsInstanceValid(_driving.CoupledTrailer))
-                    size += _driving.CoupledTrailer.WorldMeshAabb().Size.Length() * 0.7f;   // towing -> pull the cam out further so the whole rig stays in frame (strawberry)
                 float dist = Mathf.Clamp(size * 1.1f, 6.5f, 34f);   // raised cap so the semi+trailer fits
                 float pitchR = Mathf.DegToRad(_driveCamPitch);
                 Vector3 dir = new Basis(Vector3.Up, Mathf.DegToRad(_driveCamYaw)) * (-fwd);   // behind the heading, orbited by the mouse yaw
@@ -2390,6 +2511,7 @@ namespace UnturnedGodot
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
+            if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }

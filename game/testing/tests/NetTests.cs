@@ -1155,4 +1155,154 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+
+    // PEI_CLIENT_PLAN §3 Phase C6 -- THE FINISH LINE: a joined player walks to a REPLICATED vehicle,
+    // enters through the SHELL'S INTERACT SEAM (RequestEnterNearestPuppet -- the F-key path, not raw
+    // commands), drives it across the world, and exits beside the door. A ClientWorldSession driver +
+    // a raw observer client join a DedicatedServer (RemoteAvatars) on the fallback world. Asserts:
+    // REACH-REJECT (an Enter sent from ~10 m -- beyond ServerVehicles.EnterReach -- never takes the
+    // seat: the §2.3 choke point, a cheater can't seat across the map); the seat HANDOFF
+    // (DriverPlayerId == the peer, ride mode latched, shell hidden); the vehicle PHYSICALLY DROVE
+    // > 8 m under the streamed DriveInput -- on the server node AND on the observer's puppet (everyone
+    // else sees it); the EXIT re-appears the shell beside the door and the resumed walk/reconcile loop
+    // CONVERGES it onto the exit-teleported entity; and DESYNC-QUIET on BOTH clients across the whole
+    // enter/drive/exit run (vehicles are in the EnableSyncCheck set -- the driven vehicle's state must
+    // hash-converge while input streams @50 Hz).
+    public class NetShellDrive : GameTest
+    {
+        public override string Name => "net.shell_drive";
+        public override double TimeoutSimSeconds => 60;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260723);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);   // datagram delivery before the session's Client.Tick each tick
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "driver" };
+            World.AddChild(sess);      // registers net.client.pump + client.shell (before the server's steps, §2.5)
+            var observer = new NetWorldClient(new MemClientTransport(net), "observer", contentHash: NetContent.Hash);
+            var obsPump = new DelegateSimStep((t, dt) => observer.Tick(), "l1.obspump");
+            world.Sim.Sim.Add(obsPump);
+            var obsView = new VehicleReplicaView { Client = observer };
+            World.AddChild(obsView);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+            observer.DesyncDetected += _ => desyncs++;
+            observer.Connect();
+
+            // the server-side vehicle: a REAL jeep 10 m in FRONT of the spawn line (shell spawns at the
+            // origin facing -Z) -- far enough that the reach-reject case below is genuinely out of reach
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(0f, 1.2f, -10f);
+
+            yield return Until(() => sess.Shell != null && observer.State == NetSessionState.Connected, 5);
+            T.Check("shell spawned + observer joined", sess.Shell != null && observer.State == NetSessionState.Connected);
+            if (sess.Shell == null) yield break;
+            yield return Until(() => sess.Client.Vehicles.Count == 1 && observer.Vehicles.Count == 1, 5);
+            uint netId = 0;
+            foreach (var e in sess.Client.Vehicles.All) { netId = e.NetIdValue; break; }
+            T.Check("the vehicle replicated to both clients", netId != 0 && observer.Vehicles.Count == 1);
+            yield return Ticks(50);   // let the spawn drop settle onto the fallback ground
+
+            // REACH-REJECT: a raw Enter from the spawn (~10 m out, > EnterReach 6 m) -- exactly what a
+            // cheater bypassing the client-side 4 m interact gate would send. The choke point refuses it.
+            bool ownFar = ded.Server.Players.TryGetByOwner(sess.Client.PlayerId, out var farP);
+            bool jeepE = ded.Server.Vehicles.TryGet(netId, out var vFar);
+            float farDist = ownFar && jeepE ? (vFar.Pos - farP.Pos).magnitude : 0f;
+            T.Check($"the peer really is beyond EnterReach ({farDist:0.0} m)", farDist > ServerVehicles.EnterReach);
+            sess.Client.SendEnterVehicle(netId);
+            yield return Ticks(25);   // reliable command lands within a couple ticks; give it a second
+            bool stillEmpty = ded.Server.Vehicles.TryGet(netId, out var rejE) && rejE.DriverPlayerId == 0;
+            T.Check("REACH-REJECT: an Enter from across the field never takes the seat", stillEmpty);
+            T.Check("...and no seat fact reached the client", sess.RidingVehicle == 0 && !sess.Shell.IsRiding);
+
+            // walk to the vehicle (the C6 story: walk up, get in) -- REAL shell physics, input on the wire
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            for (int i = 0; i < 400 && sess.Shell.TruePhysicsPosition.DistanceTo(jeep.GlobalPosition) > 3f; i++)
+                yield return Ticks(1);
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            float walkDist = sess.Shell.TruePhysicsPosition.DistanceTo(jeep.GlobalPosition);
+            T.Check($"walked to the vehicle (dist {walkDist:0.0} m)", walkDist < 3.5f);
+            yield return Ticks(25);   // stop + let the last walk inputs ack so the avatar is in reach too
+
+            // ENTER through the interact seam (the F-key path): nearest puppet -> SendEnterVehicle
+            int enterFacts = 0;
+            sess.Client.VehicleEntered += e => { if (e.PlayerId == sess.Client.PlayerId) enterFacts++; };
+            T.Check("the interact seam found the puppet + requested the seat", sess.Shell.RequestEnterNearestPuppet());
+            yield return Until(() => sess.Shell.IsRiding, 5);
+            bool seated = ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == sess.Client.PlayerId;
+            T.Check("SEAT HANDOFF: server DriverPlayerId == the peer", seated);
+            T.Check($"the VehicleEntered fact reached the driver ({enterFacts})", enterFacts > 0);
+            T.Check("ride mode latched: shell hidden + frozen, chasing the puppet", sess.Shell.IsRiding && !sess.Shell.Visible);
+            yield return Until(() => observer.Vehicles.TryGet(netId, out var oe) && oe.DriverPlayerId == sess.Client.PlayerId, 5);
+            T.Check("the observer sees the seat taken",
+                    observer.Vehicles.TryGet(netId, out var obsSeat) && obsSeat.DriverPlayerId == sess.Client.PlayerId);
+
+            // DRIVE ~4 s: ScriptedDrive -> RidePuppet captures intent -> the session streams SendDriveInput
+            bool haveObsPup = obsView.TryGetPuppet(netId, out var obsPup);
+            T.Check("the observer materialized a puppet", haveObsPup);
+            var jeepStart = jeep.GlobalPosition;
+            var obsPupStart = haveObsPup ? obsPup.GlobalPosition : Vector3.Zero;
+            sess.Shell.ScriptedDrive = new Vector2(0f, 1f);   // (steer, throttle): straight ahead, full throttle
+            yield return Ticks(200);
+            float driven = jeep.GlobalPosition.DistanceTo(jeepStart);
+            T.Check($"the server vehicle PHYSICALLY DROVE under the streamed input ({driven:0.0} m)", driven > 8f);
+            float obsDriven = haveObsPup ? obsPup.GlobalPosition.DistanceTo(obsPupStart) : 0f;
+            T.Check($"...and the observer's puppet drove with it ({obsDriven:0.0} m) -- everyone else sees it", obsDriven > 8f);
+            T.Check("the shell rode along (cam/exit anchor)", sess.Shell.GlobalPosition.DistanceTo(jeep.GlobalPosition) < 6f);
+
+            // coast down, then EXIT through the seam (the F-while-riding path)
+            sess.Shell.ScriptedDrive = new Vector2(0f, 0f);
+            yield return Ticks(100);
+            // the §7-risk-6 seam: prove ServerExit routes the teleport spot through AdjustExitSpot (the
+            // dedicated server wires a Terr.SampleHeight clamp here; fallback worlds have no Terr, so the
+            // L1 probes the seam with an identity lambda + flag)
+            bool exitSpotAdjusted = false;
+            ded.Server.VehicleHost.AdjustExitSpot = p => { exitSpotAdjusted = true; return p; };
+            T.Check("the exit seam fired", sess.Shell.RequestExitPuppet());
+            yield return Until(() => !sess.Shell.IsRiding, 5);
+            T.Check("seat freed server-side", ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
+            T.Check("the exit teleport routed through AdjustExitSpot (§7 risk 6 seam)", exitSpotAdjusted);
+            T.Check("the shell RE-APPEARED", !sess.Shell.IsRiding && sess.Shell.Visible);
+            var doorFlat = sess.Shell.GlobalPosition - jeep.GlobalPosition; doorFlat.Y = 0f;
+            T.Check($"...beside the door, not in the seat and not at the curb it entered from ({doorFlat.Length():0.0} m from center)",
+                    doorFlat.Length() > 1.0f && doorFlat.Length() < 8f);
+
+            // the walk/reconcile loop RESUMED: the shell converges onto the server's exit-teleported entity
+            // (the shell_walk_reconcile (b) bar -- both sides settle to the same grid point)
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e2);
+            float exitErr = own ? (e2.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"shell CONVERGED on the exit-teleported entity (err {exitErr:0.###} m)", own && exitErr < 0.05f);
+            var back = sess.Shell.TruePhysicsPosition;
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            yield return Ticks(75);
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            T.Check($"the walk plane resumed after the ride ({back.DistanceTo(sess.Shell.TruePhysicsPosition):0.0} m)",
+                    back.DistanceTo(sess.Shell.TruePhysicsPosition) > 2f);
+
+            // DESYNC-QUIET (the C6 review fold): vehicles are AllRelevant -> in the EnableSyncCheck set;
+            // the whole enter/drive/exit run must hash-converge on BOTH snapshot-applying clients
+            yield return Ticks(60);
+            T.Check($"sync-check blocks flowed ({ded.Server.Composer.Diag.SyncCheckBlocksWritten})",
+                    ded.Server.Composer.Diag.SyncCheckBlocksWritten > 0);
+            T.Check($"DESYNC-QUIET across enter/drive/exit on both clients ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pumps so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            world.Sim.Sim.Remove(obsPump);
+            observer.Disconnect();
+        }
+    }
 }

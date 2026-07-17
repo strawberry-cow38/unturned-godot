@@ -438,6 +438,12 @@ namespace UnturnedGodot.Net
         /// it is generous like ServerTransactions.PickupReach.</summary>
         public const float EnterReach = 6f;
 
+        /// <summary>Optional game-side exit-spot adjuster (PEI_CLIENT_PLAN §7 risk 6): the raw exit spot
+        /// (vehicle pos + right*2.4 + 1 up) has no ground snap, so on a hillside it can land BELOW the
+        /// terrain surface and drop the avatar through the world. The dedicated server wires a
+        /// Terr.SampleHeight clamp here; null (every test/demo default) keeps the raw spot.</summary>
+        public Func<Vector3, Vector3> AdjustExitSpot;
+
         readonly VehicleReplication _vehicles;
         readonly PlayerReplication _players;
         readonly PlayerCombatReplication _combat;
@@ -507,7 +513,9 @@ namespace UnturnedGodot.Net
                 float yawRad = v.YawDegrees * (Mathf.PI / 180f);
                 // Godot yaw basis: right (basis.X) = (cos yaw, 0, -sin yaw)
                 var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
-                _players.ServerTeleport(playerId, v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f), tick);
+                var spot = v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f);
+                if (AdjustExitSpot != null) spot = AdjustExitSpot(spot);   // §7 risk 6: terrain-snap a below-ground slope exit
+                _players.ServerTeleport(playerId, spot, tick);
             }
             var evt = new VehicleExitedEvent { NetId = netId, PlayerId = playerId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventVehicleExited, evt.Write));

@@ -878,7 +878,8 @@ namespace UnturnedGodot
         public static VehiclePuppet BuildPuppetByName(string name, int variant)
         {
             var s = SpecFor(name);
-            var p = new VehiclePuppet { SpecKey = name };
+            var p = new VehiclePuppet { SpecKey = name, SeatOffset = SeatOf(s.Name) };
+            if (s.DriverEye != Vector3.Zero) p.DriverEyeLocal = s.DriverEye;   // tall-cab override, same rule as Build()
             var paint = SpawnPaint(s, variant);   // deterministic from the replicated variant -> same look as the server spawn
             Material bodyMat = s.Palette != null
                 ? PaintMat(s.Palette, paint)

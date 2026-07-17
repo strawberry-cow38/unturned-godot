@@ -33,13 +33,17 @@ namespace UnturnedGodot
         public Godot.Environment Env;
         public DayNightCycle DayNight;              // the client world's clock (WorldBuildResult.DayNight) -- C5: WorldClockView anchors it on the replicated clock
         public ResourceField Resources;             // the client world's trees/rocks (WorldBuildResult.Resources) -- C5: ResourceAliveView mirrors the alive-bitmap
+        public Terrain Terr;                        // the client world's terrain (WorldBuildResult.Terr) -- C6: terrain-snaps a slope vehicle-exit (§7 risk 6)
         public IClientTransport TransportOverride;  // tests inject MemClientTransport; null = real UDP to Host:Port
 
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
         public ZombiePuppets Puppets { get; private set; }        // C5: server zombies as interpolated puppets
         public WorldItemReplicaView Items { get; private set; }   // C5: replicated world items as static visuals
+        public VehicleReplicaView VehicleView { get; private set; }   // C6: the puppet registry -- ride mode chases these
         public PlayerController Shell { get; private set; }   // null until the first authoritative own-entity sample
+        public uint RidingVehicle => _ridingNetId;             // NetId of the vehicle the server seated us in (0 = on foot)
+        uint _ridingNetId;                                     // latched by VehicleEntered(self), cleared by VehicleExited(self)
         // The session's OWN reconciler -- NOT Client.Prediction.Reconciler: NetWorldClient.Tick feeds that
         // one through ClientPrediction.Reconcile (the headless-walker path), which would consume the snap
         // onto the dead Prediction.Pos and corrupt the node's correction accounting.
@@ -75,7 +79,12 @@ namespace UnturnedGodot
             Remotes = new RemotePlayers { Client = Client };  // remote players as CharacterModel puppets; self never puppets (the shell owns self)
             AddChild(Remotes);
             AddChild(new DeployableReplicaView { Client = Client });
-            AddChild(new VehicleReplicaView { Client = Client });   // server vehicles as dead-reckoned puppets (§3.6)
+            VehicleView = new VehicleReplicaView { Client = Client };   // server vehicles as dead-reckoned puppets (§3.6)
+            AddChild(VehicleView);
+            // C6 ride mode: the server's seat facts drive the shell's enter/exit -- the client never seats
+            // itself (SendEnterVehicle is a REQUEST; the seat lands only when the validated fact comes back)
+            Client.VehicleEntered += e => { if (e.PlayerId == Client.PlayerId) _ridingNetId = e.NetId; };
+            Client.VehicleExited += OnVehicleExited;
             // C5 (§3): the remaining world-state views -- all read-only replica consumers. Zombie puppets,
             // world items as static visuals, the synced clock anchoring the local sky, and server-felled
             // resources dropping their client visual + trunk collider (§7 risk 7).
@@ -116,7 +125,20 @@ namespace UnturnedGodot
                 if (Client.Players.TryGetByOwner(Client.PlayerId, out var me)) SpawnShell(me);
                 return;
             }
-            if (Shell.IsDriving) return;   // C6 wires driving; walk corrections must never fight the seat teleport
+            if (Shell.IsDriving) return;   // the SP direct-drive path (never taken in MP -- no Vehicle nodes on a client world)
+
+            // C6 RIDE MODE (§3.6 v1): seated in a replicated vehicle. The shell is hidden/frozen (EnterPuppet);
+            // this step streams its captured drive intent @50 Hz (held-input model, latest-wins server-side)
+            // INSTEAD of MoveInput -- the server drops a seated peer's walk input at the choke point anyway,
+            // and the reconciler idles (the seat teleport owns the entity; corrections must never fight it).
+            if (_ridingNetId != 0)
+            {
+                if (Shell.IsRiding)
+                    Client.SendDriveInput(_ridingNetId, Shell.LastDriveInput.y, Shell.LastDriveInput.x, Shell.LastHandbrakeInput);
+                else if (VehicleView.TryGetPuppet(_ridingNetId, out var pup))
+                    Shell.EnterPuppet(pup);   // seat confirmed; puppet materialized -> hide/freeze + chase-cam it
+                return;                       // (else: puppet not spawned yet -- wait, never walk-send from under the seat)
+            }
 
             // 1) consume the newest authoritative own-entity sample (stale/duplicate acks no-op inside),
             //    and apply this tick's correction TO THE NODE -- the one real new mechanism vs MpLoopback
@@ -154,10 +176,40 @@ namespace UnturnedGodot
             shell.RotationDegrees = new Vector3(0f, me.YawDegrees, 0f);
             shell.Spawn = shell.GlobalPosition;   // local OOB respawn point; server-auth death/respawn is deferred (§6)
             WorldBuilder.AttachPlayerShell(this, shell, withCropManager: false);   // the SP shell block verbatim; crops: the SERVER owns growth
+            // C6: the shell's F-interact near a VehiclePuppet requests the seat over the wire (the MP
+            // analogue of the SP direct EnterVehicle); F while riding requests the exit. Server validates.
+            shell.NetEnterVehicle = netId => Client.SendEnterVehicle(netId);
+            shell.NetExitVehicle = () => Client.SendExitVehicle();
             Shell = shell;
             if (System.Environment.GetEnvironmentVariable("UG_MPWALK") == "1")   // scripted-walk hook for headless connect-and-render checks (the UG_AUTOFIRE spirit)
                 shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             GD.Print($"[CLIENT] shell spawned at server-adopted spawn ({me.Pos.x:0.0},{me.Pos.y:0.0},{me.Pos.z:0.0}) -- first-person, predicted, reconciled");
+        }
+
+        // C6 exit: unhide the shell BESIDE THE DOOR. The server already teleported our entity there
+        // (ServerVehicles.ServerExit), but that position rides a 25 Hz snapshot -- the reliable exit fact
+        // usually lands first. So compute the SAME spot from the vehicle replica (pos + right*2.4 + 1 up,
+        // the identical formula + the identical §7 risk 6 terrain clamp the server applies) and place the
+        // shell immediately; the resumed MoveInput/reconcile loop absorbs any residual within a few acks.
+        void OnVehicleExited(VehicleExitedEvent evt)
+        {
+            if (evt.PlayerId != Client.PlayerId || evt.NetId != _ridingNetId) return;
+            _ridingNetId = 0;
+            if (Shell == null || !IsInstanceValid(Shell) || !Shell.IsRiding) return;
+            Vector3 exit;
+            if (Client.Vehicles.TryGet(evt.NetId, out var v))
+            {
+                float yawRad = Mathf.DegToRad(v.YawDegrees);
+                var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));   // Godot yaw basis: right = (cos, 0, -sin)
+                exit = new Vector3(v.Pos.x, v.Pos.y, v.Pos.z) + right * 2.4f + Vector3.Up * 1.0f;
+            }
+            else exit = Shell.GlobalPosition;   // vehicle despawned under us -- exit in place (the shell rode along)
+            if (Terr != null)
+            {
+                float h = Terr.SampleHeight(exit.X, exit.Z);
+                if (exit.Y < h + 0.1f) exit = new Vector3(exit.X, h + 0.5f, exit.Z);   // §7 risk 6: never below the slope
+            }
+            Shell.ExitPuppet(exit);
         }
 
         public override void _Process(double delta)

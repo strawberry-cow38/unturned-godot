@@ -49,6 +49,8 @@ namespace UnturnedGodot
                 {
                     string key = e.TypeId < Vehicle.SpecNames.Length ? Vehicle.SpecNames[e.TypeId] : "jeep";
                     var pup = Vehicle.BuildPuppetByName(key, e.Variant);
+                    pup.NetId = e.NetIdValue;               // C6: the shell's interact seam targets puppets by group + NetId
+                    pup.AddToGroup("vehicle_puppets");
                     parent.AddChild(pup);
                     pup.GlobalPosition = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z);
                     t = new Tracked { Node = pup, LastSnapPos = e.Pos };

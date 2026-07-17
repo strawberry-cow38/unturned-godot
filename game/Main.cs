@@ -1991,7 +1991,8 @@ namespace UnturnedGodot
                 if (_playableClient)   // --connect= (C3): the predicted first-person shell -- its camera is the view once the join snapshot seeds the spawn
                 {
                     AddChild(new ClientWorldSession { Host = _connectHost, Port = PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
-                                                      DayNight = res.DayNight, Resources = res.Resources });   // C5: the world-state views drive these
+                                                      DayNight = res.DayNight, Resources = res.Resources,   // C5: the world-state views drive these
+                                                      Terr = res.Terr });                                    // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                     GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
