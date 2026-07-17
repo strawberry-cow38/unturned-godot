@@ -22,7 +22,13 @@ namespace UnturnedGodot
 
         const float DriftEpsilon = 0.001f;   // ~0.3 s of a 300 s day -- the WorldClockNetSync threshold
 
-        public override void _Process(double delta)
+        // Re-anchor on the PHYSICS tick, not _Process: the derived time changes with the applied snapshot
+        // tick (a physics-tick quantity), and adopting here runs in lock-step with replication + the L1
+        // harness's Ticks() advance -- an idle-frame _Process is decoupled from physics in headless, so the
+        // adoption raced the tick budget and net.client_world_views flaked (~50% even pre-rubberband). The
+        // sky still glides smoothly: DayNightCycle advances its own Time per render frame; this only
+        // re-anchors on drift, which per-tick vs per-frame does not change.
+        public override void _PhysicsProcess(double delta)
         {
             if (Client == null || DayNight == null || !GodotObject.IsInstanceValid(DayNight)) return;
             if (!Client.Clock.HasClock || Client.Applier.LastAppliedServerTick <= 0) return;
