@@ -121,6 +121,28 @@ Output lands in **`game/content/`**:
 - Contributors: **strawberry_cow** (game dev) and **catboy** (asset rips/handovers).
 - Log meaningful progress/decisions in **PROGRESS.md** — it's the project's institutional memory.
 
+### Dedicated multiplayer server (claw.bitvox.me)
+
+The `--dedicated` flag boots a **headless** Godot dedicated server (no camera/HUD): the real world via
+`WorldBuilder` (dedicated mode) + a `NetServerSession` over `UdpServerTransport` on **UDP 47872**, ticking the
+sim at 50 Hz with replication registered last. Clients join with `--connect=<host>` (their content hash must
+match the server's build). `docs/MP_PLAN.md` is the multiplayer architecture; phases 1-5 are live on `main`.
+
+- **Map data** (retail, NOT in the repo): the server loads the real PEI map from `$UG_UNTURNED_DIR/Maps/PEI/`.
+  On the claw box that's `/home/ec2-user/unturned/Maps/PEI/` (set `UG_UNTURNED_DIR=/home/ec2-user/unturned`).
+  Map paths were normalized to forward slashes (valid on Windows too) so the Linux server resolves them —
+  don't reintroduce `@"\..."` path literals in the map-loading code.
+- **systemd (user units, live on claw)** — versioned in `deploy/systemd/`, installed at `~/.config/systemd/user/`:
+  - `unturned-server.service` — runs `--dedicated` headless, `Restart=always`, `TimeoutStopSec=5` (Godot ignores
+    SIGTERM, so a restart would otherwise block ~90s). `stdbuf -oL` streams the `[DEDICATED]` heartbeats to journald.
+    `loginctl` linger is on, so it starts on boot. Logs: `journalctl --user -u unturned-server`.
+  - `unturned-server-reload.path` + `.service` — the `.path` watches the built assembly
+    (`game/.godot/mono/temp/bin/Debug/UnturnedGodot.dll`); a rebuild trips it and auto-restarts the server.
+- **Deploy a new version**: `tools/deploy-server.sh` (git pull `--ff-only` + `dotnet build`). The rebuild rewrites
+  the watched DLL → the `.path` unit bounces the server onto the fresh build. Never restart the unit by hand for a
+  deploy — let the watcher own it. Install/refresh the units: `cp deploy/systemd/* ~/.config/systemd/user/ &&
+  systemctl --user daemon-reload`.
+
 ## Gotchas & lessons (hard-won)
 
 - **`--headless` renders nothing and hangs silently.** Always xvfb + `--rendering-driver vulkan` + `--write-movie` (movie mode forces the frame loop).

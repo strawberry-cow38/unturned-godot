@@ -1,0 +1,23 @@
+[Unit]
+Description=Unturned-Godot dedicated server (--dedicated, UDP 47872)
+After=network-online.target
+Wants=network-online.target
+# If a broken build makes it crash-loop, give up after 5 tries/60s instead of thrashing forever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ec2-user/projects/unturned-godot/game
+Environment=UG_UNTURNED_DIR=/home/ec2-user/unturned
+# stdbuf -oL: line-buffer stdout so the [DEDICATED] heartbeats stream to journald live (Godot block-buffers a piped stdout otherwise).
+ExecStart=/usr/bin/stdbuf -oL -eL /home/ec2-user/godot46/Godot_v4.6-stable_mono_linux_arm64/Godot_v4.6-stable_mono_linux.arm64 --path /home/ec2-user/projects/unturned-godot/game --headless -- --dedicated
+Restart=always
+RestartSec=3
+# Godot ignores SIGTERM, so without this a restart blocks ~90s waiting for the stop. Give it 5s, then SIGKILL.
+TimeoutStopSec=5
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
+[Install]
+WantedBy=default.target

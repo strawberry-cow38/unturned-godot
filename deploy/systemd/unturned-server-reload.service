@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart the dedicated server after an assembly rebuild
+# Small settle so a multi-write build finishes before we bounce the server (avoids loading a half-written DLL).
+StartLimitIntervalSec=30
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/systemctl --user restart unturned-server.service

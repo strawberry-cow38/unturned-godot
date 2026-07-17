@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch the game assembly; restart the dedicated server when it is rebuilt
+
+[Path]
+# tools/deploy-server.sh (git pull + dotnet build) rewrites this DLL on a new version;
+# PathChanged then fires unturned-server-reload.service, which restarts the running server.
+PathChanged=/home/ec2-user/projects/unturned-godot/game/.godot/mono/temp/bin/Debug/UnturnedGodot.dll
+Unit=unturned-server-reload.service
+
+[Install]
+WantedBy=default.target
