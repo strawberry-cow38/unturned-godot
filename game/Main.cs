@@ -344,7 +344,7 @@ namespace UnturnedGodot
 
             if (dedicated) { BuildDedicated(); return; }        // headless dedicated server: real world + NetServerSession (MP_PLAN §4 Phase 3)
             if (server) { BuildServer(); return; }              // headless demo server (bare arena + a scripted bot)
-            if (client) { GetWindow().Mode = Window.ModeEnum.Maximized; BuildClient(); return; }   // fill the screen (same "tiny viewport" fix as --play below): a fixed Size while the project opens MAXIMIZED boxed the render in a corner
+            if (client) { if (DisplayServer.GetName() != "headless") GetWindow().Mode = Window.ModeEnum.Maximized; BuildClient(); return; }   // fill the screen (same "tiny viewport" fix as --play below). Guard the window op for --headless (dummy DisplayServer, no window) -> a headless CLIENT runs the full netcode + world STATE with no rasterization (diagnostics / future scripted-client harness).
 
             if (netdemo)
             {
