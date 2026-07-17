@@ -1942,68 +1942,53 @@ namespace UnturnedGodot
             GD.Print($"[SERVER] demo NetWorldServer + scripted bot on udp {NetPort}");
         }
 
-        // Rendering client process: connects to the dedicated server, renders the synced players.
-        void BuildClient()
+        // Rendering client process (PEI_CLIENT_PLAN §3 Phase C1): the REAL map world through the ONE
+        // WorldBuilder path (Client mode -- terrain/objects/colliders + roads/foliage/trees + day-night,
+        // no local player), then ClientNode joins the dedicated server and renders the synced players
+        // INTO it. Still the overhead camera, hovered over the player-spawn region (C3 replaces it with
+        // the real predicted player shell).
+        async void BuildClient()
         {
-            var env = new Godot.Environment
+            // async void swallows exceptions silently (the trap BuildDedicated hit) -- surface anything that breaks.
+            try
             {
-                BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
-                AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
-                AmbientLightEnergy = 0.6f,
-            };
-            AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
-            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
-            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
-            var gm = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
-            gm.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
-            ground.AddChild(gm);
-            AddChild(ground);
-            var cam = new Camera3D { Current = true, Fov = 62f };
-            AddChild(cam);
-            cam.Position = new Vector3(0f, 9f, 14f);
-            cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
-
-            ScatterScenery(); // real ripped Unturned props so the arena isn't a bare plane
-
-            AddChild(new ClientNode { Host = _connectHost, Port = NetPort });
-            GD.Print($"[CLIENT] connecting to {_connectHost}:{NetPort} over NetSession; players rendered from server snapshots");
-        }
-
-        // Scatter a few real ripped props (textured) around the arena as static scenery.
-        void ScatterScenery()
-        {
-            const string manifest = @"C:\claude-workspace\ripped-mb\converted\manifest.json";
-            if (!System.IO.File.Exists(manifest)) return;
-            var cp = new ContentProvider();
-            AddChild(cp);
-            cp.LoadManifest(manifest);
-            cp.LoadTextureManifest(@"C:\claude-workspace\ripped-mb\converted\texture_manifest.json");
-            CharacterModel.LoadBundled(); // the real ripped character mesh for players + zombies
-
-            (string name, float x, float z, float s)[] scenery =
+                var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Client, _mapRoot, _mapPlace,
+                    noZombies: true, syncLoad: false, bakeNav: false, activeHoliday: ActiveHoliday());
+                if (res.Terr == null)
+                {
+                    // FAIL-FAST (C1): a client without the retail map cannot render the world the server is
+                    // simulating -- say exactly what to fix; never silently fall back to the old demo arena.
+                    GD.PrintErr($"[CLIENT] map not found at {_mapRoot} -- set UG_UNTURNED_DIR to a local Unturned install (or install Unturned). NOT joining.");
+                    var layer = new CanvasLayer { Layer = 200 };   // above the LoadingScreen (128) the aborted build left up
+                    var bg = new ColorRect { Color = new Color(0.04f, 0.05f, 0.07f) };
+                    bg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    layer.AddChild(bg);
+                    var msg = new Label
+                    {
+                        Text = "PEI map not found -- set UG_UNTURNED_DIR to your Unturned install (or install Unturned)",
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    msg.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                    msg.AddThemeFontSizeOverride("font_size", 26);
+                    msg.AddThemeColorOverride("font_color", new Color(1f, 0.45f, 0.40f));
+                    layer.AddChild(msg);
+                    AddChild(layer);
+                    return;
+                }
+                CharacterModel.LoadBundled();   // remote players render as the real ripped character mesh (this call lived only in the dead ScatterScenery)
+                var cam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
+                AddChild(cam);
+                var ctr = res.HasPlayerSpawn ? res.PlayerSpawn : Vector3.Zero;   // hover the real spawn region, not the origin (open water on PEI)
+                cam.Position = ctr + new Vector3(0f, 50f, 44f);
+                cam.LookAt(ctr, Vector3.Up);
+                _worldReady = res.Ready;
+                AddChild(new ClientNode { Host = _connectHost, Port = NetPort });
+                GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{NetPort} over NetSession; players rendered from server snapshots");
+            }
+            catch (System.Exception e)
             {
-                ("Crate", -9f, -7f, 2.2f), ("Crate_0", 9f, -6f, 2.2f), ("Crate", 7f, 8f, 2.0f),
-                ("Brickoven_Fire_0", -10f, 6f, 2.6f), ("Kiln_Fire_0", 11f, 3f, 2.6f),
-                ("Berry_0", -6f, 10f, 1.6f), ("Crate_0", -12f, -1f, 2.0f),
-            };
-            foreach (var (name, x, z, s) in scenery)
-            {
-                var g = cp.FindGuidByName(name);
-                if (g == null) continue;
-                var mesh = cp.LoadMesh(g);
-                if (mesh == null || mesh.GetSurfaceCount() == 0) continue;
-                Material mat = new StandardMaterial3D { AlbedoColor = new Color(0.7f, 0.68f, 0.62f) };
-                var tp = cp.GetTexturePath(g);
-                if (tp != null) { var img = Image.LoadFromFile(tp); if (img != null) mat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(img) }; }
-                var aabb = mesh.GetAabb();
-                float big = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
-                float sc = big > 0.001f ? s / big : 1f;
-                var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat, Scale = new Vector3(sc, sc, sc) };
-                AddChild(mi);
-                mi.Position = new Vector3(x, -aabb.Position.Y * sc, z);
+                GD.PrintErr($"[CLIENT] world build FAILED: {e}");
             }
         }
 

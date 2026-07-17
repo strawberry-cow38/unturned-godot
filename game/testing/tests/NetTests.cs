@@ -616,4 +616,30 @@ namespace UnturnedGodot.Testing
             observer.Disconnect();
         }
     }
+
+    // PEI_CLIENT_PLAN §3 Phase C1: a joined client assembles its world through the ONE WorldBuilder path
+    // in the new Client mode -- and that mode must stay pure scenery+physics: no local PlayerController,
+    // no ZombieField, no local-authority spawns. On a missing map the contract is FAIL-FAST (Terr == null,
+    // world NOT ready) -- Main.BuildClient shows an error screen instead of silently faking a demo arena;
+    // the flat-ground fallback is Dedicated-only. The bogus map path makes this deterministic on any box
+    // (no retail map data needed), the NetDedicatedBoot pattern.
+    public class NetClientWorldMode : GameTest
+    {
+        public override string Name => "net.client_world_mode";
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Client,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            T.Check("client world build completed synchronously (syncLoad)", task.IsCompleted);
+            var world = task.Result;
+            T.Check("sim spine (SimDriver/SimRoot) present", world.Sim != null);
+            T.Check("fail-fast: Terr is null on a missing map", world.Terr == null);
+            T.Check("fail-fast: world NOT ready (no flat-ground fallback for a client)", !world.Ready);
+            T.Check("no local player in a client world", world.Player == null);
+            T.Check("no ZombieField in a client world", world.Zombies == null);
+            T.Check("no PlayerController registered (PlayerRegistry empty)", PlayerRegistry.Count == 0);
+            yield return Ticks(1);   // let the sandbox tick once so teardown exercises the built nodes
+        }
+    }
 }

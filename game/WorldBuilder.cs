@@ -8,7 +8,11 @@ namespace UnturnedGodot
     //   Playable  = --peidrive / menu "Drive PEI": full world + local player + streamers + HUD.
     //   Dedicated = headless server world: terrain/objects/roads/trees WITH colliders + nav, but no
     //               camera, no HUD, no viewmodel, no local player, no loading UI (§2.1 fork A(b)).
-    public enum WorldMode { Aerial, Playable, Dedicated }
+    //   Client    = joined MP client (PEI_CLIENT_PLAN §2.1): the world as scenery + physics -- terrain +
+    //               objects + colliders + roads/foliage/trees + day-night, but NO local player, NO camera,
+    //               NO local-authority spawns (zombies/loot/animals/vehicles/jeep/crops) and NO navmesh
+    //               (puppets don't path); authoritative state arrives as replicas rendered by client views.
+    public enum WorldMode { Aerial, Playable, Dedicated, Client }
 
     public sealed class WorldBuildResult
     {
@@ -20,6 +24,8 @@ namespace UnturnedGodot
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public Vector3 VehicleAim;         // first static service vehicle, for the legacy demo cam
         public bool HasVehicleAim;
+        public Vector3 PlayerSpawn;        // Client only: a real Spawns/Players.dat point (terrain-height Y) -- the C1 overhead cam hovers here (C3: the local shell spawns here)
+        public bool HasPlayerSpawn;
         public bool Ready;                 // true once the whole build finished (the old _worldReady)
     }
 
@@ -47,7 +53,7 @@ namespace UnturnedGodot
             // phase's elapsed ms, advances the bar, sets the label, and yields a frame so the overlay actually paints
             // before the next (blocking) chunk of work runs. (Dedicated: no loading UI -- there is nobody watching.)
             LoadingScreen loading = null;
-            if (mode != WorldMode.Dedicated) { loading = new LoadingScreen(); root.AddChild(loading); loading.SetTotal(11); }
+            if (mode != WorldMode.Dedicated) { loading = new LoadingScreen(); root.AddChild(loading); loading.SetTotal(mode == WorldMode.Client ? 5 : 11); }   // Client: Terrain/Objects/Roads/Foliage/Trees
             // Guarantee the overlay is actually PRESENTED before any blocking asset load. A single
             // process_frame resumes mid-frame (before the draw), so the first + heaviest phase (Terrain)
             // would otherwise block on the previous frame and the loading screen would never show. Wait
@@ -227,31 +233,65 @@ namespace UnturnedGodot
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped} (active={activeHoliday})");
 
+            // PEI's REAL regular spawn points (Spawns/Players.dat = u8 ver, u8 count, per point Vector3 + u8 angle*2
+            // + bool isAlt if v>3; source LevelPlayers.getSpawn picks a random NON-alt spawn). Shared parse: Playable
+            // spawns the local player on one; Client hovers the C1 overhead cam over one (PEI_CLIENT_PLAN §3 C1).
+            System.Collections.Generic.List<(float x, float z, float yaw)> LoadRegularSpawns()
+            {
+                var regs = new System.Collections.Generic.List<(float x, float z, float yaw)>();
+                string ppath = mapRoot + "/Spawns/Players.dat";
+                if (!System.IO.File.Exists(ppath)) return regs;
+                var pd = System.IO.File.ReadAllBytes(ppath); int pp = 0;
+                byte pver = pd[pp++]; byte pcount = pd[pp++];
+                for (int i = 0; i < pcount; i++)
+                {
+                    float px = System.BitConverter.ToSingle(pd, pp); pp += 8;   // point.x (skip point.y)
+                    float pz = System.BitConverter.ToSingle(pd, pp); pp += 4;   // point.z
+                    float pang = pd[pp++] * 2f;
+                    bool isAlt = pver > 3 && pd[pp++] != 0;
+                    if (!isAlt) regs.Add((px, -pz, -pang));   // regular spawn -> port negate-Z, negate yaw
+                }
+                return regs;
+            }
+            // ROADS + FOLIAGE + TREES -- ONE extraction shared verbatim by Playable and Client (PEI_CLIENT_PLAN §3
+            // C1: call-site-identical for Playable -- same order, same params, same RNG -- so SP stays byte-identical).
+            async System.Threading.Tasks.Task BuildRoadsFoliageTrees()
+            {
+                // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
+                {
+                    await Phase("Roads");
+                    var rf = new RoadField { Terr = terr };
+                    rf.LoadFromEnvironment(mapRoot + "/Environment");
+                    root.AddChild(rf);
+                }
+                // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
+                {
+                    await Phase("Foliage");
+                    var ff = new FoliageField();
+                    root.AddChild(ff);
+                    ff.LoadGrass();
+                }
+                // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
+                {
+                    await Phase("Trees");
+                    var rsf = new ResourceField();
+                    root.AddChild(rsf);
+                    rsf.LoadResources(activeHoliday);   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
+                    result.Resources = rsf;
+                }
+            }
+
             if (mode == WorldMode.Playable)
             {
                 await Phase("Player");
                 // menu "Drive PEI": drop the player + jeep on open grass with REAL controls (WASD + mouse look, F to enter/drive the jeep)
                 float sx = 0f, sz = -350f, spawnYaw = 0f;
-                // player spawn: PEI's REAL regular spawn points (Spawns/Players.dat = u8 ver, u8 count, per point Vector3 + u8 angle*2 + bool isAlt if v>3;
-                // source LevelPlayers.getSpawn picks a random NON-alt spawn). Falls back to the inland-grass scan if the file's missing.
+                // player spawn: a random regular Spawns/Players.dat point (shared parse above, source LevelPlayers.getSpawn).
+                // Falls back to the inland-grass scan if the file's missing/empty.
                 bool gotSpawn = false;
                 {
-                    string ppath = mapRoot + "/Spawns/Players.dat";
-                    if (System.IO.File.Exists(ppath))
-                    {
-                        var pd = System.IO.File.ReadAllBytes(ppath); int pp = 0;
-                        byte pver = pd[pp++]; byte pcount = pd[pp++];
-                        var regs = new System.Collections.Generic.List<(float x, float z, float yaw)>();
-                        for (int i = 0; i < pcount; i++)
-                        {
-                            float px = System.BitConverter.ToSingle(pd, pp); pp += 8;   // point.x (skip point.y)
-                            float pz = System.BitConverter.ToSingle(pd, pp); pp += 4;   // point.z
-                            float pang = pd[pp++] * 2f;
-                            bool isAlt = pver > 3 && pd[pp++] != 0;
-                            if (!isAlt) regs.Add((px, -pz, -pang));   // regular spawn -> port negate-Z, negate yaw
-                        }
-                        if (regs.Count > 0) { var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)]; sx = pick.x; sz = pick.z; spawnYaw = pick.yaw; gotSpawn = true; }
-                    }
+                    var regs = LoadRegularSpawns();
+                    if (regs.Count > 0) { var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)]; sx = pick.x; sz = pick.z; spawnYaw = pick.yaw; gotSpawn = true; }
                 }
                 if (!gotSpawn)   // fallback: most-inland grass
                 {
@@ -398,28 +438,7 @@ namespace UnturnedGodot
                     animals.LoadFromPei(mapRoot);
                     root.AddChild(animals);
                 }
-                // ROAD SPLINES: Environment/Paths.dat bezier road network (separate from the road props) -> extruded strips.
-                {
-                    await Phase("Roads");
-                    var rf = new RoadField { Terr = terr };
-                    rf.LoadFromEnvironment(mapRoot + "/Environment");
-                    root.AddChild(rf);
-                }
-                // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
-                {
-                    await Phase("Foliage");
-                    var ff = new FoliageField();
-                    root.AddChild(ff);
-                    ff.LoadGrass();
-                }
-                // RESOURCES: Terrain/Trees.dat -> trees/bushes/ore-rocks/mushrooms (1694 spawns, 26 types) as MultiMeshes
-                {
-                    await Phase("Trees");
-                    var rsf = new ResourceField();
-                    root.AddChild(rsf);
-                    rsf.LoadResources(activeHoliday);   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
-                    result.Resources = rsf;
-                }
+                await BuildRoadsFoliageTrees();   // roads/foliage/trees -- the shared extraction above (identical order/params)
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
                     var acam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
@@ -477,6 +496,22 @@ namespace UnturnedGodot
                     root.AddChild(loot);
                 }
             }
+            else if (mode == WorldMode.Client)
+            {
+                // Joined-client world (PEI_CLIENT_PLAN §3 Phase C1): everything deterministic-from-files loads
+                // locally (terrain/objects/colliders above + roads/foliage/trees + the day-night visuals);
+                // everything authoritative (players/zombies/vehicles/loot/items) arrives as replicas rendered
+                // by the client views. No local player, no camera (Main.BuildClient owns the C1 overhead cam),
+                // no local-authority spawns -- and the aerial else-branch below must NOT fire here.
+                await BuildRoadsFoliageTrees();
+                var regs = LoadRegularSpawns();
+                if (regs.Count > 0)
+                {
+                    var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)];
+                    result.PlayerSpawn = new Vector3(pick.x, terr.SampleHeight(pick.x, pick.z), pick.z);
+                    result.HasPlayerSpawn = true;
+                }
+            }
             else
             {
                 // aerial over the busiest cluster so the full populated PEI (all ~360 types) reads at once, no gaps
@@ -493,7 +528,8 @@ namespace UnturnedGodot
             // Zombie navmesh POCKETS -- bake NOW, in the FULL world, so the BUILDINGS (layer 1<<0) carve the mesh and
             // zombies route around them. This full-world bake is the CANONICAL one (save:true -> pei_pocket_N.res);
             // the terrain-only peiplay/navshot verify modes pass save:false so they never overwrite it.
-            try { var _navPk = ZombieNav.LoadPockets(mapRoot); ZombieNav.BuildOrLoad(root, _navPk, overlay: false, save: bakeNav, bakeIfMissing: bakeNav); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world nav failed: {_ne.Message}"); }   // --bakenav BAKES+SAVES here; the game just LOADS the committed .res
+            if (mode != WorldMode.Client)   // client puppets don't path (the server owns zombie AI) -> skip the pocket load/bake entirely (C1: pure load-time savings)
+                try { var _navPk = ZombieNav.LoadPockets(mapRoot); ZombieNav.BuildOrLoad(root, _navPk, overlay: false, save: bakeNav, bakeIfMissing: bakeNav); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world nav failed: {_ne.Message}"); }   // --bakenav BAKES+SAVES here; the game just LOADS the committed .res
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
         }
