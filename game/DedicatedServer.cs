@@ -36,6 +36,13 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            // Cap the headless main loop: with no FPS limit Godot spins the idle loop as fast as the CPU
+            // allows and burns a whole core even at 0 players (nothing to render, but it never sleeps). The
+            // sim + netcode run on the fixed 50 Hz physics accumulator, independent of this cap, so 60 leaves
+            // ample headroom while the process idles instead of busy-waiting. Only the REAL dedicated server
+            // (real UDP transport); L1 hosts inject a MemTransport and pump ticks themselves.
+            if (TransportOverride == null) Engine.MaxFps = 60;
+
             // net diagnostics (hardening Part B): route the engine-free NetLog through Godot so it lands in
             // journald; OFF unless UG_NETLOG=1 or --netlog (zero overhead when off -- call sites are gated)
             NetLog.Sink = s => GD.Print(s);
