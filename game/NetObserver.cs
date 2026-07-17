@@ -75,10 +75,13 @@ namespace UnturnedGodot
                 GD.Print($"[NETOBS] connected as player {Client.PlayerId}; join snapshot applied (server tick {Client.Applier.LastAppliedServerTick}): vehicles={Client.Vehicles.Count} players={Client.Players.Count}");
             }
 
-            if (++_sinceHb >= 250)   // 5 s liveness: distinguishes "connected, nothing moving" from wedged
+            if (++_sinceHb >= 50)   // 1 s liveness: distinguishes "connected, nothing moving" from wedged
             {
                 _sinceHb = 0;
-                GD.Print($"[NETOBS] hb state={Client.State} tick={Client.Applier.LastAppliedServerTick} vehicles={Client.Vehicles.Count} players={Client.Players.Count} puppets={VehicleView.PuppetCount}");
+                // joinfulls = reliable full/join snapshots applied (the drive-freeze fix's recovery-full
+                // fingerprint: +1 after an induced ack gap = a reliable recovery full landed over real UDP);
+                // deltas resuming after a wedge = the client is back in normal delta flow
+                GD.Print($"[NETOBS] hb state={Client.State} tick={Client.Applier.LastAppliedServerTick} vehicles={Client.Vehicles.Count} players={Client.Players.Count} puppets={VehicleView.PuppetCount} joinfulls={Client.JoinSnapshotsApplied} fulls={Client.Applier.Diag.FullSnapshotsApplied} deltas={Client.Applier.Diag.DeltaSnapshotsApplied}");
             }
 
             if (++_sinceLog < 25) return;   // 0.5 s vehicle report
