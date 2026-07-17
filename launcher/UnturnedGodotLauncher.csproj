@@ -7,6 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The launcher ships + self-updates as ONE exe (the updater only swaps the exe). A plain PublishSingleFile leaves
+         the native libs (libSkiaSharp/libHarfBuzzSharp/av_libglesv2) as loose files BESIDE the exe -> a standalone exe
+         has no renderer and dies with a SkiaSharp DllNotFoundException. This bundles them INTO the exe (extracted at
+         run). Bake it into the csproj so every publish is genuinely self-contained, flag or no flag. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.18" />
