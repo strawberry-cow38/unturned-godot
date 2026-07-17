@@ -119,6 +119,7 @@ namespace UnturnedGodot
         WorldItem _focusItem;   // the dropped item the player is currently LOOKING AT (glowing + named), pickup target for E
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
+        IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
         MeshInstance3D _lookHullViz; ImmediateMesh _lookHullMesh; bool _showLookHulls;   // I-toggle wireframe of every vehicle's look-focus hulls (culled behind-cam / past LookHullVizRange for fps)
@@ -135,6 +136,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null;
+            IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
                 var space = GetWorld3D().DirectSpaceState;
@@ -153,7 +155,7 @@ namespace UnturnedGodot
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5), Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
-                float bestI = float.MaxValue, bestV = float.MaxValue;
+                float bestI = float.MaxValue, bestV = float.MaxValue, bestP = float.MaxValue;
                 foreach (var h in space.IntersectShape(_lookSphereQ, 8))
                 {
                     var c = h["collider"].As<GodotObject>();
@@ -166,6 +168,13 @@ namespace UnturnedGodot
                     {
                         float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestV) { bestV = d; hitVeh = v; }
+                    }
+                    // MP: the hit collider is a puppet's detection body (bit 5 car / bit 7 item); its parent is the
+                    // IPuppetFocusable render node. SP never reaches this branch (real Vehicle/WorldItem matched above).
+                    else if (c is Node body && body.GetParent() is Node3D pn && IsInstanceValid(pn) && pn is IPuppetFocusable pf)
+                    {
+                        float d = pn.GlobalPosition.DistanceSquaredTo(_lookEnd);
+                        if (d < bestP) { bestP = d; hitPuppet = pf; }
                     }
                 }
                 if (hitItem != null && hitVeh != null) { if (bestV < bestI) hitItem = null; else hitVeh = null; }   // focus the nearer of the two
@@ -198,6 +207,13 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusDeployable)) _focusDeployable.SetLookFocused(false);
                 _focusDeployable = hitDeploy;
                 _focusDeployable?.SetLookFocused(true);
+            }
+            // MP puppet outline: clears when hitPuppet is null (guarded look-block sets it null -> outline drops on death/ride too).
+            if (!ReferenceEquals(hitPuppet, _focusPuppet))
+            {
+                if (_focusPuppet is Node3D op && IsInstanceValid(op)) _focusPuppet.SetLookFocused(false);
+                _focusPuppet = hitPuppet;
+                _focusPuppet?.SetLookFocused(true);
             }
         }
 

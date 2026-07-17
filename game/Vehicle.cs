@@ -908,6 +908,13 @@ namespace UnturnedGodot
                 p.AddChild(pivot);
                 p.Wheels[i] = new VehiclePuppet.WheelDress { Pivot = pivot, Steer = steer, Radius = wr };
             }
+            p.OutlineColor = ItemTool.RarityColorUI(s.Rarity);   // match the real vehicle's look-at rim colour (line 931)
+            // look-detection collider (client-only): the vehicle-layer box (bit 5) so the player's look-ray/sphere finds
+            // the puppet and outlines it. CollisionMask 0 + NO bit 0 -> it never blocks movement (player mask is bit0|bit6)
+            // and it isn't the physics body the SP car is; detection only, mirroring the real vehicle's bit-5 hull.
+            var focusBody = new StaticBody3D { CollisionLayer = 1u << 5, CollisionMask = 0 };
+            focusBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = s.BoxSize }, Position = s.BoxCenter });
+            p.AddChild(focusBody);
             return p;
         }
 

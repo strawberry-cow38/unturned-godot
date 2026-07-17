@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "zLqlv4mC8Bg=",
+  "dgSpecHash": "zlI50WC3BLY=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/unturned-godot-ib/core/UnturnedDat/UnturnedDat.csproj",
+  "projectFilePath": "/home/ec2-user/projects/unturned-godot/core/UnturnedDat/UnturnedDat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

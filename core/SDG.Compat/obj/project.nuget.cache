@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "5ttYMn+exxg=",
+  "dgSpecHash": "yM2VWBYbke8=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/unturned-godot-ib/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

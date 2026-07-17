@@ -7,7 +7,7 @@ namespace UnturnedGodot
     // dead-reckons its transform from snapshots; DressWheels applies the replicated steer angle plus a
     // spin derived from the replicated forward speed (rolling wheels need no spin on the wire).
     // Built by Vehicle.BuildPuppetByName so puppet and server node share the same Spec data.
-    public partial class VehiclePuppet : Node3D
+    public partial class VehiclePuppet : Node3D, IPuppetFocusable
     {
         public sealed class WheelDress
         {
@@ -19,6 +19,37 @@ namespace UnturnedGodot
 
         public string SpecKey = "jeep";
         public WheelDress[] Wheels = System.Array.Empty<WheelDress>();
+
+        // look-at focus (client-only): the same screen-space outline the real Vehicle draws -- add every mesh to
+        // OutlineOverlay's layer so the offscreen mask cam picks them up as ONE silhouette. Detection is the bit-5
+        // box collider added in Vehicle.BuildPuppetByName; PlayerController.UpdateLookFocus drives this on/off.
+        public Color OutlineColor = new Color(0.82f, 0.83f, 0.90f);   // default vehicle tint; BuildPuppetByName overrides from spec rarity
+        bool _lookFocused;
+        System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
+
+        public void SetLookFocused(bool on)
+        {
+            if (_lookFocused == on) return;
+            _lookFocused = on;
+            if (on || _outlineMeshes == null)   // (re)collect on FOCUS so newly-dressed wheel meshes are covered
+            {
+                _outlineMeshes = new System.Collections.Generic.List<MeshInstance3D>();
+                CollectMeshes(this, _outlineMeshes);
+            }
+            foreach (var mi in _outlineMeshes)
+                if (IsInstanceValid(mi))
+                    mi.Layers = on ? (mi.Layers | OutlineOverlay.OutlineLayer) : (mi.Layers & ~OutlineOverlay.OutlineLayer);
+            if (on) WorldItem.FocusColor = OutlineColor;   // OutlineOverlay tints the rim with this
+        }
+
+        static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)
+        {
+            foreach (var c in n.GetChildren())
+            {
+                if (c is MeshInstance3D mi) list.Add(mi);   // body + wheels -> one combined silhouette
+                CollectMeshes(c, list);
+            }
+        }
 
         // C6 ride mode (PEI_CLIENT_PLAN §3 C6): the puppet is the shell's ENTER TARGET and drive-cam anchor.
         public uint NetId;                    // the replicated vehicle entity id (set by VehicleReplicaView at spawn) -- what SendEnterVehicle takes

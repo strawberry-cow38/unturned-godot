@@ -127,6 +127,37 @@ namespace UnturnedGodot
             };
         }
 
+        /// <summary>Client-side FOCUSABLE dropped-item replica (MP): the render-only replica visual + a hidden
+        /// glow silhouette on the outline layer + a look-detection box collider on the item hit layer (bit 7).
+        /// Mirrors the real WorldItem's look-at highlight so the joined client can see + aim at replicated drops --
+        /// a bare replica node (WorldItemReplicaView's old shape) is invisible to the look-ray. Bit 7 + mask 0 ->
+        /// it never blocks movement (player mask is bit0|bit6) or catches bullets (bit 7 isn't in the bullet mask).</summary>
+        public static WorldItemPuppet BuildItemPuppet(ushort itemId, Color rarity)
+        {
+            var p = new WorldItemPuppet();
+            var visual = BuildReplicaVisual(itemId, rarity);
+            p.AddChild(visual);
+
+            var model = itemId > 0 ? GetModel(itemId) : null;
+            Vector3 boxSize = (model != null && model.Ok) ? model.Box : new Vector3(0.24f, 0.24f, 0.24f);
+            Vector3 boxCenter = (model != null && model.Ok) ? model.Center : Vector3.Zero;
+            boxSize *= 1.15f;   // +15% like the real item's hitbox -> easier to look at + aim
+            var body = new StaticBody3D { CollisionLayer = ItemHitLayer, CollisionMask = 0 };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = boxSize }, Position = boxCenter });
+            p.AddChild(body);
+
+            var glow = new MeshInstance3D
+            {
+                Mesh = visual.Mesh, Visible = false,
+                Layers = OutlineOverlay.OutlineLayer,   // only the offscreen mask camera renders this
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+            };
+            p.AddChild(glow);
+            p.Configure(glow, rarity);
+            return p;
+        }
+
         public static WorldItem Spawn(Node parent, Item item, Vector3 pos, Color? fallbackColor = null, string fallbackName = null)
         {
             var wi = new WorldItem { Item = item, FallbackColor = fallbackColor, FallbackName = fallbackName };
@@ -313,6 +344,26 @@ namespace UnturnedGodot
                 if (!show && _glow != null && _glow.Visible) _glow.Visible = false;
                 Prof.Add("item_LOS", _pt);
             }
+        }
+    }
+
+    // Client-side FOCUSABLE dropped-item replica (MP). A render-only Node3D (WorldItemReplicaView owns its
+    // transform/lifecycle) carrying the item mesh, a look-detection box collider, and a glow silhouette --
+    // built by WorldItem.BuildItemPuppet, toggled by PlayerController.UpdateLookFocus. No pickup physics.
+    public partial class WorldItemPuppet : Node3D, IPuppetFocusable
+    {
+        MeshInstance3D _glow;
+        Color _rar = Colors.White;
+        bool _focused;
+
+        public void Configure(MeshInstance3D glow, Color rarity) { _glow = glow; _rar = rarity; }
+
+        public void SetLookFocused(bool on)
+        {
+            if (_focused == on) return;
+            _focused = on;
+            if (on) WorldItem.FocusColor = _rar;   // OutlineOverlay tints the rim with the item's rarity
+            if (_glow != null && IsInstanceValid(_glow)) _glow.Visible = on;
         }
     }
 }
