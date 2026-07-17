@@ -36,6 +36,8 @@ namespace UnturnedGodot
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
+        public string SpecKey = "jeep"; public int SpawnVariant;   // MP §3.6: which Spec built this + its paint variant -- VehicleNetSync replicates them so client puppets rebuild the same look
+        public ushort NetDriverId;   // MP §3.6: remote player holding the driver seat (set by VehicleNetSync); 0 = none. Gates the local direct-path enter; never set in pure SP.
         public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP driving eye (local); tall cabs override higher so the view clears the hood
 
         // --- trailer hitch (master steer: back the cab under the trailer, hop out, walk to the hitch, F to couple; then
@@ -79,6 +81,10 @@ namespace UnturnedGodot
         const float BumperMult = 1f, BumperThreshold = 3f, BumperZombieDmg = 15f, BumperPlayerDmg = 10f, BumperSelfMult = 1f;
         const float HornAlertRadius = 32f;   // source InteractableVehicle.tellHorn: AlertTool.alert(pos, 32) -> zombies within earshot investigate
         public bool HeadlightsOn => _headlightsOn;
+        public bool TaillightsOn => _taillightsOn;          // MP §3.6: replicated light/brake flags (read-only views of the SP state)
+        public bool SirenOn => _sirenOn;
+        public bool BrakingNow => _braking;
+        public float SteerAngleDegrees => _steerAngle;      // MP §3.6: the wheel-steer summary the snapshot carries
 
         // look-at focus (master): same system as items -- a screen-space outline + an info billboard (name/HP/fuel/battery)
         bool _lookFocused; System.Collections.Generic.List<MeshInstance3D> _outlineMeshes; InfoBillboard _info;
@@ -833,30 +839,81 @@ namespace UnturnedGodot
             },
         };
 
-        public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant);
-        public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant);
-        public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant);
-        public static Vehicle BuildSedan(int variant = 0) => Build(_sedan, variant);
-        public static Vehicle BuildSemi(int variant = 0) => Build(_semi, variant);
-        public static Vehicle BuildTrailer(int variant = 0) => Build(_trailer, variant);
-        public static Vehicle BuildHatchback(int variant = 0) => Build(_hatchback, variant);
-        public static Vehicle BuildHumvee(int variant = 0) => Build(_humvee, variant);
-        public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant);
-        public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant);
-        public static Vehicle BuildFiretruck(int variant = 0) => Build(_firetruck, variant);
-        public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant);
-        public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant);
-        public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant);
-        public static Vehicle BuildOffRoader(int variant = 0) => Build(_offroader, variant);
-        public static Vehicle BuildTruck(int variant = 0) => Build(_truck, variant);
-        public static Vehicle BuildVan(int variant = 0) => Build(_van, variant);
-        public static Vehicle BuildGolf(int variant = 0) => Build(_golf, variant);
+        public static Vehicle BuildJeep(int variant = 0) => Build(_jeep, variant, "jeep");
+        public static Vehicle BuildQuad(int variant = 0) => Build(_quad, variant, "quad");
+        public static Vehicle BuildBus(int variant = 0) => Build(_bus, variant, "bus");
+        public static Vehicle BuildSedan(int variant = 0) => Build(_sedan, variant, "sedan");
+        public static Vehicle BuildSemi(int variant = 0) => Build(_semi, variant, "semi");
+        public static Vehicle BuildTrailer(int variant = 0) => Build(_trailer, variant, "trailer");
+        public static Vehicle BuildHatchback(int variant = 0) => Build(_hatchback, variant, "hatchback");
+        public static Vehicle BuildHumvee(int variant = 0) => Build(_humvee, variant, "humvee");
+        public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant, "roadster");
+        public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant, "ambulance");
+        public static Vehicle BuildFiretruck(int variant = 0) => Build(_firetruck, variant, "firetruck");
+        public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant, "tractor");
+        public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant, "ural");
+        public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant, "police");
+        public static Vehicle BuildOffRoader(int variant = 0) => Build(_offroader, variant, "offroader");
+        public static Vehicle BuildTruck(int variant = 0) => Build(_truck, variant, "truck");
+        public static Vehicle BuildVan(int variant = 0) => Build(_van, variant, "van");
+        public static Vehicle BuildGolf(int variant = 0) => Build(_golf, variant, "golf");
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), _ => BuildJeep(variant) };
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn)
 
-        static Vehicle Build(Spec s, int variant)
+        // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
+        // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
+        static Spec SpecFor(string name) => name switch
+        {
+            "quad" => _quad, "bus" => _bus, "sedan" => _sedan, "hatchback" => _hatchback, "humvee" => _humvee,
+            "roadster" => _roadster, "ambulance" => _ambulance, "firetruck" => _firetruck, "tractor" => _tractor,
+            "ural" => _ural, "police" => _police, "semi" => _semi, "trailer" => _trailer,
+            "offroader" => _offroader, "off_roader" => _offroader, "truck" => _truck, "van" => _van,
+            "golf" => _golf, "vw_golf" => _golf, _ => _jeep,
+        };
+
+        // MP §3.6 client replica: a mesh-only PUPPET -- the same ripped body/palette/parts/wheels as
+        // Build(), but NO VehicleBody3D/VehicleWheel3D/collision/audio/particles. Puppets are interpolated
+        // visuals (VehicleReplicaView dead-reckons them); the server owns the physics. Wheel pivots are
+        // exposed on the returned node for steer/spin dressing.
+        public static VehiclePuppet BuildPuppetByName(string name, int variant)
+        {
+            var s = SpecFor(name);
+            var p = new VehiclePuppet { SpecKey = name };
+            var paint = SpawnPaint(s, variant);   // deterministic from the replicated variant -> same look as the server spawn
+            Material bodyMat = s.Palette != null
+                ? PaintMat(s.Palette, paint)
+                : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            p.AddChild(new MeshInstance3D { Name = "Body", Mesh = ContentProvider.ParseObj($"res://content/{s.Body}"), MaterialOverride = bodyMat });
+            if (s.Parts != null)
+                foreach (var (txt, color) in s.Parts)
+                    p.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = SolidMat(color) });
+            var wheelMesh = ContentProvider.ParseObj($"res://content/{s.Wheel}");
+            Material wheelMat;
+            if (s.WheelTex != null)
+            {
+                var wimg = Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.WheelTex}"));
+                wheelMat = new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(wimg), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            }
+            else
+                wheelMat = new StandardMaterial3D { AlbedoColor = new Color(0.09f, 0.09f, 0.10f), Metallic = 0f, Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            p.Wheels = new VehiclePuppet.WheelDress[s.Wheels.Length];
+            for (int i = 0; i < s.Wheels.Length; i++)
+            {
+                var (x, y, z, steer) = s.Wheels[i];
+                float wr = s.WheelRadii != null ? s.WheelRadii[i] : s.WheelRadius;
+                float wscale = wr / s.WheelRadius;
+                var pivot = new Node3D { Position = new Vector3(x, y, z) };
+                pivot.AddChild(new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) });
+                p.AddChild(pivot);
+                p.Wheels[i] = new VehiclePuppet.WheelDress { Pivot = pivot, Steer = steer, Radius = wr };
+            }
+            return p;
+        }
+
+        static Vehicle Build(Spec s, int variant, string specKey)
         {
             var v = new Vehicle { Mass = GlobalMass };   // source uses one constant mass (2.0) for ALL vehicles -> one global Godot mass
+            v.SpecKey = specKey; v.SpawnVariant = variant;   // MP §3.6: replicated so puppets rebuild the same spec + paint
             v.CollisionLayer |= 1u << 5;   // bit 5 = "vehicle" so player bullets can raycast-hit it (see PlayerController.StepBullets)
             v._baseCollisionLayer = v.CollisionLayer;   // remember the un-ghosted layer (bit0|bit5) so a towed trailer can swap bit0->bit6 and restore it
             v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask, so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it

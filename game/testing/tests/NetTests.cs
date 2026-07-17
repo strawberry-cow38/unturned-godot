@@ -370,4 +370,114 @@ namespace UnturnedGodot.Testing
             b.Disconnect();
         }
     }
+
+    // MP_PLAN §4 Phase 7: server-authoritative vehicle physics end to end on the real world path (§3.6).
+    // A real Vehicle NODE (VehicleBody3D) lives on the dedicated server world; a DRIVER client takes the
+    // seat by command (validated at the choke point) and streams DriveInput @50 Hz; VehicleNetSync feeds
+    // the held input into Vehicle.Drive -- the SAME seam the SP shell uses -- so the node physically
+    // drives on the server's ground; an OBSERVER client's VehicleReplicaView renders a mesh-only puppet
+    // that follows by dead-reckoned interpolation: converging on the server transform within tolerance,
+    // never teleporting, never running vehicle physics of its own.
+    public class NetVehicleDriveSync : GameTest
+    {
+        public override string Name => "net.vehicle_drive_sync";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(74747);
+            var driver = new NetWorldClient(new MemClientTransport(net), "driver", contentHash: NetContent.Hash);
+            var observer = new NetWorldClient(new MemClientTransport(net), "observer", contentHash: NetContent.Hash);
+            uint drivingVeh = 0;   // once seated, the pump streams the held DriveInput every tick
+            float throttle = 0f;
+            bool handbrake = false;
+            var pump = new DelegateSimStep((t, dt) =>
+            {
+                net.Tick(); driver.Tick(); observer.Tick();
+                if (drivingVeh != 0) driver.SendDriveInput(drivingVeh, throttle, 0f, handbrake);
+            }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + vehicle sync + replicate stay after/LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+            var view = new VehicleReplicaView { Client = observer };
+            World.AddChild(view);
+            driver.Connect();
+            observer.Connect();
+
+            // the server-side vehicle: a REAL jeep node dropped beside the (0,0,0) player spawn area
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(1f, 1.2f, 0f);
+
+            yield return Until(() => driver.State == NetSessionState.Connected && observer.State == NetSessionState.Connected, 5);
+            T.Check("both clients joined", driver.State == NetSessionState.Connected && observer.State == NetSessionState.Connected);
+            yield return Until(() => driver.Vehicles.Count == 1 && observer.Vehicles.Count == 1, 5);
+            T.Check("the vehicle node replicated to both clients (VehicleNetSync minted its entity)",
+                    driver.Vehicles.Count == 1 && observer.Vehicles.Count == 1);
+            T.Check("exactly one vehicle tracked server-side", ded.Server.Vehicles.Count == 1);
+            uint netId = 0;
+            foreach (var e in driver.Vehicles.All) { netId = e.NetIdValue; break; }
+
+            yield return Ticks(50);   // let the spawn drop settle onto the fallback ground before driving
+
+            int entered = 0;
+            driver.VehicleEntered += e => { if (e.PlayerId == driver.PlayerId) entered++; };
+            driver.SendEnterVehicle(netId);
+            yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == driver.PlayerId, 5);
+            bool seated = ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == driver.PlayerId;
+            T.Check("the Enter command took the seat server-side (occupancy + reach validated)", seated);
+            T.Check("the node's engine started (SP enter side effects through the sync)", jeep.EngineOn);
+            yield return Until(() => entered > 0, 5);
+            T.Check($"the VehicleEntered fact reached the driver ({entered})", entered > 0);
+
+            // drive forward ~4 s of sim; the observer's puppet must exist and TRACK the server node
+            drivingVeh = netId;
+            throttle = 1f;
+            yield return Until(() => view.TryGetPuppet(netId, out _), 5);
+            // VehiclePuppet is a plain Node3D by type -- the compiler itself guarantees no VehicleBody3D here
+            bool havePuppet = view.TryGetPuppet(netId, out var pup);
+            T.Check("the observer materialized a mesh-only puppet (no VehicleBody3D)", havePuppet);
+            var start = jeep.GlobalPosition;
+            float maxErr = 0f, maxStep = 0f;
+            Vector3 prev = pup.GlobalPosition;
+            for (int i = 0; i < 200; i++)
+            {
+                yield return Ticks(1);
+                var now = pup.GlobalPosition;
+                maxStep = Mathf.Max(maxStep, now.DistanceTo(prev));
+                prev = now;
+                if (i > 50) maxErr = Mathf.Max(maxErr, now.DistanceTo(jeep.GlobalPosition));   // measure once the glide latched
+            }
+            float driven = jeep.GlobalPosition.DistanceTo(start);
+            T.Check($"the server NODE physically drove under the remote DriveInput ({driven:0.0} m)", driven > 8f);
+            T.Check($"the puppet converged on the driven vehicle (max err {maxErr:0.00} m, dead-reckoned)", maxErr < 2.5f);
+            T.Check($"the puppet moved by interpolation, not teleports (max per-tick step {maxStep:0.00} m)", maxStep > 0f && maxStep < 1.5f);
+
+            // brake to a stop -> at rest the puppet parks on the node's exact transform
+            throttle = 0f;
+            handbrake = true;
+            yield return Ticks(150);
+            float restErr = pup.GlobalPosition.DistanceTo(jeep.GlobalPosition);
+            T.Check($"at rest the puppet sits on the server transform (err {restErr:0.00} m)", restErr < 0.6f);
+
+            // exit frees the seat and parks the node (SP exit side effects through the sync)
+            drivingVeh = 0;
+            driver.SendExitVehicle();
+            yield return Until(() => ded.Server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId == 0, 5);
+            T.Check("Exit freed the seat", ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
+            yield return Ticks(5);
+            T.Check("the node parked (engine off) after exit", !jeep.EngineOn);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            driver.Disconnect();
+            observer.Disconnect();
+        }
+    }
 }

@@ -21,6 +21,7 @@ namespace UnturnedGodot.Net
         public const byte SystemDeployables = 6;    // Phase 6: the power-graph inputs -- entities/wires/scalars (DeployableReplication.cs, §3.1)
         public const byte SystemInventory = 7;      // Phase 6: owner-only full-grid block (InventoryReplication.cs, §3.3)
         public const byte SystemWorldItems = 8;     // Phase 6: dropped/loot items as NetId entities (WorldItemReplication.cs, §3.3)
+        public const byte SystemVehicles = 9;       // Phase 7: transform + velocities + wheel steer + scalars @25 Hz (VehicleReplication.cs, §3.6)
 
         // CommandRegistry id space (0 = snapshot ack, reserved)
         public const byte CommandMoveInput = 1;
@@ -43,6 +44,9 @@ namespace UnturnedGodot.Net
         public const byte CommandOpenStorage = 18;
         public const byte CommandCloseStorage = 19;
         public const byte CommandConsole = 20;         // Phase 6: DevConsole mutations, server-gated (§2.3 "including DevConsole")
+        public const byte CommandEnterVehicle = 21;    // Phase 7 (§3.6): transactional, gated server-side (occupancy + reach)
+        public const byte CommandExitVehicle = 22;
+        public const byte CommandDriveInput = 23;      // Phase 7: @50 Hz UnreliableSeq, driver-only, feeds Vehicle.Drive
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -67,6 +71,8 @@ namespace UnturnedGodot.Net
         public const byte EventConsoleResult = 20;     // to the sender: the server's console verdict line
         public const byte EventStorageOpened = 21;     // to the opener (open/close arbitration, §3.7)
         public const byte EventStorageClosed = 22;
+        public const byte EventVehicleEntered = 23;    // Phase 7 (§3.6): occupancy facts (also ride the snapshot; events give immediacy)
+        public const byte EventVehicleExited = 24;
     }
 
     /// <summary>

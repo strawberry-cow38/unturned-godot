@@ -21,6 +21,7 @@ namespace UnturnedGodot
         public NetWorldServer Server { get; private set; }
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
+        public VehicleNetSync VehicleSync { get; private set; }
 
         long _lastStatusTick;
 
@@ -47,6 +48,9 @@ namespace UnturnedGodot
             // world-item nodes (LootField streaming etc.) -> WorldItemReplication at 5 Hz (§3.3)
             WorldItemSync = new WorldItemNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));
+            // vehicle nodes -> VehicleReplication publish + remote DriveInput onto Vehicle.Drive (§3.6, Phase 7)
+            VehicleSync = new VehicleNetSync(Server, this);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => VehicleSync.Tick(), "net.vehicles.sync"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }
 

@@ -30,6 +30,7 @@ namespace UnturnedGodot
             // lights the lamps, §3.1), and gate console cheats through the server (§2.3).
             DeployableNetSchema.RegisterAll(_client.Deployables.Schema);
             AddChild(new DeployableReplicaView { Client = _client });
+            AddChild(new VehicleReplicaView { Client = _client });   // Phase 7: server vehicles render as dead-reckoned puppets (§3.6)
             DevConsole.RemoteClient = _client;
 
             var layer = new CanvasLayer();

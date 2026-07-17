@@ -2266,6 +2266,7 @@ namespace UnturnedGodot
 
         void EnterVehicle(Vehicle v)
         {
+            if (v.NetDriverId != 0) return;   // MP §3.6: a remote player holds the seat (single driver) -- never set in pure SP, so the direct path is unchanged
             _driving = v;
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             v.EngineOn = true;                                 // start burning fuel (source: engine on)

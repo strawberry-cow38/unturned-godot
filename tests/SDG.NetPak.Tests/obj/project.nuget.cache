@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "IWAIIbiRD4Q=",
+  "dgSpecHash": "7Hz3fyuGxgM=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/unturned-godot-mp6/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
+  "projectFilePath": "/home/ec2-user/projects/unturned-godot-mp7/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
   "expectedPackageFiles": [
     "/home/ec2-user/.nuget/packages/microsoft.codecoverage/17.11.1/microsoft.codecoverage.17.11.1.nupkg.sha512",
     "/home/ec2-user/.nuget/packages/microsoft.net.test.sdk/17.11.1/microsoft.net.test.sdk.17.11.1.nupkg.sha512",

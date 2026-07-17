@@ -32,6 +32,9 @@ namespace UnturnedGodot.Net
         public readonly DeployableReplication Deployables = new DeployableReplication();
         public readonly InventoryReplication Inventories = new InventoryReplication();
         public readonly WorldItemReplication WorldItems = new WorldItemReplication();
+        // Phase 7 -- vehicles (MP_PLAN §3.6)
+        public readonly VehicleReplication Vehicles = new VehicleReplication();
+        public readonly ServerVehicles VehicleHost;
         public readonly ServerCombat Combat;
         public readonly ServerTransactions Transactions;
         public readonly SnapshotComposer Composer;
@@ -50,16 +53,21 @@ namespace UnturnedGodot.Net
         {
             Session = new NetServerSession(transport, connectionFailureCallback, maxPeers: maxPeers, contentHash: contentHash);
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
-                                                                      Skills, Deployables, Inventories, WorldItems });
+                                                                      Skills, Deployables, Inventories, WorldItems,
+                                                                      Vehicles });
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             Transactions.Register(Commands);
+            VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent);
+            VehicleHost.Register(Commands);
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
             Commands.Register<MoveInput>(ReplicationIds.CommandMoveInput, MoveInput.TryRead,
                 (sender, cmd) => Players.ServerQueueInput(sender, cmd),
-                validate: (sender, cmd) => CombatState.IsAlive(sender));   // a corpse's inputs drop at the choke point
+                // a corpse's inputs drop at the choke point; so do a DRIVER's (the seat teleport owns the
+                // avatar while driving -- walked positions must not fight it, §3.6)
+                validate: (sender, cmd) => CombatState.IsAlive(sender) && !VehicleHost.IsDriver(sender));
             Commands.Register<FireCommand>(ReplicationIds.CommandFire, FireCommand.TryRead,
                 (sender, cmd) => Combat.OnFire(sender, cmd, Session.CurrentTick));
             Commands.Register<MeleeCommand>(ReplicationIds.CommandMelee, MeleeCommand.TryRead,
@@ -96,6 +104,7 @@ namespace UnturnedGodot.Net
             };
             Session.PeerDisconnected += (peer, reason) =>
             {
+                VehicleHost.OnPeerDisconnected(peer.PlayerId);   // frees the seat BEFORE the player entity goes
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 Skills.ServerRemove(peer.PlayerId);
@@ -130,6 +139,7 @@ namespace UnturnedGodot.Net
                 while (peer.TryReceiveUnreliable(out byte[] msg)) Commands.TryDispatch(msg, peer.PlayerId);
             }
             Players.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
+            VehicleHost.Step(Session.CurrentTick);   // drivers ride their vehicle entity; dead drivers exit
             Combat.Step(Session.CurrentTick);
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
             Inventories.ServerCommitDirty(Session.CurrentTick);
@@ -173,6 +183,8 @@ namespace UnturnedGodot.Net
         public readonly DeployableReplication Deployables = new DeployableReplication();
         public readonly InventoryReplication Inventories = new InventoryReplication();
         public readonly WorldItemReplication WorldItems = new WorldItemReplication();
+        // Phase 7 replica: every client mirrors vehicle state; puppets render from it (§3.6)
+        public readonly VehicleReplication Vehicles = new VehicleReplication();
         public readonly SnapshotApplier Applier;
         public readonly EventRegistry Events = new EventRegistry();
         public readonly ClientPrediction Prediction = new ClientPrediction();
@@ -206,6 +218,10 @@ namespace UnturnedGodot.Net
         public event System.Action<StorageOpenedEvent> StorageOpened;
         public event System.Action<StorageClosedEvent> StorageClosed;
 
+        // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
+        public event System.Action<VehicleEnteredEvent> VehicleEntered;
+        public event System.Action<VehicleExitedEvent> VehicleExited;
+
         ushort _inputSeq;
         ushort _combatSeq;
 
@@ -213,7 +229,8 @@ namespace UnturnedGodot.Net
         {
             Session = new NetClientSession(transport, playerName, contentHash: contentHash);
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
-                                                                    Skills, Deployables, Inventories, WorldItems });
+                                                                    Skills, Deployables, Inventories, WorldItems,
+                                                                    Vehicles });
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
                 if (!reader.ReadUInt16(out ushort len) || len == 0) return;
@@ -259,6 +276,10 @@ namespace UnturnedGodot.Net
             Events.Register<ConsoleResultEvent>(ReplicationIds.EventConsoleResult, ConsoleResultEvent.TryRead, e => ConsoleResult?.Invoke(e));
             Events.Register<StorageOpenedEvent>(ReplicationIds.EventStorageOpened, StorageOpenedEvent.TryRead, e => StorageOpened?.Invoke(e));
             Events.Register<StorageClosedEvent>(ReplicationIds.EventStorageClosed, StorageClosedEvent.TryRead, e => StorageClosed?.Invoke(e));
+            Events.Register<VehicleEnteredEvent>(ReplicationIds.EventVehicleEntered, VehicleEnteredEvent.TryRead,
+                e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
+            Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
+                e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
         }
 
         public NetSessionState State => Session.State;
@@ -392,6 +413,27 @@ namespace UnturnedGodot.Net
 
         public bool SendConsole(string text)
             => SendCommand(ReplicationIds.CommandConsole, new ConsoleCommand { Text = text }.Write);
+
+        // ---- Phase 7 vehicle commands (§3.6): Enter/Exit transactional, DriveInput @50 Hz unreliable ----
+
+        public bool SendEnterVehicle(uint netId)
+            => SendCommand(ReplicationIds.CommandEnterVehicle, new EnterVehicleCommand { NetId = netId }.Write);
+
+        public bool SendExitVehicle()
+            => SendCommand(ReplicationIds.CommandExitVehicle, new ExitVehicleCommand().Write);
+
+        /// <summary>This tick's driving intent (held-input model like MoveInput -- the newest keeps applying
+        /// server-side until replaced, so single loss costs nothing). Returns the seq (0 = not connected).</summary>
+        public ushort SendDriveInput(uint vehicleNetId, float throttle, float steer, bool handbrake)
+        {
+            if (Session.State != NetSessionState.Connected) return 0;
+            if (++_driveSeq == 0) _driveSeq = 1;
+            var cmd = new DriveInputCommand { Seq = _driveSeq, NetId = vehicleNetId, Throttle = throttle, Steer = steer, Handbrake = handbrake };
+            Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandDriveInput, cmd.Write));
+            return cmd.Seq;
+        }
+
+        ushort _driveSeq;
 
         public void Disconnect() => Session.Disconnect();
     }

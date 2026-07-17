@@ -25,6 +25,7 @@ namespace UnturnedGodot
         public RemotePlayers Remotes { get; private set; }
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
+        public VehicleNetSync VehicleSync { get; private set; }
 
         public override void _Ready()
         {
@@ -53,6 +54,11 @@ namespace UnturnedGodot
             // session soaks the world-item wire the same way it soaks the zombie wire.
             WorldItemSync = new WorldItemNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));
+            // Phase 7: the loopback world's vehicles publish as entities too (§3.6) -- every SP-loopback
+            // session soaks the vehicle wire. The LOCAL player keeps the direct SP drive path (the node IS
+            // the authority); the sync publishes that occupancy so remote Enter commands respect the seat.
+            VehicleSync = new VehicleNetSync(Server, this) { LocalPlayer = Player, LocalPlayerId = () => Client.PlayerId };
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => VehicleSync.Tick(), "net.vehicles.sync"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }
