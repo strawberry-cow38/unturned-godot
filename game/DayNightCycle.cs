@@ -17,6 +17,13 @@ namespace UnturnedGodot
         public float DayLength = 120f;   // seconds per full cycle (short here; Unturned's is ~an hour)
         public float Time = 0.35f;       // 0..1 time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
 
+        // MP Phase 8 (§3.7): a net sync owns Time (server: tick-derived; client: derived from the synced
+        // clock + snapshot tick) -- _Process stops free-running it. SP default (false) is byte-identical.
+        public bool ExternalTime;
+        // Dedicated fx hygiene (§2.1/§5): a headless server needs the CLOCK (authoritative time) but not
+        // the sky shader / sun / fog / glow work every frame. Default (true) is byte-identical for SP.
+        public bool VisualsEnabled = true;
+
         // ── PEI's REAL per-time-of-day lighting, ripped byte-exact from Maps/PEI/Environment/Lighting.dat (v12: the
         //    LightingInfo[4] table = DAWN/MIDDAY/DUSK/MIDNIGHT x ELightingColor, readColor = 3 bytes RGB /255).
         //    Arrays ordered [midnight, dawn, noon, dusk] to match Grad(). tools/parse_lighting.py dumps the full table.
@@ -148,8 +155,8 @@ void sky() {
 
         public override void _Process(double delta)
         {
-            Time = Mathf.PosMod(Time + (float)delta / DayLength, 1f);
-            Apply();
+            if (!ExternalTime) Time = Mathf.PosMod(Time + (float)delta / DayLength, 1f);
+            if (VisualsEnabled) Apply();
         }
 
         void EnsureSky()

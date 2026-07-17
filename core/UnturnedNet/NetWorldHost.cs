@@ -34,6 +34,10 @@ namespace UnturnedGodot.Net
         public readonly WorldItemReplication WorldItems = new WorldItemReplication();
         // Phase 7 -- vehicles (MP_PLAN §3.6)
         public readonly VehicleReplication Vehicles = new VehicleReplication();
+        // Phase 8 -- world state (MP_PLAN §3.7)
+        public readonly WorldClockReplication Clock = new WorldClockReplication();
+        public readonly CropReplication Crops = new CropReplication();
+        public readonly ResourceReplication Resources = new ResourceReplication();
         public readonly ServerVehicles VehicleHost;
         public readonly ServerCombat Combat;
         public readonly ServerTransactions Transactions;
@@ -54,11 +58,12 @@ namespace UnturnedGodot.Net
             Session = new NetServerSession(transport, connectionFailureCallback, maxPeers: maxPeers, contentHash: contentHash);
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
-                                                                      Vehicles });
+                                                                      Vehicles, Clock, Crops, Resources });
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
-                                                  Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
+                                                  Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
+                                                  Crops, Resources);
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent);
             VehicleHost.Register(Commands);
@@ -110,6 +115,9 @@ namespace UnturnedGodot.Net
                 Skills.ServerRemove(peer.PlayerId);
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
+                // Phase 8 rejoin hardening: per-client relevancy sets must not leak to a recycled playerId
+                Zombies.ForgetClient(peer.PlayerId);
+                WorldItems.ForgetClient(peer.PlayerId);
             };
         }
 
@@ -185,6 +193,10 @@ namespace UnturnedGodot.Net
         public readonly WorldItemReplication WorldItems = new WorldItemReplication();
         // Phase 7 replica: every client mirrors vehicle state; puppets render from it (§3.6)
         public readonly VehicleReplication Vehicles = new VehicleReplication();
+        // Phase 8 replicas (§3.7): world clock (time derives from the snapshot tick), crops, resources
+        public readonly WorldClockReplication Clock = new WorldClockReplication();
+        public readonly CropReplication Crops = new CropReplication();
+        public readonly ResourceReplication Resources = new ResourceReplication();
         public readonly SnapshotApplier Applier;
         public readonly EventRegistry Events = new EventRegistry();
         public readonly ClientPrediction Prediction = new ClientPrediction();
@@ -222,6 +234,12 @@ namespace UnturnedGodot.Net
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
 
+        // Phase 8 world-state facts (§3.7 -- already applied to the replicas when these fire)
+        public event System.Action<CropPlantedEvent> CropPlanted;
+        public event System.Action<CropHarvestedEvent> CropHarvested;
+        public event System.Action<ResourceHarvestedEvent> ResourceHarvested;
+        public event System.Action<ResourceRespawnedEvent> ResourceRespawned;
+
         ushort _inputSeq;
         ushort _combatSeq;
 
@@ -230,7 +248,7 @@ namespace UnturnedGodot.Net
             Session = new NetClientSession(transport, playerName, contentHash: contentHash);
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                     Skills, Deployables, Inventories, WorldItems,
-                                                                    Vehicles });
+                                                                    Vehicles, Clock, Crops, Resources });
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
                 if (!reader.ReadUInt16(out ushort len) || len == 0) return;
@@ -280,6 +298,15 @@ namespace UnturnedGodot.Net
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
                 e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
+            // Phase 8: world-state facts apply straight onto the replicas, then surface for fx/views
+            Events.Register<CropPlantedEvent>(ReplicationIds.EventCropPlanted, CropPlantedEvent.TryRead,
+                e => { Crops.ApplyPlanted(e, Applier.LastAppliedServerTick); CropPlanted?.Invoke(e); });
+            Events.Register<CropHarvestedEvent>(ReplicationIds.EventCropHarvested, CropHarvestedEvent.TryRead,
+                e => { Crops.ApplyHarvested(e, Applier.LastAppliedServerTick); CropHarvested?.Invoke(e); });
+            Events.Register<ResourceHarvestedEvent>(ReplicationIds.EventResourceHarvested, ResourceHarvestedEvent.TryRead,
+                e => { Resources.ApplyHarvested(e, Applier.LastAppliedServerTick); ResourceHarvested?.Invoke(e); });
+            Events.Register<ResourceRespawnedEvent>(ReplicationIds.EventResourceRespawned, ResourceRespawnedEvent.TryRead,
+                e => { Resources.ApplyRespawned(e, Applier.LastAppliedServerTick); ResourceRespawned?.Invoke(e); });
         }
 
         public NetSessionState State => Session.State;
@@ -413,6 +440,14 @@ namespace UnturnedGodot.Net
 
         public bool SendConsole(string text)
             => SendCommand(ReplicationIds.CommandConsole, new ConsoleCommand { Text = text }.Write);
+
+        // ---- Phase 8 crop commands (§3.7): both transactional, ReliableOrdered ----
+
+        public bool SendPlantCrop(ushort seedId, Vector3 pos)
+            => SendCommand(ReplicationIds.CommandPlantCrop, new PlantCropCommand { SeedId = seedId, Pos = pos }.Write);
+
+        public bool SendHarvestCrop(uint netId)
+            => SendCommand(ReplicationIds.CommandHarvestCrop, new HarvestCropCommand { NetId = netId }.Write);
 
         // ---- Phase 7 vehicle commands (§3.6): Enter/Exit transactional, DriveInput @50 Hz unreliable ----
 

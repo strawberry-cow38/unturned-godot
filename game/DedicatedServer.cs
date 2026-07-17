@@ -17,11 +17,17 @@ namespace UnturnedGodot
         public SimDriver Driver;                     // the world's sim spine (WorldBuildResult.Sim)
         public IServerTransport TransportOverride;   // tests inject MemTransport; null = real UDP
         public Terrain Terr;                         // optional (WorldBuildResult.Terr): grounds server grenade bounces on real terrain
+        public DayNightCycle DayNight;               // optional (WorldBuildResult.DayNight): tick-derived day-night (§3.7)
+        public ResourceField Resources;              // optional (WorldBuildResult.Resources): the §3.7 alive-bitmap index space
+        public string MapRoot;                       // optional: loads the 19 nav pockets as relevancy cells (§2.6)
 
         public NetWorldServer Server { get; private set; }
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
+        public WorldClockNetSync ClockSync { get; private set; }
+        public CropNetSync CropSync { get; private set; }
+        public ResourceNetSync ResourceSync { get; private set; }
 
         long _lastStatusTick;
 
@@ -41,6 +47,19 @@ namespace UnturnedGodot
             Server.Combat.WorldRay = GodotWorldRay;
             if (Terr != null) Server.Combat.GroundHeight = (x, z) => Terr.SampleHeight(x, z);
 
+            // Phase 8 interest policy (§2.6): distance rings for the world entities, plus the 19 PEI nav
+            // pockets as relevancy cells -- a town's whole horde stays relevant while a client is in that
+            // town. Fallback worlds (no map) have no pockets: rings only.
+            var pockets = MapRoot != null ? ZombieNav.LoadPockets(MapRoot) : new System.Collections.Generic.List<NavPocket>();
+            System.Func<UnityEngine.Vector3, int> cellOf = pos =>
+            {
+                var p = new Vector3(pos.x, pos.y, pos.z);
+                for (int i = 0; i < pockets.Count; i++) if (pockets[i].Box.HasPoint(p)) return i;
+                return -1;
+            };
+            Server.Zombies.Interest = new InterestPolicy { RingRadius = 192f, CellOf = cellOf };
+            Server.WorldItems.Interest = new InterestPolicy { RingRadius = 128f, CellOf = cellOf };
+
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Server.TickSimulation(), "net.server.sim"));
             // zombie brains -> ZombieReplication at 12.5 Hz (§3.5), BEFORE the snapshot send
             ZombieSync = new ZombieNetSync(Server, this);
@@ -51,6 +70,13 @@ namespace UnturnedGodot
             // vehicle nodes -> VehicleReplication publish + remote DriveInput onto Vehicle.Drive (§3.6, Phase 7)
             VehicleSync = new VehicleNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => VehicleSync.Tick(), "net.vehicles.sync"));
+            // Phase 8 world state (§3.7): tick-derived day-night, crops, the resource alive-bitmap
+            ClockSync = new WorldClockNetSync(Server, DayNight, driveFromTick: true);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => ClockSync.Tick(), "net.worldclock.sync"));
+            CropSync = new CropNetSync(Server, this);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => CropSync.Tick(), "net.crops.sync"));
+            ResourceSync = new ResourceNetSync(Server, Resources);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => ResourceSync.Tick(), "net.resources.sync"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }
 

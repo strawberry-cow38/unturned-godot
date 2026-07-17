@@ -371,6 +371,142 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // MP_PLAN §3.7: the resource index space against the REAL committed content. The load-order index is
+    // the implicit wire id the alive-bitmap keys on, so the dedicated build (VisualInstances=false --
+    // colliders only, no MultiMesh) and the client build must agree on it EXACTLY, and SetAlive must fell/
+    // respawn instances in both shapes.
+    public class WorldResourceIndexSpace : GameTest
+    {
+        public override string Name => "world.resource_index_space";
+        public override IEnumerable<Step> Run()
+        {
+            var visual = new ResourceField();                             // client/SP shape
+            World.AddChild(visual);
+            visual.LoadResources("NONE");
+            var headless = new ResourceField { VisualInstances = false }; // dedicated shape (§5 fx hygiene)
+            World.AddChild(headless);
+            headless.LoadResources("NONE");
+
+            T.Check($"committed content yields instances ({visual.InstanceCount})", visual.InstanceCount > 0);
+            T.Check("dedicated + client builds agree on the index space (the §3.7 implicit wire id)",
+                    visual.InstanceCount == headless.InstanceCount);
+            int last = visual.InstanceCount - 1;
+            T.Check("everything alive at load", visual.IsAlive(0) && visual.IsAlive(last) && headless.IsAlive(0));
+
+            visual.SetAlive(0, false);
+            headless.SetAlive(last, false);
+            T.Check("SetAlive fells an instance in both build modes", !visual.IsAlive(0) && !headless.IsAlive(last));
+            visual.SetAlive(0, true);
+            T.Check("respawn restores it", visual.IsAlive(0));
+            T.Check("out-of-range indices are ignored", !visual.IsAlive(-1) && !visual.IsAlive(visual.InstanceCount));
+            yield break;
+        }
+    }
+
+    // MP_PLAN §4 Phase 8: the disconnect/rejoin soak. Clients join and HARD-DROP repeatedly -- including
+    // while seated in a vehicle (the nastiest state to leak) -- against a dedicated world with a persistent
+    // observer watching. The world must stay consistent the whole way: seats free on disconnect, player
+    // entities drain, the observer's replicas hold exact StateHash parity, the Phase 8 world clock keeps
+    // deriving the same time on both sides, and a rejoin under a previously-used name lands clean.
+    public class NetDropinDropout : GameTest
+    {
+        public override string Name => "net.dropin_dropout";
+        public override double TimeoutSimSeconds => 45;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260717);
+            var clients = new List<NetWorldClient>();   // everything in here gets pumped each tick
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); for (int i = 0; i < clients.Count; i++) clients[i].Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + replicate stay after/LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net),
+                                            DayNight = world.DayNight, Resources = world.Resources };   // Phase 8 world-state syncs
+            World.AddChild(ded);
+
+            var observer = new NetWorldClient(new MemClientTransport(net), "observer", contentHash: NetContent.Hash);
+            clients.Add(observer);
+            observer.Connect();
+            yield return Until(() => observer.State == NetSessionState.Connected, 5);
+            T.Check("persistent observer joined", observer.State == NetSessionState.Connected);
+
+            // the world state the churners fight over: one real vehicle node
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(1f, 1.2f, 0f);
+            yield return Until(() => observer.Vehicles.Count == 1, 5);
+            uint vehId = 0;
+            foreach (var e in observer.Vehicles.All) { vehId = e.NetIdValue; break; }
+            T.Check("vehicle replicated to the observer", vehId != 0);
+            yield return Ticks(50);   // let the spawn drop settle
+
+            const int Cycles = 5;
+            int seatedCycles = 0, seatFreedCycles = 0, drainedCycles = 0;
+            for (int i = 0; i < Cycles; i++)
+            {
+                var churn = new NetWorldClient(new MemClientTransport(net), $"churn{i}", contentHash: NetContent.Hash);
+                clients.Add(churn);
+                churn.Connect();
+                yield return Until(() => churn.State == NetSessionState.Connected && churn.JoinSnapshotsApplied >= 1, 5);
+                if (churn.State != NetSessionState.Connected) break;
+
+                for (int k = 0; k < 15; k++) { churn.SendMoveInput(0f, 1f, (i * 60f) % 360f); yield return Ticks(1); }   // walk a little
+                for (int k = 0; k < 5; k++) { churn.SendMoveInput(0f, 0f, 0f); yield return Ticks(1); }                 // stop (held-keys)
+                // joins-in-a-row spawn farther and farther out (SpawnPosition spacing) -- park the avatar
+                // beside the jeep server-side so every cycle's Enter passes the same 6 m reach gate
+                ded.Server.Players.ServerTeleport(churn.PlayerId, new UnityEngine.Vector3(2f, 0f, 0f), ded.Server.Session.CurrentTick);
+                yield return Ticks(2);
+                churn.SendEnterVehicle(vehId);
+                yield return Until(() => ded.Server.Vehicles.TryGet(vehId, out var v) && v.DriverPlayerId == churn.PlayerId, 5);
+                if (ded.Server.Vehicles.TryGet(vehId, out var seatE) && seatE.DriverPlayerId == churn.PlayerId) seatedCycles++;
+
+                // HARD DROP while seated -- the hardening case: the seat must free through PeerDisconnected
+                churn.Disconnect();
+                yield return Until(() => ded.Server.Session.Peers.Count == 1, 8);
+                clients.Remove(churn);
+                if (ded.Server.Session.Peers.Count == 1) drainedCycles++;
+                if (ded.Server.Vehicles.TryGet(vehId, out var freedE) && freedE.DriverPlayerId == 0) seatFreedCycles++;
+            }
+            T.Check($"all {Cycles} churn clients took the seat ({seatedCycles})", seatedCycles == Cycles);
+            T.Check($"every drop freed the seat ({seatFreedCycles}/{Cycles})", seatFreedCycles == Cycles);
+            T.Check($"every drop drained the peer ({drainedCycles}/{Cycles})", drainedCycles == Cycles);
+            T.Check("player entities drained back to observer-only", ded.Server.Players.Count == 1);
+
+            // the observer's world converged through all the churn -- exact parity, never a tolerance (§6)
+            yield return Ticks(30);
+            T.Check("observer players replica == server (StateHash parity)", observer.Players.StateHash() == ded.Server.Players.StateHash());
+            T.Check("observer vehicles replica == server (StateHash parity)", observer.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
+
+            // Phase 8 world clock (§3.7): synced through the churn, same tick -> same derived time-of-day
+            T.Check("world clock synced to the observer", observer.Clock.HasClock);
+            long ct = observer.Applier.LastAppliedServerTick;
+            T.Check("observer derives the server's exact time-of-day from the snapshot tick",
+                    observer.Clock.HasClock && observer.Clock.TimeOfDayAt(ct) == ded.Server.Clock.TimeOfDayAt(ct));
+
+            // rejoin under a previously-used name: a clean join snapshot, full parity, no leaked state
+            var rejoin = new NetWorldClient(new MemClientTransport(net), "churn0", contentHash: NetContent.Hash);
+            clients.Add(rejoin);
+            rejoin.Connect();
+            yield return Until(() => rejoin.State == NetSessionState.Connected && rejoin.JoinSnapshotsApplied >= 1, 5);
+            T.Check("rejoin under a reused name lands clean (reliable join snapshot)",
+                    rejoin.State == NetSessionState.Connected && rejoin.JoinSnapshotsApplied >= 1);
+            yield return Ticks(30);
+            T.Check("rejoiner players replica == server", rejoin.Players.StateHash() == ded.Server.Players.StateHash());
+            T.Check("rejoiner vehicles replica == server", rejoin.Vehicles.StateHash() == ded.Server.Vehicles.StateHash());
+            T.Check("server tracks observer + rejoiner", ded.Server.Session.Peers.Count == 2);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            observer.Disconnect();
+            rejoin.Disconnect();
+        }
+    }
+
     // MP_PLAN §4 Phase 7: server-authoritative vehicle physics end to end on the real world path (§3.6).
     // A real Vehicle NODE (VehicleBody3D) lives on the dedicated server world; a DRIVER client takes the
     // seat by command (validated at the choke point) and streams DriveInput @50 Hz; VehicleNetSync feeds

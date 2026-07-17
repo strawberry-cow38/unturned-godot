@@ -40,6 +40,7 @@ namespace SDG.Unturned
         public static bool IsSeed(ushort id) => _bySeed.ContainsKey(id);
         public static bool TryGet(ushort id, out FarmDef def) => _bySeed.TryGetValue(id, out def);
         public static int Count => _bySeed.Count;
+        public static IEnumerable<FarmDef> All => _bySeed.Values;   // MP Phase 8: CropNetSchema registers every def
     }
 
     // A planted crop instance. Source InteractableFarm: IsFullyGrown when (now - planted) >= growth; harvest (use/E)

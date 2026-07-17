@@ -112,8 +112,17 @@ namespace UnturnedGodot.Net
 
         public byte SystemId => ReplicationIds.SystemWorldItems;
 
+        /// <summary>Phase 8 interest policy (§2.6): null = AllRelevant (byte-identical to the pre-Phase-8
+        /// wire). Ground items are the classic ring case -- a settled item never re-dirties, so the ack-safe
+        /// tracker (not dirty ticks) is what makes walk-into-range appearance work.</summary>
+        public InterestPolicy Interest;
+
         readonly NetEntityRegistry<WorldItemEntity> _items = new NetEntityRegistry<WorldItemEntity>();
         readonly Dictionary<uint, long> _removedAtTick = new Dictionary<uint, long>();
+        readonly RelevancyTracker _relevancy = new RelevancyTracker();
+
+        /// <summary>Disconnect/rejoin hygiene: per-client relevancy state must not leak to a recycled id.</summary>
+        public void ForgetClient(ushort clientPlayerId) => _relevancy.ForgetClient(clientPlayerId);
 
         public int Count => _items.Count;
 
@@ -165,6 +174,7 @@ namespace UnturnedGodot.Net
         {
             if (!_items.Remove(new NetId(netId))) return false;
             _removedAtTick[netId] = Stamp(tick);
+            _relevancy.ForgetEntity(netId);   // the tombstone reaches every client; per-client state drops
             return true;
         }
 
@@ -190,6 +200,17 @@ namespace UnturnedGodot.Net
         public void WriteFull(NetPakWriter w, in ReplicationContext ctx)
         {
             var ids = SortedIds();
+            if (Interest != null)
+            {
+                var included = new List<uint>();
+                foreach (uint id in ids)
+                {
+                    _items.TryGet(new NetId(id), out var e);
+                    if (Interest.IsRelevant(ctx.ViewPos, e.Pos)) included.Add(id);
+                }
+                _relevancy.ResetFull(ctx.ClientPlayerId, included, ctx.ServerTick);
+                ids = included;
+            }
             w.WriteUInt16((ushort)ids.Count);
             foreach (uint id in ids) { _items.TryGet(new NetId(id), out var e); WriteEntity(w, e); }
         }
@@ -197,12 +218,21 @@ namespace UnturnedGodot.Net
         public void WriteDelta(NetPakWriter w, in ReplicationContext ctx, long baselineTick)
         {
             var changed = new List<uint>();
+            var removed = new List<uint>();
             foreach (uint id in SortedIds())
             {
                 _items.TryGet(new NetId(id), out var e);
-                if (e.LastChangedTick > baselineTick) changed.Add(id);
+                if (Interest == null)
+                {
+                    if (e.LastChangedTick > baselineTick) changed.Add(id);
+                }
+                else if (_relevancy.ShouldWrite(ctx.ClientPlayerId, id, Interest.IsRelevant(ctx.ViewPos, e.Pos),
+                                                e.LastChangedTick, baselineTick, ctx.ServerTick))
+                {
+                    changed.Add(id);
+                }
             }
-            var removed = new List<uint>();
+            if (Interest != null) _relevancy.CollectRemovals(ctx.ClientPlayerId, baselineTick, removed);
             foreach (var kv in _removedAtTick)
                 if (kv.Value > baselineTick) removed.Add(kv.Key);
             removed.Sort();

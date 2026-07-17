@@ -35,6 +35,14 @@ namespace UnturnedGodot.Net
         /// bounds it generously (grid-quantized feet positions, no eye trace).</summary>
         public const float PickupReach = 6f;
 
+        /// <summary>Server-side plant/harvest reach (SP harvests at 3 m by eye focus; same generous
+        /// feet-position bound as PickupReach).</summary>
+        public const float CropReach = 6f;
+
+        /// <summary>Source ItemFarmAsset default (verified in CropManager: no Seed_* .dat overrides
+        /// Harvest_Reward_Experience) -- awarded per harvest, same as the SP path.</summary>
+        public const uint HarvestRewardExperience = 1;
+
         /// <summary>Dev/cheat console verbs (give/xp/skill) apply only while true -- a public dedicated
         /// server would flip this off (admin gating is deferred policy, the choke point is the mechanism).</summary>
         public bool AllowCheats = true;
@@ -46,12 +54,18 @@ namespace UnturnedGodot.Net
 
         public ServerTransactionsDiagnostics Diag { get; } = new ServerTransactionsDiagnostics();
 
+        /// <summary>The server's yield-roll RNG seam (Phase 8, §3.7: the AGRICULTURE second-yield roll moves
+        /// server-side -- SP keeps GD.Randf on the direct path). Injectable so L0 tests are deterministic.</summary>
+        public Func<float> Rand;
+
         readonly PlayerReplication _players;
         readonly PlayerCombatReplication _combat;
         readonly SkillsReplication _skills;
         readonly InventoryReplication _inventories;
         readonly WorldItemReplication _worldItems;
         readonly DeployableReplication _deployables;
+        readonly CropReplication _crops;
+        readonly ResourceReplication _resources;
         readonly NetIdMinter _ids;
         readonly Func<long> _tick;
         readonly Action<byte[]> _broadcast;
@@ -61,11 +75,15 @@ namespace UnturnedGodot.Net
                                   SkillsReplication skills, InventoryReplication inventories,
                                   WorldItemReplication worldItems, DeployableReplication deployables,
                                   NetIdMinter ids, Func<long> tick,
-                                  Action<byte[]> broadcast, Action<ushort, byte[]> sendTo)
+                                  Action<byte[]> broadcast, Action<ushort, byte[]> sendTo,
+                                  CropReplication crops = null, ResourceReplication resources = null)
         {
             _players = players; _combat = combat;
             _skills = skills; _inventories = inventories; _worldItems = worldItems; _deployables = deployables;
+            _crops = crops; _resources = resources;
             _ids = ids; _tick = tick; _broadcast = broadcast; _sendTo = sendTo;
+            var rng = new Random();   // server-side only (§2.5: only the server rolls); tests inject a stub
+            Rand = () => (float)rng.NextDouble();
         }
 
         public void Register(CommandRegistry commands)
@@ -167,6 +185,26 @@ namespace UnturnedGodot.Net
 
             commands.Register<ConsoleCommand>(ReplicationIds.CommandConsole, ConsoleCommand.TryRead, OnConsole,
                 validate: (sender, cmd) => cmd.Text != null && cmd.Text.Length <= 128);
+
+            // Phase 8 crops (§3.7): the server owns the growth clock and the yield roll. Planting spends
+            // the seed item (server grid = the validator, like deployable placement); harvesting requires
+            // tick-derived maturity. Both are reach-gated on the sender's authoritative position.
+            if (_crops != null)
+            {
+                commands.Register<PlantCropCommand>(ReplicationIds.CommandPlantCrop, PlantCropCommand.TryRead,
+                    OnPlantCrop,
+                    validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                            && (cmd.Pos - pos).magnitude <= CropReach
+                                            && _crops.Schema.TryGet(cmd.SeedId, out _)
+                                            && SenderInventory(sender)?.getItemCount(cmd.SeedId) > 0);
+
+                commands.Register<HarvestCropCommand>(ReplicationIds.CommandHarvestCrop, HarvestCropCommand.TryRead,
+                    OnHarvestCrop,
+                    validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                            && _crops.TryGet(cmd.NetId, out var e)
+                                            && (e.Pos - pos).magnitude <= CropReach
+                                            && _crops.IsGrown(e, _tick()));
+            }
         }
 
         // ---- cross-system handlers ----
@@ -292,6 +330,72 @@ namespace UnturnedGodot.Net
                 ce.Health = (byte)Mathf.RoundToInt(ce.HealthExact);
                 _combat.MarkDirty(ce, _tick());
             }
+        }
+
+        void OnPlantCrop(ushort sender, PlantCropCommand cmd)
+        {
+            SenderInventory(sender).removeItemAmount(cmd.SeedId, 1);   // the seed is spent (SP: planting consumes it)
+            PlantCrop(cmd.SeedId, cmd.Pos, grown: false);
+        }
+
+        /// <summary>Server-side crop plant + its broadcast fact (remote Plant commands and the loopback
+        /// world's locally-planted crops both funnel here). Null if the seed isn't in the schema.</summary>
+        public CropReplication.CropEntity PlantCrop(ushort seedId, Vector3 pos, bool grown)
+        {
+            var e = _crops.ServerPlant(_ids.Mint(), seedId, pos, _tick(), grown);
+            if (e == null) return null;
+            var evt = new CropPlantedEvent { NetId = e.NetIdValue, SeedId = e.SeedId, Pos = e.Pos,
+                                             PlantedAtTick = (uint)e.PlantedAtTick, Grown = e.Grown };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventCropPlanted, evt.Write));
+            return e;
+        }
+
+        void OnHarvestCrop(ushort sender, HarvestCropCommand cmd)
+        {
+            _crops.TryGet(cmd.NetId, out var e);
+            _crops.Schema.TryGet(e.SeedId, out var def);
+            if (!RemoveCrop(cmd.NetId)) return;
+
+            // yield drops at the crop like SP (CropManager.Harvest), spawned as replicated world items
+            var at = e.Pos + new Vector3(0f, 0.3f, 0f);
+            if (def.YieldItemId != 0)
+            {
+                SpawnWorldItem(new Item(def.YieldItemId), at, Vector3.zero);
+                // AGRICULTURE second-yield roll (source InteractableFarm): chance = mastery, rolled HERE --
+                // the server owns the roll (§3.7); SP's GD.Randf stays on the direct path only.
+                float mastery = _skills.TryGet(sender, out var se)
+                    ? se.Skills.GetSkill((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.AGRICULTURE).Mastery : 0f;
+                if (mastery > 0f && Rand() < mastery)
+                    SpawnWorldItem(new Item(def.YieldItemId), at + new Vector3(0.25f, 0f, 0f), Vector3.zero);
+            }
+            AwardXp(sender, HarvestRewardExperience);   // source: harvest awards Harvest_Reward_Experience
+        }
+
+        /// <summary>Server-side crop removal + its broadcast fact. Idempotent -- false if already gone.</summary>
+        public bool RemoveCrop(uint netId)
+        {
+            if (!_crops.ServerRemove(netId, _tick())) return false;
+            var evt = new CropHarvestedEvent { NetId = netId };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventCropHarvested, evt.Write));
+            return true;
+        }
+
+        /// <summary>Resource (tree) alive-bit flip + its broadcast fact (§3.7). No game mechanic fells
+        /// trees yet (SP has none either) -- this is the authoritative entry point for when one lands.</summary>
+        public bool SetResourceAlive(int index, bool alive)
+        {
+            if (_resources == null || !_resources.ServerSetAlive(index, alive, _tick())) return false;
+            if (alive)
+            {
+                var evt = new ResourceRespawnedEvent { Index = (ushort)index };
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventResourceRespawned, evt.Write));
+            }
+            else
+            {
+                var evt = new ResourceHarvestedEvent { Index = (ushort)index };
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventResourceHarvested, evt.Write));
+            }
+            return true;
         }
 
         void OnConsole(ushort sender, ConsoleCommand cmd)

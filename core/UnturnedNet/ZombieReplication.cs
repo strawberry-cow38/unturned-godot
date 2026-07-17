@@ -38,8 +38,17 @@ namespace UnturnedGodot.Net
 
         public byte SystemId => ReplicationIds.SystemZombies;
 
+        /// <summary>Phase 8 interest policy (§2.6): null = AllRelevant (byte-identical to the pre-Phase-8
+        /// wire). The game host sets rings + the nav-pocket CellOf on dedicated/loopback servers; client
+        /// replicas never set it.</summary>
+        public InterestPolicy Interest;
+
         readonly NetEntityRegistry<ZombieEntity> _zombies = new NetEntityRegistry<ZombieEntity>();
         readonly Dictionary<uint, long> _removedAtTick = new Dictionary<uint, long>();
+        readonly RelevancyTracker _relevancy = new RelevancyTracker();
+
+        /// <summary>Disconnect/rejoin hygiene: per-client relevancy state must not leak to a recycled id.</summary>
+        public void ForgetClient(ushort clientPlayerId) => _relevancy.ForgetClient(clientPlayerId);
 
         public int Count => _zombies.Count;
 
@@ -101,6 +110,7 @@ namespace UnturnedGodot.Net
         public void ServerRemove(NetId id, long tick)
         {
             if (_zombies.Remove(id)) _removedAtTick[id.Value] = tick;
+            _relevancy.ForgetEntity(id.Value);   // the tombstone reaches every client; per-client state drops
         }
 
         // ---- IReplicatedSystem ----
@@ -108,6 +118,17 @@ namespace UnturnedGodot.Net
         public void WriteFull(NetPakWriter w, in ReplicationContext ctx)
         {
             var ids = SortedIds();
+            if (Interest != null)
+            {
+                var included = new List<uint>();
+                foreach (uint id in ids)
+                {
+                    _zombies.TryGet(new NetId(id), out var e);
+                    if (Interest.IsRelevant(ctx.ViewPos, e.Pos)) included.Add(id);
+                }
+                _relevancy.ResetFull(ctx.ClientPlayerId, included, ctx.ServerTick);
+                ids = included;
+            }
             w.WriteUInt16((ushort)ids.Count);
             foreach (uint id in ids)
             {
@@ -119,12 +140,23 @@ namespace UnturnedGodot.Net
         public void WriteDelta(NetPakWriter w, in ReplicationContext ctx, long baselineTick)
         {
             var changed = new List<uint>();
+            var removed = new List<uint>();
             foreach (uint id in SortedIds())
             {
                 _zombies.TryGet(new NetId(id), out var e);
-                if (e.LastChangedTick > baselineTick) changed.Add(id);
+                if (Interest == null)
+                {
+                    if (e.LastChangedTick > baselineTick) changed.Add(id);
+                }
+                else if (_relevancy.ShouldWrite(ctx.ClientPlayerId, id, Interest.IsRelevant(ctx.ViewPos, e.Pos),
+                                                e.LastChangedTick, baselineTick, ctx.ServerTick))
+                {
+                    changed.Add(id);
+                }
             }
-            var removed = new List<uint>();
+            // relevancy-exit removals ride the same wire removals as despawns -- replicas can't tell, and
+            // don't need to (the entity re-enters through ShouldWrite when it becomes relevant again)
+            if (Interest != null) _relevancy.CollectRemovals(ctx.ClientPlayerId, baselineTick, removed);
             foreach (var kv in _removedAtTick)
                 if (kv.Value > baselineTick) removed.Add(kv.Key);
             removed.Sort();

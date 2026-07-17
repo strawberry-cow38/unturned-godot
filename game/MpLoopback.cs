@@ -18,6 +18,8 @@ namespace UnturnedGodot
     {
         public PlayerController Player;   // the SP shell (WorldBuildResult.Player)
         public SimDriver Driver;          // the world's sim spine
+        public DayNightCycle DayNight;    // Phase 8 (§3.7): the world clock this session publishes
+        public ResourceField Resources;   // Phase 8 (§3.7): the resource alive-bitmap index space
 
         public MemNetwork Net { get; private set; }
         public NetWorldServer Server { get; private set; }
@@ -26,6 +28,9 @@ namespace UnturnedGodot
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
+        public WorldClockNetSync ClockSync { get; private set; }
+        public CropNetSync CropSync { get; private set; }
+        public ResourceNetSync ResourceSync { get; private set; }
 
         public override void _Ready()
         {
@@ -59,6 +64,16 @@ namespace UnturnedGodot
             // the authority); the sync publishes that occupancy so remote Enter commands respect the seat.
             VehicleSync = new VehicleNetSync(Server, this) { LocalPlayer = Player, LocalPlayerId = () => Client.PlayerId };
             Driver.Sim.Add(new DelegateSimStep((t, dt) => VehicleSync.Tick(), "net.vehicles.sync"));
+            // Phase 8 world state (§3.7): the loopback world's clock/crops/resources publish too -- every
+            // SP-loopback session soaks the world-state wire. The local DayNightCycle keeps SP's exact
+            // frame clock (driveFromTick=false -- behavior-neutral); the sync only re-anchors on drift.
+            ClockSync = new WorldClockNetSync(Server, DayNight, driveFromTick: false);
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => ClockSync.Tick(), "net.worldclock.sync"));
+            CropSync = new CropNetSync(Server, this);
+            CropNetSchema.RegisterAll(Client.Crops.Schema);   // the local replica derives growth stages too
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => CropSync.Tick(), "net.crops.sync"));
+            ResourceSync = new ResourceNetSync(Server, Resources);
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => ResourceSync.Tick(), "net.resources.sync"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }

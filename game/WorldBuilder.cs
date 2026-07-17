@@ -16,6 +16,8 @@ namespace UnturnedGodot
         public Terrain Terr;               // null if the map couldn't load (no local Unturned install)
         public PlayerController Player;    // Playable/PeiPlay only
         public ZombieField Zombies;        // Playable only (and only when zombies are enabled)
+        public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
+        public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public Vector3 VehicleAim;         // first static service vehicle, for the legacy demo cam
         public bool HasVehicleAim;
         public bool Ready;                 // true once the whole build finished (the old _worldReady)
@@ -77,9 +79,13 @@ namespace UnturnedGodot
             // (--peidrive) is the mode master actually plays, so THIS is the one that has to carry the src-accurate lighting.
             var env = new Godot.Environment { AmbientLightSource = Godot.Environment.AmbientSource.Color };
             root.AddChild(new WorldEnvironment { Environment = env });
-            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true };
+            // dedicated fx hygiene (§2.1/§5): the headless server keeps the CLOCK (day-night time is
+            // authoritative state now, §3.7) but skips shadow maps + the per-frame sky/fog/glow work
+            var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated };
             root.AddChild(sun);
-            root.AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
+            var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = mode != WorldMode.Dedicated };
+            root.AddChild(dayNight);
+            result.DayNight = dayNight;
             await Phase("Terrain");
             var terr = Terrain.LoadMapMerged(mapRoot + "/Landscape/Heightmaps", withCollider: true);
             if (terr == null)
@@ -412,6 +418,7 @@ namespace UnturnedGodot
                     var rsf = new ResourceField();
                     root.AddChild(rsf);
                     rsf.LoadResources(activeHoliday);   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
+                    result.Resources = rsf;
                 }
                 if (System.Environment.GetEnvironmentVariable("UG_ZAERIAL") == "1")   // demo cam: look down on the spawn town so the zombies are visible
                 {
@@ -451,9 +458,12 @@ namespace UnturnedGodot
                 }
                 {
                     await Phase("Trees");
-                    var rsf = new ResourceField();
+                    // fx hygiene (§5): the server needs trunk colliders + the deterministic instance
+                    // index space for the §3.7 alive-bitmap, not 1694 rendered MultiMesh instances
+                    var rsf = new ResourceField { VisualInstances = false };
                     root.AddChild(rsf);
                     rsf.LoadResources(activeHoliday);
+                    result.Resources = rsf;
                 }
                 // LOOT (Phase 6, §3.3): the rolls run server-side now that LootField keys spawn/despawn on
                 // ANY player's proximity via PlayerRegistry (no local player exists here). The catalog must
@@ -503,7 +513,9 @@ namespace UnturnedGodot
             root.AddChild(new WorldEnvironment { Environment = env });
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = true };
             root.AddChild(sun);
-            root.AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
+            var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f };
+            root.AddChild(dayNight);
+            result.DayNight = dayNight;
 
             var terr = Terrain.LoadMapMerged(mapRoot + "/Landscape/Heightmaps", withCollider: true);
             if (terr == null) return result;

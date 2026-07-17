@@ -1491,7 +1491,8 @@ namespace UnturnedGodot
         void AttachMpLoopback(WorldBuildResult res)
         {
             if (!_mpLoopback || res.Player == null || res.Sim == null) return;
-            AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim });
+            AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
+                                      DayNight = res.DayNight, Resources = res.Resources });   // Phase 8 world-state syncs (§3.7)
         }
 
         // --navshot=OUT: a VERIFY screenshot for the zombie nav rework -- synchronous world (loads reliably offline),
@@ -1919,7 +1920,8 @@ namespace UnturnedGodot
             {
                 var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
                     noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
-                AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim, Terr = res.Terr });   // Terr: server grenades bounce on real terrain height (Phase 5)
+                AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
+                    DayNight = res.DayNight, Resources = res.Resources, MapRoot = _mapRoot });      // Phase 8: tick-derived clock + resource bitmap + nav-pocket relevancy cells (§3.7/§2.6)
                 _worldReady = res.Ready;
                 GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {NetPort}");
             }

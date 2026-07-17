@@ -12,8 +12,46 @@ namespace UnturnedGodot
     // and exports per-spawn (pos, EulerXYZ, scale) = 9 floats -> <name>.bin. Placement uses the SAME prop
     // convention as Main.BuildObjectsTest (raw Unity mesh, double-sided; Basis(Y,180-ey)*Basis(X,ex)*Basis(Z,-ez),
     // pos.z negated). Tree roots sit ~1.2 below origin, so origin-at-spawn-point sinks them (punch-list #8).
+    //
+    // MP Phase 8 (§3.7): every instance gets a deterministic LOAD-ORDER INDEX (manifest order x .bin order --
+    // identical on every peer, content-hash-matched), which is the implicit wire id ResourceReplication's
+    // alive-bitmap keys on. SetAlive(index,false) despawns an instance (zero-scaled out of its MultiMesh +
+    // collider off); dedicated servers build with VisualInstances=false (colliders + indices, no rendering).
     public partial class ResourceField : Node3D
     {
+        /// <summary>Dedicated fx hygiene (§2.1/§5): false = skip all MultiMesh/material/texture work; the
+        /// instance registry (indices for the wire) and tree trunk colliders (the sim needs them) remain.</summary>
+        public bool VisualInstances = true;
+
+        sealed class InstanceRec
+        {
+            public readonly List<(MultiMesh Mm, int Slot)> Slots = new();   // one entry per part-mesh
+            public Transform3D Xf;
+            public StaticBody3D Trunk;      // trees only
+            public uint TrunkLayer;
+            public bool Alive = true;
+        }
+        readonly List<InstanceRec> _instances = new();
+
+        /// <summary>Total placed resource instances, in the deterministic load order (the wire index space).</summary>
+        public int InstanceCount => _instances.Count;
+
+        public bool IsAlive(int index) => index >= 0 && index < _instances.Count && _instances[index].Alive;
+
+        /// <summary>Fell (false) or respawn (true) one resource instance by its load-order index: the visual
+        /// leaves/enters its MultiMesh (zero-scale -- MultiMesh has no per-instance visibility) and a tree's
+        /// trunk collider toggles with it. Idempotent; never called on the SP direct path.</summary>
+        public void SetAlive(int index, bool alive)
+        {
+            if (index < 0 || index >= _instances.Count) return;
+            var r = _instances[index];
+            if (r.Alive == alive) return;
+            r.Alive = alive;
+            var hidden = new Transform3D(new Basis(Vector3.Zero, Vector3.Zero, Vector3.Zero), new Vector3(0f, -10000f, 0f));
+            foreach (var (mm, slot) in r.Slots) mm.SetInstanceTransform(slot, alive ? r.Xf : hidden);
+            if (r.Trunk != null) r.Trunk.CollisionLayer = alive ? r.TrunkLayer : 0;
+        }
+
         public void LoadResources(string activeHoliday)
         {
             string dir = ProjectSettings.GlobalizePath("res://content/resources/");
@@ -32,44 +70,67 @@ namespace UnturnedGodot
                 if (!File.Exists(binPath)) continue;
                 var xf = ReadInstances(binPath);
                 if (xf.Count == 0) continue;
-                // Bucket instances into spatial CELLS so each chunk frustum-culls independently (behind the player) + distance-culls,
-                // instead of one map-wide MultiMesh that's never culled. Trees keep their shadows within range (master); props cull closer.
-                const float Cell = 64f;
-                float cullRange = isTree ? 320f : 180f;
-                var byCell = new Dictionary<(int, int), List<Transform3D>>();
-                foreach (var t in xf) { var key = ((int)Mathf.Floor(t.Origin.X / Cell), (int)Mathf.Floor(t.Origin.Z / Cell)); if (!byCell.TryGetValue(key, out var cl)) { cl = new List<Transform3D>(); byCell[key] = cl; } cl.Add(t); }
-                for (int i = 0; i < parts; i++)
+                // the deterministic index space: instances register in manifest x .bin order on every peer
+                var recs = new List<InstanceRec>(xf.Count);
+                foreach (var t in xf)
                 {
-                    string objP = dir + name + "_" + i + ".obj";
-                    if (!File.Exists(objP)) continue;
-                    var mesh = ObjMesh.Load(objP);
-                    if (mesh == null) continue;
-                    var mat = MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
-                    if (isTree && i == 0)   // MultiMesh has no colliders -> add a trunk cylinder per tree so trees BLOCK bullets/movement (master), tagged Wood
+                    var rec = new InstanceRec { Xf = t };
+                    recs.Add(rec);
+                    _instances.Add(rec);
+                }
+                if (isTree)   // MultiMesh has no colliders -> add a trunk cylinder per tree so trees BLOCK bullets/movement (master), tagged Wood
+                {
+                    for (int k = 0; k < xf.Count; k++)
                     {
-                        foreach (var t in xf)
-                        {
-                            // part-0's mesh AABB is the WHOLE tree (incl. canopy) -> that gave a giant ~5m-radius cylinder
-                            // floating at canopy height that missed the ground. Use a FIXED trunk (~0.5m radius, ~8m tall) at
-                            // the base, scaled by the instance scale, on an ORTHONORMAL body (Jolt drops non-uniform-scaled shapes).
-                            Vector3 sc = t.Basis.Scale;
-                            float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
-                            var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
-                            body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
-                            body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
-                            body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
-                            AddChild(body);
-                            treeCols++;
-                        }
+                        var t = xf[k];
+                        // part-0's mesh AABB is the WHOLE tree (incl. canopy) -> that gave a giant ~5m-radius cylinder
+                        // floating at canopy height that missed the ground. Use a FIXED trunk (~0.5m radius, ~8m tall) at
+                        // the base, scaled by the instance scale, on an ORTHONORMAL body (Jolt drops non-uniform-scaled shapes).
+                        Vector3 sc = t.Basis.Scale;
+                        float sr = Mathf.Max(Mathf.Abs(sc.X), Mathf.Abs(sc.Z)), sh = Mathf.Abs(sc.Y);
+                        var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
+                        body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
+                        body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
+                        body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
+                        AddChild(body);
+                        recs[k].Trunk = body;
+                        recs[k].TrunkLayer = body.CollisionLayer;
+                        treeCols++;
                     }
-                    foreach (var kv in byCell)
+                }
+                if (VisualInstances)
+                {
+                    // Bucket instances into spatial CELLS so each chunk frustum-culls independently (behind the player) + distance-culls,
+                    // instead of one map-wide MultiMesh that's never culled. Trees keep their shadows within range (master); props cull closer.
+                    const float Cell = 64f;
+                    float cullRange = isTree ? 320f : 180f;
+                    var byCell = new Dictionary<(int, int), List<int>>();
+                    for (int k = 0; k < xf.Count; k++)
                     {
-                        var lst = kv.Value;
-                        var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
-                        for (int k = 0; k < lst.Count; k++) mm.SetInstanceTransform(k, lst[k]);
-                        AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
-                            CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
-                            VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+                        var key = ((int)Mathf.Floor(xf[k].Origin.X / Cell), (int)Mathf.Floor(xf[k].Origin.Z / Cell));
+                        if (!byCell.TryGetValue(key, out var cl)) { cl = new List<int>(); byCell[key] = cl; }
+                        cl.Add(k);
+                    }
+                    for (int i = 0; i < parts; i++)
+                    {
+                        string objP = dir + name + "_" + i + ".obj";
+                        if (!File.Exists(objP)) continue;
+                        var mesh = ObjMesh.Load(objP);
+                        if (mesh == null) continue;
+                        var mat = MakeMat(dir + name + "_" + i + "_tex.png", !isTree);
+                        foreach (var kv in byCell)
+                        {
+                            var lst = kv.Value;
+                            var mm = new MultiMesh { Mesh = mesh, TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, InstanceCount = lst.Count };
+                            for (int k = 0; k < lst.Count; k++)
+                            {
+                                mm.SetInstanceTransform(k, xf[lst[k]]);
+                                recs[lst[k]].Slots.Add((mm, k));
+                            }
+                            AddChild(new MultiMeshInstance3D { Multimesh = mm, MaterialOverride = mat,
+                                CastShadow = isTree ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off,
+                                VisibilityRangeEnd = cullRange, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+                        }
                     }
                 }
                 total += xf.Count; types++;

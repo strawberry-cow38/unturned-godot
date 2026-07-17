@@ -22,6 +22,9 @@ namespace UnturnedGodot.Net
         public const byte SystemInventory = 7;      // Phase 6: owner-only full-grid block (InventoryReplication.cs, §3.3)
         public const byte SystemWorldItems = 8;     // Phase 6: dropped/loot items as NetId entities (WorldItemReplication.cs, §3.3)
         public const byte SystemVehicles = 9;       // Phase 7: transform + velocities + wheel steer + scalars @25 Hz (VehicleReplication.cs, §3.6)
+        public const byte SystemWorldClock = 10;    // Phase 8: day-night base + day length; time derives from the snapshot tick (WorldReplication.cs, §3.7)
+        public const byte SystemCrops = 11;         // Phase 8: planted crops -- growth derives from PlantedAtTick (WorldReplication.cs, §3.7)
+        public const byte SystemResources = 12;     // Phase 8: tree/resource alive-bitmap keyed by load-order index (WorldReplication.cs, §3.7)
 
         // CommandRegistry id space (0 = snapshot ack, reserved)
         public const byte CommandMoveInput = 1;
@@ -47,6 +50,8 @@ namespace UnturnedGodot.Net
         public const byte CommandEnterVehicle = 21;    // Phase 7 (§3.6): transactional, gated server-side (occupancy + reach)
         public const byte CommandExitVehicle = 22;
         public const byte CommandDriveInput = 23;      // Phase 7: @50 Hz UnreliableSeq, driver-only, feeds Vehicle.Drive
+        public const byte CommandPlantCrop = 24;       // Phase 8 (§3.7): consumes the seed item; server owns the growth clock
+        public const byte CommandHarvestCrop = 25;     // Phase 8: server checks growth + rolls the AGRICULTURE second yield
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -73,6 +78,10 @@ namespace UnturnedGodot.Net
         public const byte EventStorageClosed = 22;
         public const byte EventVehicleEntered = 23;    // Phase 7 (§3.6): occupancy facts (also ride the snapshot; events give immediacy)
         public const byte EventVehicleExited = 24;
+        public const byte EventCropPlanted = 25;       // Phase 8 (§3.7): plant/harvest facts (also ride the snapshot; events give fx immediacy)
+        public const byte EventCropHarvested = 26;
+        public const byte EventResourceHarvested = 27; // Phase 8: tree/resource alive-bit flips by load-order index
+        public const byte EventResourceRespawned = 28;
     }
 
     /// <summary>
