@@ -17,6 +17,7 @@ namespace UnturnedGodot
     {
         public System.Action<bool> OnPlay;        // legacy flat-terrain survival build (test flags only)
         public System.Action<bool> OnDrivePEI;    // bool = noZombies -- the real PEI world; the dashboard's Play opens this
+        public System.Action OnMultiplayer;       // top-level "Multiplayer": connect to the MP test server (VoX: always our test server for now; server browser later)
 
         // --- camera anchors (framings of the barn). Tuned against the render; index 0 = Title (idle). ---
         // pos + look-at, world space. Title is a pulled-back 3/4 hero shot; each tab reframes the barn.
@@ -178,9 +179,10 @@ namespace UnturnedGodot
             // Configuration 290, Workshop 350; Exit anchored to the bottom). Hover glides the camera to that
             // tab's anchor; click runs the action.
             MenuButton(layer, "play",          "Play",          170f, false, 1, () => TogglePlayPanel());
-            MenuButton(layer, "survivors",     "Survivors",     230f, false, 2, () => ShowStub("Survivors"));
-            MenuButton(layer, "configuration", "Configuration", 290f, false, 3, () => ShowStub("Configuration"));
-            MenuButton(layer, "workshop",      "Workshop",      350f, false, 4, () => ShowStub("Workshop"));
+            MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, 1, () => OnMultiplayer?.Invoke());   // connect straight to the MP test server (no panel; server browser later)
+            MenuButton(layer, "survivors",     "Survivors",     290f, false, 2, () => ShowStub("Survivors"));
+            MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ShowStub("Configuration"));
+            MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ShowStub("Workshop"));
             MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
 
             BuildPlayPanel(layer);
