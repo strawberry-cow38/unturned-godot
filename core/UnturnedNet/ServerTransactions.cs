@@ -35,6 +35,18 @@ namespace UnturnedGodot.Net
         /// bounds it generously (grid-quantized feet positions, no eye trace).</summary>
         public const float PickupReach = 6f;
 
+        /// <summary>Server-side pickup facing cone (strawberry's look-at requirement, honest v1): the
+        /// engine-free core has yaw but no pitch and no world raycast, so the provable bound is a
+        /// horizontal cone -- dot(facing, toItem) >= this. 0.25 ~= a 75-degree half-angle: generous for
+        /// quantized wire yaw + look-down pickups, tight enough that a modified client can no longer
+        /// hoover the full 6 m sphere behind its back. Through-wall pickup inside reach+cone remains
+        /// until the game-side LOS seam (MP_PLAN §7 pre-public hardening).</summary>
+        public const float PickupFacingMinDot = 0.25f;
+
+        /// <summary>Inside this horizontal range the cone is SKIPPED: an item at your feet has an
+        /// unstable bearing (and SP allows feet pickups via the eye ray anyway).</summary>
+        public const float PickupFacingSkipRange = 1.5f;
+
         /// <summary>Server-side plant/harvest reach (SP harvests at 3 m by eye focus; same generous
         /// feet-position bound as PickupReach).</summary>
         public const float CropReach = 6f;
@@ -149,7 +161,8 @@ namespace UnturnedGodot.Net
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _inventories.TryGet(sender, out _)
                                         && _worldItems.TryGet(cmd.NetId, out var e)
-                                        && (e.Pos - pos).magnitude <= PickupReach);
+                                        && (e.Pos - pos).magnitude <= PickupReach
+                                        && SenderFacingItem(sender, e.Pos));
 
             commands.Register<EquipItemCommand>(ReplicationIds.CommandEquipItem, EquipItemCommand.TryRead,
                 (sender, cmd) =>
@@ -510,6 +523,26 @@ namespace UnturnedGodot.Net
                     best = a;
             }
             return best;
+        }
+
+        /// <summary>The pickup facing-cone check (reach says the item is CLOSE; this says the player is
+        /// LOOKING that way). Forward is derived from the wire yaw in the GODOT convention --
+        /// (-sin yaw, 0, -cos yaw) -- because that is what PlayerEntity.YawDegrees actually holds: the
+        /// shell sends RotationDegrees.Y verbatim and the production server's avatars ServerDrive it back
+        /// unchanged (a Godot body at yaw 0 faces -Z; PlayerController maps sim-forward to local -Z).
+        /// NOTE this is the NEGATION of the (+sin,+cos) convention OnDropItem/ServerCombat.StepMelee use --
+        /// those are latent (nothing sends DropItem yet; see PROGRESS.md) and get aligned when their seams
+        /// wire up. Using their convention here would reject every honest look-at pickup.</summary>
+        bool SenderFacingItem(ushort sender, Vector3 itemPos)
+        {
+            if (!_players.TryGetByOwner(sender, out var p)) return false;
+            var flat = itemPos - p.Pos;
+            flat.y = 0f;
+            float dist = flat.magnitude;
+            if (dist < PickupFacingSkipRange) return true;   // at-feet: bearing unstable, cone skipped
+            float yawRad = p.YawDegrees * (Mathf.PI / 180f);
+            var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
+            return Vector3.Dot(fwd, flat / dist) >= PickupFacingMinDot;
         }
 
         PlayerInventory SenderInventory(ushort sender) => _inventories.TryGet(sender, out var e) ? e.Inventory : null;

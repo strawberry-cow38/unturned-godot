@@ -127,6 +127,45 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void pickup_behind_the_back_rejected()
+        {
+            var h = new TransactionalHarness(9090).Connected("a");
+            var a = h.Clients[0];
+            // player 1 spawns at (0,0,0) with yaw 0 -- facing -Z in the wire-yaw convention the REAL
+            // server stamps onto entities (ServerDrive writes the avatar's Godot RotationDegrees.Y, and
+            // Godot forward at yaw 0 is -Z). An item 3 m at +Z is squarely BEHIND: well inside the 6 m
+            // PickupReach, far outside the facing cone -- reach alone would hoover it.
+            var behind = h.Server.Transactions.SpawnWorldItem(new Item(TransactionalFixtures.BeansId), new Vector3(0f, 0f, 3f), Vector3.zero);
+            h.Step(5);
+            long rejected = h.Server.Commands.Diag.ValidationRejected;
+
+            a.SendPickupItem(behind.NetIdValue);
+            h.Step(20);
+
+            Assert.That(h.Server.Commands.Diag.ValidationRejected, Is.GreaterThan(rejected),
+                        "behind-the-back grab refused at the choke point (the facing cone -- reach alone allows it)");
+            Assert.That(h.Server.WorldItems.Count, Is.EqualTo(1), "the item stayed in the world");
+        }
+
+        [Test]
+        public void pickup_at_feet_allowed_regardless_of_yaw()
+        {
+            var h = new TransactionalHarness(9091).Connected("a");
+            var a = h.Clients[0];
+            // 0.5 m at +Z = directly behind a yaw-0 player, but INSIDE the at-feet skip range: the bearing
+            // of an item at your feet is unstable (and SP picks it up via the eye ray), so the cone must
+            // not apply -- the pickup lands.
+            var atFeet = h.Server.Transactions.SpawnWorldItem(new Item(TransactionalFixtures.BeansId), new Vector3(0f, 0f, 0.5f), Vector3.zero);
+            h.Step(5);
+
+            a.SendPickupItem(atFeet.NetIdValue);
+            Assert.That(h.StepUntil(() => h.Server.WorldItems.Count == 0
+                                       && a.Inventories.TryGet(a.PlayerId, out var mine)
+                                       && mine.Inventory.getItemCount(TransactionalFixtures.BeansId) == 1), Is.True,
+                        $"at-feet pickup landed regardless of facing (seed={h.Net.Seed})");
+        }
+
+        [Test]
         public void pickup_into_a_full_grid_is_denied_but_stays()
         {
             var h = new TransactionalHarness(9086).Connected("a");
