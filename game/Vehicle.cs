@@ -881,6 +881,12 @@ namespace UnturnedGodot
         {
             var s = SpecFor(name);
             var p = new VehiclePuppet { SpecKey = name, SeatOffset = SeatOf(s.Name) };
+            // Opt the puppet OUT of Godot's global physics interpolation (project.godot physics_interpolation=true), like
+            // the PlayerController shell does (PlayerController.cs:1674). VehicleReplicaView repositions the puppet every
+            // _Process frame with its OWN manual glide/dead-reckoning; leaving Godot interp ON renders the puppet at its
+            // stale physics-frame transform instead -> a DRIVEN car's mesh freezes at its old spot while its data position
+            // (and colliders) drive off, which no headless test can see (there's no render). This is the live drive freeze.
+            p.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;
             if (s.DriverEye != Vector3.Zero) p.DriverEyeLocal = s.DriverEye;   // tall-cab override, same rule as Build()
             var paint = SpawnPaint(s, variant);   // deterministic from the replicated variant -> same look as the server spawn
             Material bodyMat = s.Palette != null
