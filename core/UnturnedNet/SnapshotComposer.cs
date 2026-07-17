@@ -9,6 +9,11 @@ namespace UnturnedGodot.Net
     {
         public long FullSnapshotsComposed;
         public long DeltaSnapshotsComposed;
+        /// <summary>A system block that would have pushed the datagram past its byte budget was emitted as
+        /// an EMPTY (byteLen 0) block instead -- the framing stays valid and every other system still
+        /// applies; that system's state simply waits (Phase 8's relevancy/byte-budget policies are the real
+        /// fix for sustained oversize). Zero in healthy worlds.</summary>
+        public long OversizedBlocksSkipped;
     }
 
     /// <summary>
@@ -37,8 +42,11 @@ namespace UnturnedGodot.Net
 
         readonly List<IReplicatedSystem> _systems = new List<IReplicatedSystem>();
         readonly Dictionary<ushort, long> _clientBaselineTick = new Dictionary<ushort, long>();
-        readonly NetPakWriter _writer = new NetPakWriter { buffer = new byte[NetProtocol.MaxUnreliablePayload] };
-        readonly NetPakWriter _scratch = new NetPakWriter { buffer = new byte[NetProtocol.MaxUnreliablePayload] };
+        // Buffers sized far past the unreliable budget: blocks WRITE cleanly at any entity count, then the
+        // per-block budget check below decides whether they fit the datagram (see OversizedBlocksSkipped).
+        const int BufferBytes = 256 * 1024;
+        readonly NetPakWriter _writer = new NetPakWriter { buffer = new byte[BufferBytes] };
+        readonly NetPakWriter _scratch = new NetPakWriter { buffer = new byte[BufferBytes] };
 
         public SnapshotComposerDiagnostics Diag { get; } = new SnapshotComposerDiagnostics();
 
@@ -86,8 +94,12 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>Compose one snapshot payload for one client, right-sized and ready for
-        /// NetSession.SendUnreliableSequenced.</summary>
-        public byte[] Compose(long serverTick, ushort clientPlayerId, Vector3 viewPos)
+        /// NetSession.SendUnreliableSequenced. maxBytes is the datagram budget: a system block that would
+        /// exceed it is emitted EMPTY (byteLen 0 -- readers no-op on it) so the framing never corrupts; the
+        /// join path passes a reliable-channel-sized budget so the full world always fits there (§2.2:
+        /// fragmentation is safe on ReliableOrdered).</summary>
+        public byte[] Compose(long serverTick, ushort clientPlayerId, Vector3 viewPos,
+                              int maxBytes = NetProtocol.MaxUnreliablePayload)
         {
             long baseline = GetClientBaseline(clientPlayerId);
             bool full = WillSendFull(clientPlayerId, serverTick);
@@ -104,10 +116,14 @@ namespace UnturnedGodot.Net
                 else system.WriteDelta(_scratch, in ctx, baseline);
                 _scratch.Flush();
 
+                // block header = id:8 + len:16 + align ≈ 4 bytes; skip-oversized keeps the datagram valid
+                int blockLen = _scratch.writeByteIndex;
+                if (_writer.writeByteIndex + 4 + blockLen > maxBytes) { blockLen = 0; Diag.OversizedBlocksSkipped++; }
+
                 _writer.WriteUInt8(system.SystemId);
-                _writer.WriteUInt16((ushort)_scratch.writeByteIndex);
+                _writer.WriteUInt16((ushort)blockLen);
                 _writer.AlignToByte();
-                _writer.WriteBytes(_scratch.buffer, 0, _scratch.writeByteIndex);
+                if (blockLen > 0) _writer.WriteBytes(_scratch.buffer, 0, blockLen);
             }
             _writer.Flush();
 

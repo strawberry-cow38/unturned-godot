@@ -23,6 +23,7 @@ namespace UnturnedGodot
         public NetWorldServer Server { get; private set; }
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
+        public ZombieNetSync ZombieSync { get; private set; }
 
         public override void _Ready()
         {
@@ -30,14 +31,33 @@ namespace UnturnedGodot
             Server = new NetWorldServer(new MemServerTransport(Net), contentHash: NetContent.Hash);
             Client = new NetWorldClient(new MemClientTransport(Net), "local", contentHash: NetContent.Hash);
             Client.Connect();
+            Server.Combat.WorldRay = GodotWorldRay;   // Phase 5: remote joiners' server bullets stop at real world geometry
 
             Remotes = new RemotePlayers { Client = Client };
             AddChild(Remotes);
 
             Driver.Sim.Add(new DelegateSimStep((t, dt) => TickLocal((float)dt), "mp.loopback.local"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickSimulation(), "net.server.sim"));
+            // Phase 5: the world's real zombie brains publish into ZombieReplication at 12.5 Hz (§3.5) --
+            // every loopback session soaks the zombie wire; the local view renders the brains directly
+            // (no ZombiePuppets here -- puppets are for worlds that don't own the brains).
+            ZombieSync = new ZombieNetSync(Server, this);
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => ZombieSync.Tick(), "net.zombies.publish"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
+        }
+
+        bool GodotWorldRay(UnityEngine.Vector3 from, UnityEngine.Vector3 to, out UnityEngine.Vector3 point)
+        {
+            point = default;
+            var world = GetViewport()?.World3D;
+            if (world == null) return false;
+            var q = PhysicsRayQueryParameters3D.Create(new Vector3(from.x, from.y, from.z), new Vector3(to.x, to.y, to.z), (1u << 0) | (1u << 6));
+            var hit = world.DirectSpaceState.IntersectRay(q);
+            if (hit.Count == 0) return false;
+            var p = (Vector3)hit["position"];
+            point = new UnityEngine.Vector3(p.X, p.Y, p.Z);
+            return true;
         }
 
         void TickLocal(float dt)

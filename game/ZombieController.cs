@@ -19,6 +19,13 @@ namespace UnturnedGodot
 
         public Node3D Target;
         public ESpeciality Speciality = ESpeciality.NORMAL;
+        // MP Phase 5 (MP_PLAN §3.5): the brain/puppet split. A PUPPET is a client-side replica -- it skips
+        // AI/nav/physics entirely (its _PhysicsProcess returns immediately) and is driven by ZombiePuppets
+        // calling PuppetFrame with the replicated transform + anim byte; the rig/anim layer renders as-is.
+        // SP zombies are never puppets, so the default path is untouched.
+        public bool IsPuppet;
+        public int SwingSeq { get; private set; }              // increments at swing START (ZombieNetSync -> AttackSwing event)
+        public bool IsAttackSwinging => _isAttacking;          // mid-swing (drives the replicated anim byte)
         [Export] public float Speed = 5.5f;         // overwritten from Speciality in _Ready (Zombie seeker.Speed)
         [Export] public float Health = 100f;
         [Export] public float AttackDamage = 15f;   // LevelZombies.tables[type].damage (map data) x the mults below
@@ -71,7 +78,7 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
-            AddToGroup("zombies");
+            if (!IsPuppet) AddToGroup("zombies");   // puppets stay out of the group: no local combat/hearing/sync interactions (server damage arrives via the wire)
             CollisionLayer = 1 << 1;   // enemy bit the gun ray masks for
             CollisionMask = 1 << 0;    // collide with ground
 
@@ -104,8 +111,11 @@ namespace UnturnedGodot
             shape.Position = new Vector3(0, low ? 0.4f : 0.9f, 0);
             AddChild(shape);
             FloorMaxAngle = Mathf.DegToRad(55f); FloorSnapLength = 0.5f;   // climb steeper slopes + stay grounded, like the player (master)
-            _nav = new NavigationAgent3D { PathDesiredDistance = 0.8f, TargetDesiredDistance = 1.3f, Radius = 0.4f, Height = 1.8f, AvoidanceEnabled = false, PathMaxDistance = 30f };
-            AddChild(_nav);   // paths on the pre-baked pocket navmesh (ZombieNav) -> routes around buildings instead of beelining
+            if (!IsPuppet)   // a puppet never paths -- keep replica worlds off the NavigationServer entirely
+            {
+                _nav = new NavigationAgent3D { PathDesiredDistance = 0.8f, TargetDesiredDistance = 1.3f, Radius = 0.4f, Height = 1.8f, AvoidanceEnabled = false, PathMaxDistance = 30f };
+                AddChild(_nav);   // paths on the pre-baked pocket navmesh (ZombieNav) -> routes around buildings instead of beelining
+            }
 
             // each zombie randomly wears one of the baked ZombieClothing outfits (real zombies randomise their
             // shirt/pants from the map's LevelZombies table) so the horde isn't a uniform.
@@ -187,7 +197,7 @@ namespace UnturnedGodot
 
         void ApplyDamage(float amount, Vector3 point, Vector3 dir, bool impact)
         {
-            if (Dead) return;
+            if (Dead || IsPuppet) return;   // a puppet has no authoritative health -- its death arrives as the replicated Dead anim state
             Health -= amount;
             if (_capMat != null) _capMat.AlbedoColor = new Color(0.7f, 0.2f, 0.2f);
             if (Health <= 0f)
@@ -213,6 +223,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            if (IsPuppet) return;   // puppet: ZombiePuppets drives the node from replicated state (PuppetFrame)
             float g = PlayerMovementDef.GRAVITY;
             float dt = (float)delta;
 
@@ -223,7 +234,13 @@ namespace UnturnedGodot
                 MoveAndSlide();
                 return;
             }
-            if (Target is not PlayerController player) return;
+            // Hunt-target resolution (MP_PLAN §3.5 "sensing generalizes to any player avatar via
+            // PlayerRegistry"): an explicitly-set Target keeps the exact SP behavior (including the old
+            // do-nothing on a non-player Target); a NULL Target -- server worlds, where nobody wires one --
+            // hunts the nearest registered player avatar instead of idling forever.
+            PlayerController player;
+            if (Target != null) { if (Target is not PlayerController targetPlayer) return; player = targetPlayer; }
+            else { player = PlayerRegistry.Nearest(GlobalPosition); if (player == null) return; }
             _age += delta;
             if (!_homeSet) { _home = GlobalPosition; _homeSet = true; }   // remember the spawn point
 
@@ -357,7 +374,7 @@ namespace UnturnedGodot
                 }
                 else if (_age - _lastAttack > 1f)
                 {
-                    _isAttacking = true; swinging = true;
+                    _isAttacking = true; swinging = true; SwingSeq++;   // SwingSeq: the net sync turns each new swing into an AttackSwing event
                     _lastAttack = (float)_age;             // askAttack: lastAttack = now
                     _rig?.PlayOnce("Attack_" + _atkId);
                     if (_audio != null && !_audio.Playing) PlaySound(_roars);   // roar on the swing (Zombie.askAttack)
@@ -378,6 +395,45 @@ namespace UnturnedGodot
 
             // FLANKER_STALK: a faint ghost while closing in, snapping fully solid only for the swing (updateVisibility)
             if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(!_isAttacking);
+        }
+
+        // --- MP Phase 5 puppet driver (MP_PLAN §3.5). Called every RENDER frame by ZombiePuppets with the
+        // newest replicated state: glide toward the 12.5 Hz snapshot position (snap across teleport-sized
+        // jumps, RemotePlayers-style), mirror the anim byte onto the rig, play the death ragdoll once.
+        // No AI, no nav, no MoveAndSlide ever runs on a puppet. ---
+        byte _puppetAnim = 255;   // last applied anim byte (255 = none yet -> first Attack edge still triggers)
+        public void PuppetFrame(double delta, Vector3 targetPos, float yawDegrees, byte anim)
+        {
+            if (!IsPuppet || Dead) return;   // dead: the ragdoll owns the body
+            float dt = (float)delta;
+            Vector3 before = GlobalPosition;
+            GlobalPosition = before.DistanceTo(targetPos) > 5f ? targetPos : before.Lerp(targetPos, 1f - Mathf.Exp(-14f * dt));
+            RotationDegrees = new Vector3(0f, yawDegrees, 0f);
+            if (_rig != null)
+            {
+                _rig.Tick(delta);
+                if (anim == (byte)UnturnedGodot.Net.ZombieNetAnim.Dead) { PuppetDie(); return; }
+                if (anim == (byte)UnturnedGodot.Net.ZombieNetAnim.Attack)
+                { if (_puppetAnim != anim) _rig.PlayOnce("Attack_" + _atkId); }
+                else _rig.SetLocomotion(dt > 1e-4f ? (GlobalPosition - before).Length() / dt : 0f);
+            }
+            else if (anim == (byte)UnturnedGodot.Net.ZombieNetAnim.Dead) { PuppetDie(); return; }
+            _puppetAnim = anim;
+        }
+
+        void PuppetDie()
+        {
+            if (Dead) return;
+            Dead = true;
+            Velocity = Vector3.Zero;
+            CollisionLayer = 0;
+            if (_rig != null)
+            {
+                _rig.SetGhost(false);
+                Vector3 f = (-GlobalTransform.Basis.Z * 6f + Vector3.Up * 8f) * 0.64f;   // the standard spine pop, minus the server's RNG scatter (cosmetic only)
+                _rig.RagdollStart(f);
+                _ragdoll = true;
+            }
         }
 
         // AlertTool.check + line-of-sight: sense the player only within their stealth radius, not behind the
@@ -509,7 +565,7 @@ namespace UnturnedGodot
         // Zombie.askDamage: a BURNER detonates in a 4 m fire ball on death (EExplosionDamageType.ZOMBIE_FIRE, 40 dmg).
         void FireExplosion()
         {
-            if (Target is PlayerController tp)
+            if ((Target as PlayerController ?? PlayerRegistry.Nearest(GlobalPosition)) is PlayerController tp)   // Target-less server zombies burn the nearest avatar (SP: Target IS the player, identical)
             {
                 float d = GlobalPosition.DistanceTo(tp.GlobalPosition);
                 if (d < 4f) tp.TakeDamage(40f * (1f - d / 4f));          // radial falloff over the 4 m radius

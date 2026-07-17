@@ -166,4 +166,102 @@ namespace UnturnedGodot.Testing
             b.Disconnect();
         }
     }
+
+    // MP_PLAN §4 Phase 5: the zombie brain/puppet split, end to end on the real world path. The SERVER runs
+    // a real ZombieController brain (sensing/vision/nav chase) against a real PlayerController avatar it
+    // acquires through PlayerRegistry (no Target wired -- the §3.5 generalization); ZombieNetSync (inside
+    // DedicatedServer) publishes it at 12.5 Hz; a headless observer client receives the replicas and a
+    // ZombiePuppets node renders an IsPuppet ZombieController that follows by INTERPOLATION -- visibly
+    // chasing, never teleporting, never running AI of its own.
+    public class NetZombieChaseSync : GameTest
+    {
+        public override string Name => "net.zombie_chase_sync";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            // a walkable navmesh for the brain: one authored quad over the flat fallback ground (the real
+            // map's pockets are pre-baked; the fallback world has none)
+            var nm = new NavigationMesh();
+            nm.Vertices = new[] { new Vector3(-60f, 0f, -60f), new Vector3(-60f, 0f, 60f), new Vector3(60f, 0f, 60f), new Vector3(60f, 0f, -60f) };
+            nm.AddPolygon(new int[] { 0, 1, 2, 3 });
+            World.AddChild(new NavigationRegion3D { NavigationMesh = nm });
+
+            var net = new MemNetwork(20260717);
+            var player = Rigs.Player(World, new Vector3(0f, 1.1f, 0f));   // the avatar the brain hunts (registers in PlayerRegistry)
+            var b = new NetWorldClient(new MemClientTransport(net), "watcher", contentHash: NetContent.Hash);
+            int swings = 0;
+            b.ZombieSwung += _ => swings++;
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); b.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + zombie publish + replicate stay after/LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+            var puppets = new ZombiePuppets { Client = b };
+            World.AddChild(puppets);
+            b.Connect();
+
+            yield return Until(() => b.State == NetSessionState.Connected, 5);
+            T.Check("observer client joined", b.State == NetSessionState.Connected);
+
+            // the BRAIN: a real ZombieController with NO Target wired -- it must acquire the player through
+            // PlayerRegistry (§3.5 "sensing generalizes to any player avatar"). Spawned 8 m out, facing the
+            // player, inside the sneak-halved vision cone (20 * 0.5 = 10 m).
+            var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
+            World.AddChild(z);
+            z.GlobalPosition = new Vector3(0f, 0.3f, 8f);
+
+            yield return Until(() => b.Zombies.Count == 1, 5);
+            T.Check("server zombie replicated to the observer (12.5 Hz snap)", b.Zombies.Count == 1);
+            T.Check("exactly one zombie tracked server-side (the puppet never re-registers)", ded.Server.Zombies.Count == 1);
+            yield return Until(() => puppets.PuppetCount == 1, 5);
+            uint netId = 0;
+            foreach (var e in b.Zombies.All) { netId = e.NetIdValue; break; }
+            bool havePuppet = puppets.TryGetPuppet(netId, out var pup);
+            T.Check("a puppet ZombieController spawned from the replica (IsPuppet)", havePuppet && pup.IsPuppet);
+
+            // the avatar walks to meet the horde (a stationary player on open flat ground parks the RUSH
+            // approach at ~2.3 m -- the 1 m short approach point + the agent's 1.3 m finish radius -- a
+            // pre-existing brain equilibrium this phase must NOT retune; any movement breaks it)
+            player.RotationDegrees = new Vector3(0f, 180f, 0f);   // face +Z, toward the zombie
+            player.ScriptedInput = new UnityEngine.Vector2(0f, 0.4f);
+
+            // sample the chase per tick: the brain closes 8 m -> swing range; the puppet follows by glide --
+            // total displacement proves it tracked, the max per-tick step proves it interpolated (no snaps)
+            float maxStep = 0f, total = 0f;
+            Vector3 prev = pup.GlobalPosition;
+            for (int i = 0; i < 250; i++)
+            {
+                yield return Ticks(1);
+                var now = pup.GlobalPosition;
+                float d = now.DistanceTo(prev);
+                maxStep = Mathf.Max(maxStep, d);
+                total += d;
+                prev = now;
+                float brainToPlayer = z.GlobalPosition.DistanceTo(player.GlobalPosition);
+                if (brainToPlayer < 1.45f) player.ScriptedInput = UnityEngine.Vector2.zero;   // met the zombie -> stand and get bitten
+                if (brainToPlayer < 1.5f && total > 3f) break;
+            }
+            float brainDist = z.GlobalPosition.DistanceTo(player.GlobalPosition);
+            T.Check($"brain chased the registry-acquired player (now {brainDist:0.00} m out, from 8 m)", brainDist < 2.5f);
+            T.Check($"puppet followed the chase ({total:0.0} m tracked)", total > 3f);
+            T.Check($"puppet moved by INTERPOLATION (max per-tick step {maxStep:0.00} m)", maxStep > 0f && maxStep < 1.5f);
+            float lag = pup.GlobalPosition.DistanceTo(z.GlobalPosition);
+            T.Check($"puppet within glide lag of the brain ({lag:0.00} m)", lag < 2.5f);
+
+            // in reach the brain swings: the AttackSwing event flows, and the avatar authoritatively bleeds
+            yield return Until(() => swings > 0 && player.Health < 100f, 8);
+            T.Check($"AttackSwing event reached the observer ({swings} swings)", swings > 0);
+            T.Check($"server brain bit the avatar (health {player.Health:0})", player.Health < 100f);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            b.Disconnect();
+        }
+    }
 }

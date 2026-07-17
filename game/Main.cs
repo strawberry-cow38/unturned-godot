@@ -1915,7 +1915,7 @@ namespace UnturnedGodot
         {
             var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
                 noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
-            AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim });
+            AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim, Terr = res.Terr });   // Terr: server grenades bounce on real terrain height (Phase 5)
             _worldReady = res.Ready;
             GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {NetPort}");
         }

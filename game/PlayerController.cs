@@ -1862,7 +1862,11 @@ namespace UnturnedGodot
             for (int i = _bullets.Count - 1; i >= 0; i--)
             {
                 var b = _bullets[i];
-                Vector3 next = b.Pos + b.Vel * 0.02f;
+                // integration goes through the shared core model (BallisticsMath) so the MP server's bullets
+                // (ServerCombat) fly the same trajectory by construction -- the ops are IEEE-identical to the
+                // old inline pos + vel*0.02 / vel.y += g*0.02
+                var un = BallisticsMath.NextPos(new UnityEngine.Vector3(b.Pos.X, b.Pos.Y, b.Pos.Z), new UnityEngine.Vector3(b.Vel.X, b.Vel.Y, b.Vel.Z));
+                Vector3 next = new Vector3(un.x, un.y, un.z);
                 var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9)); // world + enemy + ragdoll + vehicle + props + water surface
                 var hit = space.IntersectRay(query);
                 if (hit.Count > 0)
@@ -1889,7 +1893,8 @@ namespace UnturnedGodot
                     continue;
                 }
                 b.Pos = next;
-                b.Vel += new Vector3(0f, b.Gravity * 0.02f, 0f);
+                var uv = BallisticsMath.StepVel(new UnityEngine.Vector3(b.Vel.X, b.Vel.Y, b.Vel.Z), b.Gravity);
+                b.Vel = new Vector3(uv.x, uv.y, uv.z);
                 UpdateTracer(b);
                 if (b.RocketVis != null && IsInstanceValid(b.RocketVis)) { b.RocketVis.GlobalPosition = b.Pos; var _vd = b.Vel.Normalized(); if (Mathf.Abs(_vd.Y) < 0.98f) b.RocketVis.LookAt(b.Pos + b.Vel, Vector3.Up); }   // fly the rocket model along the ballistic, nose along velocity
                 if (--b.StepsLeft <= 0) RemoveBullet(i);

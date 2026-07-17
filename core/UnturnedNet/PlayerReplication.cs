@@ -14,12 +14,27 @@ namespace UnturnedGodot.Net
     {
         // IReplicatedSystem.SystemId space
         public const byte SystemPlayers = 1;
+        public const byte SystemPlayerCombat = 2;   // Phase 5: alive/coarse-health/kills/deaths (CombatReplication.cs)
+        public const byte SystemZombies = 3;        // Phase 5: transform + anim byte + speciality @12.5 Hz (ZombieReplication.cs)
+        public const byte SystemProjectiles = 4;    // Phase 5: server-spawned grenades in flight
 
         // CommandRegistry id space (0 = snapshot ack, reserved)
         public const byte CommandMoveInput = 1;
+        public const byte CommandFire = 2;          // Phase 5: the client aim ray -- the server steps the bullet
+        public const byte CommandMelee = 3;
+        public const byte CommandGrenade = 4;
+        public const byte CommandReload = 5;
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
+        public const byte EventHitConfirm = 2;     // Phase 5 combat facts (CombatReplication.cs)
+        public const byte EventImpactFx = 3;
+        public const byte EventPlayerDied = 4;
+        public const byte EventPlayerRespawned = 5;
+        public const byte EventZombieHit = 6;
+        public const byte EventZombieDied = 7;
+        public const byte EventAttackSwing = 8;
+        public const byte EventGrenadeExploded = 9;
     }
 
     /// <summary>
@@ -207,6 +222,25 @@ namespace UnturnedGodot.Net
             e.YawDegrees = newYaw;
             e.LastProcessedInputSeq = lastProcessedInputSeq;
             if (changed) e.LastChangedTick = tick;
+        }
+
+        /// <summary>Server-side teleport (Phase 5 respawn): move the entity without consulting its input.
+        /// Works for driven and undriven entities alike -- a driven shell re-asserts its own transform on
+        /// its next ServerDrive anyway.</summary>
+        public void ServerTeleport(ushort ownerPlayerId, Vector3 pos, long tick)
+        {
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return;
+            var newPos = Quantize(pos);
+            if (newPos == e.Pos) return;
+            e.Pos = newPos;
+            e.LastChangedTick = tick;
+        }
+
+        /// <summary>Drop the held-keys input (Phase 5 death: a corpse must stop integrating the victim's
+        /// last MoveInput; fresh inputs are rejected at the dispatch gate until respawn).</summary>
+        public void ServerClearInput(ushort ownerPlayerId)
+        {
+            if (TryGetByOwner(ownerPlayerId, out var e)) e.HasInput = false;
         }
 
         /// <summary>Round a position through the exact wire encoding -- authoritative state and client
