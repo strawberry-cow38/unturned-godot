@@ -41,6 +41,8 @@ public class MainWindow : Window
     readonly TextBlock _status = new() { Foreground = Brushes.Gray };
     readonly TextBox _log;
     readonly Button _action = new() { MinWidth = 150, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Right, FontSize = 16, IsEnabled = false };
+    // When checked, Play launches the game with --connect=claw.bitvox.me to join the shared test server.
+    readonly CheckBox _mpTest = new() { Content = "Multiplayer test", FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.Parse("#c8d0d8")) };
     Mode _mode = Mode.Busy;
 
     public MainWindow()
@@ -88,9 +90,12 @@ public class MainWindow : Window
         var logHeader = new TextBlock { Text = "Debug console", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#7a828c")), Margin = new Avalonia.Thickness(2, 0, 0, 3) };
 
         var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Avalonia.Thickness(0, 10, 0, 0) };
-        Grid.SetColumn(_status, 0); Grid.SetColumn(_action, 1);
+        // right side: the "Multiplayer test" checkbox sits just left of the Play button.
+        var rightSide = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, VerticalAlignment = VerticalAlignment.Center, Children = { _mpTest, _action } };
+        ToolTip.SetTip(_mpTest, "Launch connected to the claw.bitvox.me test server (adds --connect=claw.bitvox.me)");
+        Grid.SetColumn(_status, 0); Grid.SetColumn(rightSide, 1);
         _status.VerticalAlignment = VerticalAlignment.Center;
-        footer.Children.Add(_status); footer.Children.Add(_action);
+        footer.Children.Add(_status); footer.Children.Add(rightSide);
 
         var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
         void Row(Control c, int r) { Grid.SetRow(c, r); grid.Children.Add(c); }
@@ -244,6 +249,11 @@ public class MainWindow : Window
             var psi = new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = _gameDir };
             psi.ArgumentList.Add("--path");
             psi.ArgumentList.Add(_gameDir);
+            if (_mpTest.IsChecked == true)   // "Multiplayer test" ticked -> join the shared claw test server
+            {
+                psi.ArgumentList.Add("--connect=claw.bitvox.me");
+                Log("Multiplayer test ON — connecting to claw.bitvox.me");
+            }
             Process.Start(psi);
             Log($"Launched: {Path.GetFileName(exe)} --path game — handing off, closing launcher.");
             SetBusy("Handing off to game…");
