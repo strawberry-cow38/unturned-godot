@@ -107,6 +107,13 @@ namespace UnturnedGodot.Net
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
         public Func<float, float, float> GroundHeight;        // (x,z) -> ground y for grenade bounces; null = y 0
 
+        /// <summary>D1 posture (PEI_COMBAT_PLAN §3): while false, players are not combat targets at all --
+        /// bullets fly through them, melee ignores them, blasts spare them (self-damage included, since a
+        /// D1 shell has no server-auth vitals and an invisible entity death would just rubber-band it).
+        /// Zombie damage is untouched. Default TRUE keeps every existing path byte-identical; the D1
+        /// dedicated server sets it false until D2 lands server-auth player vitals.</summary>
+        public bool PvPEnabled = true;
+
         public ServerGunProfile DefaultGun = new ServerGunProfile();
         public ServerMeleeProfile DefaultMelee = new ServerMeleeProfile();
         public ServerGrenadeProfile DefaultGrenade = new ServerGrenadeProfile();
@@ -269,13 +276,14 @@ namespace UnturnedGodot.Net
                 float hitRelY = 0f, hitTop = 0f;
                 Vector3 worldPoint = default;
 
-                foreach (var pe in _players.All)
-                {
-                    if (pe.OwnerPlayerId == b.Shooter) continue;
-                    if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
-                    if (SegmentHitsCylinder(b.Pos, next, pe.Pos, PlayerZoneRadius, PlayerZoneTopY, out float t, out float relY) && t < bestT)
-                    { bestT = t; hitKind = 1; hitPlayer = pe.OwnerPlayerId; hitRelY = relY; hitTop = PlayerZoneTopY; }
-                }
+                if (PvPEnabled)
+                    foreach (var pe in _players.All)
+                    {
+                        if (pe.OwnerPlayerId == b.Shooter) continue;
+                        if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
+                        if (SegmentHitsCylinder(b.Pos, next, pe.Pos, PlayerZoneRadius, PlayerZoneTopY, out float t, out float relY) && t < bestT)
+                        { bestT = t; hitKind = 1; hitPlayer = pe.OwnerPlayerId; hitRelY = relY; hitTop = PlayerZoneTopY; }
+                    }
                 if (ZombieHost != null)
                     foreach (var ze in _zombies.All)
                     {
@@ -362,14 +370,15 @@ namespace UnturnedGodot.Net
                 ushort bestPlayer = 0;
                 ZombieReplication.ZombieEntity bestZombie = null;
 
-                foreach (var pe in _players.All)
-                {
-                    if (pe.OwnerPlayerId == pm.Attacker) continue;
-                    if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
-                    var to = (pe.Pos + new Vector3(0f, 1f, 0f)) - origin;
-                    float d = to.magnitude;
-                    if (d < reach && d > 1e-4f && Vector3.Dot(to / d, fwd) > 0.3f && d < bestD) { bestD = d; bestPlayer = pe.OwnerPlayerId; bestZombie = null; }
-                }
+                if (PvPEnabled)
+                    foreach (var pe in _players.All)
+                    {
+                        if (pe.OwnerPlayerId == pm.Attacker) continue;
+                        if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
+                        var to = (pe.Pos + new Vector3(0f, 1f, 0f)) - origin;
+                        float d = to.magnitude;
+                        if (d < reach && d > 1e-4f && Vector3.Dot(to / d, fwd) > 0.3f && d < bestD) { bestD = d; bestPlayer = pe.OwnerPlayerId; bestZombie = null; }
+                    }
                 if (ZombieHost != null)
                     foreach (var ze in _zombies.All)
                     {
@@ -448,14 +457,15 @@ namespace UnturnedGodot.Net
                         _broadcast(NetMessagePak.Pack(ReplicationIds.EventZombieDied, died.Write));
                     }
                 }
-            foreach (var pe in _players.All)
-            {
-                if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
-                float pr = (pe.Pos - g.Pos).magnitude;
-                if (pr > prof.Radius || Blocked(g.Pos, pe.Pos)) continue;
-                float dmg = ExplosionMath.Squared(prof.PlayerDamage, pr, prof.Radius);   // players: SQUARED falloff (Player.cs:1975); thrower included
-                if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _);
-            }
+            if (PvPEnabled)
+                foreach (var pe in _players.All)
+                {
+                    if (_state.TryGet(pe.OwnerPlayerId, out var vs) && !vs.Alive) continue;
+                    float pr = (pe.Pos - g.Pos).magnitude;
+                    if (pr > prof.Radius || Blocked(g.Pos, pe.Pos)) continue;
+                    float dmg = ExplosionMath.Squared(prof.PlayerDamage, pr, prof.Radius);   // players: SQUARED falloff (Player.cs:1975); thrower included
+                    if (dmg > 0f) ApplyPlayerDamage(pe.OwnerPlayerId, dmg, g.Owner, tick, out _);
+                }
             var evt = new GrenadeExplodedEvent { Pos = g.Pos, Radius = prof.Radius };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventGrenadeExploded, evt.Write));
         }

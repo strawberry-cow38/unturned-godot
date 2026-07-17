@@ -1305,4 +1305,144 @@ namespace UnturnedGodot.Testing
             observer.Disconnect();
         }
     }
+
+    // PEI_COMBAT_PLAN §3 Phase D1 -- the combat lane opens: a joined client's fire routes OVER THE WIRE and
+    // kills a real server zombie brain, with the server's facts (HitConfirmed / ZombieDied / kill credit /
+    // the replicated Dead anim) rendering the result, while PvP stays OFF. The net.shell_walk_reconcile rig
+    // (ClientWorldSession + DedicatedServer{RemoteAvatars}) plus the net.zombie_chase_sync brain. The shell
+    // fires through the D1 seam (scripted Shell.Fire() with NetFire wired -- never polled input): its LOCAL
+    // bullet is COSMETIC (tracer only -- Kills stays 0, the shared-world brain takes no direct DamageHit),
+    // the server's bullet is the authority. Then a burst at a second peer's avatar proves the D1 posture:
+    // no player damage, no PlayerDied, Health 100 -- and the whole run is DESYNC-QUIET (SystemPlayerCombat
+    // is in the EnableSyncCheck set, so the kill counter itself is hash-checked).
+    public class NetShellFireZombie : GameTest
+    {
+        public override string Name => "net.shell_fire_zombie";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            // a walkable navmesh for the brain (the net.zombie_chase_sync rig)
+            var nm = new NavigationMesh();
+            nm.Vertices = new[] { new Vector3(-60f, 0f, -60f), new Vector3(-60f, 0f, 60f), new Vector3(60f, 0f, 60f), new Vector3(60f, 0f, -60f) };
+            nm.AddPolygon(new int[] { 0, 1, 2, 3 });
+            World.AddChild(new NavigationRegion3D { NavigationMesh = nm });
+
+            var net = new MemNetwork(20260727);
+            NetWorldClient bystander = null;
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); bystander?.Tick(); }, "l1.netpump");
+            world.Sim.Sim.Add(pump);   // datagram delivery + bystander session before the session's steps (§2.5)
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "gunner" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+            bystander = new NetWorldClient(new MemClientTransport(net), "bystander", contentHash: NetContent.Hash);
+            bystander.DesyncDetected += _ => desyncs++;
+            bystander.Connect();
+
+            var confirms = new List<HitConfirmEvent>();
+            var zDeaths = new List<ZombieDiedEvent>();
+            var pDeaths = new List<PlayerDiedEvent>();
+            sess.Client.HitConfirmed += confirms.Add;
+            sess.Client.ZombieDied += zDeaths.Add;
+            sess.Client.PlayerDied += pDeaths.Add;
+            bystander.PlayerDied += pDeaths.Add;
+
+            yield return Until(() => sess.Shell != null && bystander.State == NetSessionState.Connected, 5);
+            T.Check("shell spawned + bystander joined", sess.Shell != null && bystander.State == NetSessionState.Connected);
+            if (sess.Shell == null) yield break;
+            T.Check("D1 posture: PvP is OFF on the dedicated server", !ded.Server.Combat.PvPEnabled);
+            T.Check($"the MP shell spawns holding the EAGLEFIRE -- the server's validation profile ({sess.Shell.HeldGunName})",
+                    sess.Shell.HasGunOut && sess.Shell.HeldGunName == "eaglefire");
+            yield return Until(() => ded.PlayerSync.TrackedCount == 2, 5);
+            T.Check("both peers have C2 avatar bodies", ded.PlayerSync.TrackedCount == 2);
+
+            // the target: a REAL ZombieController brain 8 m in front of the shell, published by ZombieNetSync
+            var z = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };
+            World.AddChild(z);
+            z.GlobalPosition = new Vector3(0f, 0.3f, 8f);
+            yield return Until(() => sess.Puppets.PuppetCount == 1, 5);
+            T.Check("the zombie replicated + puppeted in the session's world", sess.Puppets.PuppetCount == 1);
+            uint zid = 0;
+            foreach (var e in sess.Client.Zombies.All) { zid = e.NetIdValue; break; }
+
+            // FIRE through the seam -- scripted Shell.Fire() (the NetFire delegate sends the aim ray), the
+            // shell re-aimed at the brain each tick (it chases). Eaglefire Zombie_Damage 99 vs brain HP 100
+            // -> the second landed bullet kills. The kill must come back over the wire, not from the local
+            // bullet: the cosmetic flag means the shared-world brain never takes a direct local DamageHit.
+            int shots = 0;
+            for (int i = 0; i < 500 && !z.Dead; i++)
+            {
+                var eye = sess.Shell.TruePhysicsPosition + Vector3.Up * 1.6f;
+                var dir = z.GlobalPosition + Vector3.Up * 1.2f - eye;
+                sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-dir.X, -dir.Z)), 0f);
+                if (sess.Shell.Fire()) shots++;
+                yield return Ticks(1);
+            }
+            T.Check($"the WIRE killed the brain ({shots} shots fired)", z.Dead && shots >= 2);
+            T.Check("the local cosmetic bullet never credited a kill (shell Kills == 0 -- credit is the server's)", sess.Shell.Kills == 0);
+            yield return Until(() => zDeaths.Count > 0, 5);
+            T.Check("ZombieDied fact reached the shooter", zDeaths.Count == 1);
+            T.Check("...with the shell's kill credit", zDeaths.Count > 0 && zDeaths[0].NetId == zid && zDeaths[0].Killer == sess.Client.PlayerId);
+            bool sawZombieConfirm = false, sawKillConfirm = false;
+            foreach (var c in confirms)
+            {
+                if (c.TargetKind == (byte)HitTargetKind.Zombie) sawZombieConfirm = true;
+                if (c.Killed) sawKillConfirm = true;
+            }
+            T.Check($"HitConfirmed flowed with TargetKind=Zombie ({confirms.Count} confirms)", sawZombieConfirm);
+            T.Check("the killing hit confirmed Killed=true", sawKillConfirm);
+            yield return Until(() => sess.Client.Zombies.TryGet(new NetId(zid), out var zr) && zr.IsDead, 5);
+            T.Check("the replica anim byte reads DEAD (the puppet ragdolls off it)",
+                    sess.Client.Zombies.TryGet(new NetId(zid), out var zRep) && zRep.IsDead);
+            yield return Until(() => ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var cs) && cs.Kills == 1, 5);
+            T.Check("server CombatState credited kills == 1", ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var sCs) && sCs.Kills == 1);
+            yield return Ticks(30);   // settle: the kills delta + a sync-check round flush to both clients
+            T.Check("CombatState parity: session replica == server (StateHash)",
+                    sess.Client.CombatState.StateHash() == ded.Server.CombatState.StateHash());
+            T.Check("CombatState parity: bystander replica == server",
+                    bystander.CombatState.StateHash() == ded.Server.CombatState.StateHash());
+
+            // PvP-OFF: a burst at the bystander's avatar (~2 m away, aimed at head height -- 3 landed shots
+            // would be 360 damage if PvP were on). The D1 posture: players are simply not targets.
+            long hitsPlayerBefore = ded.Server.Combat.Diag.BulletHitsPlayer;
+            bool haveBy = ded.Server.Players.TryGetByOwner(bystander.PlayerId, out var bype);
+            T.Check("bystander player entity exists server-side", haveBy);
+            int pvpShots = 0;
+            for (int i = 0; i < 200 && pvpShots < 3; i++)
+            {
+                var eye = sess.Shell.TruePhysicsPosition + Vector3.Up * 1.6f;
+                var dir = new Vector3(bype.Pos.x, bype.Pos.y + 1.6f, bype.Pos.z) - eye;
+                sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-dir.X, -dir.Z)), 0f);
+                if (sess.Shell.Fire()) pvpShots++;
+                yield return Ticks(1);
+            }
+            yield return Ticks(50);   // every bullet adjudicated + snapshots flushed
+            T.Check($"a full burst went at the second peer ({pvpShots} shots)", pvpShots >= 3);
+            T.Check("PvP-OFF: no bullet ever resolved on a player", ded.Server.Combat.Diag.BulletHitsPlayer == hitsPlayerBefore);
+            T.Check("no PlayerDied fact reached any client", pDeaths.Count == 0);
+            bool byOk = ded.Server.CombatState.TryGet(bystander.PlayerId, out var byCs);
+            T.Check("bystander untouched server-side: Alive, Health 100", byOk && byCs.Alive && byCs.Health == 100);
+            bool byRepOk = bystander.CombatState.TryGet(bystander.PlayerId, out var byRep);
+            T.Check("...and its own replica agrees", byRepOk && byRep.Alive && byRep.Health == 100);
+
+            // the D1 hash-convergence proof: SystemPlayerCombat is in the sync-check set, so the kill/death
+            // counters themselves were hash-checked all run -- and the detector stayed silent
+            T.Check($"sync-check blocks flowed ({ded.Server.Composer.Diag.SyncCheckBlocksWritten})",
+                    ded.Server.Composer.Diag.SyncCheckBlocksWritten > 0);
+            T.Check($"DESYNC-QUIET across the whole combat run ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            bystander.Disconnect();
+        }
+    }
 }

@@ -14,18 +14,21 @@ namespace UnturnedGodot
         public float Fuse = 2.5f, Radius = 8f, ZombieDamage = 175f, PlayerDamage = 175f, VehicleDamage = 100f;   // Grenade.dat Vehicle_Damage 100
         const float Gravity = 9.81f;
 
-        public override void _Ready()
+        public override void _Ready() => AddChild(BuildVisual());
+
+        // The grenade's visual, shared with ProjectileReplicaView (a server-flown grenade renders identically).
+        public static MeshInstance3D BuildVisual()
         {
             var mat = new StandardMaterial3D { Metallic = 0.4f, Roughness = 0.6f };
             string ap = ProjectSettings.GlobalizePath("res://content/grenade_albedo.png");   // real Grenade material _MainTex
             if (System.IO.File.Exists(ap)) { var img = Image.LoadFromFile(ap); if (img != null) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); }
             else mat.AlbedoColor = new Color(0.16f, 0.2f, 0.13f);
             var mesh = ContentProvider.ParseObj("res://content/grenade.txt");   // real Grenade item.prefab Model_0 (was a placeholder SphereMesh)
-            AddChild(new MeshInstance3D
+            return new MeshInstance3D
             {
                 Mesh = mesh != null ? (Mesh)mesh : new SphereMesh { Radius = 0.11f, Height = 0.22f },
                 MaterialOverride = mat,
-            });
+            };
         }
 
         public override void _PhysicsProcess(double delta)

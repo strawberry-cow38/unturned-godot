@@ -892,6 +892,7 @@ namespace UnturnedGodot
             if (alert > 0f) SoundBus.Emit(GetTree(), GlobalPosition, alert);   // swing NOISE fires with the swing (source AlertTool.alert); 0 = stealthy
             // DAMAGE lands at the END of the swing (source: isDamageable is only true once the swing anim has played),
             // NOT instantly on click -- scheduled here and applied by the tick, re-evaluating targets when it connects (master).
+            if (NetMelee != null) { NetMelee(strong, RotationDegrees.Y); return; }   // D1: swing fx played above; the SERVER owns the deferred hit (ServerCombat re-evaluates at land time)
             _pendingMeleeStrong = strong; _pendingMeleeHit = _meleeCd * 0.7f;
         }
 
@@ -1014,9 +1015,18 @@ namespace UnturnedGodot
             if (_grenadeCd > 0f) return;
             _grenadeCd = 1.0f;
             Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
-            var g = new Grenade { Thrower = this, Vel = fwd * 16f + Vector3.Up * 5f + Velocity };   // arc forward + inherit motion
+            Vector3 vel = fwd * 16f + Vector3.Up * 5f + Velocity;   // arc forward + inherit motion
+            Vector3 origin = (_cam?.GlobalPosition ?? GlobalPosition) + fwd * 0.5f;
+            if (NetGrenade != null)   // D1: the SERVER spawns/flies/explodes it (ProjectileReplicaView renders the flight)
+            {
+                if (vel.Length() > 47.5f) vel = vel.Normalized() * 47.5f;   // stay under the server's 48 m/s sanity cap (a sprint-throw must not get silently rejected)
+                NetGrenade(origin, vel);
+                GD.Print("[grenade] thrown (wire)");
+                return;
+            }
+            var g = new Grenade { Thrower = this, Vel = vel };
             GetParent().AddChild(g);
-            g.GlobalPosition = (_cam?.GlobalPosition ?? GlobalPosition) + fwd * 0.5f;
+            g.GlobalPosition = origin;
             GD.Print("[grenade] thrown");
         }
 
@@ -1120,6 +1130,16 @@ namespace UnturnedGodot
         public bool LastHandbrakeInput;
         public System.Action<uint> NetEnterVehicle;  // wired by ClientWorldSession: F near a puppet asks the server for the seat
         public System.Action NetExitVehicle;         // F while riding asks the server to free it (exit teleport follows)
+
+        // D1 MP combat routing seams (PEI_COMBAT_PLAN §3 D1) -- the NetEnterVehicle pattern: wired ONLY by
+        // ClientWorldSession, null in SP/loopback so every direct combat path below stays byte-identical.
+        // When set, the trigger pull still plays ALL its local fx (recoil/muzzle/tracer/casings/swing anim)
+        // but authority moves to the wire: bullets go cosmetic (no damage, no impact fx -- those render from
+        // the server's ImpactFx/HitConfirmed events), melee/grenade intent is sent instead of resolved.
+        public System.Action<Vector3, Vector3> NetFire;      // (muzzle, undeviated aim axis) -> Client.SendFire
+        public System.Action<bool, float> NetMelee;          // (strong, yawDegrees) -> Client.SendMelee
+        public System.Action<Vector3, Vector3> NetGrenade;   // (origin, velocity) -> Client.SendGrenade
+        public System.Action NetReload;                      // -> Client.SendReload (server ammo/reload clock tracks the local one)
 
         VehiclePuppet NearestPuppet()
         {
@@ -1860,6 +1880,7 @@ namespace UnturnedGodot
             double full = (_viewmodel?.ReloadLength ?? ReloadTime) / rspeed;   // per-gun reload duration (masterkey 2.467s vs rifles 1.633s), sped up by DEXTERITY
             _hammerDur = _hammerPending ? (_viewmodel.HammerLength / rspeed) : 0.0;
             _reloadTimer = Gun?.ShellReload == true ? full / System.Math.Max(1, max) : full;   // shell-fed shotguns (Pump/Break) load ONE shell per interval (see the reload tick + StartFire cancel)
+            NetReload?.Invoke();   // D1: the server's ammo/reload clock (ReloadTicks) tracks the local reload
         }
 
         // LMB press -> fire per the current mode (safety = nothing, semi = one, burst = queue BurstCount, auto = start).
@@ -1981,17 +2002,23 @@ namespace UnturnedGodot
             if (Gun != null && Gun.RechamberAfterShotCount > 0 && ++_shotCountForRechamber >= Gun.RechamberAfterShotCount)
             { _needsRechamber = true; _rechamberDelayTimer = Gun.RechamberAfterShotDelay; }
             SaveGunState();   // keep the backing item's ammo current so a drop/holster mid-fight preserves it (master)
+            NetFire?.Invoke(muzzle, aim);   // D1: the UNDEVIATED aim ray over the wire -- the server spawns the authoritative bullet (spread is client fx; the bullets above went cosmetic in SpawnBullet)
             return true;   // shot fired; the actual hits/kills land later in StepBullets
         }
 
         // A simulated bullet (Unturned's BulletInfo): flies from the muzzle with a velocity, dropping under gravity,
         // stepped every physics tick; its tracer travels with it; it hits/despawns on contact or after its steps.
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage; public MeshInstance3D Tracer; public Node3D RocketVis; }
+        // Cosmetic (D1): true on every bullet an MP shell fires locally -- it flies + tracers exactly like SP
+        // for responsiveness, but on contact it just vanishes: NO damage, NO Kills++, NO hitmarker, NO impact
+        // decals/blood. The server's bullet is the authority; impact fx render from the broadcast ImpactFx
+        // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
+        // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, Tracer = MakeTracer() };
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, Cosmetic = NetFire != null, Tracer = MakeTracer() };
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
             if (Gun?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
             _bullets.Add(b);
@@ -2015,6 +2042,7 @@ namespace UnturnedGodot
                 var hit = space.IntersectRay(query);
                 if (hit.Count > 0)
                 {
+                    if (b.Cosmetic) { RemoveBullet(i); continue; }   // MP: the tracer stops here, but damage AND impact fx are the server's (ImpactFx/HitConfirmed events render them)
                     Vector3 point = hit["position"].AsVector3();
                     Vector3 hdir = b.Vel.Normalized();
                     var collider = hit["collider"].As<GodotObject>();
@@ -2278,6 +2306,40 @@ namespace UnturnedGodot
             timer.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
             if (!_fleshSndTried) { _fleshSndTried = true; _fleshSnd = LoadWav("res://content/impact_flesh.wav"); }
             PlayImpactSound(_fleshSnd, point);   // source flesh impact carries blood-splat audio
+        }
+
+        // D1 (PEI_COMBAT_PLAN §3): render a SERVER-asserted bullet end (the broadcast ImpactFx event) through
+        // the same local spawners SP bullets use. The MP shell's own bullets are cosmetic (no impact fx), so
+        // this is the ONE impact-fx authority in MP -- every client, the shooter included, renders the server's
+        // point; nobody double-renders. The event carries only pos + flesh/world, so world surface/normal are
+        // recovered locally with a short probe ray through the point; a miss (e.g. a replicated-vehicle hit --
+        // puppets have no colliders) falls back to a soft up-facing debris burst with no decal.
+        public void RenderImpactFx(Vector3 point, bool flesh)
+        {
+            if (flesh)
+            {
+                Vector3 fdir = point - (_cam?.GlobalPosition ?? GlobalPosition);
+                SpawnFleshImpact(point, fdir.LengthSquared() > 1e-4f ? fdir.Normalized() : Vector3.Forward);
+                return;
+            }
+            Vector3 camPos = _cam?.GlobalPosition ?? (GlobalPosition + Vector3.Up * 1.6f);
+            Vector3 toward = point - camPos;
+            toward = toward.LengthSquared() > 1e-4f ? toward.Normalized() : Vector3.Forward;
+            var q = PhysicsRayQueryParameters3D.Create(point - toward * 0.5f, point + toward * 0.5f, (1u << 0) | (1u << 5) | (1u << 6));   // world + vehicle + props
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
+            if (hit.Count > 0)
+            {
+                Vector3 p = hit["position"].AsVector3();
+                Surf sf = Surf.Concrete;
+                if (hit["collider"].As<GodotObject>() is Node n)
+                {
+                    if (Terrain.Active != null && n.IsInGroup("terrain")) sf = Terrain.Active.SurfAt(p.X, p.Z);
+                    else if (n.HasMeta(SurfMeta)) sf = (Surf)(int)n.GetMeta(SurfMeta);
+                }
+                SpawnSurfaceImpact(p, hit["normal"].AsVector3(), sf);
+            }
+            else
+                SpawnSurfaceImpact(point, Vector3.Up, Surf.Dirt);   // surface unrecoverable -> soft debris burst, no decal
         }
 
         static Texture2D _tracerTex;      // the "Bullet" sprite, loaded once (shared by MakeTracer)

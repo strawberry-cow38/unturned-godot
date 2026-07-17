@@ -319,6 +319,63 @@ namespace UnturnedNet.Tests
             Assert.That(bState.Alive, Is.False);
         }
 
+        // ---------------------------------------------------------------- the D1 PvP-off posture
+
+        [Test]
+        public void PvPDisabled_PlayersAreNotTargets_ZombiesUnaffected()
+        {
+            var h = new Harness(50109).Connected("shooter", "bystander");
+            var a = h.Clients[0];
+            var b = h.Clients[1];   // spawns 2 m along +X (SpawnPosition spacing)
+            var mock = new MockZombieHost();
+            h.Server.Combat.ZombieHost = mock;
+            h.Server.Combat.PvPEnabled = false;   // the D1 dedicated-server posture
+
+            // a zombie BEHIND the bystander on the same aim line: with PvP off the bullet must pass
+            // THROUGH the player and land on the zombie
+            var zid = h.Server.Ids.Mint();
+            h.Server.Zombies.ServerSpawn(zid, 0, new Vector3(6f, 0f, 0f), h.Server.Session.CurrentTick);
+            mock.Hp[zid.Value] = 500f;   // survives everything below -- we count damage, not corpses
+
+            var confirms = new List<HitConfirmEvent>();
+            var deaths = new List<PlayerDiedEvent>();
+            a.HitConfirmed += confirms.Add;
+            a.PlayerDied += deaths.Add;
+            b.PlayerDied += deaths.Add;
+
+            h.Server.Players.TryGetByOwner(a.PlayerId, out var ape);
+            var origin = ape.Pos + new Vector3(0f, 1.0f, 0f);
+            a.SendFire(origin, new Vector3(1f, 0f, 0f));   // flat +X: bystander torso band at 2 m, zombie at 6 m
+            h.Step(15);
+
+            Assert.That(h.Server.Combat.Diag.ShotsAccepted, Is.EqualTo(1), "validation is untouched by the toggle");
+            Assert.That(h.Server.Combat.Diag.BulletHitsPlayer, Is.EqualTo(0), "the bullet never targets the player");
+            Assert.That(mock.Hits, Is.EqualTo(1), "it flew through and hit the zombie behind");
+            Assert.That(confirms.Count, Is.EqualTo(1));
+            Assert.That(confirms[0].TargetKind, Is.EqualTo((byte)HitTargetKind.Zombie), "the confirm is the zombie hit");
+
+            // melee at the bystander (in reach, in the cone): the swing resolves but finds no player target
+            h.Step(25);   // clear the melee cooldown window
+            a.SendMelee(strong: false, yawDegrees: 90f);   // forward = +X, straight at the bystander
+            h.Step(25);   // past HitDelayTicks -- the deferred hit re-evaluated and skipped the player
+
+            // a point-blank grenade: the blast spares BOTH players (self-damage included -- a D1 shell has
+            // no server-auth vitals to render a death with), while the zombie inside the radius takes the
+            // linear-falloff damage
+            float zHpBefore = mock.Hp[zid.Value];
+            a.SendGrenade(ape.Pos + new Vector3(0f, 1f, 0f), Vector3.zero);
+            h.Step(h.Server.Combat.DefaultGrenade.FuseTicks + 15);
+
+            Assert.That(mock.Hp[zid.Value], Is.LessThan(zHpBefore), "zombie blast damage unaffected (6 m < radius 8)");
+            Assert.That(h.Server.CombatState.TryGet(a.PlayerId, out var aState), Is.True);
+            Assert.That(h.Server.CombatState.TryGet(b.PlayerId, out var bState), Is.True);
+            Assert.That(aState.Alive, Is.True.And.EqualTo(bState.Alive), "everyone alive");
+            Assert.That(aState.Health, Is.EqualTo(100), "the thrower's own blast spared it");
+            Assert.That(bState.Health, Is.EqualTo(100), "bullet + melee + blast all skipped the bystander");
+            Assert.That(bState.Deaths, Is.EqualTo(0));
+            Assert.That(deaths.Count, Is.EqualTo(0), "no PlayerDied fact ever broadcast");
+        }
+
         // ---------------------------------------------------------------- grenades: entity + event
 
         [Test]

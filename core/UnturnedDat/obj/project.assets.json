@@ -32,11 +32,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/ec2-user/projects/unturned-godot-c5/core/UnturnedDat/UnturnedDat.csproj",
+      "projectUniqueName": "/home/ec2-user/projects/unturned-godot-d1/core/UnturnedDat/UnturnedDat.csproj",
       "projectName": "UnturnedDat",
-      "projectPath": "/home/ec2-user/projects/unturned-godot-c5/core/UnturnedDat/UnturnedDat.csproj",
+      "projectPath": "/home/ec2-user/projects/unturned-godot-d1/core/UnturnedDat/UnturnedDat.csproj",
       "packagesPath": "/home/ec2-user/.nuget/packages/",
-      "outputPath": "/home/ec2-user/projects/unturned-godot-c5/core/UnturnedDat/obj/",
+      "outputPath": "/home/ec2-user/projects/unturned-godot-d1/core/UnturnedDat/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -52,8 +52,8 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "/home/ec2-user/projects/unturned-godot-c5/core/SDG.Compat/SDG.Compat.csproj": {
-              "projectPath": "/home/ec2-user/projects/unturned-godot-c5/core/SDG.Compat/SDG.Compat.csproj"
+            "/home/ec2-user/projects/unturned-godot-d1/core/SDG.Compat/SDG.Compat.csproj": {
+              "projectPath": "/home/ec2-user/projects/unturned-godot-d1/core/SDG.Compat/SDG.Compat.csproj"
             }
           }
         }

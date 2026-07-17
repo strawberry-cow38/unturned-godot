@@ -54,6 +54,8 @@ namespace UnturnedGodot
         Label _desyncLabel;
         string _desyncAlert = "";
 
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
         public override void _Ready()
         {
             // net diagnostics (hardening Part B) -- same toggle as the server: UG_NETLOG=1 or --netlog
@@ -94,6 +96,34 @@ namespace UnturnedGodot
             AddChild(Items);
             AddChild(new WorldClockView { Client = Client, DayNight = DayNight });
             AddChild(new ResourceAliveView { Client = Client, Field = Resources });
+            AddChild(new ProjectileReplicaView { Client = Client });   // D1: server-flown grenades render while fused
+
+            // D1 combat facts -> render consumers (PEI_COMBAT_PLAN §3 D1). All read-only fx/HUD -- nothing
+            // here writes a replica. The shell's own bullets are cosmetic, so these events are the ONE
+            // authority for hitmarkers + impact fx (shooter included -- no local/echo double-render).
+            Client.HitConfirmed += e =>
+            {
+                HitmarkerHUD.Instance?.Show(e.Headshot);   // the hitmarker now only ever tells the server's truth
+                GD.Print($"[combat] hit {(HitTargetKind)e.TargetKind} {e.TargetId} for {e.Damage:0}{(e.Headshot ? " HEADSHOT" : "")}{(e.Killed ? " -- KILLED" : "")}");
+            };
+            Client.ImpactFx += e =>
+            {
+                if (Shell != null && IsInstanceValid(Shell))
+                    Shell.RenderImpactFx(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.Surface == (byte)ImpactSurface.Flesh);
+            };
+            Client.ZombieHit += e =>
+            {
+                // melee blood (melee broadcasts no ImpactFx); bullet hits also land here -- their ImpactFx
+                // arrives at the exact hit point too, so a shot zombie just bleeds a little harder
+                if (Shell != null && IsInstanceValid(Shell) && Puppets.TryGetPuppet(e.NetId, out var pup) && IsInstanceValid(pup))
+                    Shell.RenderImpactFx(pup.GlobalPosition + Vector3.Up, flesh: true);
+            };
+            Client.ZombieDied += e =>
+                GD.Print($"[combat] zombie {e.NetId} killed by {(e.Killer == Client.PlayerId ? "you" : $"player {e.Killer}")}");
+            Client.GrenadeExploded += e =>
+                // the SP blast "fx" is the camera flinch (PlayerController.Explode -> FlinchAllFromExplosion,
+                // same params) -- fx only, zero damage: the server already applied the authoritative damage
+                PlayerRegistry.FlinchAllFromExplosion(new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), Mathf.Max(e.Radius * 2f, 12f), 30f);
 
             // pre-join status: there is NO camera until the shell spawns (its first-person cam IS the
             // view) -- surface the session state so an unreachable server isn't a silent black screen
@@ -170,7 +200,11 @@ namespace UnturnedGodot
         {
             var shell = new PlayerController { CaptureMouse = true };
             AddChild(shell);
-            shell.EquipUnarmed();   // spawn UNARMED, exactly like Playable (combat over the wire is deferred, §6)
+            // D1: spawn holding the EAGLEFIRE (demo-inventory primary slot) -- the server validates every
+            // shot as the default Eaglefire profile (ServerCombat), so client + server agree on rate/ammo;
+            // a faster demo gun would get half its shots silently rate-rejected and feel broken. Per-gun
+            // server profiles are the deferred Phase 6 equip seam.
+            shell.EquipHotbar(1);
             if (Sun != null && Env != null) shell.LinkWorldLighting(Sun, Env);   // FP gun takes the world day/night sun + ambient
             shell.GlobalPosition = new Vector3(me.Pos.x, me.Pos.y, me.Pos.z);
             shell.RotationDegrees = new Vector3(0f, me.YawDegrees, 0f);
@@ -180,6 +214,12 @@ namespace UnturnedGodot
             // analogue of the SP direct EnterVehicle); F while riding requests the exit. Server validates.
             shell.NetEnterVehicle = netId => Client.SendEnterVehicle(netId);
             shell.NetExitVehicle = () => Client.SendExitVehicle();
+            // D1: trigger pulls route over the wire (fx stay local + immediate, damage waits for the server;
+            // the null default of each seam keeps SP/loopback byte-identical -- only THIS session wires them)
+            shell.NetFire = (muzzle, aim) => Client.SendFire(ToU(muzzle), ToU(aim));
+            shell.NetMelee = (strong, yaw) => Client.SendMelee(strong, yaw);
+            shell.NetGrenade = (origin, vel) => Client.SendGrenade(ToU(origin), ToU(vel));
+            shell.NetReload = () => Client.SendReload();
             Shell = shell;
             if (System.Environment.GetEnvironmentVariable("UG_MPWALK") == "1")   // scripted-walk hook for headless connect-and-render checks (the UG_AUTOFIRE spirit)
                 shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
