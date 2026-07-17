@@ -198,7 +198,7 @@ namespace UnturnedGodot.Testing
 
             var pump = new DelegateSimStep((t, dt) => { net.Tick(); a.Tick(); b.Tick(); }, "l1.clientpump");
             world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + replicate stay after/LAST (§2.5)
-            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), AllowCheats = true };   // this test uses console-give to stock client A; cheats are off by default on the real server (review C1)
             World.AddChild(ded);
             var view = new DeployableReplicaView { Client = b };   // B's node mirror -- the lamp that must light
             World.AddChild(view);

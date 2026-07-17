@@ -16,6 +16,7 @@ namespace UnturnedGodot
         public ushort Port = 47872;
         public SimDriver Driver;                     // the world's sim spine (WorldBuildResult.Sim)
         public IServerTransport TransportOverride;   // tests inject MemTransport; null = real UDP
+        public bool AllowCheats = false;             // SECURITY (review C1): give/xp/skill console cheats. OFF by default on the public server; tests set true to exercise the give plane.
         public Terrain Terr;                         // optional (WorldBuildResult.Terr): grounds server grenade bounces on real terrain
         public DayNightCycle DayNight;               // optional (WorldBuildResult.DayNight): tick-derived day-night (§3.7)
         public ResourceField Resources;              // optional (WorldBuildResult.Resources): the §3.7 alive-bitmap index space
@@ -42,6 +43,7 @@ namespace UnturnedGodot
             // client build carries (content-hash-matched), feeding placement validation + the server solve.
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
+            Server.Transactions.AllowCheats = AllowCheats;   // SECURITY (review C1): default OFF on the public dedicated server -- no client may run the give/xp/skill console cheats. Tests/admins opt in via the AllowCheats field; a real per-connection admin gate is future work.
             // Phase 5 combat hooks: server bullets/blasts stop at the world's real geometry, grenades
             // bounce on real ground height. Both are optional seams on the engine-free ServerCombat.
             Server.Combat.WorldRay = GodotWorldRay;
