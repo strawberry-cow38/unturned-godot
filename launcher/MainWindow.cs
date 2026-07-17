@@ -21,7 +21,7 @@ public class MainWindow : Window
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 5;   // v5: "Multiplayer test" checkbox -> --connect=claw.bitvox.me
+    const int LauncherVersion = 6;   // v6: fix the "--" separator so --connect actually reaches the game
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
     // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
@@ -251,6 +251,10 @@ public class MainWindow : Window
             psi.ArgumentList.Add(_gameDir);
             if (_mpTest.IsChecked == true)   // "Multiplayer test" ticked -> join the shared claw test server
             {
+                // The game reads OS.GetCmdlineUserArgs() -- args AFTER a "--" separator. Without it Godot
+                // treats --connect as an (unknown) ENGINE arg and the game never sees it, so it just opens
+                // the main menu. The "--" is what routes the flag to Main's parser.
+                psi.ArgumentList.Add("--");
                 psi.ArgumentList.Add("--connect=claw.bitvox.me");
                 Log("Multiplayer test ON — connecting to claw.bitvox.me");
             }
