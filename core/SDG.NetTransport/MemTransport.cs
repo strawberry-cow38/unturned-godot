@@ -24,6 +24,11 @@ namespace SDG.NetTransport.Mem
         public int LatencyTicks;
         /// <summary>Random extra 0..N ticks per datagram; a later send can outrun an earlier one = reordering.</summary>
         public int ReorderJitterTicks;
+        /// <summary>Link stall: any datagram whose delivery would land before this network tick is held
+        /// and becomes deliverable AT this tick instead, in send order -- nothing crosses during the
+        /// window, then the whole backlog arrives as one in-order burst (the ~100 ms wifi stall that
+        /// bunches five ticks of input into one delivery). 0 / past ticks = no effect.</summary>
+        public long HoldUntilTick;
     }
 
     /// <summary>
@@ -110,9 +115,11 @@ namespace SDG.NetTransport.Mem
             var data = new byte[length];
             Buffer.BlockCopy(buffer, 0, data, 0, length);
             long jitter = link.ReorderJitterTicks > 0 ? _rng.Next(link.ReorderJitterTicks + 1) : 0;
+            long deliverTick = CurrentTick + link.LatencyTicks + jitter;
+            if (deliverTick < link.HoldUntilTick) deliverTick = link.HoldUntilTick;
             inbox.Add(new Packet
             {
-                DeliverTick = CurrentTick + link.LatencyTicks + jitter,
+                DeliverTick = deliverTick,
                 Order = _orderCounter++,
                 FromEndpoint = fromEndpoint,
                 Data = data,

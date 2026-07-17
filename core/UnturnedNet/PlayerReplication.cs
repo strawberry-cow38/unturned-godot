@@ -203,6 +203,12 @@ namespace UnturnedGodot.Net
             internal ushort LastConsumedSeq;
             internal byte PrimeWait;
             internal bool Primed;
+            // consecutive starved-coast ticks (reset by any motion consume; at MaxCoastTicks the coast
+            // becomes a HOLD), and how many of those coasts are integrations the client may ALSO have
+            // predicted -- a delayed (not lost) input arriving later is consumed ack-only against this
+            // debt so its tick is never integrated twice
+            internal int CoastTicks;
+            internal int CoastDebt;
             // true once ServerDrive has taken over this entity: an in-process shell (the listen-server /
             // SP-loopback local player, MP_PLAN §4 Phase 4) steps the REAL sim-core + physics and writes
             // the result here; the internal flat-ground integration must not fight it.
@@ -285,15 +291,20 @@ namespace UnturnedGodot.Net
         // accumulated gap resolves as one hard correction the instant the player stops. Tunables:
 
         /// <summary>Queue depth cap: arrivals beyond this drop the OLDEST queued input (a hitch burst must
-        /// bound added input latency and memory, and the freshest intent matters most).</summary>
+        /// bound added input latency and memory, and the freshest intent matters most). This enqueue-side
+        /// cap is the ONLY place a queued input is ever dropped -- consumption never skips one (a queued
+        /// input is a tick the client already predicted; discarding it to drain faster put the server one
+        /// integration behind and the deficit resolved as a correction at the next stop).</summary>
         public const int MaxQueuedInputs = 8;
-        /// <summary>Backlog above this consumes TWO inputs in a tick (one skipped) -- bounded catch-up so
-        /// a hitch's backlog drains instead of becoming permanent input lag.</summary>
-        public const int CatchUpQueueDepth = 4;
         /// <summary>Seq holes at most this size (dropped datagrams) substitute one coast tick per missing
         /// input, keeping the integration count aligned; bigger jumps (hitch / cap drops) adopt directly
         /// and let the reconciler absorb the difference.</summary>
         public const int MaxGapCoastTicks = 2;
+        /// <summary>Starvation coast bound: an empty queue coasts the last consumed input for at most this
+        /// many consecutive ticks (~240 ms, enough to ride out routine jitter gaps), then HOLDS -- zero
+        /// motion until real input resumes. Uncapped, a long outage (heavy loss / stall / pre-disconnect)
+        /// ghost-ran the avatar on stale "sprint forward" for as long as the outage lasted.</summary>
+        public const int MaxCoastTicks = 12;
         /// <summary>Consumption starts once this many inputs are buffered (or after an equal number of
         /// ticks with anything queued, so a sparse sender is never stalled) -- the shallow standing buffer
         /// that absorbs arrival jitter of the same magnitude. Costs its depth in ticks of added input
@@ -316,24 +327,27 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>One tick's input for the avatar driver (PlayerNetSync) -- the in-order consume that
-        /// replaces reading the held latest. Dequeues exactly one queued input per call; when the queue
-        /// is starved it COASTS on the last consumed input (the held-keys model's virtue on an unreliable
-        /// wire: a lost datagram's axes are almost always the held ones), and a small seq hole substitutes
-        /// one coast tick per missing input so the count stays aligned with the client's prediction.
-        /// False = nothing to integrate (no input since spawn/clear) -- stand still, like TryGetHeldInput.
-        /// The returned Seq is the ack the caller must pair with the produced position (during a coast it
-        /// repeats the last consumed seq, which the client's reconciler already treats as stale).</summary>
+        /// replaces reading the held latest. Integrates AT MOST ONE tick of motion per call and never
+        /// skips a queued input -- real Unturned's serversidePackets model (PlayerInput.cs:1723-1734)
+        /// dequeues one packet per qualifying tick and lets the buffer absorb a burst as bounded added
+        /// latency; the enqueue-side MaxQueuedInputs cap is the only drop. When the queue is starved it
+        /// COASTS on the last consumed input (the held-keys model's virtue on an unreliable wire: a lost
+        /// datagram's axes are almost always the held ones) for at most MaxCoastTicks, then HOLDS (zero
+        /// motion, stance STAND) until real input resumes. Every starved coast may be an early
+        /// integration of a tick whose input was merely DELAYED, not lost -- CoastDebt remembers them,
+        /// and when the delayed inputs arrive bunched, debt-many are consumed instantly ack-only (seqs
+        /// claimed, no second integration), so a stall-burst leaves neither a double-integrated segment
+        /// nor a standing backlog. A small seq hole substitutes one coast tick per missing input so the
+        /// count stays aligned with the client's prediction. False = nothing to integrate (no input
+        /// since spawn/clear) -- stand still, like TryGetHeldInput. The returned Seq is the ack the
+        /// caller must pair with the produced position (during a coast/hold it repeats the last consumed
+        /// seq, which the client's reconciler already treats as stale).</summary>
         public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input)
         {
             input = default;
             if (!TryGetByOwner(ownerPlayerId, out var e) || e.Sim == null) return false;
             var q = e.PendingInputs;
-            if (q == null || q.Count == 0)
-            {
-                input = e.AppliedInput;   // starved: coast (or false while nothing consumed yet)
-                return e.HasApplied;
-            }
-            if (!e.Primed)
+            if (q != null && q.Count > 0 && !e.Primed)
             {
                 // fill the shallow jitter buffer before the first consume; the tick counter keeps a
                 // sparse sender (a single held input) from waiting forever
@@ -344,8 +358,33 @@ namespace UnturnedGodot.Net
                 }
                 e.Primed = true;
             }
-            if (q.Count > CatchUpQueueDepth)
-                e.LastConsumedSeq = q.Dequeue().Seq;   // bounded catch-up: skip one (closes its hole too)
+            // repay coast debt: these queued seqs are the stall's delayed inputs and their ticks were
+            // already integrated by the starved coasts -- claim them (and any lost seq's hole among
+            // them) without a second integration. A jump past the substitutable window means the coasts
+            // stood in for nothing recoverable: void the debt and let the adopt below handle it.
+            while (q != null && q.Count > 0 && e.CoastDebt > 0)
+            {
+                int gap = (ushort)(q.Peek().Seq - e.LastConsumedSeq);
+                if (gap > MaxGapCoastTicks + 1) { e.CoastDebt = 0; break; }
+                if (gap > 1) e.LastConsumedSeq++;
+                else { var pre = q.Dequeue(); e.LastConsumedSeq = pre.Seq; e.AppliedInput = pre; }
+                e.CoastDebt--;
+            }
+            if (q == null || q.Count == 0)
+            {
+                if (!e.HasApplied) return false;   // nothing consumed since spawn/clear: stand still
+                input = e.AppliedInput;            // stale seq: the repeated ack is ignored client-side
+                if (e.CoastTicks >= MaxCoastTicks)
+                {
+                    // past the jitter-gap budget this is an outage, not a gap: hold still instead of
+                    // ghost-running stale intent (motion zeroed, yaw kept, no fresh ack emitted)
+                    StripMotion(ref input);
+                    return true;
+                }
+                e.CoastTicks++;
+                if (e.CoastDebt < MaxCoastTicks) e.CoastDebt++;
+                return true;
+            }
             int dist = (ushort)(q.Peek().Seq - e.LastConsumedSeq);
             if (e.HasApplied && dist > 1 && dist <= MaxGapCoastTicks + 1)
             {
@@ -364,8 +403,18 @@ namespace UnturnedGodot.Net
             e.LastConsumedSeq = inp.Seq;
             e.AppliedInput = inp;
             e.HasApplied = true;
+            e.CoastTicks = 0;
             input = inp;
             return true;
+        }
+
+        /// <summary>Zero a returned input's motion (axes, jump, stance -> STAND) while keeping seq and
+        /// yaw: a hold tick -- the avatar stands (facing still tracks) and no fresh ack is emitted.</summary>
+        static void StripMotion(ref MoveInput input)
+        {
+            input.MoveX = 0f;
+            input.MoveY = 0f;
+            input.Buttons = 0;
         }
 
         /// <summary>One 50 Hz authoritative movement step for every server-owned player. Held-key model:
@@ -448,6 +497,8 @@ namespace UnturnedGodot.Net
             e.PendingInputs?.Clear();
             e.Primed = false;
             e.PrimeWait = 0;
+            e.CoastTicks = 0;
+            e.CoastDebt = 0;
         }
 
         /// <summary>Round a position through the exact wire encoding -- authoritative state and client

@@ -1050,6 +1050,193 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // FIX 1 of the adversarial review on mp-inputbuffer-fix: the BURSTY link. A ~120 ms stall delivers
+    // ~6 ticks of MoveInput as ONE in-order burst (nothing lost, nothing reordered -- the wifi-hiccup
+    // jitter this whole fix targets). The old consume path drained that backlog by DISCARDING a queued
+    // input per tick past a depth threshold (CatchUpQueueDepth), so the server integrated FEWER ticks
+    // than the shell predicted for the segment and the deficit surfaced as a correction -- the
+    // sprint-stop yank reborn at smaller magnitude. The old L0 test only asserted seq advancement, which
+    // is why it missed this; here the assert is the POSITION deficit itself. The fix never skips:
+    // starved ticks during the stall coast (counted as CoastDebt), the bunched delayed inputs are then
+    // claimed instantly ack-only against that debt (their ticks were already integrated -- never twice,
+    // never dropped, no standing backlog), and consumption continues in order. Asserts: no correction
+    // above the dead-zone through and after the burst, zero snaps, and the stop after the burst lands
+    // soft -- the count invariant (server integrates the SAME order AND COUNT the client predicted)
+    // holds under bursts.
+    public class NetShellStallBurst : GameTest
+    {
+        public override string Name => "net.shell_stall_burst";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(52525);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "staller" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            // mild base latency on the input channel, then sprint to steady state
+            net.ClientToServer.LatencyTicks = 2;
+            sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            yield return Ticks(100);
+
+            // THE STALL: ~120 ms where nothing crosses client->server, then the whole held backlog lands
+            // as one in-order burst -- the input queue jumps well past the old catch-up threshold (4)
+            long snapsBefore = sess.Reconciler.Snaps;
+            float corrBefore = sess.Reconciler.CorrectionAppliedMeters;
+            net.ClientToServer.HoldUntilTick = net.CurrentTick + 6;
+            float maxPend = 0f;
+            for (int i = 0; i < 80; i++)   // through the stall, the burst, and continued sprint after
+            {
+                yield return Ticks(1);
+                maxPend = Mathf.Max(maxPend, sess.Reconciler.PendingError.magnitude);
+            }
+            float corrBurst = sess.Reconciler.CorrectionAppliedMeters - corrBefore;
+            GD.Print($"[stall-burst] burst window: maxPending={maxPend:0.###} m, corrApplied={corrBurst:0.###} m, snaps={sess.Reconciler.Snaps - snapsBefore}");
+            T.Check($"no correction above the dead-zone through the burst (applied {corrBurst:0.###} m)", corrBurst < 0.08f);
+            T.Check($"position deficit stayed small through the burst (maxPending {maxPend:0.###} m)", maxPend < 0.15f);
+            T.Check($"zero snaps through the burst ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
+
+            // NOW STOP -- the moment any surviving integration-count gap resolves as a yank (pre-fix the
+            // burst's discarded inputs rip through the stationary shell right here)
+            sess.Shell.ScriptedStance = null;
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            float corrStopBefore = sess.Reconciler.CorrectionAppliedMeters;
+            float maxPendStop = 0f;
+            for (int i = 0; i < 60; i++)
+            {
+                yield return Ticks(1);
+                maxPendStop = Mathf.Max(maxPendStop, sess.Reconciler.PendingError.magnitude);
+            }
+            float corrStop = sess.Reconciler.CorrectionAppliedMeters - corrStopBefore;
+            GD.Print($"[stall-burst] stop window: maxPending={maxPendStop:0.###} m, corrApplied={corrStop:0.###} m");
+            T.Check($"the stop after the burst landed SOFT (maxPending {maxPendStop:0.###} m)", maxPendStop < 0.15f);
+            T.Check($"stop-window correction stayed small ({corrStop:0.###} m applied)", corrStop < 0.20f);
+            T.Check($"still zero snaps ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
+
+            // settle -> exact wire-grid convergence, the standard closing bar
+            yield return Ticks(60);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the stall-burst (err {err:0.###} m)", own && err < 0.05f);
+            T.Check($"DESYNC-QUIET across the run ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // FIX 2 of the adversarial review on mp-inputbuffer-fix: the starvation coast is CAPPED. On an empty
+    // input queue the avatar coasts the last consumed input -- right for jitter-sized gaps (the shell's
+    // held keys almost surely continue) -- but pre-fix it coasted FOREVER, so a long input outage (heavy
+    // loss / stall / pre-disconnect) ghost-ran the avatar at full sprint on stale intent for the whole
+    // outage: a runaway every other client watched, and a hard snap for the owner whose real state had
+    // diverged meanwhile. Post-fix the coast stops after MaxCoastTicks (~240 ms) and the avatar HOLDS
+    // (stand-still, stale acks) until real input resumes. Asserts: a short gap still coasts smoothly
+    // (zero snaps -- the sprint-stop fix intact), a long blackout moves the avatar only the bounded coast
+    // distance then PINS it still, and the world re-converges desync-quiet after the link returns.
+    public class NetShellStarvationHold : GameTest
+    {
+        public override string Name => "net.shell_starvation_hold";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(53535);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "starved" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            // sprint to steady state on a clean link
+            sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            yield return Ticks(100);
+            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
+            T.Check("C2 avatar body exists for the shell's peer", haveBody);
+            if (!haveBody) yield break;
+
+            // (a) SHORT gap: ~6 ticks of total input loss -- inside the coast budget, the avatar rides it
+            // on the held axes and the sprint stays smooth (no regression to the sprint-stop fix)
+            long snapsBefore = sess.Reconciler.Snaps;
+            net.ClientToServer.LossProbability = 1.0;
+            yield return Ticks(6);
+            net.ClientToServer.LossProbability = 0;
+            float maxPendShort = 0f;
+            for (int i = 0; i < 60; i++)
+            {
+                yield return Ticks(1);
+                maxPendShort = Mathf.Max(maxPendShort, sess.Reconciler.PendingError.magnitude);
+            }
+            GD.Print($"[starve-hold] short gap: maxPending={maxPendShort:0.###} m, snaps={sess.Reconciler.Snaps - snapsBefore}");
+            T.Check($"short gap rode the coast smoothly (maxPending {maxPendShort:0.###} m, {sess.Reconciler.Snaps - snapsBefore} snaps)",
+                    sess.Reconciler.Snaps == snapsBefore && maxPendShort < 0.5f);
+
+            // (b) LONG outage: the link goes fully dark; the player keeps sprinting briefly, then lets
+            // go -- the server hears NONE of it and must not keep running the avatar on stale intent
+            net.ClientToServer.LossProbability = 1.0;
+            yield return Ticks(10);
+            sess.Shell.ScriptedStance = null;
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            var pStart = body.TruePhysicsPosition;
+            yield return Ticks(25);            // well past the coast cap (MaxCoastTicks=12) + buffer drain
+            var pCap = body.TruePhysicsPosition;
+            yield return Ticks(55);            // the rest of the blackout (~1.9 s total)
+            var pEnd = body.TruePhysicsPosition;
+            float coasted = pStart.DistanceTo(pCap);
+            float creep = pCap.DistanceTo(pEnd);
+            GD.Print($"[starve-hold] blackout: coasted {coasted:0.###} m, then crept {creep:0.###} m over 1.1 s (pre-fix ghost-run: ~{55 * 0.02f * 7f:0.0} m)");
+            T.Check($"the avatar coasted only the bounded budget ({coasted:0.###} m)", coasted > 0.2f && coasted < 3.5f);
+            T.Check($"then PINNED STILL -- no unbounded ghost-run ({creep:0.###} m creep)", creep < 0.15f);
+
+            // (c) the link returns with the shell stopped: the resumed stream adopts, the shell
+            // re-converges on the held authority, desync-quiet
+            net.ClientToServer.LossProbability = 0;
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"re-converged after the outage (err {err:0.###} m)", own && err < 0.05f);
+            T.Check($"DESYNC-QUIET across the run ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // THE mp-rubberband regression (branch mp-rubberband-fix): the client shell and the server avatar are
     // SEPARATE CharacterBody3Ds, and pre-fix the grounded bool feeding PlayerMovementSim.Step was each
     // body's own IsOnFloor() -- a physics-engine contact state that DISAGREES between the two bodies on a

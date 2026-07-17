@@ -119,7 +119,8 @@ namespace UnturnedGodot
                 // serversidePackets model): one dequeue per tick so the avatar integrates the same input
                 // stream, in the same order and count, the shell predicted -- the held-latest model
                 // skipped/re-integrated ticks under jitter and the count gap resolved as the sprint-stop
-                // yank. Starvation coasts on the last consumed input inside TryConsumeInput; false means
+                // yank. Starvation coasts on the last consumed input inside TryConsumeInput (bounded by
+                // MaxCoastTicks, then a zero-motion hold -- no ghost-running stale intent); false means
                 // nothing to integrate at all -> stand still (death/enter-vehicle cleared it, or none yet)
                 if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp))
                 {

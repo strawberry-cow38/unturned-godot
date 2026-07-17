@@ -7,9 +7,11 @@ namespace UnturnedNet.Tests
     // The mp-inputbuffer fix (real Unturned's PlayerInput.serversidePackets model): the C2 avatar driver
     // consumes the client's MoveInput stream IN SEQ ORDER via TryConsumeInput -- one dequeue per tick
     // behind a shallow jitter buffer -- instead of re-reading the held latest. These are the engine-free
-    // policy tests: in-order consumption (jitter compression never skips an input), coast on starvation,
-    // seq-hole substitution that CLAIMS the missing seq (so the published (pos, seq) ack pairs stay
-    // exact), the bounded catch-up drain, the depth cap, and the held-keys view (TryGetHeldInput /
+    // policy tests: in-order consumption (jitter compression never skips an input; a backlog is bounded
+    // added latency, never a discard), starvation coast bounded by MaxCoastTicks then HOLD, coast-debt
+    // repayment (a stall's delayed inputs are claimed ack-only, never integrated twice), seq-hole
+    // substitution that CLAIMS the missing seq (so the published (pos, seq) ack pairs stay exact), the
+    // enqueue-side depth cap -- the ONLY drop point -- and the held-keys view (TryGetHeldInput /
     // ServerStep) staying latest-wins for the pre-C2 flat demo path.
     [TestFixture]
     public class InputQueueTests
@@ -117,23 +119,25 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void Backlog_DrainsBoundedTwoPerTick()
+        public void Backlog_NeverSkipsAnInput_EveryQueuedTickIntegrated()
         {
-            // backlog past CatchUpQueueDepth consumes two per tick (one skipped) -- bounded catch-up, so
-            // a hitch's queue becomes neither permanent input lag nor an instant teleport
+            // THE catch-up regression (adversarial review, fix 1): a backlog used to drain by DISCARDING
+            // one queued input per tick past a depth threshold -- but every queued input is a tick the
+            // client already predicted, so each discard put the server one integration behind and the
+            // deficit resolved as a correction the moment the player stopped (the sprint-stop yank at
+            // smaller magnitude). Real Unturned (PlayerInput.cs:1723-1734) never skips: one dequeue per
+            // qualifying tick, the buffer absorbs the burst as bounded added latency.
             PrimeWith(1, 2, 3);
-            for (ushort s = 4; s <= 10; s++) _players.ServerQueueInput(Owner, In(s));   // depth 9 backlog
+            for (ushort s = 4; s <= 9; s++) _players.ServerQueueInput(Owner, In(s));   // burst to the cap (depth 8)
             var seqs = new System.Collections.Generic.List<ushort>();
-            for (int tick = 0; tick < 8 && _players.TryConsumeInput(Owner, out var inp); tick++)
+            for (int tick = 0; tick < 8; tick++)
             {
-                if (seqs.Count > 0 && inp.Seq == seqs[seqs.Count - 1]) break;   // started coasting = drained
+                Assert.That(_players.TryConsumeInput(Owner, out var inp), Is.True);
+                Assert.That(inp.MoveY, Is.EqualTo(In(inp.Seq).MoveY), "a backlogged input integrates real motion (no phantom ack-only consume without a starved coast)");
                 seqs.Add(inp.Seq);
             }
-            // 9 queued inputs land in well under 9 ticks, each tick still advancing by at most 2 seqs
-            Assert.That(seqs[seqs.Count - 1], Is.EqualTo(10), "the backlog drained to the newest input");
-            Assert.That(seqs.Count, Is.LessThan(9), "faster than one-per-tick (catch-up engaged)");
-            for (int i = 1; i < seqs.Count; i++)
-                Assert.That(NetSeq.Diff(seqs[i], seqs[i - 1]), Is.InRange(1, 2), "at most one skip per tick");
+            Assert.That(seqs, Is.EqualTo(new ushort[] { 2, 3, 4, 5, 6, 7, 8, 9 }),
+                        "every queued input consumed, in order, exactly once -- none discarded to drain faster");
         }
 
         [Test]
@@ -153,7 +157,96 @@ namespace UnturnedNet.Tests
             Assert.That(seqs[seqs.Count - 1], Is.EqualTo(newest), "the freshest input survived the cap");
             Assert.That(seqs[0], Is.GreaterThanOrEqualTo((ushort)(newest - PlayerReplication.MaxQueuedInputs - 1)),
                         "the capped-off oldest inputs never surfaced (dropped, not crawled through)");
-            Assert.That(seqs.Count, Is.LessThan(10), "the burst drained in bounded time (catch-up), not one-per-tick lag");
+            Assert.That(seqs.Count, Is.EqualTo(PlayerReplication.MaxQueuedInputs),
+                        "the enqueue cap bounds the drain: at most MaxQueuedInputs ticks of added latency, no consume-side skip");
+        }
+
+        [Test]
+        public void StallBurst_DelayedInputsRepayCoastDebt_CountExact()
+        {
+            // FIX 1's invariant under the exact review scenario: a link stall starves the queue while the
+            // client keeps sending, so the server coasts the held axes -- integrations of ticks the client
+            // ALSO predicted (the inputs were delayed, not lost). When the stall releases and the backlog
+            // arrives bunched (no seq hole), the coasted ticks' inputs must be claimed instantly ACK-ONLY:
+            // never integrated a second time (double-count), never discarded (the old catch-up skip), and
+            // never left as a standing backlog. The first post-burst consume therefore acks straight
+            // through the repaid seqs to the first not-yet-integrated input.
+            PrimeWith(1, 2, 3);
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 -> queue empty
+            int motionTicks = 3;                          // seqs 1..3 integrated with motion
+            for (int i = 0; i < 3; i++)                   // 3-tick stall: coast on the held axes
+            {
+                Assert.That(_players.TryConsumeInput(Owner, out var coast), Is.True);
+                Assert.That(coast.Seq, Is.EqualTo(3), "coast repeats the stale seq (no fresh ack)");
+                Assert.That(coast.MoveY, Is.EqualTo(1f), "coast integrates the held axes");
+                motionTicks++;
+            }
+            for (ushort s = 4; s <= 8; s++) _players.ServerQueueInput(Owner, In(s));   // the stall releases: 5 bunched
+            Assert.That(_players.TryConsumeInput(Owner, out var first), Is.True);
+            Assert.That(first.Seq, Is.EqualTo(7),
+                        "the 3 coasted ticks' delayed inputs (4,5,6) were claimed ack-only in one call; this tick integrates 7");
+            Assert.That(first.MoveY, Is.EqualTo(1f));
+            motionTicks++;
+            Assert.That(_players.TryConsumeInput(Owner, out var second), Is.True);
+            Assert.That(second.Seq, Is.EqualTo(8), "the stream continues in order past the repaid segment");
+            Assert.That(second.MoveY, Is.EqualTo(1f));
+            motionTicks++;
+            Assert.That(motionTicks, Is.EqualTo(8), "integrated-motion ticks == the 8 ticks the client predicted (seqs 1..8), exactly once each");
+            Assert.That(_players.TryConsumeInput(Owner, out var after), Is.True);
+            Assert.That(after.Seq, Is.EqualTo(8), "the burst left NO standing backlog (repayment drained it) -- back to coasting on the latest");
+        }
+
+        [Test]
+        public void StarvationPastCap_HoldsStill_UntilRealInputResumes()
+        {
+            // FIX 2: the starvation coast is bounded. Up to MaxCoastTicks of empty queue is a jitter gap
+            // and coasts (held axes keep the avatar consistent with the client's own held keys); past it
+            // this is an outage (heavy loss / stall / pre-disconnect) and the avatar must HOLD -- zero
+            // motion, stance STAND, stale seq (no fresh ack) -- instead of ghost-sprinting stale intent
+            // for as long as the outage lasts.
+            PrimeWith(1, 2, 3);
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 -> queue empty
+            for (int i = 0; i < PlayerReplication.MaxCoastTicks; i++)
+            {
+                Assert.That(_players.TryConsumeInput(Owner, out var coast), Is.True);
+                Assert.That(coast.MoveY, Is.EqualTo(1f), $"coast tick {i + 1} keeps the held axes (short gaps stay smooth)");
+            }
+            for (int i = 0; i < 20; i++)
+            {
+                Assert.That(_players.TryConsumeInput(Owner, out var hold), Is.True, "the hold still returns true (yaw/gravity tick), just without motion");
+                Assert.That(hold.MoveY, Is.EqualTo(0f), "past the cap the avatar stands -- no unbounded ghost-run on stale intent");
+                Assert.That(hold.MoveX, Is.EqualTo(0f));
+                Assert.That(hold.Buttons, Is.EqualTo(0), "no jump, stance STAND while holding");
+                Assert.That(hold.Seq, Is.EqualTo(3), "hold repeats the stale seq -- never a fresh ack for a tick the client didn't predict");
+            }
+            // the stream resumes after the outage: a big seq jump adopts immediately and motion returns
+            _players.ServerQueueInput(Owner, In(60));
+            Assert.That(_players.TryConsumeInput(Owner, out var back), Is.True);
+            Assert.That(back.Seq, Is.EqualTo(60), "the resumed stream is adopted at once");
+            Assert.That(back.MoveY, Is.EqualTo(1f), "motion resumes with real input (the outage voided the coast debt)");
+        }
+
+        [Test]
+        public void LossAfterStarvation_HolesRepayCoastDebt_NoDoubleIntegration()
+        {
+            // the starve-then-hole seam: the queue drains, the server coasts (integrating the held axes),
+            // and the datagrams for those same ticks turn out LOST -- so when the stream resumes the seq
+            // hole must be claimed against the coast debt WITHOUT a second integration. Pre-fix the hole
+            // substitution integrated motion on top of the starved coasts: +1 integrated tick per loss
+            // after a starve, the same count break as the discard, in the other direction.
+            PrimeWith(1, 2, 3);
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 -> queue empty
+            for (int i = 0; i < 2; i++) _players.TryConsumeInput(Owner, out _);   // 2 starved coasts; seqs 4,5 lost in flight
+            _players.ServerQueueInput(Owner, In(6));
+            Assert.That(_players.TryConsumeInput(Owner, out var inp), Is.True);
+            Assert.That(inp.Seq, Is.EqualTo(6),
+                        "the lost seqs 4,5 were claimed against the 2 coasted ticks (ack-only); this tick integrates 6");
+            Assert.That(inp.MoveY, Is.EqualTo(1f));
+            // total: seqs 1..3 real + 2 coasts standing in for 4,5 + seq 6 real = 6 motion ticks for the
+            // 6 the client predicted; pre-fix this path integrated 8
         }
 
         [Test]

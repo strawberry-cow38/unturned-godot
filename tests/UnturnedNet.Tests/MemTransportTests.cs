@@ -44,6 +44,39 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void HoldUntilTick_StallsThenDeliversOneInOrderBurst()
+        {
+            // the link-stall knob (mp-inputbuffer fix 1's repro harness): nothing crosses during the
+            // window, then the whole backlog lands AT HoldUntilTick as one burst in SEND order (no
+            // reordering -- a stall delays everything uniformly, so the seq gate must accept it all)
+            var net = new MemNetwork(999);
+            var server = new MemServerTransport(net);
+            server.Initialize(null);
+            var client = new MemClientTransport(net);
+            client.Initialize(null, null);
+            net.ClientToServer.HoldUntilTick = 6;
+
+            var rx = new byte[64];
+            var arrivals = new List<(long tick, int id)>();
+            for (int tick = 1; tick <= 10; tick++)
+            {
+                net.Tick();
+                if (tick <= 8)
+                {
+                    var p = Payload(tick);
+                    client.Send(p, p.Length, ENetReliability.Unreliable);
+                }
+                while (server.Receive(rx, out long size, out _))
+                    arrivals.Add((net.CurrentTick, rx[0] | (rx[1] << 8)));
+            }
+            Assert.That(arrivals.FindAll(a => a.tick < 6), Is.Empty, "nothing crosses during the stall window");
+            Assert.That(arrivals.FindAll(a => a.tick == 6).ConvertAll(a => a.id), Is.EqualTo(new[] { 1, 2, 3, 4, 5, 6 }),
+                        "the held backlog lands at HoldUntilTick as one burst, in send order");
+            Assert.That(arrivals.FindAll(a => a.tick > 6).ConvertAll(a => a.id), Is.EqualTo(new[] { 7, 8 }),
+                        "sends after the stall window are unaffected");
+        }
+
+        [Test]
         public void SameSeed_SameDeliverySchedule()
         {
             var link = new FaultyLinkConfig { LossProbability = 0.3, DuplicateProbability = 0.1, ReorderJitterTicks = 4, LatencyTicks = 2 };
