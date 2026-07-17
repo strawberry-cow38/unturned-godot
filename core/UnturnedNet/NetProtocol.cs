@@ -84,6 +84,15 @@ namespace UnturnedGodot.Net
         public const int SendWindowMessages = 64;
         public const int RecvWindowMessages = 256;
 
+        // Reassembly abuse guards (review M1): the receive window alone would let a peer that never
+        // completes the head message pin ~77 MB of fragments (255 msgs x 254 frags x 1183 B). Legit
+        // traffic never buffers more than one max-size message (join snapshot <= MaxReliableMessageBytes/2)
+        // plus a window of small events, so a few x MaxReliableMessageBytes is generous; and a message a
+        // peer can't complete within 10 s of RTO retransmits is dead anyway. Exceeding either marks the
+        // session (NetSession.ReassemblyBudgetExceeded) -- the server kicks such peers.
+        public const int MaxReassemblyBufferBytes = 4 * MaxReliableMessageBytes; // ~1.2 MB per peer
+        public const int ReassemblyTtlTicks = 500;                               // 10 s to complete a message
+
         public struct Header
         {
             public byte MagicByte;

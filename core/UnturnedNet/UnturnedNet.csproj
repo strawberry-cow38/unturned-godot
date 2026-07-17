@@ -7,6 +7,10 @@
     <AssemblyName>UnturnedNet</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <!-- test seam (e.g. presetting _nextPlayerId for the review-L2 wrap test), like UnturnedDat does -->
+    <InternalsVisibleTo Include="UnturnedNet.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\SDG.NetTransport\SDG.NetTransport.csproj" />
     <ProjectReference Include="..\SDG.NetPak\SDG.NetPak.csproj" />
     <!-- UnityEngine.Vector3 shim, for ReplicationContext.ViewPos (MP_PLAN §2.3/§2.6 interest hook). -->

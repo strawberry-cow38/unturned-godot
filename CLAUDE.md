@@ -115,6 +115,49 @@ Output lands in **`game/content/`**:
 - Drivable `vehicle.prefab` ≠ static wreck `object.prefab` — rip the right one.
 - Content `.txt`/PNG changes are picked up at runtime; only C# changes need a rebuild.
 
+## Multiplayer (MP)
+
+All 8 MP_PLAN phases are live; `docs/MP_PLAN.md` is the architecture doc (§7 = current status + security
+posture). Working reference:
+
+- **Architecture, bottom-up:** dumb datagram transports (`core/SDG.NetTransport/` — real UDP + the
+  deterministic `MemTransport` test hub) → per-peer reliability engine (`NetSession`: seq/ack header, 3
+  channels: Control / ReliableOrdered / UnreliableSequenced, fragmentation, RTO retransmit) → session
+  wrappers (`NetServerSession` handshake/keepalive/timeout + flood caps; `NetClientSession`) → the three
+  replication planes: **snapshots** (`SnapshotComposer`/`SnapshotApplier` + `IReplicatedSystem`, per-client
+  delta baselines, 25 Hz unreliable), **commands** (client→server, `CommandRegistry`, THE validation choke
+  point — sender identity always from the connection, never the payload), **events** (server→client facts,
+  `EventRegistry`, reliable). `NetWorldServer`/`NetWorldClient` (`NetWorldHost.cs`) wire it all together.
+  **The server is authoritative for everything**; clients send intents and render replicas (local player =
+  predict + smooth-correct).
+- **Tick order (50 Hz):** `TickSimulation` (receive → dispatch commands → player sim → vehicles → combat)
+  … game-side publishers (zombies/world items/vehicles/clock/crops/resources) … `TickReplication` LAST
+  (join snapshots compose here too — after ALL mutation, never mid-tick).
+- **Id registries** (append-only, never renumber): `ReplicationIds` in `core/UnturnedNet/PlayerReplication.cs`
+  holds all three spaces — SystemIds 1-12 (players, player-combat, zombies, projectiles, skills,
+  deployables, inventory, world-items, vehicles, world-clock, crops, resources) + 255 = sync-check block;
+  CommandIds 0 (snapshot ack) + 1-25; EventIds 1-28. New wire ids get the next number and a comment.
+- **Run it:** server `godot --headless --path game -- --dedicated` (env: `UG_UNTURNED_DIR` for the retail
+  map, `UG_DEDICATED_NOCHEATS=1` to disable console cheats); client `godot --path game -- --connect=<host>`.
+  Content hashes must match or the join is rejected. In-process demos: `--netdemo`, `--mploopback`.
+- **Net diagnostics (find bugs):** `UG_NETLOG=1` (env) or `--netlog` — routes `NetLog` through
+  GD.Print/GD.PrintErr (→ journald on the server). Logs connects/accepts/rejects (with endpoint + reason),
+  kicks, per-command rejects (with sender + reason), and a 1 Hz `[NET] 1s:` rollup (pkts/bytes in-out,
+  retransmits, cmd rejects, snapshot full/delta/bytes/skips, reassembly drops). OFF by default, zero
+  overhead when off.
+- **Desync detection:** the server appends a per-system StateHash block to one snapshot per second
+  (`NetWorldServer.EnableSyncCheck`, on for `--dedicated`); clients compare after applying. A confirmed
+  mismatch (2 consecutive checks) fires `NetWorldClient.DesyncDetected`, prints
+  `[CLIENT] DESYNC DETECTED -- desync at server tick T: system N server hash X != client hash Y` and
+  banners the player. `system N` = the diverged SystemId above — that's the system whose replication to go
+  debug. Only globally-mirrored systems are checked (owner-only + relevancy-filtered ones differ per client
+  by design).
+- **Security posture (TEST SERVER — private, friendly):** console cheats ON by default
+  (`UG_DEDICATED_NOCHEATS=1` to lock); simple flood caps (8 half-open total / 8 sessions per source IP,
+  `ServerFull` reject beyond) + reliable-reassembly byte cap with kick; deployable ownership checks
+  DEFERRED on purpose (co-op convenience — `TODO(mp-security)` in `ServerTransactions.cs`); no connect
+  cookie/auth/encryption. Revisit all four before any public/untrusted hosting (MP_PLAN §7).
+
 ## Deploy / workflow
 
 - Pushes go **direct to `main`** on `github.com/strawberry-cow38/unturned-godot` (private). `gh` is authenticated with write access.

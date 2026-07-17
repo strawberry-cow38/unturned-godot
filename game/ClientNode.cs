@@ -18,13 +18,27 @@ namespace UnturnedGodot
 
         NetWorldClient _client;
         Label _hud;
+        Label _desyncLabel;
+        string _desyncAlert = "";
         readonly Dictionary<ushort, Node3D> _avatars = new();
 
         static readonly Color Skin = new Color(0.85f, 0.70f, 0.55f);
 
         public override void _Ready()
         {
+            // net diagnostics (hardening Part B) -- same toggle as the server: UG_NETLOG=1 or --netlog
+            NetLog.Sink = s => GD.Print(s);
+            NetLog.ErrorSink = s => GD.PrintErr(s);
+            if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
+
             _client = new NetWorldClient(new UdpClientTransport(Host, Port), "player", contentHash: NetContent.Hash);
+            // desync detection (hardening Part C): the server hashes the mirrored systems into the
+            // snapshot; a confirmed replica mismatch lands here -- log loudly + banner the player
+            _client.DesyncDetected += report =>
+            {
+                GD.PrintErr($"[CLIENT] DESYNC DETECTED -- {report}");
+                _desyncAlert = $"!! DESYNC detected (system {report.SystemId} @ tick {report.ServerTick}) -- state may be out of sync";
+            };
             _client.Connect();
             // Phase 6: mirror the replicated deployable graph as real nodes (the local PowerSolver pass
             // lights the lamps, §3.1), and gate console cheats through the server (§2.3).
@@ -38,6 +52,9 @@ namespace UnturnedGodot
             _hud = new Label { Position = new Vector2(24, 22) };
             _hud.AddThemeFontSizeOverride("font_size", 22);
             layer.AddChild(_hud);
+            _desyncLabel = new Label { Position = new Vector2(24, 54), Modulate = new Color(1f, 0.35f, 0.30f) };
+            _desyncLabel.AddThemeFontSizeOverride("font_size", 20);
+            layer.AddChild(_desyncLabel);
             AddChild(layer);
 
             var sim = new SimDriver();
@@ -83,6 +100,7 @@ namespace UnturnedGodot
             }
 
             _hud.Text = $"MULTIPLAYER   ·   {_client.State}   ·   players {_client.Players.Count}   ·   applied tick {_client.Applier.LastAppliedServerTick}";
+            _desyncLabel.Text = _desyncAlert;
         }
 
         public override void _ExitTree()

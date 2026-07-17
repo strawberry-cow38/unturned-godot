@@ -98,6 +98,10 @@ namespace UnturnedGodot.Net
                                         && _deployables.CanPlace(cmd.DefId, cmd.Pos, pos)
                                         && SenderInventory(sender)?.getItemCount(cmd.DefId) > 0);   // placing spends the held item
 
+            // TODO(mp-security): salvage/wire/toggle are reach-gated only -- no e.OwnerPlayerId == sender
+            // (or group) check (review M2). DELIBERATELY deferred while this is a friendly co-op test
+            // server (editing each other's bases is convenient); add the ownership gate to these three
+            // validators before any public/untrusted hosting. See MP_PLAN "Security posture".
             commands.Register<SalvageDeployableCommand>(ReplicationIds.CommandSalvageDeployable, SalvageDeployableCommand.TryRead,
                 OnSalvageDeployable,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
@@ -105,11 +109,13 @@ namespace UnturnedGodot.Net
                                         && e.OnFire   // only a dead/burning wreck tears down (SP: blowtorch a cooled wreck)
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
 
+            // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
             commands.Register<ConnectWireCommand>(ReplicationIds.CommandConnectWire, ConnectWireCommand.TryRead,
                 OnConnectWire,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _deployables.CanConnectWire(cmd.SrcId, cmd.SrcPort, cmd.DstId, cmd.DstPort, pos));
 
+            // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
             commands.Register<RemoveWireCommand>(ReplicationIds.CommandRemoveWire, RemoveWireCommand.TryRead,
                 OnRemoveWire,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
@@ -117,6 +123,7 @@ namespace UnturnedGodot.Net
                                         && _deployables.TryGet(w.SrcId, out var src)
                                         && (src.Pos - pos).magnitude <= DeployableReplication.WireReach);
 
+            // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
             commands.Register<ToggleDeployableCommand>(ReplicationIds.CommandToggleDeployable, ToggleDeployableCommand.TryRead,
                 OnToggleDeployable,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)

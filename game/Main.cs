@@ -105,6 +105,7 @@ namespace UnturnedGodot
                 else if (arg == "--netdemo") netdemo = true;
                 else if (arg == "--server") server = true;
                 else if (arg == "--dedicated") dedicated = true;   // headless dedicated server: the REAL world (WorldBuilder dedicated mode) + NetServerSession on UDP
+                else if (arg == "--netlog") UnturnedGodot.Net.NetLog.Enabled = true;   // net-diagnostics logging (equivalent: UG_NETLOG=1); sinks wired in DedicatedServer/ClientNode
                 else if (arg == "--mploopback") _mpLoopback = true;   // OPT-IN (MP_PLAN §4 Phase 4): SP runs as an in-process listen-server + local client over MemTransport; without the flag SP keeps the direct path
                 else if (arg == "--client") client = true;
                 else if (arg.StartsWith("--connect=")) { client = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP

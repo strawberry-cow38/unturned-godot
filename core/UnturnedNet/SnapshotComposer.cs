@@ -16,6 +16,9 @@ namespace UnturnedGodot.Net
         /// carries everything the skips withheld, and the priority accumulator guarantees the skipped
         /// system is tried first on the next compose. Non-zero under sustained overload only.</summary>
         public long OversizedBlocksSkipped;
+        public long BytesComposed;              // total snapshot payload bytes composed (net-diag rollup)
+        public long SyncCheckBlocksWritten;     // desync-detection hash blocks appended (0 unless enabled)
+        public long FutureBaselineAcksRejected; // review L1: acks claiming a tick the server hasn't reached
     }
 
     /// <summary>
@@ -54,6 +57,12 @@ namespace UnturnedGodot.Net
         /// maxBytes (the 25 Hz unreliable stream). The join path always passes its own reliable-channel
         /// budget explicitly, so lowering this never squeezes join snapshots.</summary>
         public int BudgetBytes = NetProtocol.MaxUnreliablePayload;
+
+        /// <summary>Newest server tick, supplied by the host (NetWorldServer wires it to the session tick).
+        /// When set, SetClientBaseline rejects acks claiming a FUTURE tick -- review L1: a client acking
+        /// 0xFFFFFFFF would otherwise pin a bogus baseline and starve its own deltas forever. Null (unit
+        /// tests that drive Compose directly) = no clamp.</summary>
+        public Func<long> CurrentTick;
 
         sealed class ClientState
         {
@@ -101,6 +110,60 @@ namespace UnturnedGodot.Net
             _orderScratch = new int[_systems.Count];
         }
 
+        // ---- desync detection (hardening pass, Part C) ----
+        int _syncCheckIntervalTicks;   // 0 = off (default): the composed bytes are identical to pre-hardening
+        int[] _syncCheckIdx;           // indices into _systems of the checked (globally-mirrored) systems
+        long _syncHashCacheTick = -1;  // hashes are per-tick, not per-client -- compute once, reuse per peer
+        ulong[] _syncHashCache;
+
+        /// <summary>Enable the rolling state-hash block (desync detection): every intervalTicks the
+        /// snapshot gains one extra block (ReplicationIds.SystemSyncCheck) carrying each listed system's
+        /// StateHash() at this tick; SnapshotApplier compares them against the replicas after applying.
+        /// Only list systems every client mirrors COMPLETELY -- owner-only (skills/inventory) and
+        /// relevancy-filtered (zombies/world items) systems would false-alarm by design. The block is
+        /// additive: a client that doesn't know the id skips it (forward compat), and it is withheld
+        /// whenever any checked system's block was budget-skipped in the same compose (the replica is
+        /// intentionally stale then, not desynced).</summary>
+        public void EnableSyncCheck(int intervalTicks, params byte[] systemIds)
+        {
+            if (intervalTicks <= 0) throw new ArgumentOutOfRangeException(nameof(intervalTicks));
+            var idx = new List<int>();
+            foreach (byte id in systemIds)
+            {
+                int found = _systems.FindIndex(s => s.SystemId == id);
+                if (found < 0) throw new InvalidOperationException($"EnableSyncCheck: SystemId {id} is not registered on this composer");
+                idx.Add(found);
+            }
+            _syncCheckIntervalTicks = intervalTicks;
+            _syncCheckIdx = idx.ToArray();
+            _syncHashCache = new ulong[idx.Count];
+            _syncHashCacheTick = -1;
+        }
+
+        void WriteSyncCheckBlock(long serverTick, ulong includedMask, int maxBytes)
+        {
+            if (_syncCheckIntervalTicks <= 0 || serverTick % _syncCheckIntervalTicks != 0) return;
+            foreach (int idx in _syncCheckIdx)
+                if ((includedMask & (1UL << idx)) == 0) return;   // a checked block was withheld: replica is legitimately stale
+            if (_syncHashCacheTick != serverTick)
+            {
+                for (int i = 0; i < _syncCheckIdx.Length; i++) _syncHashCache[i] = _systems[_syncCheckIdx[i]].StateHash();
+                _syncHashCacheTick = serverTick;
+            }
+            int blockLen = 1 + _syncCheckIdx.Length * 9;   // count:8 + per entry systemId:8 + hash:64
+            if (_writer.writeByteIndex + 4 + blockLen > maxBytes) return;   // over budget this snapshot: just skip the check
+            _writer.WriteUInt8(ReplicationIds.SystemSyncCheck);
+            _writer.WriteUInt16((ushort)blockLen);
+            _writer.AlignToByte();
+            _writer.WriteUInt8((byte)_syncCheckIdx.Length);
+            for (int i = 0; i < _syncCheckIdx.Length; i++)
+            {
+                _writer.WriteUInt8(_systems[_syncCheckIdx[i]].SystemId);
+                _writer.WriteUInt64(_syncHashCache[i]);
+            }
+            Diag.SyncCheckBlocksWritten++;
+        }
+
         /// <summary>Wires this composer's ack piggyback into a CommandRegistry under AckCommandId. Kept as
         /// an explicit opt-in step (rather than baked into the constructor) so unit tests that only need
         /// Compose() directly can skip building a registry at all.</summary>
@@ -120,6 +183,13 @@ namespace UnturnedGodot.Net
         /// here too -- but only when the acked snapshot's recorded mask proves that system's block was in it.</summary>
         public void SetClientBaseline(ushort clientPlayerId, long baselineTick)
         {
+            // review L1: never accept an ack for a tick we haven't composed yet -- the delta math would
+            // treat the huge baseline as "nothing changed since" and the client would starve itself.
+            if (CurrentTick != null && baselineTick > CurrentTick())
+            {
+                Diag.FutureBaselineAcksRejected++;
+                return;
+            }
             var cs = StateFor(clientPlayerId);
             if (baselineTick <= cs.AckedTick) return;
             cs.AckedTick = baselineTick;
@@ -202,12 +272,14 @@ namespace UnturnedGodot.Net
                 _writer.AlignToByte();
                 if (blockLen > 0) _writer.WriteBytes(_scratch.buffer, 0, blockLen);
             }
+            WriteSyncCheckBlock(serverTick, includedMask, maxBytes);   // desync detection; no-op unless enabled
             _writer.Flush();
 
             cs.IncludedMask[serverTick] = includedMask;
             PruneMaskRecords(cs, serverTick);
 
             if (full) Diag.FullSnapshotsComposed++; else Diag.DeltaSnapshotsComposed++;
+            Diag.BytesComposed += _writer.writeByteIndex;
 
             var result = new byte[_writer.writeByteIndex];
             Buffer.BlockCopy(_writer.buffer, 0, result, 0, _writer.writeByteIndex);

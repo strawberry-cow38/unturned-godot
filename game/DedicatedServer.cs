@@ -34,9 +34,16 @@ namespace UnturnedGodot
 
         public override void _Ready()
         {
+            // net diagnostics (hardening Part B): route the engine-free NetLog through Godot so it lands in
+            // journald; OFF unless UG_NETLOG=1 or --netlog (zero overhead when off -- call sites are gated)
+            NetLog.Sink = s => GD.Print(s);
+            NetLog.ErrorSink = s => GD.PrintErr(s);
+            if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
+
             Server = new NetWorldServer(TransportOverride ?? new UdpServerTransport(Port),
                 (conn, reason, isError) => GD.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
                 contentHash: NetContent.Hash);   // §2.2: joiners with a different content identity are rejected
+            Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
             Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
             Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
             // Phase 6: the transactional slice's def tables -- the same DeployableDef/blueprint data every

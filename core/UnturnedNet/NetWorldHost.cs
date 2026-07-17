@@ -59,6 +59,7 @@ namespace UnturnedGodot.Net
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources });
+            Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
@@ -93,22 +94,18 @@ namespace UnturnedGodot.Net
                 Inventories.ServerAdd(peer.PlayerId, Session.CurrentTick);
                 // The join flow (MP_PLAN §4 Phase 4): Accept -> reliable FULL snapshot -> deltas. The full
                 // snapshot rides ReliableOrdered where fragmentation is safe (§2.2) -- a lost datagram
-                // retransmits instead of the client waiting out unreliable full-resends. Composed HERE so
-                // the joiner's own freshly-spawned avatar is inside it; the reliable-channel budget means a
-                // big world (many zombies) still fits the join snapshot whole.
-                var joinSnapshot = Composer.Compose(Session.CurrentTick, peer.PlayerId, e.Pos,
-                                                    maxBytes: NetProtocol.MaxReliableMessageBytes / 2);
-                peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventJoinSnapshot, w =>
-                {
-                    // explicit byteLen prefix: NetPakReader.RemainingSegmentLength is imprecise (the reader
-                    // pre-buffers 32-bit words), so like every other frame on this stack the payload carries
-                    // its own length
-                    w.WriteUInt16((ushort)joinSnapshot.Length);
-                    w.WriteBytes(joinSnapshot, 0, joinSnapshot.Length);
-                }, bufferSize: joinSnapshot.Length + 8));
+                // retransmits instead of the client waiting out unreliable full-resends. Composed in
+                // TickReplication (NOT here): PeerConnected fires mid-TickSimulation, and a snapshot
+                // composed here would miss anything else this same tick still mutates -- most concretely a
+                // SECOND same-tick joiner, whose entities are stamped with this very tick and therefore
+                // never make a later delta once this client acks it (found by the Part C desync detector:
+                // two simultaneous joiners each permanently missing the other's combat entity). §2.5's
+                // "replication send last" applies to the join snapshot too.
+                _pendingJoinSnapshots.Add(peer);
             };
             Session.PeerDisconnected += (peer, reason) =>
             {
+                _pendingJoinSnapshots.Remove(peer);   // joined and vanished within the same tick
                 VehicleHost.OnPeerDisconnected(peer.PlayerId);   // frees the seat BEFORE the player entity goes
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
@@ -123,6 +120,19 @@ namespace UnturnedGodot.Net
 
         // deterministic joins-in-a-row spacing so demo avatars don't spawn inside each other
         static Vector3 SpawnPosition(ushort playerId) => new Vector3(((playerId - 1) % 8) * 2f, 0f, 0f);
+
+        /// <summary>Turn on desync detection (hardening Part C): every intervalTicks the snapshot carries a
+        /// StateHash per globally-mirrored system (players / player-combat / projectiles / deployables /
+        /// vehicles / clock / crops / resources -- NOT the owner-only or relevancy-filtered ones, which
+        /// differ per client by design). Clients compare after applying and raise DesyncDetected on a
+        /// confirmed mismatch. Default cadence 50 = one check per second; the block is 74 bytes.</summary>
+        public void EnableSyncCheck(int intervalTicks = 50)
+        {
+            Composer.EnableSyncCheck(intervalTicks,
+                ReplicationIds.SystemPlayers, ReplicationIds.SystemPlayerCombat, ReplicationIds.SystemProjectiles,
+                ReplicationIds.SystemDeployables, ReplicationIds.SystemVehicles, ReplicationIds.SystemWorldClock,
+                ReplicationIds.SystemCrops, ReplicationIds.SystemResources);
+        }
 
         /// <summary>Reliable event to every connected peer (the event plane, §2.3).</summary>
         public void BroadcastEvent(byte[] message)
@@ -151,7 +161,48 @@ namespace UnturnedGodot.Net
             Combat.Step(Session.CurrentTick);
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
             Inventories.ServerCommitDirty(Session.CurrentTick);
+            if (NetLog.Enabled) LogRollupIfDue();
         }
+
+        // ---- net-diag traffic rollup (hardening Part B): one line per second aggregating the per-peer
+        // session counters + composer + command registry. Peers leaving take their counters with them, so
+        // each delta clamps at 0 rather than going negative across a disconnect. Zero cost unless NetLog
+        // is enabled (the call itself is gated). ----
+        long _lastRollupTick;
+        long _rlDgIn, _rlDgOut, _rlBytesIn, _rlBytesOut, _rlRetx, _rlUnkRej, _rlMalRej, _rlValRej,
+             _rlSnapFull, _rlSnapDelta, _rlSnapBytes, _rlSkips, _rlReasmDrop;
+
+        void LogRollupIfDue()
+        {
+            if (Session.CurrentTick - _lastRollupTick < NetProtocol.TicksPerSecond) return;
+            _lastRollupTick = Session.CurrentTick;
+
+            long dgIn = 0, dgOut = 0, bytesIn = 0, bytesOut = 0, retx = 0, reasmDrop = 0;
+            foreach (var peer in Session.Peers)
+            {
+                var d = peer.Session.Diag;
+                dgIn += d.DatagramsReceived; dgOut += d.DatagramsSent;
+                bytesIn += d.BytesReceived; bytesOut += d.BytesSent;
+                retx += d.ReliableRetransmits;
+                reasmDrop += d.ReassemblyOverflowDropped + d.ReassemblyEvicted;
+            }
+            long D(long cur, ref long prev) { long delta = System.Math.Max(0, cur - prev); prev = cur; return delta; }
+
+            NetLog.Sink($"[NET] 1s: peers {Session.Peers.Count} (half-open {Session.HalfOpenCount})" +
+                        $" | pkts in {D(dgIn, ref _rlDgIn)} out {D(dgOut, ref _rlDgOut)}" +
+                        $" | bytes in {D(bytesIn, ref _rlBytesIn)} out {D(bytesOut, ref _rlBytesOut)}" +
+                        $" | retx {D(retx, ref _rlRetx)}" +
+                        $" | cmd rej unk {D(Commands.Diag.UnknownIdRejected, ref _rlUnkRej)}" +
+                        $" mal {D(Commands.Diag.MalformedRejected, ref _rlMalRej)}" +
+                        $" val {D(Commands.Diag.ValidationRejected, ref _rlValRej)}" +
+                        $" | snaps full {D(Composer.Diag.FullSnapshotsComposed, ref _rlSnapFull)}" +
+                        $" delta {D(Composer.Diag.DeltaSnapshotsComposed, ref _rlSnapDelta)}" +
+                        $" bytes {D(Composer.Diag.BytesComposed, ref _rlSnapBytes)}" +
+                        $" skips {D(Composer.Diag.OversizedBlocksSkipped, ref _rlSkips)}" +
+                        $" | reasm drops {D(reasmDrop, ref _rlReasmDrop)}");
+        }
+
+        readonly System.Collections.Generic.List<NetPeer> _pendingJoinSnapshots = new System.Collections.Generic.List<NetPeer>();
 
         /// <summary>Compose + send snapshots. Registered LAST on the tick so it captures this tick's final
         /// state; viewPos is the owning player's position (the §2.6 interest hook, policy AllRelevant v1).
@@ -160,6 +211,27 @@ namespace UnturnedGodot.Net
         /// ack -- the join path is reliable BY CONSTRUCTION, not by racing the unreliable stream.</summary>
         public void TickReplication()
         {
+            // this tick's joiners get their reliable FULL snapshot first -- composed here, after ALL of the
+            // tick's mutation, so acking its tick really does mean "I have everything through that tick"
+            if (_pendingJoinSnapshots.Count > 0)
+            {
+                foreach (var peer in _pendingJoinSnapshots)
+                {
+                    Vector3 spawnPos = Players.TryGetByOwner(peer.PlayerId, out var pe) ? pe.Pos : Vector3.zero;
+                    var joinSnapshot = Composer.Compose(Session.CurrentTick, peer.PlayerId, spawnPos,
+                                                        maxBytes: NetProtocol.MaxReliableMessageBytes / 2);
+                    peer.SendReliable(NetMessagePak.Pack(ReplicationIds.EventJoinSnapshot, w =>
+                    {
+                        // explicit byteLen prefix: NetPakReader.RemainingSegmentLength is imprecise (the
+                        // reader pre-buffers 32-bit words), so like every other frame on this stack the
+                        // payload carries its own length
+                        w.WriteUInt16((ushort)joinSnapshot.Length);
+                        w.WriteBytes(joinSnapshot, 0, joinSnapshot.Length);
+                    }, bufferSize: joinSnapshot.Length + 8));
+                }
+                _pendingJoinSnapshots.Clear();
+            }
+
             if (SnapshotDivisorTicks > 1 && (Session.CurrentTick % SnapshotDivisorTicks) != 0) return;
             foreach (var peer in Session.Peers)
             {
@@ -240,6 +312,10 @@ namespace UnturnedGodot.Net
         public event System.Action<ResourceHarvestedEvent> ResourceHarvested;
         public event System.Action<ResourceRespawnedEvent> ResourceRespawned;
 
+        /// <summary>Hardening Part C: a confirmed replica-vs-server StateHash mismatch (the server must
+        /// have EnableSyncCheck on; silent otherwise). The game shell surfaces this to the player.</summary>
+        public event System.Action<DesyncReport> DesyncDetected;
+
         ushort _inputSeq;
         ushort _combatSeq;
 
@@ -249,6 +325,7 @@ namespace UnturnedGodot.Net
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                     Skills, Deployables, Inventories, WorldItems,
                                                                     Vehicles, Clock, Crops, Resources });
+            Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
                 if (!reader.ReadUInt16(out ushort len) || len == 0) return;

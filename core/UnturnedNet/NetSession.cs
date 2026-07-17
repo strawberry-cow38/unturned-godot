@@ -23,6 +23,10 @@ namespace UnturnedGodot.Net
         public long UnreliableDelivered;
         public long StaleUnreliableDropped;
         public long WriterErrors;               // datagram compose overflowed the MTU budget (a bug if ever nonzero)
+        public long BytesSent;                  // datagram bytes out (accepted datagrams only)
+        public long BytesReceived;              // datagram bytes in (valid header + matching version only)
+        public long ReassemblyOverflowDropped;  // fragments refused past MaxReassemblyBufferBytes (review M1)
+        public long ReassemblyEvicted;          // incomplete messages evicted past ReassemblyTtlTicks (review M1)
     }
 
     /// <summary>
@@ -109,12 +113,22 @@ namespace UnturnedGodot.Net
             public int FragCount;
             public int ReceivedCount;
             public byte[][] Frags;
+            public long FirstFragTick;   // TTL anchor (review M1); deliberately NOT refreshed per fragment
+            public int BufferedBytes;    // stored payload bytes, subtracted from the session total on removal
         }
         ushort _nextDeliverMsgId;
         readonly Dictionary<ushort, InMessage> _reassembly = new Dictionary<ushort, InMessage>();
         readonly Queue<byte[]> _reliableRecvQueue = new Queue<byte[]>();
+        int _reassemblyBytes;
 
         public int ReassemblyCount => _reassembly.Count;
+        public int ReassemblyBufferedBytes => _reassemblyBytes;
+
+        /// <summary>Latched when this peer's reliable buffering broke the M1 budget (fragment refused past
+        /// MaxReassemblyBufferBytes, or an incomplete message evicted past ReassemblyTtlTicks). The channel
+        /// may have lost acked data at that point, so the session is unrecoverable by design -- the owner
+        /// (NetServerSession.Tick) kicks flagged peers. Never set by legit traffic.</summary>
+        public bool ReassemblyBudgetExceeded { get; private set; }
 
         // ---- unreliable-sequenced: receive side ----
         ushort _lastUnreliableSeq; // 0 = none seen (datagram seq 0 is never sent)
@@ -156,6 +170,7 @@ namespace UnturnedGodot.Net
             }
 
             Diag.DatagramsReceived++;
+            Diag.BytesReceived += length;
             _lastReceiveTick = _now;
             RegisterRemoteSeq(h.Seq);
             ProcessAcks(h.Ack, h.AckBits);
@@ -214,22 +229,59 @@ namespace UnturnedGodot.Net
 
             if (!_reassembly.TryGetValue(msgId, out var msg))
             {
-                msg = new InMessage { FragCount = fragCount, Frags = new byte[fragCount][] };
+                msg = new InMessage { FragCount = fragCount, Frags = new byte[fragCount][], FirstFragTick = _now };
                 _reassembly[msgId] = msg;
             }
             if (msg.FragCount != fragCount) { Diag.MalformedDropped++; return; }
             if (msg.Frags[fragIdx] != null) { Diag.DuplicateFragmentsDropped++; return; }
+            // review M1: hard cap on total buffered reassembly bytes. The datagram was already acked at
+            // the header layer, so a refused fragment is lost for good -- which is why this latches the
+            // session as broken (the server kicks it) instead of pretending the channel still works.
+            if (_reassemblyBytes + len > NetProtocol.MaxReassemblyBufferBytes)
+            {
+                Diag.ReassemblyOverflowDropped++;
+                ReassemblyBudgetExceeded = true;
+                return;
+            }
             msg.Frags[fragIdx] = payload;
             msg.ReceivedCount++;
+            msg.BufferedBytes += len;
+            _reassemblyBytes += len;
 
             // in-order delivery: drain every consecutive complete message starting at the window head
             while (_reassembly.TryGetValue(_nextDeliverMsgId, out var head) && head.ReceivedCount == head.FragCount)
             {
                 _reliableRecvQueue.Enqueue(Assemble(head));
                 _reassembly.Remove(_nextDeliverMsgId);
+                _reassemblyBytes -= head.BufferedBytes;
                 _nextDeliverMsgId++;
                 Diag.ReliableMessagesDelivered++;
             }
+        }
+
+        // review M1: an incomplete message the peer hasn't finished within the TTL is evicted (its
+        // fragments were acked, so it can never legitimately complete after this -- latch the session).
+        // The dictionary is empty/tiny for healthy peers, so the per-tick sweep is effectively free.
+        List<ushort> _evictScratch;
+        void EvictStaleReassembly()
+        {
+            if (_reassembly.Count == 0) return;
+            foreach (var kv in _reassembly)
+            {
+                // complete messages are only parked here waiting for the window head -- they deliver, not rot
+                if (kv.Value.ReceivedCount == kv.Value.FragCount) continue;
+                if (_now - kv.Value.FirstFragTick < NetProtocol.ReassemblyTtlTicks) continue;
+                (_evictScratch ??= new List<ushort>()).Add(kv.Key);
+            }
+            if (_evictScratch == null || _evictScratch.Count == 0) return;
+            foreach (ushort msgId in _evictScratch)
+            {
+                _reassemblyBytes -= _reassembly[msgId].BufferedBytes;
+                _reassembly.Remove(msgId);
+                Diag.ReassemblyEvicted++;
+                ReassemblyBudgetExceeded = true;
+            }
+            _evictScratch.Clear();
         }
 
         static byte[] Assemble(InMessage msg)
@@ -395,6 +447,7 @@ namespace UnturnedGodot.Net
         public void Tick(long now)
         {
             if (now > _now) _now = now;
+            EvictStaleReassembly();
             RetransmitDueFragments();
             if (KeepAliveEnabled)
             {
@@ -520,6 +573,7 @@ namespace UnturnedGodot.Net
             }
             _send(_writer.buffer, _writer.writeByteIndex);
             Diag.DatagramsSent++;
+            Diag.BytesSent += _writer.writeByteIndex;
             _lastSendTick = _now;
             _ackReliablePending = false; // every datagram carries current ack/ackBits
         }

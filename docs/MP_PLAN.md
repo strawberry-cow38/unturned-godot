@@ -229,4 +229,42 @@ Ordering rationale: 1–4 are the architecture-critical decisions running as cod
 
 ---
 
+## 7. Status + security posture (updated 2026-07-17, mp-hardening pass)
+
+**All 8 phases are shipped and live on `main`**; the dedicated server runs on claw.bitvox.me (UDP 47872).
+A lean hardening pass then addressed the adversarial review (`mp-hardening` branch):
+
+- **H1 connect flood** — `NetServerSession` caps concurrent *half-open* sessions (admitted but never heard
+  from past the initial Connect — what a spoofed-source blast produces) at 8, and caps live sessions per
+  source IP at 8 (both ctor-tunable). Over-cap Connects get the existing `ServerFull` reject — zero wire
+  change. Note: the handshake completes in one datagram, so a stateless cookie (deliberately NOT built —
+  test-server scope) is what full spoofing resistance would take.
+- **M1 reliable reassembly** — per-session cap on buffered fragment bytes (`MaxReassemblyBufferBytes`,
+  ~1.2 MB = 4× max message) + a 10 s TTL on incomplete messages; either violation latches the session and
+  the server kicks it (`ReassemblyBudgetExceeded`). Legit traffic can't come close to the cap.
+- **L1 baseline ack** — `SnapshotComposer.SetClientBaseline` rejects acks claiming a future tick (a client
+  acking `0xFFFFFFFF` used to starve its own deltas permanently).
+- **L2 playerId wrap** — the id mint skips 0 (the "none" sentinel) and ids still held by live peers.
+- **Join-tick race (found by the desync detector)** — join snapshots now compose in `TickReplication`,
+  after ALL of the tick's mutation; previously two same-tick joiners each permanently missed the other's
+  combat entity (state stamped with the join tick was suppressed by the joiner's own ack of that tick).
+- **Desync detection** — `SnapshotComposer.EnableSyncCheck` (on for the dedicated server, 1 Hz) appends a
+  per-system `StateHash` block (`SystemSyncCheck` = 255, additive/skippable) for the globally-mirrored
+  systems; `SnapshotApplier` compares after applying and raises `DesyncDetected` after 2 consecutive
+  mismatched checks. Client shell logs it and banners the player.
+- **Net diagnostics** — `NetLog` (off by default): `UG_NETLOG=1` or `--netlog`. Connection lifecycle,
+  command rejects with sender, 1 Hz traffic rollups, reassembly/flood kicks, desync reports.
+
+**Deliberate deferrals (TEST-SERVER posture — revisit before any public/untrusted hosting):**
+
+- **Console cheats are ON** (`give`/`xp`/`skill` for every client) — intentionally, for testing;
+  `UG_DEDICATED_NOCHEATS=1` turns them off without a code change (review C1). A per-connection admin
+  allowlist is future work.
+- **M2 deployable ownership** — salvage/wire/toggle validate reach only, not `OwnerPlayerId`: on a
+  friendly co-op server, editing each other's bases is a feature. Gate these three validators on
+  owner/group before public play (`// TODO(mp-security)` markers in `ServerTransactions.Register`).
+- **No connect cookie / HMAC challenge**, no encryption, no auth — per §5's deferred list.
+
+---
+
 *Written 2026-07-16 against `main` @ 239176b. Review forks: §2.1 (headless-Godot server), §2.2 (session-layer reliability), §2.5 (predict+correct v1), §3.6 (no driver prediction v1), §4 (phase order). Everything else is load-bearing detail that follows from those five calls.*

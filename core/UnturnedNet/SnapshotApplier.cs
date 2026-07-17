@@ -11,6 +11,20 @@ namespace UnturnedGodot.Net
         public long DeltaSnapshotsApplied;
         public long UnknownSystemBlocksSkipped; // forward-compat proof: a systemId this client build doesn't know
         public long TruncatedSnapshotsDropped;  // the header or a block's declared length ran past the buffer
+        public long SyncChecksPassed;           // hash blocks where every checked replica matched the server
+        public long SyncChecksFailed;           // hash blocks with at least one mismatching system
+    }
+
+    /// <summary>One confirmed replica-vs-server hash mismatch (desync detection, hardening Part C).</summary>
+    public struct DesyncReport
+    {
+        public long ServerTick;   // the tick both hashes describe
+        public byte SystemId;     // which system diverged
+        public ulong ServerHash;
+        public ulong ClientHash;
+
+        public override string ToString()
+            => $"desync at server tick {ServerTick}: system {SystemId} server hash {ServerHash:x16} != client hash {ClientHash:x16}";
     }
 
     /// <summary>
@@ -32,6 +46,15 @@ namespace UnturnedGodot.Net
         /// echoes back as its ack (see SnapshotComposer.AckCommandId).</summary>
         public long LastAppliedServerTick { get; private set; }
         public bool LastAppliedWasFull { get; private set; }
+
+        /// <summary>Fired when DesyncConfirmChecks CONSECUTIVE sync-check blocks mismatched -- once per
+        /// mismatching system of the confirming check. The threshold (default 2) absorbs the benign
+        /// one-check race where a reliable event overtakes an earlier-composed snapshot on the wire; a real
+        /// desync persists and keeps re-confirming. Costs nothing unless the server enabled sync checks.</summary>
+        public event Action<DesyncReport> DesyncDetected;
+        public int DesyncConfirmChecks = 2;
+        int _consecutiveMismatchedChecks;
+        readonly List<DesyncReport> _mismatchScratch = new List<DesyncReport>();
 
         public SnapshotApplier(IEnumerable<IReplicatedSystem> systems)
         {
@@ -72,7 +95,12 @@ namespace UnturnedGodot.Net
                     return false; // declared length ran past the buffer -- corrupt, not merely "unknown"
                 }
 
-                if (_bySystemId.TryGetValue(systemId, out var system))
+                if (systemId == ReplicationIds.SystemSyncCheck)
+                {
+                    // composed LAST by the server, so every state block of this snapshot is applied by now
+                    ProcessSyncCheck(block, byteLen, tick);
+                }
+                else if (_bySystemId.TryGetValue(systemId, out var system))
                 {
                     var blockReader = new NetPakReader();
                     blockReader.SetBufferSegment(block, byteLen);
@@ -89,6 +117,46 @@ namespace UnturnedGodot.Net
             Diag.SnapshotsApplied++;
             if (full) Diag.FullSnapshotsApplied++; else Diag.DeltaSnapshotsApplied++;
             return true;
+        }
+
+        // One sync-check block (desync detection): count:8 then (systemId:8 + serverHash:64) per checked
+        // system. Compare each server hash against the local replica's StateHash for the same tick; a
+        // system this build doesn't register is skipped like any unknown block content.
+        void ProcessSyncCheck(byte[] block, int byteLen, uint serverTick)
+        {
+            var r = new NetPakReader();
+            r.SetBufferSegment(block, byteLen);
+            if (!r.ReadUInt8(out byte count)) return;
+            _mismatchScratch.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                if (!r.ReadUInt8(out byte systemId) || !r.ReadUInt64(out ulong serverHash)) return;
+                if (!_bySystemId.TryGetValue(systemId, out var system)) continue;
+                ulong clientHash = system.StateHash();
+                if (clientHash != serverHash)
+                    _mismatchScratch.Add(new DesyncReport
+                    {
+                        ServerTick = serverTick,
+                        SystemId = systemId,
+                        ServerHash = serverHash,
+                        ClientHash = clientHash,
+                    });
+            }
+
+            if (_mismatchScratch.Count == 0)
+            {
+                Diag.SyncChecksPassed++;
+                _consecutiveMismatchedChecks = 0;
+                return;
+            }
+            Diag.SyncChecksFailed++;
+            if (++_consecutiveMismatchedChecks < DesyncConfirmChecks) return;
+            _consecutiveMismatchedChecks = 0;   // keep re-confirming (and re-alerting) while diverged
+            foreach (var report in _mismatchScratch)
+            {
+                if (NetLog.Enabled) NetLog.Warn(report.ToString());
+                DesyncDetected?.Invoke(report);
+            }
         }
     }
 }

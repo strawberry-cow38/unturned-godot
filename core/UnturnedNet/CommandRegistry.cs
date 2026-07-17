@@ -52,8 +52,18 @@ namespace UnturnedGodot.Net
         {
             Register(commandId, (reader, sender) =>
             {
-                if (!tryRead(reader, out T cmd)) { Diag.MalformedRejected++; return; }
-                if (validate != null && !validate(sender, cmd)) { Diag.ValidationRejected++; return; }
+                if (!tryRead(reader, out T cmd))
+                {
+                    Diag.MalformedRejected++;
+                    if (NetLog.Enabled) NetLog.Warn($"cmd {commandId} ({typeof(T).Name}) from player {sender} rejected: malformed payload");
+                    return;
+                }
+                if (validate != null && !validate(sender, cmd))
+                {
+                    Diag.ValidationRejected++;
+                    if (NetLog.Enabled) NetLog.Info($"cmd {commandId} ({typeof(T).Name}) from player {sender} rejected: validation refused");
+                    return;
+                }
                 apply(sender, cmd);
             });
         }
@@ -66,7 +76,12 @@ namespace UnturnedGodot.Net
         {
             if (data == null || data.Length < 1) { Diag.MalformedRejected++; return false; }
             byte commandId = data[0];
-            if (!_handlers.TryGetValue(commandId, out var handler)) { Diag.UnknownIdRejected++; return false; }
+            if (!_handlers.TryGetValue(commandId, out var handler))
+            {
+                Diag.UnknownIdRejected++;
+                if (NetLog.Enabled) NetLog.Warn($"cmd {commandId} from player {senderPlayerId} rejected: unknown command id");
+                return false;
+            }
 
             var reader = new NetPakReader();
             reader.SetBufferSegment(data, data.Length);
@@ -78,11 +93,12 @@ namespace UnturnedGodot.Net
                 handler(reader, senderPlayerId);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
                 // The one seam untrusted client bytes cross into game logic: a handler bug on a fuzzed
                 // payload must drop the command, not take the server down.
                 Diag.HandlerExceptionsCaught++;
+                if (NetLog.Enabled) NetLog.Warn($"cmd {commandId} from player {senderPlayerId} handler threw {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
         }
