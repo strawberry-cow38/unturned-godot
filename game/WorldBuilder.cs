@@ -233,26 +233,8 @@ namespace UnturnedGodot
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped} (active={activeHoliday})");
 
-            // PEI's REAL regular spawn points (Spawns/Players.dat = u8 ver, u8 count, per point Vector3 + u8 angle*2
-            // + bool isAlt if v>3; source LevelPlayers.getSpawn picks a random NON-alt spawn). Shared parse: Playable
-            // spawns the local player on one; Client hovers the C1 overhead cam over one (PEI_CLIENT_PLAN §3 C1).
-            System.Collections.Generic.List<(float x, float z, float yaw)> LoadRegularSpawns()
-            {
-                var regs = new System.Collections.Generic.List<(float x, float z, float yaw)>();
-                string ppath = mapRoot + "/Spawns/Players.dat";
-                if (!System.IO.File.Exists(ppath)) return regs;
-                var pd = System.IO.File.ReadAllBytes(ppath); int pp = 0;
-                byte pver = pd[pp++]; byte pcount = pd[pp++];
-                for (int i = 0; i < pcount; i++)
-                {
-                    float px = System.BitConverter.ToSingle(pd, pp); pp += 8;   // point.x (skip point.y)
-                    float pz = System.BitConverter.ToSingle(pd, pp); pp += 4;   // point.z
-                    float pang = pd[pp++] * 2f;
-                    bool isAlt = pver > 3 && pd[pp++] != 0;
-                    if (!isAlt) regs.Add((px, -pz, -pang));   // regular spawn -> port negate-Z, negate yaw
-                }
-                return regs;
-            }
+            // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static
+            // so the dedicated server's SpawnProvider reads the SAME points -- behavior-identical here).
             // ROADS + FOLIAGE + TREES -- ONE extraction shared verbatim by Playable and Client (PEI_CLIENT_PLAN §3
             // C1: call-site-identical for Playable -- same order, same params, same RNG -- so SP stays byte-identical).
             async System.Threading.Tasks.Task BuildRoadsFoliageTrees()
@@ -286,11 +268,11 @@ namespace UnturnedGodot
                 await Phase("Player");
                 // menu "Drive PEI": drop the player + jeep on open grass with REAL controls (WASD + mouse look, F to enter/drive the jeep)
                 float sx = 0f, sz = -350f, spawnYaw = 0f;
-                // player spawn: a random regular Spawns/Players.dat point (shared parse above, source LevelPlayers.getSpawn).
+                // player spawn: a random regular Spawns/Players.dat point (shared parse, source LevelPlayers.getSpawn).
                 // Falls back to the inland-grass scan if the file's missing/empty.
                 bool gotSpawn = false;
                 {
-                    var regs = LoadRegularSpawns();
+                    var regs = LevelSpawns.PlayerSpawns(mapRoot);
                     if (regs.Count > 0) { var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)]; sx = pick.x; sz = pick.z; spawnYaw = pick.yaw; gotSpawn = true; }
                 }
                 if (!gotSpawn)   // fallback: most-inland grass
@@ -504,7 +486,7 @@ namespace UnturnedGodot
                 // by the client views. No local player, no camera (Main.BuildClient owns the C1 overhead cam),
                 // no local-authority spawns -- and the aerial else-branch below must NOT fire here.
                 await BuildRoadsFoliageTrees();
-                var regs = LoadRegularSpawns();
+                var regs = LevelSpawns.PlayerSpawns(mapRoot);
                 if (regs.Count > 0)
                 {
                     var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)];

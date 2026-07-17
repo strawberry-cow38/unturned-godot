@@ -94,10 +94,17 @@ namespace UnturnedGodot.Net
     /// </summary>
     public struct MoveInput
     {
+        // v2 buttons bitfield (PEI_CLIENT_PLAN §3 C2): bit 0 = jump; bits 1-7 headroom (sprint/crouch/prone
+        // ride here when stance goes over the wire). Adding a bit is NOT a wire break; widening the field is.
+        public const byte ButtonJump = 1 << 0;
+
         public ushort Seq;        // client-local, monotonically increasing (wrap-around via NetSeq)
         public float MoveX;       // strafe axis [-1,1] (quantized to 8 bits on the wire)
         public float MoveY;       // forward axis [-1,1]
         public float YawDegrees;  // facing, wrapped into [0,360) by the wire encoding
+        public byte Buttons;      // v2: held-button bits (ButtonJump | ...)
+
+        public bool Jump => (Buttons & ButtonJump) != 0;
 
         public void Write(NetPakWriter w)
         {
@@ -105,6 +112,7 @@ namespace UnturnedGodot.Net
             w.WriteSignedNormalizedFloat(Clamp1(MoveX), 8);
             w.WriteSignedNormalizedFloat(Clamp1(MoveY), 8);
             w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
+            w.WriteUInt8(Buttons);   // v2 (NetProtocol.Version 3): the buttons byte -- v2 peers version-reject before ever parsing this
         }
 
         public static bool TryRead(NetPakReader r, out MoveInput cmd)
@@ -114,7 +122,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadSignedNormalizedFloat(8, out float mx)) return false;
             if (!r.ReadSignedNormalizedFloat(8, out float my)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
-            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw };
+            if (!r.ReadUInt8(out byte buttons)) return false;
+            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons };
             return true;
         }
 
@@ -151,6 +160,9 @@ namespace UnturnedGodot.Net
             // SP-loopback local player, MP_PLAN §4 Phase 4) steps the REAL sim-core + physics and writes
             // the result here; the internal flat-ground integration must not fight it.
             internal bool ExternallyDriven;
+            /// <summary>Read-only view for game-side drivers (C2 PlayerNetSync must not adopt an entity
+            /// another shell already ServerDrives -- double-driving the seam would fight over it).</summary>
+            public bool IsExternallyDriven => ExternallyDriven;
         }
 
         public byte SystemId => ReplicationIds.SystemPlayers;
@@ -205,6 +217,17 @@ namespace UnturnedGodot.Net
             if (!_netIdByOwner.TryGetValue(ownerPlayerId, out uint id)) return;
             _netIdByOwner.Remove(ownerPlayerId);
             if (_players.Remove(new NetId(id))) _removedAtTick[id] = tick;
+        }
+
+        /// <summary>The peer's currently-held MoveInput (the held-keys model's latest). False when none is
+        /// held -- never received one yet, or cleared by death/vehicle-enter (ServerClearInput). This is the
+        /// C2 seam PlayerNetSync reads each tick to drive the server avatar body.</summary>
+        public bool TryGetHeldInput(ushort ownerPlayerId, out MoveInput input)
+        {
+            input = default;
+            if (!TryGetByOwner(ownerPlayerId, out var e) || !e.HasInput) return false;
+            input = e.CurrentInput;
+            return true;
         }
 
         /// <summary>Latest-wins input queue: MoveInput rides UnreliableSequenced, so a reordered stale

@@ -45,6 +45,11 @@ namespace UnturnedGodot.Net
 
         public int SnapshotDivisorTicks = 2; // 25 Hz at the 50 Hz tick (MP_PLAN §2.5)
 
+        /// <summary>Where a joining peer's player entity spawns (PEI_CLIENT_PLAN §3 C2). Defaults to the
+        /// demo origin line so every existing test/demo world is byte-untouched; the dedicated server
+        /// overrides it with real Spawns/Players.dat points at terrain height.</summary>
+        public System.Func<ushort, Vector3> SpawnProvider = SpawnPosition;
+
         /// <summary>XP per credited kill (the §3.2 award hook, wired through ServerCombat.KillCredited).
         /// Default 0 = award nothing, because the SP port awards no kill XP yet either -- MP must not
         /// out-reward the direct path. Bump both together when kill XP lands in SP.</summary>
@@ -85,7 +90,7 @@ namespace UnturnedGodot.Net
 
             Session.PeerConnected += peer =>
             {
-                var spawn = SpawnPosition(peer.PlayerId);
+                var spawn = SpawnProvider(peer.PlayerId);
                 var e = Players.ServerSpawn(Ids.Mint(), peer.PlayerId, spawn, Session.CurrentTick);
                 CombatState.ServerAdd(peer.PlayerId, e.Pos, Combat.GunFor(peer.PlayerId).MagCapacity, Session.CurrentTick);
                 // Phase 6 per-player authoritative state -- added BEFORE the join snapshot composes below,
@@ -412,11 +417,12 @@ namespace UnturnedGodot.Net
         bool ApplySnapshot(byte[] data, int length) => Applier.Apply(data, length);
 
         /// <summary>Send this tick's movement intent; returns the input seq (0 = not connected, nothing
-        /// sent) so the shell can record its prediction under the same seq.</summary>
-        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees)
+        /// sent) so the shell can record its prediction under the same seq. buttons = the v2 held-button
+        /// bits (MoveInput.ButtonJump | ...).</summary>
+        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0)
         {
             if (Session.State != NetSessionState.Connected) return 0;
-            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees };
+            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons };
             if (_inputSeq == 0) cmd.Seq = ++_inputSeq;   // seq 0 is the reconciler's "none" sentinel; skip it on wrap
             Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandMoveInput, cmd.Write));
             return cmd.Seq;

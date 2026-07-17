@@ -617,6 +617,108 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // PEI_CLIENT_PLAN §3 Phase C2: server players live on REAL collision, not the flat demo integration.
+    // A dedicated world (fallback ground) with RemoteAvatars on gets a ramp placed in the walker's path;
+    // a remote client joins and (a) holds the MoveInput v2 JUMP bit standing still -- the replicated Y
+    // leaves the ground (the buttons byte drives the body), then (b) walks forward up the ramp -- the
+    // replicated Y climbs it. Both are impossible under IntegrateFlat, which never changes Y. The ack loop
+    // must stay honest (LastProcessedInputSeq flows through ServerDrive), and the run must be DESYNC-QUIET:
+    // the hardening Part C detector (EnableSyncCheck, on for every DedicatedServer) watches a full
+    // snapshot-applying client across the whole real-collision run and must never fire.
+    public class NetServerAvatarTerrain : GameTest
+    {
+        public override string Name => "net.server_avatar_terrain";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            // the ramp: real collision the flat demo integration cannot see. 18 deg (under the shell's 55
+            // FloorMaxAngle), 12 m wide so wire-grid drift still lands on it; its near edge is buried below
+            // the fallback ground (top face crosses y=0 around z~4.7) so the walker strolls straight on.
+            var ramp = new StaticBody3D { CollisionLayer = 1u << 0, Position = new Vector3(0f, 2.5f, 14f), RotationDegrees = new Vector3(-18f, 0f, 0f) };
+            ramp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 1f, 24f) } });
+            World.AddChild(ramp);
+
+            var net = new MemNetwork(20260718);
+            var walker = new NetWorldClient(new MemClientTransport(net), "climber", contentHash: NetContent.Hash);
+            bool desynced = false;
+            walker.DesyncDetected += _ => desynced = true;
+            bool sendInput = false; float fwd = 0f; byte buttons = 0;
+            var pump = new DelegateSimStep((t, dt) =>
+            {
+                net.Tick(); walker.Tick();
+                // yaw 180: the avatar NODE's forward (-Z at yaw 0) turns to +Z -- into the ramp
+                if (sendInput) walker.SendMoveInput(0f, fwd, 180f, buttons);
+            }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + player sync + replicate stay after/LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            walker.Connect();
+
+            yield return Until(() => walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1, 5);
+            T.Check("walker joined (join snapshot applied)", walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1);
+            yield return Until(() => ded.PlayerSync.TrackedCount == 1, 5);
+            bool haveBody = ded.PlayerSync.TryGetBody(walker.PlayerId, out var body);
+            T.Check("a NetAvatar PlayerController body spawned for the remote peer", haveBody && body.NetAvatar);
+            T.Check("the avatar registered in PlayerRegistry (zombie/loot streaming compat)", PlayerRegistry.Count == 1);
+
+            // (a) JUMP standing still: the v2 buttons bit -> ScriptedJump -> the body leaves the ground.
+            // JUMP=7 under 3x gravity peaks ~0.83 m; IntegrateFlat would hold y at exactly 0 forever.
+            sendInput = true; fwd = 0f; buttons = MoveInput.ButtonJump;
+            float jumpMaxY = float.MinValue;
+            for (int i = 0; i < 100; i++)
+            {
+                yield return Ticks(1);
+                if (walker.Players.TryGetByOwner(walker.PlayerId, out var j)) jumpMaxY = Mathf.Max(jumpMaxY, j.Pos.y);
+            }
+            T.Check($"the jump bit drove the body off the ground (replicated peak y {jumpMaxY:0.00})", jumpMaxY > 0.4f);
+
+            // land + settle so no ballistic hop can contaminate the ramp measurement
+            buttons = 0;
+            yield return Ticks(60);
+            walker.Players.TryGetByOwner(walker.PlayerId, out var settled);
+            T.Check($"back on the ground after the hops (y {settled?.Pos.y:0.00})", settled != null && settled.Pos.y < 0.2f);
+
+            // (b) walk forward up the ramp: replicated Y must RISE above the ramp base -- impossible under
+            // IntegrateFlat -- while the input-seq ack keeps flowing through the ServerDrive write-back
+            float rampMaxY = float.MinValue, finalZ = 0f; ushort ackSeq = 0;
+            fwd = 1f;
+            for (int i = 0; i < 250; i++)
+            {
+                yield return Ticks(1);
+                if (walker.Players.TryGetByOwner(walker.PlayerId, out var m))
+                {
+                    rampMaxY = Mathf.Max(rampMaxY, m.Pos.y);
+                    finalZ = m.Pos.z;
+                    ackSeq = m.LastProcessedInputSeq;
+                }
+            }
+            T.Check($"replicated Y climbed the ramp (peak y {rampMaxY:0.00} m)", rampMaxY > 1.5f);
+            T.Check($"the body physically advanced (z {finalZ:0.0} m)", finalZ > 6f);
+            T.Check($"input seqs acked through the ServerDrive write-back (seq {ackSeq})", ackSeq > 0);
+
+            // settle to exact parity (held-keys: explicit stop, then input-QUIET so the last snapshots flush)
+            fwd = 0f;
+            yield return Ticks(40);
+            sendInput = false;
+            yield return Ticks(60);
+            T.Check("players replica == server (StateHash parity)", walker.Players.StateHash() == ded.Server.Players.StateHash());
+            // the C2 promise (PEI_CLIENT_PLAN §3 C2 verify): real-collision server movement produces state
+            // clients CONVERGE to -- the Part C runtime detector stayed silent across the whole run
+            T.Check("DESYNC-QUIET: zero DesyncDetected across the real-collision avatar run", !desynced);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            walker.Disconnect();
+        }
+    }
+
     // PEI_CLIENT_PLAN §3 Phase C1: a joined client assembles its world through the ONE WorldBuilder path
     // in the new Client mode -- and that mode must stay pure scenery+physics: no local PlayerController,
     // no ZombieField, no local-authority spawns. On a missing map the contract is FAIL-FAST (Terr == null,

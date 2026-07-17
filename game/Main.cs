@@ -1923,6 +1923,7 @@ namespace UnturnedGodot
                     noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
                 AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
                     DayNight = res.DayNight, Resources = res.Resources, MapRoot = _mapRoot,          // Phase 8: tick-derived clock + resource bitmap + nav-pocket relevancy cells (§3.7/§2.6)
+                    RemoteAvatars = true,                                                            // C2: remote peers get real avatar bodies (real spawns/collision/jump) on this world
                     AllowCheats = System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1" });   // test server: give/xp/skill console cheats ON (useful for testing); set UG_DEDICATED_NOCHEATS=1 to lock them off, no code change (review C1 toggle)
                 _worldReady = res.Ready;
                 GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {NetPort}");

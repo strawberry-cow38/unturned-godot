@@ -940,6 +940,7 @@ namespace UnturnedGodot
         // Leg-breaking (source breakLegs) is now gated by worn clothing's Prevents_Falling_Broken_Bones (PlayerLife:2436) -- WIRED.
         void CheckFallDamage(float verticalVel)
         {
+            if (NetAvatar) return;   // v1 invulnerability (see TakeDamage) -- and a broken-legs flag would silently eat the wire's jump bit
             if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
             Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
             int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
@@ -1086,6 +1087,16 @@ namespace UnturnedGodot
         public UnityEngine.Vector2 LastMoveInput;
         // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
         public EPlayerStance? ScriptedStance;
+        // Likewise forces jump (bypassing Space) -- PlayerNetSync injects the MoveInput v2 jump bit here.
+        public bool? ScriptedJump;
+
+        // Headless SERVER AVATAR construction (PEI_CLIENT_PLAN §2.3 / C2): a remote peer's body on the
+        // dedicated world. Keeps the capsule / MoveAndSlide / floor tuning / PlayerRegistry registration +
+        // the Scripted* input seams; skips the whole client-only subtree (camera-current, viewmodel,
+        // inventory/craft/skills UIs, OutlineOverlay, BuildTool, demo inventory, mouse capture) and NEVER
+        // reads global Input.* (a headless server has none; L1 test hosts have a window whose input must
+        // not leak into avatars). Set at construction, before AddChild. Default false = SP byte-identical.
+        public bool NetAvatar;
 
         void UpdateHitbox(EPlayerStance stance)   // collision capsule per stance (STAND 2 / CROUCH 1.2 / PRONE 0.8), bottom pinned to the feet
         {
@@ -1290,6 +1301,7 @@ namespace UnturnedGodot
         // (starvation/infection) which flashes but doesn't kick the camera.
         public void TakeDamage(float amount, Vector3? fromPos = null)
         {
+            if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
             if (_dead || Health <= 0f) return;
             Health -= amount;
             if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
@@ -1370,6 +1382,7 @@ namespace UnturnedGodot
         // same stand-ins as before (Unturned's real ones live in server modeConfigData, not the binary).
         void UpdateVitals(bool moving, float dt)
         {
+            if (NetAvatar) return;   // v1 invulnerability (see TakeDamage): no local starvation/infection death on a server avatar either
             if (_dead) return;
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
             bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
@@ -1449,9 +1462,19 @@ namespace UnturnedGodot
             FloorSnapLength = 0.5f;                 // stay glued to the ground over small steps / undulations
 
             PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;   // opt the PLAYER out of Godot's global physics interp -- on-foot uses MANUAL position-only interp so the mouse stays instant (master)
-            _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = true, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };
+            // NetAvatar keeps the (non-Current) camera node -- look math (LookPoint, aim) reads it -- but a
+            // Current camera per avatar would hijack the host viewport (L1 sandbox / any windowed server).
+            _cam = new Camera3D { Position = new Vector3(0, 1.6f, 0), Current = !NetAvatar, PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off };
             _cam.CullMask &= ~OutlineOverlay.OutlineLayer;   // don't render the items' silhouette meshes in the main view (only the offscreen mask cam does)
             AddChild(_cam);
+            if (NetAvatar)
+            {
+                // server avatar: capsule + camera node + registry registration are enough. Everything below
+                // is the client-only subtree (viewmodel/UIs/outline/build/demo inventory) -- and RegisterAll
+                // clears+rebuilds the asset table, which a mid-game join must never do to a live server.
+                Inventory = new PlayerInventory();   // empty; readers all touch it through null-safe/worn-nothing paths
+                return;
+            }
             CallDeferred(Node.MethodName.AddChild, new OutlineOverlay());   // screen-space look-at outline (deferred so the viewport/camera exist)
             _lookViz = new MeshInstance3D   // the ONE look-END sphere (O toggles it); TopLevel so it sits in world space at the ray end
             {
@@ -1497,6 +1520,7 @@ namespace UnturnedGodot
 
         public override void _UnhandledInput(InputEvent @event)
         {
+            if (NetAvatar) return;   // a server avatar is driven ONLY through the Scripted* seams, never local input
             // Inventory dashboard open -> EAT ALL game input except Tab (to close it) + Escape: no firing / world interactions /
             // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
             if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape })) return;
@@ -2159,6 +2183,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
@@ -2346,7 +2371,7 @@ namespace UnturnedGodot
         {
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
-            if (!_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }
+            if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
@@ -2392,14 +2417,15 @@ namespace UnturnedGodot
             if (_fireCd <= 0f && !_reloading)
             {
                 if (_burstLeft > 0) { if (Fire()) { _burstLeft--; if (_burstLeft == 0) _burstCd = 0.2f; } else _burstLeft = 0; }
-                else if (_firemode == FireMode.Auto && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();
+                else if (_firemode == FireMode.Auto && !NetAvatar && !UiInputBlocked && Input.IsMouseButtonPressed(MouseButton.Left)) Fire();   // NetAvatar: never poll global input (a windowed L1 host's held mouse must not fire server avatars)
             }
 
             // Stance FSM: the shell polls the keys, the engine-free PlayerStanceSim owns the state machine
             // (X = crouch, Z = prone, sprint overlay, broken-legs demotion, headroom gate -- MP_PLAN §3.4).
-            bool xNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
-            bool zNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
-            bool sprintNow = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
+            // NetAvatar never polls the keys (stance stays STAND until stance rides the wire, post-C2).
+            bool xNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
+            bool zNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
+            bool sprintNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
             _move.Stance = _stance.Step(xNow, zNow, sprintNow, Stamina, Broken, ScriptedStance, _capStance, HeadroomFor);
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
 
@@ -2411,7 +2437,7 @@ namespace UnturnedGodot
                 forward = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
                 strafe  = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
-            bool jump = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310)
+            bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space))) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310); ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
 

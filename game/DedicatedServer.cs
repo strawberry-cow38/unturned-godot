@@ -17,12 +17,14 @@ namespace UnturnedGodot
         public SimDriver Driver;                     // the world's sim spine (WorldBuildResult.Sim)
         public IServerTransport TransportOverride;   // tests inject MemTransport; null = real UDP
         public bool AllowCheats = false;             // SECURITY (review C1): give/xp/skill console cheats. OFF by default on the public server; tests set true to exercise the give plane.
+        public bool RemoteAvatars = false;           // C2: PlayerNetSync avatar bodies (real spawns/collision/jump) for remote peers. Opt-in: Main.BuildDedicated turns it ON for the real server; default OFF keeps every pre-C2 harness (flat IntegrateFlat movement, ServerTeleport-driven tests) byte-identical.
         public Terrain Terr;                         // optional (WorldBuildResult.Terr): grounds server grenade bounces on real terrain
         public DayNightCycle DayNight;               // optional (WorldBuildResult.DayNight): tick-derived day-night (§3.7)
         public ResourceField Resources;              // optional (WorldBuildResult.Resources): the §3.7 alive-bitmap index space
         public string MapRoot;                       // optional: loads the 19 nav pockets as relevancy cells (§2.6)
 
         public NetWorldServer Server { get; private set; }
+        public PlayerNetSync PlayerSync { get; private set; }
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
@@ -69,7 +71,29 @@ namespace UnturnedGodot
             Server.Zombies.Interest = new InterestPolicy { RingRadius = 192f, CellOf = cellOf };
             Server.WorldItems.Interest = new InterestPolicy { RingRadius = 128f, CellOf = cellOf };
 
+            // C2 real spawns: joiners land on real Spawns/Players.dat points at terrain height (+1.5 m drop),
+            // spread deterministically by playerId. Fallback worlds (no map/terrain) keep the default demo
+            // origin line -- every pre-C2 test spawn is byte-identical.
+            if (Terr != null && MapRoot != null)
+            {
+                var spawns = LevelSpawns.PlayerSpawns(MapRoot);
+                if (spawns.Count > 0)
+                    Server.SpawnProvider = playerId =>
+                    {
+                        var pick = spawns[(playerId - 1) % spawns.Count];
+                        return new UnityEngine.Vector3(pick.x, Terr.SampleHeight(pick.x, pick.z) + 1.5f, pick.z);
+                    };
+            }
+
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Server.TickSimulation(), "net.server.sim"));
+            // C2 remote avatar bodies: real PlayerController physics per peer, written back through
+            // ServerDrive -- registered right after the sim step (input is dispatched) and before every
+            // publish sync, so published state (zombie targets etc.) sees this tick's driven positions.
+            if (RemoteAvatars)
+            {
+                PlayerSync = new PlayerNetSync(Server, this);
+                Driver.Sim.Add(new DelegateSimStep((tick, dt) => PlayerSync.Tick(), "net.players.sync"));
+            }
             // zombie brains -> ZombieReplication at 12.5 Hz (§3.5), BEFORE the snapshot send
             ZombieSync = new ZombieNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ZombieSync.Tick(), "net.zombies.publish"));
