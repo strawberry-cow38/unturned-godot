@@ -107,8 +107,8 @@ namespace UnturnedGodot
                 else if (arg == "--dedicated") dedicated = true;   // headless dedicated server: the REAL world (WorldBuilder dedicated mode) + NetServerSession on UDP
                 else if (arg == "--netlog") UnturnedGodot.Net.NetLog.Enabled = true;   // net-diagnostics logging (equivalent: UG_NETLOG=1); sinks wired in DedicatedServer/ClientNode
                 else if (arg == "--mploopback") _mpLoopback = true;   // OPT-IN (MP_PLAN §4 Phase 4): SP runs as an in-process listen-server + local client over MemTransport; without the flag SP keeps the direct path
-                else if (arg == "--client") client = true;
-                else if (arg.StartsWith("--connect=")) { client = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP
+                else if (arg == "--client") client = true;   // bare demo/test client: real world + the C1 overhead cam + ClientNode capsules (no player shell)
+                else if (arg.StartsWith("--connect=")) { client = true; _playableClient = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP -- C3: the PLAYABLE client (ClientWorldSession: predicted first-person shell)
                 else if (arg == "--smoke") smoke = true;
                 else if (arg == "--hurtdemo") hurtdemo = true;
                 else if (arg == "--firetest") firetest = true;   // player fires near a distant zombie: verify the gunshot alert (+ --supp = suppressed -> no alert)
@@ -1908,6 +1908,7 @@ namespace UnturnedGodot
 
         const ushort NetPort = 47872;
         string _connectHost = "127.0.0.1";   // --connect=<ip>: the dedicated server to join (default = same-machine loopback)
+        bool _playableClient;                // --connect= (vs bare --client): attach the C3 ClientWorldSession (predicted shell) instead of the ClientNode demo renderer
 
         // Headless DEDICATED server (MP_PLAN §4 Phase 3): the REAL world via WorldBuilder (dedicated mode --
         // no camera/HUD/viewmodel/local player) + a NetServerSession over UdpServerTransport. The world's
@@ -1943,11 +1944,13 @@ namespace UnturnedGodot
             GD.Print($"[SERVER] demo NetWorldServer + scripted bot on udp {NetPort}");
         }
 
-        // Rendering client process (PEI_CLIENT_PLAN §3 Phase C1): the REAL map world through the ONE
+        // Rendering client process (PEI_CLIENT_PLAN §3 Phases C1+C3): the REAL map world through the ONE
         // WorldBuilder path (Client mode -- terrain/objects/colliders + roads/foliage/trees + day-night,
-        // no local player), then ClientNode joins the dedicated server and renders the synced players
-        // INTO it. Still the overhead camera, hovered over the player-spawn region (C3 replaces it with
-        // the real predicted player shell).
+        // no local player), then the net client joins the dedicated server. --connect= (the playable
+        // client) attaches ClientWorldSession: a real first-person PlayerController shell spawns at the
+        // server-adopted spawn, predicted + reconciled -- its camera IS the view (no overhead cam). Bare
+        // --client keeps the C1 demo shape: overhead cam + ClientNode's capsule renderer (used by the
+        // --server 2-process demo; no player shell).
         async void BuildClient()
         {
             // async void swallows exceptions silently (the trap BuildDedicated hit) -- surface anything that breaks.
@@ -1978,14 +1981,22 @@ namespace UnturnedGodot
                     return;
                 }
                 CharacterModel.LoadBundled();   // remote players render as the real ripped character mesh (this call lived only in the dead ScatterScenery)
-                var cam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
-                AddChild(cam);
-                var ctr = res.HasPlayerSpawn ? res.PlayerSpawn : Vector3.Zero;   // hover the real spawn region, not the origin (open water on PEI)
-                cam.Position = ctr + new Vector3(0f, 50f, 44f);
-                cam.LookAt(ctr, Vector3.Up);
                 _worldReady = res.Ready;
-                AddChild(new ClientNode { Host = _connectHost, Port = NetPort });
-                GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{NetPort} over NetSession; players rendered from server snapshots");
+                if (_playableClient)   // --connect= (C3): the predicted first-person shell -- its camera is the view once the join snapshot seeds the spawn
+                {
+                    AddChild(new ClientWorldSession { Host = _connectHost, Port = NetPort, Driver = res.Sim, Sun = res.Sun, Env = res.Env });
+                    GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{NetPort} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
+                }
+                else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
+                {
+                    var cam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
+                    AddChild(cam);
+                    var ctr = res.HasPlayerSpawn ? res.PlayerSpawn : Vector3.Zero;   // hover the real spawn region, not the origin (open water on PEI)
+                    cam.Position = ctr + new Vector3(0f, 50f, 44f);
+                    cam.LookAt(ctr, Vector3.Up);
+                    AddChild(new ClientNode { Host = _connectHost, Port = NetPort });
+                    GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{NetPort} over NetSession; players rendered from server snapshots");
+                }
             }
             catch (System.Exception e)
             {

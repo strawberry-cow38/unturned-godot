@@ -22,9 +22,11 @@ namespace UnturnedGodot
         public ZombieField Zombies;        // Playable only (and only when zombies are enabled)
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
+        public DirectionalLight3D Sun;     // world sun + env (C3: the client session LinkWorldLightings its late-spawned shell)
+        public Godot.Environment Env;
         public Vector3 VehicleAim;         // first static service vehicle, for the legacy demo cam
         public bool HasVehicleAim;
-        public Vector3 PlayerSpawn;        // Client only: a real Spawns/Players.dat point (terrain-height Y) -- the C1 overhead cam hovers here (C3: the local shell spawns here)
+        public Vector3 PlayerSpawn;        // Client only: a real Spawns/Players.dat point (terrain-height Y) -- pre-join reference (the C3 shell spawns at the SERVER-adopted entity pos, not here)
         public bool HasPlayerSpawn;
         public bool Ready;                 // true once the whole build finished (the old _worldReady)
     }
@@ -92,6 +94,8 @@ namespace UnturnedGodot
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = mode != WorldMode.Dedicated };
             root.AddChild(dayNight);
             result.DayNight = dayNight;
+            result.Sun = sun;
+            result.Env = env;
             await Phase("Terrain");
             var terr = Terrain.LoadMapMerged(mapRoot + "/Landscape/Heightmaps", withCollider: true);
             if (terr == null)
@@ -306,19 +310,11 @@ namespace UnturnedGodot
                 player.EquipUnarmed();   // spawn UNARMED (bare fists) -- pick items up to equip them (strawberry)
                 result.Player = player;   // UG_AUTOFIRE terrain-impact verification
                 player.LinkWorldLighting(sun, env);   // FP gun takes the world day/night sun + ambient -- was NEVER called in Drive PEI, so the gun ignored time-of-day (master saw "not applying at all")
-                root.AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> / plant <crop> spawns at the look-orb (master)
-                root.AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, F to harvest)
-                root.AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
                 player.GlobalPosition = new Vector3(sx, terr.SampleHeight(sx, sz) + 3f, sz);
                 player.RotationDegrees = new Vector3(0f, spawnYaw, 0f);   // face the spawn point's angle
                 player.Spawn = player.GlobalPosition;   // respawn on this above-ground point, NOT the default (0,1,0) which is underground on PEI
                 if (System.Environment.GetEnvironmentVariable("UG_OOBTEST") == "1") player.GlobalPosition = new Vector3(sx, -2000f, sz);   // test hook: drop below the map -> should trip the OOB kill
-                { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
-                root.AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
-                { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
-                { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
-                root.AddChild(new Profiler());   // F3 perf overlay (parity)
-                { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
+                AttachPlayerShell(root, player, withCropManager: true);   // console/map/HUD/hitmarkers/pause/profiler/attachments -- the C3 shared shell block (same nodes, same order)
                 var jeep = Vehicle.BuildByName("jeep");
                 root.AddChild(jeep);
                 jeep.GlobalPosition = new Vector3(sx + 2.2f, terr.SampleHeight(sx + 2.2f, sz) + 1.5f, sz);
@@ -514,6 +510,25 @@ namespace UnturnedGodot
                 try { var _navPk = ZombieNav.LoadPockets(mapRoot); ZombieNav.BuildOrLoad(root, _navPk, overlay: false, save: bakeNav, bakeIfMissing: bakeNav); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world nav failed: {_ne.Message}"); }   // --bakenav BAKES+SAVES here; the game just LOADS the committed .res
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
+        }
+
+        // The player-shell block (PEI_CLIENT_PLAN §3 C3): everything a HUMAN-driven PlayerController needs
+        // around it -- dev console, map, HUD, FPS counter, hitmarkers, pause menu, profiler, attachment
+        // menu -- extracted verbatim from the Playable branch (extract-and-call: same nodes, same order,
+        // same wiring) so the joined-client session attaches the SAME shell around its predicted player.
+        // withCropManager: Playable owns local-authority crop growth; on a joined client the SERVER owns
+        // growth (crops arrive as replicas), so the session passes false.
+        public static void AttachPlayerShell(Node root, PlayerController player, bool withCropManager)
+        {
+            root.AddChild(new DevConsole { Player = player });   // F1 dev console: give <item> / vehicle <name> / plant <crop> spawns at the look-orb (master)
+            if (withCropManager) root.AddChild(new CropManager());   // farm crop growth ticking + plant/harvest (console `plant`, F to harvest)
+            root.AddChild(new MapUI { Player = player });         // M: full-screen PEI map (town nodes + player pos/facing)
+            { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
+            root.AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
+            { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
+            { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
+            root.AddChild(new Profiler());   // F3 perf overlay (parity)
+            { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.

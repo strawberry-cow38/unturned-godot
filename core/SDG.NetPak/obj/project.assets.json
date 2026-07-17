@@ -32,11 +32,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/ec2-user/projects/unturned-godot-c2/core/SDG.NetPak/SDG.NetPak.csproj",
+      "projectUniqueName": "/home/ec2-user/projects/unturned-godot-c3/core/SDG.NetPak/SDG.NetPak.csproj",
       "projectName": "SDG.NetPak",
-      "projectPath": "/home/ec2-user/projects/unturned-godot-c2/core/SDG.NetPak/SDG.NetPak.csproj",
+      "projectPath": "/home/ec2-user/projects/unturned-godot-c3/core/SDG.NetPak/SDG.NetPak.csproj",
       "packagesPath": "/home/ec2-user/.nuget/packages/",
-      "outputPath": "/home/ec2-user/projects/unturned-godot-c2/core/SDG.NetPak/obj/",
+      "outputPath": "/home/ec2-user/projects/unturned-godot-c3/core/SDG.NetPak/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -52,8 +52,8 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "/home/ec2-user/projects/unturned-godot-c2/core/SDG.Compat/SDG.Compat.csproj": {
-              "projectPath": "/home/ec2-user/projects/unturned-godot-c2/core/SDG.Compat/SDG.Compat.csproj"
+            "/home/ec2-user/projects/unturned-godot-c3/core/SDG.Compat/SDG.Compat.csproj": {
+              "projectPath": "/home/ec2-user/projects/unturned-godot-c3/core/SDG.Compat/SDG.Compat.csproj"
             }
           }
         }

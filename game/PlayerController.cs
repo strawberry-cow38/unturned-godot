@@ -1085,6 +1085,23 @@ namespace UnturnedGodot
         // The move axes THIS shell captured on its last physics tick (x=strafe, y=forward) -- what the
         // MP loopback/client host sends as MoveInput so the wire carries exactly what the sim consumed.
         public UnityEngine.Vector2 LastMoveInput;
+        // The jump input the sim consumed on that same tick (post Broken-gate, same as the axes) -- the
+        // C3 client session sends it as the MoveInput v2 jump bit, so the wire carries exactly what the
+        // local shell jumped on (a Broken shell that can't jump locally must not jump on the server).
+        public bool LastJumpInput;
+
+        // C3 prediction seams (PEI_CLIENT_PLAN §2.3 / §7 risk 5). The shell does MANUAL render interp:
+        // _PhysicsProcess RESTORES GlobalPosition from _interpCurr before moving and _Process lerps
+        // _interpPrev.._interpCurr every frame -- so a bare GlobalPosition write from the net session is
+        // silently overwritten one tick later and never renders. The reconciler must therefore read the
+        // TRUE physics position (not the render-lerped GlobalPosition) and apply corrections through a
+        // seam that shifts the interp samples WITH the node.
+        public Vector3 TruePhysicsPosition => _interpReady ? _interpCurr : GlobalPosition;
+        public void ApplyNetCorrection(Vector3 delta)
+        {
+            GlobalPosition += delta;
+            if (_interpReady) { _interpPrev += delta; _interpCurr += delta; }   // keep the correction through the restore + render it (a sub-threshold slice is grid-tiny; a snap is meant to pop)
+        }
         // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
         public EPlayerStance? ScriptedStance;
         // Likewise forces jump (bypassing Space) -- PlayerNetSync injects the MoveInput v2 jump bit here.
@@ -2372,7 +2389,7 @@ namespace UnturnedGodot
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
-            if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
+            if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
@@ -2381,6 +2398,7 @@ namespace UnturnedGodot
                 _deathTimer -= delta;
                 Velocity = Vector3.Zero;
                 LastMoveInput = UnityEngine.Vector2.zero;
+                LastJumpInput = false;
                 if (_deathTimer <= 0) Respawn();
                 return;
             }
@@ -2440,6 +2458,7 @@ namespace UnturnedGodot
             bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space))) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310); ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
+            LastJumpInput = jump;                                       // + the jump the sim consumed (C3: the MoveInput v2 jump bit)
 
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;

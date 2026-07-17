@@ -744,4 +744,90 @@ namespace UnturnedGodot.Testing
             yield return Ticks(1);   // let the sandbox tick once so teardown exercises the built nodes
         }
     }
+
+    // PEI_CLIENT_PLAN §3 Phase C3: the locally-controlled PREDICTED player shell. A ClientWorldSession
+    // joins a DedicatedServer (RemoteAvatars = the C2 avatar sync) over MemTransport on the fallback
+    // world; the first authoritative own-entity sample spawns a REAL first-person PlayerController shell
+    // (not a NetAvatar) at the server-adopted spawn. The shell walks under its OWN physics while its
+    // input rides the wire, and PredictionReconciler corrections are CONSUMED -- applied TO THE NODE
+    // through ApplyNetCorrection (the §7 risk 5 seam that shifts the manual render-interp samples with
+    // it). Asserts the C3 bar: (a) the shell MOVES; (b) the replicated own-entity CONVERGES to the shell
+    // within the wire grid once settled (loopback-parity style); (c) an injected ~5 m displacement of
+    // the SERVER avatar SNAPS the shell (Reconciler.Snaps) and it re-converges on the displaced
+    // authority; and DESYNC-QUIET throughout -- the Part C runtime detector (EnableSyncCheck, on for
+    // every DedicatedServer) must never fire while corrections are being applied to the node.
+    public class NetShellWalkReconcile : GameTest
+    {
+        public override string Name => "net.shell_walk_reconcile";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(30303);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);   // datagram delivery BEFORE the session's Client.Tick each tick
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "shellwalker" };
+            World.AddChild(sess);      // registers net.client.pump + client.shell steps (before the server's, §2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            // join -> first authoritative own-entity sample -> the shell spawns at the server-adopted spawn
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            T.Check("the shell is a REAL local player (not a NetAvatar)", !sess.Shell.NetAvatar);
+            bool ownSeed = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var seed);
+            float seedErr = ownSeed ? (seed.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"shell adopted the server spawn (err {seedErr:0.###} m)", seedErr < 0.5f);
+
+            // (a) walk forward ~3 s under REAL shell physics; input rides the wire to the C2 avatar body
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            var start = sess.Shell.TruePhysicsPosition;
+            yield return Ticks(150);
+            float walked = start.DistanceTo(sess.Shell.TruePhysicsPosition);
+            T.Check($"(a) the shell MOVED under its own physics ({walked:0.0} m)", walked > 4f);
+            T.Check("corrections actually flowed (acks applied)", sess.Reconciler.AcksApplied > 0);
+
+            // (b) stop + settle: the reconciler drains and the replicated own-entity lands ON the node
+            // (both stationary -> residual is pure wire-grid quantization, far under 5 cm)
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"(b) replicated own-entity CONVERGED to the shell (err {err:0.###} m)", own && err < 0.05f);
+            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.01f);
+            T.Check("no snap during a plain reconciled walk", sess.Reconciler.Snaps == 0);
+            T.Check($"DESYNC-QUIET across the corrected walk ({desyncs} fired)", desyncs == 0);
+
+            // (c) shove the SERVER avatar ~5 m sideways (a divergence only the server saw): past the 2 m
+            // SnapThreshold the shell must SNAP onto the displaced authority, not glide. The shove goes
+            // through ApplyNetCorrection -- a bare GlobalPosition write is UNDONE next tick by the body's
+            // own manual-interp restore (the exact §7 risk 5 failure mode, server-side edition) and would
+            // never reach the ServerDrive write-back.
+            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
+            T.Check("C2 avatar body exists for the shell's peer", haveBody);
+            long snapsBefore = sess.Reconciler.Snaps;
+            body.ApplyNetCorrection(new Vector3(5f, 0f, 0f));
+            yield return Ticks(50);
+            T.Check($"(c) the 5 m server-side displacement SNAPPED the shell (snaps {sess.Reconciler.Snaps})", sess.Reconciler.Snaps > snapsBefore);
+            bool own2 = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e2);
+            float snapErr = own2 ? (e2.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"shell re-converged on the displaced authority (err {snapErr:0.###} m)", own2 && snapErr < 0.05f);
+            T.Check($"still DESYNC-QUIET after the snap ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            // (the session's own steps die with the sandbox's SimDriver; _ExitTree disconnects)
+            world.Sim.Sim.Remove(pump);
+        }
+    }
 }
