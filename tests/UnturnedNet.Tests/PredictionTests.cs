@@ -54,6 +54,30 @@ namespace UnturnedNet.Tests
             Assert.That(r.OnAuthoritative(0, new Vector3(9f, 0f, 0f)), Is.False, "seq 0 = server processed nothing yet");
         }
 
+        [Test]
+        public void Reconciler_DeadZone_NoCorrectionBelowTolerance_SnapStillArmed()
+        {
+            // the mp-rubberband "roped back" fix: real Unturned only corrects past errorToleranceDistance
+            // (PlayerInput.cs:1817, 2 cm) -- below the dead-zone the shell keeps its own prediction, so
+            // healthy per-tick float/contact residue between two physics bodies produces ZERO tug.
+            var r = new PredictionReconciler();
+            r.Record(3, Vector3.zero);
+            Assert.That(r.OnAuthoritative(3, new Vector3(0.03f, 0f, 0f)), Is.False, "3 cm is under the dead-zone");
+            Assert.That(r.PendingError, Is.EqualTo(Vector3.zero), "sub-tolerance error is held at ZERO, not smoothed");
+            Assert.That(r.Step(Dt), Is.EqualTo(Vector3.zero), "so no correction is handed out");
+            Assert.That(r.AcksApplied, Is.EqualTo(1), "the ack still counted (sample consumed, not ignored)");
+            Assert.That(r.CorrectionAppliedMeters, Is.EqualTo(0f), "and the applied-correction meter stayed at zero");
+
+            r.Record(4, Vector3.zero);
+            Assert.That(r.OnAuthoritative(4, new Vector3(0.5f, 0f, 0f)), Is.False, "0.5 m: above the dead-zone, below the snap threshold");
+            Assert.That(r.PendingError.magnitude, Is.EqualTo(0.5f).Within(1e-5f), "smoothed exactly as before");
+            r.NoteCorrectionApplied(r.TakeAll());   // consume it so the next ack measures clean
+
+            r.Record(5, Vector3.zero);
+            Assert.That(r.OnAuthoritative(5, new Vector3(0f, 0f, 3f) + new Vector3(0.5f, 0f, 0f)), Is.True, "3 m still hard-snaps -- the dead-zone must not disarm the teleport/anti-cheat guard");
+            Assert.That(r.Snaps, Is.EqualTo(1));
+        }
+
         // ---- full-stack convergence sims (server + predicted client over MemTransport with latency) ----
 
         sealed class PredictedHarness
@@ -136,8 +160,12 @@ namespace UnturnedNet.Tests
                         "error effectively gone while walking (smooth exponential correction)");
             Assert.That(h.Client.Prediction.Reconciler.Snaps, Is.EqualTo(0), "the whole correction was smooth");
 
+            // convergence tolerance = the dead-zone: below DeadZoneMeters the reconciler deliberately
+            // stops correcting (the shell keeps its own prediction), so the residual offset of a healed
+            // misprediction parks anywhere inside the dead-zone instead of at exact zero.
             for (int t = 0; t < 40; t++) h.Step(0f, 0f, 90f);
-            Assert.That(h.Error(), Is.LessThan(1e-3f), "predicted and authoritative positions converged");
+            Assert.That(h.Error(), Is.LessThan(h.Client.Prediction.Reconciler.DeadZoneMeters + 1e-3f),
+                        "predicted and authoritative positions converged to within the dead-zone");
         }
 
         [Test]

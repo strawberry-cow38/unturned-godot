@@ -1240,12 +1240,71 @@ namespace UnturnedGodot
             _capStance = h; _capsule.Height = h; _hitbox.Position = new Vector3(0f, h / 2f, 0f);
         }
 
+        // MP deterministic ground (branch mp-rubberband-fix): prediction requires the client shell and the
+        // server avatar -- two SEPARATE CharacterBody3Ds -- to make the SAME grounded decision every tick,
+        // or their vertical integration diverges and the reconciler drags the shell around (worst on a
+        // downhill: "walk down, get yanked up into the air"). Godot's IsOnFloor() is each body's own
+        // contact-solve state and DISAGREES between the two near the floor-snap threshold, so MP bodies
+        // mirror real Unturned instead (PlayerMovement.checkGround :732 / ground snap :1371): grounded = a
+        // deterministic downward spherecast, plus a post-move snap cast that glues a descending walker to
+        // a walkable slope. Set ONLY by ClientWorldSession.SpawnShell (the MP shell) and PlayerNetSync
+        // (the server avatar); default false keeps SP/loopback byte-identical (single body -- IsOnFloor
+        // has nobody to disagree with).
+        public bool DeterministicGround;
+        bool _detGrounded;                       // last post-move ground-check result -> next tick's Step
+        SphereShape3D _detSphere;
+        const float DetCastRadius = 0.349f;      // capsule radius - 1 mm (Unturned: PlayerStance.RADIUS - 0.001f)
+        const float DetCastLift = 0.10f;         // Unturned's SKIN_WIDTH hover made explicit: shape casts IGNORE initially-overlapping shapes, and a Godot body rests ~0 (sometimes a hair penetrated) on its floor where Unity's CharacterController hovers a full skin width clear -- so the cast must START lifted or it skips the very slope the body stands on and "grounds" against whatever lies below it
+        const float DetCheckLength = 0.03f;      // grounded = surface within this below the feet (Unturned CHECK_LENGTH minus its skin width: 0.025)
+        const float DetSnapLength = 0.6f;        // Unturned snapLength = stepOffset + SKIN_WIDTH -> our StepHeight + 0.1 (covers a sprint tick's drop on the 55-deg max slope, ~0.2 m)
+
+        // The Unturned checkGround cast shape: a sphere of (almost) capsule radius, started a skin-width
+        // above the capsule bottom, cast straight down. Purely position -> world geometry -- identical on
+        // both MP bodies at the same position, unlike a contact-solve flag. feetGap = how far the surface
+        // is BELOW the feet (~0 or slightly negative while resting on it).
+        bool DetGroundCast(float length, out float feetGap)
+        {
+            float maxDist = DetCastLift + length;
+            var q = new PhysicsShapeQueryParameters3D
+            {
+                Shape = _detSphere ??= new SphereShape3D { Radius = DetCastRadius },
+                Transform = new Transform3D(Basis.Identity, GlobalPosition + Vector3.Up * (DetCastRadius + DetCastLift)),
+                Motion = Vector3.Down * maxDist,
+                CollisionMask = CollisionMask,
+                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+            };
+            var res = GetWorld3D().DirectSpaceState.CastMotion(q);
+            if (res[1] >= 1f) { feetGap = length; return false; }
+            feetGap = res[0] * maxDist - DetCastLift;
+            return true;
+        }
+
+        // The post-move ground snap (Unturned PlayerMovement :1371): a walker that WAS grounded and is not
+        // launching upward gets pulled down onto ground within DetSnapLength, so walking downhill stays
+        // GLUED to the slope instead of ballistically skipping off it. Only onto walkable slopes
+        // (FloorMaxAngle -- the Max_Walkable_Slope guard: snapping to any surface climbs trees).
+        void DetSnapToGround()
+        {
+            if (!DetGroundCast(DetSnapLength, out float gap) || gap <= 1e-4f) return;
+            var ray = new PhysicsRayQueryParameters3D
+            {
+                From = GlobalPosition + Vector3.Up * DetCastLift,
+                To = GlobalPosition + Vector3.Down * (gap + DetCastRadius + 0.3f),
+                CollisionMask = CollisionMask,
+                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+            };
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(ray);
+            if (hit.Count == 0) return;                                  // center is over an edge -- don't snap onto nothing
+            if (((Vector3)hit["normal"]).AngleTo(Vector3.Up) >= FloorMaxAngle) return;
+            GlobalPosition += Vector3.Down * gap;
+        }
+
         const float StepHeight = 0.5f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks; bumped 0.4->0.5)
         // If the horizontal motion is blocked at foot level but clear a step higher, raise onto the step; FloorSnapLength then
         // pulls us back down onto it. Reused by both the player and zombies (source has stair/ledge handling in PlayerMovement).
-        void StepUp(float delta)
+        void StepUp(float delta, bool grounded)
         {
-            if (!IsOnFloor()) return;
+            if (!grounded) return;
             Vector3 motion = new Vector3(Velocity.X, 0f, Velocity.Z) * delta;
             if (motion.LengthSquared() < 1e-6f) return;
             var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
@@ -2666,14 +2725,28 @@ namespace UnturnedGodot
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
 
-            var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, IsOnFloor(), (float)delta);
+            bool grounded = DeterministicGround ? _detGrounded : IsOnFloor();   // MP bodies: the deterministic check, so shell + avatar integrate identical vertical motion
+            var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded, (float)delta);
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);
-            bool wasAirborne = !IsOnFloor();                  // ground state going into this step
+            bool wasAirborne = !grounded;                     // ground state going into this step
             Velocity = new Vector3(world.X, v.y, world.Z);
-            StepUp((float)delta);   // climb small curbs/thresholds so we don't snag (master)
+            StepUp((float)delta, grounded);   // climb small curbs/thresholds so we don't snag (master)
             MoveAndSlide();
+            if (DeterministicGround)
+            {
+                // re-check after the move; a walker that just left the ground going DOWN a slope (not a
+                // jump: v.y < 0.01, the Unturned guard) snaps back onto it, then the post-snap state feeds
+                // the NEXT tick's Step -- the Unturned checkGround/snap pipeline, identical on both bodies.
+                bool onGround = DetGroundCast(DetCheckLength, out _);
+                if (!onGround && !wasAirborne && v.y < 0.01f)
+                {
+                    DetSnapToGround();
+                    onGround = DetGroundCast(DetCheckLength, out _);
+                }
+                _detGrounded = onGround;
+            }
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
-            if (wasAirborne && IsOnFloor()) CheckFallDamage(v.y);   // just touched down -> fall damage on a hard landing
+            if (wasAirborne && (DeterministicGround ? _detGrounded : IsOnFloor())) CheckFallDamage(v.y);   // just touched down -> fall damage on a hard landing
         }
     }
 }

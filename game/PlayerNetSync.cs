@@ -67,7 +67,9 @@ namespace UnturnedGodot
                     // an entity already driven by someone else (a listen-server shell ServerDriving directly,
                     // the loopback pattern) is not ours to avatar -- adopting it would double-drive the seam
                     if (e.IsExternallyDriven) continue;
-                    var body = new PlayerController { NetAvatar = true, CaptureMouse = false };
+                    // DeterministicGround: pair of ClientWorldSession.SpawnShell -- avatar + shell must
+                    // make the SAME grounded decision or their vertical integration diverges (rubberband)
+                    var body = new PlayerController { NetAvatar = true, CaptureMouse = false, DeterministicGround = true };
                     _host.AddChild(body);                       // in the tree FIRST, else GlobalPosition no-ops
                     body.GlobalPosition = ToG(e.Pos);
                     body.RotationDegrees = new Vector3(0f, e.YawDegrees, 0f);

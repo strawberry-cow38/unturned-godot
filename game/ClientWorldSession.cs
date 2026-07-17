@@ -200,7 +200,10 @@ namespace UnturnedGodot
 
         void SpawnShell(PlayerReplication.PlayerEntity me)
         {
-            var shell = new PlayerController { CaptureMouse = true };
+            // DeterministicGround: the shell and its server avatar must make the SAME grounded decision
+            // (a deterministic spherecast, not each body's own IsOnFloor) or downhill walking rubberbands
+            // -- see PlayerController.DeterministicGround. MP bodies only; SP stays byte-identical.
+            var shell = new PlayerController { CaptureMouse = true, DeterministicGround = true };
             AddChild(shell);
             // D1: spawn holding the EAGLEFIRE (demo-inventory primary slot) -- the server validates every
             // shot as the default Eaglefire profile (ServerCombat), so client + server agree on rate/ammo;

@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/home/ec2-user/projects/unturned-godot-iw/core/SDG.Compat/SDG.Compat.csproj": {}
+    "/home/ec2-user/projects/unturned-godot-rb/core/SDG.Compat/SDG.Compat.csproj": {}
   },
   "projects": {
-    "/home/ec2-user/projects/unturned-godot-iw/core/SDG.Compat/SDG.Compat.csproj": {
+    "/home/ec2-user/projects/unturned-godot-rb/core/SDG.Compat/SDG.Compat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/ec2-user/projects/unturned-godot-iw/core/SDG.Compat/SDG.Compat.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/unturned-godot-rb/core/SDG.Compat/SDG.Compat.csproj",
         "projectName": "SDG.Compat",
-        "projectPath": "/home/ec2-user/projects/unturned-godot-iw/core/SDG.Compat/SDG.Compat.csproj",
+        "projectPath": "/home/ec2-user/projects/unturned-godot-rb/core/SDG.Compat/SDG.Compat.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/home/ec2-user/projects/unturned-godot-iw/core/SDG.Compat/obj/",
+        "outputPath": "/home/ec2-user/projects/unturned-godot-rb/core/SDG.Compat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"

@@ -798,6 +798,25 @@ namespace UnturnedGodot.Testing
             T.Check($"(a) the shell MOVED under its own physics ({walked:0.0} m)", walked > 4f);
             T.Check("corrections actually flowed (acks applied)", sess.Reconciler.AcksApplied > 0);
 
+            // (a2) the dead-zone (the "roped back" fix, mp-rubberband-fix): during a STEADY walk the
+            // residual between two healthy bodies is grid/timing noise under DeadZoneMeters, and the
+            // reconciler must apply NO correction at all -- real Unturned corrects only past
+            // errorToleranceDistance (PlayerInput.cs:1817). Pre-dead-zone every ack smeared a
+            // micro-correction into the shell every tick: the constant gentle tug on normal ground.
+            long acksBefore = sess.Reconciler.AcksApplied;
+            float corrBefore = sess.Reconciler.CorrectionAppliedMeters;
+            int tugTicks = 0;
+            for (int i = 0; i < 100; i++)
+            {
+                yield return Ticks(1);
+                if (sess.Reconciler.PendingError != UnityEngine.Vector3.zero) tugTicks++;
+            }
+            float corrApplied = sess.Reconciler.CorrectionAppliedMeters - corrBefore;
+            GD.Print($"[deadzone] steady walk: acks +{sess.Reconciler.AcksApplied - acksBefore}, corrApplied +{corrApplied:0.####} m, tugTicks={tugTicks}/100");
+            T.Check($"(a2) acks kept flowing during the steady walk (+{sess.Reconciler.AcksApplied - acksBefore})", sess.Reconciler.AcksApplied - acksBefore > 40);
+            T.Check($"(a2) dead-zone: ~ZERO correction applied across a steady 2 s walk (+{corrApplied:0.####} m)", corrApplied < 0.02f);
+            T.Check($"(a2) no per-tick tug ({tugTicks}/100 ticks with a live pending error)", tugTicks < 10);
+
             // (b) stop + settle: the reconciler drains and the replicated own-entity lands ON the node
             // (both stationary -> residual is pure wire-grid quantization, far under 5 cm)
             sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
@@ -928,6 +947,138 @@ namespace UnturnedGodot.Testing
             T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.01f);
             T.Check("avatar back to STAND after the sprint ended", haveBody && body.Stance == EPlayerStance.STAND);
             T.Check($"DESYNC-QUIET across the whole sprint run ({desyncs} fired)", desyncs == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // THE mp-rubberband regression (branch mp-rubberband-fix): the client shell and the server avatar are
+    // SEPARATE CharacterBody3Ds, and pre-fix the grounded bool feeding PlayerMovementSim.Step was each
+    // body's own IsOnFloor() -- a physics-engine contact state that DISAGREES between the two bodies on a
+    // downhill near the floor-snap threshold. One body integrates gravity while the other stays glued, Y
+    // diverges, and the reconciler drags the falling shell UP toward the still-grounded avatar: the "walk
+    // downhill and get yanked into the air" rubberband (every IsOnFloor flicker is the same bug at smaller
+    // magnitude). The fix mirrors real Unturned's PlayerMovement.checkGround + ground snap (source
+    // :732-736 / :1371-1374): a DETERMINISTIC downward spherecast decides grounded and a post-move snap
+    // cast glues a descending walker to the slope -- identical on shell + avatar, so both integrate the
+    // SAME vertical motion (DeterministicGround, set ONLY on the MP bodies; SP keeps IsOnFloor untouched).
+    // This test walks the C3 shell UP an 18-deg ramp then back DOWN it and asserts the descent stays
+    // CONVERGED: zero snaps, bounded vertical pending error, no upward yank of the shell mid-descent, the
+    // shell actually reaches the flat ground, and the shell tracks the avatar's Y; then the same descent
+    // again over a mild adverse link (latency 3 / jitter 2 / 2% loss). DESYNC-QUIET throughout.
+    public class NetShellDownhillReconcile : GameTest
+    {
+        public override string Name => "net.shell_downhill_reconcile";
+        public override double TimeoutSimSeconds => 60;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            // the ramp, mirrored from net.server_avatar_terrain but at -Z (the shell spawns facing -Z at
+            // yaw 0): 18 deg, 12 m wide, near edge buried below the fallback ground so the shell strolls
+            // straight onto it walking forward and descends back off it walking backward.
+            var ramp = new StaticBody3D { CollisionLayer = 1u << 0, Position = new Vector3(0f, 2.5f, -14f), RotationDegrees = new Vector3(18f, 0f, 0f) };
+            ramp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 1f, 24f) } });
+            World.AddChild(ramp);
+
+            var net = new MemNetwork(20260717);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "descender" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var avatar);
+            T.Check("C2 avatar body exists for the shell's peer", haveBody);
+
+            // ---- climb (clean link): forward is -Z at the spawn yaw -> up the ramp ----
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            yield return Ticks(180);
+            float climbY = sess.Shell.TruePhysicsPosition.Y;
+            T.Check($"climbed the ramp (shell y {climbY:0.00} m)", climbY > 1.5f);
+            T.Check($"no snap on the climb (snaps {sess.Reconciler.Snaps})", sess.Reconciler.Snaps == 0);
+
+            // ---- descend (clean link): walk backward -> down the slope. THE repro: pre-fix the two
+            // bodies' IsOnFloor() disagree on the way down, Y diverges, and the reconciler yanks the
+            // shell up / snaps it. Post-fix the descent is glued and converged on both bodies. ----
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, -1f);
+            long snapsBefore = sess.Reconciler.Snaps;
+            float maxPend = 0f, maxPendY = 0f, maxRise = 0f, maxYGap = 0f;
+            int hotTicks = 0;
+            float prevY = sess.Shell.TruePhysicsPosition.Y;
+            for (int i = 0; i < 260; i++)
+            {
+                yield return Ticks(1);
+                float y = sess.Shell.TruePhysicsPosition.Y;
+                if (i >= 10) maxRise = Mathf.Max(maxRise, y - prevY);   // a DESCENDING walker must never move up (skip the turn-around transient)
+                prevY = y;
+                var p = sess.Reconciler.PendingError;
+                maxPend = Mathf.Max(maxPend, p.magnitude);
+                maxPendY = Mathf.Max(maxPendY, Mathf.Abs(p.y));
+                if (p.magnitude > 0.15f) hotTicks++;
+                if (GodotObject.IsInstanceValid(avatar))
+                    maxYGap = Mathf.Max(maxYGap, Mathf.Abs(avatar.GlobalPosition.Y - y));   // zero-latency: the two bodies' CURRENT Y must agree
+            }
+            long descentSnaps = sess.Reconciler.Snaps - snapsBefore;
+            float bottomY = sess.Shell.TruePhysicsPosition.Y;
+            GD.Print($"[downhill-repro] clean link: snaps={descentSnaps}, maxPend={maxPend:0.###} m (y {maxPendY:0.###}), maxRise={maxRise:0.###} m, maxYGap={maxYGap:0.###} m, hotTicks={hotTicks}/260, bottomY={bottomY:0.00}");
+            T.Check($"(a) ZERO snaps on the descent (snaps {descentSnaps})", descentSnaps == 0);
+            T.Check($"(b) vertical pending error stayed bounded (max |pend.y| {maxPendY:0.###} m)", maxPendY < 0.2f);
+            T.Check($"(c) no upward yank mid-descent (max per-tick rise {maxRise:0.###} m)", maxRise < 0.05f);
+            T.Check($"(d) shell Y tracked the avatar Y down the slope (max gap {maxYGap:0.###} m)", maxYGap < 0.3f);
+            T.Check($"(e) no sustained correction drag ({hotTicks}/260 ticks with pending > 0.15 m)", hotTicks < 15);
+            T.Check($"(f) the shell reached the flat ground (y {bottomY:0.00} m)", bottomY < 0.3f);
+
+            // ---- climb again, then descend over a mild adverse link (the sprint test's jitter profile):
+            // the glue must hold under real-ish latency/jitter/loss, not just the zero-latency ideal ----
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            yield return Ticks(180);
+            T.Check($"re-climbed for the jittery descent (shell y {sess.Shell.TruePhysicsPosition.Y:0.00} m)", sess.Shell.TruePhysicsPosition.Y > 1.2f);
+            net.ClientToServer.LatencyTicks = 3; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.02;
+            net.ServerToClient.LatencyTicks = 3; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.02;
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, -1f);
+            snapsBefore = sess.Reconciler.Snaps;
+            float maxPendJ = 0f, maxRiseJ = 0f;
+            prevY = sess.Shell.TruePhysicsPosition.Y;
+            for (int i = 0; i < 260; i++)
+            {
+                yield return Ticks(1);
+                float y = sess.Shell.TruePhysicsPosition.Y;
+                if (i >= 10) maxRiseJ = Mathf.Max(maxRiseJ, y - prevY);
+                prevY = y;
+                maxPendJ = Mathf.Max(maxPendJ, sess.Reconciler.PendingError.magnitude);
+            }
+            GD.Print($"[downhill-repro] jittery link: snaps={sess.Reconciler.Snaps - snapsBefore}, maxPend={maxPendJ:0.###} m, maxRise={maxRiseJ:0.###} m, bottomY={sess.Shell.TruePhysicsPosition.Y:0.00}");
+            T.Check($"(g) ZERO snaps descending over the jittery link ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
+            T.Check($"(h) no upward yank over the jittery link (max rise {maxRiseJ:0.###} m)", maxRiseJ < 0.05f);
+            T.Check($"(i) pending bounded over the jittery link (max {maxPendJ:0.###} m)", maxPendJ < 1.5f);
+            T.Check($"(j) reached the flat ground over the jittery link (y {sess.Shell.TruePhysicsPosition.Y:0.00} m)", sess.Shell.TruePhysicsPosition.Y < 0.3f);
+
+            // ---- settle on a clean link -> convergence + quiet detector, the standard closing bar ----
+            net.ClientToServer.LatencyTicks = 0; net.ClientToServer.ReorderJitterTicks = 0; net.ClientToServer.LossProbability = 0;
+            net.ServerToClient.LatencyTicks = 0; net.ServerToClient.ReorderJitterTicks = 0; net.ServerToClient.LossProbability = 0;
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the descents (err {err:0.###} m)", own && err < 0.05f);
+            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.05f);
+            T.Check("corrections actually flowed (acks applied)", sess.Reconciler.AcksApplied > 0);
+            T.Check($"DESYNC-QUIET across the whole downhill run ({desyncs} fired)", desyncs == 0);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
             world.Sim.Sim.Remove(pump);

@@ -31,6 +31,14 @@ namespace UnturnedGodot.Net
         /// slice lands the prediction EXACTLY on the authoritative grid point. 5 cm in one tick is under
         /// the perception floor at 50 Hz.</summary>
         public float FinishThresholdMeters = 0.05f;
+        /// <summary>Errors at or below this (metres) are NOT corrected at all: the pending error is held
+        /// at zero and the shell keeps its own prediction. Two separate physics bodies produce small
+        /// per-tick float/contact residuals even when healthy; correcting every non-zero sample every
+        /// tick reads as a constant "roped back" tug. Real Unturned corrects only past
+        /// errorToleranceDistance = 0.02 m (PlayerInput.cs:1817) -- ours is a little wider because the
+        /// two ends are distinct physics solves, not a bit-identical re-sim. Client-side only, no wire
+        /// change; the SnapThreshold teleport guard above is unaffected.</summary>
+        public float DeadZoneMeters = 0.04f;
 
         const int RingSize = 256;   // > any plausible input round-trip in ticks
         struct Entry { public ushort Seq; public bool Used; public Vector3 Pos; public Vector3 CumCorrection; }
@@ -44,6 +52,9 @@ namespace UnturnedGodot.Net
         public Vector3 PendingError => _pending;
         public long Snaps { get; private set; }
         public long AcksApplied { get; private set; }
+        /// <summary>Total metres of correction actually applied (sum of |NoteCorrectionApplied|) -- the
+        /// "how hard is the rope pulling" observability the dead-zone tests assert on.</summary>
+        public float CorrectionAppliedMeters { get; private set; }
 
         /// <summary>Remember where the local sim put the player after processing input `seq` (call once
         /// per tick, after stepping AND after applying this tick's correction slice).</summary>
@@ -67,6 +78,7 @@ namespace UnturnedGodot.Net
             var appliedSince = _cumCorrection - rec.CumCorrection;                          // corrections newer than the ack's knowledge
             _pending = (authoritativePos - rec.Pos) - appliedSince;
             if (Magnitude(_pending) >= SnapThresholdMeters) { Snaps++; return true; }
+            if (Magnitude(_pending) <= DeadZoneMeters) _pending = Vector3.zero;   // dead-zone: under the tolerance the shell keeps its own prediction -- zero correction, zero tug
             return false;
         }
 
@@ -101,7 +113,11 @@ namespace UnturnedGodot.Net
 
         /// <summary>Record how much correction ACTUALLY moved the predicted position this tick (after any
         /// quantization) -- the amount future acks subtract as already-applied.</summary>
-        public void NoteCorrectionApplied(Vector3 actuallyApplied) => _cumCorrection += actuallyApplied;
+        public void NoteCorrectionApplied(Vector3 actuallyApplied)
+        {
+            _cumCorrection += actuallyApplied;
+            CorrectionAppliedMeters += Magnitude(actuallyApplied);
+        }
 
         static float Magnitude(Vector3 v) => MathF.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
     }
