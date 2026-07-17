@@ -1087,6 +1087,27 @@ namespace UnturnedGodot
                 to.addItem(j.x, j.y, j.rot, j.item);
             }
         }
+
+        /// <summary>MP (wired only by ClientWorldSession): copy the replicated owner-block grid INTO the
+        /// shell's EXISTING Inventory instance -- never swap the reference (InventoryUI/CraftingUI, the
+        /// reload mag hunt, and the armor math all hold it). Worn refs first (direct field writes -- the
+        /// wearX helpers would RESIZE and wipe the pages), then every page cell-for-cell; the page sizes
+        /// come off the wire, so worn-bag grids stay right even before asset resolution. The replica entry
+        /// is rebuilt fresh per snapshot (InventoryReplication.ReadSnapshot), so adopting its jars shares
+        /// nothing with the server grid. InventoryUI's signature poll repaints on its next _Process (its
+        /// !_dragging guard already protects a mid-drag).</summary>
+        public void AdoptReplicatedInventory(PlayerInventory replica)
+        {
+            if (replica == null || Inventory == null || ReferenceEquals(replica, Inventory)) return;
+            Inventory.wornHat = replica.wornHat; Inventory.wornGlasses = replica.wornGlasses; Inventory.wornMask = replica.wornMask;
+            Inventory.wornShirt = replica.wornShirt; Inventory.wornVest = replica.wornVest;
+            Inventory.wornBackpack = replica.wornBackpack; Inventory.wornPants = replica.wornPants;
+            for (byte p = 0; p < PlayerInventory.PAGES; p++)
+            {
+                var from = replica.items[p];
+                CopyPage(from, Inventory.items[p], from.width, from.height);
+            }
+        }
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
@@ -1922,18 +1943,23 @@ namespace UnturnedGodot
 
         // seed the inventory with real items: wear the Alicepack (8x7) + Cargo Pants (6x3) so those pages open up,
         // put both guns in the hand slots, and scatter medical/food/water across pockets + backpack to show packing
-        void PopulateDemoInventory()
+        void PopulateDemoInventory() => PopulateDemoKit(Inventory);
+
+        /// <summary>The demo kit, shared by the SP shell (above) and the dedicated server's join seeding
+        /// (DedicatedServer -- MP pickup Step 4: the same bag the client always showed, now granted into
+        /// the SERVER grid so the owner-block adoption renders truth instead of a client-side fiction).</summary>
+        public static void PopulateDemoKit(PlayerInventory inv)
         {
-            Inventory.wearBackpack(new Item(253));   // Alicepack -> backpack slot + 8x7 storage
-            Inventory.wearPants(new Item(209));      // Cargo Pants -> pants slot + 6x3 storage
-            Inventory.equipToSlot(0, new Item(4));     // Eaglefire -> primary
-            Inventory.equipToSlot(1, new Item(363));   // Maplestrike -> secondary
+            inv.wearBackpack(new Item(253));   // Alicepack -> backpack slot + 8x7 storage
+            inv.wearPants(new Item(209));      // Cargo Pants -> pants slot + 6x3 storage
+            inv.equipToSlot(0, new Item(4));     // Eaglefire -> primary
+            inv.equipToSlot(1, new Item(363));   // Maplestrike -> secondary
             // items DON'T stack (Unturned is grid-based): each is its own single (amount-1) grid item.
-            Inventory.items[2].tryAddItem(new Item(15));            // Medkit in pockets
-            Inventory.items[2].tryAddItem(new Item(95));            // Bandage
-            Inventory.items[2].tryAddItem(new Item(95));            // Bandage (separate slot -- no stacking)
-            Inventory.items[2].tryAddItem(new Item(14));            // Bottled Water
-            var bag = Inventory.items[PlayerInventory.BACKPACK];
+            inv.items[2].tryAddItem(new Item(15));            // Medkit in pockets
+            inv.items[2].tryAddItem(new Item(95));            // Bandage
+            inv.items[2].tryAddItem(new Item(95));            // Bandage (separate slot -- no stacking)
+            inv.items[2].tryAddItem(new Item(14));            // Bottled Water
+            var bag = inv.items[PlayerInventory.BACKPACK];
             bag.tryAddItem(new Item(15));                           // Medkit
             bag.tryAddItem(new Item(13));                           // Canned Beans
             bag.tryAddItem(new Item(13));                           // Canned Beans (separate)
@@ -1949,7 +1975,7 @@ namespace UnturnedGodot
             bag.tryAddItem(new Item(121, 1));                       // Military Knife (melee: LMB weak / RMB strong swing)
             bag.tryAddItem(new Item(136, 1));                       // Sledgehammer (heavy melee -- anti-structure)
             bag.tryAddItem(new Item(76, 1));                        // Blowtorch (repair live hurt cars / salvage cold wrecks)
-            Inventory.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
+            inv.items[PlayerInventory.PANTS].tryAddItem(new Item(13));  // Canned Beans in pants
         }
 
         // R to reload: block firing, then refill the magazine after the reload's duration. The reload takes the

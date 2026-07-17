@@ -2259,6 +2259,77 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // MP pickup (ITEM_PICKUP_WIRING_PLAN Steps 1-4), the headline round trip: F on a focused world-item
+    // puppet -> PickupItemCommand -> the §2.3 choke point -> OnPickupItem transacts into the SERVER grid ->
+    // WorldItemRemoved retires the puppet everywhere + the owner-block echo makes the item appear in the
+    // shell's LOCAL bag (the adoption seam -- the one piece no L0 can see). Also pins the Step 4 decision:
+    // the demo kit is seeded SERVER-side on join, so the bag the player sees is the server's truth.
+    public class NetShellPickupItem : GameTest
+    {
+        public override string Name => "net.shell_pickup_item";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // real ids: the puppet view + the join demo-kit seeding resolve against the catalog
+
+            var net = new MemNetwork(20260808);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);   // datagram delivery before the session's Client.Tick each tick
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "picker" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            // Step 4 seeding: the joiner's SERVER grid carries the demo kit -- the bag is truth, not fiction
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            T.Check("server grid seeded with the demo kit on join (Eaglefire in the primary slot)",
+                    sHave && sInv.Inventory.getItemCount(4) == 1);
+            yield return Ticks(10);   // the join echo settles into the shell's bag
+            T.Check("the shell's bag ADOPTED the server grid (the seeded kit's medkits)",
+                    sess.Shell.Inventory.getItemCount(15) == 2);
+
+            // the target: a GENERATOR (458 -- not in the demo kit, so counts discriminate) 2 m ahead of
+            // the shell's facing: inside PickupReach AND the Step 5 facing cone, past the at-feet skip
+            var fwd = -sess.Shell.GlobalTransform.Basis.Z;
+            var e = ded.Server.Transactions.SpawnWorldItem(new SDG.Unturned.Item(458), ToU(sess.Shell.GlobalPosition + fwd * 2f), UnityEngine.Vector3.zero);
+            T.Check("server spawned the world-item entity", e != null && ded.Server.WorldItems.Count == 1);
+            yield return Until(() => sess.Items.TryGetNode(e.NetIdValue, out _), 5);
+            bool haveNode = sess.Items.TryGetNode(e.NetIdValue, out var node);
+            T.Check("the item puppet materialized on the joined client", haveNode);
+            var wp = node as WorldItemPuppet;
+            T.Check("the puppet carries the entity NetId (Step 1)", wp != null && wp.NetId == e.NetIdValue);
+
+            // drive the request through the seam (the F-chain path minus the focus raycast -- the same
+            // way net.shell_drive drives ride mode). A REQUEST only: nothing local changes until the
+            // server's facts come back.
+            T.Check("the pickup request fired through the NetPickupItem seam", sess.Shell.RequestPickupPuppet(wp));
+
+            yield return Until(() => ded.Server.WorldItems.Count == 0, 5);
+            T.Check("(a) the server world-item entity retired", ded.Server.WorldItems.Count == 0);
+            yield return Until(() => !sess.Items.TryGetNode(e.NetIdValue, out _), 5);
+            T.Check("(b) the puppet node freed (WorldItemRemoved -> the diff-driven view)", !sess.Items.TryGetNode(e.NetIdValue, out _));
+            T.Check("(c) the SERVER grid holds the item", sHave && sInv.Inventory.getItemCount(458) == 1);
+            yield return Until(() => sess.Shell.Inventory.getItemCount(458) == 1, 5);
+            T.Check("(d) the shell's LOCAL bag shows it -- the owner-block adoption echo",
+                    sess.Shell.Inventory.getItemCount(458) == 1);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // MP pickup denial (ITEM_PICKUP_WIRING_PLAN Step 3): a LEGAL pickup into a FULL server grid --
     // ItemPickupDenied comes back to the requester only, the entity + puppet stay in the world, and
     // neither grid changes (the request made no local mutation to roll back). The L0

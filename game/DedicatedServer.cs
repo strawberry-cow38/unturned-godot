@@ -55,6 +55,18 @@ namespace UnturnedGodot
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
             Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
             Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
+            // MP pickup Step 4 (decision, ITEM_PICKUP_WIRING_PLAN §4.1): joiners get the DEMO KIT granted
+            // into the SERVER grid -- the same bag the client shell always showed locally, now authoritative
+            // (without it the owner-block adoption would empty the bag at join and reload/consume would have
+            // nothing to chew on). Game-side only, so every core L0 harness stays byte-identical. Runs here
+            // in PeerConnected -- after core's Inventories.ServerAdd (subscribed first, in the NetWorldServer
+            // ctor) and BEFORE the join snapshot composes in TickReplication, so the kit rides the join
+            // snapshot. In a catalog-less fallback boot the grants degrade to 1x1/no-bag -- harmless.
+            Server.Session.PeerConnected += peer =>
+            {
+                if (Server.Inventories.TryGet(peer.PlayerId, out var inv))
+                    PlayerController.PopulateDemoKit(inv.Inventory);
+            };
             // Phase 6: the transactional slice's def tables -- the same DeployableDef/blueprint data every
             // client build carries (content-hash-matched), feeding placement validation + the server solve.
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);

@@ -132,6 +132,17 @@ namespace UnturnedGodot
                 GD.Print($"[CLIENT] pickup denied (world item {e.NetId}) -- no room in the bag");
                 if (_toast != null) { _toast.Text = "No room in inventory"; _toastT = 2.5f; }
             };
+            // Phase 6 owner inventory (pickup Step 4): the shell's bag MIRRORS the server's authoritative
+            // grid -- every owner-block echo re-adopts into the shell's EXISTING Inventory instance
+            // (copy-in-place; the UI's signature poll repaints). The initial pull rides SpawnShell: the
+            // join snapshot's owner block applies BEFORE the shell exists, so its ReplicaUpdated already
+            // fired by then. Known wrinkle (accepted, PROGRESS.md): locally-mutated state MP hasn't routed
+            // yet (mag accounting, consume decrement) is resurrected by the next full-state echo.
+            Client.Inventories.ReplicaUpdated += owner =>
+            {
+                if (owner != Client.PlayerId || Shell == null || !IsInstanceValid(Shell)) return;
+                if (Client.Inventories.TryGet(owner, out var inv)) Shell.AdoptReplicatedInventory(inv.Inventory);
+            };
 
             // pre-join status: there is NO camera until the shell spawns (its first-person cam IS the
             // view) -- surface the session state so an unreachable server isn't a silent black screen
@@ -240,6 +251,10 @@ namespace UnturnedGodot
             // item itself": the bag fills only when the owner-block echo lands, the puppet despawns only
             // when WorldItemRemoved broadcasts (WorldItemReplicaView is already diff-driven).
             shell.NetPickupItem = netId => Client.SendPickupItem(netId);
+            // owner-grid initial pull (Step 4): the join snapshot's owner block landed before this shell
+            // existed -- adopt it now; the ReplicaUpdated subscription (in _Ready) carries every echo after
+            if (Client.Inventories.TryGet(Client.PlayerId, out var invEntry))
+                shell.AdoptReplicatedInventory(invEntry.Inventory);
             Shell = shell;
             if (System.Environment.GetEnvironmentVariable("UG_MPWALK") == "1")   // scripted-walk hook for headless connect-and-render checks (the UG_AUTOFIRE spirit)
                 shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
