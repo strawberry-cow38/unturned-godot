@@ -81,7 +81,7 @@ namespace UnturnedGodot
             root.AddChild(sun);
             root.AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
             await Phase("Terrain");
-            var terr = Terrain.LoadMapMerged(mapRoot + @"\Landscape\Heightmaps", withCollider: true);
+            var terr = Terrain.LoadMapMerged(mapRoot + "/Landscape/Heightmaps", withCollider: true);
             if (terr == null)
             {
                 // no local Unturned install -> LoadMapMerged logged the UG_UNTURNED_DIR hint; bail the world-build cleanly.
@@ -230,7 +230,7 @@ namespace UnturnedGodot
                 // source LevelPlayers.getSpawn picks a random NON-alt spawn). Falls back to the inland-grass scan if the file's missing.
                 bool gotSpawn = false;
                 {
-                    string ppath = mapRoot + @"\Spawns\Players.dat";
+                    string ppath = mapRoot + "/Spawns/Players.dat";
                     if (System.IO.File.Exists(ppath))
                     {
                         var pd = System.IO.File.ReadAllBytes(ppath); int pp = 0;
@@ -313,7 +313,7 @@ namespace UnturnedGodot
                 // 4 Medic, 5 Farm, 6-11 air/water/tank. LAND (0-5): Civilian=car pool, Police/Fire/Medic=static mesh, Military=humvee, Farm=jeep stand-in.
                 {
                     await Phase("Vehicles");
-                    string vpath = mapRoot + @"\Spawns\Vehicles.dat";
+                    string vpath = mapRoot + "/Spawns/Vehicles.dat";
                     int nv = 0;
                     if (System.IO.File.Exists(vpath))
                     {
@@ -396,7 +396,7 @@ namespace UnturnedGodot
                 {
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
-                    rf.LoadFromEnvironment(mapRoot + @"\Environment");
+                    rf.LoadFromEnvironment(mapRoot + "/Environment");
                     root.AddChild(rf);
                 }
                 // FOLIAGE: PEI's baked Foliage.blob grass (asset 1, 612K instances) as one MultiMesh
@@ -447,7 +447,7 @@ namespace UnturnedGodot
                 {
                     await Phase("Roads");
                     var rf = new RoadField { Terr = terr };
-                    rf.LoadFromEnvironment(mapRoot + @"\Environment");
+                    rf.LoadFromEnvironment(mapRoot + "/Environment");
                     root.AddChild(rf);
                 }
                 {
@@ -495,7 +495,7 @@ namespace UnturnedGodot
             root.AddChild(sun);
             root.AddChild(new DayNightCycle { Sun = sun, Env = env, DayLength = 300f });
 
-            var terr = Terrain.LoadMapMerged(mapRoot + @"\Landscape\Heightmaps", withCollider: true);
+            var terr = Terrain.LoadMapMerged(mapRoot + "/Landscape/Heightmaps", withCollider: true);
             if (terr == null) return result;
             root.AddChild(terr);
             result.Terr = terr;

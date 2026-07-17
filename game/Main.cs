@@ -21,7 +21,7 @@ namespace UnturnedGodot
         // NON-default installs, e.g. UG_UNTURNED_DIR="D:\SteamLibrary\steamapps\common\Unturned".
         static string MapDir(string name) =>
             (System.Environment.GetEnvironmentVariable("UG_UNTURNED_DIR")?.TrimEnd('\\', '/')
-             ?? @"C:\Program Files (x86)\Steam\steamapps\common\Unturned") + @"\Maps\" + name;
+             ?? @"C:\Program Files (x86)\Steam\steamapps\common\Unturned") + "/Maps/" + name;   // forward slashes: valid on Windows too, and required on the Linux dedicated server
         string _mapRoot = MapDir("PEI");   // --map=NAME switches the whole map (terrain + objects + spawns)
         string _mapPlace = "placements.txt";   // per-map baked object placements in content/objects/ (non-PEI = placements_<key>.txt)
         int _frame;
@@ -1041,7 +1041,7 @@ namespace UnturnedGodot
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -55f, 0f), LightEnergy = 1.15f, ShadowEnabled = true });
 
-            { var _t = Terrain.LoadMapMerged(_mapRoot + @"\Landscape\Heightmaps", withCollider: false); if (_t != null) AddChild(_t); }   // --map= aware (defaults to PEI); any modern-Landscape map renders here
+            { var _t = Terrain.LoadMapMerged(_mapRoot + "/Landscape/Heightmaps", withCollider: false); if (_t != null) AddChild(_t); }   // --map= aware (defaults to PEI); any modern-Landscape map renders here
 
             var cam = new Camera3D { Current = true, Fov = 55f, Far = 16000f };
             AddChild(cam);
@@ -1504,7 +1504,7 @@ namespace UnturnedGodot
             var sun = new DirectionalLight3D { LightEnergy = 1.3f, ShadowEnabled = true, RotationDegrees = new Vector3(-55f, 35f, 0f) };
             AddChild(sun);
 
-            var terr = Terrain.LoadMapMerged(MapDir("PEI") + @"\Landscape\Heightmaps", withCollider: true);
+            var terr = Terrain.LoadMapMerged(MapDir("PEI") + "/Landscape/Heightmaps", withCollider: true);
             if (terr == null) return;
             AddChild(terr);
 
@@ -1913,11 +1913,21 @@ namespace UnturnedGodot
         // server has no loading screen to paint -- block until the world stands, then start serving.
         async void BuildDedicated()
         {
-            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
-            AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim, Terr = res.Terr });   // Terr: server grenades bounce on real terrain height (Phase 5)
-            _worldReady = res.Ready;
-            GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {NetPort}");
+            // async void swallows exceptions silently -- a bad map path used to leave the server dead with no
+            // log and no bound socket. Surface anything that goes wrong + hard-exit so systemd restarts cleanly.
+            try
+            {
+                var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
+                    noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
+                AddChild(new DedicatedServer { Port = NetPort, Driver = res.Sim, Terr = res.Terr });   // Terr: server grenades bounce on real terrain height (Phase 5)
+                _worldReady = res.Ready;
+                GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {NetPort}");
+            }
+            catch (System.Exception e)
+            {
+                GD.PrintErr($"[DEDICATED] world build FAILED: {e}");
+                GetTree().Quit(1);
+            }
         }
 
         // Headless demo server process (+ a scripted bot player) -- the visible 2-process demo, now riding
