@@ -347,6 +347,120 @@ namespace UnturnedNet.Tests
             Assert.That(h.StepUntil(() => exited.Count > 0, 20), Is.True, "VehicleExited broadcast the eject");
         }
 
+        // ---------------------------------------------------------------- P4: the owner-only wire block (SystemId 13, v8)
+
+        [Test]
+        public void VitalsBlock_IsOwnerOnly_AnotherPlayersVitalsNeverCross()
+        {
+            var h = new Harness(60113).Connected("a", "b");
+            var a = h.Clients[0];
+            var b = h.Clients[1];
+
+            // hurt A so its block goes dirty and definitely rides deltas
+            h.Server.Vitals.ApplyDamageDirect(a.PlayerId, 30f, h.Server.Session.CurrentTick);
+            Assert.That(h.StepUntil(() => a.Vitals.TryGet(a.PlayerId, out var mine) && mine.Health < 100, 100),
+                        Is.True, $"A's own block arrived (seed={h.Net.Seed})");
+
+            Assert.That(a.Vitals.TryGet(b.PlayerId, out _), Is.False, "B's vitals never crossed to A");
+            Assert.That(b.Vitals.TryGet(a.PlayerId, out _), Is.False, "A's vitals never crossed to B (the privacy rule)");
+            Assert.That(b.Vitals.Count, Is.LessThanOrEqualTo(1), "B holds at most its own entry");
+        }
+
+        [Test]
+        public void VitalsBlock_QuantizationRoundTrips_WithinOneStep()
+        {
+            var h = new Harness(60114).Connected("a");
+            var a = h.Clients[0];
+            h.Server.Vitals.TryGet(a.PlayerId, out var e);
+            // a STABLE state (drain off, infection 0, stamina/health full) so the values hold while the
+            // snapshot flows; food/water over the 0.30 regen gate keeps health parked at max
+            e.Sim.Food = 0.37f;
+            e.Sim.Water = 0.62f;
+
+            Assert.That(h.StepUntil(() => a.Vitals.TryGet(a.PlayerId, out var r) && r.Food != 255, 100), Is.True,
+                        $"the changed block replicated (seed={h.Net.Seed})");
+            a.Vitals.TryGet(a.PlayerId, out var rep);
+            Assert.That(rep.Food, Is.EqualTo(ServerVitals.Quantize01(0.37f)), "food byte is the exact encode");
+            Assert.That(rep.Water, Is.EqualTo(ServerVitals.Quantize01(0.62f)), "water byte is the exact encode");
+            Assert.That(rep.Food / 255f, Is.EqualTo(0.37f).Within(1f / 255f), "decode within one quantum");
+            Assert.That(rep.Water / 255f, Is.EqualTo(0.62f).Within(1f / 255f));
+            Assert.That(rep.Stamina, Is.EqualTo(255), "full stamina rides as 255");
+            Assert.That(rep.Health, Is.EqualTo(100));
+        }
+
+        [Test]
+        public void VitalsBlock_QuiescentEntryGoesDeltaSilent()
+        {
+            var h = new Harness(60115).Connected("idle");
+            var a = h.Clients[0];
+            h.Server.Vitals.TryGet(a.PlayerId, out var e);
+
+            // a full-vitals, motionless, drain-off player: nothing wire-visible moves -> no stamps
+            h.Step(20);
+            long stamp = e.LastChangedTick;
+            h.Step(100);
+            Assert.That(e.LastChangedTick, Is.EqualTo(stamp),
+                        "a quiescent entry stops stamping (the owner block goes delta-silent)");
+
+            h.Server.Vitals.ApplyDamageDirect(a.PlayerId, 5f, h.Server.Session.CurrentTick);
+            Assert.That(e.LastChangedTick, Is.GreaterThan(stamp), "a real mutation stamps again");
+        }
+
+        [Test]
+        public void VitalsBlock_StateHashForParity_ServerVsOwnReplica()
+        {
+            var h = new Harness(60116).Connected("hashed");
+            var a = h.Clients[0];
+            h.Server.Vitals.ApplyDamageDirect(a.PlayerId, 23.7f, h.Server.Session.CurrentTick);
+            h.Server.Vitals.EnqueueInfection(a.PlayerId, 0.3f);
+            h.Server.Vitals.TryGet(a.PlayerId, out var e);
+            e.Sim.Food = 0.2f;   // close the regen gate so the state HOLDS once replicated
+
+            // wait for the replica to converge on a tick where the server is quiescent, then compare
+            Assert.That(h.StepUntil(() =>
+            {
+                if (!a.Vitals.TryGet(a.PlayerId, out var r)) return false;
+                return h.Server.VitalsBlock.StateHashFor(a.PlayerId) == a.Vitals.StateHash();
+            }, 200), Is.True, $"owner-only hash parity: server encode == client replica (seed={h.Net.Seed})");
+        }
+
+        [Test]
+        public void VitalsOwnerBlock_GoldenBytes()
+        {
+            // the 9-byte owner block, byte-exact (MP_VITALS_PLAN §5/§8: goldened so the NEXT layout change
+            // is caught and forced through a version bump): count:u8=1, owner:u16, health:u8 (Ceiling),
+            // food/water/stamina/infection:u8 (round(v*255)), flags:u8 (bit0 bleed, bit1 broken, bit2 drain)
+            var players = new PlayerReplication();
+            var combat = new PlayerCombatReplication();
+            var skills = new SkillsReplication();
+            var vitals = new ServerVitals(combat, players, skills);
+            combat.ServerAdd(7, Vector3.zero, 30, 1);
+            var e = vitals.ServerAdd(7, 1);
+            e.Sim.Health = 72.3f;     // ceil -> 73  = 0x49
+            e.Sim.Food = 0.5f;        // 127.5 -> 128 = 0x80 (round-half-to-even, the Math.Round default)
+            e.Sim.Water = 1f;         // 255 = 0xFF
+            e.Sim.Stamina = 0.25f;    // 63.75 -> 64 = 0x40
+            e.Sim.Infection = 0.2f;   // 51 = 0x33
+            e.Bleeding = true;
+            e.Broken = true;          // flags = 0x03 (drain off)
+            var block = new VitalsReplication { Server = vitals };
+
+            var w = new SDG.NetPak.NetPakWriter { buffer = new byte[64] };
+            w.Reset();
+            block.WriteFull(w, new ReplicationContext(1, clientPlayerId: 7, Vector3.zero));
+            w.Flush();
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < w.writeByteIndex; i++) sb.Append(w.buffer[i].ToString("X2"));
+            Assert.That(sb.ToString(), Is.EqualTo("0107004980FF403303"), "the 9-byte owner block, locked");
+
+            // ... and a client that is NOT the owner gets the empty block (count 0)
+            w.Reset();
+            block.WriteFull(w, new ReplicationContext(1, clientPlayerId: 9, Vector3.zero));
+            w.Flush();
+            Assert.That(w.writeByteIndex, Is.EqualTo(1).And.EqualTo((int)w.buffer[0] + 1),
+                        "someone else's compose carries count=0, one byte");
+        }
+
         // ---------------------------------------------------------------- the one write-through helper (§10 risk 6)
 
         [Test]

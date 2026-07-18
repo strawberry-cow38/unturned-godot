@@ -19,7 +19,7 @@ namespace UnturnedGodot
         // ConsoleResult event echoes the verdict back into this log. SP and the listen-server host leave it
         // null -- the local process IS the authority there, so the direct paths below stay byte-identical.
         public static UnturnedGodot.Net.NetWorldClient RemoteClient;
-        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp" };
+        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "survival", "hunger", "pdie" };   // MP vitals: survival/pdie mutate ONLY the server (§10 risk 9); the local static mirrors back via flags bit2
         bool _resultHooked;
 
         LineEdit _input;

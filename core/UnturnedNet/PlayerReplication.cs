@@ -25,6 +25,7 @@ namespace UnturnedGodot.Net
         public const byte SystemWorldClock = 10;    // Phase 8: day-night base + day length; time derives from the snapshot tick (WorldReplication.cs, §3.7)
         public const byte SystemCrops = 11;         // Phase 8: planted crops -- growth derives from PlantedAtTick (WorldReplication.cs, §3.7)
         public const byte SystemResources = 12;     // Phase 8: tree/resource alive-bitmap keyed by load-order index (WorldReplication.cs, §3.7)
+        public const byte SystemPlayerVitals = 13;  // MP vitals P4 (v8): OWNER-ONLY health/food/water/stamina/infection + bleed/broken/drain flags (VitalsReplication.cs, MP_VITALS_PLAN §5)
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 

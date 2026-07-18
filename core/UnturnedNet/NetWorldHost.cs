@@ -38,6 +38,8 @@ namespace UnturnedGodot.Net
         public readonly WorldClockReplication Clock = new WorldClockReplication();
         public readonly CropReplication Crops = new CropReplication();
         public readonly ResourceReplication Resources = new ResourceReplication();
+        // MP vitals P4 (v8): the owner-only vitals block (SystemId 13) -- encodes straight from ServerVitals
+        public readonly VitalsReplication VitalsBlock = new VitalsReplication();
         public readonly ServerVehicles VehicleHost;
         public readonly ServerCombat Combat;
         public readonly ServerVitals Vitals;   // MP_VITALS_PLAN §3: the per-player authoritative vitals sim
@@ -66,10 +68,13 @@ namespace UnturnedGodot.Net
                                            activeHoliday: activeHoliday);
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
-                                                                      Vehicles, Clock, Crops, Resources });
+                                                                      Vehicles, Clock, Crops, Resources, VitalsBlock });
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Vitals = new ServerVitals(CombatState, Players, Skills);
+            VitalsBlock.Server = Vitals;   // the block encodes from the authoritative sim at compose time
+            // NOT added to EnableSyncCheck: owner-only systems differ per client by design (the
+            // Skills/Inventory exclusion precedent -- MP_VITALS_PLAN §5)
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo, Vitals);
             Vitals.Combat = Combat;   // deaths from the vitals step (starve/queue) run the ONE KillPlayer tail
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
@@ -326,6 +331,8 @@ namespace UnturnedGodot.Net
         public readonly WorldClockReplication Clock = new WorldClockReplication();
         public readonly CropReplication Crops = new CropReplication();
         public readonly ResourceReplication Resources = new ResourceReplication();
+        // MP vitals P4 (v8): the owner-only vitals replica -- only MY entry ever fills in (SystemId 13)
+        public readonly VitalsReplication Vitals = new VitalsReplication();
         public readonly SnapshotApplier Applier;
         public readonly EventRegistry Events = new EventRegistry();
         public readonly ClientPrediction Prediction = new ClientPrediction();
@@ -384,7 +391,7 @@ namespace UnturnedGodot.Net
             Session = new NetClientSession(transport, playerName, contentHash: contentHash);
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                     Skills, Deployables, Inventories, WorldItems,
-                                                                    Vehicles, Clock, Crops, Resources });
+                                                                    Vehicles, Clock, Crops, Resources, Vitals });
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {

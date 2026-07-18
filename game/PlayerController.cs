@@ -1222,6 +1222,40 @@ namespace UnturnedGodot
                 CopyPage(from, Inventory.items[p], from.width, from.height);
             }
         }
+        /// <summary>MP vitals P4 (called only by ClientWorldSession, each tick): overwrite the shell's
+        /// local vitals sim wholesale from the replicated owner block -- the AdoptReplicatedSkills
+        /// analogue. The HUD reads the shell properties, which read _vitals, so this IS the HUD bind;
+        /// the local sim keeps stepping between snapshots as prediction (steady-state deltas are
+        /// sub-quantum, §10 risk 1). On a drop >= 1 HP the pain/bleed feedback fires locally --
+        /// sourceless, no camera kick (the :1852-1853 precedent) -- so server-side bites hurt visibly
+        /// even though damage never executes client-side.</summary>
+        public void AdoptReplicatedVitals(UnturnedGodot.Net.VitalsReplication.Entry e)
+        {
+            if (e == null) return;
+            float prev = _vitals.Health;
+            _vitals.Health = e.Health;               // the owner's health IS the coarse Ceiling byte (MaxHealth fixed 100)
+            _vitals.Food = e.Food / 255f;
+            _vitals.Water = e.Water / 255f;
+            _vitals.Stamina = e.Stamina / 255f;
+            _vitals.Infection = e.Infection / 255f;
+            // bleeding: the server flag is truth; the local 5 s fx timer keeps the icon through the RTT
+            // window so a fresh local hit never flickers off before the echo confirms it
+            Bleeding = e.Bleeding || _bleedTimer > 0;
+            // BROKEN (§10 risk 7): the replicated flag is HUD/heal state ONLY -- it must never gate
+            // movement, so it is adopted as a CLEAR EDGE only (server true -> false = a heal/respawn
+            // happened: release the local gate). The SET is always this body's own deterministic landing.
+            if (_adoptedBrokenPrev && !e.Broken) Broken = false;
+            _adoptedBrokenPrev = e.Broken;
+            SurvivalDrain = e.SurvivalDrain;         // §10 risk 9: the shell's static mirrors the server's drain toggle
+            float drop = prev - _vitals.Health;
+            if (drop >= 1f && !_dead)
+            {
+                if (drop > 5f) PainAlpha = Mathf.Clamp(drop / 40f, 0f, 1f) * 0.75f;   // the SP > 5 gate (:1863)
+                Bleeding = true; _bleedTimer = 5.0;
+            }
+        }
+        bool _adoptedBrokenPrev;
+
         /// <summary>MP (called only by ClientWorldSession, each tick): mirror the replicated owner skills
         /// block into the shell's local PlayerSkills -- the AdoptReplicatedInventory analogue. The skill
         /// multipliers (recoil/stamina/crafting gates) all read this instance, so the server's levels/XP

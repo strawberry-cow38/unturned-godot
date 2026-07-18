@@ -255,6 +255,9 @@ namespace UnturnedGodot
             // owner skills block -> the shell's local PlayerSkills (the AdoptReplicatedInventory analogue;
             // SkillsReplication has no per-echo event, so mirror every tick -- 23 bytes, idempotent)
             if (Client.Skills.TryGet(Client.PlayerId, out var sk)) Shell.AdoptReplicatedSkills(sk.Skills);
+            // MP vitals P4: owner vitals block -> the shell's local sim (the HUD source). Every tick,
+            // wholesale -- the shell's own stepping between snapshots is prediction the echo overwrites.
+            if (Client.Vitals.TryGet(Client.PlayerId, out var vit)) Shell.AdoptReplicatedVitals(vit);
             // Part A DRIVING (CLIENT_PREDICTION_PLAN §5.2 A1, replacing the C6 v1 puppet-ride): seated in a
             // replicated vehicle -- the shell drives a CLIENT-LOCAL real Vehicle through the SP direct-drive
             // path (0 ms wheel response; retail client authority) and this step streams VehicleState @25 Hz

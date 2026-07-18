@@ -2645,6 +2645,89 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // MP VITALS P4 (docs/MP_VITALS_PLAN.md §5/§9): the owner-only vitals block (SystemId 13, wire v8)
+    // binds the shell's HUD to the SERVER's truth -- AdoptReplicatedVitals overwrites the local sim from
+    // the replicated block every tick, so a server-side bite shows on the health bar within a snapshot,
+    // infection rises then decays on the server's clock, the bleed icon shows and clears off the server
+    // flag, and a server-side food change lands on the HUD without any client message. TEETH: unregister
+    // SystemPlayerVitals from either side (or unhook the ShellStep adopt) and every convergence check
+    // here fails -- the shell's local sim has no other path to these numbers (RemoteVitals blocks local
+    // writes).
+    public class NetShellVitalsHud : GameTest
+    {
+        public override string Name => "net.shell_vitals_hud";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var net = new MemNetwork(20260721);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "hud" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(25);
+            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
+            bool sHave = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var scs);
+            bool vHave = ded.Server.Vitals.TryGet(sess.Client.PlayerId, out var sv);
+            T.Check("avatar body + server state live", haveBody && sHave && vHave);
+            if (!haveBody || !sHave || !vHave) yield break;
+
+            // (a) a server-side bite lands on the HUD within a snapshot (the owner block -> adopt)
+            body.TakeDamage(12f, body.GlobalPosition + Vector3.Forward);
+            body.Infect(0.2f);
+            yield return Until(() => sess.Shell.Health < 100f, 2);
+            T.Check($"(a) the bite reached the health BAR within a snapshot ({sess.Shell.Health:0.#})",
+                    sess.Shell.Health < 100f && Mathf.Abs(sess.Shell.Health - Mathf.Ceil(scs.HealthExact)) <= 1f);
+            T.Check("(a) the sourceless pain flash fired off the adopted drop", sess.Shell.PainAlpha > 0f);
+            T.Check("(a) bleeding icon showed off the server flag", sess.Shell.Bleeding && sv.Bleeding);
+
+            // (b) infection: rises through the seam, then DECAYS on the server's 0.01/s clock -- the HUD
+            //     number tracks the server, not a local sim
+            yield return Until(() => sess.Shell.Infection > 0.1f, 2);
+            float infPeak = sess.Shell.Infection;
+            T.Check($"(b) infection rose on the HUD ({infPeak:0.###})", infPeak > 0.1f);
+            yield return Ticks(250);   // 5 s of decay = -0.05
+            T.Check($"(b) ... and decays on the server clock ({sess.Shell.Infection:0.###} < {infPeak:0.###})",
+                    sess.Shell.Infection < infPeak - 0.03f && Mathf.Abs(sess.Shell.Infection - sv.Sim.Infection) < 0.02f);
+
+            // (c) the bleed icon cleared: the server's 5 s timer elapsed during the decay wait above and
+            //     the echo took the icon down (no local decision)
+            yield return Until(() => !sess.Shell.Bleeding, 8);
+            T.Check("(c) bleeding icon cleared off the server timer", !sess.Shell.Bleeding && !sv.Bleeding);
+
+            // (d) a SERVER-side food change lands on the HUD with no client message at all
+            sv.Sim.Food = 0.5f;   // the next Vitals.Step stamps the quantized change
+            yield return Until(() => sess.Shell.Food < 0.6f, 2);
+            T.Check($"(d) server food change reached the HUD ({sess.Shell.Food:0.###})",
+                    Mathf.Abs(sess.Shell.Food - 0.5f) <= 2f / 255f);
+
+            // (e) health regenerated back up (fed + hydrated on the server) and the HUD followed
+            // (wait on the EXACT float: the ceil byte shows 100 a few ticks before the float tops out)
+            yield return Until(() => scs.HealthExact >= 100f, 15);
+            yield return Ticks(5);
+            T.Check($"(e) server regen carried the HUD back to full ({sess.Shell.Health:0.#})",
+                    sess.Shell.Health >= 100f && scs.HealthExact == 100f);
+
+            T.Check($"DESYNC-QUIET ({desyncs})", desyncs == 0);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // MP VITALS P3, the PvP smoke (docs/MP_VITALS_PLAN.md §9): with death UX live, PvP defaults ON
     // (DedicatedServer no longer forces PvPEnabled=false; UG_DEDICATED_PVP=0 is the kill switch). A
     // connect shell fires the wire Fire command at a second joined peer: the server's ballistic step
@@ -2784,11 +2867,11 @@ namespace UnturnedGodot.Testing
             yield return Until(() => scs.HealthExact < 100f, 10);
             yield return Ticks(25);
 
-            // (a) P2: the shell NO LONGER self-applies -- its landing is fx-only (bleed icon set, local
-            //     health untouched; the true number arrives via the owner block in P4)
-            T.Check($"(a) shell health untouched by its own landing ({sess.Shell.Health:0.#})",
-                    sess.Shell.Health == 100f);
-            T.Check("(a) ... but the landing fx fired (bleeding icon)", sess.Shell.Bleeding);
+            // (a) the shell NO LONGER self-applies (P2: fx-only landing) -- and since P4 its HUD health
+            //     is the ADOPTED owner block: the server's number, not a local computation
+            T.Check($"(a) shell HUD converged to the SERVER's number ({sess.Shell.Health:0.#} vs exact {scs.HealthExact:0.#})",
+                    sess.Shell.Health < 100f && Mathf.Abs(sess.Shell.Health - Mathf.Ceil(scs.HealthExact)) <= 1f);
+            T.Check("(a) ... and the landing fx fired (bleeding icon)", sess.Shell.Bleeding);
             T.Check("(a) shell computed its own movement-gating Broken locally", sess.Shell.Broken);
             // (b) the SERVER took the authoritative damage through the avatar's seam + vitals queue
             T.Check($"(b) server HealthExact dropped from the avatar's landing ({scs.HealthExact:0.#})",

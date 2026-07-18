@@ -87,6 +87,9 @@ namespace UnturnedGodot.Net
 
         public bool TryGet(ushort ownerPlayerId, out Entry entry) => _byOwner.TryGetValue(ownerPlayerId, out entry);
 
+        /// <summary>Sorted owner ids (VitalsReplication's server-side StateHash enumerates through this).</summary>
+        public List<ushort> Owners() => SortedOwners();
+
         // see SkillsReplication.Stamp: mutations stamp one tick ahead so a change landing after this
         // tick's snapshot composed still beats the acked baseline (the compose-boundary off-by-one)
         static long Stamp(long tick) => tick + 1;
