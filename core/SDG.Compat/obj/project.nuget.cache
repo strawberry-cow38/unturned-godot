@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "0/7HmnwAIDk=",
+  "dgSpecHash": "u1vHazSTbNE=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/ug-predict-a/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/projects/ug-parity/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

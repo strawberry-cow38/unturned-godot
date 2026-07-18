@@ -47,6 +47,7 @@ namespace UnturnedGodot
         public RemotePlayers Remotes { get; private set; }
         public ZombiePuppets Puppets { get; private set; }        // C5: server zombies as interpolated puppets
         public WorldItemReplicaView Items { get; private set; }   // C5: replicated world items as static visuals
+        public DeployableReplicaView Deploys { get; private set; }   // Phase 6/8: replicated deployables/wires as real nodes (L1 tests reach the netId-stamped nodes through this)
         public VehicleReplicaView VehicleView { get; private set; }   // C6: the puppet registry -- ride mode chases these
         public PlayerController Shell { get; private set; }   // null until the first authoritative own-entity sample
         public uint RidingVehicle => _ridingNetId;             // NetId of the vehicle the server seated us in (0 = on foot)
@@ -98,7 +99,8 @@ namespace UnturnedGodot
             // replica views -- puppets/replicas land INSIDE the real world (they parent to this node / its parent)
             Remotes = new RemotePlayers { Client = Client };  // remote players as CharacterModel puppets; self never puppets (the shell owns self)
             AddChild(Remotes);
-            AddChild(new DeployableReplicaView { Client = Client });
+            Deploys = new DeployableReplicaView { Client = Client };
+            AddChild(Deploys);
             VehicleView = new VehicleReplicaView { Client = Client };   // server vehicles as dead-reckoned puppets (§3.6)
             AddChild(VehicleView);
             // C6 ride mode: the server's seat facts drive the shell's enter/exit -- the client never seats
@@ -175,6 +177,10 @@ namespace UnturnedGodot
                 if (owner != Client.PlayerId || Shell == null || !IsInstanceValid(Shell)) return;
                 if (Client.Inventories.TryGet(owner, out var inv)) Shell.AdoptReplicatedInventory(inv.Inventory);
             };
+            // Phase 6/8 storage arbitration facts (sent only to the opener): the dashboard opens/latches on
+            // the SERVER's say-so -- the crate grid itself rides the owner inventory echo (STORAGE page 7)
+            Client.StorageOpened += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageOpened(e.NetId); };
+            Client.StorageClosed += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageClosed(); };
 
             // pre-join status: there is NO camera until the shell spawns (its first-person cam IS the
             // view) -- surface the session state so an unreachable server isn't a silent black screen
@@ -229,6 +235,9 @@ namespace UnturnedGodot
                 if (Client.Players.TryGetByOwner(Client.PlayerId, out var me)) SpawnShell(me);
                 return;
             }
+            // owner skills block -> the shell's local PlayerSkills (the AdoptReplicatedInventory analogue;
+            // SkillsReplication has no per-echo event, so mirror every tick -- 23 bytes, idempotent)
+            if (Client.Skills.TryGet(Client.PlayerId, out var sk)) Shell.AdoptReplicatedSkills(sk.Skills);
             // Part A DRIVING (CLIENT_PREDICTION_PLAN §5.2 A1, replacing the C6 v1 puppet-ride): seated in a
             // replicated vehicle -- the shell drives a CLIENT-LOCAL real Vehicle through the SP direct-drive
             // path (0 ms wheel response; retail client authority) and this step streams VehicleState @25 Hz
@@ -436,6 +445,23 @@ namespace UnturnedGodot
             // item itself": the bag fills only when the owner-block echo lands, the puppet despawns only
             // when WorldItemRemoved broadcasts (WorldItemReplicaView is already diff-driven).
             shell.NetPickupItem = netId => Client.SendPickupItem(netId);
+            // Phase 6/8 shell seams (mp-parity-clientseams): every remaining UI action routes as INTENT --
+            // grid ops + consume echo back through the owner inventory block, deployable/wire ops through
+            // the broadcast facts + replica view, storage through StorageOpened/Closed + the STORAGE page,
+            // skills through the owner skills block (adopted each tick in ShellStep).
+            shell.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
+            shell.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
+            shell.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+            shell.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
+            shell.NetCraft = index => Client.SendCraft(index);
+            shell.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);
+            shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
+            shell.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
+            shell.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
+            shell.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
+            shell.NetOpenStorage = netId => Client.SendOpenStorage(netId);
+            shell.NetCloseStorage = () => Client.SendCloseStorage();
+            shell.NetUpgradeSkill = (spec, index) => Client.SendUpgradeSkill(spec, index);
             // owner-grid initial pull (Step 4): the join snapshot's owner block landed before this shell
             // existed -- adopt it now; the ReplicaUpdated subscription (in _Ready) carries every echo after
             if (Client.Inventories.TryGet(Client.PlayerId, out var invEntry))

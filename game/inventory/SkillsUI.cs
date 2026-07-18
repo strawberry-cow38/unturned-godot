@@ -55,6 +55,24 @@ namespace UnturnedGodot
         {
             if (_open && _panel != null)
                 _panel.Position = new Vector2((_root.Size.X - PANELW) / 2f, (_root.Size.Y - PANELH) / 2f);
+            // MP only: the upgrade is applied by the SERVER (the levels/XP change in the background when
+            // the owner skills echo adopts) -- repaint off a cheap signature, like the InventoryUI poll.
+            if (_open && Player?.NetUpgradeSkill != null)
+            {
+                long sig = SkillsSignature();
+                if (sig != _lastSig) { _lastSig = sig; Refresh(); }
+            }
+        }
+
+        long _lastSig = -1;
+        long SkillsSignature()
+        {
+            var sk = SkillsSource ?? Player?.Skills;
+            if (sk == null) return 0;
+            long h = sk.experience;
+            for (int s = 0; s < PlayerSkills.SPECIALITIES; s++)
+                foreach (var skill in sk.skills[s]) h = (h * 31) ^ skill.level;
+            return h;
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
@@ -84,7 +102,13 @@ namespace UnturnedGodot
                     bool maxed = skill.level >= skill.max;
                     var btn = new Button { Text = maxed ? "MAX" : $"Up  ({skill.Cost} XP)", CustomMinimumSize = new Vector2(160, 30) };
                     btn.Disabled = maxed || sk.experience < skill.Cost;
-                    btn.Pressed += () => { if (sk.TryUpgrade(spec, idx)) Refresh(); };
+                    // MP: the spend is a REQUEST -- the server's TryUpgrade validates cost/cap and the
+                    // owner skills echo re-levels (the _Process poll repaints). SP: the direct local spend.
+                    btn.Pressed += () =>
+                    {
+                        if (Player != null && Player.RequestUpgradeSkill((byte)spec, (byte)idx)) return;
+                        if (sk.TryUpgrade(spec, idx)) Refresh();
+                    };
                     row.AddChild(btn);
                     _list.AddChild(row);
                 }

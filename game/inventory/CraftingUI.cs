@@ -54,6 +54,28 @@ namespace UnturnedGodot
         {
             if (_open && _panel != null)
                 _panel.Position = new Vector2((_root.Size.X - PANELW) / 2f, (_root.Size.Y - PANELH) / 2f);
+            // MP only: a craft is applied by the SERVER, so the bag changes in the background when the
+            // owner echo lands -- repaint the recipe list off a cheap signature (the InventoryUI poll).
+            if (_open && Player?.NetCraft != null)
+            {
+                long sig = BagSignature();
+                if (sig != _lastSig) { _lastSig = sig; Refresh(); }
+            }
+        }
+
+        long _lastSig = -1;
+        long BagSignature()
+        {
+            if (Inv == null) return 0;
+            long h = 1469598103934665603L;
+            foreach (var pg in Inv.items)
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var j = pg.getItem(i);
+                    long v = ((long)j.item.id << 24) ^ ((long)j.item.amount << 8) ^ ((long)j.x << 4) ^ j.y;
+                    h = (h ^ v) * 1099511628211L;
+                }
+            return h;
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
@@ -103,6 +125,15 @@ namespace UnturnedGodot
         void OnCraft(BlueprintDef bp)
         {
             if (!Crafting.MeetsSkill(bp, Player?.Skills)) { GD.Print($"[craftui] blocked: needs {bp.Skill} skill {bp.SkillLevel}"); return; }   // skill gate (source EBlueprintSkill level)
+            if (Player?.NetCraft != null)
+            {
+                // MP: the craft is a REQUEST by registry index (BlueprintRegistry.All order -- the same
+                // content-hash-matched table the server holds); the server re-checks skill + supplies and
+                // applies, and the owner echo repaints the bag + this list (the _Process poll above).
+                for (int i = 0; i < BlueprintRegistry.All.Count; i++)
+                    if (ReferenceEquals(BlueprintRegistry.All[i], bp)) { Player.NetCraft((ushort)i); break; }
+                return;
+            }
             var adapter = new Crafting.PlayerInvAdapter(Inv);
             if (!Crafting.DoCraft(bp, adapter)) return;
             // RepairTargetItem restores the owned item's quality (target-op); other ops just consume->produce.

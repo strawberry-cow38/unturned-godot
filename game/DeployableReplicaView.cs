@@ -41,6 +41,7 @@ namespace UnturnedGodot
                     var def = DeployableDef.ById(e.DefId);
                     if (def == null) continue;
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
+                    node.NetId = e.NetIdValue;   // the shell's salvage/toggle/wire requests address the entity by this
                     _nodes[e.NetIdValue] = node;
                 }
                 node.Health = e.Health;
@@ -57,7 +58,7 @@ namespace UnturnedGodot
                 if (_wires.TryGetValue(w.NetIdValue, out var wire) && IsInstanceValid(wire)) continue;
                 if (!TryGetNode(w.SrcId, out var src) || !TryGetNode(w.DstId, out var dst)) continue;
                 if (w.SrcPort >= src.Ports.Count || w.DstPort >= dst.Ports.Count) continue;
-                wire = new Wire();
+                wire = new Wire { NetId = w.NetIdValue };   // the shell's remove-wire requests address it by this
                 parent.AddChild(wire);
                 wire.Source = src.Ports[w.SrcPort];
                 wire.Consumer = dst.Ports[w.DstPort];

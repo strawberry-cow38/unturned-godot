@@ -2409,6 +2409,313 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Phase 6/8 client seams (mp-parity-clientseams): the connect shell DRAGS an item -- the InventoryUI
+    // Drop path routes through RequestMoveItem/NetMoveItem, the SERVER's TryDrag applies it, and the
+    // owner-block echo re-seats the jar in the shell's bag. Teeth: unwired, the request returns false and
+    // the server grid never changes (the SP local drag would be silently reverted by the next echo anyway).
+    public class NetShellMoveItem : GameTest
+    {
+        public override string Name => "net.shell_move_item";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260810);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "dragger" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            T.Check("server grid seeded (demo kit)", sHave);
+            yield return Ticks(10);   // the join echo settles into the shell's bag
+
+            // source: a Bandage (95, 1x1) in POCKETS (page 2), located on the SERVER grid (the truth the
+            // shell's bag mirrors); destination: the first free 1x1 cell on the same page (checkSpaceEmpty
+            // = the ported cell math the server's TryDrag validates with)
+            var pg = sInv.Inventory.items[2];
+            byte sx = 255, sy = 255;
+            for (byte i = 0; i < pg.getItemCount(); i++)
+            { var j = pg.getItem(i); if (j.item?.id == 95) { sx = j.x; sy = j.y; break; } }
+            T.Check("found the pockets Bandage on the server grid", sx != 255);
+            byte dx = 255, dy = 255;
+            for (byte y = 0; y < pg.height && dx == 255; y++)
+                for (byte x = 0; x < pg.width && dx == 255; x++)
+                    if (pg.checkSpaceEmpty(x, y, 1, 1, 0)) { dx = x; dy = y; }
+            T.Check("found a free destination cell", dx != 255 && (dx != sx || dy != sy));
+
+            long movesBefore = ded.Server.Transactions.Diag.GridMovesApplied;
+            T.Check("the move request fired through the NetMoveItem seam",
+                    sess.Shell.RequestMoveItem(2, sx, sy, 2, dx, dy, 0));
+            yield return Until(() => pg.getIndex(dx, dy) != byte.MaxValue, 5);
+            byte di = pg.getIndex(dx, dy);
+            T.Check("(a) the SERVER grid applied the drag", di != byte.MaxValue && pg.getItem(di).item?.id == 95);
+            T.Check("(b) Diag.GridMovesApplied bumped", ded.Server.Transactions.Diag.GridMovesApplied == movesBefore + 1);
+            yield return Until(() => sess.Shell.Inventory.items[2].getIndex(dx, dy) != byte.MaxValue, 5);
+            var cpg = sess.Shell.Inventory.items[2];
+            byte ci = cpg.getIndex(dx, dy);
+            T.Check("(c) the shell's bag echoed the new layout", ci != byte.MaxValue && cpg.getItem(ci).item?.id == 95);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // Phase 6/8 client seams: the connect shell EATS a held consumable -- TickConsume's completion routes
+    // through NetConsume (the cell names the item; the server deletes by id) instead of the local
+    // removeItemAmount, and the owner echo empties the bag. Teeth: unwired, the SP branch would delete
+    // locally and the SERVER count assertion (a) fails.
+    public class NetShellConsume : GameTest
+    {
+        public override string Name => "net.shell_consume";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260811);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "eater" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            yield return Ticks(10);
+            int serverBefore = sHave ? sInv.Inventory.getItemCount(95) : 0;   // demo kit: 2 pocket + 1 backpack Bandages
+            T.Check("server grid carries the demo Bandages", serverBefore >= 2);
+            T.Check("the shell's bag adopted them", sess.Shell.Inventory.getItemCount(95) == serverBefore);
+
+            var asset = Assets.find(95);
+            T.Check("Bandage resolves as a consumable", asset != null && asset.IsConsumable);
+            long consumesBefore = ded.Server.Transactions.Diag.ConsumesApplied;
+            sess.Shell.EquipHeldConsumable(asset, null);   // hold it (the InventoryUI "Hold" action)
+            sess.Shell.StartConsume();                     // LMB: begin eating
+            sess.Shell.DebugConsumeTick(30f);              // jump the eat timer -> the completion runs the seam branch
+
+            yield return Until(() => sHave && sInv.Inventory.getItemCount(95) == serverBefore - 1, 5);
+            T.Check("(a) the SERVER deleted the eaten Bandage", sInv.Inventory.getItemCount(95) == serverBefore - 1);
+            T.Check("(b) Diag.ConsumesApplied bumped", ded.Server.Transactions.Diag.ConsumesApplied == consumesBefore + 1);
+            yield return Until(() => sess.Shell.Inventory.getItemCount(95) == serverBefore - 1, 5);
+            T.Check("(c) the shell's bag echoed the deletion", sess.Shell.Inventory.getItemCount(95) == serverBefore - 1);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // Phase 6/8 client seams: the connect shell SPENDS XP -- the SkillsUI upgrade routes through
+    // RequestUpgradeSkill/NetUpgradeSkill, the server's PlayerSkills.TryUpgrade validates cost/cap, and
+    // the owner skills block echoes the level + spend into AdoptReplicatedSkills. Also proves the
+    // server-awarded XP echo (ServerAward -> the shell's local PlayerSkills) the upgrade depends on.
+    public class NetShellUpgradeSkill : GameTest
+    {
+        public override string Name => "net.shell_upgrade_skill";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260812);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "student" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+
+            ded.Server.Skills.ServerAward(sess.Client.PlayerId, 100, ded.Server.Session.CurrentTick);
+            yield return Until(() => sess.Shell.Skills.experience == 100, 5);
+            T.Check("the XP award echoed into the shell's local PlayerSkills (owner-block adoption)",
+                    sess.Shell.Skills.experience == 100);
+
+            bool sHave = ded.Server.Skills.TryGet(sess.Client.PlayerId, out var sSk);
+            T.Check("server skills entry exists", sHave);
+            T.Check("the upgrade request fired through the NetUpgradeSkill seam",
+                    sess.Shell.RequestUpgradeSkill(0, 0));   // OFFENSE / Overkill (cost 10 at level 0)
+            yield return Until(() => sHave && sSk.Skills.skills[0][0].level == 1, 5);
+            T.Check("(a) the SERVER leveled Overkill", sSk.Skills.skills[0][0].level == 1);
+            T.Check("(b) the SERVER spent the XP", sSk.Skills.experience == 90);
+            yield return Until(() => sess.Shell.Skills.skills[0][0].level == 1, 5);
+            T.Check("(c) the shell echoed the level", sess.Shell.Skills.skills[0][0].level == 1);
+            T.Check("(d) the shell echoed the spend", sess.Shell.Skills.experience == 90);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // Phase 6/8 client seams: the connect shell OPENS A CRATE -- RequestOpenStorage/NetOpenStorage; the
+    // server arbitrates (one opener), loads the crate grid into the opener's STORAGE page, and the
+    // StorageOpened fact + owner echo bring the dashboard + grid back. Then a crate->bag drag rides the
+    // SAME move seam (page 7 addressing, §3.7), and the ESC/Tab close path saves + clears server-side.
+    public class NetShellOpenStorage : GameTest
+    {
+        public override string Name => "net.shell_open_storage";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260813);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "stasher" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            yield return Ticks(10);
+
+            // a server-side crate 2 m from the shell (inside StorageReach) holding one bean can
+            var fwd = -sess.Shell.GlobalTransform.Basis.Z;
+            var crate = ded.Server.Inventories.ServerRegisterCrate(ded.Server.Ids.Mint(), 5, 4,
+                ToU(sess.Shell.GlobalPosition + fwd * 2f));
+            crate.Storage.tryAddItem(new Item(13));
+
+            T.Check("the open request fired through the NetOpenStorage seam",
+                    sess.Shell.RequestOpenStorage(crate.NetIdValue));
+            yield return Until(() => crate.OpenBy == sess.Client.PlayerId, 5);
+            T.Check("(a) the server granted the open (arbitration latch)", crate.OpenBy == sess.Client.PlayerId);
+            var storagePage = sess.Shell.Inventory.items[PlayerInventory.STORAGE];
+            yield return Until(() => storagePage.width == 5 && storagePage.getItemCount() == 1, 5);
+            T.Check("(b) the CRATE grid echoed into the shell's STORAGE page", storagePage.width == 5 && storagePage.getItemCount() == 1);
+            T.Check("(c) the StorageOpened fact opened the dashboard", sess.Shell.DashboardOpen);
+
+            // drag the bean can OUT of the crate into the bag -- the same NetMoveItem seam, page-7 source
+            var bj = storagePage.getItem(0);
+            var pocket = sHave ? sInv.Inventory.items[2] : null;
+            byte fx = 255, fy = 255;
+            for (byte y = 0; y < pocket.height && fx == 255; y++)
+                for (byte x = 0; x < pocket.width && fx == 255; x++)
+                    if (pocket.checkSpaceEmpty(x, y, 1, 1, 0)) { fx = x; fy = y; }
+            T.Check("found a free pockets cell", fx != 255);
+            T.Check("the crate->bag move request fired", sess.Shell.RequestMoveItem(PlayerInventory.STORAGE, bj.x, bj.y, 2, fx, fy, 0));
+            yield return Until(() => pocket.getIndex(fx, fy) != byte.MaxValue, 5);
+            byte pi = pocket.getIndex(fx, fy);
+            T.Check("(d) the server moved it out of the crate into the bag", pi != byte.MaxValue && pocket.getItem(pi).item?.id == 13);
+
+            // close via the ESC/Tab path: the server saves the (now-empty) view back + frees the crate
+            sess.Shell.DebugCloseCrate();
+            yield return Until(() => crate.OpenBy == 0, 5);
+            T.Check("(e) the server closed + freed the crate", crate.OpenBy == 0);
+            T.Check("(f) the crate grid saved back empty (the bean left it)", crate.Storage.getItemCount() == 0);
+            yield return Until(() => storagePage.width == 0, 5);
+            T.Check("(g) the STORAGE page cleared on the echo", storagePage.width == 0);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // Phase 6/8 client seams: the connect shell PLANTS a deployable -- TickDeploy's place-confirm routes
+    // through RequestPlaceDeployable/NetPlaceDeployable, the server validates spot + supplies and spends
+    // the item, DeployablePlaced broadcasts, and DeployableReplicaView renders the real node (NetId
+    // stamped). Then the F-toggle rides RequestToggleDeployable and the echo lands via NetSetPowered.
+    public class NetShellPlaceDeployable : GameTest
+    {
+        public override string Name => "net.shell_place_deployable";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260814);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "builder" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            yield return Ticks(10);
+
+            // grant a Generator (458) into the SERVER grid (the authority seeding its own state); the
+            // echo puts it in the bag -- placement validation requires the item to spend
+            T.Check("server granted the Generator", sHave && sInv.Inventory.tryAddItem(new Item(458)));
+            yield return Until(() => sess.Shell.Inventory.getItemCount(458) == 1, 5);
+            T.Check("the grant echoed into the bag", sess.Shell.Inventory.getItemCount(458) == 1);
+
+            var fwd = -sess.Shell.GlobalTransform.Basis.Z;
+            var spot = sess.Shell.GlobalPosition + fwd * 2.5f;
+            T.Check("the place request fired through the NetPlaceDeployable seam",
+                    sess.Shell.RequestPlaceDeployable(458, spot, 45f));
+            yield return Until(() => ded.Server.Deployables.Count == 1, 5);
+            T.Check("(a) the SERVER planted the entity", ded.Server.Deployables.Count == 1);
+            T.Check("(b) the SERVER spent the item", sInv.Inventory.getItemCount(458) == 0);
+            Deployable node = null;
+            yield return Until(() =>
+            {
+                foreach (var e in sess.Client.Deployables.All)
+                    if (sess.Deploys.TryGetNode(e.NetIdValue, out node)) return true;
+                return false;
+            }, 5);
+            T.Check("(c) DeployableReplicaView rendered the node, NetId stamped", node != null && node.NetId != 0);
+            yield return Until(() => sess.Shell.Inventory.getItemCount(458) == 0, 5);
+            T.Check("(d) the bag echoed the spend", sess.Shell.Inventory.getItemCount(458) == 0);
+
+            // the F-toggle: a REQUEST addressed by the replica NetId; the echo flips the node's target
+            T.Check("the toggle request fired through the NetToggleDeployable seam",
+                    sess.Shell.RequestToggleDeployable(node));
+            yield return Until(() => node.PoweredTarget, 5);
+            T.Check("(e) the toggle echoed into the replica node (NetSetPowered)", node.PoweredTarget);
+            bool sEnt = ded.Server.Deployables.TryGet(node.NetId, out var ent);
+            T.Check("(f) the server entity agrees (ToggledOn)", sEnt && ent.ToggledOn);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // MP console teleport (#27, branch mp-teleport): live-server F1 `teleport <location>` snapped the
     // player RIGHT BACK -- DevConsole ran a client-LOCAL Player.TeleportTo, the server's authoritative
     // entity never moved, and the reconciler dragged the shell home. Part (a) keeps that pre-fix path as

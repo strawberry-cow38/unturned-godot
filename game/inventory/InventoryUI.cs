@@ -81,13 +81,15 @@ namespace UnturnedGodot
             }
         }
 
-        // Cheap rolling hash of every jar (id/amount/pos) -> detects any background change without rebuilding each frame.
+        // Cheap rolling hash of every jar (id/amount/pos) + the page dims (an MP crate open/close resizes
+        // STORAGE with zero jars moving) -> detects any background change without rebuilding each frame.
         long InventorySignature()
         {
             if (Inv == null) return 0;
             long h = 1469598103934665603L;
             foreach (var pg in Inv.items)
             {
+                h = (h ^ ((long)pg.width << 8 | pg.height)) * 1099511628211L;
                 byte cnt = pg.getItemCount();
                 for (byte i = 0; i < cnt; i++)
                 {
@@ -183,7 +185,10 @@ namespace UnturnedGodot
             Vector2 topLeft = global - _grab + new Vector2(CELL / 2f, CELL / 2f);
             if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _)) return;
             if (page == sp && x1 == sx && y1 == sy) return;   // released in place -> no-op (the item menu is RMB now)
-            if (Inv.TryDrag(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
+            // MP: the move is a REQUEST -- the server's TryDrag validates+applies and the owner echo
+            // repaints (the item snaps home until it lands). SP: the direct local drag, unchanged.
+            if (Player != null && Player.RequestMoveItem(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
+            else if (Inv.TryDrag(sp, sx, sy, page, x1, y1, srot)) { CloseSelection(); Refresh(); }
         }
 
         // map a screen point to (page, cellX, cellY) over a registered drop zone
@@ -295,10 +300,17 @@ namespace UnturnedGodot
             var asset = pg.getItem(idx).GetAsset();
             if (asset?.gunName != null) Player?.EquipHeldGun(asset.gunName, pg.getItem(idx).item);   // equipping a gun makes it the held weapon; the item carries its saved ammo/firemode/mag (master)
             else if (asset?.meleeName != null) Player?.EquipHeldMelee(asset.meleeName);   // a melee weapon -> the melee viewmodel + weapon-specific swings
-            // holster a grid gun into the first empty hand slot; an already-slotted gun just stays put
+            // holster a grid gun into the first empty hand slot; an already-slotted gun just stays put.
+            // MP: the slot pick is computed on the mirrored grid and the server runs the same TryDrag
+            // (the echo re-seats the jar); the in-hand equip above stays local either way.
             if (_selPage >= PlayerInventory.SLOTS)
                 for (byte slot = 0; slot < PlayerInventory.SLOTS; slot++)
-                    if (Inv.items[slot].getItemCount() == 0) { Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0); break; }
+                    if (Inv.items[slot].getItemCount() == 0)
+                    {
+                        if (Player == null || !Player.RequestEquipItem(_selPage, _selX, _selY, slot))
+                            Inv.TryDrag(_selPage, _selX, _selY, slot, 0, 0, 0);
+                        break;
+                    }
             CloseSelection();
             Refresh();
         }
@@ -362,9 +374,16 @@ namespace UnturnedGodot
             {
                 var jar = pg.getItem(idx); var item = jar.item;
                 bool wasHeld = Player != null && Player.IsHeld(jar.GetAsset(), item);   // dropping the HELD item -> go unarmed (strawberry)
-                pg.removeItem(idx);
-                if (Player != null && item != null)   // spawn it in the world just in front of the player
-                    Player.DropWorldItem(item, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
+                if (Player != null && Player.RequestDropItem(_selPage, _selX, _selY))
+                {   // MP: the server removes the jar + tosses the world item (the echo empties the cell,
+                    // the item puppet renders the drop); the hand state below is client-local either way
+                }
+                else
+                {
+                    pg.removeItem(idx);
+                    if (Player != null && item != null)   // spawn it in the world just in front of the player
+                        Player.DropWorldItem(item, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
+                }
                 if (wasHeld) Player?.EquipUnarmed();
             }
             CloseSelection();

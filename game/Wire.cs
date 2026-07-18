@@ -9,6 +9,7 @@ namespace UnturnedGodot
     // by poking its connection ports (see PlayerController). Power propagation reads Source/Consumer/Points off it.
     public partial class Wire : Node3D
     {
+        public uint NetId;   // MP: the replicated wire this node mirrors (set by DeployableReplicaView); 0 = SP/local/preview
         public ConnectionPort Source, Consumer;
         public List<Vector3> Points = new();
         const float Radius = 0.018f;

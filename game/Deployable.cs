@@ -9,6 +9,7 @@ namespace UnturnedGodot
     public partial class Deployable : StaticBody3D
     {
         public DeployableDef Def;
+        public uint NetId;   // MP: the replicated entity this node mirrors (set by DeployableReplicaView); 0 = SP/local
         public readonly System.Collections.Generic.List<ConnectionPort> Ports = new();   // power connection cubes (output/consumer/passthrough)
         public float Health, HealthMax;
         public float Fuel, FuelMax;   // src InteractableGenerator: fuel drawn from Capacity; a fresh build starts FULL (matches vehicle spawn) until the refuel/power pass
@@ -181,6 +182,7 @@ namespace UnturnedGodot
         // MP replica apply (DeployableReplicaView): the server already validated this toggle, so it lands
         // without the local CanTogglePower interaction gating. The warmup/cooldown ramp still runs locally.
         public void NetSetPowered(bool on) { if (_powered != on) { _powered = on; PowerNet.MarkDirty(); } }
+        public bool PoweredTarget => _powered;   // the F-toggle TARGET state (IsPowered adds fuel/fire gating) -- what an MP toggle request inverts
 
         void Explode()   // src explode: blast nearby, then either shatter into pieces (spotlight) or become a burning salvageable wreck (generator)
         {

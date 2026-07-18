@@ -351,6 +351,13 @@ namespace UnturnedGodot
         void CompleteWire(ConnectionPort consumer)
         {
             if (_wirePreview == null || !IsInstanceValid(_wireSrc)) { CancelWire(); return; }
+            if (RequestConnectWire(_wireSrc, consumer))
+            {   // MP: the link is a REQUEST -- drop the local preview; the committed wire renders when
+                // WireConnected echoes through the replica view (server wires are 2-point, nodes are SP cosmetics)
+                GD.Print($"[wire] connect requested {_wireSrc.ProviderName} -> {consumer.ProviderName} (wire)");
+                CancelWire();
+                return;
+            }
             var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
             pts.AddRange(_wireNodes); pts.Add(consumer.GlobalPosition);
             _wirePreview.Source = _wireSrc; _wirePreview.Consumer = consumer;
@@ -399,12 +406,15 @@ namespace UnturnedGodot
                 _wireClearHold += delta;
                 if (_wireClearHold >= WireClearTime)   // held long enough -> clear the whole wire
                 {
-                    w.RemoveFromGroup("wires"); w.QueueFree(); PowerNet.MarkDirty();   // drop the group THIS frame so power + PortWired update immediately
+                    if (!RequestRemoveWire(w))   // MP: a replicated wire clears server-side; WireRemoved echoes the teardown
+                    { w.RemoveFromGroup("wires"); w.QueueFree(); PowerNet.MarkDirty(); }   // drop the group THIS frame so power + PortWired update immediately
                     _clearPort = null; _wireClearHold = 0f; WireHudSet(null); return;
                 }
                 WireHudSet($"clearing wire... {Mathf.Clamp((int)(_wireClearHold / WireClearTime * 100f), 0, 99)}%");
             }
-            else { if (_wireClearHold <= WireClickMax) UnplugWire(w); _clearPort = null; _wireClearHold = 0f; }   // released quick -> tap-unplug
+            // released quick -> tap-unplug. MP: an unplug is a plain removal request (server wires keep no
+            // routed nodes to pick back up) -- re-route fresh once the removal echoes.
+            else { if (_wireClearHold <= WireClickMax && !RequestRemoveWire(w)) UnplugWire(w); _clearPort = null; _wireClearHold = 0f; }
         }
 
         // Unplug a wire: drop its consumer link + leave the "wires" group, and pick it back up as a routing preview from
@@ -506,7 +516,14 @@ namespace UnturnedGodot
                 else if (lmb)
                 {
                     _salvageTimer += delta; sparks = true;
-                    if (_salvageTimer >= SalvageTime) { dp.Salvage(); _focusDeployable = null; _salvageTimer = 0f; sparks = false; }
+                    if (_salvageTimer >= SalvageTime)
+                    {
+                        // MP: a replicated wreck tears down server-side (scrap spawns there too); the
+                        // removal echoes back through the replica view. SP/local nodes salvage direct.
+                        if (NetSalvageDeployable != null && dp.NetId != 0) NetSalvageDeployable(dp.NetId);
+                        else dp.Salvage();
+                        _focusDeployable = null; _salvageTimer = 0f; sparks = false;
+                    }
                     else dp.SetSalvagePrompt($"Salvaging... {Mathf.Clamp((int)(_salvageTimer / SalvageTime * 100f), 0, 99)}%", white);
                 }
                 else { dp.SetSalvagePrompt("Hold LMB to salvage", white); _salvageTimer = 0f; }
@@ -700,13 +717,26 @@ namespace UnturnedGodot
             _consumeTimer -= dt;
             if (_consumeTimer <= 0f && _heldConsumable != null)
             {
-                Consume(_heldConsumable);   // apply Health/Food/Water/etc.
+                Consume(_heldConsumable);   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
                 ushort id = _heldConsumable.id;
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
                 _heldConsumable = null;             // one use per item: this one leaves the hand + is deleted (master)
-                Inventory?.removeItemAmount(id, 1);  // delete the one that was eaten
-                if ((Inventory?.getItemCount(id) ?? 0) > 0)
+                int left;
+                if (NetConsume != null)
+                {
+                    // MP: the DELETION is the server's -- send the cell holding one of these (the server
+                    // removes by id, the cell just names the item) and let the owner echo empty the bag.
+                    // The re-equip decision predicts the echo (count - 1); the hand is client-local state.
+                    if (FindBagCell(id, out byte cp, out byte cx, out byte cy)) NetConsume(cp, cx, cy);
+                    left = (Inventory?.getItemCount(id) ?? 1) - 1;
+                }
+                else
+                {
+                    Inventory?.removeItemAmount(id, 1);  // delete the one that was eaten
+                    left = Inventory?.getItemCount(id) ?? 0;
+                }
+                if (left > 0)
                     EquipHeldConsumable(asset, mesh, captureRevert: false);   // still have another of the same type -> auto-equip a FRESH one (keep the original revert target)
                 else
                     (_revertEquip ?? EquipUnarmed)();   // stack empty -> revert to the last-held item if still valid, else fists (strawberry)
@@ -715,6 +745,24 @@ namespace UnturnedGodot
 
         // test-only: drive the eat/drink timer from a headless self-test (--consumeholdtest)
         public void DebugConsumeTick(float dt) => TickConsume(dt);
+
+        // The first grid cell holding an item of this id (page,x,y) -- the NetConsume address (the held
+        // consumable doesn't carry its source cell; the server deletes by id, so any matching cell names it).
+        bool FindBagCell(ushort id, out byte page, out byte x, out byte y)
+        {
+            page = x = y = 0;
+            if (Inventory == null) return false;
+            for (byte p = 0; p < PlayerInventory.PAGES; p++)
+            {
+                var pg = Inventory.items[p];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var j = pg.getItem(i);
+                    if (j?.item != null && j.item.id == id) { page = p; x = j.x; y = j.y; return true; }
+                }
+            }
+            return false;
+        }
 
         // Equip a deployable to the hands: empty-hand carry + a world-space placement ghost that follows your aim
         // (blue valid / red invalid). LMB plants a real object. (src UseableBarricade equip/tick/startPrimary.)
@@ -785,6 +833,19 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
+                    if (NetPlaceDeployable != null)
+                    {
+                        // MP: the placement is a REQUEST -- the server validates spot + supplies, spends
+                        // the item, and broadcasts; DeployableReplicaView spawns the real node. Ghost/fx
+                        // stay local; the revert decision predicts the echo's spend (count - 1).
+                        RequestPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
+                        PlayPlaceSound(_deployable.PlaceSound, _placePoint);
+                        GD.Print($"[deploy] place requested: {_deployable.Name} at {_placePoint} (wire)");
+                        if (_deployItem != null && Inventory != null && Inventory.getItemCount(_deployItem.id) <= 1)
+                        { (_revertEquip ?? EquipUnarmed)(); return; }   // the last one just went over the wire -> revert
+                        _viewmodel?.PlayDeployHold();
+                        return;
+                    }
                     Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw);
                     PlayPlaceSound(_deployable.PlaceSound, _placePoint);   // src: playSound(barricadeAsset.use) on build -- the .dat PlacementAudioClip
                     GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
@@ -1077,12 +1138,39 @@ namespace UnturnedGodot
         // save the open crate's contents back and clear the STORAGE view (called when the dashboard closes)
         void CloseCrate()
         {
+            if (NetCloseStorage != null)
+            {
+                // MP: the server saves the STORAGE page back into the crate and clears it; the owner
+                // echo empties the local view (no local copy-back -- the crate grid is the server's).
+                if (_openCrateNetId != 0) { NetCloseStorage(); _openCrateNetId = 0; }
+                return;
+            }
             if (_openCrate == null) return;
             CopyPage(Inventory.items[PlayerInventory.STORAGE], _openCrate.Storage, _openCrate.Width, _openCrate.Height);
             var s = Inventory.items[PlayerInventory.STORAGE];
             s.clear(); s.loadSize(0, 0);
             _openCrate = null;
         }
+
+        // MP storage state (wired only by ClientWorldSession): the crate the SERVER says we have open.
+        // Latched on the StorageOpened fact -- never on the request -- so the dashboard mirrors arbitration.
+        uint _openCrateNetId;
+        public bool DashboardOpen => _invUI?.IsOpen ?? false;   // L1 net tests: did the storage fact open the dashboard
+        public void DebugCloseCrate() => CloseCrate();          // L1 net tests: the ESC/Tab crate-close path without an InputEvent
+
+        /// <summary>StorageOpened landed (server-validated): latch the crate + open the dashboard. The
+        /// CRATE grid itself arrives via the owner-block echo (the server loads it into STORAGE page 7,
+        /// the SP OpenNearestCrate mechanic), so there's nothing to copy here.</summary>
+        public void OnReplicatedStorageOpened(uint netId)
+        {
+            _openCrateNetId = netId;
+            _invUI?.Open();
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+
+        /// <summary>StorageClosed landed (ours or a server-side force-close): drop the latch; the echo
+        /// clears the STORAGE page.</summary>
+        public void OnReplicatedStorageClosed() => _openCrateNetId = 0;
 
         static void CopyPage(SDG.Unturned.Items from, SDG.Unturned.Items to, byte w, byte h)
         {
@@ -1114,6 +1202,21 @@ namespace UnturnedGodot
                 CopyPage(from, Inventory.items[p], from.width, from.height);
             }
         }
+        /// <summary>MP (called only by ClientWorldSession, each tick): mirror the replicated owner skills
+        /// block into the shell's local PlayerSkills -- the AdoptReplicatedInventory analogue. The skill
+        /// multipliers (recoil/stamina/crafting gates) all read this instance, so the server's levels/XP
+        /// drive them; SkillsUI repaints off its MP signature poll.</summary>
+        public void AdoptReplicatedSkills(SDG.Unturned.PlayerSkills replica)
+        {
+            if (replica == null || ReferenceEquals(replica, Skills)) return;
+            Skills.NetSetExperience(replica.experience);
+            for (int s = 0; s < SDG.Unturned.PlayerSkills.SPECIALITIES; s++)
+            {
+                var from = replica.skills[s]; var to = Skills.skills[s];
+                for (int i = 0; i < to.Length && i < from.Length; i++) to[i].level = from[i].level;
+            }
+        }
+
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
@@ -1223,6 +1326,25 @@ namespace UnturnedGodot
         public System.Action NetReload;                      // -> Client.SendReload (server ammo/reload clock tracks the local one)
         public System.Action<uint> NetPickupItem;            // wired by ClientWorldSession: F on a focused WorldItemPuppet asks the server for the item (Client.SendPickupItem)
 
+        // Phase 6/8 client-shell seams (mp-parity-clientseams) -- the NetPickupItem pattern, one per UI
+        // action the server already validates: wired ONLY by ClientWorldSession, null in SP/loopback so
+        // every direct mutation below stays byte-identical. When set, the action site sends INTENT and
+        // skips its local mutation -- the owner-block echo / broadcast fact renders the result (the
+        // client never re-packs its own bag, plants its own generator, or levels its own skill).
+        public System.Action<byte, byte, byte, byte, byte, byte, byte> NetMoveItem;   // (page0,x0,y0, page1,x1,y1, rot1) -> Client.SendMoveItem
+        public System.Action<byte, byte, byte, byte> NetEquipItem;   // (fromPage,x,y, slot) -> Client.SendEquipItem (the holster-to-hand-slot TryDrag; the viewmodel equip stays local)
+        public System.Action<byte, byte, byte> NetDropItem;          // (page,x,y) -> Client.SendDropItem (server removes + tosses the world item)
+        public System.Action<byte, byte, byte> NetConsume;           // (page,x,y) -> Client.SendConsume (server deletes the item; vitals stay client-led until the vitals split)
+        public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
+        public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
+        public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
+        public System.Action<uint, byte, uint, byte> NetConnectWire; // (srcId,srcPort, dstId,dstPort) -> Client.SendConnectWire
+        public System.Action<uint> NetRemoveWire;                    // wireId -> Client.SendRemoveWire
+        public System.Action<uint, bool> NetToggleDeployable;        // (netId,on) -> Client.SendToggleDeployable (NetSetPowered lands the echo)
+        public System.Action<uint> NetOpenStorage;                   // crate netId -> Client.SendOpenStorage (StorageOpened + the owner echo carry the grid back)
+        public System.Action NetCloseStorage;                        // -> Client.SendCloseStorage (server saves the STORAGE page back into the crate)
+        public System.Action<byte, byte> NetUpgradeSkill;            // (speciality,index) -> Client.SendUpgradeSkill
+
         VehiclePuppet NearestPuppet()
         {
             if (NetEnterVehicle == null) return null;   // not an MP shell -> no puppets to consider (SP fast-out)
@@ -1273,6 +1395,96 @@ namespace UnturnedGodot
             if (NetExitVehicle == null) return false;
             if (_riding == null && !DrivingPredicted) return false;
             NetExitVehicle();
+            return true;
+        }
+
+        // ---- Phase 6/8 request helpers (the RequestPickupPuppet pattern): PUBLIC so the UI action
+        // sites AND the L1 net tests drive the same seam without a mouse/raycast. Each is a REQUEST
+        // only -- no local state changes; false = not an MP shell, so the caller runs its SP path. ----
+
+        /// <summary>MP grid move (InventoryUI drag-drop): the server's TryDrag is the validator+applier;
+        /// the owner-block echo repaints the bag.</summary>
+        public bool RequestMoveItem(byte page0, byte x0, byte y0, byte page1, byte x1, byte y1, byte rot1)
+        {
+            if (NetMoveItem == null) return false;
+            NetMoveItem(page0, x0, y0, page1, x1, y1, rot1);
+            return true;
+        }
+
+        /// <summary>MP holster-to-slot (InventoryUI Equip): the server runs the same TryDrag into the
+        /// hand slot; the in-hand viewmodel equip stays local at the call site.</summary>
+        public bool RequestEquipItem(byte fromPage, byte x, byte y, byte slot)
+        {
+            if (NetEquipItem == null) return false;
+            NetEquipItem(fromPage, x, y, slot);
+            return true;
+        }
+
+        /// <summary>MP drop (InventoryUI Drop): the server removes the jar + tosses the world item; the
+        /// echo empties the cell and the item puppet renders the drop.</summary>
+        public bool RequestDropItem(byte page, byte x, byte y)
+        {
+            if (NetDropItem == null) return false;
+            NetDropItem(page, x, y);
+            return true;
+        }
+
+        /// <summary>MP deployable placement (TickDeploy's place-confirm): the server validates the spot +
+        /// spends the item; DeployablePlaced broadcasts and the replica view spawns the real node.</summary>
+        public bool RequestPlaceDeployable(ushort defId, Vector3 pos, float yawDeg)
+        {
+            if (NetPlaceDeployable == null) return false;
+            NetPlaceDeployable(defId, pos, yawDeg);
+            return true;
+        }
+
+        /// <summary>MP generator toggle (the F interact): only a REPLICATED node (NetId != 0) routes over
+        /// the wire -- the echo lands via DeployableReplicaView.NetSetPowered.</summary>
+        public bool RequestToggleDeployable(Deployable d)
+        {
+            if (NetToggleDeployable == null || d == null || !IsInstanceValid(d) || d.NetId == 0) return false;
+            NetToggleDeployable(d.NetId, !d.PoweredTarget);
+            return true;
+        }
+
+        /// <summary>MP wire link (CompleteWire): both endpoints must be replicated nodes; the port
+        /// sub-address is the def port order (the replica view's mapping). The committed wire renders
+        /// only when WireConnected echoes back.</summary>
+        public bool RequestConnectWire(ConnectionPort src, ConnectionPort dst)
+        {
+            if (NetConnectWire == null || src == null || dst == null) return false;
+            var so = src.Owner; var co = dst.Owner;
+            if (so == null || co == null || so.NetId == 0 || co.NetId == 0) return false;
+            int si = so.Ports.IndexOf(src), di = co.Ports.IndexOf(dst);
+            if (si < 0 || di < 0) return false;
+            NetConnectWire(so.NetId, (byte)si, co.NetId, (byte)di);
+            return true;
+        }
+
+        /// <summary>MP wire removal (the RMB clear/unplug manage actions): the wire node vanishes when
+        /// WireRemoved echoes through the replica view.</summary>
+        public bool RequestRemoveWire(Wire w)
+        {
+            if (NetRemoveWire == null || w == null || !IsInstanceValid(w) || w.NetId == 0) return false;
+            NetRemoveWire(w.NetId);
+            return true;
+        }
+
+        /// <summary>MP storage open: a REQUEST -- the dashboard opens only when the server's
+        /// StorageOpened fact comes back (OnReplicatedStorageOpened), never on the send.</summary>
+        public bool RequestOpenStorage(uint netId)
+        {
+            if (NetOpenStorage == null) return false;
+            NetOpenStorage(netId);
+            return true;
+        }
+
+        /// <summary>MP skill upgrade (SkillsUI): the server's PlayerSkills.TryUpgrade is the validator;
+        /// the owner skills block echoes the new level/XP into AdoptReplicatedSkills.</summary>
+        public bool RequestUpgradeSkill(byte speciality, byte index)
+        {
+            if (NetUpgradeSkill == null) return false;
+            NetUpgradeSkill(speciality, index);
             return true;
         }
 
@@ -1946,7 +2158,10 @@ namespace UnturnedGodot
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
-                else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.CanTogglePower) _focusDeployable.TogglePower();  // looking at a generator: toggle its power (src InteractableGenerator.use)
+                else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.CanTogglePower)
+                {   // looking at a generator: toggle its power (src InteractableGenerator.use); a replicated one is a REQUEST (echo -> NetSetPowered)
+                    if (!RequestToggleDeployable(_focusDeployable)) _focusDeployable.TogglePower();
+                }
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (OpenNearestCrate()) { }                           // open a nearby storage crate
                 else if (_melee != null) _viewmodel?.PlayMeleeInspect();   // nothing to interact with -> inspect (melee plays its own Inspect clip)
