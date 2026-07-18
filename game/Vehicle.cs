@@ -895,7 +895,26 @@ namespace UnturnedGodot
             p.AddChild(new MeshInstance3D { Name = "Body", Mesh = ContentProvider.ParseObj($"res://content/{s.Body}"), MaterialOverride = bodyMat });
             if (s.Parts != null)
                 foreach (var (txt, color) in s.Parts)
-                    p.AddChild(new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = SolidMat(color) });
+                {
+                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{txt}"), MaterialOverride = SolidMat(color) };
+                    if (txt.Contains("steer") && s.SteerAxis != Vector3.Zero)   // wrap the steering wheel in a pivot so DressWheels can turn it (#38) -- mirrors Build()'s Parts loop
+                    {
+                        p.SteerPivot = new Node3D { Position = s.SteerPivot };
+                        mi.Position = -s.SteerPivot;   // baked world verts render in place once the pivot sits at the centre
+                        p.SteerPivot.AddChild(mi);
+                        p.AddChild(p.SteerPivot);
+                        p.SteerAxis = s.SteerAxis.Normalized();
+                    }
+                    else p.AddChild(mi);
+                }
+            if (s.SteerModel != null && s.SteerAxis != Vector3.Zero)   // dedicated ripped steering wheel (semi) -- mirrors Build()'s SteerModel block (#38)
+            {
+                var sMesh = ContentProvider.ParseObj($"res://content/{s.SteerModel}");
+                p.SteerPivot = new Node3D { Position = s.SteerPivot };
+                p.SteerAxis = s.SteerAxis.Normalized();
+                p.SteerPivot.AddChild(new MeshInstance3D { Mesh = sMesh, MaterialOverride = SolidMat(new Color(0.13f, 0.11f, 0.08f)), Position = -sMesh.GetAabb().GetCenter() });
+                p.AddChild(p.SteerPivot);
+            }
             var wheelMesh = ContentProvider.ParseObj($"res://content/{s.Wheel}");
             Material wheelMat;
             if (s.WheelTex != null)

@@ -2398,4 +2398,36 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+
+    // #38 regression: the MP vehicle puppet builds the INTERIOR steering wheel and DressWheels turns it
+    // with the replicated steer angle (the SP _steerPivot rotation, Vehicle.cs). Pre-fix the puppet only
+    // dressed the road wheels -- the driver stared at a frozen wheel. Covers both SP build forms: the
+    // Parts-based steer part (jeep) and the dedicated SteerModel mesh (semi); the trailer (SteerAxis
+    // Zero) must build none and stay null-safe through DressWheels.
+    public class NetPuppetSteerModel : GameTest
+    {
+        public override string Name => "net.puppet_steer_model";
+        public override IEnumerable<Step> Run()
+        {
+            var jeep = Vehicle.BuildPuppetByName("jeep", 0);
+            var semi = Vehicle.BuildPuppetByName("semi", 0);
+            var trailer = Vehicle.BuildPuppetByName("trailer", 0);
+            World.AddChild(jeep); World.AddChild(semi); World.AddChild(trailer);
+            yield return Ticks(1);
+
+            T.Check("jeep puppet builds the Parts-based steering wheel in a pivot", jeep.SteerPivot != null && jeep.SteerPivot.GetChildCount() == 1);
+            T.Check("semi puppet builds the dedicated SteerModel wheel", semi.SteerPivot != null && semi.SteerPivot.GetChildCount() == 1);
+            T.Check("trailer puppet has no steer model", trailer.SteerPivot == null);
+
+            jeep.DressWheels(20f, 3f, 0.02f);
+            var expect = new Basis(new Vector3(0f, 0.259f, 0.966f).Normalized(), Mathf.DegToRad(20f));   // the jeep spec's SteerAxis (disc normal)
+            T.Check("jeep steering wheel turned to the replicated 20 deg about the spec's SteerAxis", jeep.SteerPivot.Basis.IsEqualApprox(expect));
+            T.Check("front road wheels still dress alongside (steer yaw applied)",
+                jeep.Wheels[0].Steer && !jeep.Wheels[0].Pivot.Basis.IsEqualApprox(Basis.Identity));
+            jeep.DressWheels(0f, 0f, 0.02f);
+            T.Check("steering wheel returns to centre at steer 0", jeep.SteerPivot.Basis.IsEqualApprox(Basis.Identity));
+            trailer.DressWheels(15f, 2f, 0.02f);   // must not throw with no steer model
+            T.Check("trailer DressWheels stays null-safe", true);
+        }
+    }
 }
