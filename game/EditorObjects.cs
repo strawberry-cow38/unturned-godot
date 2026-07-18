@@ -332,20 +332,26 @@ namespace UnturnedGodot
         }
 
         // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)
-        Vector3 _copyPos; Basis _copyBasis; bool _hasCopyXform;
-        void CopyTransform()
+        Vector3 _copyPos; Basis _copyBasis; bool _hasCopyXform, _copyFull;
+        void CopyTransform()   // source: rot/scale copied only in LOCAL space (hasCopiedRotation = dragCoordinate==LOCAL); GLOBAL = position only
         {
             if (Primary == null) return;
-            _copyPos = Primary.GlobalPosition; _copyBasis = Primary.GlobalTransform.Basis; _hasCopyXform = true;
-            GD.Print("[editor] copied transform");
+            _copyPos = Primary.GlobalPosition; _copyBasis = Primary.GlobalTransform.Basis;
+            _copyFull = _gizmo.LocalSpace; _hasCopyXform = true;
+            GD.Print($"[editor] copied transform ({(_copyFull ? "pos+rot+scale, local" : "position only, global")})");
         }
         void PasteTransform()
         {
             if (!_hasCopyXform || _selection.Count == 0) return;
-            if (_selection.Count == 1) _selection[0].GlobalTransform = new Transform3D(_copyBasis, _copyPos);   // align exactly (source count==1)
-            else { var delta = _copyPos - Primary.GlobalPosition; foreach (var s in _selection) s.GlobalPosition += delta; }   // else move the group onto the copied pos
+            if (_copyFull && _selection.Count == 1)
+                _selection[0].GlobalTransform = new Transform3D(_copyBasis, _copyPos);   // local + single: align pos+rot+scale exactly
+            else   // global (position only), or a group: move the selection so the primary lands on the copied position
+            {
+                var delta = _copyPos - Primary.GlobalPosition;
+                foreach (var s in _selection) s.GlobalPosition += delta;
+            }
             _gizmo.Attach(Primary); PositionMarkers();
-            GD.Print($"[editor] pasted transform to {_selection.Count}");
+            GD.Print($"[editor] pasted transform ({(_copyFull ? "full" : "position")}) to {_selection.Count}");
         }
 
         // harness hook (--editor): scatter a few props so a headless render shows placement working
@@ -380,6 +386,9 @@ namespace UnturnedGodot
                 BoxSelect(new Rect2(Vector2.Zero, new Vector2(100000f, 100000f)), false);   // verify box drag-select: full-viewport rect selects every in-frame prop
                 GD.Print($"[editordemo] box-select all-in-frame: {_selection.Count}");
                 Select(pr, false);   // single-select the transformed prop for a clean outline in the render
+                _gizmo.LocalSpace = false; CopyTransform();   // verify: global Ctrl+B = position only
+                _gizmo.LocalSpace = true; CopyTransform();    // verify: local Ctrl+B = pos+rot+scale
+                _gizmo.LocalSpace = false;                    // back to global for the render
             }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
