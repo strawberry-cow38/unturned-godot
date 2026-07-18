@@ -2482,4 +2482,95 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+
+    // #38 regression: the MP vehicle puppet builds the INTERIOR steering wheel and DressWheels turns it
+    // with the replicated steer angle (the SP _steerPivot rotation, Vehicle.cs). Pre-fix the puppet only
+    // dressed the road wheels -- the driver stared at a frozen wheel. Covers both SP build forms: the
+    // Parts-based steer part (jeep) and the dedicated SteerModel mesh (semi); the trailer (SteerAxis
+    // Zero) must build none and stay null-safe through DressWheels.
+    public class NetPuppetSteerModel : GameTest
+    {
+        public override string Name => "net.puppet_steer_model";
+        public override IEnumerable<Step> Run()
+        {
+            var jeep = Vehicle.BuildPuppetByName("jeep", 0);
+            var semi = Vehicle.BuildPuppetByName("semi", 0);
+            var trailer = Vehicle.BuildPuppetByName("trailer", 0);
+            World.AddChild(jeep); World.AddChild(semi); World.AddChild(trailer);
+            yield return Ticks(1);
+
+            T.Check("jeep puppet builds the Parts-based steering wheel in a pivot", jeep.SteerPivot != null && jeep.SteerPivot.GetChildCount() == 1);
+            T.Check("semi puppet builds the dedicated SteerModel wheel", semi.SteerPivot != null && semi.SteerPivot.GetChildCount() == 1);
+            T.Check("trailer puppet has no steer model", trailer.SteerPivot == null);
+
+            jeep.DressWheels(20f, 3f, 0.02f);
+            var expect = new Basis(new Vector3(0f, 0.259f, 0.966f).Normalized(), Mathf.DegToRad(20f));   // the jeep spec's SteerAxis (disc normal)
+            T.Check("jeep steering wheel turned to the replicated 20 deg about the spec's SteerAxis", jeep.SteerPivot.Basis.IsEqualApprox(expect));
+            T.Check("front road wheels still dress alongside (steer yaw applied)",
+                jeep.Wheels[0].Steer && !jeep.Wheels[0].Pivot.Basis.IsEqualApprox(Basis.Identity));
+            jeep.DressWheels(0f, 0f, 0.02f);
+            T.Check("steering wheel returns to centre at steer 0", jeep.SteerPivot.Basis.IsEqualApprox(Basis.Identity));
+            trailer.DressWheels(15f, 2f, 0.02f);   // must not throw with no steer model
+            T.Check("trailer DressWheels stays null-safe", true);
+        }
+    }
+
+    // #37 regression: while seated on a replicated vehicle puppet the camera must be LOOKABLE. FP (the
+    // spawn default): mouse free-look yaws/pitches the view in VEHICLE-LOCAL space (real Unturned lets you
+    // look around while driving); pre-fix the FP ride cam was hard-locked to the fixed forward gaze and
+    // mouse motion was silently ignored. 3P (H toggle): the chase-cam orbit consumes _driveCamYaw/Pitch for
+    // _riding. The look angles are driven through the Debug seams (headless hosts can't capture the mouse);
+    // the H toggle goes through the REAL _UnhandledInput path.
+    public class NetRideFreelook : GameTest
+    {
+        public override string Name => "net.ride_freelook";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0, 0.1f, 0));
+            var pup = Vehicle.BuildPuppetByName("jeep", 0);
+            World.AddChild(pup);
+            pup.GlobalPosition = new Vector3(5f, 0.5f, 0f);
+            pup.RotationDegrees = new Vector3(0f, 90f, 0f);   // yawed vehicle -> proves the look math is vehicle-LOCAL
+            yield return Ticks(2);
+
+            p.EnterPuppet(pup);
+            yield return Ticks(3);
+            // The headless L1 host doesn't interleave frame callbacks with the stepped physics ticks, so the
+            // camera positioner (a _Process hook) is driven DIRECTLY -- deterministic, same code path as live.
+            var cam = p.Camera;
+            p._Process(0.016);
+            T.Check("ride cam sits at the puppet's driver eye",
+                cam.GlobalPosition.DistanceTo(pup.GlobalTransform * pup.DriverEyeLocal) < 0.05f);
+            // entry gaze = the classic fixed gaze: vehicle-forward, pitched atan(0.6/3.9) ~ 8.75 deg down
+            Vector3 fwd0 = pup.GlobalBasis * new Vector3(0f, -Mathf.Sin(Mathf.DegToRad(8.75f)), -Mathf.Cos(Mathf.DegToRad(8.75f)));
+            T.Check("FP entry gaze looks over the hood (vehicle forward, slight down-tilt)",
+                (-cam.GlobalBasis.Z).Dot(fwd0.Normalized()) > 0.999f);
+
+            p.DebugSetRideLook(90f, 0f);   // yaw +90 = look LEFT of the vehicle
+            p._Process(0.016);
+            T.Check("FP free-look yaw 90 turns the view to the vehicle's left",
+                (-cam.GlobalBasis.Z).Dot(pup.GlobalBasis * new Vector3(-1f, 0f, 0f)) > 0.999f);
+            p.DebugSetRideLook(0f, 45f);   // pitch +45 = look up
+            p._Process(0.016);
+            Vector3 up45 = pup.GlobalBasis * new Vector3(0f, Mathf.Sin(Mathf.DegToRad(45f)), -Mathf.Cos(Mathf.DegToRad(45f)));
+            T.Check("FP free-look pitch 45 tilts the view up", (-cam.GlobalBasis.Z).Dot(up45.Normalized()) > 0.999f);
+
+            // H (through the real input path -- allowed while riding) -> 3P chase; the orbit must consume the vars
+            p._UnhandledInput(new InputEventKey { Pressed = true, Keycode = Key.H });
+            p.DebugSetDriveOrbit(0f, 15f);
+            p._Process(0.016);
+            Vector3 chase0 = cam.GlobalPosition;
+            T.Check("H toggles to the 3P chase cam (behind the car, not at the eye)",
+                chase0.DistanceTo(pup.GlobalTransform * pup.DriverEyeLocal) > 3f);
+            p.DebugSetDriveOrbit(120f, 15f);
+            p._Process(0.016);
+            T.Check("3P orbit yaw moves the chase cam around the riding puppet",
+                cam.GlobalPosition.DistanceTo(chase0) > 2f);
+
+            p._UnhandledInput(new InputEventKey { Pressed = true, Keycode = Key.H });   // back to FP for teardown parity
+            p.ExitPuppet(new Vector3(0f, 0.1f, 0f));
+            yield return Ticks(1);
+        }
+    }
 }

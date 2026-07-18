@@ -42,18 +42,16 @@ shirts = shirts[:8]; pants = pants[:8]
 print("picked shirts:", [(s[0], s[1].split('/')[-2]) for s in shirts])
 print("picked pants:", [(p[0], p[1].split('/')[-2]) for p in pants])
 
-face = None
-for path, obj in dict(env.container).items():
-    if obj.type.name == "Texture2D" and "faces/19/" in str(path).lower():
-        face = obj.read().image.convert("RGBA"); break
+# NO face in the atlas: the u[0.254-0.371] v[0.563-0.625] rect an earlier bake stamped the face into is
+# NOT the head-front -- the character mesh's triangles sampling those texels are skinned to Left_Arm/Spine,
+# so the baked face rendered as a decal ON THE LEFT ARM (live MP bug #36). The head-front UV really is a
+# skin-only sliver (no dedicated face patch exists in UV0); the face is drawn at runtime by the
+# Skull-bone-attached quad in RiggedCharacter.BuildFrom instead.
 SKINS = [(150, 158, 128), (140, 150, 120), (158, 150, 132), (132, 145, 118), (146, 156, 122), (152, 148, 130)]
-FX = (int(0.254 * 128), int(0.371 * 128)); FY = (int(0.563 * 128), int(0.625 * 128))
-face_r = face.resize((FX[1] - FX[0], FY[1] - FY[0]), Image.NEAREST)
 N = 6
 for i in range(N):
     atlas = Image.new("RGBA", (128, 128), SKINS[i % len(SKINS)] + (255,))
     atlas.alpha_composite(pants[i % len(pants)][2].read().image.convert("RGBA"))
     atlas.alpha_composite(shirts[i % len(shirts)][2].read().image.convert("RGBA"))
-    atlas.alpha_composite(face_r, (FX[0], FY[0]))
     atlas.save(os.path.join(d, f"zombie_atlas_{i}.png"))
 print(f"baked {N} low-id variants -> {d}")

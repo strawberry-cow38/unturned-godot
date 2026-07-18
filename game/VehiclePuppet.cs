@@ -20,6 +20,13 @@ namespace UnturnedGodot
         public string SpecKey = "jeep";
         public WheelDress[] Wheels = System.Array.Empty<WheelDress>();
 
+        // Interior steering wheel model (#38): the puppet analogue of the SP _steerPivot/_steerAxis
+        // (Vehicle.cs Build) -- built by BuildPuppetByName from the spec's steer part / SteerModel and
+        // rotated 1:1 with the replicated steer angle in DressWheels. Null when the spec has no steer
+        // model (SteerAxis == Zero, e.g. the trailer).
+        public Node3D SteerPivot;
+        public Vector3 SteerAxis;
+
         // look-at focus (client-only): the same screen-space outline the real Vehicle draws -- add every mesh to
         // OutlineOverlay's layer so the offscreen mask cam picks them up as ONE silhouette. Detection is the bit-5
         // box collider added in Vehicle.BuildPuppetByName; PlayerController.UpdateLookFocus drives this on/off.
@@ -89,7 +96,7 @@ namespace UnturnedGodot
 
         /// <summary>Wheel dressing: front wheels yaw to the replicated steer, every wheel rolls at the
         /// rolling-contact rate for the replicated forward speed (forward = -Z -> negative roll about X,
-        /// the VehicleWheel3D convention).</summary>
+        /// the VehicleWheel3D convention). The interior steering wheel turns with the same angle.</summary>
         public void DressWheels(float steerDegrees, float forwardSpeed, float dt)
         {
             float steerRad = Mathf.DegToRad(steerDegrees);
@@ -101,6 +108,8 @@ namespace UnturnedGodot
                 if (wd.Steer) basis = new Basis(Vector3.Up, steerRad) * basis;
                 wd.Pivot.Basis = basis;
             }
+            if (SteerPivot != null && IsInstanceValid(SteerPivot) && SteerAxis != Vector3.Zero)
+                SteerPivot.Basis = new Basis(SteerAxis, steerRad);   // the SP steering-wheel rotation (Vehicle.cs _steerPivot), fed by the wire's steer angle
         }
     }
 }

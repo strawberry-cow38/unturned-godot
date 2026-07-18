@@ -367,7 +367,8 @@ namespace UnturnedGodot
                 AlbedoColor = tint,
                 CullMode = BaseMaterial3D.CullModeEnum.Front, // Z-flip reverses winding -> cull the (reversed) BACK faces = single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer)
             };
-            // optional baked skin atlas (ZombieClothing composite: skin + shirt + pants + face decal). The tint
+            // optional baked skin atlas (ZombieClothing composite: skin + shirt + pants -- NO face; the face-in-atlas
+            // bake landed on the LEFT ARM's texels, see tools/bake_zombie_variants.py + the Skull quad below). The tint
             // multiplies it, so a NORMAL zombie passes white for the natural look, specials an accent colour.
             if (albedoTexPath != null)
             {
