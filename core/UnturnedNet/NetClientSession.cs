@@ -28,6 +28,11 @@ namespace UnturnedGodot.Net
         public NetRejectReason RejectReason { get; private set; }
         public ushort PlayerId { get; private set; }
         public uint ServerTickAtAccept { get; private set; }
+        /// <summary>P3 holiday parity (wire v6): the server world's activeHoliday, from the Accept. The
+        /// joining client builds the SERVER's holiday-gated props/colliders with this instead of its own
+        /// wall clock's -- a client across a holiday boundary otherwise silently builds a different
+        /// static collision set the content hash never catches. "" until Connected.</summary>
+        public string ServerHoliday { get; private set; } = "";
         public long CurrentTick => _tick;
         public NetSession Session => _session;
 
@@ -111,6 +116,7 @@ namespace UnturnedGodot.Net
                     if (State != NetSessionState.Connecting) return; // duplicate Accept (our ack got lost)
                     PlayerId = playerId;
                     ServerTickAtAccept = serverTick;
+                    ServerHoliday = reader.ReadString(out string holiday) ? holiday : "";   // wire v6 (same-version peers always carry it; lenient for raw test rigs)
                     State = NetSessionState.Connected;
                     _session.KeepAliveEnabled = true;
                     break;

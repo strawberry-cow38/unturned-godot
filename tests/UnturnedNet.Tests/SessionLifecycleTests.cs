@@ -33,6 +33,24 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void Accept_CarriesTheServersActiveHoliday()
+        {
+            // P3 holiday parity (wire v6, PREDICTION_GEOMETRY_DIAGNOSIS §2 footnote 1): ~285 placed props
+            // carry COLLIDERS and are gated by activeHoliday, which each machine derived from its LOCAL
+            // wall clock -- a client across a holiday boundary silently built a different static
+            // collision set the content hash never catches. The server's holiday now rides the Accept;
+            // the client builds ITS world with it, never the local clock's.
+            var h = new NetSimHarness(seed: 4, activeHoliday: "CHRISTMAS");
+            var c = h.ConnectClient("santa");
+            Assert.That(c.ServerHoliday, Is.EqualTo("CHRISTMAS"),
+                "the joining client learns the SERVER world's holiday from the Accept");
+
+            var none = new NetSimHarness(seed: 5);   // default server: no holiday configured
+            var c2 = none.ConnectClient("plain");
+            Assert.That(c2.ServerHoliday, Is.EqualTo(""), "an unconfigured server sends the empty holiday");
+        }
+
+        [Test]
         public void Connect_Succeeds_UnderHeavyLoss()
         {
             // 40% loss both directions: the 0.5 s Connect retry + idempotent re-Accept must converge

@@ -88,7 +88,7 @@ run_l1() {  # batched in-engine tests: build the game once, boot headless godot,
   fi
   local glob=""; [ "$ONLY" != "*" ] && glob="=$ONLY"
   local log="$RESULTS/l1.log"
-  timeout 300 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1
+  timeout 600 "$GODOT" --path game --headless -- "--tests$glob" >"$log" 2>&1   # cap > the full L1 set (the four §8 geometry WAN courses added ~3 min of simulated-course wall time)
   grep -E '^\[TEST\]|^[[:space:]]+✗|^[[:space:]]+repro' "$log"   # per-test detail (human + agent)
   local summary; summary="$(grep -E '^\[L1\] passed=' "$log" | tail -1)"
   if [ -z "$summary" ]; then

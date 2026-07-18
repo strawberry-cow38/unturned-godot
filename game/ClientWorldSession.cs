@@ -35,6 +35,13 @@ namespace UnturnedGodot
         public ResourceField Resources;             // the client world's trees/rocks (WorldBuildResult.Resources) -- C5: ResourceAliveView mirrors the alive-bitmap
         public Terrain Terr;                        // the client world's terrain (WorldBuildResult.Terr) -- C6: terrain-snaps a slope vehicle-exit (§7 risk 6)
         public IClientTransport TransportOverride;  // tests inject MemClientTransport; null = real UDP to Host:Port
+        // P3 holiday parity (wire v6): wired by Main.BuildClient to WorldBuildResult.ApplyHoliday --
+        // invoked exactly once, on the first Connected tick, with the SERVER's activeHoliday from the
+        // Accept, so the deferred holiday props/colliders + the resource field build as the server's
+        // world, never this machine's wall clock's.
+        public System.Action<string> ApplyServerHoliday;
+        bool _holidayApplied;
+        ResourceAliveView _resourceView;
 
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
@@ -120,7 +127,8 @@ namespace UnturnedGodot
             Items = new WorldItemReplicaView { Client = Client };
             AddChild(Items);
             AddChild(new WorldClockView { Client = Client, DayNight = DayNight });
-            AddChild(new ResourceAliveView { Client = Client, Field = Resources });
+            _resourceView = new ResourceAliveView { Client = Client, Field = Resources };
+            AddChild(_resourceView);
             AddChild(new ProjectileReplicaView { Client = Client });   // D1: server-flown grenades render while fused
 
             // D1 combat facts -> render consumers (PEI_COMBAT_PLAN §3 D1). All read-only fx/HUD -- nothing
@@ -205,6 +213,14 @@ namespace UnturnedGodot
         void ShellStep(float dt)
         {
             if (Client.State != NetSessionState.Connected) return;
+            if (!_holidayApplied)
+            {
+                // P3: first Connected tick -- build the deferred holiday world content with the SERVER's
+                // holiday (Accept, wire v6), then let the alive-bitmap view re-apply onto the fresh field
+                _holidayApplied = true;
+                ApplyServerHoliday?.Invoke(Client.ServerHoliday ?? "");
+                _resourceView?.Refresh();
+            }
             if (Shell == null || !IsInstanceValid(Shell))
             {
                 // the reconcile-seed pattern (ClientPrediction.Reconcile): the FIRST authoritative
@@ -229,8 +245,18 @@ namespace UnturnedGodot
                 var delta = snap ? Reconciler.TakeAll() : Reconciler.Step(dt);   // past 2 m: snap, don't ice-skate
                 if (delta != UnityEngine.Vector3.zero)
                 {
-                    Shell.ApplyNetCorrection(new Vector3(delta.x, delta.y, delta.z));
-                    Reconciler.NoteCorrectionApplied(delta);   // raw node floats -- the delta lands in full, accounting stays exact
+                    if (snap)
+                    {
+                        Shell.ApplyNetSnap(new Vector3(delta.x, delta.y, delta.z));   // endpoint = server truth: hard adopt
+                        Reconciler.NoteCorrectionApplied(delta);
+                    }
+                    else
+                    {
+                        // F3: the eased slice is SWEPT (never through geometry) and may land partially --
+                        // report exactly what landed so the accounting stays exact (§4-4)
+                        var applied = Shell.ApplyNetCorrection(new Vector3(delta.x, delta.y, delta.z));
+                        Reconciler.NoteCorrectionApplied(new UnityEngine.Vector3(applied.X, applied.Y, applied.Z));
+                    }
                 }
             }
 

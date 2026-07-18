@@ -44,20 +44,20 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
-            // Re-goldened for Version=6 (mp-predict-a A2: vehicle client authority -- CommandVehicleState
-            // 26 + EventVehicleRecov 29); before that for Version=5 (mp-predict-c C1: the MoveInput
-            // datagram became MoveInputPacket carrying the last 3 inputs), Version=4 (mp-exitfix:
-            // VehicleExitedEvent gained the authoritative exit spot), Version=3 (PEI client C2: MoveInput
-            // gained the buttons byte) and Version=2 (Phase 4: Connect gained contentHash) -- each time
-            // the only byte that moved is the version byte, per the §6 re-golden-with-version-bump
-            // discipline.
+            // Re-goldened for Version=7 (mp-geomfix P3: Accept gained the server's activeHoliday string);
+            // before that Version=6 (mp-predict-a A2: vehicle client authority -- CommandVehicleState 26 +
+            // EventVehicleRecov 29), Version=5 (mp-predict-c C1: the MoveInput datagram became
+            // MoveInputPacket carrying the last 3 inputs), Version=4 (mp-exitfix: VehicleExitedEvent gained
+            // the authoritative exit spot), Version=3 (PEI client C2: MoveInput gained the buttons byte) and
+            // Version=2 (Phase 4: Connect gained contentHash) -- each time the only byte that moved is the
+            // version byte, per the §6 re-golden-with-version-bump discipline.
             byte[] captured = null;
             int capturedLen = 0;
             var session = new NetSession((buf, len) => { captured = (byte[])buf.Clone(); capturedLen = len; });
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750608000000000000002800"));
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750708000000000000002800"));
         }
 
         [Test]

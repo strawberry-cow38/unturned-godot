@@ -372,6 +372,133 @@ namespace UnturnedNet.Tests
             Assert.That(adv2, Is.False);
         }
 
+        // ---- F1 (PREDICTION_GEOMETRY_DIAGNOSIS §5): ButtonJump is TAKEOFF-EDGE semantics ----
+        // The client sets the bit ONLY on the tick its sim consumed a grounded jump, so the bit belongs
+        // to exactly that seq. Every consume path that re-presents an input under any OTHER pairing
+        // (starved coast, prime-wait repeat, hole substitution, repay) must strip it -- pre-F1 the held
+        // bit rode every re-present and the avatar launched whole arcs the client never predicted (the
+        // §5-B coast re-jump, the dominant engine of the wan_jump baseline's 37.496 m/min).
+
+        static MoveInput JumpIn(ushort seq) => new MoveInput { Seq = seq, MoveY = 1f, Buttons = MoveInput.ButtonJump };
+
+        [Test]
+        public void FreshConsume_KeepsItsOwnJumpBit()
+        {
+            // the strip must never eat a legitimate takeoff: a fresh dequeue carries its own bit
+            PrimeWith(1, 2, 3);
+            _players.ServerQueueInput(Owner, JumpIn(4));
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3
+            Assert.That(_players.TryConsumeInput(Owner, out var takeoff), Is.True);
+            Assert.That(takeoff.Seq, Is.EqualTo(4));
+            Assert.That(takeoff.Jump, Is.True, "a fresh consume keeps the takeoff bit -- edge semantics, not a blanket strip");
+        }
+
+        [Test]
+        public void StarvedCoast_NeverRepeatsTheJumpBit()
+        {
+            // §5-B mechanism: the last consumed input carried the takeoff bit; the queue starves; the
+            // coast re-presents that input. Pre-F1 the re-presented bit made the avatar RE-JUMP on a
+            // coast tick (a whole arc the client never predicted -- the "instant apex teleport").
+            PrimeWith(1, 2);
+            _players.ServerQueueInput(Owner, JumpIn(3));
+            _players.TryConsumeInput(Owner, out _);      // 2
+            Assert.That(_players.TryConsumeInput(Owner, out var takeoff), Is.True);
+            Assert.That(takeoff.Seq, Is.EqualTo(3));
+            Assert.That(takeoff.Jump, Is.True, "the takeoff tick itself jumps");
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.That(_players.TryConsumeInput(Owner, out var coast), Is.True, "starved queue coasts");
+                Assert.That(coast.Seq, Is.EqualTo(3), "coast repeats the stale seq");
+                Assert.That(coast.MoveY, Is.EqualTo(1f), "coast keeps the held axes");
+                Assert.That(coast.Jump, Is.False, $"coast tick {i + 1} NEVER re-presents the jump bit (the §5-B re-jump)");
+            }
+        }
+
+        [Test]
+        public void HoleSubstitution_NeverCarriesTheHeldJumpBit()
+        {
+            // a dropped datagram's substituted coast tick claims the lost seq but must integrate FLAT --
+            // the held input's takeoff belongs to ITS seq, not the substituted one
+            PrimeWith(1, 2);
+            _players.ServerQueueInput(Owner, JumpIn(3));
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 (the takeoff, keeps its bit)
+            _players.ServerQueueInput(Owner, In(5));     // 4 dropped in flight
+            Assert.That(_players.TryConsumeInput(Owner, out var sub), Is.True);
+            Assert.That(sub.Seq, Is.EqualTo(4), "the hole's seq is claimed");
+            Assert.That(sub.Jump, Is.False, "the substituted tick never carries the held takeoff bit");
+            Assert.That(_players.TryConsumeInput(Owner, out var real), Is.True);
+            Assert.That(real.Seq, Is.EqualTo(5));
+            Assert.That(real.Jump, Is.False, "seq 5 carried no bit of its own");
+        }
+
+        [Test]
+        public void RepayDrainExit_KeepsItsOwnTakeoffBit_ButNeverCoastsItAgain()
+        {
+            // the C1.6 drain exit always presents an input under its OWN seq (the queue can only empty
+            // via a dequeue), so a takeoff bit there is a legitimate same-seq consume -- KEPT, the same
+            // pairing rule as HasClaim. A takeoff repaid MID-backlog was coast-integrated flat and its
+            // bit must never surface later (the following coasts re-present the drain input stripped).
+            PrimeWith(1, 2, 3);
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 -> queue empty
+            for (int i = 0; i < 2; i++) _players.TryConsumeInput(Owner, out _);   // 2-tick stall: coasts (debt 2)
+            _players.ServerQueueInput(Owner, In(4));
+            _players.ServerQueueInput(Owner, JumpIn(5)); // the takeoff is the LAST delayed input
+            Assert.That(_players.TryConsumeInput(Owner, out var drain, out bool adv), Is.True);
+            Assert.That(drain.Seq, Is.EqualTo(5), "4 repaid ack-only; the drain exit presents 5 under its own seq");
+            Assert.That(adv, Is.True);
+            Assert.That(drain.Jump, Is.True, "the drain tick IS seq 5's integration -- its own takeoff bit rides");
+            Assert.That(_players.TryConsumeInput(Owner, out var coast, out bool adv2), Is.True);
+            Assert.That(coast.Seq, Is.EqualTo(5), "back to coasting");
+            Assert.That(adv2, Is.False);
+            Assert.That(coast.Jump, Is.False, "but the coast never re-presents that takeoff (the §5-B re-jump)");
+        }
+
+        [Test]
+        public void RepaidMidBacklogTakeoff_DefersToTheSameCallsIntegratingTick()
+        {
+            // a takeoff repaid MID-backlog was never integrated (the coasts standing in for it ran FLAT
+            // -- StripJump), so eating the bit ate the whole arc: the client flew, the avatar ran flat,
+            // ~0.8 m of vertical pullback (the wan_jump baseline's post-strip residue). The bit defers
+            // to the same call's real integrating tick instead -- fired once, a couple of ticks late,
+            // gated by the avatar's F2 grounded-tolerance; never re-presented after.
+            PrimeWith(1, 2, 3);
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 -> queue empty
+            for (int i = 0; i < 3; i++) _players.TryConsumeInput(Owner, out _);   // 3-tick stall (debt 3)
+            _players.ServerQueueInput(Owner, JumpIn(4)); // the takeoff is deep in the stall's backlog
+            _players.ServerQueueInput(Owner, In(5));
+            _players.ServerQueueInput(Owner, In(6));
+            _players.ServerQueueInput(Owner, In(7));     // one more than the debt -> a REAL dequeue follows the repays
+            Assert.That(_players.TryConsumeInput(Owner, out var real, out bool adv), Is.True);
+            Assert.That(real.Seq, Is.EqualTo(7), "4,5,6 repaid ack-only; this tick integrates 7 for real");
+            Assert.That(adv, Is.True);
+            Assert.That(real.Jump, Is.True, "seq 4's repaid takeoff fires HERE -- deferred, not eaten");
+            Assert.That(_players.TryConsumeInput(Owner, out var coast, out _), Is.True);
+            Assert.That(coast.Seq, Is.EqualTo(7));
+            Assert.That(coast.Jump, Is.False, "fired exactly once -- the coast never re-presents it");
+        }
+
+        [Test]
+        public void HitchVoidsTheDebt_AndTheDeferredTakeoffWithIt()
+        {
+            // a gap past the substitutable window adopts the fresh stream (BigJump semantics) -- an
+            // ancient takeoff must not fire into it
+            PrimeWith(1, 2, 3);
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 -> queue empty
+            for (int i = 0; i < 2; i++) _players.TryConsumeInput(Owner, out _);   // 2 coasts (debt 2)
+            _players.ServerQueueInput(Owner, JumpIn(4)); // repaid (bit pends)...
+            _players.ServerQueueInput(Owner, In(20));    // ...then a hitch-sized seq jump voids the debt
+            _players.TryConsumeInput(Owner, out var first, out _);   // repays 4 (debt 1), sees the 4->20 cliff, voids
+            Assert.That(_players.TryConsumeInput(Owner, out var adopted, out _), Is.True);
+            var probe = first.Seq == 20 ? first : adopted;
+            Assert.That(probe.Seq, Is.EqualTo(20), "the fresh stream is adopted");
+            Assert.That(probe.Jump, Is.False, "the voided debt takes the pended takeoff with it");
+        }
+
         [Test]
         public void SparseSender_SingleInput_StillConsumedAfterPrimeWait()
         {
