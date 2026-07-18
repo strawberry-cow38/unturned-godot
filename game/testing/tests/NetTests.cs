@@ -2398,4 +2398,88 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+
+    // MP console teleport (#27, branch mp-teleport): live-server F1 `teleport <location>` snapped the
+    // player RIGHT BACK -- DevConsole ran a client-LOCAL Player.TeleportTo, the server's authoritative
+    // entity never moved, and the reconciler dragged the shell home. Part (a) keeps that pre-fix path as
+    // permanent teeth: a local-only TeleportTo with no server move MUST be dragged back (that IS the
+    // reconciler's contract -- position is not the client's to write). Part (b) is the fix: the teleport
+    // rides the EXISTING console wire as coordinates (DevConsole resolves the game-side location table,
+    // RunConsole applies ServerTeleport), PlayerNetSync's avatar adopts the moved entity, and the shell
+    // SNAPS onto the replicated spot and STAYS -- the round trip no L0 can see.
+    public class NetShellConsoleTeleport : GameTest
+    {
+        public override string Name => "net.shell_console_teleport";
+        public override double TimeoutSimSeconds => 40;
+
+        static float Horiz(Vector3 a, Vector3 b) { var d = a - b; return new Vector2(d.X, d.Z).Length(); }
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260817);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);   // datagram delivery before the session's Client.Tick each tick
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "porter" };
+            World.AddChild(sess);
+            // AllowCheats: the real `--dedicated` boot turns the console cheats on (Main.BuildDedicated);
+            // the node's default is the locked public posture, so the rig opts in like an admin would
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true, AllowCheats = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(25);   // settle on the ground with corrections flowing
+            var spawn = sess.Shell.TruePhysicsPosition;
+            var target = spawn + new Vector3(30f, 3f, 20f);   // +3 up = the SP drop-height; both bodies land on the flat ground
+
+            // (a) TEETH -- the PRE-FIX path (DevConsole's old MP behavior verbatim): a client-local
+            // TeleportTo, no server move. The reconciler measures shell-vs-authority at ~36 m, snaps,
+            // and drags the shell straight back to the un-moved server position: the #27 snapback.
+            long snapsBefore = sess.Reconciler.Snaps;
+            sess.Shell.TeleportTo(target);
+            yield return Ticks(50);
+            float backAt = Horiz(sess.Shell.TruePhysicsPosition, spawn);
+            T.Check($"(a) pre-fix: the local-only teleport was dragged BACK to spawn ({backAt:0.0} m off)", backAt < 3f);
+            T.Check($"(a) never held the target ({Horiz(sess.Shell.TruePhysicsPosition, target):0.0} m away)",
+                    Horiz(sess.Shell.TruePhysicsPosition, target) > 20f);
+            T.Check($"(a) the reconciler SNAPPED it home (snaps {sess.Reconciler.Snaps - snapsBefore})",
+                    sess.Reconciler.Snaps > snapsBefore);
+
+            // (b) the FIX: the same jump as coordinates over the existing console wire. DevConsole's MP
+            // branch builds exactly this numeric form from a location name; here the coords are the
+            // spawn-relative target so the assert is map-independent.
+            string verdict = null;
+            sess.Client.ConsoleResult += e => verdict = e.Text;
+            string cmd = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                                       "teleport {0:0.##} {1:0.##} {2:0.##}", target.X, target.Y, target.Z);
+            T.Check("console teleport sent on the wire", sess.Client.SendConsole(cmd));
+            yield return Until(() => Horiz(sess.Shell.TruePhysicsPosition, target) < 1.5f, 10);
+            T.Check($"(b) the shell CONVERGED on the teleport target (horiz err {Horiz(sess.Shell.TruePhysicsPosition, target):0.##} m)",
+                    Horiz(sess.Shell.TruePhysicsPosition, target) < 1.5f);
+            T.Check($"(b) server verdict echoed back ('{verdict}')", verdict != null && verdict.Contains("teleported to"));
+            bool sHave = ded.Server.Players.TryGetByOwner(sess.Client.PlayerId, out var se);
+            T.Check("(b) the AUTHORITATIVE entity is at the target (ServerTeleport, adopted by the avatar)",
+                    sHave && Horiz(new Vector3(se.Pos.x, se.Pos.y, se.Pos.z), target) < 1.5f);
+
+            // ...and STAYS: the snapback would land within this window if the entity hadn't moved
+            yield return Ticks(100);
+            T.Check($"(b) HELD the spot -- no snapback ({Horiz(sess.Shell.TruePhysicsPosition, target):0.##} m from target)",
+                    Horiz(sess.Shell.TruePhysicsPosition, target) < 1.5f && Horiz(sess.Shell.TruePhysicsPosition, spawn) > 20f);
+
+            // the client-side name resolution the real F1 path runs before sending (game-side MapNodes)
+            bool resolved = DevConsole.TryResolveTeleport("Stratford", out string wire, out string loc);
+            T.Check($"DevConsole resolves a location name to the numeric wire form ('{wire}')",
+                    resolved && loc == "Stratford" && wire == "teleport -67.46 38.66 -505.93");
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+        }
+    }
 }

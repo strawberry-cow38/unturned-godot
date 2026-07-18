@@ -99,10 +99,14 @@ namespace UnturnedGodot
                 if (t.Seated || (e.Pos - t.LastDrivenPos).sqrMagnitude > 1e-9f)
                 {
                     // the entity moved OUTSIDE this sync (vehicle-exit teleport beside the door, combat
-                    // respawn, console teleport): adopt it -- body snaps to entity, write-back next tick
+                    // respawn, console teleport): adopt it -- body snaps to entity, write-back next tick.
+                    // Through TeleportTo, NOT a bare GlobalPosition write: _PhysicsProcess restores
+                    // GlobalPosition from _interpCurr before moving (§7 risk 5), so a bare write is UNDONE
+                    // on the body's next tick and the write-back re-asserts the OLD spot onto the entity --
+                    // #27's second act: the console teleport held for one tick, then the avatar dragged the
+                    // player straight back. TeleportTo resets the interp snapshots (and zeroes velocity).
                     t.Seated = false;
-                    t.Body.GlobalPosition = ToG(e.Pos);
-                    t.Body.Velocity = Vector3.Zero;
+                    t.Body.TeleportTo(ToG(e.Pos));
                     t.LastDrivenPos = e.Pos;
                 }
                 else
