@@ -35,10 +35,11 @@ namespace UnturnedGodot
 
         // source Editor.save() -> EditorInteract.save() + EditorObjects.save() + EditorSpawns.save().
         // wired per-phase as the sub-editors land; Phase 1 has nothing persistent yet.
-        public void Save()   // source Editor.save() -> fans out to the sub-editors; Objects persists its placements
+        public void Save()   // source Editor.save() -> fans out to the sub-editors; Objects + Spawns persist
         {
             int n = Objects?.Save() ?? 0;
-            GD.Print($"[editor] saved '{MapName}' ({n} props)");
+            int s = Spawns?.Save() ?? 0;
+            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns)");
         }
     }
 }

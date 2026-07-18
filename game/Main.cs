@@ -1562,8 +1562,9 @@ namespace UnturnedGodot
                         // verify add/remove programmatically (headless can't drive real clicks)
                         int b0 = spawns.PlayerCount;
                         spawns.RemoveNear(c);   // remove the original spawn under the cam (verify remove)
-                        spawns.AddSpawn(c); spawns.AddSpawn(c + new Vector3(7f, 0f, 0f)); spawns.AddSpawn(c + new Vector3(-7f, 0f, 0f));   // 3 fresh -> verify add + fill the render
+                        spawns.AddSpawn(c, 45f, false); spawns.AddSpawn(c + new Vector3(7f, 0f, 0f), 90f, false); spawns.AddSpawn(c + new Vector3(-7f, 0f, 0f), 0f, true);   // rotated regular x2 + an ALT (cyan)
                         GD.Print($"[editorspawns] remove-near from {b0}, then +3 -> {spawns.PlayerCount}");
+                        spawns.Save();   // verify the save round-trip: writes editor_players.txt; a re-run loads it back
                     }
                     GD.Print($"[editorspawns] {spawns.PlayerCount} player + {spawns.AltCount} alt spawns visualized");
                 };
