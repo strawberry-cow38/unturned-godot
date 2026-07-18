@@ -72,7 +72,8 @@ namespace UnturnedGodot
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
             string space = Editor.Objects != null && Editor.Objects.GizmoLocalSpace ? "local" : "global";
-            string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · drag arrows = move · G = space[{space}] · Del delete" : "";
+            string gm = Editor.Objects?.GizmoModeText ?? "move";
+            string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · gizmo {gm} (T) · drag = {gm} · G space[{space}] · Del delete" : "";
             _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}   ·   map: {Editor.MapName}";
         }
     }

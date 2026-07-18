@@ -4,10 +4,10 @@ using System.Collections.Generic;
 namespace UnturnedGodot
 {
     // Objects sub-editor (Phase 2), ported from SDG.Unturned EditorObjects. Pick a prop from the catalog, click to
-    // PLACE it on the map; click a placed prop to SELECT it; Delete removes it; R rotates the placement yaw. Placement
-    // + picking raycast the editor world's colliders (WorldMode.Editor). Each placed prop is built exactly like
-    // WorldBuilder builds the loaded ones (mesh + textured material + trimesh collider), so a placed prop is identical
-    // to a native one. Move/rotate gizmos + .level save land in the next slices.
+    // PLACE it on the map; click a placed prop to SELECT it; the TransformHandles gizmo moves/rotates it (T cycles
+    // translate<->rotate); Del removes it. Placement + picking raycast the editor world's colliders (WorldMode.Editor).
+    // Each placed prop is built exactly like WorldBuilder builds the loaded ones (mesh + textured material + trimesh
+    // collider). Placements persist to editor_PEI.txt (PEI euler, so any gizmo orientation round-trips) + reload on open.
     public partial class EditorObjects : Node3D
     {
         readonly Editor _editor;
@@ -24,6 +24,7 @@ namespace UnturnedGodot
         public IReadOnlyList<string> Catalog => _catalog;
         public string PlaceName;   // the prop to place on click; null = select mode
         public bool GizmoLocalSpace => _gizmo?.LocalSpace ?? false;   // dashboard readout
+        public string GizmoModeText => (_gizmo?.Mode ?? EditorGizmo.EMode.Translate) == EditorGizmo.EMode.Rotate ? "rotate" : "move";
 
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
         readonly List<Node3D> _placed = new();
@@ -82,18 +83,22 @@ namespace UnturnedGodot
             return mm;
         }
 
-        // Build + add a prop at a world position (yaw only for now). Returns its root Node3D.
-        public Node3D Place(string name, Vector3 pos, float yawDeg)
+        // upright placement basis: meshes are authored lying down, pitch ex=270 stands them up; yaw about world-up
+        // (the WorldBuilder convention). Placing yaw-only left every prop flat (master), hence the baked 270 pitch.
+        public static Basis Upright(float yawDeg) => new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+        // WorldBuilder placement basis from PEI euler (ex,ey,ez): Basis(Y,180-ey)*Basis(X,ex)*Basis(Z,-ez)
+        static Basis FromEuler(float ex, float ey, float ez) =>
+            new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
+
+        // Build + add a prop at a world position with a rotation basis. Returns its root Node3D. The gizmo then rotates
+        // it freely; Save decomposes the live basis back to PEI euler so any orientation round-trips.
+        public Node3D Place(string name, Vector3 pos, Basis rot)
         {
             var mesh = MeshFor(name);
             if (mesh == null) return null;
-            // Upright = the loaded-prop convention (WorldBuilder basis): the extracted meshes are authored lying down,
-            // so pitch ex=270 stands them up; yaw is about world-up. Placing yaw-only left every prop flat (master).
-            var rot = new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
             root.SetMeta("guid", _nameToGuid.TryGetValue(name, out var g) ? g : "");   // for the placements save
-            root.SetMeta("yaw", yawDeg);
             root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name) });
             var shp = mesh.CreateTrimeshShape();   // trimesh collider so the prop is pickable (+ later walkable)
             if (shp != null)
@@ -126,7 +131,7 @@ namespace UnturnedGodot
             if (PlaceName != null)   // place mode: drop the prop where the ray meets terrain / another prop
             {
                 if (Raycast(screen, TerrainLayer | SmallPropLayer | EditorPickLayer, out var pt, out _))
-                    Select(Place(PlaceName, pt, _placeYaw));
+                    Select(Place(PlaceName, pt, Upright(_placeYaw)));
             }
             else if (Raycast(screen, EditorPickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
                 Select(obj);
@@ -188,6 +193,7 @@ namespace UnturnedGodot
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 if (k.Keycode == Key.Delete || k.Keycode == Key.X) DeleteSelected();   // source: delete the selection
+                else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
                 else if (k.Keycode == Key.Escape) Select(null);
             }
@@ -208,12 +214,19 @@ namespace UnturnedGodot
                 string guid = p.HasMeta("guid") ? (string)p.GetMeta("guid") : "";
                 if (guid.Length == 0) continue;
                 var gp = p.GlobalPosition;
-                float yaw = p.HasMeta("yaw") ? (float)p.GetMeta("yaw") : 0f;
-                w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} 270 {(180f - yaw):0.###} 0 1 1 1");
+                var (ex, ey, ez) = DecomposeEuler(p.GlobalTransform.Basis.Orthonormalized());   // live basis -> PEI euler (any gizmo rotation)
+                w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {ex:0.###} {ey:0.###} {ez:0.###} 1 1 1");
                 n++;
             }
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
+        }
+
+        // inverse of FromEuler (B = Ry(180-ey)*Rx(ex)*Rz(-ez)); Godot GetEuler(Yxz) gives (x,y,z) with B=Ry(y)Rx(x)Rz(z)
+        static (float ex, float ey, float ez) DecomposeEuler(Basis b)
+        {
+            var e = b.GetEuler(EulerOrder.Yxz);
+            return (Mathf.RadToDeg(e.X), 180f - Mathf.RadToDeg(e.Y), -Mathf.RadToDeg(e.Z));
         }
 
         void LoadSaved()   // restore previously-saved editor placements on open
@@ -224,8 +237,9 @@ namespace UnturnedGodot
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 10 || !_guidToName.TryGetValue(p[0], out var name)) continue;
-                if (!float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz) || !float.TryParse(p[5], out var ey)) continue;
-                Place(name, new Vector3(px, py, -pz), 180f - ey);   // gpos = (px,py,-pz); yaw = 180 - ey
+                if (!float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)
+                    || !float.TryParse(p[4], out var ex) || !float.TryParse(p[5], out var ey) || !float.TryParse(p[6], out var ez)) continue;
+                Place(name, new Vector3(px, py, -pz), FromEuler(ex, ey, ez));   // gpos = (px,py,-pz); full PEI euler
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} saved props");
@@ -238,8 +252,20 @@ namespace UnturnedGodot
             if (_catalog.Count == 0) { GD.Print("[editordemo] empty catalog"); return; }
             int n = 0;
             for (int i = 0; i < 6; i++)
-                if (Raycast(new Vector2(300 + i * 110, 380), TerrainLayer, out var pt, out _) && Place(_catalog[(i * 7) % _catalog.Count], pt, i * 30f) != null) { DemoPositions.Add(pt); n++; }
-            if (_placed.Count > 0) Select(_placed[0]);   // show the translate gizmo on a prop in the render
+                if (Raycast(new Vector2(300 + i * 110, 380), TerrainLayer, out var pt, out _) && Place(_catalog[(i * 7) % _catalog.Count], pt, Upright(i * 30f)) != null) { DemoPositions.Add(pt); n++; }
+            // exercise an arbitrary (non-yaw) rotation on the framed prop [0] so the save round-trip covers the rotate
+            // gizmo (not just yaw) + self-check the euler decompose<->recompose in one run (catches order mismatch).
+            if (_placed.Count > 0)
+            {
+                var pr = _placed[0];
+                pr.GlobalTransform = new Transform3D(pr.GlobalTransform.Basis.Rotated(Vector3.Right, Mathf.DegToRad(24f)).Rotated(Vector3.Up, Mathf.DegToRad(37f)), pr.GlobalPosition);
+                var a = pr.GlobalTransform.Basis.Orthonormalized();
+                var (ex, ey, ez) = DecomposeEuler(a);
+                var re = FromEuler(ex, ey, ez);
+                float err = (a.X - re.X).Length() + (a.Y - re.Y).Length() + (a.Z - re.Z).Length();
+                GD.Print($"[editordemo] euler round-trip err={err:0.####} (ex={ex:0.#} ey={ey:0.#} ez={ez:0.#})");
+                Select(pr); _gizmo.CycleMode();   // rotate-mode rings on the rotated (framed) prop for the render
+            }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
     }
