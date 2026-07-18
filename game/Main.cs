@@ -1545,6 +1545,16 @@ namespace UnturnedGodot
             var terrainEd = new EditorTerrain(editor, cam, res.Terr);   // Phase 5: heightmap sculpt (Terrain tab)
             editor.AddChild(terrainEd);
             editor.TerrainEd = terrainEd;
+            RoadField rf = null;   // Phase 6: WorldMode.Editor skips WorldBuilder's roads step, so build the road splines here
+            if (res.Terr != null)
+            {
+                rf = new RoadField { Terr = res.Terr };
+                rf.LoadFromEnvironment(_mapRoot + "/Environment");
+                AddChild(rf);
+            }
+            var roadsEd = new EditorRoads(editor, cam, rf);   // roads paving under the Environment tab (R to toggle)
+            editor.AddChild(roadsEd);
+            editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
@@ -1605,6 +1615,17 @@ namespace UnturnedGodot
                         cam.LookAt(at, Vector3.Up);
                     }
                 };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORROADS") == "1" && roadsEd.HasRoads)
+            {   // synchronous (no timer): set before the first frame so the frame-45 --shot reliably captures the demoed state
+                editor.Mode = EEditorMode.Environment;
+                Vector3 j = roadsEd.DemoJoint(0, 1);            // a joint on the first road
+                roadsEd.DemoMove(0, 1, j + new Vector3(40f, 0f, 0f));   // shove it sideways -> the spline visibly bends
+                cam.GlobalPosition = j + new Vector3(38f, 42f, 38f);
+                cam.LookAt(j + new Vector3(20f, 0f, 0f), Vector3.Up);   // aim at the midpoint so the kink is centred
+                if (res.DayNight != null) res.DayNight.VisualsEnabled = false;   // Environment preview hazes the view -> clean lighting for the render
+                SetCleanEditorLighting();
+                editor.Save();   // verify the Paths.dat round-trip (writes content/roads/editor_Paths.dat)
+            }
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
 

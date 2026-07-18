@@ -18,6 +18,7 @@ namespace UnturnedGodot
         public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
         public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
         public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
+        public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, paving mode)
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 
@@ -43,7 +44,8 @@ namespace UnturnedGodot
             int s = Spawns?.Save() ?? 0;
             int e = Environment?.Save() ?? 0;
             int t = TerrainEd?.Save() ?? 0;
-            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain)");
+            int r = RoadsEd?.Save() ?? 0;
+            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads)");
         }
     }
 }

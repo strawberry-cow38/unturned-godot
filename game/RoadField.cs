@@ -14,8 +14,17 @@ namespace UnturnedGodot
         public Terrain Terr;
 
         struct RoadMat { public float Width, Height, Depth, Offset; public bool Concrete; }
-        struct Joint { public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; }
-        class RoadData { public int Material; public bool IsLoop; public List<Joint> Joints = new(); }
+        class Joint { public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; public byte Mode; }   // class so the editor can move a vertex in place
+        class RoadData { public int Material; public bool IsLoop; public List<Joint> Joints = new(); public byte[] GuidBytes; public MeshInstance3D Mi; public StaticBody3D Body; }
+
+        // editor state: the parsed roads + materials kept live so a joint move can rebuild one road + save Paths.dat back
+        readonly List<RoadData> _roads = new();
+        List<RoadMat> _mats = new();
+        byte _pathsVersion = 6;
+        public int RoadCount => _roads.Count;
+        public int JointCount(int road) => road >= 0 && road < _roads.Count ? _roads[road].Joints.Count : 0;
+        public Vector3 JointPos(int road, int joint) => _roads[road].Joints[joint].Vertex;
+        public void SetJointPos(int road, int joint, Vector3 p) { _roads[road].Joints[joint].Vertex = p; RebuildRoad(road); }
 
         // Unity (x,y,z) -> Godot (x,y,-z), the port's negate-Z layout (matches props/terrain).
         static Vector3 G(float x, float y, float z) => new Vector3(x, y, -z);
@@ -47,26 +56,73 @@ namespace UnturnedGodot
 
         public void LoadFromEnvironment(string envDir)
         {
-            var mats = ParseRoadsDat(Path.Combine(envDir, "Roads.dat"));
+            _mats = ParseRoadsDat(Path.Combine(envDir, "Roads.dat"));
             var roads = ParsePathsDat(Path.Combine(envDir, "Paths.dat"));
+            _roads.Clear();
             int built = 0;
             foreach (var r in roads)
             {
-                if (r.Joints.Count < 2 || r.Material < 0 || r.Material >= mats.Count) continue;
-                float texH = r.Material < TexHeight.Length ? TexHeight[r.Material] : 256f;
-                var mesh = BuildRoadMesh(r, mats[r.Material], texH, out var collShape);
-                if (mesh == null) continue;
-                var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = RoadMaterial3D(r.Material, mats[r.Material].Concrete) };
-                AddChild(mi);
-                if (collShape != null)   // flat top-ribbon collider (double-sided) -> clean walk/drive, nothing to snag on
-                {
-                    var body = new StaticBody3D();
-                    body.AddChild(new CollisionShape3D { Shape = collShape });
-                    AddChild(body);
-                }
+                _roads.Add(r);   // keep EVERY road (even degenerate) so editor indices match + SavePaths round-trips all
+                if (r.Joints.Count < 2 || r.Material < 0 || r.Material >= _mats.Count) continue;
+                BuildRoadNode(r);
                 built++;
             }
-            GD.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {mats.Count} materials)");
+            GD.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {_mats.Count} materials)");
+        }
+
+        // build (or rebuild) the MeshInstance + collider for one road, stashing them on the RoadData (flat top-ribbon collider)
+        void BuildRoadNode(RoadData r)
+        {
+            float texH = r.Material < TexHeight.Length ? TexHeight[r.Material] : 256f;
+            var mesh = BuildRoadMesh(r, _mats[r.Material], texH, out var collShape);
+            if (mesh == null) return;
+            if (r.Mi == null) { r.Mi = new MeshInstance3D(); AddChild(r.Mi); }
+            r.Mi.Mesh = mesh;
+            r.Mi.MaterialOverride = RoadMaterial3D(r.Material, _mats[r.Material].Concrete);
+            if (collShape != null)
+            {
+                if (r.Body == null) { r.Body = new StaticBody3D(); r.Body.AddChild(new CollisionShape3D()); AddChild(r.Body); }
+                foreach (var c in r.Body.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = collShape;
+            }
+        }
+
+        // editor: re-extrude one road's spline after a joint moved
+        public void RebuildRoad(int i)
+        {
+            if (i >= 0 && i < _roads.Count && _roads[i].Joints.Count >= 2 && _roads[i].Material >= 0 && _roads[i].Material < _mats.Count)
+                BuildRoadNode(_roads[i]);
+        }
+
+        // editor Save(): write Paths.dat back (exact reverse of ParsePathsDat, same version/guids/modes). G() negates Z on
+        // read (Unity z -> Godot -z), so undo it here: unityZ = -godotZ. Saved to an editor path, NOT the retail install.
+        public bool SavePaths(string path)
+        {
+            byte version = _pathsVersion;
+            if (version <= 1 || _roads.Count == 0) return false;
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path));
+            using var bw = new BinaryWriter(File.Create(path));
+            bw.Write(version);
+            bw.Write((ushort)_roads.Count);
+            foreach (var r in _roads)
+            {
+                bw.Write((ushort)r.Joints.Count);
+                bw.Write((byte)r.Material);
+                if (version > 2) bw.Write(r.IsLoop);
+                if (version >= 6) { var g = r.GuidBytes ?? System.Array.Empty<byte>(); bw.Write((ushort)g.Length); bw.Write(g); }
+                foreach (var jt in r.Joints)
+                {
+                    bw.Write(jt.Vertex.X); bw.Write(jt.Vertex.Y); bw.Write(-jt.Vertex.Z);
+                    if (version > 2)
+                    {
+                        bw.Write(jt.Tan0.X); bw.Write(jt.Tan0.Y); bw.Write(-jt.Tan0.Z);
+                        bw.Write(jt.Tan1.X); bw.Write(jt.Tan1.Y); bw.Write(-jt.Tan1.Z);
+                        bw.Write(jt.Mode);
+                    }
+                    if (version > 4) bw.Write(jt.Offset);
+                    if (version > 3) bw.Write(jt.IgnoreTerrain);
+                }
+            }
+            return true;
         }
 
         List<RoadMat> ParseRoadsDat(string path)
@@ -92,6 +148,7 @@ namespace UnturnedGodot
             if (!File.Exists(path)) return list;
             using var br = new BinaryReader(File.OpenRead(path));
             byte version = br.ReadByte();
+            _pathsVersion = version;   // remembered so SavePaths writes the exact same layout back
             if (version <= 1) return list;
             ushort count = br.ReadUInt16();
             for (int i = 0; i < count; i++)
@@ -100,7 +157,7 @@ namespace UnturnedGodot
                 ushort length = br.ReadUInt16();
                 road.Material = br.ReadByte();
                 if (version > 2) road.IsLoop = br.ReadBoolean();
-                if (version >= 6) { ushort gl = br.ReadUInt16(); br.ReadBytes(gl); }   // roadAssetRef: length-prefixed byte array (readGUID)
+                if (version >= 6) { ushort gl = br.ReadUInt16(); road.GuidBytes = br.ReadBytes(gl); }   // roadAssetRef: length-prefixed byte array (readGUID)
                 for (int j = 0; j < length; j++)
                 {
                     var jt = new Joint { Vertex = G(br.ReadSingle(), br.ReadSingle(), br.ReadSingle()) };
@@ -108,7 +165,7 @@ namespace UnturnedGodot
                     {
                         jt.Tan0 = G(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
                         jt.Tan1 = G(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
-                        br.ReadByte();   // mode
+                        jt.Mode = br.ReadByte();   // ERoadMode (MIRROR/ALIGNED/FREE) -- round-tripped
                     }
                     if (version > 4) jt.Offset = br.ReadSingle();
                     if (version > 3) jt.IgnoreTerrain = br.ReadBoolean();
