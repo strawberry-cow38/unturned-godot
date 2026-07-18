@@ -3879,6 +3879,110 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // C3 rewind+replay -- the RESOLUTION contract (diagnosis §7.2 step 4). A deterministic middle-band
+    // misprediction is forced on a CLEAN link by nudging the server avatar BODY sideways (0.6 m: over
+    // the 0.08 ack band, far under the 2 m snap -- exactly the band the eased glide used to own): the
+    // next fresh write-back publishes the nudged body, the claim measures over-band, the server fires
+    // MispredictionEvent, and the client must resolve it by ONE discrete teleport+replay -- pending to
+    // EXACT zero the same tick, no eased-glide tail, no snap, desync-quiet, and the post-replay ring
+    // re-record makes every following ack measure dead-zone residue (the "next-ack ~zero" contract).
+    public class NetC3ReplayResolves : GameTest
+    {
+        public override string Name => "net.c3_replay_resolves";
+        public override IEnumerable<Step> Run()
+        {
+            var rig = new WanGeoRig();
+            foreach (var s in rig.Boot(this, 94949, "c3nudged")) yield return s;
+            if (rig.Sess.Shell == null) yield break;
+
+            rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+            rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            for (int i = 0; i < 30; i++) yield return Ticks(1);   // clean-link sprint: adoption engages, zero correction
+            float corr0 = rig.Sess.Reconciler.CorrectionAppliedMeters;
+            long snaps0 = rig.Sess.Reconciler.Snaps;
+            T.Check("clean sprint runs replay-quiet", rig.Sess.ReplaysApplied == 0);
+
+            // the fork: move the avatar BODY (not the entity -- the write-back must publish it as the
+            // body's own truth, not adopt-teleport it back)
+            T.Check("server avatar body reachable", rig.Ded.PlayerSync.TryGetBody(rig.Sess.Client.PlayerId, out var avatar));
+            if (avatar == null) yield break;
+            avatar.TeleportTo(avatar.GlobalPosition + new Vector3(0.6f, 0f, 0f));
+
+            int waited = 0;
+            while (rig.Sess.ReplaysApplied == 0 && waited++ < 30) yield return Ticks(1);
+            T.Check($"the misprediction resolved by REPLAY within the round trip ({waited} ticks)", rig.Sess.ReplaysApplied >= 1);
+            T.Check("pending error is EXACT zero the tick the replay lands (no eased tail to drain)",
+                    rig.Sess.Reconciler.PendingError == UnityEngine.Vector3.zero);
+            float corrReplay = rig.Sess.Reconciler.CorrectionAppliedMeters - corr0;
+            T.Check($"the correction landed DISCRETELY, ~the fork, in one replay ({corrReplay:0.###} m for a 0.6 m nudge)",
+                    corrReplay > 0.3f && corrReplay < 1.2f);
+
+            // the quiet tail: the re-recorded ring makes every later ack measure dead-zone residue --
+            // NOTHING more corrects, pending never re-arms (this is what FAILS with the glide model:
+            // an 8/s exponential tail would still be draining for ~20 ticks)
+            float corr1 = rig.Sess.Reconciler.CorrectionAppliedMeters;
+            long replays1 = rig.Sess.ReplaysApplied;
+            float maxTailPend = 0f;
+            for (int i = 0; i < 50; i++)
+            {
+                yield return Ticks(1);
+                maxTailPend = Mathf.Max(maxTailPend, rig.Sess.Reconciler.PendingError.magnitude);
+            }
+            T.Check($"next-ack residue ~zero: the 50-tick tail stays inside the dead zone (max {maxTailPend:0.###} m)",
+                    maxTailPend <= 0.04f);
+            T.Check($"no correction dribble after the replay ({rig.Sess.Reconciler.CorrectionAppliedMeters - corr1:0.###} m)",
+                    rig.Sess.Reconciler.CorrectionAppliedMeters - corr1 < 0.05f);
+            T.Check($"one replay was enough ({rig.Sess.ReplaysApplied})", rig.Sess.ReplaysApplied <= replays1 + 1);
+            T.Check($"ZERO snaps (the middle band belongs to replay, not the teleport)", rig.Sess.Reconciler.Snaps == snaps0);
+            rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            rig.Sess.Shell.ScriptedStance = null;
+            foreach (var s in rig.Close(this, true, new WanGeo.Metrics(rig.Sess.Reconciler), "c3-replay")) yield return s;
+        }
+    }
+
+    // The TEETH: the identical fork with replay disabled (the DisableReplay test seam) must NOT resolve
+    // -- with the eased glide deleted, an over-band misprediction has no sub-snap resolution mechanism
+    // left, so the pending error parks at ~the fork forever and zero correction is ever applied. This is
+    // exactly the assertion set that flips when replay is on (net.c3_replay_resolves) -- proof the
+    // replay path, not some leftover glide, is what drives residue to zero.
+    public class NetC3ReplayTeeth : GameTest
+    {
+        public override string Name => "net.c3_replay_teeth";
+        public override IEnumerable<Step> Run()
+        {
+            var rig = new WanGeoRig();
+            foreach (var s in rig.Boot(this, 95959, "c3toothless")) yield return s;
+            if (rig.Sess.Shell == null) yield break;
+            rig.Sess.DisableReplay = true;
+
+            rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+            rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            for (int i = 0; i < 30; i++) yield return Ticks(1);
+            float corr0 = rig.Sess.Reconciler.CorrectionAppliedMeters;
+            T.Check("server avatar body reachable", rig.Ded.PlayerSync.TryGetBody(rig.Sess.Client.PlayerId, out var avatar));
+            if (avatar == null) yield break;
+            avatar.TeleportTo(avatar.GlobalPosition + new Vector3(0.6f, 0f, 0f));
+
+            // let the fork publish + the (ignored) events arrive, then hold the course
+            for (int i = 0; i < 20; i++) yield return Ticks(1);
+            int ticksAboveDeadZone = 0;
+            for (int i = 0; i < 100; i++)
+            {
+                yield return Ticks(1);
+                if (rig.Sess.Reconciler.PendingError.magnitude > 0.04f) ticksAboveDeadZone++;
+            }
+            T.Check($"without replay the middle-band error NEVER resolves ({ticksAboveDeadZone}/100 ticks parked over the dead zone)",
+                    ticksAboveDeadZone == 100);
+            T.Check($"and no correction is ever applied ({rig.Sess.Reconciler.CorrectionAppliedMeters - corr0:0.###} m)",
+                    rig.Sess.Reconciler.CorrectionAppliedMeters - corr0 < 0.05f);
+            T.Check("no snap rescued it (0.6 m is squarely sub-snap)", rig.Sess.Reconciler.Snaps == 0);
+            T.Check("replay counter untouched (the seam really disabled it)", rig.Sess.ReplaysApplied == 0);
+            rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            rig.Sess.Shell.ScriptedStance = null;
+            foreach (var s in rig.Close(this, false, new WanGeo.Metrics(rig.Sess.Reconciler), "c3-teeth")) yield return s;
+        }
+    }
+
     // §8 baseline 4 -- jumps: (a) 16 sprint-jump arcs on flat with the jump key held ACROSS landings and
     // released mid-air (bunny-hop cadence -- every arc carries a held-bit landing edge and a release
     // edge for the §5-B coast/hole re-present machinery to chew under Wan jitter), then (b) 8

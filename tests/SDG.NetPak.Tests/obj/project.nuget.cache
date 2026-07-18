@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "VrxP5pp5aDo=",
+  "dgSpecHash": "w7q7b//DtgA=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/ug-parity/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
+  "projectFilePath": "/home/ec2-user/projects/ug-c3/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
   "expectedPackageFiles": [
     "/home/ec2-user/.nuget/packages/microsoft.codecoverage/17.11.1/microsoft.codecoverage.17.11.1.nupkg.sha512",
     "/home/ec2-user/.nuget/packages/microsoft.net.test.sdk/17.11.1/microsoft.net.test.sdk.17.11.1.nupkg.sha512",

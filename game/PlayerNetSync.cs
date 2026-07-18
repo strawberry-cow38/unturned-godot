@@ -135,7 +135,33 @@ namespace UnturnedGodot
                                                                           (float)SimClock.FixedDelta, out var adopted))
                         _server.Players.ServerDrive(e.OwnerPlayerId, adopted, yaw, t.LastInputSeq, tick);
                     else
+                    {
                         _server.Players.ServerDrive(e.OwnerPlayerId, ToU(pos), yaw, t.LastInputSeq, tick);
+                        // C3 (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 2, retail's
+                        // SendSimulateMispredictedInputs): a fresh-seq claim OUTSIDE the ack band = the
+                        // band DISENGAGED, a real misprediction -- tell the owner to rewind to this
+                        // body's post-step state and replay its unacked inputs. Fired per over-band
+                        // write-back (the client's dead-zone guard collapses the RTT tail's burst into
+                        // ~one replay); in-band non-adopted ticks (hysteresis converge, budget) stay
+                        // event-quiet -- the healthy path costs zero wire.
+                        if (t.HasClaim)
+                        {
+                            var claim = PlayerReplication.Quantize(t.ClaimedPos);
+                            var body = PlayerReplication.Quantize(ToU(pos));   // exactly what ServerDrive just published
+                            if ((claim - body).magnitude > PlayerReplication.AckBandMeters)
+                            {
+                                var evt = new MispredictionEvent
+                                {
+                                    Seq = t.LastInputSeq, Pos = body, Vel = t.Body.MoveSimVelocity,
+                                    StanceByte = (byte)t.Body.Stance,
+                                    Stamina = (byte)(Mathf.Clamp(t.Body.Stamina, 0f, 1f) * 255f),
+                                };
+                                _server.SendEventTo(e.OwnerPlayerId, NetMessagePak.Pack(ReplicationIds.EventMisprediction, evt.Write));
+                                if (NetLog.Enabled)
+                                    NetLog.Sink($"[NET] misprediction -> player {e.OwnerPlayerId} seq {t.LastInputSeq} ({(claim - body).magnitude:0.###} m over band)");
+                            }
+                        }
+                    }
                     t.LastDrivenPos = e.Pos;   // ServerDrive just stamped the quantized pos onto the entity
                 }
                 // else (C1.5, the phantom-pairing fix -- found by the plan §3 WAN harness): the body's
@@ -156,12 +182,11 @@ namespace UnturnedGodot
                 // yank. Starvation coasts on the last consumed input inside TryConsumeInput (bounded by
                 // MaxCoastTicks, then a zero-motion hold -- no ghost-running stale intent); false means
                 // nothing to integrate at all -> stand still (death/enter-vehicle cleared it, or none yet)
-                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp, out bool seqAdvanced, out int jumpLate))
+                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp, out bool seqAdvanced))
                 {
                     t.Body.RotationDegrees = new Vector3(0f, inp.YawDegrees, 0f);
                     t.Body.ScriptedInput = new UnityEngine.Vector2(inp.MoveX, inp.MoveY);
-                    t.Body.ScriptedJump = inp.Jump;
-                    t.Body.ScriptedJumpLateTicks = jumpLate;   // F2b: a deferred repaid takeoff joins the arc in phase (PlayerController)
+                    t.Body.ScriptedJump = inp.Jump;   // held-key semantics (C3): coasts re-present the held bit; a mispredicted takeoff is the client's replay to resolve
                     t.Body.ScriptedStance = inp.Stance;   // integrate at the stance the shell predicted at (the inchworm fix)
                     t.LastInputSeq = inp.Seq;
                     t.PairingExact = seqAdvanced;   // stale-seq coast/hold ticks must not be written back (C1.5)
@@ -172,7 +197,6 @@ namespace UnturnedGodot
                 {
                     t.Body.ScriptedInput = UnityEngine.Vector2.zero;
                     t.Body.ScriptedJump = false;
-                    t.Body.ScriptedJumpLateTicks = 0;
                     t.Body.ScriptedStance = EPlayerStance.STAND;
                     t.PairingExact = true;   // nothing consumed since spawn/clear: the body stands at the last exact pairing
                     t.HasClaim = false;

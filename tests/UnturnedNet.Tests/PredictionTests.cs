@@ -78,27 +78,9 @@ namespace UnturnedNet.Tests
             Assert.That(r.Snaps, Is.EqualTo(1));
         }
 
-        [Test]
-        public void Reconciler_SliceCap_NoSingleTickTugAboveTheCeiling()
-        {
-            // the F3 companion (geometry WAN baselines): a swept correction blocked by geometry piles
-            // pending up; the exponential slice of the piled error must land as a bounded glide when the
-            // obstruction clears, never one released-dam tug (0.098 m single-tick measured at the curb
-            // baseline pre-cap, vs the 0.08 felt bar)
-            var r = new PredictionReconciler();
-            r.Record(9, Vector3.zero);
-            Assert.That(r.OnAuthoritative(9, new Vector3(1.5f, 0f, 0f)), Is.False, "1.5 m: eased, not snapped");
-            float total = 0f;
-            for (int i = 0; i < 400 && r.PendingError != Vector3.zero; i++)
-            {
-                var slice = r.Step(Dt);
-                Assert.That(slice.magnitude, Is.LessThanOrEqualTo(r.MaxSliceMeters + 1e-5f),
-                            $"tick {i}: no slice exceeds the per-tick ceiling");
-                total += slice.magnitude;
-            }
-            Assert.That(r.PendingError, Is.EqualTo(Vector3.zero), "the capped glide still converges to exact zero");
-            Assert.That(total, Is.EqualTo(1.5f).Within(1e-3f), "and hands out exactly the whole error");
-        }
+        // (The F3-era MaxSliceMeters slice-cap test was deleted with the cap itself: the shell's eased
+        // middle-band glide is GONE since C3 -- an over-band error resolves by rewind+replay, and Step()
+        // survives only for the headless demo walker, whose flat world has no released-dam geometry.)
 
         // ---- C3 replay ring (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 1): the per-seq ring carries the
         // FULL replay input -- axes/yaw/buttons pre-quantized through the exact wire encoding, plus the

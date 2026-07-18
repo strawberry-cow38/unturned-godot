@@ -1253,29 +1253,6 @@ namespace UnturnedGodot
         // TRUE physics position (not the render-lerped GlobalPosition) and apply corrections through a
         // seam that shifts the interp samples WITH the node.
         public Vector3 TruePhysicsPosition => _interpReady ? _interpCurr : GlobalPosition;
-        /// <summary>F3 (PREDICTION_GEOMETRY_DIAGNOSIS §4-4): an eased correction slice is applied as a
-        /// SWEPT move, never a bare position write. Mid-contact, a bare write embedded the capsule in the
-        /// floor/curb/jamb it was touching, and the next tick's depenetration -- or StepUp reading the
-        /// stuck foot-sweep as "blocked at foot" and firing its +0.5 m raise on FLAT ground (the wan_jump
-        /// phantom relaunch) -- kicked the body somewhere the avatar never went: fresh divergence
-        /// manufactured exactly where divergence was being corrected. The slice sweeps to first contact,
-        /// then slides the remainder along the contact plane (so grid-noise slices with a tiny vertical
-        /// component still land their tangential part while standing on the floor). Returns what ACTUALLY
-        /// landed -- the caller reports exactly that via NoteCorrectionApplied (the reconciler's
-        /// partial-application accounting, Prediction.cs NoteCorrectionApplied).</summary>
-        public Vector3 ApplyNetCorrection(Vector3 delta)
-        {
-            var before = GlobalPosition;
-            var col = MoveAndCollide(delta);
-            if (col != null)
-            {
-                var slide = col.GetRemainder().Slide(col.GetNormal());
-                if (slide.LengthSquared() > 1e-12f) MoveAndCollide(slide);
-            }
-            var applied = GlobalPosition - before;
-            if (_interpReady) { _interpPrev += applied; _interpCurr += applied; }   // keep the correction through the restore + render it (a sub-threshold slice is grid-tiny)
-            return applied;
-        }
         /// <summary>The >SnapThreshold path: adopt the authoritative position outright. The ENDPOINT is
         /// server truth (a legal place to stand), only the PATH may cross geometry -- so a snap stays a
         /// hard write (swept application would strand the shell on the near side of a wall the server is
@@ -1285,14 +1262,60 @@ namespace UnturnedGodot
             GlobalPosition += delta;
             if (_interpReady) { _interpPrev += delta; _interpCurr += delta; }
         }
+
+        // ---- C3 rewind+replay seams (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 4, retail
+        // ClientResimulate U3 PlayerInput.cs:1268-1346). Only ClientWorldSession.ReplayMisprediction
+        // calls these; SP/loopback never construct that path, so they are inert outside MP. ----
+
+        /// <summary>The movement-sim's carried state (horizontal components are re-derived from input
+        /// every Step; y is the ballistic DOF a rewind must seed). Read by PlayerNetSync for the
+        /// misprediction payload and by the session for the replay record.</summary>
+        public UnityEngine.Vector3 MoveSimVelocity => _move.Velocity;
+        /// <summary>The deterministic post-move grounded flag (the replay record rides it).</summary>
+        public bool DetGroundedNow => _detGrounded;
+
+        /// <summary>Rewind restore -- call after TeleportTo(server state): seed the sim velocity and the
+        /// stance/capsule from the misprediction payload, then re-derive det-grounded at the restored
+        /// position (a pure position->world query, deterministic -- better than shipping the flag; the
+        /// avatar derived ITS flag at this same position). The stance FSM's key-toggle state is
+        /// deliberately untouched: the replay window forces stances through StepMovementOnce, and the
+        /// live FSM must resume exactly where the player's real toggles left it.</summary>
+        public void NetReplayRestore(UnityEngine.Vector3 simVelocity, EPlayerStance stance)
+        {
+            _move.Velocity = simVelocity;
+            _move.Stance = stance;
+            UpdateHitbox(stance);
+            if (DeterministicGround) _detGrounded = DetGroundCast(DetCheckLength, out _);
+        }
+
+        /// <summary>One replayed input through the SAME kernel the live tick runs: the recorded wire
+        /// stance through the headroom re-gate only (no FSM key edges -- a held X across a replay must
+        /// not double-toggle), then the movement half. N of these inside one physics tick IS the replay
+        /// (net.c3_spike_restep proved N-in-one-tick tracks N engine ticks bit-identically over a curb).</summary>
+        public void StepMovementOnce(float strafe, float forward, bool jump, EPlayerStance stance, float delta)
+        {
+            var want = stance;
+            float wantH = PlayerMovementDef.HeightForStance(want);
+            if (wantH > _capStance + 0.01f && _capStance > 0f && !HeadroomFor(wantH))   // the PlayerStanceSim ceiling gate, mirrored at the replayed position
+                want = _capStance <= PlayerMovementDef.HEIGHT_PRONE + 0.01f ? EPlayerStance.PRONE : EPlayerStance.CROUCH;
+            _move.Stance = want;
+            UpdateHitbox(want);
+            StepMoveOnce(strafe, forward, jump, delta, out _, out _, out _);
+        }
+
+        /// <summary>Replay epilogue: the whole replay is ONE tick's resolution -- render its endpoint
+        /// (both interp samples := the final position, the ApplyNetSnap contract; the per-step interp
+        /// snapshots were never taken because the kernel leaves interp to its caller).</summary>
+        public void NetReplayFinish()
+        {
+            _interpPrev = _interpCurr = GlobalPosition;
+            _interpReady = true;
+        }
+
         // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
         public EPlayerStance? ScriptedStance;
         // Likewise forces jump (bypassing Space) -- PlayerNetSync injects the MoveInput v2 jump bit here.
         public bool? ScriptedJump;
-        // F2b (PREDICTION_GEOMETRY_DIAGNOSIS §5): how many ticks late the injected takeoff fires (a
-        // repaid takeoff deferred by TryConsumeInput). The avatar joins the arc IN PHASE at this offset
-        // instead of launching a label-offset arc. 0 = on time; only PlayerNetSync ever sets it.
-        public int ScriptedJumpLateTicks;
 
         // C6 MP RIDE MODE (PEI_CLIENT_PLAN §3 C6 / MP_PLAN §3.6 v1): driving a REPLICATED vehicle -- a
         // mesh-only VehiclePuppet the server dead-reckons, not a local Vehicle. Session-only: SP never
@@ -1661,7 +1684,6 @@ namespace UnturnedGodot
             GlobalPosition += Vector3.Up * StepHeight;
         }
 
-        static readonly System.Func<float, bool> AlwaysHeadroom = _ => true;   // F4: the NetAvatar stance-FSM stub -- the wire stance is already headroom-resolved client-side
 
         bool HeadroomFor(float height)   // is there space to occupy a taller capsule? (blocks standing up under a ceiling -- master)
         {
@@ -3102,7 +3124,7 @@ namespace UnturnedGodot
             bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space))) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310); ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
-            // LastJumpInput (the wire bit) is set below, once grounded is known -- F1 takeoff-edge semantics
+            LastJumpInput = jump;   // the wire jump bit is the HELD key the sim consumed (post-Broken) -- C3 reverted the F1 takeoff-edge encoding: a mispredicted takeoff is corrected by rewind+replay, not by wire gymnastics
 
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;
@@ -3125,13 +3147,7 @@ namespace UnturnedGodot
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
 
-            StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedNow);
-            // F1 (PREDICTION_GEOMETRY_DIAGNOSIS §5): the wire jump bit is the TAKEOFF EDGE -- true only
-            // on the tick this sim actually consumed a grounded jump (the tick Velocity.y became JUMP),
-            // never the held key. The held bit re-presented by the server's coast/hole machinery was §5-B:
-            // the avatar launched whole arcs the client never predicted. Local sim behavior is unchanged
-            // (jump stays held-key semantics for the body itself).
-            LastJumpInput = jump && groundedNow;
+            StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out _);
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
             if (wasAirborne && (DeterministicGround ? _detGrounded : IsOnFloor())) CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
         }
@@ -3146,58 +3162,26 @@ namespace UnturnedGodot
         // U3 PlayerInput.cs:1327-1335). Extraction is order-verbatim from the pre-C3 _PhysicsProcess
         // tail -- SP/loopback behavior is byte-identical. ----
 
-        /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).</summary>
+        /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).
+        /// C3 note: the avatar re-runs the headroom gate at its own position again (the F4 verbatim-trust
+        /// shortcut is gone) -- a doorway CROUCH-vs-STAND fork now diverges the bodies, trips the ack
+        /// band, and the client resolves it by rewind+replay, whose own stance re-gate
+        /// (StepMovementOnce) mirrors this one at the replayed positions.</summary>
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
         {
-            // F4 (PREDICTION_GEOMETRY_DIAGNOSIS §4-3/§3 asymmetry 2): a NetAvatar takes the wire stance
-            // VERBATIM -- the client's stance FSM already resolved the headroom gate at ITS position and
-            // sent the result; re-running the ceiling query here, at a position skewed by up to the ack
-            // band, disagreed in exactly the tight-doorway geometry (a CROUCH-vs-STAND fork = a 2.5 vs
-            // 4.5 m/s speed disagreement for the window it lasts). Trust boundary note: a lying stance
-            // can at worst stand the capsule up under a low ceiling -- depenetration jitter on the
-            // avatar body only; positions still gate through the C2 band + budget (TODO(mp-security)
-            // class, the test-server posture).
-            _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, NetAvatar ? AlwaysHeadroom : HeadroomFor);
+            _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor);
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
         }
 
         /// <summary>Movement half: grounded resolve -> sim Step -> StepUp -> MoveAndSlide -> det-ground
-        /// recheck/snap. groundedEntering = the grounded state the sim consumed (the caller's wire-bit /
-        /// fall-damage bookkeeping); verticalVel = this step's sim vertical velocity (fall damage).</summary>
+        /// recheck/snap. groundedEntering = the grounded state the sim consumed;
+        /// verticalVel = this step's sim vertical velocity (fall damage).</summary>
         void StepMoveOnce(float strafe, float forward, bool jump, float delta,
                           out bool wasAirborne, out float verticalVel, out bool groundedEntering)
         {
             bool grounded = DeterministicGround ? _detGrounded : IsOnFloor();   // MP bodies: the deterministic check, so shell + avatar integrate identical vertical motion
             groundedEntering = grounded;
-            // F2: the avatar honors the wire takeoff within a grounded-tolerance window. The bit arrives
-            // RTT-late and the avatar's own grounded flag carries the §4 geometry skew, so re-deriving the
-            // takeoff tick here dropped/delayed real jumps at curbs (§5-A, the time-offset arcs). Validate
-            // plausibility instead of re-deriving: accept when the body is grounded OR not ascending and
-            // within StepHeight of the ground (det cast). Worst abuse is a jump from a 0.5 m hover --
-            // bounded, the same class of tolerance the C2 ack band already accepts; fly/teleport stay
-            // gated by the band + adopt budget. NetAvatar-only: SP and the client shell are byte-identical.
-            bool lateJump = NetAvatar && jump && !grounded && Velocity.Y <= 0.01f && DetGroundCast(StepHeight, out _);
-            var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded || lateJump, delta);
-            // F2b: a DEFERRED repaid takeoff (TryConsumeInput) fires s ticks after the client's real
-            // takeoff tick -- launched at phase 0 the two arcs stay label-offset for their whole flight
-            // (~0.14 m of vertical pending per tick of lateness, the wan_jump residue). The ballistic
-            // DOF is replayable in closed form (input-free, collision-free until landing), so join the
-            // client's arc IN PHASE: lift to the arc height at phase s and take the phase-s vertical
-            // velocity. Upward-sweep guarded -- blocked overhead falls back to the phase-0 jump. The
-            // 10-tick cap keeps v.y positive so the det ground-snap can't immediately eat the join.
-            if (NetAvatar && jump && (grounded || lateJump) && ScriptedJumpLateTicks > 0)
-            {
-                float lateT = Mathf.Min(ScriptedJumpLateTicks, 10) * delta;
-                float yOff = PlayerMovementDef.JUMP * lateT - 0.5f * PlayerMovementDef.GRAVITY * lateT * lateT;
-                if (yOff > 0f && !TestMove(GlobalTransform, Vector3.Up * yOff))
-                {
-                    GlobalPosition += Vector3.Up * yOff;
-                    var vel = _move.Velocity;
-                    vel.y = PlayerMovementDef.JUMP - PlayerMovementDef.GRAVITY * lateT;
-                    _move.Velocity = vel;
-                    v.y = vel.y;
-                }
-            }
+            var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded, delta);
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);
             wasAirborne = !grounded;                     // ground state going into this step
             Velocity = new Vector3(world.X, v.y, world.Z);

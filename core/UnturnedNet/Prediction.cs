@@ -5,17 +5,18 @@ using UnityEngine;
 namespace UnturnedGodot.Net
 {
     /// <summary>
-    /// Prediction v1: predict + smooth-correct (MP_PLAN §2.5 fork b, the recommended v1 -- NO
-    /// re-simulation/rollback; that stays a deferred client-only upgrade because the protocol already
-    /// carries everything it needs). The client applies its own input immediately, records the predicted
-    /// position per input seq, and when a snapshot acks a seq (lastProcessedInputSeq + authoritative
-    /// transform, wired since Phase 3) compares authoritative vs recorded. The residual error is folded
-    /// into the player a fraction per tick (exponential smoothing) -- unless it exceeds SnapThreshold,
-    /// in which case the caller snaps.
+    /// The client-side reconciliation ledger: the per-seq prediction ring (now the full C3 replay
+    /// record), the ack cursor, the dead zone, the snap threshold, and the correction accounting.
+    /// The SHELL client (ClientWorldSession) resolves errors retail-style since C3
+    /// (PREDICTION_GEOMETRY_DIAGNOSIS §7): below DeadZone -- ack, no correction; above SnapThreshold --
+    /// hard adopt; the middle band -- rewind+replay driven by the server's MispredictionEvent (the
+    /// eased glide is GONE there; retail has no easing anywhere, U3 PlayerInput.cs). The exponential
+    /// Step() glide survives only for the headless flat demo walker (ClientPrediction), which has no
+    /// body to replay.
     ///
-    /// Convergence shape: predictions are recorded AFTER the tick's correction slice is applied, so each
-    /// fresh authoritative sample measures the REMAINING error (replace semantics, no double-count) and
-    /// the error decays geometrically even while the player keeps moving.
+    /// Convergence shape: predictions are recorded AFTER the tick's correction/replay is applied, so
+    /// each fresh authoritative sample measures the REMAINING error (replace semantics, no
+    /// double-count); a replay re-records its whole window, which is what drives the next ack to ~zero.
     /// </summary>
     public sealed class PredictionReconciler
     {
@@ -37,16 +38,10 @@ namespace UnturnedGodot.Net
         /// tick reads as a constant "roped back" tug. Real Unturned corrects only past
         /// errorToleranceDistance = 0.02 m (PlayerInput.cs:1817) -- ours is a little wider because the
         /// two ends are distinct physics solves, not a bit-identical re-sim. Client-side only, no wire
-        /// change; the SnapThreshold teleport guard above is unaffected.</summary>
+        /// change; the SnapThreshold teleport guard above is unaffected. C3 note: post-replay residue
+        /// must land inside this zone for adoption to re-engage -- the dead zone is what absorbs the
+        /// two-solve noise a replay cannot erase (diagnosis §7.2 item 4).</summary>
         public float DeadZoneMeters = 0.04f;
-        /// <summary>Per-tick ceiling on an eased slice (metres) -- the F3 companion (geometry WAN
-        /// baselines): swept application (ApplyNetCorrection) can be BLOCKED by the very geometry that
-        /// caused the divergence, so pending piles up while the shell grinds along a face; when the
-        /// obstruction clears, the exponential slice of the piled error landed as one released-dam tug
-        /// (0.098 m single-tick measured at the curb baseline vs the 0.08 felt bar). The cap turns the
-        /// release into a fast bounded glide (0.06/tick = 3 m/s of correction). Step() only -- snaps
-        /// are meant to pop, and the tail-consume (FinishThreshold 0.05) is already under it.</summary>
-        public float MaxSliceMeters = 0.06f;
 
         const int RingSize = 256;   // > any plausible input round-trip in ticks
         struct Entry
@@ -169,7 +164,12 @@ namespace UnturnedGodot.Net
         /// this tick (zero when converged). Tiny tails are consumed whole so the error reaches exact zero.
         /// The caller applies the delta (possibly quantized) and reports what actually landed via
         /// NoteCorrectionApplied -- counting the RAW delta would drift the accounting by whatever the
-        /// position grid swallowed each tick.</summary>
+        /// position grid swallowed each tick.
+        /// C3 NOTE: the SHELL client no longer calls this -- retail has no easing anywhere
+        /// (U3 PlayerInput.cs: corrections are rare, discrete, replay-complete), and the port's shell
+        /// resolves the middle band by rewind+replay (ClientWorldSession.ReplayMisprediction). Step()
+        /// survives ONLY for the headless flat demo walker (ClientPrediction below), which has no body
+        /// to replay. Kept-with-doubt: delete it if the demo walker ever grows a replay path.</summary>
         public Vector3 Step(float dt)
         {
             if (_pending == Vector3.zero) return Vector3.zero;
@@ -181,8 +181,6 @@ namespace UnturnedGodot.Net
             }
             float a = 1f - MathF.Exp(-CorrectionRatePerSecond * dt);
             var delta = _pending * a;
-            float dmag = Magnitude(delta);
-            if (dmag > MaxSliceMeters) delta *= MaxSliceMeters / dmag;   // released-dam guard (see MaxSliceMeters)
             _pending -= delta;
             return delta;
         }
