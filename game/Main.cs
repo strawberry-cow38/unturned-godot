@@ -1536,7 +1536,16 @@ namespace UnturnedGodot
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
             if (System.Environment.GetEnvironmentVariable("UG_EDITORDEMO") == "1")
-                GetTree().CreateTimer(0.8).Timeout += () => objs.DemoPlace();
+                GetTree().CreateTimer(0.8).Timeout += () =>
+                {
+                    objs.DemoPlace();
+                    if (objs.DemoPositions.Count > 0)   // pull the cam in close on a placed prop so the render shows it upright
+                    {
+                        var p = objs.DemoPositions[0];
+                        cam.GlobalPosition = p + new Vector3(7f, 5f, 12f);
+                        cam.LookAt(p + Vector3.Up * 1.5f, Vector3.Up);
+                    }
+                };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
 

@@ -78,7 +78,10 @@ namespace UnturnedGodot
         {
             var mesh = MeshFor(name);
             if (mesh == null) return null;
-            var root = new Node3D { Position = pos, RotationDegrees = new Vector3(0, yawDeg, 0) };
+            // Upright = the loaded-prop convention (WorldBuilder basis): the extracted meshes are authored lying down,
+            // so pitch ex=270 stands them up; yaw is about world-up. Placing yaw-only left every prop flat (master).
+            var rot = new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
             root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name) });
             var shp = mesh.CreateTrimeshShape();   // trimesh collider so the prop is pickable (+ later walkable)
@@ -164,12 +167,13 @@ namespace UnturnedGodot
         }
 
         // harness hook (--editor): scatter a few props so a headless render shows placement working
+        public readonly List<Vector3> DemoPositions = new();
         public void DemoPlace()
         {
             if (_catalog.Count == 0) { GD.Print("[editordemo] empty catalog"); return; }
             int n = 0;
             for (int i = 0; i < 6; i++)
-                if (Raycast(new Vector2(300 + i * 110, 380), TerrainLayer, out var pt, out _) && Place(_catalog[(i * 7) % _catalog.Count], pt, i * 30f) != null) n++;
+                if (Raycast(new Vector2(300 + i * 110, 380), TerrainLayer, out var pt, out _) && Place(_catalog[(i * 7) % _catalog.Count], pt, i * 30f) != null) { DemoPositions.Add(pt); n++; }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
     }
