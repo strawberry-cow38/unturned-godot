@@ -1564,14 +1564,14 @@ namespace UnturnedGodot
                         GD.Print($"[editorspawns] player remove-near from {b0} -> {spawns.PlayerCount}");
                         spawns.Save();
                     }
-                    spawns.DemoGoItem();   // cycle to the Item category (MultiMesh point cloud)
+                    spawns.DemoGoZombie();   // cycle to the Zombie category (Animals.dat MultiMesh cloud)
                     if (spawns.Positions.Count > 0)
                     {
-                        var ic = spawns.Positions[spawns.Positions.Count / 2];   // frame a mid item cluster
-                        cam.GlobalPosition = ic + new Vector3(0f, 40f, 36f);
-                        cam.LookAt(ic, Vector3.Up);
+                        var zc = spawns.Positions[spawns.Positions.Count / 2];   // frame a mid zombie cluster
+                        cam.GlobalPosition = zc + new Vector3(0f, 40f, 36f);
+                        cam.LookAt(zc, Vector3.Up);
                     }
-                    GD.Print($"[editorspawns] item spawns: {spawns.Count}");
+                    GD.Print($"[editorspawns] zombie spawns: {spawns.Count}");
                 };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }

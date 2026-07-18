@@ -14,7 +14,7 @@ namespace UnturnedGodot
     // retail install. NOTE: cursors are close primitive stand-ins for the source Edit/* prefabs (not ripped).
     public partial class EditorSpawns : Node3D
     {
-        enum ECategory { Player, Vehicle, Item }
+        enum ECategory { Player, Vehicle, Item, Zombie }
         struct Spawn { public Vector3 Pos; public float Yaw; public bool IsAlt; public int Type; }
 
         static readonly string[] VehicleTypes = { "Civilian", "Police", "Fire", "Military", "Medic", "Farm" };
@@ -43,14 +43,15 @@ namespace UnturnedGodot
         public readonly List<Vector3> Positions = new();
         public int Count => _spawns.Count;
         public int PlayerCount { get { int n = 0; foreach (var s in _spawns) if (!s.IsAlt) n++; return n; } }
+        bool IsPointCloud => _category == ECategory.Item || _category == ECategory.Zombie;   // dense -> MultiMesh, no facing
         int TypeCount() => _category == ECategory.Item ? Mathf.Max(1, _itemColors?.Length ?? 1) : VehicleTypes.Length;
         public string ModeText
         {
             get
             {
-                string cat = _category switch { ECategory.Vehicle => $"Vehicle[{VehicleTypes[Mathf.Clamp(_vehType, 0, 5)]}]", ECategory.Item => $"Item[t{_vehType}]", _ => "Player" };
+                string cat = _category switch { ECategory.Vehicle => $"Vehicle[{VehicleTypes[Mathf.Clamp(_vehType, 0, 5)]}]", ECategory.Item => $"Item[t{_vehType}]", ECategory.Zombie => "Zombie", _ => "Player" };
                 if (_removeMode) return $"{cat} · REMOVE (radius {_radius})";
-                string what = _category switch { ECategory.Vehicle => VehicleTypes[Mathf.Clamp(_vehType, 0, 5)], ECategory.Item => $"table {_vehType}", _ => (_alt ? "ALT" : "player") };
+                string what = _category switch { ECategory.Vehicle => VehicleTypes[Mathf.Clamp(_vehType, 0, 5)], ECategory.Item => $"table {_vehType}", ECategory.Zombie => "zombie", _ => (_alt ? "ALT" : "player") };
                 return $"{cat} · add {what}";
             }
         }
@@ -76,7 +77,8 @@ namespace UnturnedGodot
             if (System.IO.File.Exists(sp)) { LoadTranslator(sp); return; }
             if (_category == ECategory.Player) LoadPlayerSpawns();
             else if (_category == ECategory.Vehicle) LoadVehicleSpawns();
-            else LoadItemSpawns();
+            else if (_category == ECategory.Item) LoadRegionSpawns("Jars.dat");
+            else LoadRegionSpawns("Animals.dat");   // Zombie: PEI zombie spawns (legacy filename; source ZombieField reads this)
         }
 
         void LoadItemTables()   // Spawns/Items.dat table colours (source LevelItems tables)
@@ -100,11 +102,11 @@ namespace UnturnedGodot
             }
         }
 
-        void LoadItemSpawns()   // Spawns/Jars.dat (misnamed): byte ver, 64x64 regions each [u16 count, count x (u8 type + Vector3)]
+        void LoadRegionSpawns(string file)   // Jars.dat / Animals.dat: byte ver, 64x64 regions each [u16 count, count x (u8 type + Vector3)]
         {
-            string jpath = _mapRoot + "/Spawns/Jars.dat";
-            if (!System.IO.File.Exists(jpath)) { GD.Print("[editor-spawns] no Jars.dat"); return; }
-            var b = System.IO.File.ReadAllBytes(jpath); int o = 0;
+            string path = _mapRoot + "/Spawns/" + file;
+            if (!System.IO.File.Exists(path)) { GD.Print($"[editor-spawns] no {file}"); return; }
+            var b = System.IO.File.ReadAllBytes(path); int o = 0;
             byte version = b[o++];
             if (version == 0) return;
             for (int x = 0; x < 64; x++) for (int y = 0; y < 64; y++)
@@ -119,7 +121,7 @@ namespace UnturnedGodot
                     _spawns.Add(new Spawn { Pos = new Vector3(px, py, -pz), Type = type });   // authored Y, port negate-Z
                 }
             }
-            GD.Print($"[editor-spawns] loaded {_spawns.Count} item spawns");
+            GD.Print($"[editor-spawns] loaded {_spawns.Count} {_category} spawns");
         }
 
         void LoadTranslator(string sp)
@@ -199,6 +201,7 @@ namespace UnturnedGodot
         {
             if (_category == ECategory.Vehicle) return VehicleColors[Mathf.Clamp(s.Type, 0, 5)];
             if (_category == ECategory.Item) return _itemColors != null && s.Type < _itemColors.Length ? _itemColors[s.Type] : new Color(0.8f, 0.8f, 0.35f);
+            if (_category == ECategory.Zombie) return new Color(0.55f, 0.15f, 0.6f);   // zombie = purple
             return s.IsAlt ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.86f, 0.1f);
         }
 
@@ -206,7 +209,7 @@ namespace UnturnedGodot
         {
             foreach (var m in _markers) m.QueueFree();
             _markers.Clear(); Positions.Clear();
-            if (_category == ECategory.Item)   // 2470-point cloud -> one MultiMesh, per-instance colour by table
+            if (IsPointCloud)   // dense cloud (item 2470 / zombie ~1456) -> one MultiMesh, per-instance colour
             {
                 var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f }, InstanceCount = _spawns.Count };
                 for (int i = 0; i < _spawns.Count; i++)
@@ -261,10 +264,10 @@ namespace UnturnedGodot
                 _addBody.Mesh = new BoxMesh { Size = new Vector3(2.2f, 1.1f, 4.8f) }; _addBody.Position = new Vector3(0, 0.55f, 0);
                 _addArrow.Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.8f, Height = 1.8f }; _addArrow.Position = new Vector3(0, 0.55f, 3.2f);
             }
-            else if (_category == ECategory.Item)
+            else if (IsPointCloud)
             {
                 _addBody.Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f }; _addBody.Position = new Vector3(0, 0.6f, 0);
-                _addArrow.Mesh = null;   // item spawns are points -- no facing arrow
+                _addArrow.Mesh = null;   // item/zombie spawns are points -- no facing arrow
             }
             else
             {
@@ -279,6 +282,7 @@ namespace UnturnedGodot
             Color c = _category switch {
                 ECategory.Vehicle => VehicleColors[Mathf.Clamp(_vehType, 0, 5)],
                 ECategory.Item => (_itemColors != null && _vehType < _itemColors.Length ? _itemColors[_vehType] : new Color(0.8f, 0.8f, 0.35f)),
+                ECategory.Zombie => new Color(0.55f, 0.15f, 0.6f),
                 _ => (_alt ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.86f, 0.1f)) };
             c.A = 0.4f;
             var mat = new StandardMaterial3D { AlbedoColor = c, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
@@ -336,7 +340,7 @@ namespace UnturnedGodot
         void SwitchCategory()
         {
             Save();                                                     // persist the current category before switching
-            _category = (ECategory)(((int)_category + 1) % 3);          // Player -> Vehicle -> Item -> ...
+            _category = (ECategory)(((int)_category + 1) % 4);          // Player -> Vehicle -> Item -> Zombie -> ...
             _vehType = 0;
             _spawns.Clear();
             LoadCategory();
@@ -350,7 +354,7 @@ namespace UnturnedGodot
         {
             var s = new Spawn { Pos = pt, Yaw = yaw, IsAlt = isAlt, Type = type };
             _spawns.Add(s);
-            if (_category == ECategory.Item) RebuildMarkers();   // point-cloud MultiMesh rebuild
+            if (IsPointCloud) RebuildMarkers();   // point-cloud MultiMesh rebuild
             else { var m = MakeMarker(pt, yaw, MarkerColor(s)); AddChild(m); _markers.Add(m); Positions.Add(pt); }
             GD.Print($"[editor-spawns] added {_category} spawn ({_spawns.Count} total)");
         }
@@ -363,7 +367,8 @@ namespace UnturnedGodot
             if (removed > 0) { RebuildMarkers(); GD.Print($"[editor-spawns] removed {removed} ({_spawns.Count} left)"); }
         }
 
-        // harness (--editor UG_EDITORSPAWNS): cycle to the Item category so a render shows the MultiMesh point cloud
-        public void DemoGoItem() { int g = 0; while (_category != ECategory.Item && g++ < 4) SwitchCategory(); }
+        // harness (--editor UG_EDITORSPAWNS): cycle to a category so a render shows its markers
+        public void DemoGoItem() { int g = 0; while (_category != ECategory.Item && g++ < 5) SwitchCategory(); }
+        public void DemoGoZombie() { int g = 0; while (_category != ECategory.Zombie && g++ < 5) SwitchCategory(); }
     }
 }
