@@ -1162,6 +1162,13 @@ namespace UnturnedGodot
         /// partial-application accounting, Prediction.cs NoteCorrectionApplied).</summary>
         public Vector3 ApplyNetCorrection(Vector3 delta)
         {
+            // F3 origin (post-review): sweep + measure `applied` from the TRUE physics position, not the
+            // render-lerped GlobalPosition. _Process interpolates GlobalPosition off _interpCurr between
+            // physics ticks and ShellStep runs BEFORE the body's own _PhysicsProcess restore, so a bare
+            // `before = GlobalPosition` measured the render ghost -- fps-dependent, and near geometry the
+            // MoveAndCollide sweep could start a few cm off truth. TruePhysicsPosition is a no-op when
+            // interp isn't ready.
+            GlobalPosition = TruePhysicsPosition;
             var before = GlobalPosition;
             var col = MoveAndCollide(delta);
             if (col != null)
@@ -2942,6 +2949,11 @@ namespace UnturnedGodot
             // client's arc IN PHASE: lift to the arc height at phase s and take the phase-s vertical
             // velocity. Upward-sweep guarded -- blocked overhead falls back to the phase-0 jump. The
             // 10-tick cap keeps v.y positive so the det ground-snap can't immediately eat the join.
+            // (Post-review note: the lateJump branch adds yOff off a possibly-airborne origin, but it
+            // can't co-fire with ScriptedJumpLateTicks>0 in practice -- a deferred repaid takeoff means
+            // the avatar spent the starve coasting GROUNDED, so `grounded` is the live branch here and the
+            // lift is ground-referenced. A hypothetical lateJump+deferred compound overshoots by <=0.5 m,
+            // reconciler-absorbed. Left as-is; flagged only for completeness.)
             if (NetAvatar && jump && (grounded || lateJump) && ScriptedJumpLateTicks > 0)
             {
                 float lateT = Mathf.Min(ScriptedJumpLateTicks, 10) * (float)delta;
