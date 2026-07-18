@@ -120,6 +120,38 @@ Output lands in **`game/content/`**:
 All 8 MP_PLAN phases are live; `docs/MP_PLAN.md` is the architecture doc (§7 = current status + security
 posture). Working reference:
 
+**Every feature must be MP-compatible unless the task explicitly says SP-only.** SP is the fallback shell; the
+real target is the dedicated server + joined clients. Before building anything that touches game state, ask "what
+is the server-authoritative version of this?" — never a client-local mutation of shared state. The recipe, proven
+across all 8 phases + the live fixes:
+
+1. **The server owns all truth.** A client never mutates authoritative state (world / player / inventory / vehicle)
+   locally — it sends an *intent* and renders the *result*. The client "never seats itself": it waits for the
+   server's validated fact to come back.
+2. **The round trip:** client **request** (a `CommandRegistry` command) → server **validates** at the choke point
+   (reach / facing / ownership / cheats — sender identity always from the connection, never the payload) → server
+   **applies** the mutation → server **replicates** it (a per-system snapshot delta for lasting state; an
+   `EventRegistry` event for a one-shot fact) → the client **reflects** it (renders the replica / owner block; world
+   spawn/despawn is diff-driven off the registry). Copy an existing one: vehicle enter (`RequestEnterNearestPuppet`
+   → `SendEnterVehicle` → `ServerVehicles.CanEnter` → `VehicleEntered` event → `EnterPuppet`), item pickup, console
+   teleport.
+3. **Keep SP byte-identical via null seams.** Add the MP wiring as a null-default delegate on the SP class
+   (`NetEnterVehicle` / `NetFire` / `NetPickupItem` / `NetMoveItem` …), set ONLY by `ClientWorldSession`
+   (`game/ClientWorldSession.cs`), left null in SP + `MpLoopback`. One code path serves SP (local/direct) and MP
+   (over the wire). New server logic that must not perturb the engine-free `core/` L0 harness goes game-side (e.g.
+   `DedicatedServer`), not in `core/`.
+4. **Local player predicts + reconciles; every other entity is a dead-reckoned puppet.** A correction/adopt must
+   never fight the server AND must survive the render-interp restore — move a body with `TeleportTo` (it resets the
+   interp snapshots), never a bare `GlobalPosition` write (§7 risk 5: a bare write is silently undone on the body's
+   next physics tick).
+5. **Validate server-side; never trust the client.** Reach + facing-cone + ownership + cheat gates live in the
+   command validator (`ServerTransactions`), not the client — the client's UI/eye-ray is convenience, the server is
+   the authority and the anti-cheat boundary.
+6. **Ship the tests in the same commit** (regression rule): an L0 engine-free round-trip in
+   `tests/UnturnedNet.Tests/` (request → validate → apply → replicate, plus a rejection case) AND an L1 `net.shell_*`
+   test in `game/testing/tests/NetTests.cs` (a real `ClientWorldSession` over `MemTransport` — assert the client
+   actually *sees* the result). Prove teeth: the test must FAIL without the wiring.
+
 - **Architecture, bottom-up:** dumb datagram transports (`core/SDG.NetTransport/` — real UDP + the
   deterministic `MemTransport` test hub) → per-peer reliability engine (`NetSession`: seq/ack header, 3
   channels: Control / ReliableOrdered / UnreliableSequenced, fragmentation, RTO retransmit) → session
