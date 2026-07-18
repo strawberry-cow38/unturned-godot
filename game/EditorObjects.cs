@@ -90,6 +90,7 @@ namespace UnturnedGodot
                 _guidToName.TryAdd(p[0], p[1]);   // guid -> mesh name (for loading placements)
             }
             _catalog.Sort();
+            _catalog.Insert(0, LootCrateName);   // loot crate pinned to the top of the palette
         }
 
         ArrayMesh MeshFor(string name)
@@ -138,8 +139,11 @@ namespace UnturnedGodot
 
         // Build + add a prop at a world position with a rotation basis. Returns its root Node3D. The gizmo then rotates
         // it freely; Save decomposes the live basis back to PEI euler so any orientation round-trips.
+        public const string LootCrateName = "★ Loot Crate";   // a placeable loot CONTAINER (not a mesh prop) -- rolls a PEI table in SP
+
         public Node3D Place(string name, Vector3 pos, Basis rot)
         {
+            if (name == LootCrateName) return PlaceLootCrate(pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -156,6 +160,23 @@ namespace UnturnedGodot
                 _pickToObj[body.GetRid()] = root;
             }
             else _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        // a placeable loot CONTAINER marker (box) tagged with its PEI table; the SP loader spawns a real LootCrate here.
+        Node3D PlaceLootCrate(Vector3 pos, Basis rot)
+        {
+            var root = new Node3D { Transform = new Transform3D(rot, pos) };
+            root.SetMeta("loot_crate", true);
+            root.SetMeta("loot_table", 0);   // default PEI table (retable later)
+            root.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.75f, 0.75f, 0.75f) }, Position = new Vector3(0f, 0.375f, 0f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.42f, 0.2f), Roughness = 0.9f } });
+            root.AddChild(new Label3D { Text = "Loot Crate", Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.006f, Position = new Vector3(0f, 1.05f, 0f), Modulate = new Color(1f, 0.85f, 0.4f), NoDepthTest = true, FontSize = 48, OutlineSize = 8 });
+            var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Position = new Vector3(0f, 0.375f, 0f) };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.75f, 0.75f, 0.75f) } });
+            root.AddChild(body);
+            _world.AddChild(root);
+            _pickToObj[body.GetRid()] = root;
             _placed.Add(root);
             return root;
         }
@@ -386,8 +407,23 @@ namespace UnturnedGodot
                 w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {ex:0.###} {ey:0.###} {ez:0.###} {sc.X:0.###} {sc.Y:0.###} {sc.Z:0.###}");
                 n++;
             }
+            SaveLootCrates();
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
+        }
+
+        string CratesPath => Dir + $"editor_{_editor.MapName}_crates.txt";   // per-map loot-crate placements (table + world pos)
+        void SaveLootCrates()
+        {
+            var crates = _placed.FindAll(p => IsInstanceValid(p) && p.HasMeta("loot_crate"));
+            using var cw = new System.IO.StreamWriter(CratesPath, false);
+            foreach (var c in crates)
+            {
+                int tbl = c.HasMeta("loot_table") ? (int)c.GetMeta("loot_table") : 0;
+                var gp = c.GlobalPosition;
+                cw.WriteLine($"{tbl} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###}");   // gpos.Z negates back (map convention)
+            }
+            if (crates.Count > 0) GD.Print($"[editor] saved {crates.Count} loot crates -> {CratesPath}");
         }
 
         // inverse of FromEuler (B = Ry(180-ey)*Rx(ex)*Rz(-ez)); Godot GetEuler(Yxz) gives (x,y,z) with B=Ry(y)Rx(x)Rz(z)
@@ -399,6 +435,7 @@ namespace UnturnedGodot
 
         void LoadSaved()   // restore previously-saved editor placements on open
         {
+            LoadLootCrates();
             if (!System.IO.File.Exists(SavePath)) return;
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(SavePath))
@@ -414,6 +451,22 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} saved props");
+        }
+
+        void LoadLootCrates()   // restore placed loot crates (markers) on open
+        {
+            if (!System.IO.File.Exists(CratesPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(CratesPath))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4 || !int.TryParse(p[0], out var tbl)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                var root = PlaceLootCrate(new Vector3(px, py, -pz), Basis.Identity);
+                root.SetMeta("loot_table", tbl);
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor] loaded {n} loot crates");
         }
 
         // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)

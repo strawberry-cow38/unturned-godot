@@ -1498,6 +1498,25 @@ namespace UnturnedGodot
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             AttachMpLoopback(res);    // --mploopback only; default SP is untouched
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+            if (_peiPlayable) SpawnEditorLootCrates();   // stock the map with any loot crates placed in the editor
+        }
+
+        // Spawn the loot crates the editor saved for PEI (editor_PEI_crates.txt), each rolling its PEI item table (LootCrate).
+        void SpawnEditorLootCrates()
+        {
+            string cratesFile = ProjectSettings.GlobalizePath("res://content/objects/") + "editor_PEI_crates.txt";
+            if (!System.IO.File.Exists(cratesFile)) return;
+            LootTables.Load(_mapRoot + "/Spawns/Items.dat");
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(cratesFile))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4 || !int.TryParse(p[0], out var tbl)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                LootCrate.Spawn(this, new Vector3(px, py, -pz), tbl);
+                n++;
+            }
+            if (n > 0) GD.Print($"[loot-crate] spawned {n} editor loot crates in SP");
         }
 
         // Workshop -> "New Map": boot the editor with a fresh FLAT all-grass map (no props/spawns/roads) to build from
