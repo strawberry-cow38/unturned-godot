@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "lkgU+gimOxI=",
+  "dgSpecHash": "FQw1JMNrqv0=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/ug-c3/core/UnturnedDat/UnturnedDat.csproj",
+  "projectFilePath": "/home/ec2-user/projects/ug-cauth/core/UnturnedDat/UnturnedDat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }
