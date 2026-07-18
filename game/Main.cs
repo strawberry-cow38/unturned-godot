@@ -1511,19 +1511,23 @@ namespace UnturnedGodot
             // Clean, legible editor lighting. The DayNightCycle re-applies a warm-tan ambient + fog + glow EVERY
             // frame (source-faithful sky, but it reads as thick haze from the aerial editor cam), so freeze its
             // visuals first, then set a bright fog-free environment so the map is clearly editable.
+            void SetCleanEditorLighting()   // the editor's clean fog-free look; restored when leaving the Environment tab
+            {
+                foreach (var n in GetChildren())
+                    if (n is WorldEnvironment we && we.Environment is Godot.Environment ev)
+                    {
+                        ev.SetFogEnabled(false);
+                        ev.BackgroundMode = Godot.Environment.BGMode.Color;
+                        ev.BackgroundColor = new Color(0.53f, 0.67f, 0.86f);   // clear sky blue
+                        ev.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+                        ev.AmbientLightColor = new Color(0.92f, 0.92f, 0.94f);
+                        ev.AmbientLightEnergy = 1.15f;
+                        ev.GlowEnabled = false;
+                        break;
+                    }
+            }
             if (res.DayNight != null) res.DayNight.VisualsEnabled = false;
-            foreach (var n in GetChildren())
-                if (n is WorldEnvironment we && we.Environment is Godot.Environment ev)
-                {
-                    ev.SetFogEnabled(false);
-                    ev.BackgroundMode = Godot.Environment.BGMode.Color;
-                    ev.BackgroundColor = new Color(0.53f, 0.67f, 0.86f);   // clear sky blue
-                    ev.AmbientLightSource = Godot.Environment.AmbientSource.Color;
-                    ev.AmbientLightColor = new Color(0.92f, 0.92f, 0.94f);
-                    ev.AmbientLightEnergy = 1.15f;
-                    ev.GlowEnabled = false;
-                    break;
-                }
+            SetCleanEditorLighting();
             var editor = new Editor();
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
@@ -1564,14 +1568,14 @@ namespace UnturnedGodot
                         GD.Print($"[editorspawns] player remove-near from {b0} -> {spawns.PlayerCount}");
                         spawns.Save();
                     }
-                    spawns.DemoGoItem();   // cycle to the Item category (MultiMesh cube cloud)
+                    spawns.DemoGoAnimal();   // cycle to the Animal category (Fauna.dat MultiMesh)
                     if (spawns.Positions.Count > 0)
                     {
-                        var zc = spawns.Positions[spawns.Positions.Count / 2];   // frame a mid item cluster
-                        cam.GlobalPosition = zc + new Vector3(0f, 40f, 36f);
+                        var zc = spawns.Positions[spawns.Positions.Count / 2];   // frame a mid animal cluster
+                        cam.GlobalPosition = zc + new Vector3(0f, 34f, 30f);
                         cam.LookAt(zc, Vector3.Up);
                     }
-                    GD.Print($"[editorspawns] item spawns: {spawns.Count}");
+                    GD.Print($"[editorspawns] animal spawns: {spawns.Count}");
                 };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }

@@ -14,7 +14,7 @@ namespace UnturnedGodot
     // retail install. NOTE: cursors are close primitive stand-ins for the source Edit/* prefabs (not ripped).
     public partial class EditorSpawns : Node3D
     {
-        enum ECategory { Player, Vehicle, Item, Zombie }
+        enum ECategory { Player, Vehicle, Item, Zombie, Animal }
         struct Spawn { public Vector3 Pos; public float Yaw; public bool IsAlt; public int Type; }
 
         static readonly string[] VehicleTypes = { "Civilian", "Police", "Fire", "Military", "Medic", "Farm" };
@@ -38,20 +38,20 @@ namespace UnturnedGodot
         byte _radius = 8;
         bool _alt;
         int _vehType;   // source selectedVehicle / item table index
-        Color[] _itemColors;
+        Color[] _tableColors;
 
         public readonly List<Vector3> Positions = new();
         public int Count => _spawns.Count;
         public int PlayerCount { get { int n = 0; foreach (var s in _spawns) if (!s.IsAlt) n++; return n; } }
-        bool IsPointCloud => _category == ECategory.Item || _category == ECategory.Zombie;   // dense -> MultiMesh, no facing
-        int TypeCount() => _category == ECategory.Item ? Mathf.Max(1, _itemColors?.Length ?? 1) : VehicleTypes.Length;
+        bool IsPointCloud => _category == ECategory.Item || _category == ECategory.Zombie || _category == ECategory.Animal;   // dense -> MultiMesh, no facing
+        int TypeCount() => (_category == ECategory.Item || _category == ECategory.Animal) ? Mathf.Max(1, _tableColors?.Length ?? 1) : VehicleTypes.Length;
         public string ModeText
         {
             get
             {
-                string cat = _category switch { ECategory.Vehicle => $"Vehicle[{VehicleTypes[Mathf.Clamp(_vehType, 0, 5)]}]", ECategory.Item => $"Item[t{_vehType}]", ECategory.Zombie => "Zombie", _ => "Player" };
+                string cat = _category switch { ECategory.Vehicle => $"Vehicle[{VehicleTypes[Mathf.Clamp(_vehType, 0, 5)]}]", ECategory.Item => $"Item[t{_vehType}]", ECategory.Zombie => "Zombie", ECategory.Animal => $"Animal[t{_vehType}]", _ => "Player" };
                 if (_removeMode) return $"{cat} · REMOVE (radius {_radius})";
-                string what = _category switch { ECategory.Vehicle => VehicleTypes[Mathf.Clamp(_vehType, 0, 5)], ECategory.Item => $"table {_vehType}", ECategory.Zombie => "zombie", _ => (_alt ? "ALT" : "player") };
+                string what = _category switch { ECategory.Vehicle => VehicleTypes[Mathf.Clamp(_vehType, 0, 5)], ECategory.Item => $"table {_vehType}", ECategory.Zombie => "zombie", ECategory.Animal => $"table {_vehType}", _ => (_alt ? "ALT" : "player") };
                 return $"{cat} · add {what}";
             }
         }
@@ -72,30 +72,73 @@ namespace UnturnedGodot
 
         void LoadCategory()   // the editor translator (edited state) if present, else the retail .dat
         {
-            if (_category == ECategory.Item) LoadItemTables();   // colours needed even when loading from the translator
+            if (_category == ECategory.Item) LoadItemTables();          // Items.dat table colours
+            else if (_category == ECategory.Animal) LoadAnimalTables();  // Fauna.dat table colours
             string sp = TranslatorPath(_category);
             if (System.IO.File.Exists(sp)) { LoadTranslator(sp); return; }
             if (_category == ECategory.Player) LoadPlayerSpawns();
             else if (_category == ECategory.Vehicle) LoadVehicleSpawns();
             else if (_category == ECategory.Item) LoadRegionSpawns("Jars.dat");
-            else LoadRegionSpawns("Animals.dat");   // Zombie: PEI zombie spawns (legacy filename; source ZombieField reads this)
+            else if (_category == ECategory.Zombie) LoadRegionSpawns("Animals.dat");   // PEI zombie spawn points (bucketed into navmesh pockets)
+            else LoadAnimalSpawns();   // Animal: Fauna.dat (River format, source LevelAnimals)
+        }
+
+        void LoadAnimalTables()   // Fauna.dat table colours (source LevelAnimals: color + name + tableID(u16 if v>2) + tiers)
+        {
+            string fpath = _mapRoot + "/Spawns/Fauna.dat";
+            if (!System.IO.File.Exists(fpath)) { _tableColors = System.Array.Empty<Color>(); return; }
+            var fd = System.IO.File.ReadAllBytes(fpath); int fp = 0;
+            byte U8() => fd[fp++];
+            void RStr() { int n = U8(); fp += n; }
+            byte ver = U8(); byte tcount = U8();
+            _tableColors = new Color[tcount];
+            for (int t = 0; t < tcount; t++)
+            {
+                byte r = U8(), g = U8(), b = U8();
+                _tableColors[t] = new Color(r / 255f, g / 255f, b / 255f);
+                RStr(); if (ver > 2) fp += 2;
+                byte tiers = U8();
+                for (int ti = 0; ti < tiers; ti++) { RStr(); fp += 4; byte sc = U8(); fp += sc * 2; }
+            }
+        }
+
+        void LoadAnimalSpawns()   // Fauna.dat points (River, source LevelAnimals): skip tables, u16 pointCount, per point u8 type + Vector3 (no angle)
+        {
+            string fpath = _mapRoot + "/Spawns/Fauna.dat";
+            if (!System.IO.File.Exists(fpath)) { GD.Print("[editor-spawns] no Fauna.dat"); return; }
+            var fd = System.IO.File.ReadAllBytes(fpath); int fp = 0;
+            byte U8() => fd[fp++];
+            ushort U16() { var v = System.BitConverter.ToUInt16(fd, fp); fp += 2; return v; }
+            void RStr() { int n = U8(); fp += n; }
+            byte ver = U8(); byte tcount = U8();
+            for (int t = 0; t < tcount; t++) { fp += 3; RStr(); if (ver > 2) fp += 2; byte tiers = U8(); for (int ti = 0; ti < tiers; ti++) { RStr(); fp += 4; byte sc = U8(); fp += sc * 2; } }
+            ushort pcount = U16();
+            for (int i = 0; i < pcount; i++)
+            {
+                byte type = U8();
+                float px = System.BitConverter.ToSingle(fd, fp); fp += 4;
+                float py = System.BitConverter.ToSingle(fd, fp); fp += 4;
+                float pz = System.BitConverter.ToSingle(fd, fp); fp += 4;
+                _spawns.Add(new Spawn { Pos = new Vector3(px, py, -pz), Type = type });   // authored Y, port negate-Z
+            }
+            GD.Print($"[editor-spawns] loaded {_spawns.Count} animal spawns");
         }
 
         void LoadItemTables()   // Spawns/Items.dat table colours (source LevelItems tables)
         {
             string ipath = _mapRoot + "/Spawns/Items.dat";
-            if (!System.IO.File.Exists(ipath)) { _itemColors = System.Array.Empty<Color>(); return; }
+            if (!System.IO.File.Exists(ipath)) { _tableColors = System.Array.Empty<Color>(); return; }
             var b = System.IO.File.ReadAllBytes(ipath); int o = 0;
             byte U8() => b[o++];
             void RStr() { int n = U8(); o += n; }
             byte ver = U8();
             if (ver > 1 && ver < 3) o += 8;
             byte tcount = U8();
-            _itemColors = new Color[tcount];
+            _tableColors = new Color[tcount];
             for (int t = 0; t < tcount; t++)
             {
                 byte r = U8(), g = U8(), bl = U8();
-                _itemColors[t] = new Color(r / 255f, g / 255f, bl / 255f);
+                _tableColors[t] = new Color(r / 255f, g / 255f, bl / 255f);
                 RStr(); if (ver > 3) o += 2;
                 byte tiers = U8();
                 for (int ti = 0; ti < tiers; ti++) { RStr(); o += 4; byte sc = U8(); o += sc * 2; }
@@ -200,7 +243,7 @@ namespace UnturnedGodot
         Color MarkerColor(in Spawn s)
         {
             if (_category == ECategory.Vehicle) return VehicleColors[Mathf.Clamp(s.Type, 0, 5)];
-            if (_category == ECategory.Item) return _itemColors != null && s.Type < _itemColors.Length ? _itemColors[s.Type] : new Color(0.8f, 0.8f, 0.35f);
+            if (_category == ECategory.Item || _category == ECategory.Animal) return _tableColors != null && s.Type < _tableColors.Length ? _tableColors[s.Type] : new Color(0.7f, 0.55f, 0.35f);
             if (_category == ECategory.Zombie) return new Color(0.55f, 0.15f, 0.6f);   // zombie = purple
             return s.IsAlt ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.86f, 0.1f);
         }
@@ -211,9 +254,10 @@ namespace UnturnedGodot
             _markers.Clear(); Positions.Clear();
             if (IsPointCloud)   // dense cloud (item 2470 / zombie ~1456) -> one MultiMesh, per-instance colour
             {
-                bool zombie = _category == ECategory.Zombie;
-                Mesh cloud = zombie ? new BoxMesh { Size = new Vector3(0.65f, 1.9f, 0.65f) } : new BoxMesh { Size = new Vector3(0.9f, 0.9f, 0.9f) };   // zombie = human-height block, item = cube
-                float yoff = zombie ? 0.95f : 0.45f;
+                Mesh cloud; float yoff;
+                if (_category == ECategory.Zombie) { cloud = new BoxMesh { Size = new Vector3(0.65f, 1.9f, 0.65f) }; yoff = 0.95f; }        // human-height block
+                else if (_category == ECategory.Animal) { cloud = new BoxMesh { Size = new Vector3(1.1f, 0.8f, 1.9f) }; yoff = 0.4f; }       // low quadruped body
+                else { cloud = new BoxMesh { Size = new Vector3(0.9f, 0.9f, 0.9f) }; yoff = 0.45f; }                                         // item cube
                 var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, Mesh = cloud, InstanceCount = _spawns.Count };
                 for (int i = 0; i < _spawns.Count; i++)
                 {
@@ -269,10 +313,10 @@ namespace UnturnedGodot
             }
             else if (IsPointCloud)
             {
-                bool zombie = _category == ECategory.Zombie;
-                _addBody.Mesh = zombie ? new BoxMesh { Size = new Vector3(0.65f, 1.9f, 0.65f) } : new BoxMesh { Size = new Vector3(0.9f, 0.9f, 0.9f) };
-                _addBody.Position = new Vector3(0, zombie ? 0.95f : 0.45f, 0);
-                _addArrow.Mesh = null;   // item/zombie spawns are points -- no facing arrow
+                if (_category == ECategory.Zombie) { _addBody.Mesh = new BoxMesh { Size = new Vector3(0.65f, 1.9f, 0.65f) }; _addBody.Position = new Vector3(0, 0.95f, 0); }
+                else if (_category == ECategory.Animal) { _addBody.Mesh = new BoxMesh { Size = new Vector3(1.1f, 0.8f, 1.9f) }; _addBody.Position = new Vector3(0, 0.4f, 0); }
+                else { _addBody.Mesh = new BoxMesh { Size = new Vector3(0.9f, 0.9f, 0.9f) }; _addBody.Position = new Vector3(0, 0.45f, 0); }
+                _addArrow.Mesh = null;   // item/zombie/animal spawns are points -- no facing arrow
             }
             else
             {
@@ -286,7 +330,7 @@ namespace UnturnedGodot
         {
             Color c = _category switch {
                 ECategory.Vehicle => VehicleColors[Mathf.Clamp(_vehType, 0, 5)],
-                ECategory.Item => (_itemColors != null && _vehType < _itemColors.Length ? _itemColors[_vehType] : new Color(0.8f, 0.8f, 0.35f)),
+                ECategory.Item or ECategory.Animal => (_tableColors != null && _vehType < _tableColors.Length ? _tableColors[_vehType] : new Color(0.7f, 0.55f, 0.35f)),
                 ECategory.Zombie => new Color(0.55f, 0.15f, 0.6f),
                 _ => (_alt ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.86f, 0.1f)) };
             c.A = 0.4f;
@@ -345,7 +389,7 @@ namespace UnturnedGodot
         void SwitchCategory()
         {
             Save();                                                     // persist the current category before switching
-            _category = (ECategory)(((int)_category + 1) % 4);          // Player -> Vehicle -> Item -> Zombie -> ...
+            _category = (ECategory)(((int)_category + 1) % 5);          // Player -> Vehicle -> Item -> Zombie -> Animal -> ...
             _vehType = 0;
             _spawns.Clear();
             LoadCategory();
@@ -373,7 +417,8 @@ namespace UnturnedGodot
         }
 
         // harness (--editor UG_EDITORSPAWNS): cycle to a category so a render shows its markers
-        public void DemoGoItem() { int g = 0; while (_category != ECategory.Item && g++ < 5) SwitchCategory(); }
-        public void DemoGoZombie() { int g = 0; while (_category != ECategory.Zombie && g++ < 5) SwitchCategory(); }
+        public void DemoGoItem() { int g = 0; while (_category != ECategory.Item && g++ < 6) SwitchCategory(); }
+        public void DemoGoZombie() { int g = 0; while (_category != ECategory.Zombie && g++ < 6) SwitchCategory(); }
+        public void DemoGoAnimal() { int g = 0; while (_category != ECategory.Animal && g++ < 6) SwitchCategory(); }
     }
 }
