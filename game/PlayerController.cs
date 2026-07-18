@@ -59,7 +59,14 @@ namespace UnturnedGodot
         public float Water { get => _vitals.Water; set => _vitals.Water = value; }
         public static bool SurvivalDrain = false;   // hunger/thirst drain OFF by default; F1 console `survival on|off` toggles it (strawberry)
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
-        public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
+        public void Infect(float amount)
+        {
+            // MP VITALS (§6): a server avatar's infection routes to the authoritative queue RAW -- the
+            // IMMUNITY multiplier applies at drain time from the SERVER's skills, never this body's
+            // local defaults. Seam unset = the old NetAvatar no-op (Infection writes were already inert).
+            if (NetAvatar) { ServerInfect?.Invoke(amount); return; }
+            Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
+        }
 
         // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals.
         public void Consume(ItemAsset a)
@@ -1024,10 +1031,23 @@ namespace UnturnedGodot
         // Leg-breaking (source breakLegs) is now gated by worn clothing's Prevents_Falling_Broken_Bones (PlayerLife:2436) -- WIRED.
         void CheckFallDamage(float verticalVel)
         {
-            if (NetAvatar) return;   // v1 invulnerability (see TakeDamage) -- and a broken-legs flag would silently eat the wire's jump bit
+            if (NetAvatar && ServerDamage == null) return;   // seam unset (pre-vitals harnesses): the old v1-invulnerability no-op
             if (!FallMath.Hurts(verticalVel)) return;          // a normal jump lands at ~7 m/s -> no damage
+            // BROKEN-LEGS parity (MP_VITALS_PLAN §10 risk 7): BOTH MP bodies compute Broken locally from
+            // their OWN DeterministicGround landing (same FallMath, same integration -> same tick on a
+            // clean link) -- it gates sprint/jump on each body identically, so the wire's jump bit is
+            // never silently eaten by a one-sided flag. The replicated flag is HUD/heal state only.
             Broken = FallMath.BreaksLegs(verticalVel, Inventory?.PreventsFallingBoneBreak ?? false);   // legs break on a hard fall UNLESS worn clothing has Prevents_Falling_Broken_Bones (source PlayerLife:2436)
             int dmg = FallMath.Damage(verticalVel, (Inventory?.FallingDamageMultiplier ?? 1f) * Skills.StrengthFallMultiplier());   // worn clothing (whole-body product) + STRENGTH skill both cut fall damage (source PlayerLife 2428-2430)
+            if (NetAvatar)
+            {
+                // the avatar's landing is the AUTHORITATIVE one: broken-flag + damage go to ServerVitals
+                // (the avatar adopted the server's skills/worn clothing in PlayerNetSync, so the modifiers
+                // match the shell's). TakeDamage would re-route anyway; enqueue the fall cause directly.
+                ServerBroken?.Invoke(Broken);
+                if (dmg > 0) ServerDamage(dmg, UnturnedGodot.Net.ServerVitals.CauseFall);
+                return;
+            }
             if (dmg > 0) { GD.Print($"[fall] landed at {verticalVel:F1} m/s -> {dmg} damage, legs broken"); TakeDamage(dmg); }
         }
 
@@ -1344,6 +1364,22 @@ namespace UnturnedGodot
         public System.Action<uint> NetOpenStorage;                   // crate netId -> Client.SendOpenStorage (StorageOpened + the owner echo carry the grid back)
         public System.Action NetCloseStorage;                        // -> Client.SendCloseStorage (server saves the STORAGE page back into the crate)
         public System.Action<byte, byte> NetUpgradeSkill;            // (speciality,index) -> Client.SendUpgradeSkill
+
+        // MP VITALS avatar seams (docs/MP_VITALS_PLAN.md §6) -- the NetFire null-seam pattern, but for the
+        // SERVER AVATAR body: wired ONLY by PlayerNetSync on dedicated avatars, null everywhere else (SP,
+        // loopback, the client shell, every pre-vitals L1 harness), so with the seam unset the NetAvatar
+        // damage gates below behave EXACTLY like the old no-ops. A damage source landing on the avatar
+        // ENQUEUES into ServerVitals -- drained at one deterministic point in the server tick (§4) --
+        // instead of ever touching the body's local sim.
+        public System.Action<float, byte> ServerDamage;   // (amount, cause) -> Vitals.EnqueueDamage(playerId, ...)
+        public System.Action<float> ServerInfect;         // raw amount -> Vitals.EnqueueInfection (IMMUNITY applies at drain, from SERVER skills)
+        public System.Action<bool> ServerBroken;          // the avatar's own deterministic landing broke its legs (heal-clear flows the OTHER way)
+
+        // MP: vitals truth is the replicated owner block; local writes are prediction/fx only. Set ONLY by
+        // ClientWorldSession.SpawnShell (the connect shell) -- SP/loopback stay byte-identical. TakeDamage
+        // keeps ALL its feedback (bleed icon, pain overlay, camera flinch) but never writes health and
+        // never dies locally; death arrives as the server's PlayerDied fact (NetDie).
+        public bool RemoteVitals;
 
         VehiclePuppet NearestPuppet()
         {
@@ -1853,9 +1889,11 @@ namespace UnturnedGodot
         // (starvation/infection) which flashes but doesn't kick the camera.
         public void TakeDamage(float amount, Vector3? fromPos = null)
         {
-            if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
+            // MP VITALS (§6): damage landing on a server avatar routes to the authoritative vitals queue.
+            // Seam unset (SP-built avatars, pre-vitals harnesses) = the old C2 v1 invulnerability no-op.
+            if (NetAvatar) { ServerDamage?.Invoke(amount, UnturnedGodot.Net.ServerVitals.CauseGeneric); return; }
             if (_dead || Health <= 0f) return;
-            Health -= amount;
+            if (!RemoteVitals) Health -= amount;   // MP shell: fx only -- the server owns health; the owner-block echo lands the number
             if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
 
             // Hurt flash — PlayerLifeUI.onDamaged -> PlayerUI.pain: a red full-screen overlay whose alpha is
@@ -1878,7 +1916,7 @@ namespace UnturnedGodot
                 }
             }
 
-            if (Health <= 0f) { Deaths++; Die(); }
+            if (!RemoteVitals && Health <= 0f) { Deaths++; Die(); }   // MP shell: death is the server's PlayerDied fact, never a local decision
         }
 
         void Die()
@@ -1934,7 +1972,8 @@ namespace UnturnedGodot
         // same stand-ins as before (Unturned's real ones live in server modeConfigData, not the binary).
         void UpdateVitals(bool moving, float dt)
         {
-            if (NetAvatar) return;   // v1 invulnerability (see TakeDamage): no local starvation/infection death on a server avatar either
+            if (NetAvatar) return;   // the avatar body NEVER steps vitals locally: ServerVitals.Step (core) is the ONE
+                                     // authoritative stepper -- running both would double-drain (MP_VITALS_PLAN §6/§10 risk 8)
             if (_dead) return;
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
             bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
@@ -1944,7 +1983,9 @@ namespace UnturnedGodot
                 SurvivalDrain = Skills.SurvivalDrainMultiplier(),                 // SURVIVAL slows hunger/thirst
                 VitalityRegen = Skills.VitalityRegenMultiplier(),                 // VITALITY speeds regen while fed + hydrated
             });
-            if (died) { Deaths++; Die(); }
+            // MP shell: the local sim is prediction/display (stamina responsiveness for the stance FSM);
+            // death is the server's PlayerDied fact, never a local starve decision
+            if (died && !RemoteVitals) { Deaths++; Die(); }
         }
 
         public Camera3D Camera => _cam;
@@ -3037,8 +3078,10 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
-            // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
-            if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
+            // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too).
+            // A wired avatar (ServerDamage set) runs it too -- the damage routes to ServerVitals like any other source (MP_VITALS_PLAN §4);
+            // an UNWIRED avatar keeps the old skip so the inert TakeDamage can't spam the log every tick.
+            if (!_dead && GlobalPosition.Y < -1030f && (!NetAvatar || ServerDamage != null)) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)

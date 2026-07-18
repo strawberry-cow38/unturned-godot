@@ -103,9 +103,11 @@ namespace UnturnedGodot
                     }
                     if (v.Exploded)
                     {
-                        // the blast ejects the driver (SP DriveVehicle exits + takes 150 damage; the remote
-                        // kill-damage is deferred with the server vitals split -- see PROGRESS notes)
+                        // the blast ejects the driver AND deals the SP deferred 150 (DriveVehicle :2980),
+                        // server-authoritative now (MP_VITALS_PLAN §4): damage lands BEFORE the exit so a
+                        // kill and the seat-free ride the same tick; the shell's local :2980 is fx-only.
                         if (t.Held) { t.Held = false; v.NetAbortHold(); }   // Explode() already unfroze + flung the body
+                        _server.Combat.ApplyPlayerDamage(driver, 150f, 0, tick, out _);
                         _server.VehicleHost.ServerExit(driver);
                     }
                     else if (_server.VehicleHost.TryGetPredictedState(t.NetId, out var st))

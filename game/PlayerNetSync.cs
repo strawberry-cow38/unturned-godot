@@ -42,6 +42,8 @@ namespace UnturnedGodot
             public bool PairingExact = true;            // C1.5: false while the body's last step was a stale-seq coast/hold -- publishing that position would re-pair an already-acked seq with newer motion (the phantom correction)
             public UnityEngine.Vector3 ClaimedPos;      // C2: the shell's claimed post-move position for the input the body last stepped (pairs with LastInputSeq)
             public bool HasClaim;                       // false on coast/hold/substituted ticks and claimless senders -- nothing to adopt
+            public long AdoptedSkillsTick = -1;         // MP vitals: last server skills stamp adopted onto the body (fall STRENGTH parity)
+            public long AdoptedInvTick = -1;            // ... and the server inventory stamp (worn-clothing fall modifiers, §10 risk 7)
         }
         readonly Dictionary<ushort, Tracked> _tracked = new();
         readonly List<ushort> _stale = new();
@@ -82,10 +84,30 @@ namespace UnturnedGodot
                     body.ScriptedInput = UnityEngine.Vector2.zero;   // never fall through to keyboard polling
                     body.ScriptedJump = false;
                     body.ScriptedStance = EPlayerStance.STAND;       // wire-driven from the first held input on
+                    // MP VITALS (MP_VITALS_PLAN §4/§6): wire the avatar's damage seams to the server's
+                    // authoritative vitals queue -- zombie bites (TakeDamage/Infect), the avatar's own
+                    // deterministic fall landing, and the OOB kill all ENQUEUE here and drain in
+                    // Vitals.Step. ONLY this sync ever sets these; every other avatar stays a no-op.
+                    ushort pid = e.OwnerPlayerId;
+                    body.ServerDamage = (amount, cause) => _server.Vitals.EnqueueDamage(pid, amount, cause);
+                    body.ServerInfect = amount => _server.Vitals.EnqueueInfection(pid, amount);
+                    body.ServerBroken = broke => _server.Vitals.SetBroken(pid, broke, _server.Session.CurrentTick);
                     t = new Tracked { Body = body, LastDrivenPos = e.Pos };
                     _tracked[e.OwnerPlayerId] = t;
                 }
                 if (!GodotObject.IsInstanceValid(t.Body)) continue;   // freed externally; the stale sweep below retires it
+
+                // MP VITALS parity feeds (§10 risk 7): the avatar's fall math must use the SERVER's
+                // skills (STRENGTH) + worn clothing (fall multiplier / bone-break prevention) -- the same
+                // state the shell adopted -- or the two bodies compute DIFFERENT landing outcomes. Adopt
+                // on stamp change only (cheap when quiet). And the server Broken CLEAR (useHealBroken /
+                // respawn) flows onto the body; the SET is always the body's own local landing.
+                if (_server.Skills.TryGet(e.OwnerPlayerId, out var sk) && sk.LastChangedTick != t.AdoptedSkillsTick)
+                { t.Body.AdoptReplicatedSkills(sk.Skills); t.AdoptedSkillsTick = sk.LastChangedTick; }
+                if (_server.Inventories.TryGet(e.OwnerPlayerId, out var sinv) && sinv.LastChangedTick != t.AdoptedInvTick)
+                { t.Body.AdoptReplicatedInventory(sinv.Inventory); t.AdoptedInvTick = sinv.LastChangedTick; }
+                if (_server.Vitals.TryGet(e.OwnerPlayerId, out var ve) && !ve.Broken && t.Body.Broken)
+                    t.Body.Broken = false;
 
                 // seated: the seat teleport owns the entity (VehicleHost.Step teleports it to the vehicle
                 // every tick; ServerClearInput dropped the held walk input on enter). The body just follows.
