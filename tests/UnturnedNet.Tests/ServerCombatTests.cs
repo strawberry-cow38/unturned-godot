@@ -299,6 +299,12 @@ namespace UnturnedNet.Tests
             var a = h.Clients[0];
             var b = h.Clients[1];
 
+            // park the victim's food under the 0.30 regen gate (over the starve floor): the server vitals
+            // sim (MP_VITALS_PLAN P1) regens a fed player at +2/s, which would drift the exact coarse-byte
+            // asserts below by 1 across the deferred-hit ticks
+            Assert.That(h.Server.Vitals.TryGet(b.PlayerId, out var bVit), Is.True);
+            bVit.Sim.Food = 0.2f;
+
             // victim spawns 2 m along +X; the attacker faces it with yaw 270 -- forward is the GODOT
             // convention (-sin,0,-cos), so yaw 270 -> +X (yaw 90 would face -X, AWAY from the victim).
             // Teeth: on the pre-fix (+sin,+cos) code this yaw faced -X and the swing missed (no damage).

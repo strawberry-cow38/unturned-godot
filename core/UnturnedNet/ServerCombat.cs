@@ -102,6 +102,7 @@ namespace UnturnedGodot.Net
         readonly NetIdMinter _ids;
         readonly Action<byte[]> _broadcast;
         readonly Action<ushort, byte[]> _sendTo;
+        readonly ServerVitals _vitals;   // the unified health owner (MP_VITALS_PLAN §3): all health writes route through it
 
         public IZombieHost ZombieHost;
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
@@ -156,7 +157,8 @@ namespace UnturnedGodot.Net
 
         public ServerCombat(PlayerReplication players, PlayerCombatReplication state, ZombieReplication zombies,
                             ProjectileReplication projectiles, NetIdMinter ids,
-                            Action<byte[]> broadcastEvent, Action<ushort, byte[]> sendEventTo)
+                            Action<byte[]> broadcastEvent, Action<ushort, byte[]> sendEventTo,
+                            ServerVitals vitals)
         {
             _players = players;
             _state = state;
@@ -165,6 +167,7 @@ namespace UnturnedGodot.Net
             _ids = ids;
             _broadcast = broadcastEvent;
             _sendTo = sendEventTo;
+            _vitals = vitals;
         }
 
         /// <summary>Host override of a player's gun profile (until Phase 6 replicates the held item).</summary>
@@ -256,6 +259,9 @@ namespace UnturnedGodot.Net
             cs.HealthExact = 100f;
             cs.Health = 100;
             cs.RespawnAtTick = -1;
+            // full vitals reset (SP Respawn :1915-1916 parity): fresh sim, bleeding/broken cleared; its
+            // mirror re-writes the same 100/100 as the direct lines above -- coherent by construction
+            _vitals.ResetFor(cs.OwnerPlayerId, tick);
             _state.MarkDirty(cs, tick);
             _players.ServerTeleport(cs.OwnerPlayerId, cs.SpawnPos, tick);
             var evt = new PlayerRespawnedEvent { PlayerId = cs.OwnerPlayerId };
@@ -481,20 +487,34 @@ namespace UnturnedGodot.Net
             return WorldRay(a + up, b + up, out _);
         }
 
-        void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed)
+        /// <summary>All server-side player damage funnels here (bullets/melee/blasts, plus game-side
+        /// callers like the vehicle-explosion 150). Health decrements through the unified ServerVitals
+        /// helper (sim float + HealthExact + coarse Ceiling byte, one write site -- MP_VITALS_PLAN §10
+        /// risk 6); the death tail is the extracted KillPlayer.</summary>
+        public void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed)
         {
             killed = false;
             if (!_state.TryGet(victim, out var cs) || !cs.Alive) return;
-            cs.HealthExact -= damage;
-            cs.Health = (byte)Math.Clamp((int)Math.Ceiling(cs.HealthExact), 0, 100);
+            _vitals.ApplyDamageDirect(victim, damage, tick);
             _state.MarkDirty(cs, tick);
             if (cs.HealthExact > 0f) return;
-
             killed = true;
+            KillPlayer(victim, attacker, tick);
+        }
+
+        /// <summary>The ONE death tail (MP_VITALS_PLAN §2: every source converges here so death/respawn/
+        /// kill-credit/events can't fork). Idempotent -- a second same-tick kill hits the !Alive guard.
+        /// ServerVitals.Step calls this when the sim starves/sickens a player to 0 (attacker 0 =
+        /// environment) or a drained queue entry crosses zero.</summary>
+        public void KillPlayer(ushort victim, ushort attacker, long tick)
+        {
+            if (!_state.TryGet(victim, out var cs) || !cs.Alive) return;
+            _vitals.ForceDead(victim, tick);   // health floors to 0 through the one write-through helper
             cs.Alive = false;
             cs.Health = 0;
             cs.Deaths++;
             cs.RespawnAtTick = tick + RespawnDelayTicks;
+            _state.MarkDirty(cs, tick);
             _players.ServerClearInput(victim);   // a corpse stops consuming its held-keys input
             if (attacker != 0 && attacker != victim) CreditKill(attacker, tick);
             var evt = new PlayerDiedEvent { Victim = victim, Killer = attacker == victim ? (ushort)0 : attacker };

@@ -219,9 +219,14 @@ namespace UnturnedNet.Tests
             var a = h.Clients[0];
             h.Grant(a.PlayerId, new Item(TransactionalFixtures.BeansId));
             h.Server.CombatState.TryGet(a.PlayerId, out var ce);
-            ce.HealthExact = 50f;
-            ce.Health = 50;
-            h.Server.CombatState.MarkDirty(ce, h.Server.Session.CurrentTick);
+            // hurt the player through the unified vitals helper (MP_VITALS_PLAN §10 risk 6): a bare
+            // HealthExact write would fork from the authoritative Sim.Health and the heal would no-op.
+            // Food parked at 0.2 (under the 0.30 regen gate, over the starve floor) so the server sim
+            // neither regens nor starves -- the +10 heal is the only health mutation in flight.
+            h.Server.Vitals.TryGet(a.PlayerId, out var ve);
+            ve.Sim.Food = 0.2f;
+            h.Server.Vitals.ApplyDamageDirect(a.PlayerId, 50f, h.Server.Session.CurrentTick);
+            Assert.That(ce.HealthExact, Is.EqualTo(50f), "damage mirrored into the combat state");
             h.Step(10);
 
             a.SendConsume(2, 0, 0);

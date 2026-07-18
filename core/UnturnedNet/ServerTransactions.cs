@@ -70,6 +70,16 @@ namespace UnturnedGodot.Net
         /// same content-hash handshake that guarantees item defs match.</summary>
         public IReadOnlyList<BlueprintDef> Blueprints = Array.Empty<BlueprintDef>();
 
+        /// <summary>The authoritative vitals (MP_VITALS_PLAN §3), set by NetWorldServer: OnConsume health
+        /// routes through its unified write-through helper; the survival/pdie console verbs mutate it.
+        /// Null only in bare fixtures -- OnConsume then keeps the pre-split direct HealthExact patch.
+        /// TODO(mp-security): stamina is replicated but does NOT gate the server's movement -- the wire
+        /// stance is client-resolved (PlayerController :1671 AlwaysHeadroom / :3099 "a NetAvatar takes the
+        /// wire stance"), so an abusive client can sprint at 0 stamina; server stamina is bookkeeping for
+        /// HUD/regen/consume. Same test-server posture class as the M2 ownership deferrals below --
+        /// revisit before any public/untrusted hosting (MP_PLAN §7).</summary>
+        public ServerVitals Vitals;
+
         public ServerTransactionsDiagnostics Diag { get; } = new ServerTransactionsDiagnostics();
 
         /// <summary>The server's yield-roll RNG seam (Phase 8, §3.7: the AGRICULTURE second-yield roll moves
@@ -351,12 +361,17 @@ namespace UnturnedGodot.Net
             inv.removeItemAmount(asset.id, 1);   // the SP consume path removes by id (PlayerController.TickConsume)
             Diag.ConsumesApplied++;
 
-            // vitals: the server-side combat state carries health; food/water/stamina/infection have no
-            // server model yet (Phase 5 replicated coarse health only) -- deferred with the vitals split.
+            // vitals: health routes through the ONE write-through helper (MP_VITALS_PLAN §10 risk 6 --
+            // this also killed the old RoundToInt-vs-Ceiling coarse-byte divergence). The full effect set
+            // (food/water/stamina/virus/bandage/splint) lands with the P5 consume flip.
             if (asset.useHealth > 0 && _combat.TryGet(sender, out var ce) && ce.Alive)
             {
-                ce.HealthExact = Mathf.Min(100f, ce.HealthExact + asset.useHealth);
-                ce.Health = (byte)Mathf.RoundToInt(ce.HealthExact);
+                if (Vitals != null) Vitals.ApplyHealDirect(sender, asset.useHealth, _tick());
+                else   // bare fixture without vitals wiring: the pre-split direct patch
+                {
+                    ce.HealthExact = Mathf.Min(100f, ce.HealthExact + asset.useHealth);
+                    ce.Health = (byte)Mathf.Ceil(ce.HealthExact);
+                }
                 _combat.MarkDirty(ce, _tick());
             }
         }
@@ -439,7 +454,7 @@ namespace UnturnedGodot.Net
         public string RunConsole(ushort sender, string text)
         {
             var parts = text.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) { Diag.ConsoleRejected++; return "usage: give <item> | xp <n> | skill <name> [level] | teleport <x> <y> <z>"; }
+            if (parts.Length == 0) { Diag.ConsoleRejected++; return "usage: give <item> | xp <n> | skill <name> [level] | teleport <x> <y> <z> | survival [on|off] | pdie"; }
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
             if (!AllowCheats) { Diag.ConsoleRejected++; return "console commands are disabled on this server"; }
@@ -475,6 +490,28 @@ namespace UnturnedGodot.Net
                 Diag.ConsoleApplied++;
                 return $"{label} skill -> level {applied}";
             }
+            if (verb == "survival" || verb == "hunger")
+            {
+                // survival [on|off] -- the SERVER's hunger/thirst drain toggle (MP_VITALS_PLAN §10 risk 9:
+                // the verb mutates ONLY the server flag; the owner block's flags bit2 mirrors it back into
+                // the shell's static so client prediction stays in step). Bare `survival` flips it.
+                if (Vitals == null) { Diag.ConsoleRejected++; return "no vitals"; }
+                string a = arg.Trim().ToLowerInvariant();
+                Vitals.SurvivalDrainEnabled = a == "on" || a == "1" || a == "true" ? true
+                                            : a == "off" || a == "0" || a == "false" ? false
+                                            : !Vitals.SurvivalDrainEnabled;
+                Diag.ConsoleApplied++;
+                return $"hunger/thirst {(Vitals.SurvivalDrainEnabled ? "ENABLED" : "disabled")} (server)";
+            }
+            if (verb == "pdie")
+            {
+                // dev kill switch: 9999 queued environmental damage -> the ONE KillPlayer death tail
+                if (Vitals == null || !_combat.TryGet(sender, out var pce) || !pce.Alive)
+                { Diag.ConsoleRejected++; return "no living player"; }
+                Vitals.EnqueueDamage(sender, 9999f, ServerVitals.CauseConsole);
+                Diag.ConsoleApplied++;
+                return "you died";
+            }
             if (verb == "teleport" || verb == "tp")
             {
                 // #27 (mp-teleport): the wire form is NUMERIC -- this engine-free core has no map/location
@@ -497,7 +534,7 @@ namespace UnturnedGodot.Net
                 return FormattableString.Invariant($"teleported to ({x:0.#}, {y:0.#}, {z:0.#})");
             }
             Diag.ConsoleRejected++;
-            return $"unknown command '{verb}' -- give / xp / skill / teleport";
+            return $"unknown command '{verb}' -- give / xp / skill / teleport / survival / pdie";
         }
 
         /// <summary>Server-computed XP award (the §3.2 hook: kills/harvests/crafts/console feed this).

@@ -40,6 +40,7 @@ namespace UnturnedGodot.Net
         public readonly ResourceReplication Resources = new ResourceReplication();
         public readonly ServerVehicles VehicleHost;
         public readonly ServerCombat Combat;
+        public readonly ServerVitals Vitals;   // MP_VITALS_PLAN §3: the per-player authoritative vitals sim
         public readonly ServerTransactions Transactions;
         public readonly SnapshotComposer Composer;
 
@@ -68,10 +69,13 @@ namespace UnturnedGodot.Net
                                                                       Vehicles, Clock, Crops, Resources });
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
-            Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
+            Vitals = new ServerVitals(CombatState, Players, Skills);
+            Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo, Vitals);
+            Vitals.Combat = Combat;   // deaths from the vitals step (starve/queue) run the ONE KillPlayer tail
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources);
+            Transactions.Vitals = Vitals;   // OnConsume health + the survival/pdie console verbs route through the unified vitals
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             VehicleHost.Register(Commands);
@@ -103,6 +107,7 @@ namespace UnturnedGodot.Net
                 // so the joiner's own owner-only skills/inventory blocks ride the join snapshot too.
                 Skills.ServerAdd(peer.PlayerId, Session.CurrentTick);
                 Inventories.ServerAdd(peer.PlayerId, Session.CurrentTick);
+                Vitals.ServerAdd(peer.PlayerId, Session.CurrentTick);
                 // The join flow (MP_PLAN §4 Phase 4): Accept -> reliable FULL snapshot -> deltas. The full
                 // snapshot rides ReliableOrdered where fragmentation is safe (§2.2) -- a lost datagram
                 // retransmits instead of the client waiting out unreliable full-resends. Composed in
@@ -122,6 +127,7 @@ namespace UnturnedGodot.Net
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 Skills.ServerRemove(peer.PlayerId);
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
+                Vitals.ServerRemove(peer.PlayerId);
                 Composer.ForgetClient(peer.PlayerId);
                 _pendingRecoveryFulls.Remove(peer.PlayerId);   // a reused playerId must not inherit a stale hold
                 // Phase 8 rejoin hardening: per-client relevancy sets must not leak to a recycled playerId
@@ -169,6 +175,7 @@ namespace UnturnedGodot.Net
                 while (peer.TryReceiveUnreliable(out byte[] msg)) Commands.TryDispatch(msg, peer.PlayerId);
             }
             Players.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
+            Vitals.Step(Session.CurrentTick);        // drain queued damage + step every alive player's vitals sim (MP_VITALS_PLAN §3)
             VehicleHost.Step(Session.CurrentTick);   // drivers ride their vehicle entity; dead drivers exit
             Combat.Step(Session.CurrentTick);
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
