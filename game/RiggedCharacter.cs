@@ -119,6 +119,16 @@ namespace UnturnedGodot
             }
         }
 
+        // Perf (strawberry: POI fps): pose the skeletal AnimationPlayer at the 50 Hz PHYSICS rate instead of
+        // the render rate (default Idle = _process = up to 280 fps). A shambling zombie/puppet looks identical
+        // at 50 Hz, but posing 17 bones per zombie at a high-refresh render rate is pure waste -- this is the
+        // biggest single zombie-CPU cut. Never touches a Manual-mode rig (the viewmodel drives Advance itself).
+        public void UsePhysicsAnimRate()
+        {
+            if (_ap != null && _ap.CallbackModeProcess != AnimationMixer.AnimationCallbackModeProcess.Manual)
+                _ap.CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Physics;
+        }
+
         // Bake the Gun_Aim additive delta (per bone, end relative to frame 0) and switch the arms' player to
         // manual advance so we can apply that delta on top of the base pose each frame. Viewmodel arms only.
         void SetupAimAdditive()

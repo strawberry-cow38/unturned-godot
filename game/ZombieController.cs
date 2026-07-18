@@ -123,6 +123,7 @@ namespace UnturnedGodot
             _rig = RiggedCharacter.Build("res://content/rig.json", _tint, false, atlas, "res://content/face_19.png");
             if (_rig != null)
             {
+                _rig.UsePhysicsAnimRate();   // perf: shamble the skeleton at 50 Hz, not the render rate (a POI of zombie rigs at 280fps was the CPU spike)
                 // Zombie.cs: moveAnim="Move_"+move (the arms-out shamble, NOT the human walk), idleAnim="Idle_"+idle.
                 // Move_0..3 = upright shambles; Move_4/5 = the CRAWLER variant. Match the clip to the speciality.
                 bool crawler = Speciality == ESpeciality.CRAWLER;
