@@ -216,6 +216,27 @@ namespace UnturnedGodot
         public bool JointIgnoreTerrain(int road, int joint) => Valid(road, joint) && _roads[road].Joints[joint].IgnoreTerrain;
         public void SetJointIgnoreTerrain(int road, int joint, bool ig) { if (Valid(road, joint)) { _roads[road].Joints[joint].IgnoreTerrain = ig; RebuildRoad(road); } }
 
+        // undo: deep-copy the roads DATA (not the mesh nodes) as an opaque snapshot; Restore swaps it back + rebuilds.
+        RoadData CloneData(RoadData r)
+        {
+            var c = new RoadData { Material = r.Material, IsLoop = r.IsLoop, GuidBytes = r.GuidBytes };
+            foreach (var j in r.Joints) c.Joints.Add(new Joint { Vertex = j.Vertex, Tan0 = j.Tan0, Tan1 = j.Tan1, Offset = j.Offset, IgnoreTerrain = j.IgnoreTerrain, Mode = j.Mode });
+            return c;
+        }
+        public object Snapshot()
+        {
+            var snap = new List<RoadData>();
+            foreach (var r in _roads) snap.Add(CloneData(r));
+            return snap;
+        }
+        public void Restore(object snapshot)
+        {
+            if (snapshot is not List<RoadData> snap) return;
+            foreach (var r in _roads) { r.Mi?.QueueFree(); r.Body?.QueueFree(); }
+            _roads.Clear();
+            foreach (var r in snap) { var c = CloneData(r); _roads.Add(c); if (c.Joints.Count >= 2 && c.Material >= 0 && c.Material < _mats.Count) BuildRoadNode(c); }
+        }
+
         // editor reopen: replace the map's roads with the SAVED edits (same Paths.dat format), so edits round-trip
         public bool ReloadPaths(string pathsFile)
         {

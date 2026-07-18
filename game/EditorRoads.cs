@@ -118,11 +118,18 @@ namespace UnturnedGodot
         static StandardMaterial3D MarkerMat(Color c) => new() { AlbedoColor = c, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true };
         static void SetMarkerColor(StaticBody3D body, Color c) { foreach (var ch in body.GetChildren()) if (ch is MeshInstance3D mi) mi.MaterialOverride = MarkerMat(c); }
 
+        void SnapUndo(string label)   // capture the PRE-edit roads state; call BEFORE an edit. Ctrl+Z restores it.
+        {
+            var snap = _roads.Snapshot();
+            _editor.PushUndo(label, () => { _roads.Restore(snap); _selBody = null; _selRoad = _selJoint = -1; _selTan = -1; BuildMarkers(); });
+        }
+
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Environment || (_flyCam != null && _flyCam.Flying)) return;
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.R }) { SetPaving(!_paving); return; }
             if (!_paving) return;
+            if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Z } && Input.IsKeyPressed(Key.Ctrl)) { _editor.Undo(); return; }   // Ctrl+Z undo
             if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } && !Editor.PointerOverUI(this))
             {
                 var body = PickMarker(GetViewport().GetMousePosition());
@@ -131,39 +138,43 @@ namespace UnturnedGodot
                 {
                     if (_selRoad >= 0 && _selTan < 0)
                     {
+                        SnapUndo("add vertex");
                         int road = _selRoad, ni = _roads.AddVertexNearSelected(road, _selJoint, pt);
                         if (ni >= 0) RefreshAndSelect(road, ni, -1);
                     }
-                    else if (_selRoad < 0) { int nr = _roads.AddRoad(pt); RefreshAndSelect(nr, 0, -1); }
+                    else if (_selRoad < 0) { SnapUndo("add road"); int nr = _roads.AddRoad(pt); RefreshAndSelect(nr, 0, -1); }
                 }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.E } && _selRoad >= 0)   // source tool_2 = E: move the selected vertex/handle to the cursor
             {
                 if (RaycastTerrain(GetViewport().GetMousePosition(), out var pt))
                 {
+                    SnapUndo("move");
                     if (_selTan >= 0) _roads.SetTangent(_selRoad, _selJoint, _selTan, pt);   // source moveTangent (mode-aware)
                     else _roads.SetJointPos(_selRoad, _selJoint, pt);                        // source moveVertex
                     RefreshAndSelect(_selRoad, _selJoint, _selTan);
                 }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N } && _selRoad >= 0)   // cycle tangent mode
-                _roads.SetJointMode(_selRoad, _selJoint, (byte)((_roads.JointMode(_selRoad, _selJoint) + 1) % 3));
+                { SnapUndo("mode"); _roads.SetJointMode(_selRoad, _selJoint, (byte)((_roads.JointMode(_selRoad, _selJoint) + 1) % 3)); }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.M } && _selRoad >= 0 && _roads.MaterialCount > 0)   // cycle material
             {
+                SnapUndo("material");
                 _roads.SetRoadMaterial(_selRoad, (_roads.RoadMaterial(_selRoad) + 1) % _roads.MaterialCount);
                 RefreshAndSelect(_selRoad, _selJoint, _selTan);
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.L } && _selRoad >= 0)   // toggle the road as a closed loop
-                _roads.SetRoadLoop(_selRoad, !_roads.RoadIsLoop(_selRoad));
-            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.I } && _selRoad >= 0)   // toggle the joint's ignore-terrain (float at vertex height vs follow ground)
-                _roads.SetJointIgnoreTerrain(_selRoad, _selJoint, !_roads.JointIgnoreTerrain(_selRoad, _selJoint));
+                { SnapUndo("loop"); _roads.SetRoadLoop(_selRoad, !_roads.RoadIsLoop(_selRoad)); }
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.I } && _selRoad >= 0)   // toggle ignore-terrain (float at vertex height vs follow ground)
+                { SnapUndo("ignore"); _roads.SetJointIgnoreTerrain(_selRoad, _selJoint, !_roads.JointIgnoreTerrain(_selRoad, _selJoint)); }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Bracketleft } && _selRoad >= 0)    // lower the joint (height offset)
-                _roads.SetJointOffset(_selRoad, _selJoint, _roads.JointOffset(_selRoad, _selJoint) - 1f);
+                { SnapUndo("height"); _roads.SetJointOffset(_selRoad, _selJoint, _roads.JointOffset(_selRoad, _selJoint) - 1f); }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Bracketright } && _selRoad >= 0)   // raise the joint
-                _roads.SetJointOffset(_selRoad, _selJoint, _roads.JointOffset(_selRoad, _selJoint) + 1f);
+                { SnapUndo("height"); _roads.SetJointOffset(_selRoad, _selJoint, _roads.JointOffset(_selRoad, _selJoint) + 1f); }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) Deselect();
             else if (ev is InputEventKey { Pressed: true, Echo: false } dk && (dk.Keycode == Key.Delete || dk.Keycode == Key.Backspace) && _selRoad >= 0 && _selTan < 0)
             {
+                SnapUndo("delete road");
                 if (Input.IsKeyPressed(Key.Ctrl)) _roads.RemoveRoad(_selRoad);   // source Ctrl+Del: whole road
                 else _roads.RemoveVertex(_selRoad, _selJoint);                   // source Del: the joint (whole road if <2 left)
                 Deselect(); BuildMarkers();
@@ -254,6 +265,11 @@ namespace UnturnedGodot
                 RefreshAndSelect(road, joint, ti);
                 GD.Print($"[editor-roads] demo moved road {road} joint {joint} tangent {ti} -> handle {handleWorld} (mode {ModeNames[_roads.JointMode(road, joint)]})");
             }
+            // undo self-test (headless): snapshot, add a road, undo, confirm the count reverts
+            int before = _roads.RoadCount;
+            SnapUndo("test"); _roads.AddRoad(new Vector3(120f, 0f, 120f));
+            int mid = _roads.RoadCount; _editor.Undo();
+            GD.Print($"[editor-roads] undo self-test: {before} -> {mid} -> {_roads.RoadCount} roads (expect {before})");
             return handleWorld;
         }
 
