@@ -33,7 +33,7 @@ namespace UnturnedGodot
         public bool Paving => _paving;
         public string ModeText => _paving
             ? (_selRoad >= 0
-                ? $"PAVING · r{_selRoad} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · G move · N mode({ModeNames[_roads.JointMode(_selRoad, _selJoint)]}) · M mat({_roads.RoadMaterialName(_selRoad)}) · Del · Esc · R=off"
+                ? $"PAVING r{_selRoad}{(_roads.RoadIsLoop(_selRoad) ? "(loop)" : "")} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · G move · N {ModeNames[_roads.JointMode(_selRoad, _selJoint)]} · M {_roads.RoadMaterialName(_selRoad)} · L loop · [/] h={_roads.JointOffset(_selRoad, _selJoint):0} · I ign={(_roads.JointIgnoreTerrain(_selRoad, _selJoint) ? "on" : "off")} · Del · Esc"
                 : "PAVING · LMB marker=select · LMB ground=new road · R=off")
             : "R = roads paving";
 
@@ -153,6 +153,14 @@ namespace UnturnedGodot
                 _roads.SetRoadMaterial(_selRoad, (_roads.RoadMaterial(_selRoad) + 1) % _roads.MaterialCount);
                 RefreshAndSelect(_selRoad, _selJoint, _selTan);
             }
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.L } && _selRoad >= 0)   // toggle the road as a closed loop
+                _roads.SetRoadLoop(_selRoad, !_roads.RoadIsLoop(_selRoad));
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.I } && _selRoad >= 0)   // toggle the joint's ignore-terrain (float at vertex height vs follow ground)
+                _roads.SetJointIgnoreTerrain(_selRoad, _selJoint, !_roads.JointIgnoreTerrain(_selRoad, _selJoint));
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Bracketleft } && _selRoad >= 0)    // lower the joint (height offset)
+                _roads.SetJointOffset(_selRoad, _selJoint, _roads.JointOffset(_selRoad, _selJoint) - 1f);
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Bracketright } && _selRoad >= 0)   // raise the joint
+                _roads.SetJointOffset(_selRoad, _selJoint, _roads.JointOffset(_selRoad, _selJoint) + 1f);
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) Deselect();
             else if (ev is InputEventKey { Pressed: true, Echo: false } dk && (dk.Keycode == Key.Delete || dk.Keycode == Key.Backspace) && _selRoad >= 0 && _selTan < 0)
             {
@@ -255,6 +263,19 @@ namespace UnturnedGodot
             int before = _roads.RoadMaterial(road);
             _roads.SetRoadMaterial(road, m);
             GD.Print($"[editor-roads] demo set road {road} material {before} -> {_roads.RoadMaterial(road)} ({_roads.RoadMaterialName(road)}, of {_roads.MaterialCount})");
+        }
+
+        public Vector3 DemoDataModel(int road)   // inc-polish: loop toggle + per-joint offset + ignore-terrain
+        {
+            SetPaving(true);
+            if (road >= _roads.RoadCount) return Vector3.Zero;
+            _roads.SetRoadLoop(road, true);   // close the road into a loop (adds the return segment -> visible)
+            if (_roads.JointCount(road) > 1) { _roads.SetJointOffset(road, 1, 6f); _roads.SetJointIgnoreTerrain(road, 1, true); }
+            GD.Print($"[editor-roads] demo road {road}: loop={_roads.RoadIsLoop(road)} j1 offset={_roads.JointOffset(road, 1)} ignore={_roads.JointIgnoreTerrain(road, 1)}");
+            Vector3 c = Vector3.Zero; int n = _roads.JointCount(road);
+            for (int j = 0; j < n; j++) c += _roads.JointPos(road, j);
+            RefreshAndSelect(road, 1, -1);
+            return n > 0 ? c / n : Vector3.Zero;
         }
 
         public Vector3 DemoPave(int road, int joint) { SetPaving(true); return DemoJoint(road, joint); }

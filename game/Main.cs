@@ -1619,8 +1619,11 @@ namespace UnturnedGodot
             {   // synchronous (no timer): set before the first frame so the frame-45 --shot reliably captures the demoed state
                 editor.Mode = EEditorMode.Environment;
                 Vector3 focus;
+                bool loopDemo = System.Environment.GetEnvironmentVariable("UG_ROADLOOP") == "1";
                 if (System.Environment.GetEnvironmentVariable("UG_ROADCLEAN") == "1")
                     focus = roadsEd.DemoPave(0, roadsEd.DemoJointCount(0) / 2);    // markers only, NO edit -> roads render exactly as authored
+                else if (loopDemo)
+                    focus = roadsEd.DemoDataModel(0);                             // polish: loop + per-joint offset + ignore-terrain
                 else if (System.Environment.GetEnvironmentVariable("UG_ROADTAN") == "1")
                 {
                     Vector3 j = roadsEd.DemoJoint(0, 1);
@@ -1639,7 +1642,7 @@ namespace UnturnedGodot
                     roadsEd.DemoMove(0, 1, j + new Vector3(12f, 0f, 0f));          // inc1: a GENTLE nudge (not the mangling 40m yank)
                     focus = j + new Vector3(6f, 0f, 0f);
                 }
-                cam.GlobalPosition = focus + new Vector3(48f, 54f, 48f);
+                cam.GlobalPosition = focus + (loopDemo ? new Vector3(30f, 135f, 30f) : new Vector3(48f, 54f, 48f));   // loop: taller aerial to see the closed shape
                 cam.LookAt(focus, Vector3.Up);
                 if (res.DayNight != null) res.DayNight.VisualsEnabled = false;   // Environment preview hazes -> clean lighting for the render
                 SetCleanEditorLighting();

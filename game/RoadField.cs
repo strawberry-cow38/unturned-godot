@@ -200,6 +200,14 @@ namespace UnturnedGodot
             return $"{m}:{name}";
         }
 
+        // per-road loop + per-joint height offset / ignore-terrain (the rest of the source RoadJoint data model)
+        public bool RoadIsLoop(int road) => road >= 0 && road < _roads.Count && _roads[road].IsLoop;
+        public void SetRoadLoop(int road, bool loop) { if (road >= 0 && road < _roads.Count) { _roads[road].IsLoop = loop; RebuildRoad(road); } }
+        public float JointOffset(int road, int joint) => Valid(road, joint) ? _roads[road].Joints[joint].Offset : 0f;
+        public void SetJointOffset(int road, int joint, float o) { if (Valid(road, joint)) { _roads[road].Joints[joint].Offset = o; RebuildRoad(road); } }
+        public bool JointIgnoreTerrain(int road, int joint) => Valid(road, joint) && _roads[road].Joints[joint].IgnoreTerrain;
+        public void SetJointIgnoreTerrain(int road, int joint, bool ig) { if (Valid(road, joint)) { _roads[road].Joints[joint].IgnoreTerrain = ig; RebuildRoad(road); } }
+
         // editor reopen: replace the map's roads with the SAVED edits (same Paths.dat format), so edits round-trip
         public bool ReloadPaths(string pathsFile)
         {
