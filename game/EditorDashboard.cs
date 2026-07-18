@@ -62,16 +62,17 @@ namespace UnturnedGodot
 
         void Refresh()
         {
-            var active = Editor?.Mode ?? EEditorMode.Objects;
+            var active = Editor?.Mode ?? EEditorMode.Level;
             foreach (var kv in _tabs) kv.Value.ButtonPressed = kv.Key == active;
-            if (_browser != null) _browser.Visible = active == EEditorMode.Objects;
+            if (_browser != null) _browser.Visible = active == EEditorMode.Level;   // the object browser lives under the Level tab
         }
 
         public override void _Process(double delta)
         {
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
-            string obj = Editor.Mode == EEditorMode.Objects ? "   ·   LMB place/select · drag = move · R rotate · Del delete" : "";
+            string space = Editor.Objects != null && Editor.Objects.GizmoLocalSpace ? "local" : "global";
+            string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · drag arrows = move · G = space[{space}] · Del delete" : "";
             _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}   ·   map: {Editor.MapName}";
         }
     }
