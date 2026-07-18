@@ -124,7 +124,7 @@ namespace UnturnedGodot
                 float ang = U8() * 2f;
                 if (type > 5) continue;   // air/water/tank (6-11) not modelled
                 float gz = -pz;
-                _spawns.Add(new Spawn { Pos = new Vector3(px, RaycastDown(px, gz), gz), Yaw = -ang, Type = type });
+                _spawns.Add(new Spawn { Pos = new Vector3(px, RaycastDown(px, gz), gz), Yaw = -ang + 180f, Type = type });   // vehicle facing (master: +180 vs the player -ang convention)
             }
             GD.Print($"[editor-spawns] loaded {_spawns.Count} vehicle spawns");
         }
@@ -160,23 +160,47 @@ namespace UnturnedGodot
         {
             var root = new Node3D { Position = pos, RotationDegrees = new Vector3(0, yawDeg, 0) };
             var mat = new StandardMaterial3D { AlbedoColor = col, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
-            root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.18f, BottomRadius = 0.18f, Height = 3.4f }, MaterialOverride = mat, Position = new Vector3(0, 1.7f, 0) });
-            root.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.7f, Height = 1.4f }, MaterialOverride = mat, Position = new Vector3(0, 3.6f, 0) });
-            root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.55f, Height = 1.3f }, MaterialOverride = mat, Position = new Vector3(0, 2.4f, 1.0f), RotationDegrees = new Vector3(90, 0, 0) });
+            if (_category == ECategory.Vehicle)
+            {
+                // block-shaped (car footprint) + a forward arrow -- source Edit/Vehicle = a box with an "Arrow" child
+                root.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(2.2f, 1.1f, 4.8f) }, MaterialOverride = mat, Position = new Vector3(0, 0.55f, 0) });
+                root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.8f, Height = 1.8f }, MaterialOverride = mat, Position = new Vector3(0, 0.55f, 3.2f), RotationDegrees = new Vector3(90, 0, 0) });
+            }
+            else
+            {
+                root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.18f, BottomRadius = 0.18f, Height = 3.4f }, MaterialOverride = mat, Position = new Vector3(0, 1.7f, 0) });
+                root.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.7f, Height = 1.4f }, MaterialOverride = mat, Position = new Vector3(0, 3.6f, 0) });
+                root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.55f, Height = 1.3f }, MaterialOverride = mat, Position = new Vector3(0, 2.4f, 1.0f), RotationDegrees = new Vector3(90, 0, 0) });
+            }
             return root;
         }
 
         void MakeCursors()
         {
             _addCursor = new Node3D { Visible = false };
-            _addBody = new MeshInstance3D { Mesh = new CapsuleMesh { Radius = 0.4f, Height = 1.9f }, Position = new Vector3(0, 0.95f, 0) };
-            _addArrow = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.4f, Height = 1f }, Position = new Vector3(0, 0.95f, 1.0f), RotationDegrees = new Vector3(90, 0, 0) };
+            _addBody = new MeshInstance3D(); _addArrow = new MeshInstance3D();
             _addCursor.AddChild(_addBody); _addCursor.AddChild(_addArrow);
             AddChild(_addCursor);
+            ShapeAddCursor();
             _removeCursor = new Node3D { Visible = false };
             _removeCursor.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 1f, Height = 2f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.3f, 0.3f, 0.22f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } });
             AddChild(_removeCursor);
             UpdateAddCursorColor();
+        }
+
+        void ShapeAddCursor()   // add cursor matches the category (vehicle block vs player capsule), both with a forward arrow
+        {
+            if (_category == ECategory.Vehicle)
+            {
+                _addBody.Mesh = new BoxMesh { Size = new Vector3(2.2f, 1.1f, 4.8f) }; _addBody.Position = new Vector3(0, 0.55f, 0);
+                _addArrow.Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.8f, Height = 1.8f }; _addArrow.Position = new Vector3(0, 0.55f, 3.2f);
+            }
+            else
+            {
+                _addBody.Mesh = new CapsuleMesh { Radius = 0.4f, Height = 1.9f }; _addBody.Position = new Vector3(0, 0.95f, 0);
+                _addArrow.Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.4f, Height = 1f }; _addArrow.Position = new Vector3(0, 0.95f, 1.0f);
+            }
+            _addArrow.RotationDegrees = new Vector3(90, 0, 0);
         }
 
         void UpdateAddCursorColor()
@@ -242,6 +266,7 @@ namespace UnturnedGodot
             _spawns.Clear();
             LoadCategory();
             RebuildMarkers();
+            ShapeAddCursor();
             UpdateAddCursorColor();
             GD.Print($"[editor-spawns] category -> {_category} ({_spawns.Count})");
         }
