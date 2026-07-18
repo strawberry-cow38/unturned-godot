@@ -75,11 +75,14 @@ namespace UnturnedGodot.Net
             VehicleHost.Register(Commands);
             Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
-            Commands.Register<MoveInput>(ReplicationIds.CommandMoveInput, MoveInput.TryRead,
-                (sender, cmd) => Players.ServerQueueInput(sender, cmd),
+            Commands.Register<MoveInputPacket>(ReplicationIds.CommandMoveInput, MoveInputPacket.TryRead,
+                // C1 (plan §4.2): enqueue every carried entry oldest-first -- ServerQueueInput's
+                // strictly-increasing-seq guard drops the entries an earlier datagram already delivered,
+                // so the redundant backfill is idempotent and a queue hole now needs 3 consecutive losses
+                (sender, pkt) => { for (int i = 0; i < pkt.Count; i++) Players.ServerQueueInput(sender, pkt.Get(i)); },
                 // a corpse's inputs drop at the choke point; so do a DRIVER's (the seat teleport owns the
                 // avatar while driving -- walked positions must not fight it, §3.6)
-                validate: (sender, cmd) => CombatState.IsAlive(sender) && !VehicleHost.IsDriver(sender));
+                validate: (sender, pkt) => CombatState.IsAlive(sender) && !VehicleHost.IsDriver(sender));
             Commands.Register<FireCommand>(ReplicationIds.CommandFire, FireCommand.TryRead,
                 (sender, cmd) => Combat.OnFire(sender, cmd, Session.CurrentTick));
             Commands.Register<MeleeCommand>(ReplicationIds.CommandMelee, MeleeCommand.TryRead,
@@ -458,15 +461,34 @@ namespace UnturnedGodot.Net
 
         /// <summary>Send this tick's movement intent; returns the input seq (0 = not connected, nothing
         /// sent) so the shell can record its prediction under the same seq. buttons = the v2 held-button
-        /// bits (MoveInput.ButtonJump | ...).</summary>
+        /// bits (MoveInput.ButtonJump | ...). C1 (plan §4.2): the datagram carries the newest input plus
+        /// the previous two (MoveInputPacket), so a single lost/overtaken datagram costs the server
+        /// nothing -- the next one backfills the hole.</summary>
         public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0)
         {
             if (Session.State != NetSessionState.Connected) return 0;
             var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons };
             if (_inputSeq == 0) cmd.Seq = ++_inputSeq;   // seq 0 is the reconciler's "none" sentinel; skip it on wrap
-            Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandMoveInput, cmd.Write));
+            // a PAUSE in the send stream (ride mode, respawn -- anything that stopped ShellStep sending)
+            // voids the redundancy ring: the server cleared its input state at the pause boundary
+            // (ServerClearInput), and backfilling stale pre-pause intents into the resumed stream would
+            // integrate ticks of walk the client stopped predicting long ago
+            if (Session.CurrentTick != _lastMoveSendTick + 1) _movePrevCount = 0;
+            _lastMoveSendTick = Session.CurrentTick;
+            var pkt = new MoveInputPacket { Count = (byte)(_movePrevCount + 1) };
+            if (_movePrevCount == 2) { pkt.I0 = _movePrev2; pkt.I1 = _movePrev1; pkt.I2 = cmd; }
+            else if (_movePrevCount == 1) { pkt.I0 = _movePrev1; pkt.I1 = cmd; }
+            else pkt.I0 = cmd;
+            Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write));
+            _movePrev2 = _movePrev1;
+            _movePrev1 = cmd;
+            if (_movePrevCount < 2) _movePrevCount++;
             return cmd.Seq;
         }
+
+        MoveInput _movePrev1, _movePrev2;   // the last / second-to-last sent inputs (the C1 redundancy ring)
+        int _movePrevCount;
+        long _lastMoveSendTick = long.MinValue;
 
         // ---- Phase 5 combat commands (ReliableOrdered -- transactional, §2.3). Each returns the seq the
         // server will echo in HitConfirm (0 = not connected, nothing sent). ----

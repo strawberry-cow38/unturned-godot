@@ -6,9 +6,11 @@ using UnturnedGodot.Net;
 
 namespace UnturnedNet.Tests
 {
-    // Golden bytes + round-trip for the MoveInput v2 wire format (PEI_CLIENT_PLAN §3 C2: the buttons byte,
-    // bit 0 = jump -- the NetProtocol.Version 2->3 break). A failure here means the movement command's
-    // format drifted -- an intentional change bumps NetProtocol.Version and re-goldens in the same commit.
+    // Golden bytes + round-trip for the MoveInput wire format. The DATAGRAM is a MoveInputPacket since
+    // C1 (CLIENT_PREDICTION_PLAN §4.2, the Version 4->5 break): count:2 bits + count MoveInput entries
+    // oldest-first, each seq:16 + moveX:8 + moveY:8 + yaw:11 + buttons:8. A failure here means the
+    // movement command's format drifted -- an intentional change bumps NetProtocol.Version and
+    // re-goldens in the same commit.
     [TestFixture]
     public class MoveInputWireTests
     {
@@ -20,13 +22,75 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void MoveInputV2_GoldenBytes()
+        public void MoveInputPacket_SingleEntry_GoldenBytes()
         {
-            // seq:16 + moveX:8(signed-normalized) + moveY:8 + yaw:11 + buttons:8 -- 51 bits -> 7 payload
-            // bytes after the id byte. Goldened for Version = 3 (the buttons byte landed).
-            var cmd = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump };
-            var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, cmd.Write);
-            Assert.That(ToHex(bytes), Is.EqualTo("010201C07F000A00"));
+            // the spawn-time shape (nothing sent yet to backfill): count:2 + one 51-bit entry = 53 bits
+            // -> 7 payload bytes after the id byte. The entry is the exact v3/v4 golden input; goldened
+            // for Version = 5 (the redundancy count landed in front of it).
+            var pkt = new MoveInputPacket { Count = 1, I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump } };
+            var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
+            Assert.That(ToHex(bytes), Is.EqualTo("01090400FF012800"));
+        }
+
+        [Test]
+        public void MoveInputPacket_ThreeEntries_GoldenBytes()
+        {
+            // the steady-state shape: the newest input + the 2 previous, oldest-first, consecutive seqs.
+            // count:2 + 3 x 51 bits = 155 bits -> 20 payload bytes after the id byte.
+            var pkt = new MoveInputPacket
+            {
+                Count = 3,
+                I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump },
+                I1 = new MoveInput { Seq = 259, MoveX = 0f, MoveY = 1f, YawDegrees = 91f, Buttons = MoveInput.PackStance(SDG.Unturned.EPlayerStance.SPRINT) },
+                I2 = new MoveInput { Seq = 260, MoveX = 0.25f, MoveY = -1f, YawDegrees = 271f, Buttons = 0 },
+            };
+            var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
+            Assert.That(ToHex(bytes), Is.EqualTo("010B0400FF0128602000E0AF4002040120FF050600"));
+        }
+
+        [Test]
+        public void MoveInputPacket_RoundTrip_AndRejects()
+        {
+            var w = new NetPakWriter { buffer = new byte[64] };
+            var r = new NetPakReader();
+            // 1..3 entries round-trip with every field intact
+            for (byte count = 1; count <= MoveInputPacket.MaxInputs; count++)
+            {
+                var pkt = new MoveInputPacket { Count = count };
+                for (int i = 0; i < count; i++)
+                {
+                    var m = new MoveInput { Seq = (ushort)(100 + i), MoveX = i * 0.5f - 0.5f, MoveY = 1f, YawDegrees = 30f * (i + 1), Buttons = (byte)(i == 1 ? MoveInput.ButtonJump : 0) };
+                    if (i == 0) pkt.I0 = m; else if (i == 1) pkt.I1 = m; else pkt.I2 = m;
+                }
+                w.Reset();
+                pkt.Write(w);
+                w.Flush();
+                r.Reset();
+                r.SetBufferSegment(w.buffer, w.writeByteIndex);
+                Assert.That(MoveInputPacket.TryRead(r, out var read), Is.True);
+                Assert.That(read.Count, Is.EqualTo(count));
+                for (int i = 0; i < count; i++)
+                {
+                    Assert.That(read.Get(i).Seq, Is.EqualTo((ushort)(100 + i)), $"entry {i} seq survives (count {count})");
+                    Assert.That(read.Get(i).Jump, Is.EqualTo(i == 1), $"entry {i} buttons survive (count {count})");
+                }
+            }
+            // count 0 is malformed (a datagram always carries at least the newest input)
+            w.Reset();
+            w.WriteBits(0u, 2);
+            w.Flush();
+            r.Reset();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(MoveInputPacket.TryRead(r, out _), Is.False, "count 0 is rejected");
+            // a truncated packet (count says 3, only 2 entries present) is rejected, never misparsed
+            w.Reset();
+            w.WriteBits(3u, 2);
+            new MoveInput { Seq = 1, MoveY = 1f }.Write(w);
+            new MoveInput { Seq = 2, MoveY = 1f }.Write(w);
+            w.Flush();
+            r.Reset();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(MoveInputPacket.TryRead(r, out _), Is.False, "a truncated packet is rejected");
         }
 
         [Test]

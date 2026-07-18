@@ -166,6 +166,51 @@ namespace UnturnedGodot.Net
     }
 
     /// <summary>
+    /// C1 (CLIENT_PREDICTION_PLAN §4.2): the MoveInput DATAGRAM -- the newest input plus up to two
+    /// previous ones, oldest-first, each a full MoveInput entry with its own explicit seq (seqs are
+    /// usually consecutive, but the seq-0 wrap skip makes an implicit newest-minus-i encoding wrong once
+    /// per 65535 inputs). A single lost or jitter-overtaken datagram no longer leaves a hole the server
+    /// must guess across (coast/hole-substitution on held axes -- the residual high-RTT inchworm's main
+    /// engine, plan §4.1 H1); a hole now needs 3 CONSECUTIVE datagram losses (~0.001% at 2% loss vs 2%
+    /// with one input per datagram). ServerQueueInput's strictly-increasing-seq guard makes the
+    /// redundant backfill idempotent, so the receiver just enqueues every entry oldest-first. This is
+    /// the port-shaped equivalent of retail's reliable input channel (U3 PlayerInput.cs:1713 sends
+    /// inputs ENetReliability.Reliable and the server never speculates) -- the same guarantee, the
+    /// server integrates the real input stream, without retail's freeze-on-loss added latency.
+    /// MP_PLAN §2.3 specified this ("carrying the last 3 inputs redundantly"); the shipped v3-v4 wire
+    /// carried one. Wire: count:2 bits (1-3, 0 rejected), then count MoveInput entries oldest-first --
+    /// the NetProtocol.Version 4->5 break.
+    /// </summary>
+    public struct MoveInputPacket
+    {
+        public const int MaxInputs = 3;
+
+        public byte Count;
+        public MoveInput I0, I1, I2;   // oldest-first; only the first Count are valid
+
+        public MoveInput Get(int i) => i == 0 ? I0 : (i == 1 ? I1 : I2);
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteBits(Count, 2);
+            for (int i = 0; i < Count; i++) Get(i).Write(w);
+        }
+
+        public static bool TryRead(NetPakReader r, out MoveInputPacket pkt)
+        {
+            pkt = default;
+            if (!r.ReadBits(2, out uint count) || count == 0 || count > MaxInputs) return false;
+            pkt.Count = (byte)count;
+            for (int i = 0; i < pkt.Count; i++)
+            {
+                if (!MoveInput.TryRead(r, out var m)) return false;
+                if (i == 0) pkt.I0 = m; else if (i == 1) pkt.I1 = m; else pkt.I2 = m;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Players as the first real IReplicatedSystem (MP_PLAN §4 Phase 3). One class serves both sides:
     /// the server mutates via the Server* methods (spawn on join, latest-wins MoveInput queue, a 50 Hz
     /// ServerStep that integrates PlayerMovementSim on flat ground), the client only ever writes through
