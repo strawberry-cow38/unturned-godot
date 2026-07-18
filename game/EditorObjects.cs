@@ -35,11 +35,18 @@ namespace UnturnedGodot
         EditorGizmo _gizmo;
         float _placeYaw;
         Node3D Primary => _selection.Count > 0 ? _selection[_selection.Count - 1] : null;   // gizmo target = most-recent selected
+        bool _boxDragging;         // source: drag over empty ground = marquee box-select
+        Vector2 _boxStart;
+        MarqueeOverlay _marquee;
 
         public EditorObjects(Editor editor, Node world, EditorCamera cam)
         {
             _editor = editor; _world = world; _cam = cam; _flyCam = cam;
             _gizmo = new EditorGizmo(cam); AddChild(_gizmo);   // the source TransformHandles translate gizmo, shown on the selection
+            var cl = new CanvasLayer { Layer = 55 };            // marquee overlay for box drag-select
+            _marquee = new MarqueeOverlay { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _marquee.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            cl.AddChild(_marquee); AddChild(cl);
             LoadCatalog();
             LoadSaved();   // restore any previously-saved editor placements
             if (_catalog.Count > 0) PlaceName = _catalog[0];   // default to placing the first prop
@@ -128,17 +135,19 @@ namespace UnturnedGodot
             return true;
         }
 
-        void HandleClick(Vector2 screen)
+        // returns true if the click placed or selected a prop; false if it hit empty ground (caller arms a box drag-select)
+        bool TryPlaceOrSelect(Vector2 screen)
         {
             bool additive = Input.IsKeyPressed(Key.Shift);   // source 'modify' key -> toggle into the multi-selection
             if (PlaceName != null && !additive)   // place mode: drop the prop where the ray meets terrain / another prop
             {
                 if (Raycast(screen, TerrainLayer | SmallPropLayer | EditorPickLayer, out var pt, out _))
                     Select(Place(PlaceName, pt, Upright(_placeYaw)));
+                return true;   // place mode consumes the click
             }
-            else if (Raycast(screen, EditorPickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
-                Select(obj, additive);   // Shift+click toggles; plain click single-selects
-            else if (!additive) Select(null);
+            if (Raycast(screen, EditorPickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
+                { Select(obj, additive); return true; }   // Shift+click toggles; plain click single-selects
+            return false;   // clicked empty ground
         }
 
         // select obj; additive (Shift) toggles it in the multi-selection, else it replaces the selection; null clears
@@ -213,29 +222,58 @@ namespace UnturnedGodot
             GD.Print($"[editor] pasted {_selection.Count} prop(s)");
         }
 
+        static Rect2 RectFrom(Vector2 a, Vector2 b) => new Rect2(new Vector2(Mathf.Min(a.X, b.X), Mathf.Min(a.Y, b.Y)), (b - a).Abs());
+
+        void UpdateMarquee(Vector2 a, Vector2 b) { _marquee.Rect = RectFrom(a, b); _marquee.Visible = true; _marquee.QueueRedraw(); }
+
+        void FinishBoxSelect(Vector2 end)
+        {
+            bool additive = Input.IsKeyPressed(Key.Shift);
+            var rect = RectFrom(_boxStart, end);
+            if (rect.Size.Length() < 8f) { if (!additive) Select(null); return; }   // basically a click on empty -> deselect
+            BoxSelect(rect, additive);
+        }
+
+        // source: select every placed prop whose on-screen point (WorldToViewportPoint) falls inside the marquee rect
+        void BoxSelect(Rect2 rect, bool additive)
+        {
+            if (!additive) _selection.Clear();
+            foreach (var prop in _placed)
+            {
+                if (_cam.IsPositionBehind(prop.GlobalPosition)) continue;
+                if (rect.HasPoint(_cam.UnprojectPosition(prop.GlobalPosition)) && !_selection.Contains(prop)) _selection.Add(prop);
+            }
+            _gizmo.Attach(Primary); RefreshMarkers();
+            GD.Print($"[editor] box-select: {_selection.Count} selected");
+        }
+
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Level || _flyCam.Flying) return;   // Level tab only (object placement lives under Level); never while flying (RMB)
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
+                var mp = GetViewport().GetMousePosition();
                 if (mb.Pressed)
                 {
-                    if (_gizmo.TryBeginDrag(GetViewport().GetMousePosition())) return;   // grabbed a gizmo axis -> drag, not place/select
-                    HandleClick(GetViewport().GetMousePosition());                        // place (build mode) or select (source EditorSelection)
+                    if (_gizmo.TryBeginDrag(mp)) return;                                    // grabbed a gizmo axis -> drag
+                    if (!TryPlaceOrSelect(mp)) { _boxDragging = true; _boxStart = mp; }     // empty ground -> arm a box drag-select
                 }
                 else if (_gizmo.Dragging) { _gizmo.EndDrag(); PositionMarkers(); }
+                else if (_boxDragging) { FinishBoxSelect(mp); _boxDragging = false; _marquee.Visible = false; }
             }
-            else if (ev is InputEventMouseMotion && _gizmo.Dragging)
+            else if (ev is InputEventMouseMotion)
             {
-                _gizmo.DragTo(GetViewport().GetMousePosition(), Input.IsKeyPressed(Key.Ctrl));   // TransformHandles POSITION_AXIS drag; Ctrl = 1u snap
-                PositionMarkers();
+                if (_gizmo.Dragging) { _gizmo.DragTo(GetViewport().GetMousePosition(), Input.IsKeyPressed(Key.Ctrl)); PositionMarkers(); }   // TransformHandles drag; Ctrl = snap
+                else if (_boxDragging) UpdateMarquee(_boxStart, GetViewport().GetMousePosition());   // source marquee drag-select
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 bool ctrl = Input.IsKeyPressed(Key.Ctrl);
                 if (k.Keycode == Key.Delete || k.Keycode == Key.Backspace) DeleteSelected();   // source: delete the selection
-                else if (ctrl && k.Keycode == Key.C) CopySelection();                    // Ctrl+C copy (source EditorObjects)
-                else if (ctrl && k.Keycode == Key.V) PasteSelection();                   // Ctrl+V paste (source EditorObjects)
+                else if (ctrl && k.Keycode == Key.C) CopySelection();                    // Ctrl+C copy objects (source EditorObjects)
+                else if (ctrl && k.Keycode == Key.V) PasteSelection();                   // Ctrl+V paste objects (source EditorObjects)
+                else if (ctrl && k.Keycode == Key.B) CopyTransform();                    // Ctrl+B copy transform (source)
+                else if (ctrl && k.Keycode == Key.N) PasteTransform();                   // Ctrl+N paste transform (source)
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
                 else if (k.Keycode == Key.Escape) Select(null);
@@ -293,6 +331,23 @@ namespace UnturnedGodot
             if (n > 0) GD.Print($"[editor] loaded {n} saved props");
         }
 
+        // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)
+        Vector3 _copyPos; Basis _copyBasis; bool _hasCopyXform;
+        void CopyTransform()
+        {
+            if (Primary == null) return;
+            _copyPos = Primary.GlobalPosition; _copyBasis = Primary.GlobalTransform.Basis; _hasCopyXform = true;
+            GD.Print("[editor] copied transform");
+        }
+        void PasteTransform()
+        {
+            if (!_hasCopyXform || _selection.Count == 0) return;
+            if (_selection.Count == 1) _selection[0].GlobalTransform = new Transform3D(_copyBasis, _copyPos);   // align exactly (source count==1)
+            else { var delta = _copyPos - Primary.GlobalPosition; foreach (var s in _selection) s.GlobalPosition += delta; }   // else move the group onto the copied pos
+            _gizmo.Attach(Primary); PositionMarkers();
+            GD.Print($"[editor] pasted transform to {_selection.Count}");
+        }
+
         // harness hook (--editor): scatter a few props so a headless render shows placement working
         public readonly List<Vector3> DemoPositions = new();
         public void DemoPlace()
@@ -322,9 +377,22 @@ namespace UnturnedGodot
                     int before = _placed.Count; PasteSelection();
                     GD.Print($"[editordemo] multi-select={sel}, pasted {_placed.Count - before} (now {_selection.Count} selected)");
                 }
+                BoxSelect(new Rect2(Vector2.Zero, new Vector2(100000f, 100000f)), false);   // verify box drag-select: full-viewport rect selects every in-frame prop
+                GD.Print($"[editordemo] box-select all-in-frame: {_selection.Count}");
                 Select(pr, false);   // single-select the transformed prop for a clean outline in the render
             }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
+        }
+    }
+
+    // 2D marquee rectangle drawn during a box drag-select
+    public partial class MarqueeOverlay : Control
+    {
+        public Rect2 Rect;
+        public override void _Draw()
+        {
+            DrawRect(Rect, new Color(0.3f, 0.6f, 1f, 0.14f), true);
+            DrawRect(Rect, new Color(0.55f, 0.8f, 1f, 0.9f), false, 1.5f);
         }
     }
 }

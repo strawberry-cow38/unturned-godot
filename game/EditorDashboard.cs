@@ -73,7 +73,7 @@ namespace UnturnedGodot
             float spd = Editor.Camera?.Speed ?? 0f;
             string space = Editor.Objects != null && Editor.Objects.GizmoLocalSpace ? "local" : "global";
             string gm = Editor.Objects?.GizmoModeText ?? "move";
-            string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · Shift+click multi · gizmo {gm} (T) · G space[{space}] · Ctrl+C/V copy · Del delete" : "";
+            string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · drag box-select · Shift multi · {gm} gizmo (T) · Ctrl+C/V dup · Ctrl+B/N align · Del" : "";
             _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}   ·   map: {Editor.MapName}";
         }
     }
