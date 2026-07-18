@@ -1600,21 +1600,29 @@ namespace UnturnedGodot
                     GD.Print($"[editorenv] preview time={env.Time:0.00} ({(env.Overcast ? "overcast" : "clear")})");
                 };
             if (System.Environment.GetEnvironmentVariable("UG_EDITORTERRAIN") == "1")
-                GetTree().CreateTimer(0.9).Timeout += () =>
-                {
+                {   // synchronous (no timer) so the frame-45 --shot reliably captures the demoed state
                     editor.Mode = EEditorMode.Terrain;
                     Vector3 at = spawns != null && spawns.Positions.Count > 0 ? spawns.Positions[0] : Vector3.Zero;   // a known land point
-                    terrainEd.DemoSculpt(at);
-                    terrainEd.Save();   // verify the heightmap round-trip: a plain --editor re-run loads the sculpt back
-                    cam.GlobalPosition = at + new Vector3(75f, 55f, 75f);
-                    cam.LookAt(at + Vector3.Up * 40f, Vector3.Up);
-                    if (System.Environment.GetEnvironmentVariable("UG_EDITORPAINT") == "1")
+                    if (System.Environment.GetEnvironmentVariable("UG_TERRAMP") == "1")
                     {
-                        terrainEd.DemoPaint(at, 6);   // snow-cap the hill -> Materials splat-paint proof
-                        cam.GlobalPosition = at + new Vector3(150f, 175f, 150f);
-                        cam.LookAt(at, Vector3.Up);
+                        terrainEd.DemoRamp(at, at + new Vector3(70f, 90f, 0f));   // #4 RAMP: grade up 90m over 70m (steep, unmistakable)
+                        cam.GlobalPosition = at + new Vector3(35f, 85f, 80f);
+                        cam.LookAt(at + new Vector3(35f, 45f, 0f), Vector3.Up);
                     }
-                };
+                    else
+                    {
+                        terrainEd.DemoSculpt(at);
+                        cam.GlobalPosition = at + new Vector3(75f, 55f, 75f);
+                        cam.LookAt(at + Vector3.Up * 40f, Vector3.Up);
+                        if (System.Environment.GetEnvironmentVariable("UG_EDITORPAINT") == "1")
+                        {
+                            terrainEd.DemoPaint(at, 6);   // snow-cap the hill -> Materials splat-paint proof
+                            cam.GlobalPosition = at + new Vector3(150f, 175f, 150f);
+                            cam.LookAt(at, Vector3.Up);
+                        }
+                    }
+                    terrainEd.Save();   // verify the heightmap round-trip
+                }
             if (System.Environment.GetEnvironmentVariable("UG_EDITORROADS") == "1" && roadsEd.HasRoads)
             {   // synchronous (no timer): set before the first frame so the frame-45 --shot reliably captures the demoed state
                 editor.Mode = EEditorMode.Environment;

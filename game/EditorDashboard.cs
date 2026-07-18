@@ -13,6 +13,7 @@ namespace UnturnedGodot
 
         Label _status;
         EditorObjectBrowser _browser;   // the Objects-tab palette (shown only in Objects mode)
+        EditorTerrainPanel _terrainPanel;   // the Terrain-tab tool buttons (shown only in Terrain mode)
         readonly Dictionary<EEditorMode, Button> _tabs = new();
 
         public override void _Ready()
@@ -56,6 +57,7 @@ namespace UnturnedGodot
             AddChild(_status);
 
             if (Editor?.Objects != null) { _browser = new EditorObjectBrowser(Editor.Objects); AddChild(_browser); }
+            if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
             if (Editor != null) Editor.ModeChanged += _ => Refresh();
             Refresh();
         }
@@ -65,6 +67,7 @@ namespace UnturnedGodot
             var active = Editor?.Mode ?? EEditorMode.Level;
             foreach (var kv in _tabs) kv.Value.ButtonPressed = kv.Key == active;
             if (_browser != null) _browser.Visible = active == EEditorMode.Level;   // the object browser lives under the Level tab
+            if (_terrainPanel != null) _terrainPanel.Visible = active == EEditorMode.Terrain;   // terrain tool buttons under the Terrain tab
         }
 
         public override void _Process(double delta)

@@ -192,6 +192,42 @@ void fragment() {
             _dirty = true; RebuildChunksIn(cgx - rg, cgx + rg, cgy - rg, cgy + rg);
         }
 
+        // Devkit RAMP (source handleHeightmapWriteRamp): a linear height grade between two clicked world points, in a
+        // corridor of half-width radiusWorld (falloff on the cross axis). One-shot -- begin.Y..end.Y are the target heights.
+        public void EditRamp(Vector3 begin, Vector3 end, float radiusWorld)
+        {
+            if (_grid == null) return;
+            var rampOffset = new Vector2(end.X - begin.X, end.Z - begin.Z);
+            float rampMag = rampOffset.Length();
+            if (rampMag < 1f) return;
+            var rampDir = rampOffset / rampMag;
+            var rampCross = new Vector2(-rampDir.Y, rampDir.X);
+            float beginH = (begin.Y + TILE_HEIGHT / 2f) / TILE_HEIGHT, endH = (end.Y + TILE_HEIGHT / 2f) / TILE_HEIGHT;
+            float minX = Mathf.Min(begin.X, end.X) - radiusWorld, maxX = Mathf.Max(begin.X, end.X) + radiusWorld;
+            float minZ = Mathf.Min(begin.Z, end.Z) - radiusWorld, maxZ = Mathf.Max(begin.Z, end.Z) + radiusWorld;
+            int gx0 = Mathf.Clamp(Mathf.FloorToInt((minX - _bx) / UNIT), 0, _gw - 1), gx1 = Mathf.Clamp(Mathf.CeilToInt((maxX - _bx) / UNIT), 0, _gw - 1);
+            int gy0 = Mathf.Clamp(Mathf.FloorToInt((-maxZ - _bz) / UNIT), 0, _gh - 1), gy1 = Mathf.Clamp(Mathf.CeilToInt((-minZ - _bz) / UNIT), 0, _gh - 1);
+            for (int gx = gx0; gx <= gx1; gx++)
+                for (int gy = gy0; gy <= gy1; gy++)
+                {
+                    float wx = _bx + gx * UNIT, wz = -(_bz + gy * UNIT);
+                    var wo = new Vector2(wx - begin.X, wz - begin.Z);
+                    float wMag = wo.Length();
+                    if (wMag < 0.001f) { _grid[gx, gy] = Mathf.Clamp(Mathf.Lerp(_grid[gx, gy], beginH, 1f), 0f, 1f); continue; }
+                    var wDir = wo / wMag;
+                    float alongAlign = wDir.Dot(rampDir);
+                    if (alongAlign < 0f) continue;                                   // behind the ramp begin
+                    float alongDist = wMag * alongAlign / rampMag;
+                    if (alongDist > 1f) continue;                                    // past the ramp end
+                    float crossDist = Mathf.Abs(wMag * wDir.Dot(rampCross) / radiusWorld);
+                    if (crossDist > 1f) continue;                                    // outside the corridor
+                    float alpha = BrushAlpha(crossDist);
+                    float target = Mathf.Lerp(beginH, endH, alongDist);
+                    _grid[gx, gy] = Mathf.Clamp(Mathf.Lerp(_grid[gx, gy], target, alpha), 0f, 1f);
+                }
+            _dirty = true; RebuildChunksIn(gx0, gx1, gy0, gy1); FlushColliders();
+        }
+
         readonly System.Collections.Generic.HashSet<(int, int)> _dirtyChunks = new();   // chunks whose collider went stale mid-stroke (flushed on mouse-up)
 
         // Rebuild ONE chunk's mesh (+ optional trimesh collider) from the (global) _grid. Reads neighbour cells for edge normals.
