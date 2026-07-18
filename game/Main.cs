@@ -1532,7 +1532,7 @@ namespace UnturnedGodot
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
-            var spawns = new EditorSpawns(editor, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
+            var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
@@ -1559,6 +1559,11 @@ namespace UnturnedGodot
                         var c = spawns.Positions[0];    // close-up on the first spawn (the 22 are spread across the whole island)
                         cam.GlobalPosition = c + new Vector3(0f, 28f, 24f);
                         cam.LookAt(c, Vector3.Up);
+                        // verify add/remove programmatically (headless can't drive real clicks)
+                        int b0 = spawns.PlayerCount;
+                        spawns.RemoveNear(c);   // remove the original spawn under the cam (verify remove)
+                        spawns.AddSpawn(c); spawns.AddSpawn(c + new Vector3(7f, 0f, 0f)); spawns.AddSpawn(c + new Vector3(-7f, 0f, 0f));   // 3 fresh -> verify add + fill the render
+                        GD.Print($"[editorspawns] remove-near from {b0}, then +3 -> {spawns.PlayerCount}");
                     }
                     GD.Print($"[editorspawns] {spawns.PlayerCount} player + {spawns.AltCount} alt spawns visualized");
                 };
