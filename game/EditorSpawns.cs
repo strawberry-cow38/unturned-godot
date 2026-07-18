@@ -15,7 +15,7 @@ namespace UnturnedGodot
     public partial class EditorSpawns : Node3D
     {
         enum ECategory { Player, Vehicle, Item, Zombie, Animal }
-        struct Spawn { public Vector3 Pos; public float Yaw; public bool IsAlt; public int Type; }
+        public struct Spawn { public Vector3 Pos; public float Yaw; public bool IsAlt; public int Type; }
 
         static readonly string[] VehicleTypes = { "Civilian", "Police", "Fire", "Military", "Medic", "Farm" };
         static readonly Color[] VehicleColors = {
@@ -367,10 +367,13 @@ namespace UnturnedGodot
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed && !Editor.PointerOverUI(this))
             {
                 if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
-                if (_removeMode) RemoveNear(pt); else AddSpawn(pt, _rotation, _alt, _vehType);
+                var cat = _category;   // undo is category-scoped (a switch reloads _spawns)
+                if (_removeMode) { var rm = RemoveNear(pt); if (rm.Count > 0) _editor.PushUndo("remove spawn", () => { if (_category == cat) { _spawns.AddRange(rm); RebuildMarkers(); } }); }
+                else { AddSpawn(pt, _rotation, _alt, _vehType); var added = _spawns[^1]; _editor.PushUndo("add spawn", () => { if (_category == cat) { _spawns.Remove(added); RebuildMarkers(); } }); }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
+                if (Input.IsKeyPressed(Key.Ctrl) && k.Keycode == Key.Z) { _editor.Undo(); return; }   // Ctrl+Z undo
                 switch (k.Keycode)
                 {
                     case Key.Tab: SwitchCategory(); break;                                      // cycle category
@@ -425,12 +428,13 @@ namespace UnturnedGodot
             GD.Print($"[editor-spawns] added {_category} spawn ({_spawns.Count} total)");
         }
 
-        public void RemoveNear(Vector3 pt)   // source LevelXxx.removeSpawn(point, radius)
+        public List<Spawn> RemoveNear(Vector3 pt)   // source LevelXxx.removeSpawn(point, radius); returns the removed (for undo)
         {
-            int removed = 0;
+            var removed = new List<Spawn>();
             for (int i = _spawns.Count - 1; i >= 0; i--)
-                if (_spawns[i].Pos.DistanceTo(pt) <= _radius) { _spawns.RemoveAt(i); removed++; }
-            if (removed > 0) { RebuildMarkers(); GD.Print($"[editor-spawns] removed {removed} ({_spawns.Count} left)"); }
+                if (_spawns[i].Pos.DistanceTo(pt) <= _radius) { removed.Add(_spawns[i]); _spawns.RemoveAt(i); }
+            if (removed.Count > 0) { RebuildMarkers(); GD.Print($"[editor-spawns] removed {removed.Count} ({_spawns.Count} left)"); }
+            return removed;
         }
 
         // harness (--editor UG_EDITORSPAWNS): cycle to a category so a render shows its markers
