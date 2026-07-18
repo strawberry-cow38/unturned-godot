@@ -16,8 +16,10 @@ namespace UnturnedGodot
         const uint TerrainLayer = 1u << 0;
         Node3D _ring;
         float _radius = 28f, _strength = 8f;   // brush radius (world m) + strength (world Y per stroke)
+        enum EBrush { Raise, Flatten, Smooth }   // source Devkit heightmap modes (ADJUST / FLATTEN / SMOOTH)
+        EBrush _brush = EBrush.Raise;
 
-        public string ModeText => $"raise (Shift=lower) · radius {_radius:0}m · strength {_strength:0}";
+        public string ModeText => $"{_brush}{(_brush == EBrush.Raise ? " (Shift=lower)" : "")} · radius {_radius:0}m · strength {_strength:0}";
         static string SavePath => ProjectSettings.GlobalizePath("res://content/terrain/") + "editor_heightmap.bin";
 
         public int Save()   // Editor.Save() fan-out: persist the sculpted heightmap (only if edited)
@@ -70,14 +72,20 @@ namespace UnturnedGodot
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed)
             {
                 if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
-                float dir = Input.IsKeyPressed(Key.Shift) ? -1f : 1f;   // Shift = lower
-                _terr.EditHeight(pt.X, pt.Z, _radius, _strength * dir);   // one stroke per click (whole-mesh rebuild is heavy)
-                GD.Print($"[editor-terrain] {(dir > 0 ? "raised" : "lowered")} at ({pt.X:0},{pt.Z:0}) r={_radius:0} s={_strength:0}");
+                float fac = Mathf.Clamp(_strength / 40f, 0.05f, 1f);   // flatten/smooth blend factor from the strength dial
+                switch (_brush)
+                {
+                    case EBrush.Raise: _terr.EditHeight(pt.X, pt.Z, _radius, _strength * (Input.IsKeyPressed(Key.Shift) ? -1f : 1f)); break;   // Shift = lower
+                    case EBrush.Flatten: _terr.EditFlatten(pt.X, pt.Z, _radius, fac); break;
+                    case EBrush.Smooth: _terr.EditSmooth(pt.X, pt.Z, _radius, fac); break;
+                }
+                GD.Print($"[editor-terrain] {_brush} at ({pt.X:0},{pt.Z:0}) r={_radius:0} s={_strength:0}");
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 switch (k.Keycode)
                 {
+                    case Key.M: _brush = (EBrush)(((int)_brush + 1) % 3); break;            // cycle Raise/Flatten/Smooth (source Devkit modes)
                     case Key.Bracketleft: _radius = Mathf.Max(6f, _radius - 4f); break;    // brush radius (source brushRadius)
                     case Key.Bracketright: _radius = Mathf.Min(140f, _radius + 4f); break;
                     case Key.Comma: _strength = Mathf.Max(1f, _strength - 2f); break;      // brush strength
@@ -87,6 +95,12 @@ namespace UnturnedGodot
         }
 
         // harness (--editor UG_EDITORTERRAIN): raise a big bump so a render shows the sculpt working
-        public void DemoSculpt(Vector3 at) { if (_terr != null) { _terr.EditHeight(at.X, at.Z, 45f, 110f); GD.Print("[editorterrain] raised a demo bump"); } }
+        public void DemoSculpt(Vector3 at)
+        {
+            if (_terr == null) return;
+            _terr.EditHeight(at.X, at.Z, 45f, 110f);                             // a sharp spike (raise)
+            for (int i = 0; i < 4; i++) _terr.EditSmooth(at.X, at.Z, 62f, 0.5f);   // smooth it into a rounded hill (verifies Smooth)
+            GD.Print("[editorterrain] raised + smoothed a demo hill");
+        }
     }
 }

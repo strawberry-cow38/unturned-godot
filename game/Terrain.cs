@@ -128,6 +128,44 @@ void fragment() {
             return true;
         }
 
+        public void EditFlatten(float worldX, float worldZ, float radiusWorld, float strength)   // pull heights toward the brush centre's height (Devkit FLATTEN)
+        {
+            if (_grid == null) return;
+            float cx = (worldX - _bx) / UNIT, cy = (-worldZ - _bz) / UNIT;
+            int cgx = Mathf.Clamp(Mathf.RoundToInt(cx), 0, _gw - 1), cgy = Mathf.Clamp(Mathf.RoundToInt(cy), 0, _gh - 1);
+            float target = _grid[cgx, cgy];
+            int rg = Mathf.CeilToInt(radiusWorld / UNIT) + 1;
+            for (int gx = System.Math.Max(0, cgx - rg); gx <= System.Math.Min(_gw - 1, cgx + rg); gx++)
+                for (int gy = System.Math.Max(0, cgy - rg); gy <= System.Math.Min(_gh - 1, cgy + rg); gy++)
+                {
+                    float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT; float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (dist > radiusWorld) continue;
+                    float f = 0.5f + 0.5f * Mathf.Cos(Mathf.Pi * dist / radiusWorld);
+                    _grid[gx, gy] = Mathf.Lerp(_grid[gx, gy], target, Mathf.Clamp(strength * f, 0f, 1f));
+                }
+            _dirty = true; RebuildMesh();
+        }
+
+        public void EditSmooth(float worldX, float worldZ, float radiusWorld, float strength)   // average each sample with its 4 neighbours (Devkit SMOOTH)
+        {
+            if (_grid == null) return;
+            float cx = (worldX - _bx) / UNIT, cy = (-worldZ - _bz) / UNIT;
+            int cgx = Mathf.Clamp(Mathf.RoundToInt(cx), 0, _gw - 1), cgy = Mathf.Clamp(Mathf.RoundToInt(cy), 0, _gh - 1);
+            int rg = Mathf.CeilToInt(radiusWorld / UNIT) + 1;
+            var next = new System.Collections.Generic.List<(int, int, float)>();
+            for (int gx = System.Math.Max(1, cgx - rg); gx <= System.Math.Min(_gw - 2, cgx + rg); gx++)
+                for (int gy = System.Math.Max(1, cgy - rg); gy <= System.Math.Min(_gh - 2, cgy + rg); gy++)
+                {
+                    float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT; float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (dist > radiusWorld) continue;
+                    float f = 0.5f + 0.5f * Mathf.Cos(Mathf.Pi * dist / radiusWorld);
+                    float avg = (_grid[gx - 1, gy] + _grid[gx + 1, gy] + _grid[gx, gy - 1] + _grid[gx, gy + 1]) * 0.25f;
+                    next.Add((gx, gy, Mathf.Lerp(_grid[gx, gy], avg, Mathf.Clamp(strength * f, 0f, 1f))));
+                }
+            foreach (var (gx, gy, nv) in next) _grid[gx, gy] = nv;
+            _dirty = true; RebuildMesh();
+        }
+
         public void RebuildMesh()   // regenerate vertices + normals from _grid (uvs/colours/indices unchanged); refresh the collider
         {
             if (_grid == null || _mi == null) return;
