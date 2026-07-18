@@ -65,9 +65,15 @@ namespace UnturnedGodot
         Vehicle _localVehicle;
         byte _vehRecovAck;    // the last VehicleRecovEvent counter received -- echoed on every state send
         bool _vehRecovHold;   // frozen by a recov; released after the echo goes out (retail isFrozen, 1 send)
-        // The session's OWN reconciler -- NOT Client.Prediction.Reconciler: NetWorldClient.Tick feeds that
-        // one through ClientPrediction.Reconcile (the headless-walker path), which would consume the snap
-        // onto the dead Prediction.Pos and corrupt the node's correction accounting.
+        // mp-clientauth-foot (v9): walk-recov state -- the counter echo every state send carries, the
+        // pending rollback ShellStep applies in physics context, and the counter the L1 teeth assert on.
+        // In normal play RecovsApplied stays 0 at any RTT: there is no server sim of the owner left to
+        // diverge from, so the ONLY rubber-band left is a genuine envelope violation / server teleport.
+        byte _recovAck;
+        PlayerRecovEvent? _pendingRecov;
+        public long RecovsApplied { get; private set; }
+        // DEAD since the v9 switch (nothing feeds or consumes it -- the owner is client-authoritative);
+        // deleted with the rest of the C1-C3 reconcile stack in the removals commit.
         public readonly PredictionReconciler Reconciler = new PredictionReconciler();
         // C3 rewind+replay (diagnosis §7.2 step 4): the newest misprediction fact from this tick's pump,
         // consumed by ShellStep BEFORE the ack/send; the scratch lists for the unacked input window and
@@ -108,10 +114,15 @@ namespace UnturnedGodot
                 _desyncAlert = $"!! DESYNC detected (system {report.SystemId} @ tick {report.ServerTick}) -- state may be out of sync";
             };
             Client.Connect();
-            // C3: latch the newest misprediction fact per pump (events dispatch inside Client.Tick, which
-            // runs immediately before ShellStep on the same sim tick -- the replay applies there, in
-            // physics context, before the shell node's own _PhysicsProcess)
-            Client.Mispredicted += e => _pendingMisprediction = e;
+            // mp-clientauth-foot (v9): the server rolled our on-foot claim back (envelope violation, or a
+            // server-side teleport delivered as recov). Latch the ack ALWAYS -- the state stream must echo
+            // it even if a seat interleaves; the rollback itself applies in ShellStep (physics context,
+            // before the shell node's own _PhysicsProcess), on foot only.
+            Client.PlayerRecov += e =>
+            {
+                _recovAck = e.RecovCounter;
+                if (_ridingNetId == 0) _pendingRecov = e;
+            };
             DeployableNetSchema.RegisterAll(Client.Deployables.Schema);
             CropNetSchema.RegisterAll(Client.Crops.Schema);   // §3.7: growth stages derive from the synced defs + snapshot tick
             DevConsole.RemoteClient = Client;                 // server-gated cheats: give/xp/skill route over the console command plane (§2.3)
@@ -266,49 +277,32 @@ namespace UnturnedGodot
             if (_ridingNetId != 0) { DriveStep(); return; }
             if (Shell.IsDriving) return;   // the SP direct-drive guard (unreachable in MP -- the seat always latches _ridingNetId first)
 
-            // 1) C3 rewind+replay FIRST (diagnosis §7.2 step 4): the misprediction fact is the ONLY
-            //    sub-snap correction mechanism -- the eased middle-band glide is gone (retail has no
-            //    easing anywhere; corrections are rare, discrete, replay-complete).
-            if (_pendingMisprediction is MispredictionEvent mp)
+            // mp-clientauth-foot (v9): the shell OWNS its on-foot movement -- there is no server sim of
+            // the owner left to diverge from, so there are no corrections in normal play at ANY RTT.
+            // The shell just REPORTS its transform; the server envelope-validates + adopts (the Part A
+            // vehicle model, ServerPlayerAuthority). Recov -- the rubber-band -- is reserved for genuine
+            // envelope violations and server-side teleports.
+            // 1) a server rollback lands FIRST: teleport the shell to the last-good payload (TeleportTo
+            //    resets the interp snapshots, §7 risk 5), re-seed the ballistic velocity, and let this
+            //    very tick's state send carry the counter echo -- the resume claim.
+            if (_pendingRecov is PlayerRecovEvent rc)
             {
-                _pendingMisprediction = null;
-                if (!DisableReplay) ReplayMisprediction(mp);
+                _pendingRecov = null;
+                RecovsApplied++;
+                Shell.TeleportTo(new Vector3(rc.Pos.x, rc.Pos.y, rc.Pos.z));
+                Shell.NetRecovRestore(rc.Vel);
+                GD.Print($"[CLIENT] walk recov #{rc.RecovCounter} -- rolled back to ({rc.Pos.x:0.0},{rc.Pos.y:0.0},{rc.Pos.z:0.0})");
             }
 
-            // 2) consume the newest authoritative own-entity sample (stale/duplicate acks no-op inside).
-            //    Under the dead zone: retail-style ack, zero correction. Over the snap threshold: hard
-            //    adopt (unchanged). The middle band PARKS here -- the server fires a MispredictionEvent
-            //    per over-band write-back, so resolution arrives ~one one-way trip later as a replay,
-            //    not as a per-tick glide.
-            if (Client.Players.TryGetByOwner(Client.PlayerId, out var e))
-            {
-                if (Reconciler.OnAuthoritative(e.LastProcessedInputSeq, e.Pos))
-                {
-                    var delta = Reconciler.TakeAll();   // past 2 m: snap, don't ice-skate
-                    Shell.ApplyNetSnap(new Vector3(delta.x, delta.y, delta.z));   // endpoint = server truth: hard adopt
-                    Reconciler.NoteCorrectionApplied(delta);
-                }
-            }
-
-            // 3) this tick's captured input over the wire (held-keys model), THEN record the
-            //    post-correction TRUE physics position under the sent seq (the Record contract:
-            //    record AFTER the tick's correction/replay, replace semantics, no double-count) --
-            //    since C3 through the replay overload, so the ring holds the full re-steppable input.
-            //    The stance the sim consumed rides in the buttons bits (the mp-inchworm fix): the
-            //    server avatar must integrate at the SAME speed this shell just predicted at.
-            //    C2: the SAME position rides the wire as the claim (retail's clientPosition,
-            //    U3 PlayerInput.cs:867-873/:1607) -- the server ack band adopts it when the avatar
-            //    agrees to within AckBandMeters, so this ack round-trips as exactly rec[seq].
-            float yaw = Shell.RotationDegrees.Y;
-            byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance));
+            // 2) stream this tick's transform (the VehicleState analogue, @50 Hz): position on the exact
+            //    snapshot grid + facing + sim velocity + stance/jump dressing + grounded. An adopted
+            //    claim replicates back bit-exact, so observers render the owner's own view of itself.
             var p = Shell.TruePhysicsPosition;
-            var claim = new UnityEngine.Vector3(p.X, p.Y, p.Z);
-            ushort seq = Client.SendMoveInput(Shell.LastMoveInput.x, Shell.LastMoveInput.y, yaw, buttons, claim);
-            if (seq != 0)
-                Reconciler.Record(seq, claim, Shell.LastMoveInput.x, Shell.LastMoveInput.y, yaw, buttons,
-                                  Shell.MoveSimVelocity, Shell.DetGroundedNow);
+            byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance));
+            Client.SendPlayerState(new UnityEngine.Vector3(p.X, p.Y, p.Z), Shell.RotationDegrees.Y, Shell.LookPitchDegrees,
+                                   Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
 
-            if (NetLog.Enabled) LogReconcileRollupIfDue();
+            if (NetLog.Enabled) LogClientAuthRollupIfDue();
         }
 
         // C3 (diagnosis §7.2 step 4 / retail ClientResimulate, U3 PlayerInput.cs:1268-1346): rewind the
@@ -383,19 +377,10 @@ namespace UnturnedGodot
 
         void DriveStep()
         {
-            // The seat owns the entity (per-tick vehicle teleport) -- the walk reconciler must IDLE, but
-            // its ack CURSOR has to keep tracking: acks in flight when the seat latched land DURING the
-            // drive (the entity's LastProcessedInputSeq froze at the last pre-seat input), and leaving them
-            // unconsumed made the FIRST post-exit walk tick measure that stale seq against a PRE-ENTER
-            // recorded claim -- a garbage ~26 m "error" that snapped the shell clean off the exit spot
-            // (found by net.shell_drive_predicted under WAN, where 2-4 acks are always in flight across
-            // the seat latch). Consume + DISCARD: the cursor stays current, the node is never touched.
-            if (Client.Players.TryGetByOwner(Client.PlayerId, out var me))
-            {
-                Reconciler.OnAuthoritative(me.LastProcessedInputSeq, me.Pos);
-                Reconciler.TakeAll();
-            }
-            _pendingMisprediction = null;   // C3: a walk misprediction in flight when the seat latched is void -- the seat teleport owns the entity
+            // mp-clientauth-foot (v9): a walk recov in flight when the seat latched is void -- the seat
+            // teleport owns the entity (the ACK stays latched, so the post-exit stream still echoes it
+            // and a pre-enter Recovering window on the server clears on the first post-exit claim).
+            _pendingRecov = null;
 
             bool haveRep = Client.Vehicles.TryGet(_ridingNetId, out var rep);
             if (_localVehicle != null && IsInstanceValid(_localVehicle))
@@ -487,32 +472,27 @@ namespace UnturnedGodot
             VehicleView.Suppressed.Remove(netId);   // the puppet view resumes rendering the server's truth
         }
 
-        // ---- CLIENT_PREDICTION_PLAN §3 Phase-0 observability: the client mirror of the server's
-        // "[NET] 1s:" line -- one row per second of how hard the reconciler's rope actually pulled
-        // (applied correction metres, ticks with a live pending error, acks, snaps). This is what
-        // --netlog shows on a real WAN link to confirm the worm numbers live. Zero overhead when
-        // NetLog is off (the call site is gated). ----
-        int _rlTicks; int _rlHotTicks;
-        float _rlCorr; long _rlAcks, _rlSnaps;
+        // ---- observability: the client mirror of the server's "[NET] 1s:" line. Under client-auth the
+        // interesting numbers are the recov count (0 in normal play -- ANY nonzero means the envelope
+        // tripped) and how far the published own-entity lags the shell (~one uplink of claims). This is
+        // what --netlog shows on a real WAN link. Zero overhead when NetLog is off (call site gated). ----
+        int _caTicks; long _caRecovs;
 
-        void LogReconcileRollupIfDue()
+        void LogClientAuthRollupIfDue()
         {
-            if (Reconciler.PendingError != UnityEngine.Vector3.zero) _rlHotTicks++;
-            if (++_rlTicks < NetProtocol.TicksPerSecond) return;
-            float corr = Reconciler.CorrectionAppliedMeters;
-            long acks = Reconciler.AcksApplied, snaps = Reconciler.Snaps;
-            NetLog.Sink($"[NET-CLIENT] 1s: corr {corr - _rlCorr:0.###} m | hot {_rlHotTicks}/{_rlTicks} ticks" +
-                        $" | acks {acks - _rlAcks} | snaps {snaps - _rlSnaps} | pending {Reconciler.PendingError.magnitude:0.###} m");
-            _rlTicks = 0; _rlHotTicks = 0;
-            _rlCorr = corr; _rlAcks = acks; _rlSnaps = snaps;
+            if (++_caTicks < NetProtocol.TicksPerSecond) return;
+            float lag = Client.Players.TryGetByOwner(Client.PlayerId, out var own) && Shell != null && IsInstanceValid(Shell)
+                ? (own.Pos - ToU(Shell.TruePhysicsPosition)).magnitude : 0f;
+            NetLog.Sink($"[NET-CLIENT] 1s: recovs {RecovsApplied - _caRecovs} | own-entity lag {lag:0.###} m");
+            _caTicks = 0; _caRecovs = RecovsApplied;
         }
 
         void SpawnShell(PlayerReplication.PlayerEntity me)
         {
-            // DeterministicGround: the shell and its server avatar must make the SAME grounded decision
-            // (a deterministic spherecast, not each body's own IsOnFloor) or downhill walking rubberbands
-            // -- see PlayerController.DeterministicGround. MP bodies only; SP stays byte-identical.
-            var shell = new PlayerController { CaptureMouse = true, DeterministicGround = true };
+            // mp-clientauth-foot (v9): the MP shell IS the SP player -- no DeterministicGround fork left
+            // (that seam existed so shell and server avatar made the same grounded decision; there is no
+            // server avatar sim anymore). One movement code path, SP-identical feel.
+            var shell = new PlayerController { CaptureMouse = true };
             AddChild(shell);
             // D1: spawn holding the EAGLEFIRE (demo-inventory primary slot) -- the server validates every
             // shot as the default Eaglefire profile (ServerCombat), so client + server agree on rate/ammo;

@@ -1312,6 +1312,35 @@ namespace UnturnedGodot
             _interpReady = true;
         }
 
+        // ---- mp-clientauth-foot seams (wire v9): the shell OWNS its on-foot movement and REPORTS it;
+        // the server envelope-validates and adopts. These are the report/rollback/follower hooks --
+        // only ClientWorldSession + PlayerNetSync call them; SP never constructs those paths. ----
+
+        /// <summary>The grounded state the movement sim consumed on the last physics tick -- rides the
+        /// state stream as dressing, like LastMoveInput/LastJumpInput.</summary>
+        public bool LastGroundedInput;
+        /// <summary>Look pitch in degrees (the camera's X rotation) -- state-stream dressing.</summary>
+        public float LookPitchDegrees => _pitchDeg;
+
+        /// <summary>Server rollback (PlayerRecovEvent): call after TeleportTo(last-good) -- re-seed the
+        /// sim's carried velocity (y = the ballistic DOF; horizontal re-derives from input next tick).</summary>
+        public void NetRecovRestore(UnityEngine.Vector3 simVelocity) => _move.Velocity = simVelocity;
+
+        /// <summary>Follower-body hold (PlayerNetSync): the server body no longer integrates ANY movement
+        /// -- the owner's client owns it, the entity carries the adopted claim, and the sync teleports
+        /// this body onto it every tick. Skips the whole movement tail of _PhysicsProcess.</summary>
+        public bool NetHold;
+
+        /// <summary>Dress the held follower from the adopted claim: stance drives the hitbox capsule (a
+        /// crouched player must be HIT as crouched) and the zombie stealth radius; moving feeds the
+        /// radius's x1.1 modifier.</summary>
+        public void NetHoldPose(EPlayerStance stance, bool moving)
+        {
+            _move.Stance = stance;
+            UpdateHitbox(stance);
+            Moving = moving;
+        }
+
         // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
         public EPlayerStance? ScriptedStance;
         // Likewise forces jump (bypassing Space) -- PlayerNetSync injects the MoveInput v2 jump bit here.
@@ -3054,6 +3083,7 @@ namespace UnturnedGodot
             if (_pdieTest > 0) { _pdieTest -= delta; if (_pdieTest <= 0) { _pdieTest = -1; TakeDamage(9999f); } }
             // below-map kill: Unturned Level.isPointWithinValidHeight = y in [-1024,1024]; fall past the map floor -> die + respawn (covers driving too)
             if (!NetAvatar && !_dead && GlobalPosition.Y < -1030f) { GD.Print("[oob] fell below the map -> killed"); TakeDamage(9999f); }   // NetAvatar: TakeDamage is a no-op (invulnerable) -- gate here too so a pathological fall can't spam the log every tick
+            if (NetHold) return;   // mp-clientauth-foot: a follower body never moves itself -- the entity owns the transform, PlayerNetSync teleports this body onto it
             if (_driving != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; DriveVehicle((float)delta); return; }   // driving: skip on-foot movement (+ pause the render-interp so exiting doesn't smear)
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
@@ -3147,7 +3177,8 @@ namespace UnturnedGodot
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
 
-            StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out _);
+            StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedEntering);
+            LastGroundedInput = groundedEntering;   // the grounded the sim consumed -- state-stream dressing
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
             if (wasAirborne && (DeterministicGround ? _detGrounded : IsOnFloor())) CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
         }

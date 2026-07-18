@@ -5,43 +5,32 @@ using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
-    // Server side of the PLAYER authority split (PEI_CLIENT_PLAN §2.3 / C2), the VehicleNetSync shape:
-    // one headless PlayerController avatar body per REMOTE peer, walking the server's REAL world.
-    //   1. spawns a PlayerController { NetAvatar = true } at each new player entity's spawn (and frees it
-    //      when the entity goes -- disconnects drain through the same scan);
-    //   2. per tick writes back the body's post-physics transform through the existing ServerDrive seam
-    //      (paired with the seq of the input that PRODUCED that position, so lastProcessedInputSeq acks
-    //      stay honest), which marks the entity ExternallyDriven -- ServerStep's flat demo integration
-    //      never touches it again;
-    //   3. then consumes the peer's next queued MoveInput in seq order (yaw + axes + the v2 jump bit + the
-    //      stance bits) through the Scripted* seams -- one per tick from the PlayerReplication jitter
-    //      buffer (the mp-inputbuffer fix), coasting on the last consumed input when the queue starves;
-    //      the body MoveAndSlides on real terrain/objects on its own physics tick.
-    //      Stance MUST ride along (the mp-inchworm fix): the client shell predicts at its stance's speed,
-    //      so the avatar has to integrate at the SAME one -- a sprinting shell against a stand-walking
-    //      avatar grows (SPRINT-STAND)*dt of error every tick and the reconciler drags it back as a lurch.
-    // Seated peers (VehicleHost.IsDriver) are NEVER written back -- the seat teleport owns the entity
-    // (§3.6); the body parks under the seat by FOLLOWING the entity. Any other external entity move
-    // (vehicle-exit teleport, combat respawn, console teleport) is adopted the same way: whenever the
-    // entity's position isn't the one this sync last wrote, the BODY snaps to the ENTITY, never the
-    // reverse -- ServerTeleport stays authoritative over avatar physics.
+    // Server side of the on-foot CLIENT-AUTHORITY model (mp-clientauth-foot, wire v9) -- the
+    // VehicleNetSync hold shape applied to walkers. The server no longer simulates any owner's
+    // movement: the owner's client streams its transform (PlayerStateCommand), the engine-free
+    // ServerPlayerAuthority envelope-validates + adopts it into the entity (ServerDrive), and THIS
+    // sync keeps one physical FOLLOWER body per remote peer teleported onto the entity every tick --
+    // so zombies (sensing/attacks via PlayerRegistry), server ballistics and reach checks still see
+    // a real body at the adopted position. The body is a PlayerController { NetAvatar, NetHold }:
+    // its _PhysicsProcess movement tail never runs; stance/moving dressing comes from the adopted
+    // claim (hitbox capsule + zombie stealth radius). One body, zero divergence -- the pre-v9 avatar
+    // (input consumption, write-back, ack band, misprediction events) is deleted, not bypassed.
+    // Every external entity move (seat teleport, vehicle-exit spot, console teleport, respawn) is
+    // adopted the same way: the body follows the ENTITY, never the reverse. Follows through
+    // TeleportTo (interp snapshots reset + velocity zeroed, §7 risk 5) -- a bare GlobalPosition
+    // write on a live PlayerController is undone by its own interp restore.
     // Ticked between "net.server.sim" and the publish syncs on the world's SimRoot (DedicatedServer).
     public sealed class PlayerNetSync
     {
         readonly NetWorldServer _server;
         readonly Node _host;
 
-        public System.Func<ushort> LocalPlayerId;   // listen-server/loopback local shell owner (null on dedicated) -- its node IS the authority (MpLoopback drives it); never avatar it
+        public System.Func<ushort> LocalPlayerId;   // listen-server/loopback local shell owner (null on dedicated) -- its node IS the authority (MpLoopback drives it); never body it
 
         sealed class Tracked
         {
             public PlayerController Body;
-            public ushort LastInputSeq;                 // seq of the input the body last physics-stepped (pairs with the write-back)
-            public UnityEngine.Vector3 LastDrivenPos;   // what we last wrote (wire-quantized) -- a differing entity pos means someone else teleported it
-            public bool Seated;
-            public bool PairingExact = true;            // C1.5: false while the body's last step was a stale-seq coast/hold -- publishing that position would re-pair an already-acked seq with newer motion (the phantom correction)
-            public UnityEngine.Vector3 ClaimedPos;      // C2: the shell's claimed post-move position for the input the body last stepped (pairs with LastInputSeq)
-            public bool HasClaim;                       // false on coast/hold/substituted ticks and claimless senders -- nothing to adopt
+            public UnityEngine.Vector3 LastPos;   // last entity pos the body was placed at (moving = it changed)
         }
         readonly Dictionary<ushort, Tracked> _tracked = new();
         readonly List<ushort> _stale = new();
@@ -61,7 +50,6 @@ namespace UnturnedGodot
 
         public void Tick()
         {
-            long tick = _server.Session.CurrentTick;
             ushort localId = LocalPlayerId?.Invoke() ?? 0;
 
             foreach (var e in _server.Players.All)
@@ -69,141 +57,32 @@ namespace UnturnedGodot
                 if (e.OwnerPlayerId == localId) continue;
                 if (!_tracked.TryGetValue(e.OwnerPlayerId, out var t))
                 {
-                    // an entity already driven by someone else (a listen-server shell ServerDriving directly,
-                    // the loopback pattern) is not ours to avatar -- adopting it would double-drive the seam
-                    if (e.IsExternallyDriven) continue;
-                    // DeterministicGround: pair of ClientWorldSession.SpawnShell -- avatar + shell must
-                    // make the SAME grounded decision or their vertical integration diverges (rubberband)
-                    var body = new PlayerController { NetAvatar = true, CaptureMouse = false, DeterministicGround = true };
+                    var body = new PlayerController { NetAvatar = true, NetHold = true, CaptureMouse = false };
                     _host.AddChild(body);                       // in the tree FIRST, else GlobalPosition no-ops
                     body.GlobalPosition = ToG(e.Pos);
                     body.RotationDegrees = new Vector3(0f, e.YawDegrees, 0f);
                     body.Spawn = body.GlobalPosition;           // never the default (0,1,0) -- underground on PEI
-                    body.ScriptedInput = UnityEngine.Vector2.zero;   // never fall through to keyboard polling
-                    body.ScriptedJump = false;
-                    body.ScriptedStance = EPlayerStance.STAND;       // wire-driven from the first held input on
-                    t = new Tracked { Body = body, LastDrivenPos = e.Pos };
+                    t = new Tracked { Body = body, LastPos = e.Pos };
                     _tracked[e.OwnerPlayerId] = t;
                 }
                 if (!GodotObject.IsInstanceValid(t.Body)) continue;   // freed externally; the stale sweep below retires it
 
-                // seated: the seat teleport owns the entity (VehicleHost.Step teleports it to the vehicle
-                // every tick; ServerClearInput dropped the held walk input on enter). The body just follows.
-                if (_server.VehicleHost.IsDriver(e.OwnerPlayerId))
-                {
-                    t.Body.GlobalPosition = ToG(e.Pos);
-                    t.Body.Velocity = Vector3.Zero;
-                    t.Body.ScriptedInput = UnityEngine.Vector2.zero;
-                    t.Body.ScriptedJump = false;
-                    t.LastDrivenPos = e.Pos;
-                    t.Seated = true;
-                    t.HasClaim = false;   // C2: any held walk claim predates the seat -- never adopt it
-                    continue;
-                }
-                if (t.Seated || (e.Pos - t.LastDrivenPos).sqrMagnitude > 1e-9f)
-                {
-                    // the entity moved OUTSIDE this sync (vehicle-exit teleport beside the door, combat
-                    // respawn, console teleport): adopt it -- body snaps to entity, write-back next tick.
-                    // Through TeleportTo, NOT a bare GlobalPosition write: _PhysicsProcess restores
-                    // GlobalPosition from _interpCurr before moving (§7 risk 5), so a bare write is UNDONE
-                    // on the body's next tick and the write-back re-asserts the OLD spot onto the entity --
-                    // #27's second act: the console teleport held for one tick, then the avatar dragged the
-                    // player straight back. TeleportTo resets the interp snapshots (and zeroes velocity).
-                    t.Seated = false;
-                    t.Body.TeleportTo(ToG(e.Pos));
-                    t.LastDrivenPos = e.Pos;
-                    t.HasClaim = false;   // C2: the held claim predates the external teleport -- adopting it would fight ServerTeleport (the §7 guard sequencing)
-                }
-                else if (t.PairingExact)
-                {
-                    // 1) authoritative write-back: last tick's post-physics result, under the seq of the
-                    // input that produced it (ServerDrive quantizes + marks ExternallyDriven).
-                    var pos = t.Body.GlobalPosition;
-                    float yaw = t.Body.RotationDegrees.Y;
-                    // C2, the server ack band (retail's sub-2cm ack, U3 PlayerInput.cs:1820-1838): when
-                    // the shell's claimed post-move position for THIS seq sits within AckBandMeters of
-                    // the avatar body's own result -- and within the skew-growth budget -- PUBLISH the
-                    // claim instead of the body position (entity-only adoption): the ack the owner gets
-                    // back is exactly its recorded prediction -> zero correction, and the healthy
-                    // two-solve skew stays server-side, invisible. The BODY is never steered by a claim
-                    // (the first cut nudged it and oscillated -- see ServerTryAdoptClaim's comment); so
-                    // beyond band/budget the body's truth is published and the client corrects, exactly
-                    // as before C2. Adoption lives in THIS branch only, under the same "entity moved
-                    // outside this sync" guard sequencing as ServerTeleport, so it can never fight an
-                    // external teleport.
-                    if (t.HasClaim && _server.Players.ServerTryAdoptClaim(e.OwnerPlayerId, t.ClaimedPos, ToU(pos),
-                                                                          (float)SimClock.FixedDelta, out var adopted))
-                        _server.Players.ServerDrive(e.OwnerPlayerId, adopted, yaw, t.LastInputSeq, tick);
-                    else
-                    {
-                        _server.Players.ServerDrive(e.OwnerPlayerId, ToU(pos), yaw, t.LastInputSeq, tick);
-                        // C3 (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 2, retail's
-                        // SendSimulateMispredictedInputs): a fresh-seq claim OUTSIDE the ack band = the
-                        // band DISENGAGED, a real misprediction -- tell the owner to rewind to this
-                        // body's post-step state and replay its unacked inputs. Fired per over-band
-                        // write-back (the client's dead-zone guard collapses the RTT tail's burst into
-                        // ~one replay); in-band non-adopted ticks (hysteresis converge, budget) stay
-                        // event-quiet -- the healthy path costs zero wire.
-                        if (t.HasClaim)
-                        {
-                            var claim = PlayerReplication.Quantize(t.ClaimedPos);
-                            var body = PlayerReplication.Quantize(ToU(pos));   // exactly what ServerDrive just published
-                            if ((claim - body).magnitude > PlayerReplication.AckBandMeters)
-                            {
-                                var evt = new MispredictionEvent
-                                {
-                                    Seq = t.LastInputSeq, Pos = body, Vel = t.Body.MoveSimVelocity,
-                                    StanceByte = (byte)t.Body.Stance,
-                                    Stamina = (byte)(Mathf.Clamp(t.Body.Stamina, 0f, 1f) * 255f),
-                                };
-                                _server.SendEventTo(e.OwnerPlayerId, NetMessagePak.Pack(ReplicationIds.EventMisprediction, evt.Write));
-                                if (NetLog.Enabled)
-                                    NetLog.Sink($"[NET] misprediction -> player {e.OwnerPlayerId} seq {t.LastInputSeq} ({(claim - body).magnitude:0.###} m over band)");
-                            }
-                        }
-                    }
-                    t.LastDrivenPos = e.Pos;   // ServerDrive just stamped the quantized pos onto the entity
-                }
-                // else (C1.5, the phantom-pairing fix -- found by the plan §3 WAN harness): the body's
-                // last step was a starved-coast/hold tick (TryConsumeInput repeated a stale seq). The
-                // BODY keeps integrating the held intent (the count invariant: a delayed input's tick is
-                // integrated once, when it coasts), but the ENTITY holds the last exact (pos, seq)
-                // pairing -- publishing the coast-advanced position under the already-acked seq made the
-                // jittered 25 Hz snapshot stream show the owner a 1-3-tick "error" that was never real:
-                // the residual WAN inchworm's dominant engine (13.951 m/min of phantom correction on the
-                // wan_walk baseline). Retail never publishes speculated state either: no packet -> no
-                // simulate (U3 PlayerInput.cs). Observers just see this avatar 1-2 ticks stale during a
-                // starve; the next real consume write-back carries the accumulated motion.
+                // the ONE follow rule: body onto entity, whatever moved it (adopted claim, seat teleport,
+                // exit spot, console teleport, respawn). TeleportTo resets interp + zeroes velocity.
+                bool moved = (e.Pos - t.LastPos).sqrMagnitude > 1e-9f;
+                if (moved) t.Body.TeleportTo(ToG(e.Pos));
+                t.Body.RotationDegrees = new Vector3(0f, e.YawDegrees, 0f);
+                t.LastPos = e.Pos;
 
-                // 2) consume this tick's input IN SEQ ORDER (the mp-inputbuffer fix, real Unturned's
-                // serversidePackets model): one dequeue per tick so the avatar integrates the same input
-                // stream, in the same order and count, the shell predicted -- the held-latest model
-                // skipped/re-integrated ticks under jitter and the count gap resolved as the sprint-stop
-                // yank. Starvation coasts on the last consumed input inside TryConsumeInput (bounded by
-                // MaxCoastTicks, then a zero-motion hold -- no ghost-running stale intent); false means
-                // nothing to integrate at all -> stand still (death/enter-vehicle cleared it, or none yet)
-                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp, out bool seqAdvanced))
-                {
-                    t.Body.RotationDegrees = new Vector3(0f, inp.YawDegrees, 0f);
-                    t.Body.ScriptedInput = new UnityEngine.Vector2(inp.MoveX, inp.MoveY);
-                    t.Body.ScriptedJump = inp.Jump;   // held-key semantics (C3): coasts re-present the held bit; a mispredicted takeoff is the client's replay to resolve
-                    t.Body.ScriptedStance = inp.Stance;   // integrate at the stance the shell predicted at (the inchworm fix)
-                    t.LastInputSeq = inp.Seq;
-                    t.PairingExact = seqAdvanced;   // stale-seq coast/hold ticks must not be written back (C1.5)
-                    t.HasClaim = seqAdvanced && inp.HasClaim;   // C2: the claim pairs with a FRESH seq only
-                    t.ClaimedPos = inp.ClaimedPos;
-                }
+                // dressing from the adopted claim: the hitbox capsule must match the CLAIMED stance (a
+                // crouched player is hit as crouched) and the zombie stealth radius reads stance+moving
+                if (_server.PlayerHost.TryGetDrivenState(e.OwnerPlayerId, out var st))
+                    t.Body.NetHoldPose(st.Stance, moved);
                 else
-                {
-                    t.Body.ScriptedInput = UnityEngine.Vector2.zero;
-                    t.Body.ScriptedJump = false;
-                    t.Body.ScriptedStance = EPlayerStance.STAND;
-                    t.PairingExact = true;   // nothing consumed since spawn/clear: the body stands at the last exact pairing
-                    t.HasClaim = false;
-                }
+                    t.Body.NetHoldPose(EPlayerStance.STAND, moved);
             }
 
-            // entities gone (peer disconnected) or bodies freed externally -> retire the avatar
+            // entities gone (peer disconnected) or bodies freed externally -> retire the follower
             _stale.Clear();
             foreach (var kv in _tracked)
                 if (!_server.Players.TryGetByOwner(kv.Key, out _) || !GodotObject.IsInstanceValid(kv.Value.Body))
@@ -215,7 +94,6 @@ namespace UnturnedGodot
             }
         }
 
-        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
         static Vector3 ToG(UnityEngine.Vector3 v) => new Vector3(v.x, v.y, v.z);
     }
 }
