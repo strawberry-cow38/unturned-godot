@@ -24,6 +24,12 @@ namespace UnturnedGodot
         float _pitchDeg;
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
+        // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
+        // puppet in first person (real Unturned lets you look around while driving; the fixed forward gaze made the
+        // default MP ride cam feel stuck). At (0, FpRideGazePitchDeg) this reproduces the SP fixed gaze exactly --
+        // the old LookingAt(eyeL + (0,-0.6,-3.9)) target = atan(-0.6/3.9) below the vehicle's forward.
+        float _rideLookYaw, _rideLookPitch = FpRideGazePitchDeg;
+        const float FpRideGazePitchDeg = -8.75f;
         readonly bool _ugFp = System.Environment.GetEnvironmentVariable("UG_FP") == "1";   // render harness: force 1st-person to screenshot the FP viewmodel
         RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
@@ -1234,6 +1240,7 @@ namespace UnturnedGodot
         public void EnterPuppet(VehiclePuppet pup)
         {
             _riding = pup;
+            _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg;   // FP free-look starts at the classic forward gaze (#37)
             _burstLeft = 0;                                    // entering cancels an in-progress burst, like SP
             _viewmodel?.SetShown(false);
             if (_cam != null) _cam.TopLevel = true;            // free the camera into world space (chase cam)
@@ -1261,6 +1268,12 @@ namespace UnturnedGodot
             LastDriveInput = UnityEngine.Vector2.zero;
             LastHandbrakeInput = false;
         }
+
+        /// <summary>Test seams (L1): set the vehicle-cam look angles directly. The live path is mouse motion in
+        /// _UnhandledInput, which a headless host can't deliver (Input.MouseMode never reads Captured without a
+        /// real display), so the ride-cam tests drive these and assert the camera consumes them.</summary>
+        public void DebugSetRideLook(float yawDeg, float pitchDeg) { _rideLookYaw = yawDeg; _rideLookPitch = pitchDeg; }
+        public void DebugSetDriveOrbit(float yawDeg, float pitchDeg) { _driveCamYaw = yawDeg; _driveCamPitch = pitchDeg; }
 
         // The DriveVehicle shape for a puppet seat: capture drive INTENT only (the session streams it;
         // the server's Vehicle node does the physics) and ride along with the dead-reckoned puppet.
@@ -1790,6 +1803,11 @@ namespace UnturnedGodot
                 {
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
+                }
+                else if (_riding != null)   // FP RIDE free-look (#37): the mouse turns the VIEW while A/D steers the car (real Unturned). MP ride only -- SP FP driving keeps its fixed gaze.
+                {
+                    _rideLookYaw -= mm.Relative.X * MouseSensitivity;
+                    _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
                 }
                 else if (_driving == null && _riding == null)
                 {
@@ -2675,7 +2693,13 @@ namespace UnturnedGodot
             if (_fp)   // first-person from the driver's head, looking forward over the hood (eyeL per-vehicle: tall cabs sit higher so the view clears a long hood)
             {
                 var eye = vt * eyeL;
-                _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
+                if (_riding != null)   // MP ride (#37): FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
+                {
+                    var look = vt.Basis.Orthonormalized() * new Basis(Vector3.Up, Mathf.DegToRad(_rideLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_rideLookPitch));
+                    _cam.GlobalTransform = new Transform3D(look, eye);
+                }
+                else   // SP driving: the classic fixed forward gaze over the hood
+                    _cam.GlobalTransform = new Transform3D(Basis.Identity, eye).LookingAt(vt * (eyeL + new Vector3(0f, -0.6f, -3.9f)), Vector3.Up);
             }
             else            // third-person chase: ORBIT behind the car (mouse yaw/pitch), AUTO-ZOOMED for the vehicle's size (master)
             {
