@@ -15,6 +15,8 @@ namespace UnturnedGodot
         public int TableIndex = 0;
         public int MinItems = 8, MaxItems = 16;
         public string MeshName = "Shelf_1";
+        public bool ShowItems = true;        // open shelves show their loot on the tiers; solid props (fridge/wardrobe) don't
+        public string LabelText = "Store Shelf";
 
         // per-shelf-type tier layout: TierY = shelf-surface heights as fractions of the STANDING AABB; PerTier = item
         // slots across the width; WidthUse = fraction of width used (end margins); FrontZ = how far toward the front face.
@@ -31,10 +33,10 @@ namespace UnturnedGodot
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
-        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f)
+        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf")
         {
             var pr = Prof(meshName);
-            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max };
+            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label };
             parent.AddChild(s);
             s.GlobalTransform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
             return s;
@@ -77,15 +79,18 @@ namespace UnturnedGodot
         protected override void BuildVisual()
         {
             var mesh = ShelfMesh();
+            float top = 2.8f;
             if (mesh != null)
+            {
                 AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = ShelfMat(), Basis = _upright });
-
+                var box = StoodAabb(mesh); top = box.Position.Y + box.Size.Y + 0.3f;   // float the label just above the standing prop (fridge/counter are shorter)
+            }
             AddChild(new Label3D
             {
-                Text = "Store Shelf",
+                Text = LabelText,
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
                 Modulate = new Color(0.8f, 0.85f, 0.95f),
-                PixelSize = 0.007f, Position = new Vector3(0, 2.8f, 0),
+                PixelSize = 0.007f, Position = new Vector3(0, top, 0),
                 NoDepthTest = true, FontSize = 56, OutlineSize = 10,
             });
         }
@@ -103,8 +108,8 @@ namespace UnturnedGodot
                 var item = Assets.makeLoot((ushort)id);
                 if (item != null) { Add(item); ids.Add(id); }
             }
-            DisplayItems(ids);
-            GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {ids.Count} items on tiers");
+            if (ShowItems) DisplayItems(ids);   // open shelves show loot on tiers; solid props hold it hidden (F to see)
+            GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {ids.Count} items{(ShowItems ? " on tiers" : " (F-open)")}");
         }
 
         // place each stored item's real model on a tier slot (static, no physics -- the "neatly placed" display).

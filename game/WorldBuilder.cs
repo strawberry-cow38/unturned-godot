@@ -49,10 +49,16 @@ namespace UnturnedGodot
         // CONTAINERS in singleplayer instead of plain decoration -- a StoreShelf spawns at the placement transform and
         // the decoration mesh is skipped. Registry = object guid -> PEI item table. First pass: the Shelf_1 store shelf
         // (24 placed in the map's shops). Extend the map as more prop->container mappings are dialed in.
-        static readonly System.Collections.Generic.Dictionary<string, (string mesh, int table)> ContainerShelf = new()
+        static readonly System.Collections.Generic.Dictionary<string, (string mesh, int table, bool display, string label)> ContainerShelf = new()
         {
-            ["3d37d6da42a34f19b6b6a25e3ab8eaab"] = ("Shelf_1", 6),    // store gondola (Medium/Business, x24) -> table 6 "Food"
-            ["c2ea9b50d4d640438800b9ff553ec627"] = ("Shelf_0", 21),   // wood/metal shelf (Medium/Furniture, x46) -> table 21 "Civilian Canada"
+            // OPEN-tier shelves -> loot SHOWN on the tiers
+            ["3d37d6da42a34f19b6b6a25e3ab8eaab"] = ("Shelf_1", 6, true, "Store Shelf"),   // store gondola x24 -> Food
+            ["c2ea9b50d4d640438800b9ff553ec627"] = ("Shelf_0", 21, true, "Shelf"),        // wood/metal shelf x46 -> Civilian Canada
+            // SOLID-front props -> plain F-open containers (loot inside, not shown)
+            ["f463c0c6285544ac86845d98a07d73a9"] = ("Shelf_2", 21, false, "Bookcase"),    // bookcase x62 -> Civilian Canada
+            ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", 6, false, "Fridge"),      // fridge x17 -> Food
+            ["8388edfa33b84f78ad7f5d277412433b"] = ("Wardrobe_0", 19, false, "Wardrobe"), // wardrobe x24 -> Cloth
+            ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
         };
 
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
@@ -261,7 +267,7 @@ namespace UnturnedGodot
             {
                 if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
                 if (!LootTables.Loaded) LootTables.Load(mapRoot + "/Spawns/Items.dat");
-                StoreShelf.Spawn(root, new Vector3(F(q[1]), F(q[2]), -F(q[3])), cfg.mesh, cfg.table, 180f - F(q[5]));   // ex=270/ez=0 upright -> yaw only
+                StoreShelf.Spawn(root, new Vector3(F(q[1]), F(q[2]), -F(q[3])), cfg.mesh, cfg.table, 180f - F(q[5]), cfg.display, cfg.label);   // ex=270/ez=0 upright -> yaw only
                 converted++;
                 return true;
             }
