@@ -38,6 +38,7 @@ namespace UnturnedGodot
         bool _boxDragging;         // source: drag over empty ground = marquee box-select
         Vector2 _boxStart;
         MarqueeOverlay _marquee;
+        readonly List<Transform3D> _groupRel = new();   // each selected's transform relative to Primary, captured at gizmo drag-start
 
         public EditorObjects(Editor editor, Node world, EditorCamera cam)
         {
@@ -247,6 +248,21 @@ namespace UnturnedGodot
             GD.Print($"[editor] box-select: {_selection.Count} selected");
         }
 
+        // group-gizmo: the gizmo drives Primary; the rest of the multi-selection rigidly follows its transform delta
+        void BeginGroupDrag()
+        {
+            _groupRel.Clear();
+            if (_selection.Count <= 1 || Primary == null) return;
+            var inv = Primary.GlobalTransform.AffineInverse();
+            foreach (var s in _selection) _groupRel.Add(inv * s.GlobalTransform);
+        }
+        void ApplyGroupDrag()
+        {
+            if (_groupRel.Count != _selection.Count || Primary == null) return;
+            var px = Primary.GlobalTransform;
+            for (int i = 0; i < _selection.Count; i++) if (_selection[i] != Primary) _selection[i].GlobalTransform = px * _groupRel[i];
+        }
+
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Level || _flyCam.Flying) return;   // Level tab only (object placement lives under Level); never while flying (RMB)
@@ -255,7 +271,7 @@ namespace UnturnedGodot
                 var mp = GetViewport().GetMousePosition();
                 if (mb.Pressed)
                 {
-                    if (_gizmo.TryBeginDrag(mp)) return;                                    // grabbed a gizmo axis -> drag
+                    if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); return; }              // gizmo grab -> drag (capture group-relative transforms)
                     if (!TryPlaceOrSelect(mp)) { _boxDragging = true; _boxStart = mp; }     // empty ground -> arm a box drag-select
                 }
                 else if (_gizmo.Dragging) { _gizmo.EndDrag(); PositionMarkers(); }
@@ -263,7 +279,7 @@ namespace UnturnedGodot
             }
             else if (ev is InputEventMouseMotion)
             {
-                if (_gizmo.Dragging) { _gizmo.DragTo(GetViewport().GetMousePosition(), Input.IsKeyPressed(Key.Ctrl)); PositionMarkers(); }   // TransformHandles drag; Ctrl = snap
+                if (_gizmo.Dragging) { _gizmo.DragTo(GetViewport().GetMousePosition(), Input.IsKeyPressed(Key.Ctrl)); ApplyGroupDrag(); PositionMarkers(); }   // TransformHandles drag (+ carry the group); Ctrl = snap
                 else if (_boxDragging) UpdateMarquee(_boxStart, GetViewport().GetMousePosition());   // source marquee drag-select
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
@@ -385,6 +401,13 @@ namespace UnturnedGodot
                 }
                 BoxSelect(new Rect2(Vector2.Zero, new Vector2(100000f, 100000f)), false);   // verify box drag-select: full-viewport rect selects every in-frame prop
                 GD.Print($"[editordemo] box-select all-in-frame: {_selection.Count}");
+                if (_placed.Count > 3)   // verify group-gizmo: moving Primary carries the rest of the selection rigidly
+                {
+                    Select(_placed[2], false); Select(_placed[3], true);
+                    var os = _placed[2].GlobalPosition; BeginGroupDrag();
+                    Primary.GlobalPosition += new Vector3(10f, 0f, 0f); ApplyGroupDrag();
+                    GD.Print($"[editordemo] group-drag: other followed {(_placed[2].GlobalPosition - os).Length():0.#} (expect ~10)");
+                }
                 Select(pr, false);   // single-select the transformed prop for a clean outline in the render
                 _gizmo.LocalSpace = false; CopyTransform();   // verify: global Ctrl+B = position only
                 _gizmo.LocalSpace = true; CopyTransform();    // verify: local Ctrl+B = pos+rot+scale
