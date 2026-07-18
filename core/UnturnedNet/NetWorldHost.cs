@@ -39,6 +39,7 @@ namespace UnturnedGodot.Net
         public readonly CropReplication Crops = new CropReplication();
         public readonly ResourceReplication Resources = new ResourceReplication();
         public readonly ServerVehicles VehicleHost;
+        public readonly ServerPlayerAuthority PlayerHost;   // mp-clientauth-foot (v9): on-foot claims -> envelope -> ServerDrive adopt
         public readonly ServerCombat Combat;
         public readonly ServerTransactions Transactions;
         public readonly SnapshotComposer Composer;
@@ -75,6 +76,12 @@ namespace UnturnedGodot.Net
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             VehicleHost.Register(Commands);
+            // mp-clientauth-foot (v9): the owner's on-foot transform stream -- envelope-validated, then
+            // adopted through ServerDrive (the entity goes ExternallyDriven; ServerStep never integrates
+            // a client-driven owner). Seated peers' walk claims drop at the choke point like MoveInput's.
+            PlayerHost = new ServerPlayerAuthority(Players, CombatState, VehicleHost.IsDriver,
+                                                   () => Session.CurrentTick, SendEventTo);
+            PlayerHost.Register(Commands);
             Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
             Commands.Register<MoveInputPacket>(ReplicationIds.CommandMoveInput, MoveInputPacket.TryRead,
@@ -118,6 +125,7 @@ namespace UnturnedGodot.Net
             {
                 _pendingJoinSnapshots.Remove(peer);   // joined and vanished within the same tick
                 VehicleHost.OnPeerDisconnected(peer.PlayerId);   // frees the seat BEFORE the player entity goes
+                PlayerHost.OnPeerDisconnected(peer.PlayerId);    // the authority window dies with the peer
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 Skills.ServerRemove(peer.PlayerId);
@@ -362,6 +370,9 @@ namespace UnturnedGodot.Net
         // session rewinds to the payload state and replays its unacked inputs (ClientWorldSession).
         // The headless demo walker (ClientPrediction) has no body to replay and ignores it.
         public event System.Action<MispredictionEvent> Mispredicted;
+        // mp-clientauth-foot (v9): the server rolled this owner's on-foot claim back (out of envelope) --
+        // teleport the shell to the payload, re-seed the sim velocity, echo RecovCounter in the state stream
+        public event System.Action<PlayerRecovEvent> PlayerRecov;
 
         // Phase 8 world-state facts (§3.7 -- already applied to the replicas when these fire)
         public event System.Action<CropPlantedEvent> CropPlanted;
@@ -436,6 +447,8 @@ namespace UnturnedGodot.Net
                 e => VehicleRecov?.Invoke(e));   // touches no replica -- the rollback targets the driver's LOCAL vehicle only
             Events.Register<MispredictionEvent>(ReplicationIds.EventMisprediction, MispredictionEvent.TryRead,
                 e => Mispredicted?.Invoke(e));   // touches no replica -- the correction targets the owner's LOCAL shell only (C3 replay)
+            Events.Register<PlayerRecovEvent>(ReplicationIds.EventPlayerRecov, PlayerRecovEvent.TryRead,
+                e => PlayerRecov?.Invoke(e));    // touches no replica -- the rollback targets the owner's LOCAL shell only
             // Phase 8: world-state facts apply straight onto the replicas, then surface for fx/views
             Events.Register<CropPlantedEvent>(ReplicationIds.EventCropPlanted, CropPlantedEvent.TryRead,
                 e => { Crops.ApplyPlanted(e, Applier.LastAppliedServerTick); CropPlanted?.Invoke(e); });
@@ -655,6 +668,28 @@ namespace UnturnedGodot.Net
         }
 
         ushort _vehStateSeq;
+
+        /// <summary>mp-clientauth-foot (v9): the OWNER's on-foot transform stream -- UnreliableSequenced,
+        /// sent by the shell session every tick (50 Hz), latest-wins by Seq server-side. pos/yaw ride the
+        /// SAME quantizers as the player snapshot block, so an adopted claim replicates back bit-exact.
+        /// recovAck echoes the last PlayerRecovEvent counter received (0 = none yet). Returns the seq
+        /// (0 = not connected, nothing sent).</summary>
+        public ushort SendPlayerState(Vector3 pos, float yawDegrees, float pitchDegrees, Vector3 velocity,
+                                      byte buttons, bool grounded, byte recovAck)
+        {
+            if (Session.State != NetSessionState.Connected) return 0;
+            if (++_playerStateSeq == 0) _playerStateSeq = 1;
+            var cmd = new PlayerStateCommand
+            {
+                Seq = _playerStateSeq, RecovAck = recovAck,
+                Pos = pos, YawDegrees = yawDegrees, PitchDegrees = pitchDegrees,
+                LinVel = velocity, Buttons = buttons, Grounded = grounded,
+            };
+            Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandPlayerState, cmd.Write));
+            return cmd.Seq;
+        }
+
+        ushort _playerStateSeq;
 
         public void Disconnect() => Session.Disconnect();
     }

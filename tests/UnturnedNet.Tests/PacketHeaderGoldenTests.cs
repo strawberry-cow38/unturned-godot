@@ -44,8 +44,10 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
-            // Re-goldened for Version=7 (mp-geomfix P3: Accept gained the server's activeHoliday string);
-            // before that Version=6 (mp-predict-a A2: vehicle client authority -- CommandVehicleState 26 +
+            // Re-goldened for Version=9 (mp-clientauth-foot: on-foot client authority -- CommandPlayerState
+            // 27 + EventPlayerRecov 31, MoveInput drops the C2 claim fields; v8 reserved by the pending
+            // owner-vitals branch); before that Version=7 (mp-geomfix P3: Accept gained the server's
+            // activeHoliday string), Version=6 (mp-predict-a A2: vehicle client authority -- CommandVehicleState 26 +
             // EventVehicleRecov 29), Version=5 (mp-predict-c C1: the MoveInput datagram became
             // MoveInputPacket carrying the last 3 inputs), Version=4 (mp-exitfix: VehicleExitedEvent gained
             // the authoritative exit spot), Version=3 (PEI client C2: MoveInput gained the buttons byte) and
@@ -57,7 +59,7 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750708000000000000002800"));
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750908000000000000002800"));
         }
 
         [Test]

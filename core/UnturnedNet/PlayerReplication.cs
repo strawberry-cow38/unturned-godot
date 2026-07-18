@@ -55,6 +55,7 @@ namespace UnturnedGodot.Net
         public const byte CommandPlantCrop = 24;       // Phase 8 (§3.7): consumes the seed item; server owns the growth clock
         public const byte CommandHarvestCrop = 25;     // Phase 8: server checks growth + rolls the AGRICULTURE second yield
         public const byte CommandVehicleState = 26;    // Part A (CLIENT_PREDICTION_PLAN §5.2): the predicted DRIVER's reported vehicle state @25 Hz UnreliableSeq -- envelope-validated at the choke point, then ADOPTED as the vehicle's truth (retail client authority). CommandDriveInput 23 stays registered as the non-predicted fallback.
+        public const byte CommandPlayerState = 27;     // mp-clientauth-foot (wire v9): the OWNER's on-foot transform stream @50 Hz UnreliableSeq -- the vehicle client-authority model applied to walking (PlayerAuthority.cs): envelope-validated, then adopted via ServerDrive. Replaces MoveInput as the shell client's movement wire; MoveInput 1 stays registered for demo walkers/loopback.
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -86,7 +87,8 @@ namespace UnturnedGodot.Net
         public const byte EventResourceHarvested = 27; // Phase 8: tree/resource alive-bit flips by load-order index
         public const byte EventResourceRespawned = 28;
         public const byte EventVehicleRecov = 29;      // Part A: server rollback of an out-of-envelope predicted driver (retail tellRecov, U3 InteractableVehicle.cs:2095-2109) -- ReliableOrdered, driver-unicast
-        public const byte EventMisprediction = 30;     // C3 (PREDICTION_GEOMETRY_DIAGNOSIS §7): rewind+replay correction fact -- fired only when the ack band DISENGAGES (retail SendSimulateMispredictedInputs, U3 PlayerInput.cs:1818-1838); owner-unicast, ReliableOrdered. NOT a NetProtocol.Version break: unknown EventIds are gracefully skipped (EventRegistry.UnknownIdSkipped)
+        public const byte EventMisprediction = 30;     // C3 rewind+replay correction fact -- RETIRED by mp-clientauth-foot (wire v9): with client-authoritative on-foot movement there is no server sim of the owner to mispredict against. Id never reused (append-only registry).
+        public const byte EventPlayerRecov = 31;       // mp-clientauth-foot (wire v9): server rollback of an out-of-envelope on-foot claim (the VehicleRecov 29 shape for walkers) -- ReliableOrdered, owner-unicast; client teleports to the last-good pos, echoes the counter in its state stream
     }
 
     /// <summary>
