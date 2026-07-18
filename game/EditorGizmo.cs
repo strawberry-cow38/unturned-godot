@@ -14,7 +14,9 @@ namespace UnturnedGodot
         Node3D _target;
         int _dragAxis = -1;          // 0=X 1=Y 2=Z; -1 = not dragging
         Vector3 _startPos;
+        Vector3 _dragDir;            // the world-space axis captured at drag start (fixed for the drag)
         float _startDist;
+        public bool LocalSpace;      // source pivotRotation: true = the target's local axes, false = world axes
         readonly Rid[] _arrowRids = new Rid[3];
 
         static readonly Vector3[] Axis = { Vector3.Right, Vector3.Up, new Vector3(0, 0, 1) };   // world X, Y, Z
@@ -48,10 +50,15 @@ namespace UnturnedGodot
             if (target != null) GlobalPosition = target.GlobalPosition;
         }
 
-        public override void _Process(double delta)   // keep a ~constant on-screen size regardless of distance
+        // source pivotRotation: local = the target's (orthonormalized) rotation, global = world axes
+        Basis SpaceBasis => LocalSpace && _target != null ? _target.GlobalTransform.Basis.Orthonormalized() : Basis.Identity;
+
+        public override void _Process(double delta)   // sit at the target, ~constant on-screen size, oriented per space
         {
-            if (!Visible || _cam == null) return;
-            Scale = Vector3.One * Mathf.Max(0.3f, GlobalPosition.DistanceTo(_cam.GlobalPosition) * 0.07f);
+            if (!Visible || _cam == null || _target == null) return;
+            var pos = _target.GlobalPosition;
+            float s = Mathf.Max(0.3f, pos.DistanceTo(_cam.GlobalPosition) * 0.07f);
+            GlobalTransform = new Transform3D(SpaceBasis.Scaled(Vector3.One * s), pos);
         }
 
         // returns true if the click grabbed an axis handle (so the caller skips place/select)
@@ -67,7 +74,8 @@ namespace UnturnedGodot
             if (axis < 0) return false;
             _dragAxis = axis;
             _startPos = _target.GlobalPosition;
-            _startDist = ProjectRayOntoRay(from, dir, _startPos, Axis[axis]);
+            _dragDir = (SpaceBasis * Axis[axis]).Normalized();   // capture the world-space axis (local or global) for this drag
+            _startDist = ProjectRayOntoRay(from, dir, _startPos, _dragDir);
             return true;
         }
 
@@ -76,8 +84,8 @@ namespace UnturnedGodot
             if (_dragAxis < 0 || _target == null) return;
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
-            float delta = ProjectRayOntoRay(from, dir, _startPos, Axis[_dragAxis]) - _startDist;
-            var pos = _startPos + Axis[_dragAxis] * delta;
+            float delta = ProjectRayOntoRay(from, dir, _startPos, _dragDir) - _startDist;
+            var pos = _startPos + _dragDir * delta;
             if (snap) pos = pos.Snapped(Vector3.One);   // 1u grid (source snapPositionInterval)
             _target.GlobalPosition = pos;
             GlobalPosition = pos;

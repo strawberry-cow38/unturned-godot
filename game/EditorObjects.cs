@@ -23,6 +23,7 @@ namespace UnturnedGodot
         readonly Dictionary<string, string> _guidToName = new();   // guid -> mesh name (for loading placements)
         public IReadOnlyList<string> Catalog => _catalog;
         public string PlaceName;   // the prop to place on click; null = select mode
+        public bool GizmoLocalSpace => _gizmo?.LocalSpace ?? false;   // dashboard readout
 
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
         readonly List<Node3D> _placed = new();
@@ -181,6 +182,7 @@ namespace UnturnedGodot
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 if (k.Keycode == Key.Delete || k.Keycode == Key.X) DeleteSelected();   // source: delete the selection
+                else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
                 else if (k.Keycode == Key.Escape) Select(null);
             }
         }
