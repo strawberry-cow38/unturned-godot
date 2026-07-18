@@ -24,7 +24,7 @@ namespace UnturnedGodot
         public IReadOnlyList<string> Catalog => _catalog;
         public string PlaceName;   // the prop to place on click; null = select mode
         public bool GizmoLocalSpace => _gizmo?.LocalSpace ?? false;   // dashboard readout
-        public string GizmoModeText => (_gizmo?.Mode ?? EditorGizmo.EMode.Translate) == EditorGizmo.EMode.Rotate ? "rotate" : "move";
+        public string GizmoModeText => (_gizmo?.Mode ?? EditorGizmo.EMode.Translate) switch { EditorGizmo.EMode.Rotate => "rotate", EditorGizmo.EMode.Scale => "scale", _ => "move" };
 
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
         readonly List<Node3D> _placed = new();
@@ -214,8 +214,10 @@ namespace UnturnedGodot
                 string guid = p.HasMeta("guid") ? (string)p.GetMeta("guid") : "";
                 if (guid.Length == 0) continue;
                 var gp = p.GlobalPosition;
-                var (ex, ey, ez) = DecomposeEuler(p.GlobalTransform.Basis.Orthonormalized());   // live basis -> PEI euler (any gizmo rotation)
-                w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {ex:0.###} {ey:0.###} {ez:0.###} 1 1 1");
+                var b = p.GlobalTransform.Basis;
+                var (ex, ey, ez) = DecomposeEuler(b.Orthonormalized());   // live basis -> PEI euler (any gizmo rotation)
+                var sc = b.Scale;                                          // + gizmo scale (sx sy sz)
+                w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {ex:0.###} {ey:0.###} {ez:0.###} {sc.X:0.###} {sc.Y:0.###} {sc.Z:0.###}");
                 n++;
             }
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
@@ -239,7 +241,10 @@ namespace UnturnedGodot
                 if (p.Length < 10 || !_guidToName.TryGetValue(p[0], out var name)) continue;
                 if (!float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)
                     || !float.TryParse(p[4], out var ex) || !float.TryParse(p[5], out var ey) || !float.TryParse(p[6], out var ez)) continue;
-                Place(name, new Vector3(px, py, -pz), FromEuler(ex, ey, ez));   // gpos = (px,py,-pz); full PEI euler
+                float sx = 1f, sy = 1f, sz = 1f;
+                float.TryParse(p[7], out sx); float.TryParse(p[8], out sy); float.TryParse(p[9], out sz);
+                if (sx == 0f) sx = 1f; if (sy == 0f) sy = 1f; if (sz == 0f) sz = 1f;
+                Place(name, new Vector3(px, py, -pz), FromEuler(ex, ey, ez) * Basis.FromScale(new Vector3(sx, sy, sz)));   // gpos=(px,py,-pz); PEI euler + scale
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} saved props");
@@ -258,13 +263,15 @@ namespace UnturnedGodot
             if (_placed.Count > 0)
             {
                 var pr = _placed[0];
-                pr.GlobalTransform = new Transform3D(pr.GlobalTransform.Basis.Rotated(Vector3.Right, Mathf.DegToRad(24f)).Rotated(Vector3.Up, Mathf.DegToRad(37f)), pr.GlobalPosition);
+                var rb = pr.GlobalTransform.Basis.Orthonormalized().Rotated(Vector3.Right, Mathf.DegToRad(24f)).Rotated(Vector3.Up, Mathf.DegToRad(37f));
+                pr.GlobalTransform = new Transform3D(rb * Basis.FromScale(new Vector3(1.4f, 1.4f, 0.7f)), pr.GlobalPosition);   // arbitrary rotate + non-uniform scale
                 var a = pr.GlobalTransform.Basis.Orthonormalized();
                 var (ex, ey, ez) = DecomposeEuler(a);
                 var re = FromEuler(ex, ey, ez);
                 float err = (a.X - re.X).Length() + (a.Y - re.Y).Length() + (a.Z - re.Z).Length();
-                GD.Print($"[editordemo] euler round-trip err={err:0.####} (ex={ex:0.#} ey={ey:0.#} ez={ez:0.#})");
-                Select(pr); _gizmo.CycleMode();   // rotate-mode rings on the rotated (framed) prop for the render
+                var sc = pr.GlobalTransform.Basis.Scale;
+                GD.Print($"[editordemo] euler round-trip err={err:0.####} (ex={ex:0.#} ey={ey:0.#} ez={ez:0.#}) scale=({sc.X:0.##},{sc.Y:0.##},{sc.Z:0.##})");
+                Select(pr); _gizmo.CycleMode(); _gizmo.CycleMode();   // Translate->Rotate->Scale: show the scale handles on the transformed prop
             }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }

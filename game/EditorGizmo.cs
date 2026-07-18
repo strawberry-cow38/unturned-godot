@@ -3,15 +3,16 @@ using Godot;
 namespace UnturnedGodot
 {
     // Transform gizmo, ported from SDG.Unturned TransformHandles.
-    //   TRANSLATE (EMode.Position/POSITION_AXIS): 3 axis arrows; drag projects the mouse ray onto the axis
-    //     (MathfEx.ProjectRayOntoRay) and moves the target by the axis delta.
-    //   ROTATE (EMode.Rotation): 3 axis rings; drag projects onto the ring tangent -> newAngle = dist*90/viewScale ->
-    //     AngleAxis(newAngle, axis) * startRotation (source line 488-499).
-    // Ctrl = snap (1u translate / 15deg rotate, source snapPositionInterval/snapRotationIntervalDegrees). G toggles
-    // local/global (source pivotRotation). T cycles Translate<->Rotate. Scale handles are a follow-up.
+    //   TRANSLATE (POSITION_AXIS): 3 axis arrows; drag projects the mouse ray onto the axis (ProjectRayOntoRay), move
+    //     by the axis delta.
+    //   ROTATE (ROTATION): 3 axis rings; drag projects onto the ring tangent -> newAngle = dist*90/viewScale ->
+    //     AngleAxis(newAngle, axis) * startRotation (source :488-499).
+    //   SCALE (SCALE_AXIS / SCALE_UNIFORM): 3 axis stalks + a center cube; drag projects onto the scale world-dir ->
+    //     dist = (proj - initial)/viewScale -> newScale = one + localDir*dist (guards dist=-1 -> scale 0) (source :507-529).
+    // Ctrl = snap (1u translate/scale, 15deg rotate). G toggles local/global (pivotRotation). T cycles the mode.
     public partial class EditorGizmo : Node3D
     {
-        public enum EMode { Translate, Rotate }
+        public enum EMode { Translate, Rotate, Scale }
         const uint GizmoLayer = 1u << 8;
         const float RingR = 2.2f;   // ring radius, gizmo-local units
 
@@ -26,17 +27,23 @@ namespace UnturnedGodot
         int _rotAxis = -1;          // rotate drag
         Basis _startBasis;
         Vector3 _rotEdge, _rotTangent, _rotAxisWorld;
-        float _viewScale = 2f;      // ring world radius (rotate angle scale)
+        int _scaleIdx = -1;         // scale drag (0-2 = axis, 3 = uniform)
+        Vector3 _scaleStart, _scaleWorldDir, _scaleLocalDir;
+        Basis _scaleRotBasis;
+        float _scaleInitDist;
+        float _viewScale = 2f;      // ring/handle world radius (rotate + scale distance scale)
 
         readonly Rid[] _arrowRids = new Rid[3];
         readonly Node3D[] _arrows = new Node3D[3];
         readonly Node3D[] _rings = new Node3D[3];
+        readonly Rid[] _scaleRids = new Rid[4];   // 0-2 axis, 3 uniform
+        readonly Node3D[] _scaleH = new Node3D[4];
 
         static readonly Vector3[] Axis = { Vector3.Right, Vector3.Up, new Vector3(0, 0, 1) };
         static readonly Color[] AxisCol = { new(0.92f, 0.22f, 0.22f), new(0.24f, 0.9f, 0.24f), new(0.34f, 0.45f, 1f) };
 
         public EditorGizmo(Camera3D cam) { _cam = cam; }
-        public bool Dragging => _dragAxis >= 0 || _rotAxis >= 0;
+        public bool Dragging => _dragAxis >= 0 || _rotAxis >= 0 || _scaleIdx >= 0;
 
         public override void _Ready()
         {
@@ -56,13 +63,30 @@ namespace UnturnedGodot
                 var rm = new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = RingR - 0.05f, OuterRadius = RingR + 0.05f }, MaterialOverride = mat };
                 if (i == 0) rm.RotationDegrees = new Vector3(0, 0, 90); else if (i == 2) rm.RotationDegrees = new Vector3(90, 0, 0);
                 ring.AddChild(rm); AddChild(ring); _rings[i] = ring;
+                // scale handle (per-axis) -- stalk + cube tip, pickable
+                var sh = new StaticBody3D { CollisionLayer = GizmoLayer, CollisionMask = 0 };
+                sh.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.05f, Height = 1.9f }, MaterialOverride = mat, Position = new Vector3(0, 0.95f, 0) });
+                sh.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.42f, 0.42f, 0.42f) }, MaterialOverride = mat, Position = new Vector3(0, 1.95f, 0) });
+                sh.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.5f, 0.6f, 0.5f) }, Position = new Vector3(0, 1.9f, 0) });
+                if (i == 0) sh.RotationDegrees = new Vector3(0, 0, -90); else if (i == 2) sh.RotationDegrees = new Vector3(90, 0, 0);
+                AddChild(sh); _scaleH[i] = sh; _scaleRids[i] = sh.GetRid();
             }
+            // uniform scale handle -- center cube
+            var uni = new StaticBody3D { CollisionLayer = GizmoLayer, CollisionMask = 0 };
+            var umat = new StandardMaterial3D { AlbedoColor = new Color(0.92f, 0.9f, 0.45f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true };
+            uni.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.5f, 0.5f, 0.5f) }, MaterialOverride = umat });
+            uni.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.55f, 0.55f, 0.55f) } });
+            AddChild(uni); _scaleH[3] = uni; _scaleRids[3] = uni.GetRid();
             Visible = false;
             RefreshVis();
         }
 
-        void RefreshVis() { for (int i = 0; i < 3; i++) { _arrows[i].Visible = Mode == EMode.Translate; _rings[i].Visible = Mode == EMode.Rotate; } }
-        public void CycleMode() { Mode = Mode == EMode.Translate ? EMode.Rotate : EMode.Translate; RefreshVis(); }
+        void RefreshVis()
+        {
+            for (int i = 0; i < 3; i++) { _arrows[i].Visible = Mode == EMode.Translate; _rings[i].Visible = Mode == EMode.Rotate; _scaleH[i].Visible = Mode == EMode.Scale; }
+            _scaleH[3].Visible = Mode == EMode.Scale;
+        }
+        public void CycleMode() { Mode = (EMode)(((int)Mode + 1) % 3); RefreshVis(); }
 
         Basis SpaceBasis => LocalSpace && _target != null ? _target.GlobalTransform.Basis.Orthonormalized() : Basis.Identity;
 
@@ -85,14 +109,29 @@ namespace UnturnedGodot
             var pivot = _target.GlobalPosition;
             if (Mode == EMode.Translate)
             {
-                var q = new PhysicsRayQueryParameters3D { From = from, To = from + dir * 5000f, CollisionMask = GizmoLayer };
-                var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
-                if (hit.Count == 0) return false;
-                int axis = System.Array.IndexOf(_arrowRids, (Rid)hit["rid"]);
+                int axis = PickCollider(from, dir, _arrowRids);
                 if (axis < 0) return false;
                 _dragAxis = axis; _startPos = pivot;
                 _dragDir = (SpaceBasis * Axis[axis]).Normalized();
                 _startDist = ProjectRayOntoRay(from, dir, _startPos, _dragDir);
+                return true;
+            }
+            if (Mode == EMode.Scale)
+            {
+                int idx = PickCollider(from, dir, _scaleRids);
+                if (idx < 0) return false;
+                _scaleIdx = idx;
+                _scaleRotBasis = _target.GlobalTransform.Basis.Orthonormalized();
+                _scaleStart = _target.GlobalTransform.Basis.Scale;
+                if (idx < 3) { _scaleLocalDir = Axis[idx]; _scaleWorldDir = (SpaceBasis * Axis[idx]).Normalized(); }
+                else   // uniform: drag along the camera-facing plane (source SCALE_UNIFORM)
+                {
+                    _scaleLocalDir = Vector3.One;
+                    var camF = -_cam.GlobalTransform.Basis.Z;
+                    var h = new Plane(camF, pivot).IntersectsRay(from, dir);
+                    _scaleWorldDir = h != null ? (((Vector3)h) - pivot).Normalized() : (SpaceBasis * Vector3.Right).Normalized();
+                }
+                _scaleInitDist = ProjectRayOntoRay(from, dir, pivot, _scaleWorldDir);
                 return true;
             }
             // rotate: pick the ring whose plane-hit radius is closest to the ring radius
@@ -114,6 +153,13 @@ namespace UnturnedGodot
             return true;
         }
 
+        int PickCollider(Vector3 from, Vector3 dir, Rid[] rids)
+        {
+            var q = new PhysicsRayQueryParameters3D { From = from, To = from + dir * 5000f, CollisionMask = GizmoLayer };
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
+            return hit.Count == 0 ? -1 : System.Array.IndexOf(rids, (Rid)hit["rid"]);
+        }
+
         public void DragTo(Vector2 screen, bool snap)
         {
             var from = _cam.ProjectRayOrigin(screen);
@@ -131,9 +177,18 @@ namespace UnturnedGodot
                 if (snap) ang = Mathf.Round(ang / 15f) * 15f;                                          // snapRotationIntervalDegrees 15
                 _target.GlobalTransform = new Transform3D(_startBasis.Rotated(_rotAxisWorld, Mathf.DegToRad(ang)), _target.GlobalPosition);
             }
+            else if (_scaleIdx >= 0)
+            {
+                float dist = (ProjectRayOntoRay(from, dir, _target.GlobalPosition, _scaleWorldDir) - _scaleInitDist) / _viewScale;   // source :509-510
+                if (snap) dist = Mathf.Round(dist);
+                if (Mathf.Abs(dist + 1f) < 0.001f) return;   // source: don't let a scale axis hit 0
+                var f = Vector3.One + _scaleLocalDir * dist;
+                var ns = new Vector3(Mathf.Max(0.01f, _scaleStart.X * f.X), Mathf.Max(0.01f, _scaleStart.Y * f.Y), Mathf.Max(0.01f, _scaleStart.Z * f.Z));
+                _target.GlobalTransform = new Transform3D(_scaleRotBasis * Basis.FromScale(ns), _target.GlobalPosition);
+            }
         }
 
-        public void EndDrag() { _dragAxis = -1; _rotAxis = -1; }
+        public void EndDrag() { _dragAxis = -1; _rotAxis = -1; _scaleIdx = -1; }
 
         // MathfEx.ProjectRayOntoRay: scalar distance along ray B (o2,d2) of its closest point to ray A (o1,d1)
         static float ProjectRayOntoRay(Vector3 o1, Vector3 d1, Vector3 o2, Vector3 d2)
