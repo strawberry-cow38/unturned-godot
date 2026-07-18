@@ -461,13 +461,30 @@ namespace UnturnedGodot.Net
             // already integrated by the starved coasts -- claim them (and any lost seq's hole among
             // them) without a second integration. A jump past the substitutable window means the coasts
             // stood in for nothing recoverable: void the debt and let the adopt below handle it.
+            bool repaidDequeue = false, repaidHole = false;
             while (q != null && q.Count > 0 && e.CoastDebt > 0)
             {
                 int gap = (ushort)(q.Peek().Seq - e.LastConsumedSeq);
                 if (gap > MaxGapCoastTicks + 1) { e.CoastDebt = 0; break; }
-                if (gap > 1) e.LastConsumedSeq++;
-                else { var pre = q.Dequeue(); e.LastConsumedSeq = pre.Seq; e.AppliedInput = pre; }
+                if (gap > 1) { e.LastConsumedSeq++; repaidHole = true; repaidDequeue = false; }
+                else { var pre = q.Dequeue(); e.LastConsumedSeq = pre.Seq; e.AppliedInput = pre; repaidDequeue = true; repaidHole = false; }
                 e.CoastDebt--;
+            }
+            // C1.6 (the §3 harness's second find): when repayment drains the queue EMPTY, the last
+            // repaid input doubles as THIS tick's consume. Without this, a multi-tick starve (a latency
+            // step, a burst) parked the driver in a PERMANENT stale regime: every later tick's single
+            // arrival was repaid ack-only, the consume then re-starved (debt re-armed, seq repeat), so
+            // write-backs stayed suppressed for whole seconds and the owner's corrections arrived as
+            // batched 0.2-0.4 m lumps instead of a drizzle. The integrated axes are IDENTICAL either way
+            // (the starved coast would have integrated this very input); what changes is bookkeeping --
+            // the seq advances (exact pairing, write-back resumes) and the debt actually drains.
+            if ((repaidDequeue || repaidHole) && q.Count == 0)
+            {
+                input = e.AppliedInput;
+                if (repaidHole) { input.Seq = e.LastConsumedSeq; input.HasClaim = false; }
+                e.CoastTicks = 0;
+                seqAdvanced = true;
+                return true;
             }
             if (q == null || q.Count == 0)
             {

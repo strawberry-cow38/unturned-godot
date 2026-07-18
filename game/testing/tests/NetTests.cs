@@ -2669,8 +2669,11 @@ namespace UnturnedGodot.Testing
             // correction -- the ~LAN level. Pre-C1/C2 (main @ faee89f, this exact rig/seed) this measured
             // corrApplied 6.511 m over 1400 ticks = 13.951 m/min, maxPending 0.182 m, 4/1400 hot ticks:
             // a constant sub-0.15 m correction drizzle plus a tug at every corner/stop while simply
-            // walking -- strawberry's residual worm, reproduced at simulated RTT.
-            T.Check($"the WAN walk cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 13.951)", corrPerMin < 0.5f);
+            // walking -- strawberry's residual worm, reproduced at simulated RTT. The fix ladder, same
+            // rig/seed: post-C1 (input redundancy) 11.784 -- loss holes were a minor engine; post-C1.5
+            // (no mispaired write-backs) 1.906; post-C1.6 + C2 (repay-drain exit + the ack band) 0.570
+            // m/min, maxPending 0.117, 0 hot ticks. 24x under the pre-fix number.
+            T.Check($"the WAN walk cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 13.951, post-fix 0.570)", corrPerMin < 2f);
             T.Check($"no correction spike above 0.25 m (max pending {maxPend:0.###} m -- pre-fix 0.182)", maxPend < 0.25f);
             T.Check($"ZERO snaps on a WAN walk ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);
             T.Check($"DESYNC-QUIET across the WAN walk ({desyncs} fired)", desyncs == 0);
@@ -2773,8 +2776,11 @@ namespace UnturnedGodot.Testing
             // m/min, maxPending 0.358 m, 52/1100 hot ticks, worst stop-window 0.330 m (per-cycle stop
             // corrections 0.088 / 0.249 / 0.262 / 0.330 / 0.140 -- the sprint-stop yank, back at WAN
             // cadence): a rope-tug on nearly every direction change -- the inchworm at full maneuvering
-            // cadence.
-            T.Check($"WAN sprint-weave cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 30.644)", corrPerMin < 2f);
+            // cadence. The fix ladder, same rig/seed: post-C1 36.758 (loss holes were not the engine);
+            // post-C1.5 2.675; post-C1.6 + C2 1.041 m/min, maxPending 0.119, 0 hot ticks, worst
+            // stop-window 0.000 m -- every hard stop lands with literally zero correction. 29x under
+            // the pre-fix number.
+            T.Check($"WAN sprint-weave cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 30.644, post-fix 1.041)", corrPerMin < 2f);
             T.Check($"no correction spike above 0.25 m (max pending {maxPend:0.###} m -- pre-fix 0.358)", maxPend < 0.25f);
             T.Check($"every stop landed soft (worst stop-window corr {worstStopCorr:0.###} m -- pre-fix 0.330)", worstStopCorr < 0.15f);
             T.Check($"ZERO snaps across the WAN weave ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);

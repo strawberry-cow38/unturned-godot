@@ -336,6 +336,43 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void RepayDrainsQueue_LastRepaidBecomesThisTicksConsume_NoPermanentStaleRegime()
+        {
+            // C1.6 (the §3 WAN harness's second find): after a multi-tick starve (a latency step, a
+            // burst), arrivals resume ONE PER TICK -- and pre-fix the repay loop ate each tick's single
+            // arrival ack-only, the consume then re-starved (debt re-armed, stale seq repeated), so the
+            // driver sat in a PERMANENT coast regime: no fresh (pos, seq) pairings, write-backs
+            // suppressed for whole seconds, the owner's corrections arriving as batched 0.2-0.4 m lumps
+            // (the residual WAN worm after C1.5). Post-fix: when repayment drains the queue EMPTY, the
+            // last repaid input doubles as THIS tick's consume -- same integrated axes, but the seq
+            // ADVANCES (exact pairing, write-back resumes) and the debt actually drains.
+            PrimeWith(1, 2, 3);
+            _players.TryConsumeInput(Owner, out _);      // 2
+            _players.TryConsumeInput(Owner, out _);      // 3 -> queue empty
+            for (int i = 0; i < 3; i++)                  // the starve gap: 3 coast ticks (debt 3)
+            {
+                Assert.That(_players.TryConsumeInput(Owner, out var coast, out bool adv), Is.True);
+                Assert.That(coast.Seq, Is.EqualTo(3), "the gap coasts repeat the stale seq");
+                Assert.That(adv, Is.False);
+            }
+            // arrivals resume 1/tick (seqs 4..7). Each repay-drained tick must return a FRESH seq
+            // (pre-fix: adv stayed false and the seq repeated -- the permanent stale regime).
+            for (ushort s = 4; s <= 7; s++)
+            {
+                _players.ServerQueueInput(Owner, In(s));
+                Assert.That(_players.TryConsumeInput(Owner, out var inp, out bool adv), Is.True);
+                Assert.That(inp.Seq, Is.EqualTo(s), $"the 1/tick arrival {s} is consumed the tick it arrives");
+                Assert.That(adv, Is.True, $"seq {s} is a FRESH pairing -- the write-back/ack stream resumes immediately");
+                Assert.That(inp.MoveY, Is.EqualTo(1f), "and it integrates real motion");
+            }
+            // the debt drained during the 1/tick phase (3 repay-drain ticks), so a NEW gap coasts
+            // fresh instead of instantly ack-eating the next arrival
+            Assert.That(_players.TryConsumeInput(Owner, out var c2, out bool adv2), Is.True);
+            Assert.That(c2.Seq, Is.EqualTo(7), "a new starve coasts on the latest input again");
+            Assert.That(adv2, Is.False);
+        }
+
+        [Test]
         public void SparseSender_SingleInput_StillConsumedAfterPrimeWait()
         {
             // a harness that sends ONE input and relies on the held model must not stall behind the prime
