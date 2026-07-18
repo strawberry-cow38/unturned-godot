@@ -94,7 +94,7 @@ namespace UnturnedGodot
                 ESpeciality.FLANKER => 6f,
                 _ => 5.5f,
             };
-            // the tint now MULTIPLIES the baked ZombieClothing skin atlas (skin + shirt + pants + face) -> NORMAL
+            // the tint now MULTIPLIES the baked ZombieClothing skin atlas (skin + shirt + pants) -> NORMAL
             // zombies show natural; the visually-distinct specials get a colour accent (burner charred, acid toxic).
             _tint = Speciality switch
             {
