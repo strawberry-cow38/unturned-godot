@@ -2573,4 +2573,221 @@ namespace UnturnedGodot.Testing
             yield return Ticks(1);
         }
     }
+
+    // ---- CLIENT_PREDICTION_PLAN §3: the injected-RTT WAN harness (Phase 0 of Part C) ----
+    // The named simulated-WAN link profiles, so "does this fix the 100 ms worm" is a number against a
+    // fixed profile, not a vibe. At the 50 Hz tick (1 tick = 20 ms): Wan ~= 120-200 ms RTT with jitter +
+    // 2% loss per direction (strawberry's ~100+ ms WAN); HarshWan ~= 200-280 ms + 5% loss (the bad-day
+    // ceiling). The ReorderJitterTicks matter as much as the latency: a jitter-overtaken datagram is
+    // dropped stale by the UnreliableSequenced channel, so pre-C1 every overtake was a HOLE in the
+    // MoveInput stream the server had to guess across (coast/substitute on held axes) -- the residual
+    // high-RTT inchworm's main engine (plan §4.1 H1).
+    static class WanLink
+    {
+        public static void Wan(MemNetwork net)
+        {
+            net.ClientToServer.LatencyTicks = 3; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.02;
+            net.ServerToClient.LatencyTicks = 3; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.02;
+        }
+
+        public static void HarshWan(MemNetwork net)
+        {
+            net.ClientToServer.LatencyTicks = 5; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.05;
+            net.ServerToClient.LatencyTicks = 5; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.05;
+        }
+
+        public static void Clean(MemNetwork net)
+        {
+            net.ClientToServer.LatencyTicks = 0; net.ClientToServer.ReorderJitterTicks = 0; net.ClientToServer.LossProbability = 0;
+            net.ServerToClient.LatencyTicks = 0; net.ServerToClient.ReorderJitterTicks = 0; net.ServerToClient.LossProbability = 0;
+        }
+    }
+
+    // §3 Phase-0 baseline 1 -- the WAN patrol walk: WALK-stance legs with corner turns (yaw steps) and
+    // brief stops, over the Wan profile, for ~28 simulated seconds. The metric is the reconciler's
+    // CorrectionAppliedMeters normalized to a simulated minute: how many metres of rope-tug the owner
+    // FELT. On the pre-C1/C2 code this FAILS -- the teeth baseline for the whole phase.
+    public class NetShellWanWalk : GameTest
+    {
+        public override string Name => "net.shell_wan_walk";
+        public override double TimeoutSimSeconds => 90;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(70707);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "wanwalker" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(25);   // settle the spawn transient before the link degrades
+
+            // the WAN link comes up, then a patrol walk: 8 legs of [walk forward 3 s, stop 0.5 s, turn
+            // 90 deg] -- the everyday walk shape (movement, corners, pauses), nothing adversarial
+            WanLink.Wan(net);
+            float corrStart = sess.Reconciler.CorrectionAppliedMeters;
+            long snapsStart = sess.Reconciler.Snaps;
+            float maxPend = 0f;
+            int hotTicks = 0, windowTicks = 0;
+            float yaw = 0f;
+            for (int leg = 0; leg < 8; leg++)
+            {
+                sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                for (int i = 0; i < 150; i++)
+                {
+                    yield return Ticks(1);
+                    windowTicks++;
+                    float p = sess.Reconciler.PendingError.magnitude;
+                    maxPend = Mathf.Max(maxPend, p);
+                    if (p > 0.15f) hotTicks++;
+                }
+                sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                for (int i = 0; i < 25; i++) { yield return Ticks(1); windowTicks++; if (sess.Reconciler.PendingError.magnitude > 0.15f) hotTicks++; }
+                yaw += 90f;
+                sess.Shell.RotationDegrees = new Vector3(0f, yaw, 0f);
+            }
+            float corr = sess.Reconciler.CorrectionAppliedMeters - corrStart;
+            float corrPerMin = corr * (3000f / windowTicks);
+            GD.Print($"[wan-walk] {windowTicks} ticks: corrApplied={corr:0.###} m ({corrPerMin:0.###} m/min), maxPending={maxPend:0.###} m, hotTicks={hotTicks}/{windowTicks}, snaps={sess.Reconciler.Snaps - snapsStart}");
+
+            // THE BAR (the worm is dead): a walking minute at WAN RTT costs the owner almost no visible
+            // correction -- the ~LAN level. Pre-C1/C2 (main @ faee89f, this exact rig/seed) this measured
+            // corrApplied 6.511 m over 1400 ticks = 13.951 m/min, maxPending 0.182 m, 4/1400 hot ticks:
+            // a constant sub-0.15 m correction drizzle plus a tug at every corner/stop while simply
+            // walking -- strawberry's residual worm, reproduced at simulated RTT.
+            T.Check($"the WAN walk cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 13.951)", corrPerMin < 0.5f);
+            T.Check($"no correction spike above 0.25 m (max pending {maxPend:0.###} m -- pre-fix 0.182)", maxPend < 0.25f);
+            T.Check($"ZERO snaps on a WAN walk ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);
+            T.Check($"DESYNC-QUIET across the WAN walk ({desyncs} fired)", desyncs == 0);
+
+            // settle on a clean link -> exact wire-grid convergence, the standard closing bar
+            WanLink.Clean(net);
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the walk (err {err:0.###} m)", own && err < 0.05f);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // §3 Phase-0 baseline 2 -- WAN sprint with direction changes and stops: the maneuvering shape the
+    // §4.1 H1 hypothesis says the worm feeds on (every jitter-overtaken/lost MoveInput during an input
+    // TRANSITION makes the server integrate motion the client never predicted; at sprint speed one wrong
+    // tick is ~0.14 m). Five cycles of sprint-forward / strafe-weave / hard-stop over the Wan profile.
+    // On the pre-C1/C2 code this FAILS -- the second teeth baseline.
+    public class NetShellWanSprintTurns : GameTest
+    {
+        public override string Name => "net.shell_wan_sprint_turns";
+        public override double TimeoutSimSeconds => 90;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(80808);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "wansprinter" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(25);
+
+            WanLink.Wan(net);
+            float corrStart = sess.Reconciler.CorrectionAppliedMeters;
+            long snapsStart = sess.Reconciler.Snaps;
+            float maxPend = 0f, worstStopCorr = 0f;
+            int hotTicks = 0, windowTicks = 0;
+            // one weave segment: sprint at these axes for 30 ticks each -- direction changes every 0.6 s,
+            // the strafe-dodge cadence of real play
+            var weave = new[]
+            {
+                new UnityEngine.Vector2(0f, 1f), new UnityEngine.Vector2(1f, 1f), new UnityEngine.Vector2(0f, 1f),
+                new UnityEngine.Vector2(-1f, 1f), new UnityEngine.Vector2(-1f, 0f), new UnityEngine.Vector2(0f, 1f),
+            };
+            for (int cycle = 0; cycle < 5; cycle++)
+            {
+                sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+                foreach (var axes in weave)
+                {
+                    sess.Shell.ScriptedInput = axes;
+                    for (int i = 0; i < 30; i++)
+                    {
+                        yield return Ticks(1);
+                        windowTicks++;
+                        float p = sess.Reconciler.PendingError.magnitude;
+                        maxPend = Mathf.Max(maxPend, p);
+                        if (p > 0.15f) hotTicks++;
+                    }
+                }
+                // hard stop -- where any accumulated integration gap resolves onto a stationary shell
+                sess.Shell.ScriptedStance = null;
+                sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                float stopCorrBefore = sess.Reconciler.CorrectionAppliedMeters;
+                for (int i = 0; i < 40; i++)
+                {
+                    yield return Ticks(1);
+                    windowTicks++;
+                    float p = sess.Reconciler.PendingError.magnitude;
+                    maxPend = Mathf.Max(maxPend, p);
+                    if (p > 0.15f) hotTicks++;
+                }
+                float stopCorr = sess.Reconciler.CorrectionAppliedMeters - stopCorrBefore;
+                worstStopCorr = Mathf.Max(worstStopCorr, stopCorr);
+                GD.Print($"[wan-sprint] cycle {cycle}: stop-window corrApplied={stopCorr:0.###} m");
+            }
+            float corr = sess.Reconciler.CorrectionAppliedMeters - corrStart;
+            float corrPerMin = corr * (3000f / windowTicks);
+            GD.Print($"[wan-sprint] {windowTicks} ticks: corrApplied={corr:0.###} m ({corrPerMin:0.###} m/min), maxPending={maxPend:0.###} m, hotTicks={hotTicks}/{windowTicks}, worstStopCorr={worstStopCorr:0.###} m, snaps={sess.Reconciler.Snaps - snapsStart}");
+
+            // THE BAR: sprint-maneuvering a WAN minute stays at ~LAN correction levels. Pre-C1/C2 (main @
+            // faee89f, this exact rig/seed) this measured corrApplied 11.236 m over 1100 ticks = 30.644
+            // m/min, maxPending 0.358 m, 52/1100 hot ticks, worst stop-window 0.330 m (per-cycle stop
+            // corrections 0.088 / 0.249 / 0.262 / 0.330 / 0.140 -- the sprint-stop yank, back at WAN
+            // cadence): a rope-tug on nearly every direction change -- the inchworm at full maneuvering
+            // cadence.
+            T.Check($"WAN sprint-weave cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 30.644)", corrPerMin < 2f);
+            T.Check($"no correction spike above 0.25 m (max pending {maxPend:0.###} m -- pre-fix 0.358)", maxPend < 0.25f);
+            T.Check($"every stop landed soft (worst stop-window corr {worstStopCorr:0.###} m -- pre-fix 0.330)", worstStopCorr < 0.15f);
+            T.Check($"ZERO snaps across the WAN weave ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);
+            T.Check($"DESYNC-QUIET across the WAN weave ({desyncs} fired)", desyncs == 0);
+
+            // settle on a clean link -> exact wire-grid convergence, the standard closing bar
+            WanLink.Clean(net);
+            yield return Ticks(100);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the weave (err {err:0.###} m)", own && err < 0.05f);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
 }

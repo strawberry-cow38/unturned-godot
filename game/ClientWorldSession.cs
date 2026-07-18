@@ -218,6 +218,28 @@ namespace UnturnedGodot
                 var p = Shell.TruePhysicsPosition;
                 Reconciler.Record(seq, new UnityEngine.Vector3(p.X, p.Y, p.Z));
             }
+
+            if (NetLog.Enabled) LogReconcileRollupIfDue();
+        }
+
+        // ---- CLIENT_PREDICTION_PLAN §3 Phase-0 observability: the client mirror of the server's
+        // "[NET] 1s:" line -- one row per second of how hard the reconciler's rope actually pulled
+        // (applied correction metres, ticks with a live pending error, acks, snaps). This is what
+        // --netlog shows on a real WAN link to confirm the worm numbers live. Zero overhead when
+        // NetLog is off (the call site is gated). ----
+        int _rlTicks; int _rlHotTicks;
+        float _rlCorr; long _rlAcks, _rlSnaps;
+
+        void LogReconcileRollupIfDue()
+        {
+            if (Reconciler.PendingError != UnityEngine.Vector3.zero) _rlHotTicks++;
+            if (++_rlTicks < NetProtocol.TicksPerSecond) return;
+            float corr = Reconciler.CorrectionAppliedMeters;
+            long acks = Reconciler.AcksApplied, snaps = Reconciler.Snaps;
+            NetLog.Sink($"[NET-CLIENT] 1s: corr {corr - _rlCorr:0.###} m | hot {_rlHotTicks}/{_rlTicks} ticks" +
+                        $" | acks {acks - _rlAcks} | snaps {snaps - _rlSnaps} | pending {Reconciler.PendingError.magnitude:0.###} m");
+            _rlTicks = 0; _rlHotTicks = 0;
+            _rlCorr = corr; _rlAcks = acks; _rlSnaps = snaps;
         }
 
         void SpawnShell(PlayerReplication.PlayerEntity me)
