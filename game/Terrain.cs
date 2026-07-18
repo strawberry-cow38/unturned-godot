@@ -13,6 +13,8 @@ namespace UnturnedGodot
         const int RES = 257;
         const int SRES = 256, SLAYERS = 8;   // Landscape SPLATMAP_RESOLUTION + SPLATMAP_LAYERS (per-texel layer weights, 1 byte each)
         const float TILE_SIZE = 1024f, TILE_HEIGHT = 2048f, UNIT = 4f;
+        const float BRUSH_FALLOFF = 0.5f;   // source Devkit brushFalloff: full strength inside this radius fraction, then linear to 0 at the edge
+        static float BrushAlpha(float normDist) => normDist <= BRUSH_FALLOFF ? 1f : (1f - normDist) / (1f - BRUSH_FALLOFF);   // source TerrainEditor.getBrushAlpha
 
         // The 8 shared terrain material layers, colored as a stand-in until real splatmap texture blending. Inferred from
         // the PEI splatmap layout (layer 5 = ocean/water dominant, 2 = grass/ground, 3 = the road network, 0/7 = forest).
@@ -57,7 +59,7 @@ void fragment() {
 }
 ";
 
-        static ShaderMaterial BuildTerrainMaterial(Image splat0, Image splat1)
+        static ShaderMaterial BuildTerrainMaterial(Texture2D splat0, Texture2D splat1)
         {
             var imgs = new Godot.Collections.Array<Image>();
             for (int l = 0; l < SLAYERS; l++)
@@ -73,8 +75,8 @@ void fragment() {
 
             var mat = new ShaderMaterial { Shader = new Shader { Code = TERRAIN_SHADER } };
             mat.SetShaderParameter("albedos", arr);
-            mat.SetShaderParameter("splat0", ImageTexture.CreateFromImage(splat0));
-            mat.SetShaderParameter("splat1", ImageTexture.CreateFromImage(splat1));
+            mat.SetShaderParameter("splat0", splat0);
+            mat.SetShaderParameter("splat1", splat1);
             mat.SetShaderParameter("tileWorld", 16f);
             return mat;
         }
@@ -83,6 +85,29 @@ void fragment() {
         float[,] _grid; int _gw, _gh; float _bx, _bz;
         byte[,] _dom; int _dw, _dh;   // dominant splatmap layer per texel -> SampleDominantLayer (grassy-spawn picking)
         MeshInstance3D _mi; StaticBody3D _collider; Vector2[] _uvs; Color[] _cols; int[] _idx;   // editor terrain sculpt: rebuild the mesh + collider from _grid
+        Image _s0Img, _s1Img; ImageTexture _s0Tex, _s1Tex;   // editor splat paint: the live 8-layer weight textures (splat0=layers 0-3, splat1=4-7)
+
+        // Paint the splat map: set every texel in a world-radius brush to a single dominant layer, then re-upload the
+        // splat textures (the shader is winner-take-all, so one layer at 1.0 = that material shows). Also updates _dom
+        // (gameplay's SampleDominantLayer). Layer 0 Dirt / 1 Wheat / 2 Grass / 3 Gravel / 4 Road / 5 Sand / 6 Snow / 7 Stone.
+        public void PaintSplat(float worldX, float worldZ, float radiusWorld, int layer)
+        {
+            if (_dom == null || _s0Img == null) return;
+            float cx = (worldX - _bx) / UNIT, cy = (-worldZ - _bz) / UNIT;
+            int rg = Mathf.CeilToInt(radiusWorld / UNIT) + 1;
+            int cgx = Mathf.RoundToInt(cx), cgy = Mathf.RoundToInt(cy);
+            var c0 = new Color(layer == 0 ? 1 : 0, layer == 1 ? 1 : 0, layer == 2 ? 1 : 0, layer == 3 ? 1 : 0);
+            var c1 = new Color(layer == 4 ? 1 : 0, layer == 5 ? 1 : 0, layer == 6 ? 1 : 0, layer == 7 ? 1 : 0);
+            for (int gx = System.Math.Max(0, cgx - rg); gx <= System.Math.Min(_dw - 1, cgx + rg); gx++)
+                for (int gy = System.Math.Max(0, cgy - rg); gy <= System.Math.Min(_dh - 1, cgy + rg); gy++)
+                {
+                    float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT;
+                    if (Mathf.Sqrt(dx * dx + dy * dy) > radiusWorld) continue;
+                    _dom[gx, gy] = (byte)layer;
+                    _s0Img.SetPixel(gx, gy, c0); _s1Img.SetPixel(gx, gy, c1);
+                }
+            _s0Tex.Update(_s0Img); _s1Tex.Update(_s1Img);
+        }
 
         // --- live heightmap sculpt (map editor Terrain tab) ---
         // Raise/lower _grid samples inside a world-radius brush (radial falloff), then rebuild the mesh + collider.
@@ -140,7 +165,7 @@ void fragment() {
                 {
                     float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT; float dist = Mathf.Sqrt(dx * dx + dy * dy);
                     if (dist > radiusWorld) continue;
-                    float f = 0.5f + 0.5f * Mathf.Cos(Mathf.Pi * dist / radiusWorld);
+                    float f = BrushAlpha(dist / radiusWorld);   // source linear falloff
                     _grid[gx, gy] = Mathf.Lerp(_grid[gx, gy], target, Mathf.Clamp(strength * f, 0f, 1f));
                 }
             _dirty = true; RebuildMesh();
@@ -158,7 +183,7 @@ void fragment() {
                 {
                     float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT; float dist = Mathf.Sqrt(dx * dx + dy * dy);
                     if (dist > radiusWorld) continue;
-                    float f = 0.5f + 0.5f * Mathf.Cos(Mathf.Pi * dist / radiusWorld);
+                    float f = BrushAlpha(dist / radiusWorld);   // source linear falloff
                     float avg = (_grid[gx - 1, gy] + _grid[gx + 1, gy] + _grid[gx, gy - 1] + _grid[gx, gy + 1]) * 0.25f;
                     next.Add((gx, gy, Mathf.Lerp(_grid[gx, gy], avg, Mathf.Clamp(strength * f, 0f, 1f))));
                 }
@@ -387,10 +412,12 @@ void fragment() {
             var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
 
             var mi = new MeshInstance3D { Mesh = mesh };
-            var texMat = splats.Count > 0 ? BuildTerrainMaterial(splat0Img, splat1Img) : null;   // real per-layer albedos, blended by per-texel splat weights
+            ImageTexture s0t = splats.Count > 0 ? ImageTexture.CreateFromImage(splat0Img) : null;
+            ImageTexture s1t = splats.Count > 0 ? ImageTexture.CreateFromImage(splat1Img) : null;
+            var texMat = splats.Count > 0 ? BuildTerrainMaterial(s0t, s1t) : null;   // real per-layer albedos, blended by per-texel splat weights
             GD.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
             mi.MaterialOverride = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
-            terr.AddChild(mi); terr._mi = mi; terr._uvs = uvs; terr._cols = cols; terr._idx = idx;   // stash for live sculpt rebuild
+            terr.AddChild(mi); terr._mi = mi; terr._uvs = uvs; terr._cols = cols; terr._idx = idx; terr._s0Img = splat0Img; terr._s1Img = splat1Img; terr._s0Tex = s0t; terr._s1Tex = s1t;   // stash for live sculpt + splat paint
 
             // translucent ocean surface at PEI's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18, v12 = 0.1)
             // UG_NOWATER=1 skips the water plane -> see a map's raw terrain/textures from above (esp. flat custom maps below sea level)
