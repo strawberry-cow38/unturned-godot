@@ -24,7 +24,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "hitbox" };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -74,13 +74,13 @@ namespace UnturnedGodot
             _input.GrabFocus();   // stay open for the next command
         }
 
-        void Run(string cmd)
+        public void Run(string cmd)   // public: the L1 console tests drive the real parse path
         {
             if (string.IsNullOrWhiteSpace(cmd)) return;
             var parts = cmd.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
-            if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
+            if (arg.Length == 0 && verb != "hitbox" && verb != "hb") { Log("usage: give <item> | vehicle <name>"); return; }   // bare `hitbox` reports its state
 
             if (RemoteClient != null && System.Array.IndexOf(ServerGatedVerbs, verb) >= 0)
             {
@@ -192,7 +192,13 @@ namespace UnturnedGodot
                                                : !PlayerController.SurvivalDrain;
                 Log($"hunger/thirst {(PlayerController.SurvivalDrain ? "ENABLED" : "disabled")}");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival");
+            else if (verb == "hitbox" || verb == "hb")
+            {
+                // hitbox client|server|off -- collision wireframe overlays (cyan = this process's colliders,
+                // magenta = the server's, reconstructed from replicas). Client-LOCAL debug: never server-gated.
+                Log(HitboxDebugOverlay.Console(arg, GetTree()));
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival / hitbox");
         }
 
         /// <summary>MP teleport (#27): location name -> the numeric `teleport <x> <y> <z>` wire form
@@ -231,6 +237,7 @@ namespace UnturnedGodot
             string verb = parts[0].ToLowerInvariant(), pre = parts[1].Replace(" ", "");
             string match = verb.StartsWith("veh") ? Vehicle.SpecNames.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
                 : (verb == "teleport" || verb == "tp") ? MapNodes.Locations.Select(n => n.Name).Where(n => n.Replace(" ", "").StartsWith(pre, System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Length).FirstOrDefault()
+                : verb == "hitbox" ? new[] { "client", "server", "off" }.FirstOrDefault(n => n.StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
                 : Assets.all().Select(x => x.itemName).Where(n => !string.IsNullOrEmpty(n) && n.Replace(" ", "").StartsWith(pre, System.StringComparison.OrdinalIgnoreCase))
                             .OrderBy(n => n.Length).FirstOrDefault();
             if (match != null) SetInput(parts[0] + " " + match);

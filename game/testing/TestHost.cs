@@ -115,6 +115,7 @@ namespace UnturnedGodot.Testing
         {
             PowerNet.ResetForTests();
             PlayerRegistry.ResetForTests();   // _ExitTree self-cleans, this is belt-and-braces vs a leaked node
+            HitboxDebugOverlay.ResetForTests();   // the overlay lives at tree.Root (outside the sandbox) -- never leak it into the next test
             WorldItem.NoDropRotation = false;
             Engine.TimeScale = 1.0;
         }
