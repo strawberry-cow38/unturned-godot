@@ -2796,4 +2796,438 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+
+    // ---- PREDICTION_GEOMETRY_DIAGNOSIS §8: the four geometry WAN baselines (F0, the teeth) ----
+    // The flat WAN baselines above run on the no-map fallback world -- zero decision cliffs, so they
+    // structurally cannot reproduce strawberry's geometry report (pullback at step-ups / doorways / thin
+    // colliders / jumps at 100+ ms WAN). These four put OBSTACLES in the path. Harness fact that makes
+    // the add minimal: in this rig the ClientWorldSession shell and the DedicatedServer avatar live in
+    // ONE World tree = one physics space, so a test-local StaticBody3D is seen by BOTH bodies -- no
+    // WorldBuilder change. (Corollary: this harness cannot detect H0-class client/server collision-SET
+    // mismatches; §2 closed those by inspection, and the holiday fork gets its own test.)
+    //
+    // Each course measures the flat baselines' rope-tug metrics PLUS the worst single-tick correction
+    // (the "one hard tug" a per-minute average hides) and, for jumps, the worst VERTICAL pending error
+    // (the ground->apex snapshot-step signature, §5-B).
+    //
+    // THE TEETH CONTRACT (§8 + the regression rule): on the pre-fix code these FAIL their bars -- the
+    // measured pre-fix numbers are recorded in each test's comment the way the flat baselines document
+    // their 13.951 -> 0.570 ladder. Until the fix that owns a bar lands, the bars run SOFT (printed,
+    // not asserted -- §8's land-then-arm sequencing note); each fix commit flips its test's BarsLive
+    // to true in the same commit.
+    static class WanGeo
+    {
+        /// <summary>A static obstacle both bodies collide with: layer 0, the WorldBuilder object-collider
+        /// rule (WorldBuilder.cs:226) -- the player capsule's mask is (1&lt;&lt;0)|(1&lt;&lt;6).</summary>
+        public static StaticBody3D Box(Node3D world, Vector3 center, Vector3 size)
+        {
+            var body = new StaticBody3D { CollisionLayer = 1u << 0 };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size } });
+            world.AddChild(body);
+            body.GlobalPosition = center;
+            return body;
+        }
+
+        /// <summary>A bar armed only once its fix has landed (BarsLive): soft bars print their verdict
+        /// (the pre-fix teeth numbers stay visible in the log) without failing the suite.</summary>
+        public static void Bar(TestContext t, bool live, string desc, bool ok)
+        {
+            if (live) t.Check(desc, ok);
+            else GD.Print($"[geom-bar {(ok ? "pass" : "PRE-FIX FAIL (soft)")}] {desc}");
+        }
+
+        public static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        /// <summary>Per-tick rope-tug metrics over a scripted course: call Sample() after every tick.</summary>
+        public sealed class Metrics
+        {
+            readonly PredictionReconciler _r;
+            readonly float _corr0; float _lastCorr; readonly long _snaps0;
+            public int Ticks; public float MaxPend, MaxPendY, WorstTickCorr;
+            public Metrics(PredictionReconciler r) { _r = r; _corr0 = _lastCorr = r.CorrectionAppliedMeters; _snaps0 = r.Snaps; }
+            public void Sample()
+            {
+                Ticks++;
+                var p = _r.PendingError;
+                float mag = p.magnitude;
+                if (mag > MaxPend) MaxPend = mag;
+                float ay = Mathf.Abs(p.y);
+                if (ay > MaxPendY) MaxPendY = ay;
+                float c = _r.CorrectionAppliedMeters;
+                if (c - _lastCorr > WorstTickCorr) WorstTickCorr = c - _lastCorr;
+                _lastCorr = c;
+            }
+            public float Corr => _r.CorrectionAppliedMeters - _corr0;
+            public float CorrPerMin => Ticks > 0 ? Corr * (3000f / Ticks) : 0f;
+            public long Snaps => _r.Snaps - _snaps0;
+        }
+    }
+
+    // The NetShellWanWalk boot skeleton, shared by the four geometry courses: flat fallback world +
+    // MemNetwork + ClientWorldSession shell + DedicatedServer avatar host, spawn-settled and facing -Z.
+    sealed class WanGeoRig
+    {
+        public WorldBuildResult World;
+        public MemNetwork Net;
+        public ClientWorldSession Sess;
+        public DedicatedServer Ded;
+        public DelegateSimStep Pump;
+        public int Desyncs;
+        public Vector3 Org;                                    // shell feet after the spawn settle
+        public readonly Vector3 Fwd = new Vector3(0f, 0f, -1f);    // shell forward at yaw 0 (input (0,1) walks -Z)
+        public readonly Vector3 Right = new Vector3(1f, 0f, 0f);
+
+        public IEnumerable<Step> Boot(GameTest test, int seed, string playerName)
+        {
+            var task = WorldBuilder.BuildFullWorld(test.World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            World = task.Result;
+            test.T.Check("world ready (the ONE world path, flat fallback on CI)", World.Ready);
+
+            Net = new MemNetwork(seed);
+            Pump = new DelegateSimStep((t, dt) => Net.Tick(), "l1.netpump");
+            World.Sim.Sim.Add(Pump);
+            Sess = new ClientWorldSession { Driver = World.Sim, TransportOverride = new MemClientTransport(Net), PlayerName = playerName };
+            test.World.AddChild(Sess);
+            Ded = new DedicatedServer { Driver = World.Sim, TransportOverride = new MemServerTransport(Net), RemoteAvatars = true };
+            test.World.AddChild(Ded);
+            Desyncs = 0;
+            Sess.Client.DesyncDetected += _ => Desyncs++;
+
+            yield return Step.Until(() => Sess.Shell != null, 5);
+            test.T.Check("shell spawned on the first authoritative own-entity sample", Sess.Shell != null);
+            if (Sess.Shell == null) yield break;
+            yield return Step.Ticks(25);   // settle the spawn transient before the link degrades
+            Sess.Shell.RotationDegrees = new Vector3(0f, 0f, 0f);
+            yield return Step.Ticks(1);
+            Org = Sess.Shell.GlobalPosition;
+        }
+
+        /// <summary>How far along the course axis the shell currently is (metres from Org toward Fwd).</summary>
+        public float Along() => (Sess.Shell.GlobalPosition - Org).Dot(Fwd);
+
+        /// <summary>Face the shell at a world point (yaw only) -- facing is client-authoritative input,
+        /// so steering by rotation is a legal course move (position is never written).</summary>
+        public void FaceToward(Vector3 point)
+        {
+            var d = point - Sess.Shell.GlobalPosition;
+            Sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-d.X, -d.Z)), 0f);
+        }
+
+        /// <summary>The standard closing pattern: desync-quiet is asserted HARD (shell corrections never
+        /// touch the replica plane, broken or not); the clean-link convergence bar arms with the fixes.</summary>
+        public IEnumerable<Step> Close(GameTest test, bool barsLive, WanGeo.Metrics m, string course)
+        {
+            GD.Print($"[{course}] {m.Ticks} ticks: corrApplied={m.Corr:0.###} m ({m.CorrPerMin:0.###} m/min), " +
+                     $"maxPending={m.MaxPend:0.###} m, maxPendingY={m.MaxPendY:0.###} m, worstTickCorr={m.WorstTickCorr:0.###} m, snaps={m.Snaps}");
+            test.T.Check($"DESYNC-QUIET across the course ({Desyncs} fired)", Desyncs == 0);
+            WanLink.Clean(Net);
+            yield return Step.Ticks(100);
+            bool own = Sess.Client.Players.TryGetByOwner(Sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - WanGeo.ToU(Sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
+            WanGeo.Bar(test.T, barsLive, $"replicated own-entity CONVERGED after the course (err {err:0.###} m)", own && err < 0.05f);
+            World.Sim.Sim.Remove(Pump);
+        }
+    }
+
+    // §8 baseline 1 -- the curb course: two "curbs" across the path (0.15 m sidewalk lip, 0.30 m step --
+    // both under StepHeight 0.5), crossed 16 times each way over the Wan profile at maneuvering cadence
+    // (diagonal approaches, weave transitions, stop-starts at the lips). The §4-1 mechanism: StepUp is a
+    // BINARY +0.5 m raise; a transition mispredicted in a starve/jitter window near the lip skews the two
+    // bodies, a diagonal block slides them apart ALONG the face, and the step-up points fork.
+    // PRE-FIX (mp-geomfix @ P0, this exact rig/seed 90909): corrApplied 2.843 m over 2307 ticks = 3.697
+    // m/min, maxPending 0.145 m, worstTickCorr 0.050 m, snaps 0 -- 6.5x the flat wan_walk's 0.570 m/min,
+    // a steady curb-crossing correction drizzle. FAILS the corr/min bar (the spike bars pass today and
+    // ride along as guards). Measured honesty: the §8-scripted STRAIGHT crossing course measured a
+    // PASSING 0.338 m/min -- square-on, the curb face clamps both bodies to the same spot, so the
+    // pullback needs transitions at the lip, exactly the everyday shape strawberry maneuvers in.
+    public class NetShellWanStepUp : GameTest
+    {
+        public override string Name => "net.shell_wan_stepup";
+        public override double TimeoutSimSeconds => 160;
+        const bool BarsLive = false;   // armed by the fix commits (P1 strips the jump bit's role; P2's swept corrections own the curb)
+
+        public override IEnumerable<Step> Run()
+        {
+            var rig = new WanGeoRig();
+            foreach (var s in rig.Boot(this, 90909, "wanstepper")) yield return s;
+            if (rig.Sess.Shell == null) yield break;
+
+            float floor = rig.Org.Y;
+            Vector3 At(float d, float h) { var c = rig.Org + rig.Fwd * d; return new Vector3(c.X, floor + h / 2f, c.Z); }
+            WanGeo.Box(World, At(4f, 0.15f), new Vector3(16f, 0.15f, 1f));   // the sidewalk lip
+            WanGeo.Box(World, At(9f, 0.30f), new Vector3(16f, 0.30f, 1f));   // the tall curb (still under StepHeight)
+
+            WanLink.Wan(rig.Net);
+            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+            // The course puts input TRANSITIONS at the lips, not just crossings: a straight-line walk
+            // keeps the avatar's count-preserving input integration aligned (measured 0.338 m/min -- the
+            // curbs alone don't fork two aligned bodies), but a direction change or stop-start landing in
+            // a starve/jitter window near the lip is mispredicted by the coast machinery, and THAT skew
+            // hits §4-1's binary StepUp cliff. Weave cadence from the flat sprint baseline (direction
+            // change ~every 0.3 s) + a hard stop at each lip + a weaving crossing.
+            int wDir = 1;
+            IEnumerable<Step> Leg(bool sprint, bool outbound)
+            {
+                float a = outbound ? 4f : 9f, b = outbound ? 9f : 4f;
+                System.Func<float, float> dist = curb => outbound ? curb - rig.Along() : rig.Along() - curb;
+                var pace = sprint ? EPlayerStance.SPRINT : (EPlayerStance?)null;
+                foreach (var curb in new[] { a, b })
+                {
+                    // DIAGONAL approach (+-35 deg, alternating): squared-up, the curb face clamps both
+                    // bodies to the same spot (the wall resyncs them, measured 0.338 m/min); hit at an
+                    // angle, a blocked body keeps sliding ALONG the face, so skew accumulates while
+                    // blocked and the two bodies' step-up points fork -- the §4-1 cliff, as players
+                    // actually clip sidewalks
+                    wDir = -wDir;
+                    rig.Sess.Shell.RotationDegrees = new Vector3(0f, (outbound ? 0f : 180f) + wDir * 35f, 0f);
+                    rig.Sess.Shell.ScriptedStance = pace;
+                    rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                    int weave = 0, guard = 0;
+                    while (dist(curb) > 0.45f && guard++ < 250)
+                    {
+                        if (++weave % 15 == 0) rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(wDir * 0.35f, 1f);
+                        else if (weave % 15 == 8) rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                        yield return Step.Ticks(1); m.Sample();
+                    }
+                    rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;   // the stop transient AT the lip
+                    rig.Sess.Shell.ScriptedStance = null;
+                    for (int i = 0; i < 10; i++) { yield return Step.Ticks(1); m.Sample(); }
+                    rig.Sess.Shell.ScriptedStance = pace;
+                    rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                    int cross = sprint ? 26 : 40;   // ~3-3.6 m: up the lip diagonally, across the 1 m top, off the far side
+                    for (int i = 0; i < cross; i++) { yield return Step.Ticks(1); m.Sample(); }
+                }
+                rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                rig.Sess.Shell.ScriptedStance = null;
+                for (int i = 0; i < 12; i++) { yield return Step.Ticks(1); m.Sample(); }
+            }
+            for (int phase = 0; phase < 2; phase++)   // walk pace, then sprint pace
+                for (int trip = 0; trip < 4; trip++)
+                    for (int half = 0; half < 2; half++)
+                        foreach (var s in Leg(phase == 1, half == 0)) yield return s;
+
+            WanGeo.Bar(T, BarsLive, $"curb crossings cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 3.697)", m.CorrPerMin < 2f);
+            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.145)", m.MaxPend < 0.25f);
+            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.050)", m.WorstTickCorr < 0.08f);
+            WanGeo.Bar(T, BarsLive, $"ZERO snaps across the curbs ({m.Snaps})", m.Snaps == 0);
+            foreach (var s in rig.Close(this, BarsLive, m, "wan-stepup")) yield return s;
+        }
+    }
+
+    // §8 baseline 2 -- the doorway: a 0.9 m gap between two wall slabs (capsule diameter 0.7), a lintel
+    // over the gap whose underside is at y=1.9 (under the 2.0 stand capsule -- forces a crouch), the
+    // approach offset 0.2 m from the gap centre (guaranteed jamb slide). Crouch-through-stand-up each
+    // way, walking then sprinting. The §4-3 compound: jamb slide-side picks + StepUp/FloorSnap threshold
+    // interplay + the avatar-side headroom re-gate (§3 asymmetry 2: the avatar re-derives the stance the
+    // client already resolved, at a slightly different position -- a CROUCH-vs-STAND disagreement is a
+    // 2.5 vs 4.5 m/s speed fork for the window it lasts).
+    // PRE-FIX (mp-geomfix @ P0, seed 91919): corrApplied 1.750 m over 2304 ticks = 2.278 m/min,
+    // maxPending 0.426 m, worstTickCorr 0.074 m, snaps 0 -- 4x the flat wan_walk, with the doorway's
+    // signature 0.4 m correction spike. FAILS the corr/min and maxPending bars.
+    public class NetShellWanDoorway : GameTest
+    {
+        public override string Name => "net.shell_wan_doorway";
+        public override double TimeoutSimSeconds => 160;
+        const bool BarsLive = false;   // armed by P2 (F3 swept corrections + F4 wire-stance trust own the doorway)
+
+        public override IEnumerable<Step> Run()
+        {
+            var rig = new WanGeoRig();
+            foreach (var s in rig.Boot(this, 91919, "wandoorman")) yield return s;
+            if (rig.Sess.Shell == null) yield break;
+
+            float floor = rig.Org.Y;
+            var doorC = rig.Org + rig.Fwd * 4f - rig.Right * 0.2f;   // gap centre 0.2 m off the walk line
+            WanGeo.Box(World, new Vector3(doorC.X, floor + 1.25f, doorC.Z) + rig.Right * 1.95f, new Vector3(3f, 2.5f, 0.3f));
+            WanGeo.Box(World, new Vector3(doorC.X, floor + 1.25f, doorC.Z) - rig.Right * 1.95f, new Vector3(3f, 2.5f, 0.3f));
+            WanGeo.Box(World, new Vector3(doorC.X, floor + 2.0f, doorC.Z), new Vector3(0.9f, 0.2f, 0.3f));   // lintel: underside y=1.9
+
+            WanLink.Wan(rig.Net);
+            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+            for (int phase = 0; phase < 2; phase++)
+            {
+                var pace = phase == 0 ? (EPlayerStance?)null : EPlayerStance.SPRINT;
+                for (int trip = 0; trip < 6; trip++)
+                    for (int half = 0; half < 2; half++)
+                    {
+                        // out: approach at pace, crouch ~0.7 m before the jamb plane, stand back up ~0.4 m
+                        // past the lintel (position-triggered so WAN drift can't decay the engagement --
+                        // the stand-up landing near the trailing edge is what pokes the headroom re-gate)
+                        bool outbound = half == 0;
+                        float door = 4f;
+                        System.Func<float> to = () => outbound ? door - rig.Along() : rig.Along() - door;
+                        rig.Sess.Shell.RotationDegrees = new Vector3(0f, outbound ? 0f : 180f, 0f);
+                        rig.Sess.Shell.ScriptedStance = pace;
+                        rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                        int guard = 0;
+                        while (to() > 0.7f && guard++ < 200) { yield return Ticks(1); m.Sample(); }
+                        rig.Sess.Shell.ScriptedStance = EPlayerStance.CROUCH;
+                        guard = 0;
+                        while (to() > -0.4f && guard++ < 200) { yield return Ticks(1); m.Sample(); }
+                        rig.Sess.Shell.ScriptedStance = pace;                       // stand up just past the lintel
+                        guard = 0;
+                        while (to() > -3.9f && guard++ < 200) { yield return Ticks(1); m.Sample(); }
+                        rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                        rig.Sess.Shell.ScriptedStance = null;
+                        for (int i = 0; i < 12; i++) { yield return Ticks(1); m.Sample(); }
+                    }
+            }
+
+            WanGeo.Bar(T, BarsLive, $"doorway passes cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 2.278)", m.CorrPerMin < 2f);
+            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.426)", m.MaxPend < 0.25f);
+            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.074)", m.WorstTickCorr < 0.08f);
+            WanGeo.Bar(T, BarsLive, $"ZERO snaps through the doorway ({m.Snaps})", m.Snaps == 0);
+            foreach (var s in rig.Close(this, BarsLive, m, "wan-doorway")) yield return s;
+        }
+    }
+
+    // §8 baseline 3 -- the "hydrant": a 0.12 x 0.6 x 0.12 m post at +5 m, sprinted into dead-centre and
+    // at knife-edge +-0.02 m lateral offsets, held against for 1 s each engagement. The §4-2 mechanism:
+    // against a thin collider the slide DIRECTION (left vs right of the face) is decided by which side
+    // of the centre the capsule lands on -- a knife-edge on the sub-band (<=0.08 m) offset the two
+    // bodies always carry, after which they diverge LATERALLY at full speed until the post is cleared
+    // ("my server position TWEAKED out"). §4 predicts this one still fails after F1-F4 -- it is the C3
+    // (rewind+replay) gate.
+    // PRE-FIX (mp-geomfix @ P0, seed 92929): corrApplied 5.468 m over 1530 ticks = 10.722 m/min,
+    // maxPending 0.851 m, worstTickCorr 0.148 m, snaps 0 -- the "tweaked out" report reproduced: ~19x
+    // the flat wan_walk, with 0.85 m lateral divergence spikes as the two bodies pick different sides.
+    // FAILS the corr/min, maxPending and worst-tick bars.
+    public class NetShellWanThinCollider : GameTest
+    {
+        public override string Name => "net.shell_wan_thincollider";
+        public override double TimeoutSimSeconds => 120;
+        const bool BarsLive = false;   // the C3 gate: expected to stay soft after F1-F4 (see the header comment)
+
+        public override IEnumerable<Step> Run()
+        {
+            var rig = new WanGeoRig();
+            foreach (var s in rig.Boot(this, 92929, "wanhydrant")) yield return s;
+            if (rig.Sess.Shell == null) yield break;
+
+            float floor = rig.Org.Y;
+            var hydC = rig.Org + rig.Fwd * 5f;
+            var hyd = new Vector3(hydC.X, floor + 0.3f, hydC.Z);
+            WanGeo.Box(World, hyd, new Vector3(0.12f, 0.6f, 0.12f));
+
+            WanLink.Wan(rig.Net);
+            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+            for (int run = 0; run < 9; run++)
+            {
+                // aim at the post with a -0.02 / 0 / +0.02 m lateral offset (the knife edge each side),
+                // re-aimed from wherever the last run left us so drift self-corrects every lane
+                float off = ((run % 3) - 1) * 0.02f;
+                rig.FaceToward(new Vector3(hyd.X, floor, hyd.Z) + rig.Right * off);
+                rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+                rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                for (int i = 0; i < 40; i++) { yield return Ticks(1); m.Sample(); }   // ~5.6 m: reach + hit
+                for (int i = 0; i < 50; i++) { yield return Ticks(1); m.Sample(); }   // hold forward 1 s against it
+                rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                rig.Sess.Shell.ScriptedStance = null;
+                for (int i = 0; i < 10; i++) { yield return Ticks(1); m.Sample(); }
+                // sidestep off the post (alternating sides), then sprint home for the next lane
+                rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(run % 2 == 0 ? 1f : -1f, 0f);
+                for (int i = 0; i < 12; i++) { yield return Ticks(1); m.Sample(); }
+                rig.FaceToward(rig.Org);
+                rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+                rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                for (int i = 0; i < 46; i++) { yield return Ticks(1); m.Sample(); }
+                rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                rig.Sess.Shell.ScriptedStance = null;
+                for (int i = 0; i < 12; i++) { yield return Ticks(1); m.Sample(); }
+            }
+
+            WanGeo.Bar(T, BarsLive, $"hydrant grinds cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 10.722)", m.CorrPerMin < 2f);
+            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.851)", m.MaxPend < 0.25f);
+            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.148)", m.WorstTickCorr < 0.08f);
+            WanGeo.Bar(T, BarsLive, $"ZERO snaps at the hydrant ({m.Snaps})", m.Snaps == 0);
+            foreach (var s in rig.Close(this, BarsLive, m, "wan-thincollider")) yield return s;
+        }
+    }
+
+    // §8 baseline 4 -- jumps: (a) 16 sprint-jump arcs on flat with the jump key held ACROSS landings and
+    // released mid-air (bunny-hop cadence -- every arc carries a held-bit landing edge and a release
+    // edge for the §5-B coast/hole re-present machinery to chew under Wan jitter), then (b) 8
+    // sprint-jumps with takeoff pulsed ~1.2 m short of a 0.15 m curb lip (§5-A: the takeoff-tick skew
+    // where the two bodies' _detGrounded flags disagree). The extra bar is the worst VERTICAL pending
+    // error -- the "server teleports me to the apex" C1.5-window signature (ground->apex in one
+    // snapshot when the repay-drain exits mid-arc).
+    // PRE-FIX (mp-geomfix @ P0, seed 93939): corrApplied 20.610 m over 1649 ticks = 37.496 m/min,
+    // maxPending 0.791 m, maxPendingY 0.791 m (the apex teleport: ~an entire 0.83 m arc of vertical
+    // error in one snapshot step), worstTickCorr 0.137 m, snaps 0 -- the WORST of the four courses,
+    // 66x the flat wan_walk, exactly §5's ranking of jumps as the worst felt item. FAILS all four
+    // metric bars.
+    public class NetShellWanJump : GameTest
+    {
+        public override string Name => "net.shell_wan_jump";
+        public override double TimeoutSimSeconds => 120;
+        const bool BarsLive = false;   // armed by P1 (F1 takeoff-edge jump bit + F2 grounded-tolerance own the jump)
+
+        public override IEnumerable<Step> Run()
+        {
+            var rig = new WanGeoRig();
+            foreach (var s in rig.Boot(this, 93939, "wanjumper")) yield return s;
+            if (rig.Sess.Shell == null) yield break;
+            float floor = rig.Org.Y;
+
+            WanLink.Wan(rig.Net);
+            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+
+            // (a) bunny-hop: a flat arc is 24-25 ticks; hold the key across the landing (t = 20..8 of
+            // each 25-tick period) and release mid-air (t = 9..19) -- 16 arcs, 16 held landings, 16
+            // release edges riding the Wan link's loss/reorder/starve windows
+            rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+            rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            for (int i = 0; i < 400; i++)
+            {
+                int t = i % 25;
+                rig.Sess.Shell.ScriptedJump = t >= 20 || t <= 8;
+                yield return Ticks(1); m.Sample();
+            }
+            rig.Sess.Shell.ScriptedJump = false;
+            rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            rig.Sess.Shell.ScriptedStance = null;
+            for (int i = 0; i < 30; i++) { yield return Ticks(1); m.Sample(); }
+
+            // (b) the curb: placed NOW, relative to where the hop run ended (one shared physics space --
+            // both bodies see it the same tick; inserted while stopped, converged and 6 m away)
+            var start = rig.Sess.Shell.GlobalPosition;
+            var curbC = start + rig.Fwd * 6f;
+            WanGeo.Box(World, new Vector3(curbC.X, floor + 0.075f, curbC.Z), new Vector3(8f, 0.15f, 1f));
+            float CurbAlong() => (rig.Sess.Shell.GlobalPosition - start).Dot(rig.Fwd);
+            for (int rep = 0; rep < 8; rep++)
+            {
+                // out: sprint at the curb, takeoff pulsed ~1.2 m short of the lip (position-triggered)
+                rig.Sess.Shell.RotationDegrees = new Vector3(0f, 0f, 0f);
+                rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+                rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                int guard = 0;
+                while (CurbAlong() < 4.8f && guard++ < 90) { yield return Ticks(1); m.Sample(); }
+                rig.Sess.Shell.ScriptedJump = true;
+                for (int i = 0; i < 3; i++) { yield return Ticks(1); m.Sample(); }
+                rig.Sess.Shell.ScriptedJump = false;
+                for (int i = 0; i < 28; i++) { yield return Ticks(1); m.Sample(); }   // fly the arc, land on/past the curb
+                rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                rig.Sess.Shell.ScriptedStance = null;
+                for (int i = 0; i < 12; i++) { yield return Ticks(1); m.Sample(); }
+                // back: sprint home flat-footed (no jump) for the next rep
+                rig.FaceToward(start);
+                rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
+                rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                guard = 0;
+                while (CurbAlong() > 0.4f && guard++ < 120) { yield return Ticks(1); m.Sample(); }
+                rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+                rig.Sess.Shell.ScriptedStance = null;
+                for (int i = 0; i < 12; i++) { yield return Ticks(1); m.Sample(); }
+            }
+
+            WanGeo.Bar(T, BarsLive, $"jump courses cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 37.496)", m.CorrPerMin < 2f);
+            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.791)", m.MaxPend < 0.25f);
+            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.137)", m.WorstTickCorr < 0.08f);
+            WanGeo.Bar(T, BarsLive, $"no apex teleport: vertical pending under 0.15 m (max {m.MaxPendY:0.###} m -- pre-fix 0.791)", m.MaxPendY < 0.15f);
+            WanGeo.Bar(T, BarsLive, $"ZERO snaps across the jump courses ({m.Snaps})", m.Snaps == 0);
+            foreach (var s in rig.Close(this, BarsLive, m, "wan-jump")) yield return s;
+        }
+    }
 }
