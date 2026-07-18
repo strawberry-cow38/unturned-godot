@@ -296,6 +296,57 @@ namespace UnturnedNet.Tests
             Assert.That(e.Bleeding, Is.False, "the icon timer cleared it");
         }
 
+        // ---------------------------------------------------------------- the P3 death tail
+
+        [Test]
+        public void KillPlayer_IsIdempotent_DoubleKillSameTickCountsOnce()
+        {
+            var h = new Harness(60111).Connected("victim", "killerA", "killerB");
+            ushort victim = h.Clients[0].PlayerId;
+            ushort killerA = h.Clients[1].PlayerId;
+            ushort killerB = h.Clients[2].PlayerId;
+            long tick = h.Server.Session.CurrentTick;
+
+            h.Server.Combat.KillPlayer(victim, killerA, tick);
+            h.Server.Combat.KillPlayer(victim, killerB, tick);   // same-tick double kill: the !Alive guard eats it
+
+            h.Server.CombatState.TryGet(victim, out var vs);
+            h.Server.CombatState.TryGet(killerA, out var acs);
+            h.Server.CombatState.TryGet(killerB, out var bcs);
+            Assert.That(vs.Alive, Is.False);
+            Assert.That(vs.Deaths, Is.EqualTo(1), "ONE death");
+            Assert.That(vs.HealthExact, Is.EqualTo(0f), "health floored through the mirror");
+            Assert.That((int)vs.Health, Is.EqualTo(0));
+            Assert.That(acs.Kills, Is.EqualTo(1), "the FIRST kill credited");
+            Assert.That(bcs.Kills, Is.EqualTo(0), "the second was a no-op");
+        }
+
+        [Test]
+        public void DeathWhileDriving_ForceExitsTheCorpse()
+        {
+            var h = new Harness(60112).Connected("driver");
+            var a = h.Clients[0];
+            var exited = new List<VehicleExitedEvent>();
+            a.VehicleExited += e => exited.Add(e);
+
+            // a vehicle beside the spawn; the peer takes the seat over the wire
+            var vid = h.Server.Ids.Mint();
+            h.Server.Vehicles.ServerSpawn(vid, 0, 0, new Vector3(1f, 0f, 0f), h.Server.Session.CurrentTick, 20f);
+            a.SendEnterVehicle(vid.Value);
+            Assert.That(h.StepUntil(() => h.Server.VehicleHost.IsDriver(a.PlayerId), 50), Is.True,
+                        $"seat taken (seed={h.Net.Seed})");
+
+            // die in the seat (queued kill) -> ServerVehicles.Step's dead-driver sweep frees the seat
+            h.Server.Vitals.EnqueueDamage(a.PlayerId, 9999f, ServerVitals.CauseConsole);
+            Assert.That(h.StepUntil(() => !h.Server.VehicleHost.IsDriver(a.PlayerId), 20), Is.True,
+                        "the corpse does not keep the seat");
+            h.Server.CombatState.TryGet(a.PlayerId, out var cs);
+            Assert.That(cs.Alive, Is.False, "dead");
+            h.Server.Vehicles.TryGet(vid, out var ve);
+            Assert.That(ve.DriverPlayerId, Is.EqualTo(0), "the seat is free");
+            Assert.That(h.StepUntil(() => exited.Count > 0, 20), Is.True, "VehicleExited broadcast the eject");
+        }
+
         // ---------------------------------------------------------------- the one write-through helper (§10 risk 6)
 
         [Test]

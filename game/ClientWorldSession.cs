@@ -155,6 +155,23 @@ namespace UnturnedGodot
             };
             Client.ZombieDied += e =>
                 GD.Print($"[combat] zombie {e.NetId} killed by {(e.Killer == Client.PlayerId ? "you" : $"player {e.Killer}")}");
+            // MP VITALS P3 (MP_VITALS_PLAN §6): death/respawn are SERVER facts. The shell never decides
+            // death locally (RemoteVitals gates every local Die) and never respawns itself (the server's
+            // 3.5 s RespawnAtTick); these two events are the only way in and out of the death-cam.
+            // Other players' deaths need no event handling here -- RemotePlayers reads the replicated
+            // CombatState alive flag straight off the snapshot.
+            Client.PlayerDied += e =>
+            {
+                if (e.Victim != Client.PlayerId || Shell == null || !IsInstanceValid(Shell)) return;
+                GD.Print($"[CLIENT] you died{(e.Killer != 0 ? $" (killed by player {e.Killer})" : "")}");
+                Shell.NetDie();
+            };
+            Client.PlayerRespawned += e =>
+            {
+                if (e.PlayerId != Client.PlayerId || Shell == null || !IsInstanceValid(Shell)) return;
+                GD.Print("[CLIENT] respawned");
+                Shell.NetRespawn();   // position arrives via the reconciler's snap onto the teleported entity
+            };
             Client.GrenadeExploded += e =>
                 // the SP blast "fx" is the camera flinch (PlayerController.Explode -> FlinchAllFromExplosion,
                 // same params) -- fx only, zero damage: the server already applied the authoritative damage

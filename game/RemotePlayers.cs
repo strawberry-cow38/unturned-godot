@@ -18,11 +18,13 @@ namespace UnturnedGodot
         const float SnapDistance = 5f;    // beyond this the glide would look like skating -> snap
 
         readonly Dictionary<ushort, Node3D> _avatars = new();
+        readonly HashSet<ushort> _deadPuppets = new();   // MP vitals P3: puppets currently rendered as corpses
         static readonly Color Skin = new Color(0.85f, 0.70f, 0.55f);
         static readonly Color Tint = new Color(1.00f, 0.72f, 0.45f);   // remote = orange, like the net demos
 
         public int PuppetCount => _avatars.Count;
         public bool TryGetPuppet(ushort playerId, out Node3D avatar) => _avatars.TryGetValue(playerId, out avatar);
+        public bool IsPuppetDead(ushort playerId) => _deadPuppets.Contains(playerId);   // L1 net tests
 
         public override void _Process(double delta)
         {
@@ -40,6 +42,19 @@ namespace UnturnedGodot
                     av.Position = target;
                     _avatars[e.OwnerPlayerId] = av;
                 }
+                // MP VITALS P3: a dead player renders as a fallen corpse, never a standing statue -- the
+                // replicated CombatState alive flag drives it (snapshot-diff, no event needed). On the
+                // dead edge the puppet tips over at the death spot and HOLDS; the respawn edge stands it
+                // back up (the snap below covers the SpawnPos teleport).
+                bool alive = !Client.CombatState.TryGet(e.OwnerPlayerId, out var cs) || cs.Alive;
+                if (!alive)
+                {
+                    if (_deadPuppets.Add(e.OwnerPlayerId))
+                        av.Rotation = new Vector3(Mathf.Pi / 2f, Mathf.DegToRad(e.YawDegrees), 0f);   // face-up on the ground
+                    continue;   // a corpse holds its pose; no glide/turn
+                }
+                if (_deadPuppets.Remove(e.OwnerPlayerId))
+                    av.Position = target;   // respawn: snap upright at the spawn (rotation restored below)
                 av.Position = av.Position.DistanceTo(target) > SnapDistance ? target : av.Position.Lerp(target, a);
                 av.Rotation = new Vector3(0f, Mathf.DegToRad(e.YawDegrees), 0f);
             }
@@ -50,7 +65,7 @@ namespace UnturnedGodot
                 foreach (var kv in _avatars)
                     if (!Client.Players.TryGetByOwner(kv.Key, out _)) (stale ??= new List<ushort>()).Add(kv.Key);
                 if (stale != null)
-                    foreach (var id in stale) { _avatars[id].QueueFree(); _avatars.Remove(id); }
+                    foreach (var id in stale) { _avatars[id].QueueFree(); _avatars.Remove(id); _deadPuppets.Remove(id); }
             }
         }
     }

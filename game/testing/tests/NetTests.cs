@@ -2182,7 +2182,11 @@ namespace UnturnedGodot.Testing
             yield return Until(() => sess.Shell != null && bystander.State == NetSessionState.Connected, 5);
             T.Check("shell spawned + bystander joined", sess.Shell != null && bystander.State == NetSessionState.Connected);
             if (sess.Shell == null) yield break;
-            T.Check("D1 posture: PvP is OFF on the dedicated server", !ded.Server.Combat.PvPEnabled);
+            // MP vitals P3: PvP defaults ON now that death is server-authoritative + rendered
+            // (net.shell_pvp_smoke covers the live path). THIS test keeps proving the OFF posture --
+            // the UG_DEDICATED_PVP=0 kill switch for the friendly co-op server -- so flip it off here.
+            T.Check("P3 posture: PvP defaults ON on the dedicated server", ded.Server.Combat.PvPEnabled);
+            ded.Server.Combat.PvPEnabled = false;
             T.Check($"the MP shell spawns holding the EAGLEFIRE -- the server's validation profile ({sess.Shell.HeldGunName})",
                     sess.Shell.HasGunOut && sess.Shell.HeldGunName == "eaglefire");
             yield return Until(() => ded.PlayerSync.TrackedCount == 2, 5);
@@ -2234,8 +2238,9 @@ namespace UnturnedGodot.Testing
             T.Check("CombatState parity: bystander replica == server",
                     bystander.CombatState.StateHash() == ded.Server.CombatState.StateHash());
 
-            // PvP-OFF: a burst at the bystander's avatar (~2 m away, aimed at head height -- 3 landed shots
-            // would be 360 damage if PvP were on). The D1 posture: players are simply not targets.
+            // PvP-OFF (the UG_DEDICATED_PVP=0 kill-switch posture): a burst at the bystander's avatar
+            // (~2 m away, aimed at head height -- 3 landed shots would be 360 damage if PvP were on).
+            // With the switch off, players are simply not targets.
             long hitsPlayerBefore = ded.Server.Combat.Diag.BulletHitsPlayer;
             bool haveBy = ded.Server.Players.TryGetByOwner(bystander.PlayerId, out var bype);
             T.Check("bystander player entity exists server-side", haveBy);
@@ -2591,8 +2596,141 @@ namespace UnturnedGodot.Testing
             T.Check($"(d) server infection rose through the seam ({(vHave ? ve.Sim.Infection : -1f):0.###})",
                     vHave && ve.Sim.Infection > 0.05f);
             T.Check("(d) server bleed icon set by the bite", vHave && ve.Bleeding);
+
+            // ---- P3 final form: bite to DEATH -> death-cam -> the server's 3.5 s respawn -> reset ----
+            // wander off the spawn first so the respawn teleport is a REAL move the reconciler must adopt
+            var spawnPos = sess.Shell.TruePhysicsPosition;
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            yield return Ticks(100);   // ~9 m of walk
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            yield return Ticks(10);
+            float wandered = (sess.Shell.TruePhysicsPosition - spawnPos).Length();
+            T.Check($"walked away from spawn before dying ({wandered:0.0} m)", wandered > 5f);
+
+            int guard = 0;
+            while (scs.Alive && guard++ < 12)
+            {
+                body.TakeDamage(15f, body.GlobalPosition + Vector3.Forward);
+                yield return Ticks(25);
+            }
+            // (e) enough bites KILL on the server: the ONE KillPlayer tail (Alive false, death scheduled)
+            T.Check($"(e) bites killed on the server (after {guard} more)", !scs.Alive && scs.Health == 0);
+            T.Check("(e) a death was counted", scs.Deaths == 1);
+            yield return Ticks(10);   // let the PlayerDied fact land
+            // (f) the shell entered the DEATH-CAM off the server fact (never a local decision)
+            T.Check("(f) shell death-cam engaged (NetDie)", sess.Shell.IsDead);
+
+            // (g) the server's RespawnAtTick (175 = the SP 3.5 s death-cam) fires the respawn; the shell
+            // restores off the PlayerRespawned fact and the reconciler adopts the SpawnPos teleport
+            yield return Until(() => scs.Alive, 6);
+            T.Check("(g) server respawned after the 3.5 s death-cam", scs.Alive);
+            yield return Until(() => !sess.Shell.IsDead, 3);
+            T.Check("(g) shell restored (NetRespawn)", !sess.Shell.IsDead);
+            T.Check($"(g) vitals reset on the server (health {scs.HealthExact:0.#}, food {(vHave ? ve.Sim.Food : -1f):0.##})",
+                    scs.HealthExact == 100f && vHave && ve.Sim.Food > 0.99f);
+            T.Check($"(g) shell vitals reset ({sess.Shell.Health:0.#})", sess.Shell.Health == 100f);
+
+            // (h) the respawn teleport CONVERGED (shell back at SpawnPos = the join spawn) and HOLDS --
+            // no post-respawn snap-back to the death spot (§10 risk 5)
+            yield return Until(() => (sess.Shell.TruePhysicsPosition - spawnPos).Length() < 1.5f, 5);
+            float offSpawn = (sess.Shell.TruePhysicsPosition - spawnPos).Length();
+            T.Check($"(h) shell respawned AT the spawn ({offSpawn:0.##} m off)", offSpawn < 1.5f);
+            yield return Ticks(100);
+            float held = (sess.Shell.TruePhysicsPosition - spawnPos).Length();
+            T.Check($"(h) HELD the spawn -- no snap-back ({held:0.##} m off after 2 s)", held < 1.5f);
+
             T.Check($"DESYNC-QUIET across the run ({desyncs} fired)", desyncs == 0);
 
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // MP VITALS P3, the PvP smoke (docs/MP_VITALS_PLAN.md §9): with death UX live, PvP defaults ON
+    // (DedicatedServer no longer forces PvPEnabled=false; UG_DEDICATED_PVP=0 is the kill switch). A
+    // connect shell fires the wire Fire command at a second joined peer: the server's ballistic step
+    // resolves the hit against the victim's replicated entity, the damage lands in the unified vitals,
+    // the shooter gets HitConfirmed, and enough hits kill + credit the kill.
+    public class NetShellPvpSmoke : GameTest
+    {
+        public override string Name => "net.shell_pvp_smoke";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var net = new MemNetwork(20260720);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "shooter" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            T.Check("PvP defaults ON with death UX live (the D1 override is gone)", ded.Server.Combat.PvPEnabled);
+
+            // the victim: a second raw peer (no render shell needed -- its avatar body + entity are the
+            // server-side target the ballistics resolve against). Must carry the content hash or the
+            // join gate rejects it (ContentMismatch).
+            var victim = new NetWorldClient(new MemClientTransport(net), "victim", contentHash: NetContent.Hash);
+            victim.Connect();
+            var victimPump = new DelegateSimStep((t, dt) => victim.Tick(), "l1.victim");
+            world.Sim.Sim.Add(victimPump);
+
+            yield return Until(() => sess.Shell != null && victim.State == NetSessionState.Connected, 5);
+            T.Check("both peers joined", sess.Shell != null && victim.State == NetSessionState.Connected);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(25);
+
+            bool sHave = ded.Server.Players.TryGetByOwner(sess.Client.PlayerId, out var shooterEnt);
+            bool vHave = ded.Server.Players.TryGetByOwner(victim.PlayerId, out var victimEnt);
+            T.Check("both entities live on the server", sHave && vHave);
+            bool vcHave = ded.Server.CombatState.TryGet(victim.PlayerId, out var vcs);
+            bool scHave = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var scs2);
+            if (!vHave || !vcHave || !scHave) yield break;
+
+            var hits = new List<HitConfirmEvent>();
+            sess.Client.HitConfirmed += e => hits.Add(e);
+
+            // fire the wire command straight at the victim's torso (eye-height origin beside the shooter
+            // entity; the server steps the bullet against SERVER positions -- Eaglefire 40 dmg/hit)
+            void Fire()
+            {
+                var origin = new UnityEngine.Vector3(shooterEnt.Pos.x, shooterEnt.Pos.y + 1.5f, shooterEnt.Pos.z);
+                var at = new UnityEngine.Vector3(victimEnt.Pos.x, victimEnt.Pos.y + 1.0f, victimEnt.Pos.z);
+                sess.Client.SendFire(origin, at - origin);
+            }
+
+            Fire();
+            yield return Until(() => vcs.HealthExact < 100f, 5);
+            T.Check($"(a) the shot landed in the unified vitals (victim health {vcs.HealthExact:0.#})",
+                    vcs.HealthExact < 100f && vcs.HealthExact > 0f);
+            yield return Until(() => hits.Count > 0, 3);
+            T.Check($"(a) shooter got HitConfirmed ({(hits.Count > 0 ? $"{hits[0].Damage:0} dmg" : "none")})",
+                    hits.Count > 0 && hits[0].TargetId == victim.PlayerId);
+
+            // keep firing (Firerate 4 -> a shot every 6 ticks clears the gap rule) until the kill
+            int guard = 0;
+            while (vcs.Alive && guard++ < 10)
+            {
+                Fire();
+                yield return Ticks(8);
+            }
+            T.Check($"(b) enough hits KILLED the victim (after {guard + 1} shots)", !vcs.Alive);
+            T.Check("(b) the kill credited to the shooter", scs2.Kills == 1);
+            T.Check("(b) the victim's death counted", vcs.Deaths == 1);
+            yield return Until(() => hits.Exists(h2 => h2.Killed), 3);
+            T.Check("(b) the killing HitConfirm carried the kill flag", hits.Exists(h2 => h2.Killed));
+
+            // the victim respawns on the server clock, full health, at ITS spawn
+            yield return Until(() => vcs.Alive, 6);
+            T.Check($"(c) victim respawned server-side (health {vcs.HealthExact:0.#})",
+                    vcs.Alive && vcs.HealthExact == 100f);
+
+            world.Sim.Sim.Remove(victimPump);
             world.Sim.Sim.Remove(pump);
         }
     }

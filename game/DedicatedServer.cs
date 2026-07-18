@@ -77,7 +77,10 @@ namespace UnturnedGodot
             // Phase 5 combat hooks: server bullets/blasts stop at the world's real geometry, grenades
             // bounce on real ground height. Both are optional seams on the engine-free ServerCombat.
             Server.Combat.WorldRay = GodotWorldRay;
-            Server.Combat.PvPEnabled = false;   // D1 (PEI_COMBAT_PLAN §3): players safe -- shell vitals are still local, so server-side player damage would only rubber-band an unrendered death. Removed in D2.
+            // MP VITALS P3 (D2): PvP defaults ON -- vitals/death/respawn are server-authoritative and
+            // rendered client-side now, so the D1 "unrendered death would rubber-band" override is gone.
+            // UG_DEDICATED_PVP=0 is the friendly-test-server kill switch.
+            Server.Combat.PvPEnabled = System.Environment.GetEnvironmentVariable("UG_DEDICATED_PVP") != "0";
             if (Terr != null) Server.Combat.GroundHeight = (x, z) => Terr.SampleHeight(x, z);
             // C6 (§7 risk 6): the vehicle-exit teleport spot has no ground snap in core -- on a hillside the
             // beside-the-door point can land INSIDE the slope and drop the avatar through the world. Lift a

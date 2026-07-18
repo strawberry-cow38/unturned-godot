@@ -1947,6 +1947,45 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>MP shell death (the server's PlayerDied fact for self, MP_VITALS_PLAN §6): the Die()
+        /// visual block -- ragdoll corpse, death-cam, viewmodel hide -- with the LOCAL respawn decision
+        /// left to the server (the _deathTimer still runs, but the RemoteVitals gate in _PhysicsProcess
+        /// never fires local Respawn; PlayerRespawned -> NetRespawn is the only way back).</summary>
+        public void NetDie()
+        {
+            if (_dead) return;
+            Deaths++;
+            Die();
+        }
+
+        /// <summary>MP shell respawn (the server's PlayerRespawned fact for self): the Respawn() restore
+        /// block WITHOUT a position write -- the server already teleported the authoritative entity to
+        /// SpawnPos (ServerCombat.Respawn), and the reconciler adopts it through ApplyNetSnap, which
+        /// shifts the render-interp samples WITH the node (§7 risk 5: a bare GlobalPosition write here
+        /// would be silently undone by the interp restore). The local vitals reset predicts the server's
+        /// own reset (the owner-block echo confirms it).</summary>
+        public void NetRespawn()
+        {
+            if (!_dead) return;
+            _dead = false;
+            Health = MaxHealth;
+            Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;   // prediction of the server's ResetFor
+            Velocity = Vector3.Zero;
+            _corpse?.QueueFree(); _corpse = null;
+            _viewmodel?.SetShown(true);
+            if (_cam != null)
+            {
+                _cam.TopLevel = false;
+                _cam.Position = new Vector3(0f, 1.6f, 0f);
+                _cam.Rotation = Vector3.Zero;
+                _pitchDeg = 0f;
+                PainAlpha = 0f; _flinch = Quaternion.Identity;
+            }
+        }
+
+        /// <summary>Death-cam state, readable for the L1 net tests (the shell's _dead is otherwise local).</summary>
+        public bool IsDead => _dead;
+
         void Respawn()
         {
             _dead = false;
@@ -3093,7 +3132,7 @@ namespace UnturnedGodot
                 Velocity = Vector3.Zero;
                 LastMoveInput = UnityEngine.Vector2.zero;
                 LastJumpInput = false;
-                if (_deathTimer <= 0) Respawn();
+                if (_deathTimer <= 0 && !RemoteVitals) Respawn();   // MP shell: the SERVER owns respawn timing (PlayerRespawned -> NetRespawn)
                 return;
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
