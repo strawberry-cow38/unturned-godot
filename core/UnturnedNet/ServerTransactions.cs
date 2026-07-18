@@ -55,9 +55,15 @@ namespace UnturnedGodot.Net
         /// Harvest_Reward_Experience) -- awarded per harvest, same as the SP path.</summary>
         public const uint HarvestRewardExperience = 1;
 
-        /// <summary>Dev/cheat console verbs (give/xp/skill) apply only while true -- a public dedicated
+        /// <summary>Dev/cheat console verbs (give/xp/skill/teleport) apply only while true -- a public dedicated
         /// server would flip this off (admin gating is deferred policy, the choke point is the mechanism).</summary>
         public bool AllowCheats = true;
+
+        /// <summary>Seat query for the console teleport (#27): while seated the seat teleport owns the
+        /// entity (ServerVehicles.Step re-asserts it every tick), so a ServerTeleport would silently lose
+        /// the fight -- reject instead. NetWorldServer wires this to VehicleHost.IsDriver (it's built
+        /// after this object); null (bare L0 harnesses without vehicles) = never seated.</summary>
+        public Func<ushort, bool> IsSeated;
 
         /// <summary>The blueprint catalog the Craft command indexes into. The HOST supplies it (game:
         /// BlueprintRegistry.All; tests: fixtures); both sides must load the same list -- guaranteed by the
@@ -430,7 +436,7 @@ namespace UnturnedGodot.Net
         public string RunConsole(ushort sender, string text)
         {
             var parts = text.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) { Diag.ConsoleRejected++; return "usage: give <item> | xp <n> | skill <name> [level]"; }
+            if (parts.Length == 0) { Diag.ConsoleRejected++; return "usage: give <item> | xp <n> | skill <name> [level] | teleport <x> <y> <z>"; }
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
             if (!AllowCheats) { Diag.ConsoleRejected++; return "console commands are disabled on this server"; }
@@ -466,8 +472,29 @@ namespace UnturnedGodot.Net
                 Diag.ConsoleApplied++;
                 return $"{label} skill -> level {applied}";
             }
+            if (verb == "teleport" || verb == "tp")
+            {
+                // #27 (mp-teleport): the wire form is NUMERIC -- this engine-free core has no map/location
+                // table, so the CLIENT resolves the name (DevConsole/MapNodes) and sends coordinates.
+                // ServerTeleport moves the authoritative entity; PlayerNetSync adopts it (body snaps to
+                // entity) and the owner's reconciler snaps the shell onto the replicated spot -- the
+                // client-local TeleportTo path is what snapped back (the entity never moved).
+                var ci = System.Globalization.CultureInfo.InvariantCulture;
+                var tt = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (tt.Length != 3
+                    || !float.TryParse(tt[0], System.Globalization.NumberStyles.Float, ci, out float x)
+                    || !float.TryParse(tt[1], System.Globalization.NumberStyles.Float, ci, out float y)
+                    || !float.TryParse(tt[2], System.Globalization.NumberStyles.Float, ci, out float z)
+                    || !float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z))   // NaN/Infinity would poison the replicated pos; range is Quantize-clamped
+                { Diag.ConsoleRejected++; return "usage: teleport <x> <y> <z>"; }
+                if (!_players.TryGetByOwner(sender, out _)) { Diag.ConsoleRejected++; return "no player"; }
+                if (IsSeated?.Invoke(sender) == true) { Diag.ConsoleRejected++; return "exit the vehicle first"; }
+                _players.ServerTeleport(sender, new Vector3(x, y, z), _tick());
+                Diag.ConsoleApplied++;
+                return FormattableString.Invariant($"teleported to ({x:0.#}, {y:0.#}, {z:0.#})");
+            }
             Diag.ConsoleRejected++;
-            return $"unknown command '{verb}' -- give / xp / skill";
+            return $"unknown command '{verb}' -- give / xp / skill / teleport";
         }
 
         /// <summary>Server-computed XP award (the §3.2 hook: kills/harvests/crafts/console feed this).

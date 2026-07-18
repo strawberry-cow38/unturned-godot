@@ -19,7 +19,7 @@ namespace UnturnedGodot
         // ConsoleResult event echoes the verdict back into this log. SP and the listen-server host leave it
         // null -- the local process IS the authority there, so the direct paths below stay byte-identical.
         public static UnturnedGodot.Net.NetWorldClient RemoteClient;
-        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill" };
+        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -84,6 +84,12 @@ namespace UnturnedGodot
 
             if (RemoteClient != null && System.Array.IndexOf(ServerGatedVerbs, verb) >= 0)
             {
+                // teleport (#27): the server is authoritative for position but has no map/location table
+                // (MapNodes is game-side), so resolve the name -> coords HERE and send the numeric form
+                // RunConsole parses. The old local Player.TeleportTo never moved the server entity, so the
+                // reconciler dragged the shell straight back -- the MP "teleport doesn't stick" snapback.
+                if ((verb == "teleport" || verb == "tp") && !TryResolveTeleport(arg, out cmd, out _))
+                { Log($"no location '{arg}'"); return; }
                 if (!_resultHooked)
                 {
                     _resultHooked = true;
@@ -187,6 +193,21 @@ namespace UnturnedGodot
                 Log($"hunger/thirst {(PlayerController.SurvivalDrain ? "ENABLED" : "disabled")}");
             }
             else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival");
+        }
+
+        /// <summary>MP teleport (#27): location name -> the numeric `teleport <x> <y> <z>` wire form
+        /// ServerTransactions.RunConsole parses (coords over the EXISTING console command -- no protocol
+        /// change). Same prefix match as the local path, and the same +3 up drop-height so the server-side
+        /// landing matches SP.</summary>
+        public static bool TryResolveTeleport(string arg, out string serverCmd, out string locationName)
+        {
+            serverCmd = locationName = null;
+            var m = MapNodes.Locations.Where(n => n.Name.Replace(" ", "").StartsWith(arg.Replace(" ", ""), System.StringComparison.OrdinalIgnoreCase)).OrderBy(n => n.Name.Length).ToList();
+            if (m.Count == 0) return false;
+            var pos = m[0].Pos + Vector3.Up * 3f;
+            locationName = m[0].Name;
+            serverCmd = string.Format(System.Globalization.CultureInfo.InvariantCulture, "teleport {0:0.##} {1:0.##} {2:0.##}", pos.X, pos.Y, pos.Z);
+            return true;
         }
 
         static ItemAsset ResolveItem(string arg)

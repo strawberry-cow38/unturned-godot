@@ -73,6 +73,7 @@ namespace UnturnedGodot.Net
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent);
             VehicleHost.Register(Commands);
+            Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
             Commands.Register<MoveInput>(ReplicationIds.CommandMoveInput, MoveInput.TryRead,
                 (sender, cmd) => Players.ServerQueueInput(sender, cmd),
