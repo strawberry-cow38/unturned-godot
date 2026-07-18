@@ -25,7 +25,13 @@ namespace UnturnedGodot
             AddToGroup("crates");
             Storage = new Items(PlayerInventory.STORAGE);
             Storage.loadSize(Width, Height);
+            BuildVisual();
+        }
 
+        // the container's world appearance. Base = a plain wooden crate; subclasses (StoreShelf) draw their own prop
+        // + display their contents. Called from _Ready after the Storage grid exists.
+        protected virtual void BuildVisual()
+        {
             // a plain wooden crate (no pop-off lid -- that read as a Steam gamble/mystery box). Unturned's storage
             // Crate is a simple wooden cube you deploy as a barricade.
             var box = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.75f, 0.75f, 0.75f) } };

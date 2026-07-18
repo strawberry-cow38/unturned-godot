@@ -37,7 +37,7 @@ namespace UnturnedGodot
             // loot-crate table picker -- appears when a placed ★ Loot Crate is selected
             var cbox = new VBoxContainer { Visible = false };
             _crateBox = cbox;
-            var cl = new Label { Text = "▼ LOOT CRATE — item table:" };
+            var cl = new Label { Text = "▼ LOOT CONTAINER — item table:" };
             cl.AddThemeFontSizeOverride("font_size", 13);
             cl.AddThemeColorOverride("font_color", new Color(1f, 0.85f, 0.4f));
             cbox.AddChild(cl);

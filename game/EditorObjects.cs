@@ -91,6 +91,7 @@ namespace UnturnedGodot
             }
             _catalog.Sort();
             _catalog.Insert(0, LootCrateName);   // loot crate pinned to the top of the palette
+            _catalog.Insert(1, StoreShelfName);  // store shelf right below it
         }
 
         ArrayMesh MeshFor(string name)
@@ -140,10 +141,12 @@ namespace UnturnedGodot
         // Build + add a prop at a world position with a rotation basis. Returns its root Node3D. The gizmo then rotates
         // it freely; Save decomposes the live basis back to PEI euler so any orientation round-trips.
         public const string LootCrateName = "★ Loot Crate";   // a placeable loot CONTAINER (not a mesh prop) -- rolls a PEI table in SP
+        public const string StoreShelfName = "🛒 Store Shelf";   // the real Shelf_1 gondola AS a loot container -- rolls a PEI table + shows items on its tiers in SP
 
         public Node3D Place(string name, Vector3 pos, Basis rot)
         {
             if (name == LootCrateName) return PlaceLootCrate(pos, rot);
+            if (name == StoreShelfName) return PlaceStoreShelf(pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -181,16 +184,44 @@ namespace UnturnedGodot
             return root;
         }
 
-        static string CrateLabelText(int table) => $"Loot Crate\n[{LootTables.TableName(table)}]";
-        void UpdateCrateLabel(Node3D crate)
+        // the real Shelf_1 gondola placed AS a loot container: stands upright (270 X on the mesh, yaw on the root, matching
+        // StoreShelf in SP), tagged with a PEI table; the SP loader spawns a real StoreShelf (items shown on the tiers) here.
+        Node3D PlaceStoreShelf(Vector3 pos, Basis rot)
         {
-            int tbl = crate.HasMeta("loot_table") ? (int)crate.GetMeta("loot_table") : 0;
-            foreach (var c in crate.GetChildren()) if (c is Label3D lbl) lbl.Text = CrateLabelText(tbl);
+            var mesh = MeshFor("Shelf_1");
+            if (mesh == null) return null;
+            float yaw = Mathf.Atan2(-rot.X.Z, rot.X.X);   // recover yaw from the Upright(yaw) basis the placer passes
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            var root = new Node3D { Transform = new Transform3D(new Basis(Vector3.Up, yaw), pos) };
+            root.SetMeta("store_shelf", true);
+            root.SetMeta("loot_table", 0);
+            root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor("Shelf_1"), Basis = stand });
+            root.AddChild(new Label3D { Text = ContainerLabelText("Store Shelf", 0), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.007f, Position = new Vector3(0f, 2.8f, 0f), Modulate = new Color(0.8f, 0.85f, 0.95f), NoDepthTest = true, FontSize = 40, OutlineSize = 8 });
+            var shp = mesh.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Basis = stand };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
         }
-        public bool CrateSelected => Primary != null && Primary.HasMeta("loot_crate");   // dashboard + browser readout
-        public System.Action SelectionChanged;   // the browser watches this to show/sync the loot-crate table dropdown
+
+        static string CrateLabelText(int table) => ContainerLabelText("Loot Crate", table);
+        static string ContainerLabelText(string prefix, int table) => $"{prefix}\n[{LootTables.TableName(table)}]";
+        void UpdateCrateLabel(Node3D container)
+        {
+            int tbl = container.HasMeta("loot_table") ? (int)container.GetMeta("loot_table") : 0;
+            string prefix = container.HasMeta("store_shelf") ? "Store Shelf" : "Loot Crate";
+            foreach (var c in container.GetChildren()) if (c is Label3D lbl) lbl.Text = ContainerLabelText(prefix, tbl);
+        }
+        public bool CrateSelected => Primary != null && Primary.HasMeta("loot_table");   // any loot container (crate OR shelf) -> the table dropdown applies
+        public System.Action SelectionChanged;   // the browser watches this to show/sync the loot-table dropdown
         public int SelectedCrateTable => CrateSelected && Primary.HasMeta("loot_table") ? (int)Primary.GetMeta("loot_table") : 0;
-        public void SetSelectedCrateTable(int t)   // dropdown -> set the selected crate's table
+        public void SetSelectedCrateTable(int t)   // dropdown -> set the selected container's table
         {
             if (!CrateSelected) return;
             Primary.SetMeta("loot_table", Mathf.Clamp(t, 0, System.Math.Max(0, LootTables.TableCount - 1)));
@@ -425,6 +456,7 @@ namespace UnturnedGodot
                 n++;
             }
             SaveLootCrates();
+            SaveStoreShelves();
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
         }
@@ -453,6 +485,7 @@ namespace UnturnedGodot
         void LoadSaved()   // restore previously-saved editor placements on open
         {
             LoadLootCrates();
+            LoadStoreShelves();
             if (!System.IO.File.Exists(SavePath)) return;
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(SavePath))
@@ -485,6 +518,37 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} loot crates");
+        }
+
+        string ShelvesPath => Dir + $"editor_{_editor.MapName}_shelves.txt";   // per-map store-shelf placements (table + world pos + yaw)
+        void SaveStoreShelves()
+        {
+            var shelves = _placed.FindAll(p => IsInstanceValid(p) && p.HasMeta("store_shelf"));
+            using var sw = new System.IO.StreamWriter(ShelvesPath, false);
+            foreach (var s in shelves)
+            {
+                int tbl = s.HasMeta("loot_table") ? (int)s.GetMeta("loot_table") : 0;
+                var gp = s.GlobalPosition;
+                float yawDeg = Mathf.RadToDeg(s.GlobalTransform.Basis.GetEuler().Y);   // yaw-only root
+                sw.WriteLine($"{tbl} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###}");
+            }
+            if (shelves.Count > 0) GD.Print($"[editor] saved {shelves.Count} store shelves -> {ShelvesPath}");
+        }
+        void LoadStoreShelves()   // restore placed store shelves (markers) on open
+        {
+            if (!System.IO.File.Exists(ShelvesPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(ShelvesPath))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4 || !int.TryParse(p[0], out var tbl)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                float yawDeg = 0f; if (p.Length >= 5) float.TryParse(p[4], out yawDeg);
+                var root = PlaceStoreShelf(new Vector3(px, py, -pz), Upright(yawDeg));
+                if (root != null) { root.SetMeta("loot_table", tbl); UpdateCrateLabel(root); }
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor] loaded {n} store shelves");
         }
 
         // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)

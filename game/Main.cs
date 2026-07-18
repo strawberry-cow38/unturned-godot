@@ -332,6 +332,7 @@ namespace UnturnedGodot
             if (invcrate)   // place a storage crate + open it -> dashboard shows the crate grid
             {
                 GetWindow().Size = new Vector2I(2560, 1440);
+                _shotPath = shot;   // UG_SHELFDEMO renders a StoreShelf instead -> capture at the settle frame + quit
                 BuildCrateDemo(gun);
                 return;
             }
@@ -1498,7 +1499,7 @@ namespace UnturnedGodot
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             AttachMpLoopback(res);    // --mploopback only; default SP is untouched
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
-            if (_peiPlayable) SpawnEditorLootCrates();   // stock the map with any loot crates placed in the editor
+            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); }   // stock the map with editor-placed loot containers
         }
 
         // Spawn the loot crates the editor saved for PEI (editor_PEI_crates.txt), each rolling its PEI item table (LootCrate).
@@ -1517,6 +1518,26 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[loot-crate] spawned {n} editor loot crates in SP");
+        }
+
+        // Spawn the store shelves the editor saved for PEI (editor_PEI_shelves.txt), each rolling its PEI table + showing
+        // the rolled items on its tiers (StoreShelf). Same flow as the loot crates, plus a yaw so the gondola faces right.
+        void SpawnEditorStoreShelves()
+        {
+            string shelvesFile = ProjectSettings.GlobalizePath("res://content/objects/") + "editor_PEI_shelves.txt";
+            if (!System.IO.File.Exists(shelvesFile)) return;
+            LootTables.Load(_mapRoot + "/Spawns/Items.dat");
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(shelvesFile))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4 || !int.TryParse(p[0], out var tbl)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                float yaw = 0f; if (p.Length >= 5) float.TryParse(p[4], out yaw);
+                StoreShelf.Spawn(this, new Vector3(px, py, -pz), tbl, yaw);
+                n++;
+            }
+            if (n > 0) GD.Print($"[store-shelf] spawned {n} editor store shelves in SP");
         }
 
         // Workshop -> "New Map": boot the editor with a fresh FLAT all-grass map (no props/spawns/roads) to build from
