@@ -171,7 +171,7 @@ namespace UnturnedGodot
             root.SetMeta("loot_crate", true);
             root.SetMeta("loot_table", 0);   // default PEI table (retable later)
             root.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.75f, 0.75f, 0.75f) }, Position = new Vector3(0f, 0.375f, 0f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.42f, 0.2f), Roughness = 0.9f } });
-            root.AddChild(new Label3D { Text = "Loot Crate", Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.006f, Position = new Vector3(0f, 1.05f, 0f), Modulate = new Color(1f, 0.85f, 0.4f), NoDepthTest = true, FontSize = 48, OutlineSize = 8 });
+            root.AddChild(new Label3D { Text = CrateLabelText(0), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.006f, Position = new Vector3(0f, 1.05f, 0f), Modulate = new Color(1f, 0.85f, 0.4f), NoDepthTest = true, FontSize = 40, OutlineSize = 8 });
             var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Position = new Vector3(0f, 0.375f, 0f) };
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.75f, 0.75f, 0.75f) } });
             root.AddChild(body);
@@ -180,6 +180,25 @@ namespace UnturnedGodot
             _placed.Add(root);
             return root;
         }
+
+        static string CrateLabelText(int table) => $"Loot Crate\n[{LootTables.TableName(table)}]";
+        void UpdateCrateLabel(Node3D crate)
+        {
+            int tbl = crate.HasMeta("loot_table") ? (int)crate.GetMeta("loot_table") : 0;
+            foreach (var c in crate.GetChildren()) if (c is Label3D lbl) lbl.Text = CrateLabelText(tbl);
+        }
+        // ',' / '.' with a loot crate selected: cycle which PEI table it rolls (source of the loot picker)
+        void CycleCrateTable(int dir)
+        {
+            if (Primary == null || !Primary.HasMeta("loot_crate")) return;
+            int count = System.Math.Max(1, LootTables.TableCount);
+            int tbl = Primary.HasMeta("loot_table") ? (int)Primary.GetMeta("loot_table") : 0;
+            tbl = ((tbl + dir) % count + count) % count;
+            Primary.SetMeta("loot_table", tbl);
+            UpdateCrateLabel(Primary);
+            GD.Print($"[editor] loot crate table -> {tbl} ({LootTables.TableName(tbl)})");
+        }
+        public bool CrateSelected => Primary != null && Primary.HasMeta("loot_crate");   // dashboard readout
 
         bool Raycast(Vector2 screen, uint mask, out Vector3 point, out Rid collider)
         {
@@ -382,6 +401,8 @@ namespace UnturnedGodot
                 else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
+                else if (k.Keycode == Key.Comma && CrateSelected) CycleCrateTable(-1);   // ,/. cycle the selected loot crate's PEI table
+                else if (k.Keycode == Key.Period && CrateSelected) CycleCrateTable(1);
                 else if (k.Keycode == Key.Escape) Select(null);
             }
         }
@@ -464,6 +485,7 @@ namespace UnturnedGodot
                     || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
                 var root = PlaceLootCrate(new Vector3(px, py, -pz), Basis.Identity);
                 root.SetMeta("loot_table", tbl);
+                UpdateCrateLabel(root);
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} loot crates");

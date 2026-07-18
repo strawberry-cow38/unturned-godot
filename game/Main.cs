@@ -1543,6 +1543,7 @@ namespace UnturnedGodot
             var cam = new EditorCamera { Position = new Vector3(0f, 130f, 190f), RotationDegrees = new Vector3(-30f, 0f, 0f) };
             editor.AddChild(cam);
             editor.Setup("NewMap", null, cam);
+            LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
             var objs = new EditorObjects(editor, this, cam); editor.AddChild(objs); editor.Objects = objs;
             var spawns = new EditorSpawns(editor, cam, MapDir("NewMap")); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             var envEd = new EditorEnvironment(editor, dayNight, SetCleanEditorLighting); editor.AddChild(envEd); editor.Environment = envEd;
@@ -1590,6 +1591,7 @@ namespace UnturnedGodot
             var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
             editor.AddChild(cam);
             editor.Setup("PEI", null, cam);
+            LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // so loot-crate tables can be named/picked in the editor
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
