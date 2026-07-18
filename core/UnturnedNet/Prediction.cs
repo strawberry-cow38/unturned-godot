@@ -49,7 +49,16 @@ namespace UnturnedGodot.Net
         public float MaxSliceMeters = 0.06f;
 
         const int RingSize = 256;   // > any plausible input round-trip in ticks
-        struct Entry { public ushort Seq; public bool Used; public Vector3 Pos; public Vector3 CumCorrection; }
+        struct Entry
+        {
+            public ushort Seq; public bool Used; public Vector3 Pos; public Vector3 CumCorrection;
+            // C3 replay record (diagnosis §7.2 step 1): the FULL input the shell sim consumed for this
+            // seq -- pre-quantized through the exact wire encoding, so a replay integrates the same
+            // values the server avatar does -- plus the shell's post-move state (velocity + det-grounded)
+            // for diagnostics/future local rewinds. HasReplay = recorded through the replay overload.
+            public float MoveX, MoveY, YawDegrees; public byte Buttons;
+            public Vector3 PostVel; public bool Grounded; public bool HasReplay;
+        }
         readonly Entry[] _ring = new Entry[RingSize];
 
         Vector3 _pending;         // residual error still to fold in (authoritative - predicted, minus corrections already applied)
@@ -67,7 +76,73 @@ namespace UnturnedGodot.Net
         /// <summary>Remember where the local sim put the player after processing input `seq` (call once
         /// per tick, after stepping AND after applying this tick's correction slice).</summary>
         public void Record(ushort seq, Vector3 predictedPos)
-            => _ring[seq % RingSize] = new Entry { Seq = seq, Used = true, Pos = predictedPos, CumCorrection = _cumCorrection };
+        {
+            _ring[seq % RingSize] = new Entry { Seq = seq, Used = true, Pos = predictedPos, CumCorrection = _cumCorrection };
+            LastRecordedSeq = seq;
+        }
+
+        /// <summary>C3 (diagnosis §7.2): the replay-record overload -- position plus the full input this
+        /// seq's tick consumed (axes/yaw/buttons, quantized here through the exact wire encoding so a
+        /// replay steps the same values the server integrates) and the post-move velocity/grounded state.
+        /// The shell session records through THIS; the headless demo walker keeps the plain overload.</summary>
+        public void Record(ushort seq, Vector3 predictedPos, float moveX, float moveY, float yawDegrees,
+                           byte buttons, Vector3 postMoveVel, bool grounded)
+        {
+            _ring[seq % RingSize] = new Entry
+            {
+                Seq = seq, Used = true, Pos = predictedPos, CumCorrection = _cumCorrection,
+                MoveX = NetQuantization.QuantizeSignedNormalizedFloat(Clamp1(moveX), 8),
+                MoveY = NetQuantization.QuantizeSignedNormalizedFloat(Clamp1(moveY), 8),
+                YawDegrees = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits),
+                Buttons = buttons, PostVel = postMoveVel, Grounded = grounded, HasReplay = true,
+            };
+            LastRecordedSeq = seq;
+        }
+
+        /// <summary>The newest recorded input seq (0 = none yet) -- the replay window's upper bound.</summary>
+        public ushort LastRecordedSeq { get; private set; }
+
+        /// <summary>One replayable input pulled back out of the ring (C3): what the shell must re-step,
+        /// exactly as the wire carried it.</summary>
+        public struct ReplayInput
+        {
+            public ushort Seq;
+            public float MoveX, MoveY, YawDegrees;
+            public byte Buttons;
+            public Vector3 PostVel;   // the shell's ORIGINAL post-move sim velocity for this seq (diagnostic)
+            public bool Grounded;
+            public bool Jump => (Buttons & MoveInput.ButtonJump) != 0;
+            public EPlayerStance Stance => new MoveInput { Buttons = Buttons }.Stance;
+        }
+
+        /// <summary>Collect the unacked replay window (fromSeqExclusive, LastRecordedSeq] in seq order --
+        /// the inputs a C3 replay must re-step after teleporting to the server's state for
+        /// fromSeqExclusive. False (and an empty list) when the window is torn: an entry evicted from the
+        /// ring, recorded without the replay overload, longer than maxCount, or a from-seq newer than
+        /// anything recorded -- the caller skips the replay and lets the snap/next-event path recover.
+        /// Empty-and-true when from == LastRecordedSeq (everything acked: adopt-only). Walks the sender's
+        /// seq convention (seq 0 is skipped on wrap, NetWorldClient.SendMoveInput).</summary>
+        public bool CollectReplayWindow(ushort fromSeqExclusive, System.Collections.Generic.List<ReplayInput> into, int maxCount = 64)
+        {
+            into.Clear();
+            if (LastRecordedSeq == 0) return false;
+            if (fromSeqExclusive == LastRecordedSeq) return true;
+            if (NetSeq.IsNewer(fromSeqExclusive, LastRecordedSeq)) return false;
+            ushort seq = fromSeqExclusive;
+            while (seq != LastRecordedSeq)
+            {
+                seq++;
+                if (seq == 0) seq++;   // the sender never emits seq 0 (the reconciler's "none" sentinel)
+                var rec = _ring[seq % RingSize];
+                if (!rec.Used || rec.Seq != seq || !rec.HasReplay || into.Count >= maxCount) { into.Clear(); return false; }
+                into.Add(new ReplayInput
+                {
+                    Seq = seq, MoveX = rec.MoveX, MoveY = rec.MoveY, YawDegrees = rec.YawDegrees,
+                    Buttons = rec.Buttons, PostVel = rec.PostVel, Grounded = rec.Grounded,
+                });
+            }
+            return true;
+        }
 
         /// <summary>Feed one authoritative sample (own entity's pos + lastProcessedInputSeq from an applied
         /// snapshot). Stale/duplicate acks are ignored. The measured error is reduced by every correction
@@ -130,6 +205,7 @@ namespace UnturnedGodot.Net
         }
 
         static float Magnitude(Vector3 v) => MathF.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        static float Clamp1(float v) => v < -1f ? -1f : (v > 1f ? 1f : v);
     }
 
     /// <summary>

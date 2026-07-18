@@ -100,6 +100,84 @@ namespace UnturnedNet.Tests
             Assert.That(total, Is.EqualTo(1.5f).Within(1e-3f), "and hands out exactly the whole error");
         }
 
+        // ---- C3 replay ring (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 1): the per-seq ring carries the
+        // FULL replay input -- axes/yaw/buttons pre-quantized through the exact wire encoding, plus the
+        // post-move velocity/grounded state -- and CollectReplayWindow hands back the unacked tail a
+        // rewind+replay must re-step. ----
+
+        static void RecordReplay(PredictionReconciler r, ushort seq, float x = 0f, float y = 1f, float yaw = 0f, byte buttons = 0)
+            => r.Record(seq, new Vector3(seq, 0f, 0f), x, y, yaw, buttons, new Vector3(0f, -1f, 7f), grounded: true);
+
+        [Test]
+        public void ReplayWindow_CollectsUnackedTailInSeqOrder_WireQuantized()
+        {
+            var r = new PredictionReconciler();
+            for (ushort s = 10; s <= 15; s++)
+                r.Record(s, new Vector3(s, 0f, 0f), moveX: 0.37f, moveY: 1f, yawDegrees: 123.456f,
+                         buttons: (byte)(MoveInput.ButtonJump | MoveInput.PackStance(EPlayerStance.SPRINT)),
+                         postMoveVel: new Vector3(0f, -0.2f, 7f), grounded: s % 2 == 0);
+            Assert.That(r.LastRecordedSeq, Is.EqualTo(15));
+
+            var into = new System.Collections.Generic.List<PredictionReconciler.ReplayInput>();
+            Assert.That(r.CollectReplayWindow(12, into), Is.True);
+            Assert.That(into.Count, Is.EqualTo(3), "the window is (acked, last] = 13,14,15");
+            Assert.That(into[0].Seq, Is.EqualTo(13));
+            Assert.That(into[2].Seq, Is.EqualTo(15));
+            Assert.That(into[0].MoveX, Is.EqualTo(NetQuantization.QuantizeSignedNormalizedFloat(0.37f, 8)),
+                        "axes are stored WIRE-quantized -- the replay integrates what the server integrates");
+            Assert.That(into[0].YawDegrees, Is.EqualTo(NetQuantization.QuantizeDegrees(123.456f, NetQuantization.YawBits)));
+            Assert.That(into[0].Jump, Is.True);
+            Assert.That(into[0].Stance, Is.EqualTo(EPlayerStance.SPRINT), "stance decodes from the same buttons bits the wire carries");
+            Assert.That(into[1].Grounded, Is.True, "post-move grounded rides the record (seq 14 was even)");
+        }
+
+        [Test]
+        public void ReplayWindow_EmptyWhenEverythingAcked_TornWhenNewer()
+        {
+            var r = new PredictionReconciler();
+            RecordReplay(r, 40);
+            RecordReplay(r, 41);
+            var into = new System.Collections.Generic.List<PredictionReconciler.ReplayInput>();
+            Assert.That(r.CollectReplayWindow(41, into), Is.True, "from == last: everything acked");
+            Assert.That(into, Is.Empty, "-> adopt-only, nothing to re-step");
+            Assert.That(r.CollectReplayWindow(45, into), Is.False, "an ack NEWER than anything recorded is torn");
+        }
+
+        [Test]
+        public void ReplayWindow_WrapWalksTheSenderConvention_SkippingSeqZero()
+        {
+            // NetWorldClient.SendMoveInput never emits seq 0 (the reconciler's "none" sentinel) -- the
+            // window walk must skip it too or one wrap per 65535 inputs tears every replay
+            var r = new PredictionReconciler();
+            RecordReplay(r, 65534);
+            RecordReplay(r, 65535);
+            RecordReplay(r, 1);
+            RecordReplay(r, 2);
+            var into = new System.Collections.Generic.List<PredictionReconciler.ReplayInput>();
+            Assert.That(r.CollectReplayWindow(65534, into), Is.True);
+            Assert.That(into.Count, Is.EqualTo(3));
+            Assert.That(into[0].Seq, Is.EqualTo(65535));
+            Assert.That(into[1].Seq, Is.EqualTo(1), "seq 0 skipped exactly like the sender");
+            Assert.That(into[2].Seq, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void ReplayWindow_HoleOrPlainRecord_Bails()
+        {
+            var r = new PredictionReconciler();
+            RecordReplay(r, 20);
+            RecordReplay(r, 21);
+            r.Record(22, new Vector3(22f, 0f, 0f));   // the PLAIN overload -- no replay input stored
+            RecordReplay(r, 23);
+            var into = new System.Collections.Generic.List<PredictionReconciler.ReplayInput>();
+            Assert.That(r.CollectReplayWindow(20, into), Is.False, "a non-replayable entry tears the window");
+            Assert.That(into, Is.Empty, "torn window hands back nothing (no partial replays)");
+
+            var r2 = new PredictionReconciler();
+            RecordReplay(r2, 300);
+            Assert.That(r2.CollectReplayWindow(1, into), Is.False, "a from-seq the ring no longer covers bails");
+        }
+
         // ---- full-stack convergence sims (server + predicted client over MemTransport with latency) ----
 
         sealed class PredictedHarness
