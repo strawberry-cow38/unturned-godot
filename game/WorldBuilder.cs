@@ -45,6 +45,15 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        // Map-load loot distribution (master's "loot distribution on shelves"): certain PLACED props become lootable
+        // CONTAINERS in singleplayer instead of plain decoration -- a StoreShelf spawns at the placement transform and
+        // the decoration mesh is skipped. Registry = object guid -> PEI item table. First pass: the Shelf_1 store shelf
+        // (24 placed in the map's shops). Extend the map as more prop->container mappings are dialed in.
+        static readonly System.Collections.Generic.Dictionary<string, int> ContainerTable = new()
+        {
+            ["3d37d6da42a34f19b6b6a25e3ab8eaab"] = 6,   // Shelf_1 (store shelf, Medium/Business) -> PEI table 6 "Food"
+        };
+
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
         // whole build runs synchronously inside one _Ready (the --bakenav/--navpathtest/--zombietest tools
         // and the dedicated server use this); bakeNav additionally re-bakes + saves the canonical navmesh.
@@ -244,6 +253,17 @@ namespace UnturnedGodot
                 cellSum.TryGetValue(cell, out Vector3 cs); cellSum[cell] = cs + gpos;
                 if (cc + 1 > bestN) { bestN = cc + 1; bestCell = cell; }
             }
+            // SP loot distribution: a registered prop spawns as a lootable StoreShelf here (at the placement transform)
+            // instead of the decoration mesh. Only in Playable -- the editor shows decoration; the client is server-driven.
+            int converted = 0;
+            bool TryContainer(string[] q)
+            {
+                if (mode != WorldMode.Playable || !ContainerTable.TryGetValue(q[0], out int table)) return false;
+                if (!LootTables.Loaded) LootTables.Load(mapRoot + "/Spawns/Items.dat");
+                StoreShelf.Spawn(root, new Vector3(F(q[1]), F(q[2]), -F(q[3])), table, 180f - F(q[5]));   // ex=270/ez=0 upright -> yaw only
+                converted++;
+                return true;
+            }
             foreach (var line in System.IO.File.ReadLines(dir + mapPlace))
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
@@ -253,8 +273,10 @@ namespace UnturnedGodot
                     if (deferredHoliday != null) { deferredHoliday.Add((p, name, ph)); continue; }   // P3: the SERVER's holiday decides, at join (ApplyHoliday)
                     if (ph != activeHoliday) { holidaySkipped++; continue; }                          // out-of-season holiday prop
                 }
+                if (TryContainer(p)) continue;   // registered map prop -> lootable container (SP), skip the decoration mesh
                 PlaceObject(p, name);
             }
+            if (converted > 0) GD.Print($"[containers] converted {converted} map props to lootable StoreShelves (SP)");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
 
