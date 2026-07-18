@@ -17,6 +17,7 @@ namespace UnturnedGodot
         public EditorObjects Objects;                     // Phase 2 objects sub-editor (set by BuildEditor)
         public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
         public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
+        public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 

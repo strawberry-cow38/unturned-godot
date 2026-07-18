@@ -82,6 +82,50 @@ void fragment() {
         // Merged-map height grid + placement, stashed so gameplay can sample the ground height at a world XZ (spawns etc.).
         float[,] _grid; int _gw, _gh; float _bx, _bz;
         byte[,] _dom; int _dw, _dh;   // dominant splatmap layer per texel -> SampleDominantLayer (grassy-spawn picking)
+        MeshInstance3D _mi; StaticBody3D _collider; Vector2[] _uvs; Color[] _cols; int[] _idx;   // editor terrain sculpt: rebuild the mesh + collider from _grid
+
+        // --- live heightmap sculpt (map editor Terrain tab) ---
+        // Raise/lower _grid samples inside a world-radius brush (radial falloff), then rebuild the mesh + collider.
+        public void EditHeight(float worldX, float worldZ, float radiusWorld, float deltaWorldY)
+        {
+            if (_grid == null) return;
+            float cx = (worldX - _bx) / UNIT, cy = (-worldZ - _bz) / UNIT;   // brush centre in grid space (world Z negated, matching SampleHeight)
+            int rg = Mathf.CeilToInt(radiusWorld / UNIT) + 1;
+            int cgx = Mathf.RoundToInt(cx), cgy = Mathf.RoundToInt(cy);
+            float dNorm = deltaWorldY / TILE_HEIGHT;   // world Y delta -> normalized grid delta
+            for (int gx = System.Math.Max(0, cgx - rg); gx <= System.Math.Min(_gw - 1, cgx + rg); gx++)
+                for (int gy = System.Math.Max(0, cgy - rg); gy <= System.Math.Min(_gh - 1, cgy + rg); gy++)
+                {
+                    float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT;
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (dist > radiusWorld) continue;
+                    float falloff = 0.5f + 0.5f * Mathf.Cos(Mathf.Pi * dist / radiusWorld);   // smooth (cos) brush falloff
+                    _grid[gx, gy] = Mathf.Clamp(_grid[gx, gy] + dNorm * falloff, 0f, 1f);
+                }
+            RebuildMesh();
+        }
+
+        public void RebuildMesh()   // regenerate vertices + normals from _grid (uvs/colours/indices unchanged); refresh the collider
+        {
+            if (_grid == null || _mi == null) return;
+            int nv = _gw * _gh;
+            var verts = new Vector3[nv]; var norms = new Vector3[nv];
+            for (int x = 0; x < _gw; x++)
+                for (int y = 0; y < _gh; y++)
+                {
+                    int i = x * _gh + y;
+                    verts[i] = new Vector3(_bx + x * UNIT, _grid[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f, -(_bz + y * UNIT));
+                    float hl = _grid[System.Math.Max(0, x - 1), y], hr = _grid[System.Math.Min(_gw - 1, x + 1), y];
+                    float hd = _grid[x, System.Math.Max(0, y - 1)], hu = _grid[x, System.Math.Min(_gh - 1, y + 1)];
+                    norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
+                }
+            var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
+            arr[(int)Mesh.ArrayType.Vertex] = verts; arr[(int)Mesh.ArrayType.Normal] = norms;
+            arr[(int)Mesh.ArrayType.TexUV] = _uvs; arr[(int)Mesh.ArrayType.Color] = _cols; arr[(int)Mesh.ArrayType.Index] = _idx;
+            var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            _mi.Mesh = mesh;
+            if (_collider != null) foreach (var c in _collider.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = mesh.CreateTrimeshShape();
+        }
         public float SampleHeight(float worldX, float worldZ)
         {
             if (_grid == null) return 0f;
@@ -280,7 +324,7 @@ void fragment() {
             var texMat = splats.Count > 0 ? BuildTerrainMaterial(splat0Img, splat1Img) : null;   // real per-layer albedos, blended by per-texel splat weights
             GD.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
             mi.MaterialOverride = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
-            terr.AddChild(mi);
+            terr.AddChild(mi); terr._mi = mi; terr._uvs = uvs; terr._cols = cols; terr._idx = idx;   // stash for live sculpt rebuild
 
             // translucent ocean surface at PEI's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18, v12 = 0.1)
             // UG_NOWATER=1 skips the water plane -> see a map's raw terrain/textures from above (esp. flat custom maps below sea level)
@@ -310,7 +354,7 @@ void fragment() {
                 body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass);   // fallback if SurfAt has no splat data
                 body.AddToGroup("terrain");                                                 // bullet impacts sample SurfAt per-point
                 body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
-                terr.AddChild(body);
+                terr.AddChild(body); terr._collider = body;
             }
             terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = baseX; terr._bz = baseZ;   // for SampleHeight (spawns)
             terr._dom = dom; terr._dw = GWs; terr._dh = GHs;   // for SampleDominantLayer (grassy-spawn picking)

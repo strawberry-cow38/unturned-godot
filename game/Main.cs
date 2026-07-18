@@ -1542,6 +1542,9 @@ namespace UnturnedGodot
             var env = new EditorEnvironment(editor, res.DayNight, SetCleanEditorLighting);   // Phase 4: lighting/time/weather (Environment tab)
             editor.AddChild(env);
             editor.Environment = env;
+            var terrainEd = new EditorTerrain(editor, cam, res.Terr);   // Phase 5: heightmap sculpt (Terrain tab)
+            editor.AddChild(terrainEd);
+            editor.TerrainEd = terrainEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
@@ -1585,6 +1588,15 @@ namespace UnturnedGodot
                 {
                     env.DemoSet(0.5f, false);   // preview noon lighting through the Environment tab
                     GD.Print($"[editorenv] preview time={env.Time:0.00} ({(env.Overcast ? "overcast" : "clear")})");
+                };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORTERRAIN") == "1")
+                GetTree().CreateTimer(0.9).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Terrain;
+                    Vector3 at = spawns != null && spawns.Positions.Count > 0 ? spawns.Positions[0] : Vector3.Zero;   // a known land point
+                    terrainEd.DemoSculpt(at);
+                    cam.GlobalPosition = at + new Vector3(75f, 55f, 75f);
+                    cam.LookAt(at + Vector3.Up * 40f, Vector3.Up);
                 };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
