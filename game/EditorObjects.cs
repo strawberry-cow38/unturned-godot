@@ -29,10 +29,12 @@ namespace UnturnedGodot
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
         readonly List<Node3D> _placed = new();
         readonly Dictionary<Rid, Node3D> _pickToObj = new();
-        Node3D _selected;
-        MeshInstance3D _marker;
+        readonly List<Node3D> _selection = new();                      // multi-select (source EditorObjects.selection list)
+        readonly List<MeshInstance3D> _markers = new();                // one yellow outline per selected object
+        readonly List<(string guid, Transform3D x)> _copies = new();   // source EditorObjects.copies (Ctrl+C / Ctrl+V)
         EditorGizmo _gizmo;
         float _placeYaw;
+        Node3D Primary => _selection.Count > 0 ? _selection[_selection.Count - 1] : null;   // gizmo target = most-recent selected
 
         public EditorObjects(Editor editor, Node world, EditorCamera cam)
         {
@@ -128,49 +130,87 @@ namespace UnturnedGodot
 
         void HandleClick(Vector2 screen)
         {
-            if (PlaceName != null)   // place mode: drop the prop where the ray meets terrain / another prop
+            bool additive = Input.IsKeyPressed(Key.Shift);   // source 'modify' key -> toggle into the multi-selection
+            if (PlaceName != null && !additive)   // place mode: drop the prop where the ray meets terrain / another prop
             {
                 if (Raycast(screen, TerrainLayer | SmallPropLayer | EditorPickLayer, out var pt, out _))
                     Select(Place(PlaceName, pt, Upright(_placeYaw)));
             }
             else if (Raycast(screen, EditorPickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
-                Select(obj);
-            else Select(null);
+                Select(obj, additive);   // Shift+click toggles; plain click single-selects
+            else if (!additive) Select(null);
         }
 
-        void Select(Node3D obj) { _selected = obj; _gizmo.Attach(obj); RefreshMarker(); }
-
-        void RefreshMarker()
+        // select obj; additive (Shift) toggles it in the multi-selection, else it replaces the selection; null clears
+        void Select(Node3D obj, bool additive = false)
         {
-            if (_marker == null)
+            if (obj == null) { if (!additive) _selection.Clear(); }
+            else if (additive) { if (!_selection.Remove(obj)) _selection.Add(obj); }
+            else { _selection.Clear(); _selection.Add(obj); }
+            _gizmo.Attach(Primary);
+            RefreshMarkers();
+        }
+
+        MeshInstance3D NewMarker() => new MeshInstance3D
+        {
+            Mesh = new BoxMesh { Size = Vector3.One },
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.85f, 0.15f, 0.28f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded },
+            TopLevel = true,   // we drive its world transform from the selected object directly
+        };
+
+        void RefreshMarkers()   // selection changed: one yellow outline per selected object
+        {
+            foreach (var m in _markers) m.QueueFree();
+            _markers.Clear();
+            foreach (var _ in _selection) { var mk = NewMarker(); AddChild(mk); _markers.Add(mk); }
+            PositionMarkers();
+        }
+
+        void PositionMarkers()   // each frame / after a transform: hug each selected object's FULL transform (rotate+scale)
+        {
+            for (int i = 0; i < _markers.Count && i < _selection.Count; i++)
             {
-                _marker = new MeshInstance3D
-                {
-                    Mesh = new BoxMesh { Size = Vector3.One },
-                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.85f, 0.15f, 0.28f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded },
-                    Visible = false,
-                    TopLevel = true,   // we drive its world transform from the selected object directly
-                };
-                AddChild(_marker);
+                var sel = _selection[i];
+                var mi = sel.GetChildCount() > 0 ? sel.GetChild(0) as MeshInstance3D : null;
+                var aabb = mi != null ? mi.GetAabb() : new Aabb(-Vector3.One * 0.5f, Vector3.One);
+                _markers[i].GlobalTransform = sel.GlobalTransform * new Transform3D(Basis.FromScale(aabb.Size * 1.06f), aabb.Position + aabb.Size * 0.5f);
             }
-            if (_selected == null) { _marker.Visible = false; return; }
-            var mi = _selected.GetChildCount() > 0 ? _selected.GetChild(0) as MeshInstance3D : null;
-            var aabb = mi != null ? mi.GetAabb() : new Aabb(-Vector3.One * 0.5f, Vector3.One);
-            // carry the mesh's LOCAL AABB box through the object's FULL transform, so the outline rotates + scales WITH it
-            _marker.GlobalTransform = _selected.GlobalTransform * new Transform3D(Basis.FromScale(aabb.Size * 1.06f), aabb.Position + aabb.Size * 0.5f);
-            _marker.Visible = true;
         }
 
-        // (move/rotate on the selection is the source TransformHandles gizmo -- ported next, not an improvised drag)
-
-        public void DeleteSelected()
+        public void DeleteSelected()   // source: delete the whole selection
         {
-            if (_selected == null) return;
-            _placed.Remove(_selected);
-            foreach (var kv in new List<KeyValuePair<Rid, Node3D>>(_pickToObj))
-                if (kv.Value == _selected) _pickToObj.Remove(kv.Key);
-            _selected.QueueFree();
+            if (_selection.Count == 0) return;
+            foreach (var sel in new List<Node3D>(_selection))
+            {
+                _placed.Remove(sel);
+                foreach (var kv in new List<KeyValuePair<Rid, Node3D>>(_pickToObj))
+                    if (kv.Value == sel) _pickToObj.Remove(kv.Key);
+                sel.QueueFree();
+            }
             Select(null);
+        }
+
+        // source EditorObjects Ctrl+C/Ctrl+V: copy stores each selected prop's (guid + world transform); paste re-creates
+        // them at the same spot + selects the new ones (you then move the fresh copies off the originals).
+        void CopySelection()
+        {
+            _copies.Clear();
+            foreach (var sel in _selection)
+            {
+                string g = sel.HasMeta("guid") ? (string)sel.GetMeta("guid") : "";
+                if (g.Length > 0) _copies.Add((g, sel.GlobalTransform));
+            }
+            GD.Print($"[editor] copied {_copies.Count} prop(s)");
+        }
+
+        void PasteSelection()
+        {
+            if (_copies.Count == 0) return;
+            _selection.Clear();
+            foreach (var (g, x) in _copies)
+                if (_guidToName.TryGetValue(g, out var name)) { var nn = Place(name, x.Origin, x.Basis); if (nn != null) _selection.Add(nn); }
+            _gizmo.Attach(Primary); RefreshMarkers();
+            GD.Print($"[editor] pasted {_selection.Count} prop(s)");
         }
 
         public override void _UnhandledInput(InputEvent ev)
@@ -183,17 +223,20 @@ namespace UnturnedGodot
                     if (_gizmo.TryBeginDrag(GetViewport().GetMousePosition())) return;   // grabbed a gizmo axis -> drag, not place/select
                     HandleClick(GetViewport().GetMousePosition());                        // place (build mode) or select (source EditorSelection)
                 }
-                else if (_gizmo.Dragging) { _gizmo.EndDrag(); RefreshMarker(); }
+                else if (_gizmo.Dragging) { _gizmo.EndDrag(); PositionMarkers(); }
             }
             else if (ev is InputEventMouseMotion && _gizmo.Dragging)
             {
                 _gizmo.DragTo(GetViewport().GetMousePosition(), Input.IsKeyPressed(Key.Ctrl));   // TransformHandles POSITION_AXIS drag; Ctrl = 1u snap
-                RefreshMarker();
+                PositionMarkers();
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
-                if (k.Keycode == Key.Delete || k.Keycode == Key.X) DeleteSelected();   // source: delete the selection
-                else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate gizmo (source TransformHandles EMode)
+                bool ctrl = Input.IsKeyPressed(Key.Ctrl);
+                if (k.Keycode == Key.Delete || k.Keycode == Key.Backspace) DeleteSelected();   // source: delete the selection
+                else if (ctrl && k.Keycode == Key.C) CopySelection();                    // Ctrl+C copy (source EditorObjects)
+                else if (ctrl && k.Keycode == Key.V) PasteSelection();                   // Ctrl+V paste (source EditorObjects)
+                else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
                 else if (k.Keycode == Key.Escape) Select(null);
             }
@@ -271,7 +314,15 @@ namespace UnturnedGodot
                 float err = (a.X - re.X).Length() + (a.Y - re.Y).Length() + (a.Z - re.Z).Length();
                 var sc = pr.GlobalTransform.Basis.Scale;
                 GD.Print($"[editordemo] euler round-trip err={err:0.####} (ex={ex:0.#} ey={ey:0.#} ez={ez:0.#}) scale=({sc.X:0.##},{sc.Y:0.##},{sc.Z:0.##})");
-                Select(pr);   // translate-mode gizmo (thin) so the selection outline reads clearly in the render
+                // verify multi-select + copy/paste programmatically (headless can't drive real clicks)
+                if (_placed.Count > 3)
+                {
+                    Select(_placed[2], false); Select(_placed[3], true);   // Shift-add -> 2 selected
+                    int sel = _selection.Count; CopySelection();
+                    int before = _placed.Count; PasteSelection();
+                    GD.Print($"[editordemo] multi-select={sel}, pasted {_placed.Count - before} (now {_selection.Count} selected)");
+                }
+                Select(pr, false);   // single-select the transformed prop for a clean outline in the render
             }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
