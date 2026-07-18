@@ -40,6 +40,63 @@ namespace UnturnedGodot
         public ushort NetDriverId;   // MP §3.6: remote player holding the driver seat (set by VehicleNetSync); 0 = none. Gates the local direct-path enter; never set in pure SP.
         public Vector3 DriverEyeLocal = new Vector3(-0.4f, 1.85f, 0.4f);   // FP driving eye (local); tall cabs override higher so the view clears the hood
 
+        // --- MP Part A (CLIENT_PREDICTION_PLAN §5.2): the predicted-driver authority split. Both flags are
+        // MP-only null-seam state -- never set in pure SP, so every gate below is inert there. ---
+        // NetClientPredicted: THIS node is the driver's client-local vehicle (ClientWorldSession built it).
+        // The server owns health/explosion (they arrive via the replica's Exploded flag), so local damage
+        // must not eject/blow the driver on a divergence the server never saw.
+        public bool NetClientPredicted;
+        // NetHeld: THIS node is the server's body for a vehicle whose physics a driver's client owns
+        // (retail updatePhysics kinematic, U3 InteractableVehicle.cs:1490-1519). VehicleNetSync freezes it
+        // and teleports it to the adopted state every tick; _PhysicsProcess collapses to fuel burn + the
+        // explosion timer (retail simulateBurnFuel runs server-side for driven cars too).
+        public bool NetHeld { get; private set; }
+
+        /// <summary>Server hold begin (VehicleNetSync, first adopted state): freeze STATIC -- the parked-car
+        /// combo below; FreezeMode.Kinematic is known-bad on this Godot/Jolt build ("kinematic vanished the
+        /// car", the settle freeze) -- zero velocities, flag the hold. Layer ghosting is NetGhost's job.</summary>
+        public void NetBeginHold()
+        {
+            NetHeld = true;
+            LinearVelocity = Vector3.Zero; AngularVelocity = Vector3.Zero;
+            FreezeMode = FreezeModeEnum.Static;
+            Freeze = true;
+        }
+
+        /// <summary>Per-tick teleport of the held body to the driver-adopted state. A frozen static body
+        /// takes the transform verbatim (no solver fight -- wheels don't raycast while frozen), and space
+        /// queries (server ballistics/occlusion/interaction) see it at the new pose immediately.</summary>
+        public void NetHoldTeleport(Transform3D t) => GlobalTransform = t;
+
+        /// <summary>Server hold end (exit/disconnect): physics authority returns to the server exactly as
+        /// retail removePlayer -> updatePhysics. Seed the body from the last adopted velocity so it coasts
+        /// on instead of stopping dead, and seed the settle low-pass (_velAvg) + crash detector (_prevSpeed)
+        /// from the same -- stale zeros would insta-refreeze a rolling car / fake a crash on tick one.</summary>
+        public void NetEndHold(Vector3 lin, Vector3 ang)
+        {
+            NetHeld = false;
+            Freeze = false; _parked = false;
+            LinearVelocity = lin; AngularVelocity = ang;
+            _velAvg = lin; _angAvg = ang;
+            _prevSpeed = lin.Length();
+        }
+
+        /// <summary>Hold teardown when the vehicle EXPLODED while held: Explode() already unfroze + flung
+        /// the body -- just drop the flag and keep whatever velocity the blast set.</summary>
+        public void NetAbortHold() => NetHeld = false;
+
+        /// <summary>Driven-vehicle layer ghost (VehicleNetSync, remote-enter side effect): swap body layer
+        /// bit0 -> bit6 -- the SetTowGhost trick -- so the driver-client's own physics body (mask bit0) and
+        /// its wheel raycasts never ride the server duplicate when both live in one tree (the L1 shared-tree
+        /// harness), while players (mask bit0|bit6) still collide and server bullets (GodotWorldRay mask
+        /// bit0|bit6) still occlude. Cost, accepted for v1: other VEHICLES (mask bit0) pass through a driven
+        /// car -- retail's kinematic driven body does collide there; revisit with vehicle-vs-vehicle play.</summary>
+        public void NetGhost(bool on)
+        {
+            uint wantLayer = on ? (_baseCollisionLayer & ~(1u << 0)) | (1u << 6) : _baseCollisionLayer;
+            if (CollisionLayer != wantLayer) CollisionLayer = wantLayer;
+        }
+
         // --- trailer hitch (master steer: back the cab under the trailer, hop out, walk to the hitch, F to couple; then
         // the trailer swings behind on the pin like a real rig). A PinJoint3D pins the cab's fifth-wheel to the trailer
         // kingpin -> a ball joint that lets the trailer articulate (yaw through turns) around the coupling point. ---
@@ -226,6 +283,7 @@ namespace UnturnedGodot
 
         public void TakeDamage(float amount)   // source askDamage: reduce health; at 0 the EXPLODE timer starts
         {
+            if (NetClientPredicted) return;   // MP Part A: the driver's client-local vehicle -- health/explosion are SERVER truth (replica Exploded flag); a local crash must not eject the driver on damage the server never applied
             if (_exploded || amount <= 0f) return;
             Health = Mathf.Max(0f, Health - amount);
             TriggerAlarm();   // damaging an alarmed car sets off its alarm (master)
@@ -1630,6 +1688,12 @@ namespace UnturnedGodot
                 else { QueueFree(); return; }   // 5 min after extinguishing -> despawn the wreck
             }
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
+            if (NetHeld)   // MP Part A: a driver's client owns this body's physics -- the frozen node only burns fuel + counts down its explosion (retail simulateBurnFuel / explode run server-side for driven cars too); settle/damage/gear sim all skip
+            {
+                if (EngineOn && Fuel > 0f) Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);
+                if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
+                return;
+            }
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
