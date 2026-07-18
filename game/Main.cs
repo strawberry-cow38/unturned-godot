@@ -1556,17 +1556,22 @@ namespace UnturnedGodot
                     editor.Mode = EEditorMode.Spawns;   // switch to the Spawns tab so the markers show
                     if (spawns.Positions.Count > 0)
                     {
-                        var c = spawns.Positions[0];    // close-up on the first spawn (the 22 are spread across the whole island)
-                        cam.GlobalPosition = c + new Vector3(0f, 28f, 24f);
-                        cam.LookAt(c, Vector3.Up);
-                        // verify add/remove programmatically (headless can't drive real clicks)
+                        var c = spawns.Positions[0];
+                        // verify player add/remove + save round-trip (headless can't drive real clicks)
                         int b0 = spawns.PlayerCount;
                         spawns.RemoveNear(c);   // remove the original spawn under the cam (verify remove)
-                        spawns.AddSpawn(c, 45f, false); spawns.AddSpawn(c + new Vector3(7f, 0f, 0f), 90f, false); spawns.AddSpawn(c + new Vector3(-7f, 0f, 0f), 0f, true);   // rotated regular x2 + an ALT (cyan)
-                        GD.Print($"[editorspawns] remove-near from {b0}, then +3 -> {spawns.PlayerCount}");
-                        spawns.Save();   // verify the save round-trip: writes editor_players.txt; a re-run loads it back
+                        spawns.AddSpawn(c, 45f, false); spawns.AddSpawn(c + new Vector3(7f, 0f, 0f), 90f, false); spawns.AddSpawn(c + new Vector3(-7f, 0f, 0f), 0f, true);   // rotated x2 + an ALT
+                        GD.Print($"[editorspawns] player remove-near from {b0} -> {spawns.PlayerCount}");
+                        spawns.Save();
                     }
-                    GD.Print($"[editorspawns] {spawns.PlayerCount} player + {spawns.AltCount} alt spawns visualized");
+                    spawns.DemoSwitchToVehicles();   // flip to the Vehicle category (loads Vehicles.dat, type-coloured markers)
+                    if (spawns.Positions.Count > 0)
+                    {
+                        var vc = spawns.Positions[0];   // frame a vehicle spawn
+                        cam.GlobalPosition = vc + new Vector3(0f, 34f, 30f);
+                        cam.LookAt(vc, Vector3.Up);
+                    }
+                    GD.Print($"[editorspawns] vehicle spawns: {spawns.Count}");
                 };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }

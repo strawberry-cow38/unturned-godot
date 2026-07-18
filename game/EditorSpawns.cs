@@ -3,18 +3,24 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot
 {
-    // Spawns sub-editor, ported from SDG.Unturned EditorSpawns. Visualizes the map's spawn points and edits them by
-    // clicking the terrain (source ESpawnMode ADD_PLAYER/REMOVE_PLAYER -> LevelPlayers.addSpawn/removeSpawn):
-    //   1 = ADD mode, 2 = REMOVE mode (source tool_0 / tool_1);  ',' / '.' rotate the add spawn (source rotation);
-    //   '[' / ']' size the remove radius (source radius byte 2..30, the remove cursor is a sphere scaled radius*2);
-    //   V toggles player/alt (source selectedAlt).
-    // Player spawns = Spawns/Players.dat (u8 ver, u8 count, per point Vector3 + u8 angle*2 + bool isAlt if v>3). This
-    // slice = PLAYER spawns; the other four categories (zombie/vehicle/item/animal, each with a spawn TABLE) land next.
-    // NOTE: the source cursors are Resources prefabs (Edit/Player, Edit/Remove...); these are close primitive stand-ins
-    // (player capsule + facing arrow; radius-scaled sphere) -- the exact editor prefab meshes aren't ripped yet.
+    // Spawns sub-editor, ported from SDG.Unturned EditorSpawns. Visualizes + edits the map's spawn points by clicking
+    // the terrain (source ESpawnMode ADD/REMOVE per category -> LevelXxx.addSpawn/removeSpawn). Category-aware:
+    //   Tab cycles category (Player / Vehicle); 1 = ADD, 2 = REMOVE (source tool_0/tool_1); ',' '.' rotate the spawn
+    //   (source rotation); '[' ']' size the remove radius (source radius byte 2..30, sphere scaled radius*2);
+    //   V toggles player/alt (source selectedAlt); T cycles the vehicle TABLE/type (source selectedVehicle).
+    // Player = Spawns/Players.dat (Vector3 + angle*2 + isAlt). Vehicle = Spawns/Vehicles.dat points (u8 type + Vector3
+    // + angle*2; type = table: 0 Civilian 1 Police 2 Fire 3 Military 4 Medic 5 Farm). Zombie/Item/Animal land next.
+    // Edits persist to a port translator (content/spawns/editor_<cat>.txt) -- writing the binary .dat would clobber the
+    // retail install. NOTE: cursors are close primitive stand-ins for the source Edit/* prefabs (not ripped).
     public partial class EditorSpawns : Node3D
     {
-        struct Spawn { public Vector3 Pos; public float Yaw; public bool IsAlt; }
+        enum ECategory { Player, Vehicle }
+        struct Spawn { public Vector3 Pos; public float Yaw; public bool IsAlt; public int Type; }
+
+        static readonly string[] VehicleTypes = { "Civilian", "Police", "Fire", "Military", "Medic", "Farm" };
+        static readonly Color[] VehicleColors = {
+            new(0.85f, 0.85f, 0.85f), new(0.25f, 0.4f, 1f), new(1f, 0.25f, 0.2f),
+            new(0.3f, 0.75f, 0.3f), new(1f, 0.55f, 0.75f), new(0.85f, 0.6f, 0.25f) };
 
         readonly Editor _editor;
         readonly Camera3D _cam;
@@ -22,24 +28,35 @@ namespace UnturnedGodot
         readonly string _mapRoot;
         const uint TerrainLayer = 1u << 0, SmallPropLayer = 1u << 6, EditorPickLayer = 1u << 7;
 
+        ECategory _category = ECategory.Player;
         readonly List<Spawn> _spawns = new();
         readonly List<Node3D> _markers = new();
         Node3D _addCursor, _removeCursor;
         MeshInstance3D _addBody, _addArrow;
         bool _removeMode;
-        float _rotation;      // source EditorSpawns.rotation (add-spawn yaw)
-        byte _radius = 8;     // source EditorSpawns.radius (byte, 2..30; remove cursor = sphere scaled radius*2)
-        bool _alt;            // source selectedAlt (player vs alt spawn)
+        float _rotation;
+        byte _radius = 8;
+        bool _alt;
+        int _vehType;   // source selectedVehicle (table index)
 
         public readonly List<Vector3> Positions = new();
+        public int Count => _spawns.Count;
         public int PlayerCount { get { int n = 0; foreach (var s in _spawns) if (!s.IsAlt) n++; return n; } }
-        public int AltCount => _spawns.Count - PlayerCount;
-        public string ModeText => _removeMode ? $"REMOVE (radius {_radius})" : $"add {(_alt ? "ALT" : "player")} @ {_rotation:0}°";
+        public string ModeText
+        {
+            get
+            {
+                string cat = _category == ECategory.Vehicle ? $"Vehicle[{VehicleTypes[_vehType]}]" : "Player";
+                if (_removeMode) return $"{cat} · REMOVE (radius {_radius})";
+                string what = _category == ECategory.Vehicle ? VehicleTypes[_vehType] : (_alt ? "ALT" : "player");
+                return $"{cat} · add {what} @ {_rotation:0}°";
+            }
+        }
 
         public EditorSpawns(Editor editor, Camera3D cam, string mapRoot)
         {
             _editor = editor; _cam = cam; _flyCam = cam as EditorCamera; _mapRoot = mapRoot;
-            Load();
+            LoadCategory();
             RebuildMarkers();
             MakeCursors();
             _editor.ModeChanged += _ => RefreshVisibility();
@@ -48,7 +65,28 @@ namespace UnturnedGodot
 
         void RefreshVisibility() { Visible = _editor.Mode == EEditorMode.Spawns; }
 
-        void LoadPlayerSpawns()   // retail Spawns/Players.dat
+        string TranslatorPath(ECategory c) => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{c.ToString().ToLower()}.txt";
+
+        void LoadCategory()   // the editor translator (edited state) if present, else the retail .dat
+        {
+            string sp = TranslatorPath(_category);
+            if (System.IO.File.Exists(sp)) { LoadTranslator(sp); return; }
+            if (_category == ECategory.Player) LoadPlayerSpawns(); else LoadVehicleSpawns();
+        }
+
+        void LoadTranslator(string sp)
+        {
+            foreach (var line in System.IO.File.ReadLines(sp))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 5) continue;
+                if (float.TryParse(p[0], out var x) && float.TryParse(p[1], out var y) && float.TryParse(p[2], out var z) && float.TryParse(p[3], out var yaw))
+                    _spawns.Add(new Spawn { Pos = new Vector3(x, y, z), Yaw = yaw, IsAlt = p[4] == "1", Type = p.Length > 5 && int.TryParse(p[5], out var t) ? t : 0 });
+            }
+            GD.Print($"[editor-spawns] loaded {_spawns.Count} {_category} spawns (editor translator)");
+        }
+
+        void LoadPlayerSpawns()   // Spawns/Players.dat: u8 ver, u8 count, per point Vector3 + u8 angle*2 + bool isAlt if v>3
         {
             string ppath = _mapRoot + "/Spawns/Players.dat";
             if (!System.IO.File.Exists(ppath)) { GD.Print("[editor-spawns] no Players.dat"); return; }
@@ -66,46 +104,62 @@ namespace UnturnedGodot
             GD.Print($"[editor-spawns] loaded {_spawns.Count} player spawns ({PlayerCount} regular)");
         }
 
-        static string SaveDir => ProjectSettings.GlobalizePath("res://content/spawns/");
-        static string SavePath => SaveDir + "editor_players.txt";
-
-        void Load()   // the editor translator (edited state) if present, else the retail Players.dat
+        void LoadVehicleSpawns()   // Spawns/Vehicles.dat: header (tables) then u16 pointCount, per point u8 type + Vector3(skip y) + u8 angle*2
         {
-            if (!System.IO.File.Exists(SavePath)) { LoadPlayerSpawns(); return; }
-            foreach (var line in System.IO.File.ReadLines(SavePath))
+            string vpath = _mapRoot + "/Spawns/Vehicles.dat";
+            if (!System.IO.File.Exists(vpath)) { GD.Print("[editor-spawns] no Vehicles.dat"); return; }
+            var vd = System.IO.File.ReadAllBytes(vpath); int vp = 0;
+            byte U8() => vd[vp++];
+            ushort U16() { var v = System.BitConverter.ToUInt16(vd, vp); vp += 2; return v; }
+            void RStr() { int n = U8(); vp += n; }
+            byte ver = U8();
+            if (ver > 1 && ver < 3) vp += 8;   // SteamID
+            byte tcount = U8();
+            for (int t = 0; t < tcount; t++) { vp += 3; RStr(); if (ver > 3) vp += 2; byte tiers = U8(); for (int ti = 0; ti < tiers; ti++) { RStr(); vp += 4; byte sc = U8(); vp += sc * 2; } }
+            ushort pcount = U16();
+            for (int i = 0; i < pcount; i++)
             {
-                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                if (p.Length < 5) continue;
-                if (float.TryParse(p[0], out var x) && float.TryParse(p[1], out var y) && float.TryParse(p[2], out var z) && float.TryParse(p[3], out var yaw))
-                    _spawns.Add(new Spawn { Pos = new Vector3(x, y, z), Yaw = yaw, IsAlt = p[4] != "0" });
+                byte type = U8();
+                float px = System.BitConverter.ToSingle(vd, vp); vp += 4; vp += 4; float pz = System.BitConverter.ToSingle(vd, vp); vp += 4;   // x, skip y, z
+                float ang = U8() * 2f;
+                if (type > 5) continue;   // air/water/tank (6-11) not modelled
+                float gz = -pz;
+                _spawns.Add(new Spawn { Pos = new Vector3(px, RaycastDown(px, gz), gz), Yaw = -ang, Type = type });
             }
-            GD.Print($"[editor-spawns] loaded {_spawns.Count} player spawns (editor translator)");
+            GD.Print($"[editor-spawns] loaded {_spawns.Count} vehicle spawns");
         }
 
-        // Save the edited player spawns to a port-format translator (like the objects editor_PEI.txt). The source
-        // persists to binary Spawns/Players.dat, but writing that would clobber the retail install, so keep our own.
-        public int Save()
+        float RaycastDown(float x, float z)   // vehicle .dat skips point.y; sample the terrain height here
         {
-            System.IO.Directory.CreateDirectory(SaveDir);
-            using var w = new System.IO.StreamWriter(SavePath, false);
+            var q = new PhysicsRayQueryParameters3D { From = new Vector3(x, 800f, z), To = new Vector3(x, -400f, z), CollisionMask = TerrainLayer };
+            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
+            return hit.Count > 0 ? ((Vector3)hit["position"]).Y : 0f;
+        }
+
+        public int Save()   // Editor.Save() fan-out: persist the live category (source Editor.save -> EditorSpawns.save)
+        {
+            string sp = TranslatorPath(_category);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(sp));
+            using var w = new System.IO.StreamWriter(sp, false);
             foreach (var s in _spawns)
-                w.WriteLine($"{s.Pos.X:0.###} {s.Pos.Y:0.###} {s.Pos.Z:0.###} {s.Yaw:0.###} {(s.IsAlt ? 1 : 0)}");
-            GD.Print($"[editor-spawns] saved {_spawns.Count} player spawns -> {SavePath}");
+                w.WriteLine($"{s.Pos.X:0.###} {s.Pos.Y:0.###} {s.Pos.Z:0.###} {s.Yaw:0.###} {(s.IsAlt ? 1 : 0)} {s.Type}");
+            GD.Print($"[editor-spawns] saved {_spawns.Count} {_category} spawns -> {sp}");
             return _spawns.Count;
         }
+
+        Color MarkerColor(in Spawn s) => _category == ECategory.Vehicle ? VehicleColors[Mathf.Clamp(s.Type, 0, 5)] : (s.IsAlt ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.86f, 0.1f));
 
         void RebuildMarkers()
         {
             foreach (var m in _markers) m.QueueFree();
             _markers.Clear(); Positions.Clear();
-            foreach (var s in _spawns) { var m = MakeMarker(s.Pos, s.Yaw, s.IsAlt); AddChild(m); _markers.Add(m); Positions.Add(s.Pos); }
+            foreach (var s in _spawns) { var m = MakeMarker(s.Pos, s.Yaw, MarkerColor(s)); AddChild(m); _markers.Add(m); Positions.Add(s.Pos); }
         }
 
-        // a post + top ball + facing-arrow cone. Regular = yellow, alt = cyan (source colors the cursor from the table).
-        Node3D MakeMarker(Vector3 pos, float yawDeg, bool isAlt)
+        Node3D MakeMarker(Vector3 pos, float yawDeg, Color col)
         {
             var root = new Node3D { Position = pos, RotationDegrees = new Vector3(0, yawDeg, 0) };
-            var mat = new StandardMaterial3D { AlbedoColor = isAlt ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.86f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+            var mat = new StandardMaterial3D { AlbedoColor = col, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
             root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.18f, BottomRadius = 0.18f, Height = 3.4f }, MaterialOverride = mat, Position = new Vector3(0, 1.7f, 0) });
             root.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.7f, Height = 1.4f }, MaterialOverride = mat, Position = new Vector3(0, 3.6f, 0) });
             root.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.55f, Height = 1.3f }, MaterialOverride = mat, Position = new Vector3(0, 2.4f, 1.0f), RotationDegrees = new Vector3(90, 0, 0) });
@@ -114,13 +168,11 @@ namespace UnturnedGodot
 
         void MakeCursors()
         {
-            // ADD cursor: a player-height capsule + facing arrow (approximates Resources "Edit/Player"), rotated by _rotation
             _addCursor = new Node3D { Visible = false };
             _addBody = new MeshInstance3D { Mesh = new CapsuleMesh { Radius = 0.4f, Height = 1.9f }, Position = new Vector3(0, 0.95f, 0) };
             _addArrow = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0f, BottomRadius = 0.4f, Height = 1f }, Position = new Vector3(0, 0.95f, 1.0f), RotationDegrees = new Vector3(90, 0, 0) };
             _addCursor.AddChild(_addBody); _addCursor.AddChild(_addArrow);
             AddChild(_addCursor);
-            // REMOVE cursor: a translucent unit sphere scaled to the remove radius (source: remove.localScale = radius*2)
             _removeCursor = new Node3D { Visible = false };
             _removeCursor.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 1f, Height = 2f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.3f, 0.3f, 0.22f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } });
             AddChild(_removeCursor);
@@ -129,7 +181,9 @@ namespace UnturnedGodot
 
         void UpdateAddCursorColor()
         {
-            var mat = new StandardMaterial3D { AlbedoColor = _alt ? new Color(0.2f, 0.85f, 1f, 0.4f) : new Color(1f, 0.86f, 0.1f, 0.4f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+            var c = _category == ECategory.Vehicle ? VehicleColors[Mathf.Clamp(_vehType, 0, 5)] : (_alt ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.86f, 0.1f));
+            c.A = 0.4f;
+            var mat = new StandardMaterial3D { AlbedoColor = c, Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
             _addBody.MaterialOverride = mat; _addArrow.MaterialOverride = mat;
         }
 
@@ -152,32 +206,28 @@ namespace UnturnedGodot
                 if (_removeCursor != null) _removeCursor.Visible = false;
                 return;
             }
-            if (_removeMode)
-            {
-                _removeCursor.Position = pt; _removeCursor.Scale = Vector3.One * _radius; _removeCursor.Visible = true; _addCursor.Visible = false;
-            }
-            else
-            {
-                _addCursor.Position = pt; _addCursor.RotationDegrees = new Vector3(0, _rotation, 0); _addCursor.Visible = true; _removeCursor.Visible = false;
-            }
+            if (_removeMode) { _removeCursor.Position = pt; _removeCursor.Scale = Vector3.One * _radius; _removeCursor.Visible = true; _addCursor.Visible = false; }
+            else { _addCursor.Position = pt; _addCursor.RotationDegrees = new Vector3(0, _rotation, 0); _addCursor.Visible = true; _removeCursor.Visible = false; }
         }
 
         public override void _UnhandledInput(InputEvent ev)
         {
-            if (_editor.Mode != EEditorMode.Spawns || (_flyCam != null && _flyCam.Flying)) return;   // Spawns tab only; never while flying (RMB)
+            if (_editor.Mode != EEditorMode.Spawns || (_flyCam != null && _flyCam.Flying)) return;
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed)
             {
                 if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
-                if (_removeMode) RemoveNear(pt); else AddSpawn(pt, _rotation, _alt);
+                if (_removeMode) RemoveNear(pt); else AddSpawn(pt, _rotation, _alt, _vehType);
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 switch (k.Keycode)
                 {
-                    case Key.Key1: _removeMode = false; break;                                  // source tool_0 -> ADD
-                    case Key.Key2: _removeMode = true; break;                                   // source tool_1 -> REMOVE
-                    case Key.V: _alt = !_alt; UpdateAddCursorColor(); break;                    // toggle player/alt (source selectedAlt)
-                    case Key.Comma: _rotation = Mathf.Wrap(_rotation - 15f, 0f, 360f); break;   // rotate the add spawn (source rotation)
+                    case Key.Tab: SwitchCategory(); break;                                      // cycle category
+                    case Key.Key1: _removeMode = false; break;                                  // tool_0 -> ADD
+                    case Key.Key2: _removeMode = true; break;                                   // tool_1 -> REMOVE
+                    case Key.V: _alt = !_alt; UpdateAddCursorColor(); break;                    // player/alt (source selectedAlt)
+                    case Key.T: _vehType = (_vehType + 1) % VehicleTypes.Length; UpdateAddCursorColor(); break;   // vehicle table (source selectedVehicle)
+                    case Key.Comma: _rotation = Mathf.Wrap(_rotation - 15f, 0f, 360f); break;   // rotate (source rotation)
                     case Key.Period: _rotation = Mathf.Wrap(_rotation + 15f, 0f, 360f); break;
                     case Key.Bracketleft: _radius = (byte)Mathf.Max(2, _radius - 1); break;     // remove radius (source byte 2..30)
                     case Key.Bracketright: _radius = (byte)Mathf.Min(30, _radius + 1); break;
@@ -185,19 +235,34 @@ namespace UnturnedGodot
             }
         }
 
-        public void AddSpawn(Vector3 pt, float yaw = 0f, bool isAlt = false)   // source LevelPlayers.addSpawn(point, rotation, selectedAlt)
+        void SwitchCategory()
         {
-            _spawns.Add(new Spawn { Pos = pt, Yaw = yaw, IsAlt = isAlt });
-            var m = MakeMarker(pt, yaw, isAlt); AddChild(m); _markers.Add(m); Positions.Add(pt);
-            GD.Print($"[editor-spawns] added {(isAlt ? "alt" : "player")} spawn @ {yaw:0}deg ({_spawns.Count} total)");
+            Save();                                                     // persist the current category before switching
+            _category = _category == ECategory.Player ? ECategory.Vehicle : ECategory.Player;
+            _spawns.Clear();
+            LoadCategory();
+            RebuildMarkers();
+            UpdateAddCursorColor();
+            GD.Print($"[editor-spawns] category -> {_category} ({_spawns.Count})");
         }
 
-        public void RemoveNear(Vector3 pt)   // source LevelPlayers.removeSpawn(point, radius)
+        public void AddSpawn(Vector3 pt, float yaw = 0f, bool isAlt = false, int type = 0)   // source LevelXxx.addSpawn(point, rotation, ...)
+        {
+            var s = new Spawn { Pos = pt, Yaw = yaw, IsAlt = isAlt, Type = type };
+            _spawns.Add(s);
+            var m = MakeMarker(pt, yaw, MarkerColor(s)); AddChild(m); _markers.Add(m); Positions.Add(pt);
+            GD.Print($"[editor-spawns] added {_category} spawn @ {yaw:0}deg ({_spawns.Count} total)");
+        }
+
+        public void RemoveNear(Vector3 pt)   // source LevelXxx.removeSpawn(point, radius)
         {
             int removed = 0;
             for (int i = _spawns.Count - 1; i >= 0; i--)
                 if (_spawns[i].Pos.DistanceTo(pt) <= _radius) { _spawns.RemoveAt(i); removed++; }
             if (removed > 0) { RebuildMarkers(); GD.Print($"[editor-spawns] removed {removed} ({_spawns.Count} left)"); }
         }
+
+        // harness (--editor UG_EDITORSPAWNS): flip to the vehicle category so a render shows the type-coloured markers
+        public void DemoSwitchToVehicles() { if (_category != ECategory.Vehicle) SwitchCategory(); }
     }
 }
