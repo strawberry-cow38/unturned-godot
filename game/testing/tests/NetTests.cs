@@ -2524,6 +2524,134 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // MP VITALS P0 TEETH (docs/MP_VITALS_PLAN.md §9): the regression-rule anchor for the vitals split.
+    // THIS FORM ASSERTS TODAY'S BROKEN TRUTH -- MP players are immortal: the server avatar's TakeDamage/
+    // Infect early-return at PlayerController.cs:1856 (`if (NetAvatar) return`), so a zombie bite driven
+    // exactly the way ZombieController.cs:371-372 lands it is a NO-OP on the server's authoritative
+    // CombatState. Each vitals phase flips assertions:
+    //   P2 (damage routing): bites DROP server CombatState.Health (the seam + queue) and the coarse byte
+    //       replicates the drop to the client's own CombatState replica -- flip (a)/(b).
+    //   P3 (death/respawn UX): enough bites KILL -- death-cam on the shell, respawn at SpawnPos with
+    //       vitals reset, DESYNC-QUIET -- this test becomes net.shell_bite_death_respawn's final form.
+    public class NetShellBiteDeathRespawn : GameTest
+    {
+        public override string Name => "net.shell_bite_death_respawn";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260718);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "bitten" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(25);
+            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
+            T.Check("C2 avatar body exists for the shell's peer", haveBody);
+            if (!haveBody) yield break;
+
+            // the bite, driven EXACTLY the way the server's real zombie brain lands it
+            // (ZombieController.cs:371-372, AttackDamage default 15): ~1 Hz swings for ~4 s = 60 damage
+            for (int bite = 0; bite < 4; bite++)
+            {
+                body.TakeDamage(15f, body.GlobalPosition + Vector3.Forward);
+                body.Infect((15f / 3f) / 100f);
+                yield return Ticks(50);
+            }
+
+            bool sHave = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var scs);
+            T.Check("server combat entity exists", sHave);
+            if (!sHave) yield break;
+            // (a) TODAY'S GAP: 60 damage of bites and the server's authoritative health NEVER MOVED --
+            //     the avatar's TakeDamage is the :1856 no-op. P2 flips this to "health dropped".
+            T.Check($"(a) IMMORTAL TODAY: server HealthExact untouched by 60 dmg of bites ({scs.HealthExact:0.#})",
+                    scs.HealthExact == 100f && scs.Health == 100 && scs.Alive);
+            // (b) ... so the client's own replica never saw a drop either. P2 flips this too.
+            bool cHave = sess.Client.CombatState.TryGet(sess.Client.PlayerId, out var ccs);
+            T.Check($"(b) client's own CombatState replica still full ({(cHave ? ccs.Health : -1)})",
+                    cHave && ccs.Health == 100 && ccs.Alive);
+            // (c) the shell never died: no death-cam, full local health (bites happen SERVER-side only)
+            T.Check($"(c) shell alive at full local health ({sess.Shell.Health:0.#})",
+                    sess.Shell.Health == 100f);
+            T.Check($"DESYNC-QUIET across the run ({desyncs} fired)", desyncs == 0);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // MP VITALS P0 TEETH, fall baseline (docs/MP_VITALS_PLAN.md §9): documents the CLIENT-LED divergence
+    // P2 erases. The shell's CheckFallDamage runs un-gated locally (applies real damage + Broken to the
+    // shell's own vitals), while the avatar's :1027 `if (NetAvatar) return` makes the server-side landing
+    // a no-op -- so a hard fall FORKS the two views: shell hurt, server oblivious. Server-gated console
+    // teleport (+40 m up) launches BOTH bodies on the same fall (the entity teleport is adopted by the
+    // avatar; the reconciler snaps the shell). P2 flips: the server takes the damage (avatar seam ->
+    // vitals queue) and the shell STOPS self-applying (RemoteVitals fx-only gate).
+    public class NetShellFallDamage : GameTest
+    {
+        public override string Name => "net.shell_fall_damage";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260719);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "faller" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true, AllowCheats = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(25);
+            var spawn = sess.Shell.TruePhysicsPosition;
+
+            // console teleport 40 m up: ServerTeleport moves the entity, the avatar adopts, the shell
+            // snaps -- BOTH bodies fall the same ~28 m/s landing (over the 22 m/s FallMath threshold)
+            var target = spawn + new Vector3(25f, 40f, 15f);
+            string cmd = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                                       "teleport {0:0.##} {1:0.##} {2:0.##}", target.X, target.Y, target.Z);
+            T.Check("console teleport sent", sess.Client.SendConsole(cmd));
+
+            // wait out the fall (~2.9 s) + settle
+            yield return Until(() => sess.Shell.Health < 100f, 10);
+            yield return Ticks(25);
+
+            // (a) the SHELL self-applied real fall damage + broken legs, CLIENT-LED (P2 flips: fx only)
+            T.Check($"(a) shell self-applied local fall damage (health {sess.Shell.Health:0.#})",
+                    sess.Shell.Health < 100f && sess.Shell.Health > 0f);
+            T.Check("(a) shell broke its legs locally", sess.Shell.Broken);
+            // (b) the SERVER never heard about any of it -- the avatar's landing is the :1027 no-op
+            //     (P2 flips: server HealthExact drops through the ServerDamage seam + vitals queue)
+            bool sHave = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var scs);
+            T.Check($"(b) SERVER OBLIVIOUS TODAY: HealthExact still full ({(sHave ? scs.HealthExact : -1f):0.#})",
+                    sHave && scs.HealthExact == 100f && scs.Health == 100 && scs.Alive);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // Phase 6/8 client seams: the connect shell SPENDS XP -- the SkillsUI upgrade routes through
     // RequestUpgradeSkill/NetUpgradeSkill, the server's PlayerSkills.TryUpgrade validates cost/cap, and
     // the owner skills block echoes the level + spend into AdoptReplicatedSkills. Also proves the
