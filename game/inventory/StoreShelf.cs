@@ -4,51 +4,61 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot
 {
-    // Master's loot-rework step 2: a store shelf (the real Unturned Shelf_1 gondola) that's ALSO a container. Walk up +
-    // F to open its grid like a crate, but its contents are ALSO shown as the items' real 3D models sitting on the
-    // shelf tiers -- no physics, neatly placed (the display-storage mechanic from InteractableStorage.isDisplay, but
-    // for the whole grid). Contents are rolled from a PEI item drop table on spawn (like LootCrate). Placed in the
-    // editor, tested in SP. LootTables.Load must have run first.
+    // Master's loot-rework step 2: a store shelf (a real Unturned OPEN-tier shelf prop) that's ALSO a container. Walk up +
+    // F to open its grid like a crate, but its contents are ALSO shown as the items' real 3D models sitting on the shelf
+    // tiers -- no physics, neatly placed (the display-storage mechanic from InteractableStorage.isDisplay, generalized to
+    // the whole grid). Contents roll from a PEI item drop table on spawn (like LootCrate). MeshName picks which shelf prop
+    // + its tier PROFILE (Shelf_1 store gondola, Shelf_0 wood/metal shelf, ...). Only fits OPEN-tier shelves; solid-front
+    // props (bookcases/fridges) use a plain container instead. LootTables.Load must have run first.
     public partial class StoreShelf : StorageCrate
     {
         public int TableIndex = 0;
-        public int MinItems = 8, MaxItems = 16;   // a shelf holds more than a crate
+        public int MinItems = 8, MaxItems = 16;
+        public string MeshName = "Shelf_1";
 
-        // --- tier layout (fractions of the standing shelf's AABB; tuned to land items on the real Shelf_1 surfaces) ---
-        static readonly float[] TierY = { 0.20f, 0.50f, 0.80f };   // shelf-surface heights up the unit
-        const int PerTier = 6;                                     // item slots across the 5 m width
-        const float WidthUse = 0.82f;                              // fraction of the width used (leave end margins)
-        const float FrontZ = 0.30f;                                // push items toward the front face (fraction of half-depth)
+        // per-shelf-type tier layout: TierY = shelf-surface heights as fractions of the STANDING AABB; PerTier = item
+        // slots across the width; WidthUse = fraction of width used (end margins); FrontZ = how far toward the front face.
+        class Profile { public float[] TierY; public int PerTier; public float WidthUse; public float FrontZ; public int Min, Max; }
+        static readonly Dictionary<string, Profile> Profiles = new()
+        {
+            ["Shelf_1"] = new Profile { TierY = new[] { 0.20f, 0.50f, 0.80f }, PerTier = 6, WidthUse = 0.82f, FrontZ = 0.30f, Min = 8, Max = 16 },   // store gondola (5m wide)
+            ["Shelf_0"] = new Profile { TierY = new[] { 0.18f, 0.48f, 0.78f }, PerTier = 3, WidthUse = 0.78f, FrontZ = 0.45f, Min = 5, Max = 10 },   // wood/metal shelf (~1.9m wide, deep)
+        };
+        static Profile Prof(string mesh) => Profiles.TryGetValue(mesh, out var p) ? p : Profiles["Shelf_1"];
 
-        static ArrayMesh _shelfMesh;
-        static Material _shelfMat;
-        const string MeshPath = "res://content/objects/Shelf_1.obj";
-        const string TexPath = "res://content/objects/Shelf_1_tex.png";
+        static readonly Dictionary<string, ArrayMesh> _meshes = new();
+        static readonly Dictionary<string, Material> _mats = new();
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
-        public static StoreShelf Spawn(Node parent, Vector3 pos, int table, float yawDeg = 0f)
+        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f)
         {
-            var s = new StoreShelf { TableIndex = table };
+            var pr = Prof(meshName);
+            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max };
             parent.AddChild(s);
             s.GlobalTransform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
             return s;
         }
 
-        static ArrayMesh ShelfMesh() => _shelfMesh ??= ObjMesh.Load(ProjectSettings.GlobalizePath(MeshPath));
-        static Material ShelfMat()
+        ArrayMesh ShelfMesh()
         {
-            if (_shelfMat != null) return _shelfMat;
+            if (_meshes.TryGetValue(MeshName, out var m)) return m;
+            m = ObjMesh.Load(ProjectSettings.GlobalizePath($"res://content/objects/{MeshName}.obj"));
+            _meshes[MeshName] = m; return m;
+        }
+        Material ShelfMat()
+        {
+            if (_mats.TryGetValue(MeshName, out var cached)) return cached;
             var mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             var img = new Image();
-            string tp = ProjectSettings.GlobalizePath(TexPath);
+            string tp = ProjectSettings.GlobalizePath($"res://content/objects/{MeshName}_tex.png");
             if (System.IO.File.Exists(tp) && img.Load(tp) == Error.Ok)
             {
                 mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
                 mm.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // tiny palette texel
             }
             else mm.AlbedoColor = new Color(0.62f, 0.62f, 0.64f);
-            return _shelfMat = mm;
+            _mats[MeshName] = mm; return mm;
         }
 
         // the standing shelf's AABB in root space (mesh is authored lying down; +270 X stands it up, matching the editor).
@@ -94,7 +104,7 @@ namespace UnturnedGodot
                 if (item != null) { Add(item); ids.Add(id); }
             }
             DisplayItems(ids);
-            GD.Print($"[store-shelf] table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {ids.Count} items on tiers");
+            GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {ids.Count} items on tiers");
         }
 
         // place each stored item's real model on a tier slot (static, no physics -- the "neatly placed" display).
@@ -102,16 +112,17 @@ namespace UnturnedGodot
         {
             var mesh = ShelfMesh();
             if (mesh == null || ids.Count == 0) return;
+            var pr = Prof(MeshName);
             var box = StoodAabb(mesh);
-            float x0 = box.Position.X + box.Size.X * (1f - WidthUse) * 0.5f;
-            float xspan = box.Size.X * WidthUse;
-            float zFront = box.Position.Z + box.Size.Z * (0.5f + 0.5f * FrontZ);   // toward the front face
-            int slots = TierY.Length * PerTier;
+            float x0 = box.Position.X + box.Size.X * (1f - pr.WidthUse) * 0.5f;
+            float xspan = box.Size.X * pr.WidthUse;
+            float zFront = box.Position.Z + box.Size.Z * (0.5f + 0.5f * pr.FrontZ);   // toward the front face
+            int slots = pr.TierY.Length * pr.PerTier;
             for (int i = 0; i < ids.Count && i < slots; i++)
             {
-                int tier = i / PerTier, col = i % PerTier;
-                float fx = PerTier > 1 ? col / (float)(PerTier - 1) : 0.5f;
-                var pos = new Vector3(x0 + xspan * fx, box.Position.Y + box.Size.Y * TierY[tier], zFront);
+                int tier = i / pr.PerTier, col = i % pr.PerTier;
+                float fx = pr.PerTier > 1 ? col / (float)(pr.PerTier - 1) : 0.5f;
+                var pos = new Vector3(x0 + xspan * fx, box.Position.Y + box.Size.Y * pr.TierY[tier], zFront);
 
                 var asset = Assets.find((ushort)ids[i]) as ItemAsset;
                 Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;

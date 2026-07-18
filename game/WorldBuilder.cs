@@ -49,9 +49,10 @@ namespace UnturnedGodot
         // CONTAINERS in singleplayer instead of plain decoration -- a StoreShelf spawns at the placement transform and
         // the decoration mesh is skipped. Registry = object guid -> PEI item table. First pass: the Shelf_1 store shelf
         // (24 placed in the map's shops). Extend the map as more prop->container mappings are dialed in.
-        static readonly System.Collections.Generic.Dictionary<string, int> ContainerTable = new()
+        static readonly System.Collections.Generic.Dictionary<string, (string mesh, int table)> ContainerShelf = new()
         {
-            ["3d37d6da42a34f19b6b6a25e3ab8eaab"] = 6,   // Shelf_1 (store shelf, Medium/Business) -> PEI table 6 "Food"
+            ["3d37d6da42a34f19b6b6a25e3ab8eaab"] = ("Shelf_1", 6),    // store gondola (Medium/Business, x24) -> table 6 "Food"
+            ["c2ea9b50d4d640438800b9ff553ec627"] = ("Shelf_0", 21),   // wood/metal shelf (Medium/Furniture, x46) -> table 21 "Civilian Canada"
         };
 
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
@@ -258,9 +259,9 @@ namespace UnturnedGodot
             int converted = 0;
             bool TryContainer(string[] q)
             {
-                if (mode != WorldMode.Playable || !ContainerTable.TryGetValue(q[0], out int table)) return false;
+                if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
                 if (!LootTables.Loaded) LootTables.Load(mapRoot + "/Spawns/Items.dat");
-                StoreShelf.Spawn(root, new Vector3(F(q[1]), F(q[2]), -F(q[3])), table, 180f - F(q[5]));   // ex=270/ez=0 upright -> yaw only
+                StoreShelf.Spawn(root, new Vector3(F(q[1]), F(q[2]), -F(q[3])), cfg.mesh, cfg.table, 180f - F(q[5]));   // ex=270/ez=0 upright -> yaw only
                 converted++;
                 return true;
             }

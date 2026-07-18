@@ -1534,7 +1534,7 @@ namespace UnturnedGodot
                 if (p.Length < 4 || !int.TryParse(p[0], out var tbl)
                     || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
                 float yaw = 0f; if (p.Length >= 5) float.TryParse(p[4], out yaw);
-                StoreShelf.Spawn(this, new Vector3(px, py, -pz), tbl, yaw);
+                StoreShelf.Spawn(this, new Vector3(px, py, -pz), "Shelf_1", tbl, yaw);
                 n++;
             }
             if (n > 0) GD.Print($"[store-shelf] spawned {n} editor store shelves in SP");
