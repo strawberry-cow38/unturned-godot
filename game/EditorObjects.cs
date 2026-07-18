@@ -29,11 +29,13 @@ namespace UnturnedGodot
         readonly Dictionary<Rid, Node3D> _pickToObj = new();
         Node3D _selected;
         MeshInstance3D _marker;
+        EditorGizmo _gizmo;
         float _placeYaw;
 
         public EditorObjects(Editor editor, Node world, EditorCamera cam)
         {
             _editor = editor; _world = world; _cam = cam; _flyCam = cam;
+            _gizmo = new EditorGizmo(cam); AddChild(_gizmo);   // the source TransformHandles translate gizmo, shown on the selection
             LoadCatalog();
             if (_catalog.Count > 0) PlaceName = _catalog[0];   // default to placing the first prop
         }
@@ -124,7 +126,7 @@ namespace UnturnedGodot
             else Select(null);
         }
 
-        void Select(Node3D obj) { _selected = obj; RefreshMarker(); }
+        void Select(Node3D obj) { _selected = obj; _gizmo.Attach(obj); RefreshMarker(); }
 
         void RefreshMarker()
         {
@@ -162,8 +164,20 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Objects || _flyCam.Flying) return;   // Objects tab only; never while flying (RMB)
-            if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
-                HandleClick(GetViewport().GetMousePosition());   // place (build mode) or select (source EditorSelection)
+            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
+            {
+                if (mb.Pressed)
+                {
+                    if (_gizmo.TryBeginDrag(GetViewport().GetMousePosition())) return;   // grabbed a gizmo axis -> drag, not place/select
+                    HandleClick(GetViewport().GetMousePosition());                        // place (build mode) or select (source EditorSelection)
+                }
+                else if (_gizmo.Dragging) { _gizmo.EndDrag(); RefreshMarker(); }
+            }
+            else if (ev is InputEventMouseMotion && _gizmo.Dragging)
+            {
+                _gizmo.DragTo(GetViewport().GetMousePosition(), Input.IsKeyPressed(Key.Ctrl));   // TransformHandles POSITION_AXIS drag; Ctrl = 1u snap
+                RefreshMarker();
+            }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 if (k.Keycode == Key.Delete || k.Keycode == Key.X) DeleteSelected();   // source: delete the selection
@@ -179,6 +193,7 @@ namespace UnturnedGodot
             int n = 0;
             for (int i = 0; i < 6; i++)
                 if (Raycast(new Vector2(300 + i * 110, 380), TerrainLayer, out var pt, out _) && Place(_catalog[(i * 7) % _catalog.Count], pt, i * 30f) != null) { DemoPositions.Add(pt); n++; }
+            if (_placed.Count > 0) Select(_placed[0]);   // show the translate gizmo on a prop in the render
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
     }
