@@ -69,17 +69,21 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Terrain || (_flyCam != null && _flyCam.Flying) || _terr == null) return;
-            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed)
+            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
-                if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
-                float fac = Mathf.Clamp(_strength / 40f, 0.05f, 1f);   // flatten/smooth blend factor from the strength dial
-                switch (_brush)
+                if (mb.Pressed)
                 {
-                    case EBrush.Raise: _terr.EditHeight(pt.X, pt.Z, _radius, _strength * (Input.IsKeyPressed(Key.Shift) ? -1f : 1f)); break;   // Shift = lower
-                    case EBrush.Flatten: _terr.EditFlatten(pt.X, pt.Z, _radius, fac); break;
-                    case EBrush.Smooth: _terr.EditSmooth(pt.X, pt.Z, _radius, fac); break;
+                    if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
+                    float fac = Mathf.Clamp(_strength / 40f, 0.05f, 1f);   // flatten/smooth blend factor from the strength dial
+                    switch (_brush)
+                    {
+                        case EBrush.Raise: _terr.EditHeight(pt.X, pt.Z, _radius, _strength * (Input.IsKeyPressed(Key.Shift) ? -1f : 1f)); break;   // Shift = lower
+                        case EBrush.Flatten: _terr.EditFlatten(pt.X, pt.Z, _radius, fac); break;
+                        case EBrush.Smooth: _terr.EditSmooth(pt.X, pt.Z, _radius, fac); break;
+                    }
+                    GD.Print($"[editor-terrain] {_brush} at ({pt.X:0},{pt.Z:0}) r={_radius:0} s={_strength:0}");
                 }
-                GD.Print($"[editor-terrain] {_brush} at ({pt.X:0},{pt.Z:0}) r={_radius:0} s={_strength:0}");
+                else _terr?.RebuildCollider();   // stroke end (mouse-up): refresh the heavy collider once, off the stroke
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
@@ -100,6 +104,7 @@ namespace UnturnedGodot
             if (_terr == null) return;
             _terr.EditHeight(at.X, at.Z, 45f, 110f);                             // a sharp spike (raise)
             for (int i = 0; i < 4; i++) _terr.EditSmooth(at.X, at.Z, 62f, 0.5f);   // smooth it into a rounded hill (verifies Smooth)
+            _terr.RebuildCollider();                                             // stroke end
             GD.Print("[editorterrain] raised + smoothed a demo hill");
         }
     }

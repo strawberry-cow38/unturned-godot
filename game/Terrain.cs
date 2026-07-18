@@ -124,7 +124,7 @@ void fragment() {
             using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
             if (r.ReadInt32() != _gw || r.ReadInt32() != _gh) return false;
             for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) _grid[x, y] = r.ReadSingle();
-            RebuildMesh();
+            RebuildMesh(); RebuildCollider();
             return true;
         }
 
@@ -166,7 +166,7 @@ void fragment() {
             _dirty = true; RebuildMesh();
         }
 
-        public void RebuildMesh()   // regenerate vertices + normals from _grid (uvs/colours/indices unchanged); refresh the collider
+        public void RebuildMesh()   // regenerate vertices + normals from _grid (VISUAL mesh only -- fast; RebuildCollider on stroke-end)
         {
             if (_grid == null || _mi == null) return;
             int nv = _gw * _gh;
@@ -185,7 +185,12 @@ void fragment() {
             arr[(int)Mesh.ArrayType.TexUV] = _uvs; arr[(int)Mesh.ArrayType.Color] = _cols; arr[(int)Mesh.ArrayType.Index] = _idx;
             var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
             _mi.Mesh = mesh;
-            if (_collider != null) foreach (var c in _collider.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = mesh.CreateTrimeshShape();
+        }
+
+        public void RebuildCollider()   // trimesh collider from the current mesh -- heavy (whole island), so deferred to stroke-end (mouse-up)
+        {
+            if (_collider == null || _mi?.Mesh is not ArrayMesh am) return;
+            foreach (var c in _collider.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = am.CreateTrimeshShape();
         }
         public float SampleHeight(float worldX, float worldZ)
         {
