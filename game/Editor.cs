@@ -16,6 +16,7 @@ namespace UnturnedGodot
         public EditorCamera Camera { get; private set; }
         public EditorObjects Objects;                     // Phase 2 objects sub-editor (set by BuildEditor)
         public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
+        public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 
@@ -35,11 +36,12 @@ namespace UnturnedGodot
 
         // source Editor.save() -> EditorInteract.save() + EditorObjects.save() + EditorSpawns.save().
         // wired per-phase as the sub-editors land; Phase 1 has nothing persistent yet.
-        public void Save()   // source Editor.save() -> fans out to the sub-editors; Objects + Spawns persist
+        public void Save()   // source Editor.save() -> fans out to the sub-editors
         {
             int n = Objects?.Save() ?? 0;
             int s = Spawns?.Save() ?? 0;
-            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns)");
+            int e = Environment?.Save() ?? 0;
+            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env)");
         }
     }
 }

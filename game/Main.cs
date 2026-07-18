@@ -1539,6 +1539,9 @@ namespace UnturnedGodot
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
+            var env = new EditorEnvironment(editor, res.DayNight, SetCleanEditorLighting);   // Phase 4: lighting/time/weather (Environment tab)
+            editor.AddChild(env);
+            editor.Environment = env;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
@@ -1576,6 +1579,12 @@ namespace UnturnedGodot
                         cam.LookAt(zc, Vector3.Up);
                     }
                     GD.Print($"[editorspawns] animal spawns: {spawns.Count}");
+                };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORENV") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () =>
+                {
+                    env.DemoSet(0.5f, false);   // preview noon lighting through the Environment tab
+                    GD.Print($"[editorenv] preview time={env.Time:0.00} ({(env.Overcast ? "overcast" : "clear")})");
                 };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
