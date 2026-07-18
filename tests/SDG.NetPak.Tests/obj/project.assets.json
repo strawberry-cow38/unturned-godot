@@ -912,11 +912,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/ec2-user/projects/unturned-godot/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
+      "projectUniqueName": "/home/ec2-user/projects/ug-predict-a/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
       "projectName": "SDG.NetPak.Tests",
-      "projectPath": "/home/ec2-user/projects/unturned-godot/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
+      "projectPath": "/home/ec2-user/projects/ug-predict-a/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
       "packagesPath": "/home/ec2-user/.nuget/packages/",
-      "outputPath": "/home/ec2-user/projects/unturned-godot/tests/SDG.NetPak.Tests/obj/",
+      "outputPath": "/home/ec2-user/projects/ug-predict-a/tests/SDG.NetPak.Tests/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -932,11 +932,11 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj": {
-              "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj"
+            "/home/ec2-user/projects/ug-predict-a/core/SDG.Compat/SDG.Compat.csproj": {
+              "projectPath": "/home/ec2-user/projects/ug-predict-a/core/SDG.Compat/SDG.Compat.csproj"
             },
-            "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj": {
-              "projectPath": "/home/ec2-user/projects/unturned-godot/core/SDG.NetPak/SDG.NetPak.csproj"
+            "/home/ec2-user/projects/ug-predict-a/core/SDG.NetPak/SDG.NetPak.csproj": {
+              "projectPath": "/home/ec2-user/projects/ug-predict-a/core/SDG.NetPak/SDG.NetPak.csproj"
             }
           }
         }

@@ -142,6 +142,7 @@ namespace UnturnedGodot
         public bool SirenOn => _sirenOn;
         public bool BrakingNow => _braking;
         public float SteerAngleDegrees => _steerAngle;      // MP §3.6: the wheel-steer summary the snapshot carries
+        public float SpeedMaxMps => _speedMax;              // MP Part A: the spec Speed_Max -- the server envelope's horizontal cap derives from it (spec-derived, never hardcoded)
 
         // look-at focus (master): same system as items -- a screen-space outline + an info billboard (name/HP/fuel/battery)
         bool _lookFocused; System.Collections.Generic.List<MeshInstance3D> _outlineMeshes; InfoBillboard _info;

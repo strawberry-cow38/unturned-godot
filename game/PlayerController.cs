@@ -1227,10 +1227,13 @@ namespace UnturnedGodot
             return true;
         }
 
-        /// <summary>F while riding: ask the server to free the seat (exit lands via VehicleExited -> ExitPuppet).</summary>
+        /// <summary>F while seated in MP: ask the server to free the seat -- ride mode (exit lands via
+        /// VehicleExited -> ExitPuppet) or Part A predicted driving (-> ExitVehicleAt). The client never
+        /// unseats itself; the SP direct ExitVehicle stays for pure-SP driving only.</summary>
         public bool RequestExitPuppet()
         {
-            if (_riding == null || NetExitVehicle == null) return false;
+            if (NetExitVehicle == null) return false;
+            if (_riding == null && !DrivingPredicted) return false;
             NetExitVehicle();
             return true;
         }
@@ -1804,7 +1807,7 @@ namespace UnturnedGodot
                     _driveCamYaw -= mm.Relative.X * MouseSensitivity;
                     _driveCamPitch = Mathf.Clamp(_driveCamPitch + mm.Relative.Y * MouseSensitivity, -25f, 70f);   // inverted Y: mouse up -> cam tilts down (strawberry)
                 }
-                else if (_riding != null)   // FP RIDE free-look (#37): the mouse turns the VIEW while A/D steers the car (real Unturned). MP ride only -- SP FP driving keeps its fixed gaze.
+                else if (_riding != null || DrivingPredicted)   // FP RIDE free-look (#37): the mouse turns the VIEW while A/D steers the car (real Unturned). MP only (ride mode OR Part A predicted driving) -- SP FP driving keeps its fixed gaze.
                 {
                     _rideLookYaw -= mm.Relative.X * MouseSensitivity;
                     _rideLookPitch = Mathf.Clamp(_rideLookPitch - mm.Relative.Y * MouseSensitivity, -89f, 89f);   // same Y convention as on-foot look: mouse up -> look up
@@ -1861,7 +1864,7 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F })   // F = INTERACT (moved off E, strawberry): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact with -> inspect the held weapon. Echo:false so HOLDING F can't double-fire the hitch toggle (uncouple then instantly re-couple).
             {
-                if (_driving != null) ExitVehicle();                       // hop out of the vehicle
+                if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusItem != null) TryPickup();                  // looking at an item: pick it up
@@ -2616,9 +2619,16 @@ namespace UnturnedGodot
         public HUD Hud;   // set by the scene builder; the vehicle status box binds to the driven vehicle on enter/exit
         public SDG.Unturned.PlayerSkills Skills { get; } = new();   // the player's skills/XP (source PlayerSkills); gates crafting, boosts farming, etc.
 
-        void EnterVehicle(Vehicle v)
+        // MP Part A: driving a client-local predicted vehicle (ClientWorldSession built it) -- gates the
+        // free-look extension; always false in pure SP (the flag is only ever set by the session).
+        bool DrivingPredicted => _driving != null && _driving.NetClientPredicted;
+
+        // Public since Part A: ClientWorldSession seats the shell on its client-local vehicle through this
+        // EXACT SP path (one enter seam, zero MP-only side effects here).
+        public void EnterVehicle(Vehicle v)
         {
             if (v.NetDriverId != 0) return;   // MP §3.6: a remote player holds the seat (single driver) -- never set in pure SP, so the direct path is unchanged
+            if (v.NetClientPredicted) { _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; }   // Part A free-look starts at the classic forward gaze, like EnterPuppet (#37)
             _driving = v;
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
             v.EngineOn = true;                                 // start burning fuel (source: engine on)
@@ -2645,6 +2655,25 @@ namespace UnturnedGodot
             _pitchDeg = 0f;
         }
 
+        /// <summary>MP Part A exit: the SP restore block at the SERVER's authoritative exit spot (the
+        /// VehicleExited fact carries it -- ClientWorldSession.OnVehicleExited). No Park/engine-off side
+        /// effects on the vehicle: the session destroys the local node right after; the server's own node
+        /// gets the real SP exit effects from VehicleNetSync's seat-freed branch.</summary>
+        public void ExitVehicleAt(Vector3 exitPos)
+        {
+            var v = _driving; _driving = null;
+            if (v != null) v.EngineOn = false;
+            if (Hud != null) Hud.Vehicle = null;               // hide the vehicle status box
+            GlobalPosition = exitPos;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = false;
+            Visible = true;
+            Velocity = Vector3.Zero;
+            _viewmodel?.SetShown(true);
+            if (_cam != null) { _cam.TopLevel = false; _cam.Position = new Vector3(0f, 1.6f, 0f); _cam.Rotation = Vector3.Zero; }
+            _pitchDeg = 0f;
+        }
+
         public Vector2? ScriptedDrive;   // test hook: (steer, throttle) instead of keys
         public bool DriveFP { set => _fp = value; }   // test hook: force first-person cam
         public void EnterNearestVehicle() { var v = NearestVehicle(); if (v != null) EnterVehicle(v); }
@@ -2666,7 +2695,10 @@ namespace UnturnedGodot
                 throttle = (Input.IsPhysicalKeyPressed(Key.W) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.S) ? 1f : 0f);
                 steer = (Input.IsPhysicalKeyPressed(Key.D) ? 1f : 0f) - (Input.IsPhysicalKeyPressed(Key.A) ? 1f : 0f);
             }
-            _driving.Drive(throttle, steer, !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space));
+            bool handbrake = !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space);
+            _driving.Drive(throttle, steer, handbrake);
+            LastDriveInput = new UnityEngine.Vector2(steer, throttle);   // Part A: the session's VehicleState carries the axes as wheel/light dressing (inert in SP -- nothing reads these outside MP)
+            LastHandbrakeInput = handbrake;
             GlobalPosition = _driving.GlobalPosition;   // ride along so exit + FP cam land at the vehicle (the cam is positioned in _Process from the vehicle's INTERPOLATED transform)
         }
 
@@ -2693,7 +2725,7 @@ namespace UnturnedGodot
             if (_fp)   // first-person from the driver's head, looking forward over the hood (eyeL per-vehicle: tall cabs sit higher so the view clears a long hood)
             {
                 var eye = vt * eyeL;
-                if (_riding != null)   // MP ride (#37): FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
+                if (_riding != null || DrivingPredicted)   // MP ride OR Part A predicted driving (#37): FREE-LOOK -- yaw/pitch in vehicle-local space; (0, FpRideGazePitchDeg) == the fixed gaze below
                 {
                     var look = vt.Basis.Orthonormalized() * new Basis(Vector3.Up, Mathf.DegToRad(_rideLookYaw)) * new Basis(Vector3.Right, Mathf.DegToRad(_rideLookPitch));
                     _cam.GlobalTransform = new Transform3D(look, eye);

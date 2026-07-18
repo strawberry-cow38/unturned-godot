@@ -32,6 +32,7 @@ namespace UnturnedGodot
             public uint NetId;
             public Vehicle Node;
             public ushort AppliedRemoteDriver;   // remote driver whose enter side effects are on the node
+            public bool Held;                    // Part A: node frozen + teleport-adopted (the driver's client owns physics)
         }
         readonly Dictionary<Vehicle, Tracked> _tracked = new();
         readonly Dictionary<uint, Tracked> _byId = new();
@@ -66,7 +67,7 @@ namespace UnturnedGodot
                     var id = _server.Ids.Mint();
                     int typeIdx = System.Array.IndexOf(Vehicle.SpecNames, v.SpecKey);
                     _server.Vehicles.ServerSpawn(id, (byte)(typeIdx < 0 ? 0 : typeIdx), (byte)v.SpawnVariant,
-                                                 ToU(v.GlobalPosition), tick);
+                                                 ToU(v.GlobalPosition), tick, v.SpeedMaxMps);   // Part A: the spec Speed_Max feeds the envelope's horizontal cap
                     t = new Tracked { NetId = id.Value, Node = v };
                     _tracked[v] = t;
                     _byId[t.NetId] = t;
@@ -94,16 +95,32 @@ namespace UnturnedGodot
                         v.NetDriverId = driver;
                         v.EngineOn = true;
                         v.Wake();
+                        // Part A: ghost the driven body (layer bit0 -> bit6) the moment the seat is taken --
+                        // the driver's CLIENT builds a real physics twin of this node; ghosting from enter
+                        // (not first-adopt) closes the few-tick overlap window in a shared-tree L1 host.
+                        // Players/bullets keep colliding via bit6; see Vehicle.NetGhost for the trade.
+                        v.NetGhost(true);
                     }
                     if (v.Exploded)
                     {
                         // the blast ejects the driver (SP DriveVehicle exits + takes 150 damage; the remote
                         // kill-damage is deferred with the server vitals split -- see PROGRESS notes)
+                        if (t.Held) { t.Held = false; v.NetAbortHold(); }   // Explode() already unfroze + flung the body
                         _server.VehicleHost.ServerExit(driver);
+                    }
+                    else if (_server.VehicleHost.TryGetPredictedState(t.NetId, out var st))
+                    {
+                        // Part A hold (retail updatePhysics kinematic, U3 InteractableVehicle.cs:1490-1519):
+                        // the driver's client owns physics; this node freezes and teleports to the adopted
+                        // state each tick so ballistics/occlusion/interaction/shove still see it live.
+                        if (!t.Held) { t.Held = true; v.NetBeginHold(); }
+                        var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(st.PitchDegrees),
+                            Mathf.DegToRad(st.YawDegrees), Mathf.DegToRad(st.RollDegrees)));
+                        v.NetHoldTeleport(new Transform3D(basis, new Vector3(st.Pos.x, st.Pos.y, st.Pos.z)));
                     }
                     else
                     {
-                        _server.Vehicles.TryGetInput(t.NetId, out var inp);   // held-input model: none yet = coast
+                        _server.Vehicles.TryGetInput(t.NetId, out var inp);   // held-input model / pre-predict window: none yet = coast
                         v.Drive(inp.Throttle, inp.Steer, inp.Handbrake);
                     }
                 }
@@ -112,20 +129,39 @@ namespace UnturnedGodot
                     t.AppliedRemoteDriver = 0;
                     v.NetDriverId = 0;
                     v.EngineOn = false;
+                    if (t.Held)
+                    {
+                        // Part A handoff: authority returns to the server exactly as retail
+                        // removePlayer -> updatePhysics -- unfreeze, seed from the last adopted state
+                        t.Held = false;
+                        _server.Vehicles.TryGet(t.NetId, out var fe);
+                        v.NetEndHold(fe != null ? new Vector3(fe.LinVel.x, fe.LinVel.y, fe.LinVel.z) : Vector3.Zero,
+                                     fe != null ? new Vector3(fe.AngVel.x, fe.AngVel.y, fe.AngVel.z) : Vector3.Zero);
+                    }
+                    v.NetGhost(false);
                     if (!v.Exploded) v.Park();   // never Park a wreck -- it would kill the explosion tumble
                 }
 
-                // publish the node's physics state -> the wire entity (quantized + dirty-checked in core)
-                var euler = v.GlobalTransform.Basis.GetEuler() * (180f / Mathf.Pi);   // YXZ euler, degrees
-                byte flags = (byte)((v.EngineOn ? VehicleReplication.FlagEngineOn : 0)
-                                  | (v.HeadlightsOn ? VehicleReplication.FlagHeadlights : 0)
-                                  | (v.TaillightsOn ? VehicleReplication.FlagTaillights : 0)
-                                  | (v.SirenOn ? VehicleReplication.FlagSiren : 0)
-                                  | (v.BrakingNow ? VehicleReplication.FlagBraking : 0)
-                                  | (v.Exploded ? VehicleReplication.FlagExploded : 0));
-                _server.Vehicles.ServerPublish(new NetId(t.NetId), ToU(v.GlobalPosition), ToU(euler),
-                    ToU(v.LinearVelocity), ToU(v.AngularVelocity), v.SteerAngleDegrees,
-                    v.Fuel, v.Health, v.Battery, flags, tick);
+                if (t.Held)
+                {
+                    // Part A: adoption (core) owns the entity's transform/vel/steer/dressing -- the node
+                    // contributes only the SERVER-owned scalars (fuel burn, damage, the Exploded flag)
+                    _server.Vehicles.ServerPublishVitals(new NetId(t.NetId), v.Fuel, v.Health, v.Battery, v.Exploded, tick);
+                }
+                else
+                {
+                    // publish the node's physics state -> the wire entity (quantized + dirty-checked in core)
+                    var euler = v.GlobalTransform.Basis.GetEuler() * (180f / Mathf.Pi);   // YXZ euler, degrees
+                    byte flags = (byte)((v.EngineOn ? VehicleReplication.FlagEngineOn : 0)
+                                      | (v.HeadlightsOn ? VehicleReplication.FlagHeadlights : 0)
+                                      | (v.TaillightsOn ? VehicleReplication.FlagTaillights : 0)
+                                      | (v.SirenOn ? VehicleReplication.FlagSiren : 0)
+                                      | (v.BrakingNow ? VehicleReplication.FlagBraking : 0)
+                                      | (v.Exploded ? VehicleReplication.FlagExploded : 0));
+                    _server.Vehicles.ServerPublish(new NetId(t.NetId), ToU(v.GlobalPosition), ToU(euler),
+                        ToU(v.LinearVelocity), ToU(v.AngularVelocity), v.SteerAngleDegrees,
+                        v.Fuel, v.Health, v.Battery, flags, tick);
+                }
             }
 
             // freed nodes (despawned wrecks / teardown) -> eject any driver, retire the entity
