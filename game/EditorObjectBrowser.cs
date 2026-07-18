@@ -11,6 +11,8 @@ namespace UnturnedGodot
         readonly EditorObjects _objects;
         ItemList _list;
         LineEdit _search;
+        OptionButton _tableDrop;   // loot-crate table picker (shown only when a loot crate is selected)
+        Control _crateBox;
 
         public EditorObjectBrowser(EditorObjects objects) { _objects = objects; }
 
@@ -31,6 +33,20 @@ namespace UnturnedGodot
             hint.AddThemeFontSizeOverride("font_size", 11);
             hint.AddThemeColorOverride("font_color", new Color(0.75f, 0.8f, 0.85f));
             box.AddChild(hint);
+
+            // loot-crate table picker -- appears when a placed ★ Loot Crate is selected
+            var cbox = new VBoxContainer { Visible = false };
+            _crateBox = cbox;
+            var cl = new Label { Text = "▼ LOOT CRATE — item table:" };
+            cl.AddThemeFontSizeOverride("font_size", 13);
+            cl.AddThemeColorOverride("font_color", new Color(1f, 0.85f, 0.4f));
+            cbox.AddChild(cl);
+            _tableDrop = new OptionButton { CustomMinimumSize = new Vector2(240, 0) };
+            for (int i = 0; i < LootTables.TableCount; i++) _tableDrop.AddItem($"{i}: {LootTables.TableName(i)}", i);
+            _tableDrop.ItemSelected += idx => _objects.SetSelectedCrateTable((int)idx);
+            cbox.AddChild(_tableDrop);
+            box.AddChild(cbox);
+            _objects.SelectionChanged += SyncCratePicker;
 
             var sel = new Button { Text = "Select-only (clear place type)" };
             sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); };
@@ -53,6 +69,14 @@ namespace UnturnedGodot
             _list.Clear();
             foreach (var name in _objects.Catalog)
                 if (q.Length == 0 || name.ToLower().Contains(q)) _list.AddItem(name);
+        }
+
+        void SyncCratePicker()   // selection changed: show the table dropdown for a selected loot crate + reflect its table
+        {
+            if (_crateBox == null) return;
+            _crateBox.Visible = _objects.CrateSelected;
+            if (_objects.CrateSelected && _tableDrop != null && _tableDrop.ItemCount > 0)
+                _tableDrop.Selected = Mathf.Clamp(_objects.SelectedCrateTable, 0, _tableDrop.ItemCount - 1);
         }
     }
 }
