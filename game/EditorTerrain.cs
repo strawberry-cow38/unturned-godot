@@ -114,5 +114,13 @@ namespace UnturnedGodot
             _terr.FlushColliders();                                              // stroke end
             GD.Print("[editorterrain] raised + smoothed a demo hill");
         }
+
+        // harness (--editor UG_EDITORPAINT with UG_EDITORTERRAIN): splat-paint a layer patch so a render shows Materials paint
+        public void DemoPaint(Vector3 at, int layer)
+        {
+            if (_terr == null) return;
+            _terr.PaintSplat(at.X, at.Z, 55f, layer);
+            GD.Print($"[editorterrain] painted a {LayerNames[layer]} patch (splat layer {layer})");
+        }
     }
 }

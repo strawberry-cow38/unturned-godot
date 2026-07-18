@@ -1598,6 +1598,12 @@ namespace UnturnedGodot
                     terrainEd.Save();   // verify the heightmap round-trip: a plain --editor re-run loads the sculpt back
                     cam.GlobalPosition = at + new Vector3(75f, 55f, 75f);
                     cam.LookAt(at + Vector3.Up * 40f, Vector3.Up);
+                    if (System.Environment.GetEnvironmentVariable("UG_EDITORPAINT") == "1")
+                    {
+                        terrainEd.DemoPaint(at, 6);   // snow-cap the hill -> Materials splat-paint proof
+                        cam.GlobalPosition = at + new Vector3(150f, 175f, 150f);
+                        cam.LookAt(at, Vector3.Up);
+                    }
                 };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
