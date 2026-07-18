@@ -386,18 +386,35 @@ namespace UnturnedGodot
             }
         }
 
-        void SwitchCategory()
+        void SwitchCategory() => SetCategoryTo(((int)_category + 1) % 5);
+        public void SetCategoryTo(int c)   // panel category buttons + Tab: persist current, load the chosen category
         {
             Save();                                                     // persist the current category before switching
-            _category = (ECategory)(((int)_category + 1) % 5);          // Player -> Vehicle -> Item -> Zombie -> Animal -> ...
+            _category = (ECategory)Mathf.Clamp(c, 0, 4);               // Player / Vehicle / Item / Zombie / Animal
             _vehType = 0;
             _spawns.Clear();
             LoadCategory();
             RebuildMarkers();
             ShapeAddCursor();
             UpdateAddCursorColor();
+            CategoryChanged?.Invoke();
             GD.Print($"[editor-spawns] category -> {_category} ({_spawns.Count})");
         }
+
+        // --- panel (EditorSpawnsPanel) API ---
+        public static readonly string[] CategoryNames = { "Player", "Vehicle", "Item", "Zombie", "Animal" };
+        public System.Action CategoryChanged;   // panel rebuilds its type/options section when the category changes
+        public int CategoryIdx => (int)_category;
+        public bool RemoveMode { get => _removeMode; set => _removeMode = value; }
+        public bool Alt { get => _alt; set { _alt = value; UpdateAddCursorColor(); } }
+        public bool ShowsAlt => _category == ECategory.Player;
+        public bool ShowsTypes => _category is ECategory.Vehicle or ECategory.Item or ECategory.Animal;
+        public int NumTypes => TypeCount();
+        public int TypeIdx => _vehType;
+        public void SetType(int t) { _vehType = Mathf.Clamp(t, 0, TypeCount() - 1); UpdateAddCursorColor(); }
+        public string TypeLabel(int i) => _category == ECategory.Vehicle ? VehicleTypes[Mathf.Clamp(i, 0, 5)] : $"table {i}";
+        public int RemoveRadius { get => _radius; set => _radius = (byte)Mathf.Clamp(value, 2, 30); }
+        public float RotationDeg { get => _rotation; set => _rotation = Mathf.Wrap(value, 0f, 360f); }
 
         public void AddSpawn(Vector3 pt, float yaw = 0f, bool isAlt = false, int type = 0)   // source LevelXxx.addSpawn(point, rotation, ...)
         {
