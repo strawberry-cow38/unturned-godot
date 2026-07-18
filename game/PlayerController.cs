@@ -2513,6 +2513,7 @@ namespace UnturnedGodot
                 PositionDriveCam(_driving.GetGlobalTransformInterpolated());
             if (_riding != null && !_dead && IsInstanceValid(_riding))   // C6 riding: chase the dead-reckoned puppet (it moves per-FRAME in VehicleReplicaView, no physics interp to sample)
                 PositionRideCam(_riding.GlobalTransform);
+            OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug

@@ -12,9 +12,17 @@ namespace UnturnedGodot
     {
         public const uint OutlineLayer = 1u << 19;   // items' _glow silhouettes render here; main cams cull it, the mask cam renders only it
 
+        // Perf (strawberry: 3p vehicle cam tanks fps in POIs). The subviewport's mask cam does a SECOND full
+        // scene-cull every frame (UpdateMode.Always) + a fullscreen dilate pass -- cheap in a narrow 1p view,
+        // but the wide 3p vehicle view over a dense POI culls far more objects, x2 (main + mask cam), 280x/s.
+        // And while driving NOTHING is ever focused (PlayerController gates the look-at off in a vehicle), so
+        // the whole pass is pure waste there. PlayerController sets this on vehicle enter/exit.
+        public static bool DrivingSuppress;
+
         SubViewport _vp;
         Camera3D _vpCam;
         ShaderMaterial _mat;
+        TextureRect _tr;
 
         public override void _Ready()
         {
@@ -36,15 +44,22 @@ namespace UnturnedGodot
 
             var canvas = new CanvasLayer { Layer = 50 };   // over the 3D view, under the HUD? 50 keeps it above the game, below any 100+ overlays
             AddChild(canvas);
-            var tr = new TextureRect { Texture = _vp.GetTexture(), Material = _mat, MouseFilter = Control.MouseFilterEnum.Ignore };
-            tr.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            canvas.AddChild(tr);
+            _tr = new TextureRect { Texture = _vp.GetTexture(), Material = _mat, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _tr.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            canvas.AddChild(_tr);
         }
 
         public override void _Process(double delta)
         {
             var cam = GetViewport().GetCamera3D();
             if (cam == null) return;
+            // While driving, disable the whole pass (no second cull, no dilate, no stale mask on screen) --
+            // nothing is focusable from a vehicle, so it's pure cost (esp. the wide 3p view over a POI).
+            bool on = !DrivingSuppress;
+            var mode = on ? SubViewport.UpdateMode.Always : SubViewport.UpdateMode.Disabled;
+            if (_vp.RenderTargetUpdateMode != mode) _vp.RenderTargetUpdateMode = mode;
+            if (_tr != null && _tr.Visible != on) _tr.Visible = on;
+            if (!on) return;
             var sz = (Vector2I)GetViewport().GetVisibleRect().Size;
             if (_vp.Size != sz) _vp.Size = sz;
             // match the active camera exactly so the mask aligns pixel-for-pixel with the main render
