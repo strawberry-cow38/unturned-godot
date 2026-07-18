@@ -19,6 +19,8 @@ namespace UnturnedGodot
         const uint TerrainLayer = 1u << 0, SmallPropLayer = 1u << 6, EditorPickLayer = 1u << 7;
 
         readonly List<string> _catalog = new();
+        readonly Dictionary<string, string> _nameToGuid = new();   // mesh name -> first guid (for writing placements)
+        readonly Dictionary<string, string> _guidToName = new();   // guid -> mesh name (for loading placements)
         public IReadOnlyList<string> Catalog => _catalog;
         public string PlaceName;   // the prop to place on click; null = select mode
 
@@ -145,12 +147,7 @@ namespace UnturnedGodot
             _marker.Visible = true;
         }
 
-        void MoveSelected(Vector3 pos) { if (_selected != null) { _selected.GlobalPosition = pos; RefreshMarker(); } }
-        void RotateStep()
-        {
-            if (_selected != null) { _selected.RotateY(Mathf.DegToRad(45f)); RefreshMarker(); }   // spin the selected prop about world-up (keeps the upright pitch)
-            else _placeYaw = (_placeYaw + 45f) % 360f;                                             // else rotate the next placement
-        }
+        // (move/rotate on the selection is the source TransformHandles gizmo -- ported next, not an improvised drag)
 
         public void DeleteSelected()
         {
@@ -162,24 +159,14 @@ namespace UnturnedGodot
             Select(null);
         }
 
-        bool _dragging;
-
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Objects || _flyCam.Flying) return;   // Objects tab only; never while flying (RMB)
-            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
-            {
-                if (mb.Pressed) { HandleClick(GetViewport().GetMousePosition()); _dragging = PlaceName == null && _selected != null; }   // in Select mode, holding on a prop drags it
-                else _dragging = false;
-            }
-            else if (ev is InputEventMouseMotion && _dragging && _selected != null)
-            {
-                if (Raycast(GetViewport().GetMousePosition(), TerrainLayer | SmallPropLayer, out var pt, out _)) MoveSelected(pt);   // slide it along the ground
-            }
+            if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+                HandleClick(GetViewport().GetMousePosition());   // place (build mode) or select (source EditorSelection)
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
-                if (k.Keycode == Key.Delete || k.Keycode == Key.X) DeleteSelected();
-                else if (k.Keycode == Key.R) RotateStep();
+                if (k.Keycode == Key.Delete || k.Keycode == Key.X) DeleteSelected();   // source: delete the selection
                 else if (k.Keycode == Key.Escape) Select(null);
             }
         }

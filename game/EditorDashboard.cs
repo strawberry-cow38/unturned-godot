@@ -71,7 +71,7 @@ namespace UnturnedGodot
         {
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
-            string obj = Editor.Mode == EEditorMode.Objects ? "   ·   LMB place/select · drag = move · R rotate · Del delete" : "";
+            string obj = Editor.Mode == EEditorMode.Objects ? "   ·   LMB place/select · Del delete" : "";
             _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}   ·   map: {Editor.MapName}";
         }
     }
