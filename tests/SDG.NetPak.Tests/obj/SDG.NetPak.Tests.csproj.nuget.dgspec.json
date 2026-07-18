@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/home/ec2-user/projects/ug-cauth/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj": {}
+    "/home/ec2-user/projects/ug-coalesce/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj": {}
   },
   "projects": {
-    "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj": {
+    "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj",
         "projectName": "SDG.Compat",
-        "projectPath": "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj",
+        "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/obj/",
+        "outputPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -64,14 +64,14 @@
         }
       }
     },
-    "/home/ec2-user/projects/ug-cauth/core/SDG.NetPak/SDG.NetPak.csproj": {
+    "/home/ec2-user/projects/ug-coalesce/core/SDG.NetPak/SDG.NetPak.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/ec2-user/projects/ug-cauth/core/SDG.NetPak/SDG.NetPak.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/ug-coalesce/core/SDG.NetPak/SDG.NetPak.csproj",
         "projectName": "SDG.NetPak",
-        "projectPath": "/home/ec2-user/projects/ug-cauth/core/SDG.NetPak/SDG.NetPak.csproj",
+        "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.NetPak/SDG.NetPak.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/home/ec2-user/projects/ug-cauth/core/SDG.NetPak/obj/",
+        "outputPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.NetPak/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -87,8 +87,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj": {
-                "projectPath": "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj"
+              "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj"
               }
             }
           }
@@ -128,14 +128,14 @@
         }
       }
     },
-    "/home/ec2-user/projects/ug-cauth/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj": {
+    "/home/ec2-user/projects/ug-coalesce/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/ec2-user/projects/ug-cauth/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/ug-coalesce/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
         "projectName": "SDG.NetPak.Tests",
-        "projectPath": "/home/ec2-user/projects/ug-cauth/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
+        "projectPath": "/home/ec2-user/projects/ug-coalesce/tests/SDG.NetPak.Tests/SDG.NetPak.Tests.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/home/ec2-user/projects/ug-cauth/tests/SDG.NetPak.Tests/obj/",
+        "outputPath": "/home/ec2-user/projects/ug-coalesce/tests/SDG.NetPak.Tests/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -151,11 +151,11 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj": {
-                "projectPath": "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj"
+              "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj"
               },
-              "/home/ec2-user/projects/ug-cauth/core/SDG.NetPak/SDG.NetPak.csproj": {
-                "projectPath": "/home/ec2-user/projects/ug-cauth/core/SDG.NetPak/SDG.NetPak.csproj"
+              "/home/ec2-user/projects/ug-coalesce/core/SDG.NetPak/SDG.NetPak.csproj": {
+                "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.NetPak/SDG.NetPak.csproj"
               }
             }
           }

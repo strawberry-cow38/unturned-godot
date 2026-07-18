@@ -209,5 +209,44 @@ namespace UnturnedNet.Tests
             }
             Assert.That(c.PendingCombatCount, Is.EqualTo(0), "the movement-only (loopback) path never populates the combat ring");
         }
+
+        // ---------------------------------------------------------------- validate-reject replay (review finding 1)
+
+        // A shot fired in the ~1 RTT before a state transition that closes the fire gate (entering a vehicle,
+        // dying) -- and NOT delivered/acked before the transition -- must not sit in the ring and REPLAY when
+        // the gate re-opens (vehicle exit / respawn). The server's alive/not-seated validate rejects those
+        // state packets so they never ack and never drain; the game layer drops the ring on the observed
+        // transition (ClientWorldSession: VehicleEntered / PlayerDied / PlayerRespawned -> ClearCombatRing).
+        // Modeled with the vehicle case (melee -- the review's residual: melee/reload have no muzzle gate):
+        // enqueue a swing, LOSE its on-foot send, "enter the vehicle" (clear + stop streaming PlayerState),
+        // then "exit" (resume streaming). With the clear the stale swing is gone; without it, it lands late.
+        static long RunVehicleReplay(bool clearOnEnter)
+        {
+            var h = new Harness(70106);
+            var c = h.Connect("driver");
+
+            c.SendMelee(false, 0f);                          // seq 1, enqueued while on foot
+            h.Net.ClientToServer.LossProbability = 1.0;
+            h.Step();                                        // the on-foot state send carrying it is DROPPED (un-acked)
+            h.Net.ClientToServer.LossProbability = 0.0;
+
+            // "enter the vehicle": the client now streams VehicleState, not PlayerState, and the game layer
+            // clears the ring on the seat fact (Client.ClearCombatRing).
+            if (clearOnEnter) c.ClearCombatRing();
+            h.Step(5, pumpState: false);                     // "driving" -- no PlayerStateCommand leaves the client
+
+            h.Step(6);                                        // "exit" -- PlayerState streaming resumes
+            return h.Server.Combat.Diag.MeleeAccepted;
+        }
+
+        [Test]
+        public void ValidateReject_ClearedRing_DoesNotReplayOnGateReopen()
+        {
+            Assert.That(RunVehicleReplay(clearOnEnter: true), Is.EqualTo(0),
+                        "the pre-transition swing was dropped on entering the vehicle -- no late ghost melee on exit");
+            // TEETH: without the clear, the un-acked swing rides the resumed stream and lands late on exit.
+            Assert.That(RunVehicleReplay(clearOnEnter: false), Is.EqualTo(1),
+                        "no clear -> the stale swing replays when PlayerState streaming resumes -- proves the clear has teeth");
+        }
     }
 }

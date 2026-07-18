@@ -621,6 +621,15 @@ namespace UnturnedGodot.Net
             _combatRingCount = w;
         }
 
+        /// <summary>Drop the whole pending combat ring. The game layer calls this when the owner leaves a
+        /// state where it can legitimately fire on-foot -- entering a vehicle, dying, or respawning -- so
+        /// shots enqueued in the ~1 RTT around that transition don't sit UN-ACKED (the server's
+        /// alive/not-seated validate rejects them, so they're never acked and never drain) and then REPLAY
+        /// when the gate re-opens on exit/respawn. A dead or seated player's shots don't count; dropping
+        /// them is the authoritative result. (The tight server-respawn race -- backlog accepted in the ~1
+        /// RTT before the client's respawn event lands -- is closed server-side alongside vitals; see #52.)</summary>
+        public void ClearCombatRing() => _combatRingCount = 0;
+
         /// <summary>Test-visible pending-ring depth.</summary>
         public int PendingCombatCount => _combatRingCount;
         /// <summary>Test helper: does the pending ring still hold this combat seq?</summary>

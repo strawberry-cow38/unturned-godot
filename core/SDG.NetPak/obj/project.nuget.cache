@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "dZX1cUut4Qs=",
+  "dgSpecHash": "Df0HQPQmHwY=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/ug-cauth/core/SDG.NetPak/SDG.NetPak.csproj",
+  "projectFilePath": "/home/ec2-user/projects/ug-coalesce/core/SDG.NetPak/SDG.NetPak.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

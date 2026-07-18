@@ -297,3 +297,15 @@ C:/claude-workspace/unturned-godot/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Comp
 /home/ec2-user/projects/ug-cauth/core/SDG.Compat/obj/Debug/net8.0/refint/SDG.Compat.dll
 /home/ec2-user/projects/ug-cauth/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.pdb
 /home/ec2-user/projects/ug-cauth/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Compat.dll
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.deps.json
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.dll
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/bin/Debug/net8.0/SDG.Compat.pdb
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.GeneratedMSBuildEditorConfig.editorconfig
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.AssemblyInfoInputs.cache
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.AssemblyInfo.cs
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.csproj.CoreCompileInputs.cache
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.sourcelink.json
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.dll
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/refint/SDG.Compat.dll
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/SDG.Compat.pdb
+/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/Debug/net8.0/ref/SDG.Compat.dll

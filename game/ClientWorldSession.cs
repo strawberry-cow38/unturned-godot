@@ -114,8 +114,14 @@ namespace UnturnedGodot
             AddChild(VehicleView);
             // C6 ride mode: the server's seat facts drive the shell's enter/exit -- the client never seats
             // itself (SendEnterVehicle is a REQUEST; the seat lands only when the validated fact comes back)
-            Client.VehicleEntered += e => { if (e.PlayerId == Client.PlayerId) _ridingNetId = e.NetId; };
+            Client.VehicleEntered += e => { if (e.PlayerId == Client.PlayerId) { _ridingNetId = e.NetId; Client.ClearCombatRing(); } };
             Client.VehicleExited += OnVehicleExited;
+            // v10 (mp-event-coalesce): a dead or just-seated owner's un-acked combat backlog must not
+            // resurrect when the gate re-opens (respawn / vehicle exit). The server's alive/not-seated
+            // validate rejects those state packets, so they never ack and never drain -- drop the ring the
+            // moment we observe our OWN seat/death/respawn. (Seat is handled just above.)
+            Client.PlayerDied += e => { if (e.Victim == Client.PlayerId) Client.ClearCombatRing(); };
+            Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId) Client.ClearCombatRing(); };
             // Part A: the server rolled our driven vehicle back (out-of-envelope state) -- retail tellRecov
             // (U3 InteractableVehicle.cs:2095-2109): teleport the LOCAL vehicle to the last-good payload,
             // zero velocity, freeze; DriveStep sends the RecovAck echo next tick and releases.

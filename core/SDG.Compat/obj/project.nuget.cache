@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "q6e3+NAztbk=",
+  "dgSpecHash": "KW1VCWq3jlA=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/ug-cauth/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }
