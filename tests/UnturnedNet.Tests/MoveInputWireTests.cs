@@ -213,5 +213,50 @@ namespace UnturnedNet.Tests
             r.SetBufferSegment(w.buffer, w.writeByteIndex);
             Assert.That(MoveInput.TryRead(r, out _), Is.False, "a truncated (v1) MoveInput must be rejected");
         }
+
+        // ---- C3: the MispredictionEvent wire (EventMisprediction = 30, diagnosis §7.2 step 2) ----
+
+        [Test]
+        public void MispredictionEvent_RoundTrips_GridExact()
+        {
+            // Pos rides the snapshot's position grid (the same quantized value ServerDrive published that
+            // tick), Vel the 1/64 m/s NetWire vel grid -- both must round-trip to the encoder's own
+            // quantization exactly, or the client's rewind seeds a state the server never had.
+            var evt = new MispredictionEvent
+            {
+                Seq = 4711,
+                Pos = PlayerReplication.Quantize(new UnityEngine.Vector3(12.53f, -3.27f, -100.11f)),
+                Vel = new UnityEngine.Vector3(0f, -4.046875f, 7f),   // exact 1/64 multiples survive verbatim
+                StanceByte = (byte)EPlayerStance.SPRINT,
+                Stamina = 255,
+            };
+            var bytes = NetMessagePak.Pack(ReplicationIds.EventMisprediction, evt.Write);
+            Assert.That(bytes[0], Is.EqualTo(ReplicationIds.EventMisprediction));
+
+            var r = new NetPakReader();
+            r.Reset();
+            r.SetBufferSegment(bytes, bytes.Length);
+            r.ReadUInt8(out _);   // the id byte, like EventRegistry.TryDispatch
+            Assert.That(MispredictionEvent.TryRead(r, out var read), Is.True);
+            Assert.That(read.Seq, Is.EqualTo(evt.Seq));
+            Assert.That(read.Pos, Is.EqualTo(evt.Pos), "a pre-quantized position survives the wire verbatim");
+            Assert.That(read.Vel, Is.EqualTo(evt.Vel), "a grid-aligned velocity survives the wire verbatim");
+            Assert.That(read.Stance, Is.EqualTo(EPlayerStance.SPRINT));
+            Assert.That(read.Stamina, Is.EqualTo(255));
+            // a corrupt stance byte degrades to STAND instead of an undefined enum
+            Assert.That(new MispredictionEvent { StanceByte = 200 }.Stance, Is.EqualTo(EPlayerStance.STAND));
+        }
+
+        [Test]
+        public void MispredictionEvent_UnknownToAnOldClient_IsSkippedGracefully()
+        {
+            // the no-version-bump contract: a pre-C3 client (no handler registered for id 30) must skip
+            // the event -- counted, never thrown -- so the new server can ship without a wire break
+            var evt = new MispredictionEvent { Seq = 1, Pos = default, Vel = default, StanceByte = (byte)EPlayerStance.STAND, Stamina = 255 };
+            var oldClient = new EventRegistry();
+            Assert.That(oldClient.TryDispatch(NetMessagePak.Pack(ReplicationIds.EventMisprediction, evt.Write)), Is.False);
+            Assert.That(oldClient.Diag.UnknownIdSkipped, Is.EqualTo(1), "skipped and counted, exactly like any future event id");
+            Assert.That(oldClient.Diag.HandlerExceptionsCaught, Is.EqualTo(0));
+        }
     }
 }

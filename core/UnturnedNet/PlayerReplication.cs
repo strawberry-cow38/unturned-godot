@@ -86,6 +86,7 @@ namespace UnturnedGodot.Net
         public const byte EventResourceHarvested = 27; // Phase 8: tree/resource alive-bit flips by load-order index
         public const byte EventResourceRespawned = 28;
         public const byte EventVehicleRecov = 29;      // Part A: server rollback of an out-of-envelope predicted driver (retail tellRecov, U3 InteractableVehicle.cs:2095-2109) -- ReliableOrdered, driver-unicast
+        public const byte EventMisprediction = 30;     // C3 (PREDICTION_GEOMETRY_DIAGNOSIS §7): rewind+replay correction fact -- fired only when the ack band DISENGAGES (retail SendSimulateMispredictedInputs, U3 PlayerInput.cs:1818-1838); owner-unicast, ReliableOrdered. NOT a NetProtocol.Version break: unknown EventIds are gracefully skipped (EventRegistry.UnknownIdSkipped)
     }
 
     /// <summary>
@@ -240,6 +241,57 @@ namespace UnturnedGodot.Net
                 if (!MoveInput.TryRead(r, out var m)) return false;
                 if (i == 0) pkt.I0 = m; else if (i == 1) pkt.I1 = m; else pkt.I2 = m;
             }
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// C3 (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 2): the server's rewind+replay correction fact -- the
+    /// port of retail's SendSimulateMispredictedInputs (U3 PlayerInput.cs:1818-1838, which carries frame,
+    /// stance, position, velocity, stamina + clock offsets). Fired by PlayerNetSync ONLY on a write-back
+    /// whose fresh-seq claim fell OUTSIDE the ack band (the band DISENGAGED -- a real misprediction); the
+    /// healthy in-band case sends nothing, so the event costs zero on a quiet link. Owner-unicast on the
+    /// ReliableOrdered channel (a lost correction must retransmit, retail sends these reliable too).
+    /// Payload = the avatar body's post-step state for the acked seq: Pos is the SAME quantized position
+    /// ServerDrive published that tick (grid-exact vs the snapshot), Vel is the avatar's movement-sim
+    /// velocity (PlayerMovementSim.Velocity -- the only carried sim state; horizontal components are
+    /// re-derived from input every Step, the vertical is the ballistic DOF a replay must seed), Stance is
+    /// what the avatar's stance FSM actually stepped, Stamina mirrors retail's payload shape (:1833-1835)
+    /// -- the port's avatar vitals are frozen at 1.0 and stance rides the input stream, so the byte is
+    /// carried for wire parity + the future vitals split and applied to nothing today.
+    /// Version note: deliberately NOT a NetProtocol.Version bump -- an old client skips the unknown id
+    /// (EventRegistry.UnknownIdSkipped) and keeps its old reconciliation; a NEW client on an old server
+    /// never receives the event and falls back to the snap path alone for over-band errors (acceptable
+    /// for the private test-server posture -- the launcher keeps builds in lockstep).
+    /// </summary>
+    public struct MispredictionEvent
+    {
+        public ushort Seq;        // the input seq this state pairs with (the avatar stepped it)
+        public Vector3 Pos;       // avatar post-step position, wire-position-grid quantized
+        public Vector3 Vel;       // avatar PlayerMovementSim.Velocity (sim-local axes; y = the ballistic DOF)
+        public byte StanceByte;   // (byte)EPlayerStance the avatar stepped
+        public byte Stamina;      // 0-255 (avatar vitals frozen -> 255 today; reserved for the vitals split)
+
+        public EPlayerStance Stance => StanceByte <= (byte)EPlayerStance.SITTING ? (EPlayerStance)StanceByte : EPlayerStance.STAND;
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt16(Seq);
+            NetWire.WritePos(w, Pos);
+            NetWire.WriteVel(w, Vel);
+            w.WriteUInt8(StanceByte);
+            w.WriteUInt8(Stamina);
+        }
+
+        public static bool TryRead(NetPakReader r, out MispredictionEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt16(out ushort seq)) return false;
+            if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
+            if (!NetWire.ReadVel(r, out Vector3 vel)) return false;
+            if (!r.ReadUInt8(out byte stance)) return false;
+            if (!r.ReadUInt8(out byte stamina)) return false;
+            evt = new MispredictionEvent { Seq = seq, Pos = pos, Vel = vel, StanceByte = stance, Stamina = stamina };
             return true;
         }
     }

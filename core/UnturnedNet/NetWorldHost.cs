@@ -358,6 +358,10 @@ namespace UnturnedGodot.Net
         // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
         // local vehicle to the payload, freeze, echo RecovCounter in the outgoing state stream
         public event System.Action<VehicleRecovEvent> VehicleRecov;
+        // C3 (diagnosis §7): the server measured this client's claim OUTSIDE the ack band -- the shell
+        // session rewinds to the payload state and replays its unacked inputs (ClientWorldSession).
+        // The headless demo walker (ClientPrediction) has no body to replay and ignores it.
+        public event System.Action<MispredictionEvent> Mispredicted;
 
         // Phase 8 world-state facts (§3.7 -- already applied to the replicas when these fire)
         public event System.Action<CropPlantedEvent> CropPlanted;
@@ -430,6 +434,8 @@ namespace UnturnedGodot.Net
                 e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
             Events.Register<VehicleRecovEvent>(ReplicationIds.EventVehicleRecov, VehicleRecovEvent.TryRead,
                 e => VehicleRecov?.Invoke(e));   // touches no replica -- the rollback targets the driver's LOCAL vehicle only
+            Events.Register<MispredictionEvent>(ReplicationIds.EventMisprediction, MispredictionEvent.TryRead,
+                e => Mispredicted?.Invoke(e));   // touches no replica -- the correction targets the owner's LOCAL shell only (C3 replay)
             // Phase 8: world-state facts apply straight onto the replicas, then surface for fx/views
             Events.Register<CropPlantedEvent>(ReplicationIds.EventCropPlanted, CropPlantedEvent.TryRead,
                 e => { Crops.ApplyPlanted(e, Applier.LastAppliedServerTick); CropPlanted?.Invoke(e); });
