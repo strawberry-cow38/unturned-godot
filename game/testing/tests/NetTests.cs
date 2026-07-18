@@ -1105,13 +1105,14 @@ namespace UnturnedGodot.Testing
 
             // (c) shove the SERVER avatar ~5 m sideways (a divergence only the server saw): past the 2 m
             // SnapThreshold the shell must SNAP onto the displaced authority, not glide. The shove goes
-            // through ApplyNetCorrection -- a bare GlobalPosition write is UNDONE next tick by the body's
-            // own manual-interp restore (the exact §7 risk 5 failure mode, server-side edition) and would
-            // never reach the ServerDrive write-back.
+            // through ApplyNetSnap (a teleport-class displacement; F3 made ApplyNetCorrection a SWEPT
+            // slice) -- a bare GlobalPosition write is UNDONE next tick by the body's own manual-interp
+            // restore (the exact §7 risk 5 failure mode, server-side edition) and would never reach the
+            // ServerDrive write-back.
             bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
             T.Check("C2 avatar body exists for the shell's peer", haveBody);
             long snapsBefore = sess.Reconciler.Snaps;
-            body.ApplyNetCorrection(new Vector3(5f, 0f, 0f));
+            body.ApplyNetSnap(new Vector3(5f, 0f, 0f));
             yield return Ticks(50);
             T.Check($"(c) the 5 m server-side displacement SNAPPED the shell (snaps {sess.Reconciler.Snaps})", sess.Reconciler.Snaps > snapsBefore);
             bool own2 = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e2);
@@ -1712,9 +1713,10 @@ namespace UnturnedGodot.Testing
             T.Check("anyplayer: spawned brains carry Target = null (the ZombieController registry-hunt fallback)", nullTargets);
 
             // ---- hysteresis under anyplayer: B leaves -> B's pocket despawns through the same query ----
-            // (ApplyNetCorrection, not a bare GlobalPosition write -- the body's manual-interp restore
-            // would undo the latter next tick, the §7 risk 5 seam)
-            b.ApplyNetCorrection(new Vector3(0f, 0f, 600f));   // B: z 400 -> 1000, ~610 m from its pocket
+            // (ApplyNetSnap, not a bare GlobalPosition write -- the body's manual-interp restore would
+            // undo the latter next tick, the §7 risk 5 seam; and not the F3 SWEPT slice, which would
+            // sweep 600 m of world instead of teleporting)
+            b.ApplyNetSnap(new Vector3(0f, 0f, 600f));   // B: z 400 -> 1000, ~610 m from its pocket
             yield return Ticks(40);
             T.Check("anyplayer: B's pocket despawned once its nearest player left (40 m hysteresis passed)",
                     !field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 0);
@@ -2942,11 +2944,16 @@ namespace UnturnedGodot.Testing
     // ride along as guards). Measured honesty: the §8-scripted STRAIGHT crossing course measured a
     // PASSING 0.338 m/min -- square-on, the curb face clamps both bodies to the same spot, so the
     // pullback needs transitions at the lip, exactly the everyday shape strawberry maneuvers in.
+    // POST-P2 (F3 swept corrections + slice cap + F4): corr 3.377 m/min (unchanged -- the residue is
+    // pure §4-1 binary-StepUp forks, the F6 gate), maxPending 0.145, worstTickCorr 0.049. The spike
+    // bars ARM here (P2 owns them: pre-cap the swept-blocked pending piled to 0.562 and released as a
+    // 0.098 tug); the corr/min bar arms with F6.
     public class NetShellWanStepUp : GameTest
     {
         public override string Name => "net.shell_wan_stepup";
         public override double TimeoutSimSeconds => 160;
-        const bool BarsLive = false;   // armed by the fix commits (P1 strips the jump bit's role; P2's swept corrections own the curb)
+        const bool BarsLive = true;        // the spike/snap/convergence bars (P2)
+        const bool CorrBarLive = false;    // the corr/min bar: F6 (de-binarized StepUp) owns it
 
         public override IEnumerable<Step> Run()
         {
@@ -3008,7 +3015,7 @@ namespace UnturnedGodot.Testing
                     for (int half = 0; half < 2; half++)
                         foreach (var s in Leg(phase == 1, half == 0)) yield return s;
 
-            WanGeo.Bar(T, BarsLive, $"curb crossings cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 3.697)", m.CorrPerMin < 2f);
+            WanGeo.Bar(T, CorrBarLive, $"curb crossings cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 3.697)", m.CorrPerMin < 2f);
             WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.145)", m.MaxPend < 0.25f);
             WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.050)", m.WorstTickCorr < 0.08f);
             WanGeo.Bar(T, BarsLive, $"ZERO snaps across the curbs ({m.Snaps})", m.Snaps == 0);
@@ -3026,11 +3033,16 @@ namespace UnturnedGodot.Testing
     // PRE-FIX (mp-geomfix @ P0, seed 91919): corrApplied 1.750 m over 2304 ticks = 2.278 m/min,
     // maxPending 0.426 m, worstTickCorr 0.074 m, snaps 0 -- 4x the flat wan_walk, with the doorway's
     // signature 0.4 m correction spike. FAILS the corr/min and maxPending bars.
+    // POST-P2 (F3 swept corrections + slice cap + F4 wire-stance trust): corr 1.957 m/min (bar 2 --
+    // passes; margin is thin because the residue is the jamb slide-side pick, the same knife-edge
+    // family as the hydrant), worstTickCorr 0.060, maxPending 0.440 (the one bifurcation event per
+    // course -- the C3-class spike, stays soft).
     public class NetShellWanDoorway : GameTest
     {
         public override string Name => "net.shell_wan_doorway";
         public override double TimeoutSimSeconds => 160;
-        const bool BarsLive = false;   // armed by P2 (F3 swept corrections + F4 wire-stance trust own the doorway)
+        const bool BarsLive = true;         // corr/min, worst-tick, snap + convergence bars (P2)
+        const bool SpikeBarLive = false;    // the maxPending spike bar: the jamb-pick event is C3-gated (§7)
 
         public override IEnumerable<Step> Run()
         {
@@ -3076,7 +3088,7 @@ namespace UnturnedGodot.Testing
             }
 
             WanGeo.Bar(T, BarsLive, $"doorway passes cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 2.278)", m.CorrPerMin < 2f);
-            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.426)", m.MaxPend < 0.25f);
+            WanGeo.Bar(T, SpikeBarLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.426)", m.MaxPend < 0.25f);
             WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.074)", m.WorstTickCorr < 0.08f);
             WanGeo.Bar(T, BarsLive, $"ZERO snaps through the doorway ({m.Snaps})", m.Snaps == 0);
             foreach (var s in rig.Close(this, BarsLive, m, "wan-doorway")) yield return s;
@@ -3094,11 +3106,15 @@ namespace UnturnedGodot.Testing
     // maxPending 0.851 m, worstTickCorr 0.148 m, snaps 0 -- the "tweaked out" report reproduced: ~19x
     // the flat wan_walk, with 0.85 m lateral divergence spikes as the two bodies pick different sides.
     // FAILS the corr/min, maxPending and worst-tick bars.
+    // POST-P2 (F1-F4 + slice cap): 7.824 m/min, maxPending 1.20, worstTickCorr 0.061 -- the worst-tick
+    // TUG is tamed but the slide-side bifurcation itself is untouched, exactly as §4-2 predicted: no
+    // cheap fix picks the same side twice. This is the C3 (rewind+replay) gate; metric bars stay soft.
     public class NetShellWanThinCollider : GameTest
     {
         public override string Name => "net.shell_wan_thincollider";
         public override double TimeoutSimSeconds => 120;
-        const bool BarsLive = false;   // the C3 gate: expected to stay soft after F1-F4 (see the header comment)
+        const bool BarsLive = false;      // the metric bars: the C3 gate, as §4 predicted (still red after F1-F4)
+        const bool GuardBarsLive = true;  // snaps + convergence: pass today and guard against regression
 
         public override IEnumerable<Step> Run()
         {
@@ -3141,8 +3157,8 @@ namespace UnturnedGodot.Testing
             WanGeo.Bar(T, BarsLive, $"hydrant grinds cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 10.722)", m.CorrPerMin < 2f);
             WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.851)", m.MaxPend < 0.25f);
             WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.148)", m.WorstTickCorr < 0.08f);
-            WanGeo.Bar(T, BarsLive, $"ZERO snaps at the hydrant ({m.Snaps})", m.Snaps == 0);
-            foreach (var s in rig.Close(this, BarsLive, m, "wan-thincollider")) yield return s;
+            WanGeo.Bar(T, GuardBarsLive, $"ZERO snaps at the hydrant ({m.Snaps})", m.Snaps == 0);
+            foreach (var s in rig.Close(this, GuardBarsLive, m, "wan-thincollider")) yield return s;
         }
     }
 
@@ -3165,11 +3181,17 @@ namespace UnturnedGodot.Testing
     // tick's StepUp foot-sweep reads the stuck capsule as "blocked at foot" and fires the +0.5 m raise
     // ON FLAT GROUND -- a phantom step-up that relaunches every arc ~0.4 m high. That is F3's bug
     // (corrections applied through geometry), so the bars arm with P2/F3.
+    // POST-P2 (F3 killed the phantom flat-ground StepUp; slice cap): corr 1.665 m/min (22x under
+    // pre-fix), worstTickCorr 0.060, snaps 0 -- ARMED. maxPending/maxPendingY 0.354/0.339 stay soft:
+    // a rare starve-window arc still piles ~0.35 m of transient vertical pending (consumed as a capped
+    // glide or replaced by the next ack -- the corr/min number shows how little of it is ever felt);
+    // closing the spike itself is rewind/replay territory (the C3 gate, §7).
     public class NetShellWanJump : GameTest
     {
         public override string Name => "net.shell_wan_jump";
         public override double TimeoutSimSeconds => 120;
-        const bool BarsLive = false;   // arms with P2/F3: the post-P1 residue is the §4-4 correction-embed -> phantom StepUp (see header)
+        const bool BarsLive = true;         // corr/min, worst-tick, snap + convergence bars (P2)
+        const bool SpikeBarLive = false;    // the pending-spike bars: C3-gated (§7)
 
         public override IEnumerable<Step> Run()
         {
@@ -3231,9 +3253,9 @@ namespace UnturnedGodot.Testing
             }
 
             WanGeo.Bar(T, BarsLive, $"jump courses cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 37.496)", m.CorrPerMin < 2f);
-            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.791)", m.MaxPend < 0.25f);
+            WanGeo.Bar(T, SpikeBarLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.791)", m.MaxPend < 0.25f);
             WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.137)", m.WorstTickCorr < 0.08f);
-            WanGeo.Bar(T, BarsLive, $"no apex teleport: vertical pending under 0.15 m (max {m.MaxPendY:0.###} m -- pre-fix 0.791)", m.MaxPendY < 0.15f);
+            WanGeo.Bar(T, SpikeBarLive, $"no apex teleport: vertical pending under 0.15 m (max {m.MaxPendY:0.###} m -- pre-fix 0.791)", m.MaxPendY < 0.15f);
             WanGeo.Bar(T, BarsLive, $"ZERO snaps across the jump courses ({m.Snaps})", m.Snaps == 0);
             foreach (var s in rig.Close(this, BarsLive, m, "wan-jump")) yield return s;
         }

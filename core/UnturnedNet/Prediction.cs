@@ -39,6 +39,14 @@ namespace UnturnedGodot.Net
         /// two ends are distinct physics solves, not a bit-identical re-sim. Client-side only, no wire
         /// change; the SnapThreshold teleport guard above is unaffected.</summary>
         public float DeadZoneMeters = 0.04f;
+        /// <summary>Per-tick ceiling on an eased slice (metres) -- the F3 companion (geometry WAN
+        /// baselines): swept application (ApplyNetCorrection) can be BLOCKED by the very geometry that
+        /// caused the divergence, so pending piles up while the shell grinds along a face; when the
+        /// obstruction clears, the exponential slice of the piled error landed as one released-dam tug
+        /// (0.098 m single-tick measured at the curb baseline vs the 0.08 felt bar). The cap turns the
+        /// release into a fast bounded glide (0.06/tick = 3 m/s of correction). Step() only -- snaps
+        /// are meant to pop, and the tail-consume (FinishThreshold 0.05) is already under it.</summary>
+        public float MaxSliceMeters = 0.06f;
 
         const int RingSize = 256;   // > any plausible input round-trip in ticks
         struct Entry { public ushort Seq; public bool Used; public Vector3 Pos; public Vector3 CumCorrection; }
@@ -98,6 +106,8 @@ namespace UnturnedGodot.Net
             }
             float a = 1f - MathF.Exp(-CorrectionRatePerSecond * dt);
             var delta = _pending * a;
+            float dmag = Magnitude(delta);
+            if (dmag > MaxSliceMeters) delta *= MaxSliceMeters / dmag;   // released-dam guard (see MaxSliceMeters)
             _pending -= delta;
             return delta;
         }

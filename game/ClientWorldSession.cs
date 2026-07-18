@@ -200,8 +200,18 @@ namespace UnturnedGodot
                 var delta = snap ? Reconciler.TakeAll() : Reconciler.Step(dt);   // past 2 m: snap, don't ice-skate
                 if (delta != UnityEngine.Vector3.zero)
                 {
-                    Shell.ApplyNetCorrection(new Vector3(delta.x, delta.y, delta.z));
-                    Reconciler.NoteCorrectionApplied(delta);   // raw node floats -- the delta lands in full, accounting stays exact
+                    if (snap)
+                    {
+                        Shell.ApplyNetSnap(new Vector3(delta.x, delta.y, delta.z));   // endpoint = server truth: hard adopt
+                        Reconciler.NoteCorrectionApplied(delta);
+                    }
+                    else
+                    {
+                        // F3: the eased slice is SWEPT (never through geometry) and may land partially --
+                        // report exactly what landed so the accounting stays exact (§4-4)
+                        var applied = Shell.ApplyNetCorrection(new Vector3(delta.x, delta.y, delta.z));
+                        Reconciler.NoteCorrectionApplied(new UnityEngine.Vector3(applied.X, applied.Y, applied.Z));
+                    }
                 }
             }
 

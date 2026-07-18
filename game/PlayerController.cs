@@ -1150,10 +1150,37 @@ namespace UnturnedGodot
         // TRUE physics position (not the render-lerped GlobalPosition) and apply corrections through a
         // seam that shifts the interp samples WITH the node.
         public Vector3 TruePhysicsPosition => _interpReady ? _interpCurr : GlobalPosition;
-        public void ApplyNetCorrection(Vector3 delta)
+        /// <summary>F3 (PREDICTION_GEOMETRY_DIAGNOSIS §4-4): an eased correction slice is applied as a
+        /// SWEPT move, never a bare position write. Mid-contact, a bare write embedded the capsule in the
+        /// floor/curb/jamb it was touching, and the next tick's depenetration -- or StepUp reading the
+        /// stuck foot-sweep as "blocked at foot" and firing its +0.5 m raise on FLAT ground (the wan_jump
+        /// phantom relaunch) -- kicked the body somewhere the avatar never went: fresh divergence
+        /// manufactured exactly where divergence was being corrected. The slice sweeps to first contact,
+        /// then slides the remainder along the contact plane (so grid-noise slices with a tiny vertical
+        /// component still land their tangential part while standing on the floor). Returns what ACTUALLY
+        /// landed -- the caller reports exactly that via NoteCorrectionApplied (the reconciler's
+        /// partial-application accounting, Prediction.cs NoteCorrectionApplied).</summary>
+        public Vector3 ApplyNetCorrection(Vector3 delta)
+        {
+            var before = GlobalPosition;
+            var col = MoveAndCollide(delta);
+            if (col != null)
+            {
+                var slide = col.GetRemainder().Slide(col.GetNormal());
+                if (slide.LengthSquared() > 1e-12f) MoveAndCollide(slide);
+            }
+            var applied = GlobalPosition - before;
+            if (_interpReady) { _interpPrev += applied; _interpCurr += applied; }   // keep the correction through the restore + render it (a sub-threshold slice is grid-tiny)
+            return applied;
+        }
+        /// <summary>The >SnapThreshold path: adopt the authoritative position outright. The ENDPOINT is
+        /// server truth (a legal place to stand), only the PATH may cross geometry -- so a snap stays a
+        /// hard write (swept application would strand the shell on the near side of a wall the server is
+        /// beyond). Interp samples shift with the node; a snap is meant to pop.</summary>
+        public void ApplyNetSnap(Vector3 delta)
         {
             GlobalPosition += delta;
-            if (_interpReady) { _interpPrev += delta; _interpCurr += delta; }   // keep the correction through the restore + render it (a sub-threshold slice is grid-tiny; a snap is meant to pop)
+            if (_interpReady) { _interpPrev += delta; _interpCurr += delta; }
         }
         // Likewise forces the stance (bypassing the Shift/Ctrl/Z keys) for demos, bots, and self-tests.
         public EPlayerStance? ScriptedStance;
@@ -1383,6 +1410,8 @@ namespace UnturnedGodot
             if (TestMove(GlobalTransform, motion) && !TestMove(raised, motion))
                 GlobalPosition += Vector3.Up * StepHeight;
         }
+
+        static readonly System.Func<float, bool> AlwaysHeadroom = _ => true;   // F4: the NetAvatar stance-FSM stub -- the wire stance is already headroom-resolved client-side
 
         bool HeadroomFor(float height)   // is there space to occupy a taller capsule? (blocks standing up under a ceiling -- master)
         {
@@ -2777,7 +2806,15 @@ namespace UnturnedGodot
             bool xNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
             bool zNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
             bool sprintNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
-            _move.Stance = _stance.Step(xNow, zNow, sprintNow, Stamina, Broken, ScriptedStance, _capStance, HeadroomFor);
+            // F4 (PREDICTION_GEOMETRY_DIAGNOSIS §4-3/§3 asymmetry 2): a NetAvatar takes the wire stance
+            // VERBATIM -- the client's stance FSM already resolved the headroom gate at ITS position and
+            // sent the result; re-running the ceiling query here, at a position skewed by up to the ack
+            // band, disagreed in exactly the tight-doorway geometry (a CROUCH-vs-STAND fork = a 2.5 vs
+            // 4.5 m/s speed disagreement for the window it lasts). Trust boundary note: a lying stance
+            // can at worst stand the capsule up under a low ceiling -- depenetration jitter on the
+            // avatar body only; positions still gate through the C2 band + budget (TODO(mp-security)
+            // class, the test-server posture).
+            _move.Stance = _stance.Step(xNow, zNow, sprintNow, Stamina, Broken, ScriptedStance, _capStance, NetAvatar ? AlwaysHeadroom : HeadroomFor);
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
 
             float forward, strafe;
