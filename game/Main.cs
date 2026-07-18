@@ -376,7 +376,7 @@ namespace UnturnedGodot
             if (bakeIcon != null)   // render an item model to a flat icon (ItemTool.captureIcon-style) -> --shot=OUT
             {
                 _shotPath = shot;
-                GetWindow().Size = new Vector2I(256, 256);
+                GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_ISO") == "1" ? new Vector2I(640, 640) : new Vector2I(256, 256);
                 BuildBakeIcon(bakeIcon);
                 return; // capture happens a few frames later in _Process
             }
@@ -1893,8 +1893,17 @@ namespace UnturnedGodot
             System.Array.Sort(ax, (a, b) => a.e.CompareTo(b.e));   // [0]=shortest [1]=middle [2]=longest
             var cam = new Camera3D { Projection = Camera3D.ProjectionType.Orthogonal, Size = ax[2].e * 1.18f };
             AddChild(cam);
-            cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
-            cam.LookAt(c, -ax[1].dir);   // -middle axis = up (the model's height axis points "down" in mesh space)
+            if (System.Environment.GetEnvironmentVariable("UG_ISO") == "1")   // 3/4 iso view (Y-up) -- good for furniture/props that bake top-down
+            {
+                cam.Size = Mathf.Max(s.X, Mathf.Max(s.Y, s.Z)) * 1.35f;
+                cam.GlobalPosition = c + new Vector3(1f, 0.8f, 1f).Normalized() * (s.Length() + 3f);   // front-right-above
+                cam.LookAt(c, Vector3.Up);
+            }
+            else
+            {
+                cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
+                cam.LookAt(c, -ax[1].dir);   // -middle axis = up (the model's height axis points "down" in mesh space)
+            }
             cam.Current = true;
             GD.Print($"[BAKE] {modelsStr} aabb={s} longest={ax[2].e:F2} orthoSize={cam.Size:F2}");
         }
