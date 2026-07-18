@@ -1246,71 +1246,17 @@ namespace UnturnedGodot
         // local shell jumped on (a Broken shell that can't jump locally must not jump on the server).
         public bool LastJumpInput;
 
-        // C3 prediction seams (PEI_CLIENT_PLAN §2.3 / §7 risk 5). The shell does MANUAL render interp:
-        // _PhysicsProcess RESTORES GlobalPosition from _interpCurr before moving and _Process lerps
-        // _interpPrev.._interpCurr every frame -- so a bare GlobalPosition write from the net session is
-        // silently overwritten one tick later and never renders. The reconciler must therefore read the
-        // TRUE physics position (not the render-lerped GlobalPosition) and apply corrections through a
-        // seam that shifts the interp samples WITH the node.
+        // Net-session position seams (§7 risk 5). The shell does MANUAL render interp: _PhysicsProcess
+        // RESTORES GlobalPosition from _interpCurr before moving and _Process lerps _interpPrev..
+        // _interpCurr every frame -- so a bare GlobalPosition write from the net session is silently
+        // overwritten one tick later and never renders. Net code must therefore read the TRUE physics
+        // position (not the render-lerped GlobalPosition) and move the node through TeleportTo, which
+        // shifts the interp samples WITH it.
         public Vector3 TruePhysicsPosition => _interpReady ? _interpCurr : GlobalPosition;
-        /// <summary>The >SnapThreshold path: adopt the authoritative position outright. The ENDPOINT is
-        /// server truth (a legal place to stand), only the PATH may cross geometry -- so a snap stays a
-        /// hard write (swept application would strand the shell on the near side of a wall the server is
-        /// beyond). Interp samples shift with the node; a snap is meant to pop.</summary>
-        public void ApplyNetSnap(Vector3 delta)
-        {
-            GlobalPosition += delta;
-            if (_interpReady) { _interpPrev += delta; _interpCurr += delta; }
-        }
-
-        // ---- C3 rewind+replay seams (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 4, retail
-        // ClientResimulate U3 PlayerInput.cs:1268-1346). Only ClientWorldSession.ReplayMisprediction
-        // calls these; SP/loopback never construct that path, so they are inert outside MP. ----
 
         /// <summary>The movement-sim's carried state (horizontal components are re-derived from input
-        /// every Step; y is the ballistic DOF a rewind must seed). Read by PlayerNetSync for the
-        /// misprediction payload and by the session for the replay record.</summary>
+        /// every Step; y is the ballistic DOF). Rides the v9 state stream; a recov re-seeds it.</summary>
         public UnityEngine.Vector3 MoveSimVelocity => _move.Velocity;
-        /// <summary>The deterministic post-move grounded flag (the replay record rides it).</summary>
-        public bool DetGroundedNow => _detGrounded;
-
-        /// <summary>Rewind restore -- call after TeleportTo(server state): seed the sim velocity and the
-        /// stance/capsule from the misprediction payload, then re-derive det-grounded at the restored
-        /// position (a pure position->world query, deterministic -- better than shipping the flag; the
-        /// avatar derived ITS flag at this same position). The stance FSM's key-toggle state is
-        /// deliberately untouched: the replay window forces stances through StepMovementOnce, and the
-        /// live FSM must resume exactly where the player's real toggles left it.</summary>
-        public void NetReplayRestore(UnityEngine.Vector3 simVelocity, EPlayerStance stance)
-        {
-            _move.Velocity = simVelocity;
-            _move.Stance = stance;
-            UpdateHitbox(stance);
-            if (DeterministicGround) _detGrounded = DetGroundCast(DetCheckLength, out _);
-        }
-
-        /// <summary>One replayed input through the SAME kernel the live tick runs: the recorded wire
-        /// stance through the headroom re-gate only (no FSM key edges -- a held X across a replay must
-        /// not double-toggle), then the movement half. N of these inside one physics tick IS the replay
-        /// (net.c3_spike_restep proved N-in-one-tick tracks N engine ticks bit-identically over a curb).</summary>
-        public void StepMovementOnce(float strafe, float forward, bool jump, EPlayerStance stance, float delta)
-        {
-            var want = stance;
-            float wantH = PlayerMovementDef.HeightForStance(want);
-            if (wantH > _capStance + 0.01f && _capStance > 0f && !HeadroomFor(wantH))   // the PlayerStanceSim ceiling gate, mirrored at the replayed position
-                want = _capStance <= PlayerMovementDef.HEIGHT_PRONE + 0.01f ? EPlayerStance.PRONE : EPlayerStance.CROUCH;
-            _move.Stance = want;
-            UpdateHitbox(want);
-            StepMoveOnce(strafe, forward, jump, delta, out _, out _, out _);
-        }
-
-        /// <summary>Replay epilogue: the whole replay is ONE tick's resolution -- render its endpoint
-        /// (both interp samples := the final position, the ApplyNetSnap contract; the per-step interp
-        /// snapshots were never taken because the kernel leaves interp to its caller).</summary>
-        public void NetReplayFinish()
-        {
-            _interpPrev = _interpCurr = GlobalPosition;
-            _interpReady = true;
-        }
 
         // ---- mp-clientauth-foot seams (wire v9): the shell OWNS its on-foot movement and REPORTS it;
         // the server envelope-validates and adopts. These are the report/rollback/follower hooks --
@@ -1606,65 +1552,6 @@ namespace UnturnedGodot
             _capStance = h; _capsule.Height = h; _hitbox.Position = new Vector3(0f, h / 2f, 0f);
         }
 
-        // MP deterministic ground (branch mp-rubberband-fix): prediction requires the client shell and the
-        // server avatar -- two SEPARATE CharacterBody3Ds -- to make the SAME grounded decision every tick,
-        // or their vertical integration diverges and the reconciler drags the shell around (worst on a
-        // downhill: "walk down, get yanked up into the air"). Godot's IsOnFloor() is each body's own
-        // contact-solve state and DISAGREES between the two near the floor-snap threshold, so MP bodies
-        // mirror real Unturned instead (PlayerMovement.checkGround :732 / ground snap :1371): grounded = a
-        // deterministic downward spherecast, plus a post-move snap cast that glues a descending walker to
-        // a walkable slope. Set ONLY by ClientWorldSession.SpawnShell (the MP shell) and PlayerNetSync
-        // (the server avatar); default false keeps SP/loopback byte-identical (single body -- IsOnFloor
-        // has nobody to disagree with).
-        public bool DeterministicGround;
-        bool _detGrounded;                       // last post-move ground-check result -> next tick's Step
-        SphereShape3D _detSphere;
-        const float DetCastRadius = 0.349f;      // capsule radius - 1 mm (Unturned: PlayerStance.RADIUS - 0.001f)
-        const float DetCastLift = 0.10f;         // Unturned's SKIN_WIDTH hover made explicit: shape casts IGNORE initially-overlapping shapes, and a Godot body rests ~0 (sometimes a hair penetrated) on its floor where Unity's CharacterController hovers a full skin width clear -- so the cast must START lifted or it skips the very slope the body stands on and "grounds" against whatever lies below it
-        const float DetCheckLength = 0.03f;      // grounded = surface within this below the feet (Unturned CHECK_LENGTH minus its skin width: 0.025)
-        const float DetSnapLength = 0.6f;        // Unturned snapLength = stepOffset + SKIN_WIDTH -> our StepHeight + 0.1 (covers a sprint tick's drop on the 55-deg max slope, ~0.2 m)
-
-        // The Unturned checkGround cast shape: a sphere of (almost) capsule radius, started a skin-width
-        // above the capsule bottom, cast straight down. Purely position -> world geometry -- identical on
-        // both MP bodies at the same position, unlike a contact-solve flag. feetGap = how far the surface
-        // is BELOW the feet (~0 or slightly negative while resting on it).
-        bool DetGroundCast(float length, out float feetGap)
-        {
-            float maxDist = DetCastLift + length;
-            var q = new PhysicsShapeQueryParameters3D
-            {
-                Shape = _detSphere ??= new SphereShape3D { Radius = DetCastRadius },
-                Transform = new Transform3D(Basis.Identity, GlobalPosition + Vector3.Up * (DetCastRadius + DetCastLift)),
-                Motion = Vector3.Down * maxDist,
-                CollisionMask = CollisionMask,
-                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
-            };
-            var res = GetWorld3D().DirectSpaceState.CastMotion(q);
-            if (res[1] >= 1f) { feetGap = length; return false; }
-            feetGap = res[0] * maxDist - DetCastLift;
-            return true;
-        }
-
-        // The post-move ground snap (Unturned PlayerMovement :1371): a walker that WAS grounded and is not
-        // launching upward gets pulled down onto ground within DetSnapLength, so walking downhill stays
-        // GLUED to the slope instead of ballistically skipping off it. Only onto walkable slopes
-        // (FloorMaxAngle -- the Max_Walkable_Slope guard: snapping to any surface climbs trees).
-        void DetSnapToGround()
-        {
-            if (!DetGroundCast(DetSnapLength, out float gap) || gap <= 1e-4f) return;
-            var ray = new PhysicsRayQueryParameters3D
-            {
-                From = GlobalPosition + Vector3.Up * DetCastLift,
-                To = GlobalPosition + Vector3.Down * (gap + DetCastRadius + 0.3f),
-                CollisionMask = CollisionMask,
-                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
-            };
-            var hit = GetWorld3D().DirectSpaceState.IntersectRay(ray);
-            if (hit.Count == 0) return;                                  // center is over an edge -- don't snap onto nothing
-            if (((Vector3)hit["normal"]).AngleTo(Vector3.Up) >= FloorMaxAngle) return;
-            GlobalPosition += Vector3.Down * gap;
-        }
-
         const float StepHeight = 0.5f;   // curbs/thresholds up to this high are stepped over (master: stop snagging on sidewalks; bumped 0.4->0.5)
         // If the horizontal motion is blocked at foot level but clear a step higher, raise onto the step; FloorSnapLength then
         // pulls us back down onto it. Reused by both the player and zombies (source has stair/ledge handling in PlayerMovement).
@@ -1676,40 +1563,6 @@ namespace UnturnedGodot
             if (!TestMove(GlobalTransform, motion)) return;   // not blocked at foot level
             var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
             if (TestMove(raised, motion)) return;             // blocked even raised: a wall, not a step
-            if (!DeterministicGround) { GlobalPosition += Vector3.Up * StepHeight; return; }   // SP/loopback: the binary pop, byte-identical
-            // F6 spike outcome (PREDICTION_GEOMETRY_DIAGNOSIS §4-1, gated on the wan_stepup baseline
-            // still failing after F1-F4): MP bodies step ONLY onto a real step.
-            //  - real-step gate: a thin collider (the hydrant) can clear the raised sweep on a knife-edge
-            //    graze with NO step top to land on -- raising there just pops the body into the graze
-            //    slide, which the variable-height search amplified into full snaps (measured 30.763
-            //    m/min + 2 snaps on the thincollider baseline). Probe rays just past the blocked face:
-            //    a walkable surface ABOVE the current floor must exist, or this is a wall-graze, not a
-            //    step -- slide instead.
-            // The raise itself stays BINARY: the spike also tried the doc's minimal-clearing-height
-            // search (F6 as designed) and it FAILED -- the minimal height at a graze is a knife-edge
-            // function of lateral offset, so two bodies centimetres apart got raises differing by the
-            // full range and the hydrant baseline blew up (30.763 m/min + 2 snaps vs 7.824 binary);
-            // it also left the curb baseline over its bar anyway (2.989 vs 2.0). FloorSnap pulls the
-            // 0.5 pop down onto the real step top within the tick, so the binary height costs little
-            // once only REAL steps fire.
-            var dir = motion.Normalized();
-            bool realStep = false;
-            for (float ahead = 0.47f; ahead <= 0.78f && !realStep; ahead += 0.15f)   // just past the capsule face .. one tread deeper
-            {
-                var from = GlobalPosition + dir * ahead + Vector3.Up * (StepHeight + 0.10f);
-                var rq = new PhysicsRayQueryParameters3D
-                {
-                    From = from,
-                    To = from + Vector3.Down * (StepHeight + 0.05f),
-                    CollisionMask = CollisionMask,
-                    Exclude = new Godot.Collections.Array<Rid> { GetRid() },
-                };
-                var hit = GetWorld3D().DirectSpaceState.IntersectRay(rq);
-                realStep = hit.Count > 0
-                    && ((Vector3)hit["position"]).Y >= GlobalPosition.Y + 0.03f
-                    && ((Vector3)hit["normal"]).AngleTo(Vector3.Up) < FloorMaxAngle;
-            }
-            if (!realStep) return;
             GlobalPosition += Vector3.Up * StepHeight;
         }
 
@@ -3180,37 +3033,29 @@ namespace UnturnedGodot
             StepMoveOnce(strafe, forward, jump, (float)delta, out bool wasAirborne, out float vy, out bool groundedEntering);
             LastGroundedInput = groundedEntering;   // the grounded the sim consumed -- state-stream dressing
             _interpPrev = _interpReady ? _interpCurr : GlobalPosition; _interpCurr = GlobalPosition; _interpReady = true;   // snapshot this tick's start/end for render interpolation (master)
-            if (wasAirborne && (DeterministicGround ? _detGrounded : IsOnFloor())) CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
+            if (wasAirborne && IsOnFloor()) CheckFallDamage(vy);   // just touched down -> fall damage on a hard landing
         }
 
-        // ---- C3 movement kernel (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 3): the ONE deterministic
-        // movement step, split in two halves because the live tick interleaves per-tick client work
-        // (viewmodel locomotion, vitals, footstep noise) between the stance decision and the move.
-        // Everything physics-relevant lives HERE and only here, so a rewind+replay can re-step it N
-        // times inside one physics tick (proven bit-identical over a curb by net.c3_spike_restep:
-        // MoveAndSlide/TestMove/DetGroundCast are all legal repeatedly inside _PhysicsProcess -- the
-        // same operation retail performs with CharacterController.Move N times in one frame,
-        // U3 PlayerInput.cs:1327-1335). Extraction is order-verbatim from the pre-C3 _PhysicsProcess
-        // tail -- SP/loopback behavior is byte-identical. ----
+        // ---- the movement kernel: the ONE deterministic movement step, split in two halves because
+        // the live tick interleaves per-tick client work (viewmodel locomotion, vitals, footstep
+        // noise) between the stance decision and the move. Everything physics-relevant lives HERE. ----
 
-        /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).
-        /// C3 note: the avatar re-runs the headroom gate at its own position again (the F4 verbatim-trust
-        /// shortcut is gone) -- a doorway CROUCH-vs-STAND fork now diverges the bodies, trips the ack
-        /// band, and the client resolves it by rewind+replay, whose own stance re-gate
-        /// (StepMovementOnce) mirrors this one at the replayed positions.</summary>
+        /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).</summary>
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
         {
             _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor);
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
         }
 
-        /// <summary>Movement half: grounded resolve -> sim Step -> StepUp -> MoveAndSlide -> det-ground
-        /// recheck/snap. groundedEntering = the grounded state the sim consumed;
-        /// verticalVel = this step's sim vertical velocity (fall damage).</summary>
+        /// <summary>Movement half: grounded resolve -> sim Step -> StepUp -> MoveAndSlide.
+        /// groundedEntering = the grounded state the sim consumed;
+        /// verticalVel = this step's sim vertical velocity (fall damage).
+        /// (The v9 note: the MP DeterministicGround fork -- det spherecast ground + snap, the F6
+        /// real-step StepUp gate -- is deleted with the two-body model; every body runs the SP path.)</summary>
         void StepMoveOnce(float strafe, float forward, bool jump, float delta,
                           out bool wasAirborne, out float verticalVel, out bool groundedEntering)
         {
-            bool grounded = DeterministicGround ? _detGrounded : IsOnFloor();   // MP bodies: the deterministic check, so shell + avatar integrate identical vertical motion
+            bool grounded = IsOnFloor();
             groundedEntering = grounded;
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded, delta);
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);
@@ -3218,19 +3063,6 @@ namespace UnturnedGodot
             Velocity = new Vector3(world.X, v.y, world.Z);
             StepUp(delta, grounded);   // climb small curbs/thresholds so we don't snag (master)
             MoveAndSlide();
-            if (DeterministicGround)
-            {
-                // re-check after the move; a walker that just left the ground going DOWN a slope (not a
-                // jump: v.y < 0.01, the Unturned guard) snaps back onto it, then the post-snap state feeds
-                // the NEXT tick's Step -- the Unturned checkGround/snap pipeline, identical on both bodies.
-                bool onGround = DetGroundCast(DetCheckLength, out _);
-                if (!onGround && !wasAirborne && v.y < 0.01f)
-                {
-                    DetSnapToGround();
-                    onGround = DetGroundCast(DetCheckLength, out _);
-                }
-                _detGrounded = onGround;
-            }
             verticalVel = v.y;
         }
     }

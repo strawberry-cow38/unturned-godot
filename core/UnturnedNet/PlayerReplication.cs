@@ -114,20 +114,9 @@ namespace UnturnedGodot.Net
         public float MoveY;       // forward axis [-1,1]
         public float YawDegrees;  // facing, wrapped into [0,360) by the wire encoding
         public byte Buttons;      // v2: held-button bits (ButtonJump | PackStance(...))
-        // C2 (CLIENT_PREDICTION_PLAN §4.2, Version 5): the shell's post-move position for THIS input's
-        // tick -- the direct analogue of retail's WalkingPlayerInputPacket.clientPosition ("Resulting
-        // transform.position immediately after movement.simulate was called", U3 PlayerInput.cs:854-857,
-        // captured :1607, on the wire :867-873). The server's ack band compares it against the avatar's
-        // own result and ADOPTS a sub-band claim (retail's sub-2cm ack, :1820-1838) so healthy two-solve
-        // skew resolves server-ward -- invisibly -- instead of as client-visible correction traffic.
-        // Rides the same position grid as the snapshot (PlayerReplication.Quantize), so an adopted claim
-        // acks back as EXACTLY the client's recorded prediction.
-        public Vector3 ClaimedPos;
-        // On the wire as one bit: claimless senders (headless demo walkers whose flat prediction doesn't
-        // track a real-physics avatar) must not have a fabricated (0,0,0) "claim" adopted. Also cleared
-        // at consume time on the synthesized ticks (hole-substitution / hold) whose held input carries a
-        // claim belonging to a DIFFERENT seq.
-        public bool HasClaim;
+        // v9 (mp-clientauth-foot): the C2 ClaimedPos/HasClaim claim fields are GONE from the wire --
+        // the shell client no longer sends MoveInput at all (it streams PlayerStateCommand and the
+        // server adopts it); MoveInput remains the demo-walker/loopback movement intent only.
 
         public bool Jump => (Buttons & ButtonJump) != 0;
 
@@ -167,15 +156,6 @@ namespace UnturnedGodot.Net
             w.WriteSignedNormalizedFloat(Clamp1(MoveY), 8);
             w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(Buttons);   // v2 (NetProtocol.Version 3): the buttons byte -- v2 peers version-reject before ever parsing this
-            // C2 (Version 5): hasClaim:1, then the claimed post-move position on the snapshot's exact
-            // position grid -- only when the sender actually captured one
-            w.WriteBits(HasClaim ? 1u : 0u, 1);
-            if (HasClaim)
-            {
-                w.WriteClampedFloat(ClaimedPos.x, NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits);
-                w.WriteClampedFloat(ClaimedPos.y, NetQuantization.PositionYIntBits, NetQuantization.PositionYFracBits);
-                w.WriteClampedFloat(ClaimedPos.z, NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits);
-            }
         }
 
         public static bool TryRead(NetPakReader r, out MoveInput cmd)
@@ -186,16 +166,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadSignedNormalizedFloat(8, out float my)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt8(out byte buttons)) return false;
-            if (!r.ReadBits(1, out uint hasClaim)) return false;
-            float cx = 0f, cy = 0f, cz = 0f;
-            if (hasClaim != 0)
-            {
-                if (!r.ReadClampedFloat(NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits, out cx)) return false;
-                if (!r.ReadClampedFloat(NetQuantization.PositionYIntBits, NetQuantization.PositionYFracBits, out cy)) return false;
-                if (!r.ReadClampedFloat(NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits, out cz)) return false;
-            }
-            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons,
-                                  ClaimedPos = new Vector3(cx, cy, cz), HasClaim = hasClaim != 0 };
+            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons };
             return true;
         }
 
@@ -247,56 +218,8 @@ namespace UnturnedGodot.Net
         }
     }
 
-    /// <summary>
-    /// C3 (PREDICTION_GEOMETRY_DIAGNOSIS §7.2 step 2): the server's rewind+replay correction fact -- the
-    /// port of retail's SendSimulateMispredictedInputs (U3 PlayerInput.cs:1818-1838, which carries frame,
-    /// stance, position, velocity, stamina + clock offsets). Fired by PlayerNetSync ONLY on a write-back
-    /// whose fresh-seq claim fell OUTSIDE the ack band (the band DISENGAGED -- a real misprediction); the
-    /// healthy in-band case sends nothing, so the event costs zero on a quiet link. Owner-unicast on the
-    /// ReliableOrdered channel (a lost correction must retransmit, retail sends these reliable too).
-    /// Payload = the avatar body's post-step state for the acked seq: Pos is the SAME quantized position
-    /// ServerDrive published that tick (grid-exact vs the snapshot), Vel is the avatar's movement-sim
-    /// velocity (PlayerMovementSim.Velocity -- the only carried sim state; horizontal components are
-    /// re-derived from input every Step, the vertical is the ballistic DOF a replay must seed), Stance is
-    /// what the avatar's stance FSM actually stepped, Stamina mirrors retail's payload shape (:1833-1835)
-    /// -- the port's avatar vitals are frozen at 1.0 and stance rides the input stream, so the byte is
-    /// carried for wire parity + the future vitals split and applied to nothing today.
-    /// Version note: deliberately NOT a NetProtocol.Version bump -- an old client skips the unknown id
-    /// (EventRegistry.UnknownIdSkipped) and keeps its old reconciliation; a NEW client on an old server
-    /// never receives the event and falls back to the snap path alone for over-band errors (acceptable
-    /// for the private test-server posture -- the launcher keeps builds in lockstep).
-    /// </summary>
-    public struct MispredictionEvent
-    {
-        public ushort Seq;        // the input seq this state pairs with (the avatar stepped it)
-        public Vector3 Pos;       // avatar post-step position, wire-position-grid quantized
-        public Vector3 Vel;       // avatar PlayerMovementSim.Velocity (sim-local axes; y = the ballistic DOF)
-        public byte StanceByte;   // (byte)EPlayerStance the avatar stepped
-        public byte Stamina;      // 0-255 (avatar vitals frozen -> 255 today; reserved for the vitals split)
-
-        public EPlayerStance Stance => StanceByte <= (byte)EPlayerStance.SITTING ? (EPlayerStance)StanceByte : EPlayerStance.STAND;
-
-        public void Write(NetPakWriter w)
-        {
-            w.WriteUInt16(Seq);
-            NetWire.WritePos(w, Pos);
-            NetWire.WriteVel(w, Vel);
-            w.WriteUInt8(StanceByte);
-            w.WriteUInt8(Stamina);
-        }
-
-        public static bool TryRead(NetPakReader r, out MispredictionEvent evt)
-        {
-            evt = default;
-            if (!r.ReadUInt16(out ushort seq)) return false;
-            if (!NetWire.ReadPos(r, out Vector3 pos)) return false;
-            if (!NetWire.ReadVel(r, out Vector3 vel)) return false;
-            if (!r.ReadUInt8(out byte stance)) return false;
-            if (!r.ReadUInt8(out byte stamina)) return false;
-            evt = new MispredictionEvent { Seq = seq, Pos = pos, Vel = vel, StanceByte = stance, Stamina = stamina };
-            return true;
-        }
-    }
+    // (MispredictionEvent -- EventId 30 -- deleted by mp-clientauth-foot v9: with client-authoritative
+    // on-foot movement there is no server sim of the owner to mispredict against. Id retired, never reused.)
 
     /// <summary>
     /// Players as the first real IReplicatedSystem (MP_PLAN §4 Phase 3). One class serves both sides:
@@ -324,38 +247,12 @@ namespace UnturnedGodot.Net
             internal PlayerMovementSim Sim;
             internal MoveInput CurrentInput;
             internal bool HasInput;
-            // -- the mp-inputbuffer fix: the per-peer in-order MoveInput queue (real Unturned's
-            //    serversidePackets, PlayerInput.cs:1054) the C2 avatar driver consumes ONE input per tick
-            //    from (TryConsumeInput), so the server integrates the same input stream, in the same order
-            //    and count, the client predicted. CurrentInput above stays the latest-RECEIVED (the
-            //    ServerStep held-keys demo path reads it); AppliedInput is the latest CONSUMED -- what the
-            //    avatar coasts on when the queue starves.
-            internal Queue<MoveInput> PendingInputs;
-            internal MoveInput AppliedInput;
-            internal bool HasApplied;
-            internal ushort LastConsumedSeq;
-            internal byte PrimeWait;
-            internal bool Primed;
-            // consecutive starved-coast ticks (reset by any motion consume; at MaxCoastTicks the coast
-            // becomes a HOLD), and how many of those coasts are integrations the client may ALSO have
-            // predicted -- a delayed (not lost) input arriving later is consumed ack-only against this
-            // debt so its tick is never integrated twice
-            internal int CoastTicks;
-            internal int CoastDebt;
-            // true once ServerDrive has taken over this entity: an in-process shell (the listen-server /
-            // SP-loopback local player, MP_PLAN §4 Phase 4) steps the REAL sim-core + physics and writes
-            // the result here; the internal flat-ground integration must not fight it.
+            // true once ServerDrive has taken over this entity: either an in-process shell (the
+            // listen-server / SP-loopback local player) writing its own result, or -- since v9 -- the
+            // owner's envelope-validated claim stream (ServerPlayerAuthority); the internal flat-ground
+            // integration must not fight either.
             internal bool ExternallyDriven;
-            // C2 anti-cheat: the remaining claim-adoption allowance (metres). Accrues at
-            // AdoptBudgetMetersPerSecond up to the cap; each adoption drains the GROWTH of the
-            // claim-vs-body skew since the last adoption (AdoptedSkew is that baseline).
-            internal float AdoptBudget;
-            internal float AdoptedSkew;
-            // C2 hysteresis (the Schmitt trigger): adoption disengages past the band and re-engages only
-            // once the skew has CONVERGED under AdoptReentryMeters -- see ServerTryAdoptClaim.
-            internal bool AdoptEngaged;
-            /// <summary>Read-only view for game-side drivers (C2 PlayerNetSync must not adopt an entity
-            /// another shell already ServerDrives -- double-driving the seam would fight over it).</summary>
+            /// <summary>Read-only view for game-side consumers (the follower sync, tests).</summary>
             public bool IsExternallyDriven => ExternallyDriven;
         }
 
@@ -415,8 +312,7 @@ namespace UnturnedGodot.Net
 
         /// <summary>The peer's currently-held MoveInput (the held-keys model's latest). False when none is
         /// held -- never received one yet, or cleared by death/vehicle-enter (ServerClearInput). ServerStep's
-        /// flat demo integration reads this view; the C2 avatar driver consumes TryConsumeInput instead
-        /// (in-order, count-preserving -- the mp-inputbuffer fix).</summary>
+        /// flat demo integration reads this view.</summary>
         public bool TryGetHeldInput(ushort ownerPlayerId, out MoveInput input)
         {
             input = default;
@@ -425,184 +321,16 @@ namespace UnturnedGodot.Net
             return true;
         }
 
-        // ---- the mp-inputbuffer jitter buffer (the sprint-stop yank fix) ----
-        // MoveInput rides UnreliableSequenced at one per client tick; the avatar driver must integrate
-        // that stream in the same order and COUNT the client predicted, or the integrated-tick counts
-        // drift under jitter (two inputs in one server-tick window / a stale re-integration) and the
-        // accumulated gap resolves as one hard correction the instant the player stops. Tunables:
-
-        /// <summary>Queue depth cap: arrivals beyond this drop the OLDEST queued input (a hitch burst must
-        /// bound added input latency and memory, and the freshest intent matters most). This enqueue-side
-        /// cap is the ONLY place a queued input is ever dropped -- consumption never skips one (a queued
-        /// input is a tick the client already predicted; discarding it to drain faster put the server one
-        /// integration behind and the deficit resolved as a correction at the next stop).</summary>
-        public const int MaxQueuedInputs = 8;
-        /// <summary>Seq holes at most this size (dropped datagrams) substitute one coast tick per missing
-        /// input, keeping the integration count aligned; bigger jumps (hitch / cap drops) adopt directly
-        /// and let the reconciler absorb the difference.</summary>
-        public const int MaxGapCoastTicks = 2;
-        /// <summary>Starvation coast bound: an empty queue coasts the last consumed input for at most this
-        /// many consecutive ticks (~240 ms, enough to ride out routine jitter gaps), then HOLDS -- zero
-        /// motion until real input resumes. Uncapped, a long outage (heavy loss / stall / pre-disconnect)
-        /// ghost-ran the avatar on stale "sprint forward" for as long as the outage lasted.</summary>
-        public const int MaxCoastTicks = 12;
-        /// <summary>Consumption starts once this many inputs are buffered (or after an equal number of
-        /// ticks with anything queued, so a sparse sender is never stalled) -- the shallow standing buffer
-        /// that absorbs arrival jitter of the same magnitude. Costs its depth in ticks of added input
-        /// latency (~40 ms), invisible locally behind client-side prediction.</summary>
-        public const int PrimeDepth = 2;
-
-        /// <summary>Latest-wins input queue: MoveInput rides UnreliableSequenced, so a reordered stale
-        /// command must never override a newer one already applied. Also appends to the in-order
-        /// PendingInputs queue TryConsumeInput drains (the guard keeps queued seqs strictly increasing;
-        /// the depth cap drops the oldest).</summary>
+        /// <summary>Latest-wins held input: MoveInput rides UnreliableSequenced, so a reordered stale
+        /// command must never override a newer one already applied. (The v9 note: the C1-C2 in-order
+        /// jitter buffer + coast/hole machinery that used to live here served the server-side avatar
+        /// integration of the OWNER -- deleted with that model; demo walkers integrate held-latest.)</summary>
         public void ServerQueueInput(ushort ownerPlayerId, in MoveInput input)
         {
             if (!TryGetByOwner(ownerPlayerId, out var e) || e.Sim == null) return;
             if (e.HasInput && !NetSeq.IsNewer(input.Seq, e.CurrentInput.Seq)) return;
             e.CurrentInput = input;
             e.HasInput = true;
-            e.PendingInputs ??= new Queue<MoveInput>();
-            if (e.PendingInputs.Count >= MaxQueuedInputs) e.PendingInputs.Dequeue();
-            e.PendingInputs.Enqueue(input);
-        }
-
-        /// <summary>One tick's input for the avatar driver (PlayerNetSync) -- the in-order consume that
-        /// replaces reading the held latest. Integrates AT MOST ONE tick of motion per call and never
-        /// skips a queued input -- real Unturned's serversidePackets model (PlayerInput.cs:1723-1734)
-        /// dequeues one packet per qualifying tick and lets the buffer absorb a burst as bounded added
-        /// latency; the enqueue-side MaxQueuedInputs cap is the only drop. When the queue is starved it
-        /// COASTS on the last consumed input (the held-keys model's virtue on an unreliable wire: a lost
-        /// datagram's axes are almost always the held ones) for at most MaxCoastTicks, then HOLDS (zero
-        /// motion, stance STAND) until real input resumes. Every starved coast may be an early
-        /// integration of a tick whose input was merely DELAYED, not lost -- CoastDebt remembers them,
-        /// and when the delayed inputs arrive bunched, debt-many are consumed instantly ack-only (seqs
-        /// claimed, no second integration), so a stall-burst leaves neither a double-integrated segment
-        /// nor a standing backlog. A small seq hole substitutes one coast tick per missing input so the
-        /// count stays aligned with the client's prediction. False = nothing to integrate (no input
-        /// since spawn/clear) -- stand still, like TryGetHeldInput. The returned Seq is the ack the
-        /// caller must pair with the produced position (during a coast/hold it repeats the last consumed
-        /// seq, which the client's reconciler already treats as stale).</summary>
-        public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input)
-            => TryConsumeInput(ownerPlayerId, out input, out _);
-
-        /// <summary>The full consume: seqAdvanced reports whether the returned input carries a FRESH seq
-        /// (a real dequeue or a hole-substitution that claimed the lost seq) or a stale REPEAT (starved
-        /// coast, hold, prime-wait). The distinction is the C1.5 phantom-pairing fix: a coast tick still
-        /// integrates motion on the avatar body, but publishing that advanced position under the repeated
-        /// seq re-pairs an already-acked seq with a NEWER position -- and the 25 Hz jittered snapshot
-        /// stream often shows the client ONLY the phantom pairing for that seq, which measures as 1-3
-        /// ticks of error that was never real (the residual high-RTT inchworm's dominant engine, found by
-        /// the plan §3 WAN harness). The avatar driver must NOT ServerDrive a stale-seq tick's result --
-        /// hold the entity at the last exact (pos, seq) pairing until the stream resumes, exactly like
-        /// retail's never-speculate server (U3 PlayerInput.cs: no packet -> no simulate -> no new state).
-        /// C3 jump note: ButtonJump is plain HELD-KEY semantics again (the F1 takeoff-edge encoding,
-        /// strip-on-re-present and deferred-repay machinery are GONE) -- every re-present path coasts the
-        /// held input VERBATIM, jump bit included, because that IS the held-keys prediction the client
-        /// made for the lost/delayed ticks. When the prediction is wrong (the client released mid-gap, or
-        /// the takeoff tick skewed at geometry) the divergence trips the ack band and the client resolves
-        /// it by rewind+replay (MispredictionEvent) -- retail's shape: the server never guesses jumps
-        /// specially, mispredictions are corrected discretely, not prevented by wire gymnastics.</summary>
-        public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input, out bool seqAdvanced)
-        {
-            input = default;
-            seqAdvanced = false;
-            if (!TryGetByOwner(ownerPlayerId, out var e) || e.Sim == null) return false;
-            var q = e.PendingInputs;
-            if (q != null && q.Count > 0 && !e.Primed)
-            {
-                // fill the shallow jitter buffer before the first consume; the tick counter keeps a
-                // sparse sender (a single held input) from waiting forever
-                if (q.Count < PrimeDepth + 1 && ++e.PrimeWait <= PrimeDepth)
-                {
-                    input = e.AppliedInput;
-                    return e.HasApplied;
-                }
-                e.Primed = true;
-            }
-            // repay coast debt: these queued seqs are the stall's delayed inputs and their ticks were
-            // already integrated by the starved coasts -- claim them (and any lost seq's hole among
-            // them) without a second integration. A jump past the substitutable window means the coasts
-            // stood in for nothing recoverable: void the debt and let the adopt below handle it.
-            bool repaidDequeue = false, repaidHole = false;
-            while (q != null && q.Count > 0 && e.CoastDebt > 0)
-            {
-                int gap = (ushort)(q.Peek().Seq - e.LastConsumedSeq);
-                if (gap > MaxGapCoastTicks + 1) { e.CoastDebt = 0; break; }
-                if (gap > 1) { e.LastConsumedSeq++; repaidHole = true; repaidDequeue = false; }
-                else
-                {
-                    var pre = q.Dequeue(); e.LastConsumedSeq = pre.Seq; e.AppliedInput = pre; repaidDequeue = true; repaidHole = false;
-                }
-                e.CoastDebt--;
-            }
-            // C1.6 (the §3 harness's second find): when repayment drains the queue EMPTY, the last
-            // repaid input doubles as THIS tick's consume. Without this, a multi-tick starve (a latency
-            // step, a burst) parked the driver in a PERMANENT stale regime: every later tick's single
-            // arrival was repaid ack-only, the consume then re-starved (debt re-armed, seq repeat), so
-            // write-backs stayed suppressed for whole seconds and the owner's corrections arrived as
-            // batched 0.2-0.4 m lumps instead of a drizzle. The integrated axes are IDENTICAL either way
-            // (the starved coast would have integrated this very input); what changes is bookkeeping --
-            // the seq advances (exact pairing, write-back resumes) and the debt actually drains.
-            if ((repaidDequeue || repaidHole) && q.Count == 0)
-            {
-                input = e.AppliedInput;
-                // pairing rule (same as HasClaim): a hole-synthesized seq presents the held input under
-                // a seq that is not its own -- the claim belongs to ITS tick and must not ride
-                if (repaidHole) { input.Seq = e.LastConsumedSeq; input.HasClaim = false; }
-                e.CoastTicks = 0;
-                seqAdvanced = true;
-                return true;
-            }
-            if (q == null || q.Count == 0)
-            {
-                if (!e.HasApplied) return false;   // nothing consumed since spawn/clear: stand still
-                input = e.AppliedInput;            // stale seq: the repeated ack is ignored client-side
-                if (e.CoastTicks >= MaxCoastTicks)
-                {
-                    // past the jitter-gap budget this is an outage, not a gap: hold still instead of
-                    // ghost-running stale intent (motion zeroed, yaw kept, no fresh ack emitted)
-                    StripMotion(ref input);
-                    return true;
-                }
-                e.CoastTicks++;
-                if (e.CoastDebt < MaxCoastTicks) e.CoastDebt++;
-                return true;
-            }
-            int dist = (ushort)(q.Peek().Seq - e.LastConsumedSeq);
-            if (e.HasApplied && dist > 1 && dist <= MaxGapCoastTicks + 1)
-            {
-                // a dropped datagram's tick: coast in its place so the count stays aligned -- and CLAIM
-                // the hole's seq (the client predicted and recorded it; the sequenced channel can never
-                // deliver it late once a newer seq got through). Pairing the coast tick's position with
-                // the substituted seq keeps every published (pos, seq) ack exact -- returning the stale
-                // seq here let the 25 Hz snapshot sampler pair coast-advanced positions with an
-                // already-predicted seq, a phantom one-tick correction at every substitution.
-                e.LastConsumedSeq++;
-                e.AppliedInput.Seq = e.LastConsumedSeq;
-                input = e.AppliedInput;
-                input.HasClaim = false;   // the held input's ClaimedPos belongs to ITS seq, not the substituted one
-                seqAdvanced = true;       // the claimed hole seq is fresh -- its (pos, seq) pairing is exact
-                return true;
-            }
-            var inp = q.Dequeue();
-            e.LastConsumedSeq = inp.Seq;
-            e.AppliedInput = inp;
-            e.HasApplied = true;
-            e.CoastTicks = 0;
-            input = inp;
-            seqAdvanced = true;
-            return true;
-        }
-
-        /// <summary>Zero a returned input's motion (axes, jump, stance -> STAND) while keeping seq and
-        /// yaw: a hold tick -- the avatar stands (facing still tracks) and no fresh ack is emitted.</summary>
-        static void StripMotion(ref MoveInput input)
-        {
-            input.MoveX = 0f;
-            input.MoveY = 0f;
-            input.Buttons = 0;
-            input.HasClaim = false;   // the stale claim must not be adopted onto a hold tick
         }
 
         /// <summary>One 50 Hz authoritative movement step for every server-owned player. Held-key model:
@@ -644,82 +372,11 @@ namespace UnturnedGodot.Net
             return Quantize(pos + worldDelta);
         }
 
-        // ---- C2: the server ack band (CLIENT_PREDICTION_PLAN §4.2, retail's model adapted) ----
-        // Retail re-simulates the client's inputs and ACKS any result within errorToleranceDistance =
-        // 0.02 m of the claimed clientPosition -- below tolerance the client keeps its position and the
-        // skew is simply tolerated (U3 PlayerInput.cs:1820-1838). The port's adoption is ENTITY-ONLY:
-        // a sub-band claim becomes the PUBLISHED state (so the ack the owner receives is exactly its
-        // recorded prediction -> zero correction, and observers render the owner's own view of itself),
-        // while the avatar BODY keeps its own untainted physics path -- the body is never steered by a
-        // claim. The first cut nudged the body onto the claim and the §3 WAN harness caught the flaw:
-        // two delayed controllers chasing each other (the body adopting RTT-stale claims while the owner
-        // eased toward the body's RTT-stale acks) is an oscillator -- the sprint baseline got WORSE
-        // (2.7 -> 18 m/min). Body-sovereign adoption has no feedback path: claims can never move server
-        // physics, so the worst a lying claim can ever do is place the PUBLISHED position AckBandMeters
-        // from the true body.
-
-        /// <summary>Adoption band: a claim within this of the avatar body's own result is publishable,
-        /// and therefore also the hard ceiling on the standing published-vs-true skew a client can hold.
-        /// 2x the client dead-zone (0.04) and 4x retail's 2 cm -- we carry two-distinct-physics-solves
-        /// noise retail's re-simulation doesn't. Tuned on the §3 WAN harness.</summary>
-        public const float AckBandMeters = 0.08f;
-        /// <summary>Anti-cheat ramp bound (the part retail gets implicitly from re-simulating the
-        /// inputs: a cheater can skew at most 2 cm per 80 ms packet ~= 0.25 m/s). The budget drains on
-        /// the GROWTH of the claim-vs-body skew, so it meters how fast the published lie can ramp --
-        /// while the band caps how big it can ever stand. A steady healthy skew (the same few mm every
-        /// tick) drains ~nothing, so legitimate tracking never duty-cycles.</summary>
-        public const float AdoptBudgetMetersPerSecond = 0.5f;
-        /// <summary>Budget accrual cap: bounds the burst a long-quiet player can bank (just under 2x the
-        /// band -- an occasional full-band adoption stays possible, a teleport never).</summary>
-        public const float AdoptBudgetCapMeters = 0.15f;
-        /// <summary>The hysteresis re-entry threshold (the Schmitt trigger's lower edge). After a real
-        /// over-band divergence the published frame is the BODY's, and the client eases toward it; if
-        /// adoption re-engaged the moment the skew dipped back under the band, the ack frame would flip
-        /// to the client's own (RTT-stale) claims 8 cm away and UNDO the correction -- a permanent limit
-        /// cycle at the band edge (the §3 sprint baseline measured it: 19 m/min of oscillation).
-        /// Re-engaging only once the skew has CONVERGED under this -- safely inside the client's 0.04
-        /// dead-zone -- makes the frame flip invisible: below the dead-zone NEITHER frame corrects.</summary>
-        public const float AdoptReentryMeters = 0.03f;
-
-        /// <summary>The C2 ack-band decision for one write-back: claimedPos is the client's post-move
-        /// position for the input the avatar just integrated (MoveInput.ClaimedPos), serverPos the
-        /// avatar body's own result. Engaged and within band AND skew-growth budget: returns the
-        /// wire-quantized claim; the caller publishes it (ServerDrive) INSTEAD of the body position --
-        /// the body itself is never moved. Beyond the band: disengages -- the body position is published
-        /// and the client corrects, exactly as before C2, until the skew converges under
-        /// AdoptReentryMeters (the hysteresis above). Engine-free so the band/budget/hysteresis policy
-        /// is L0-testable; claims arrive wire-quantized, so NaN/extent sanity is structural (quantized
-        /// ints), not a gate.</summary>
-        public bool ServerTryAdoptClaim(ushort ownerPlayerId, Vector3 claimedPos, Vector3 serverPos, float dt, out Vector3 adoptedPos)
-        {
-            adoptedPos = default;
-            if (!TryGetByOwner(ownerPlayerId, out var e)) return false;
-            e.AdoptBudget = System.Math.Min(AdoptBudgetCapMeters, e.AdoptBudget + AdoptBudgetMetersPerSecond * dt);
-            var claim = Quantize(claimedPos);
-            float dist = (claim - serverPos).magnitude;
-            if (dist > AckBandMeters)                 // real divergence: publish the body's truth, the client corrects
-            {
-                e.AdoptEngaged = false;               // ... and stay on the body's frame until CONVERGED (hysteresis)
-                return false;
-            }
-            if (!e.AdoptEngaged)
-            {
-                if (dist > AdoptReentryMeters) return false;   // still converging: keep the frames from flipping mid-correction
-                e.AdoptEngaged = true;
-                e.AdoptedSkew = dist;                 // fresh engagement: the entry skew is the new growth baseline
-            }
-            float growth = System.Math.Max(0f, dist - e.AdoptedSkew);
-            if (growth > e.AdoptBudget) return false; // the lie is ramping faster than the allowance: the body's truth is published
-            e.AdoptBudget -= growth;
-            e.AdoptedSkew = dist;
-            adoptedPos = claim;
-            return true;
-        }
-
-        /// <summary>Authoritative write-through for an entity whose sim runs OUTSIDE this class -- the
-        /// listen-server / SP-loopback local player, whose PlayerController shell steps the same sim-core
-        /// plus real collision in-process (MP_PLAN §2.1: SP = the server world + loopback; prediction is a
-        /// pass-through). Marks the entity externally driven so ServerStep stops integrating it.</summary>
+        /// <summary>Authoritative write-through for an entity whose movement runs OUTSIDE this class:
+        /// the listen-server / SP-loopback local player's shell writing its own in-process result, and
+        /// -- since v9 -- the owner's envelope-validated claim stream (ServerPlayerAuthority adopts each
+        /// accepted PlayerStateCommand through THIS seam). Marks the entity externally driven so
+        /// ServerStep stops integrating it.</summary>
         public void ServerDrive(ushort ownerPlayerId, Vector3 pos, float yawDegrees, ushort lastProcessedInputSeq, long tick)
         {
             if (!TryGetByOwner(ownerPlayerId, out var e)) return;
@@ -746,19 +403,11 @@ namespace UnturnedGodot.Net
         }
 
         /// <summary>Drop the held-keys input (Phase 5 death: a corpse must stop integrating the victim's
-        /// last MoveInput; fresh inputs are rejected at the dispatch gate until respawn). Also drains the
-        /// in-order queue and coast state -- stale queued walk intents must not keep an avatar moving
-        /// after death/vehicle-enter -- and re-arms the jitter-buffer prime for the resumed stream.</summary>
+        /// last MoveInput; fresh inputs are rejected at the dispatch gate until respawn).</summary>
         public void ServerClearInput(ushort ownerPlayerId)
         {
             if (!TryGetByOwner(ownerPlayerId, out var e)) return;
             e.HasInput = false;
-            e.HasApplied = false;
-            e.PendingInputs?.Clear();
-            e.Primed = false;
-            e.PrimeWait = 0;
-            e.CoastTicks = 0;
-            e.CoastDebt = 0;
         }
 
         /// <summary>Round a position through the exact wire encoding -- authoritative state and client

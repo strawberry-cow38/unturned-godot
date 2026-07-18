@@ -366,10 +366,6 @@ namespace UnturnedGodot.Net
         // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
         // local vehicle to the payload, freeze, echo RecovCounter in the outgoing state stream
         public event System.Action<VehicleRecovEvent> VehicleRecov;
-        // C3 (diagnosis §7): the server measured this client's claim OUTSIDE the ack band -- the shell
-        // session rewinds to the payload state and replays its unacked inputs (ClientWorldSession).
-        // The headless demo walker (ClientPrediction) has no body to replay and ignores it.
-        public event System.Action<MispredictionEvent> Mispredicted;
         // mp-clientauth-foot (v9): the server rolled this owner's on-foot claim back (out of envelope) --
         // teleport the shell to the payload, re-seed the sim velocity, echo RecovCounter in the state stream
         public event System.Action<PlayerRecovEvent> PlayerRecov;
@@ -445,8 +441,6 @@ namespace UnturnedGodot.Net
                 e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
             Events.Register<VehicleRecovEvent>(ReplicationIds.EventVehicleRecov, VehicleRecovEvent.TryRead,
                 e => VehicleRecov?.Invoke(e));   // touches no replica -- the rollback targets the driver's LOCAL vehicle only
-            Events.Register<MispredictionEvent>(ReplicationIds.EventMisprediction, MispredictionEvent.TryRead,
-                e => Mispredicted?.Invoke(e));   // touches no replica -- the correction targets the owner's LOCAL shell only (C3 replay)
             Events.Register<PlayerRecovEvent>(ReplicationIds.EventPlayerRecov, PlayerRecovEvent.TryRead,
                 e => PlayerRecov?.Invoke(e));    // touches no replica -- the rollback targets the owner's LOCAL shell only
             // Phase 8: world-state facts apply straight onto the replicas, then surface for fx/views
@@ -488,18 +482,16 @@ namespace UnturnedGodot.Net
 
         bool ApplySnapshot(byte[] data, int length) => Applier.Apply(data, length);
 
-        /// <summary>Send this tick's movement intent; returns the input seq (0 = not connected, nothing
-        /// sent) so the shell can record its prediction under the same seq. buttons = the v2 held-button
-        /// bits (MoveInput.ButtonJump | ...). C1 (plan §4.2): the datagram carries the newest input plus
-        /// the previous two (MoveInputPacket), so a single lost/overtaken datagram costs the server
-        /// nothing -- the next one backfills the hole. C2: claimedPos = the shell's post-move position
-        /// for this input's tick (what the caller Records under the same seq) -- retail's
-        /// walkingPacket.clientPosition; the server ack band adopts sub-band claims server-ward.</summary>
-        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0, Vector3? claimedPos = null)
+        /// <summary>Send this tick's movement intent (demo walkers / loopback -- the shell client streams
+        /// SendPlayerState instead since v9); returns the input seq (0 = not connected, nothing sent) so
+        /// the walker can record its prediction under the same seq. buttons = the v2 held-button bits
+        /// (MoveInput.ButtonJump | ...). C1 (plan §4.2): the datagram carries the newest input plus the
+        /// previous two (MoveInputPacket), so a single lost/overtaken datagram costs the server nothing
+        /// -- the next one backfills the hole.</summary>
+        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0)
         {
             if (Session.State != NetSessionState.Connected) return 0;
-            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons,
-                                      ClaimedPos = claimedPos ?? default, HasClaim = claimedPos.HasValue };
+            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons };
             if (_inputSeq == 0) cmd.Seq = ++_inputSeq;   // seq 0 is the reconciler's "none" sentinel; skip it on wrap
             // a PAUSE in the send stream (ride mode, respawn -- anything that stopped ShellStep sending)
             // voids the redundancy ring: the server cleared its input state at the pause boundary

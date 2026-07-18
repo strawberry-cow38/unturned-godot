@@ -6,11 +6,12 @@ using UnturnedGodot.Net;
 
 namespace UnturnedNet.Tests
 {
-    // Golden bytes + round-trip for the MoveInput wire format. The DATAGRAM is a MoveInputPacket since
-    // C1+C2 (CLIENT_PREDICTION_PLAN §4.2, the Version 4->5 break): count:2 bits + count MoveInput
-    // entries oldest-first, each seq:16 + moveX:8 + moveY:8 + yaw:11 + buttons:8 + hasClaim:1
-    // (+ claimed post-move position on the snapshot grid when set -- retail's clientPosition,
-    // U3 PlayerInput.cs:867-873). A failure here means the movement command's format drifted -- an
+    // Golden bytes + round-trip for the MoveInput wire format (demo walkers / loopback -- the shell
+    // client streams PlayerStateCommand since v9). The DATAGRAM is a MoveInputPacket since C1
+    // (count:2 bits + count MoveInput entries oldest-first); each entry is seq:16 + moveX:8 + moveY:8
+    // + yaw:11 + buttons:8 = 51 bits. v9 (mp-clientauth-foot) REMOVED the C2 hasClaim/ClaimedPos claim
+    // fields -- the server ack band they fed is deleted (re-goldened in the same commit as the
+    // NetProtocol.Version 9 bump). A failure here means the movement command's format drifted -- an
     // intentional change bumps NetProtocol.Version and re-goldens in the same commit.
     [TestFixture]
     public class MoveInputWireTests
@@ -23,79 +24,33 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void MoveInputPacket_SingleEntry_NoClaim_GoldenBytes()
+        public void MoveInputPacket_SingleEntry_GoldenBytes()
         {
-            // the claimless spawn/demo-walker shape: count:2 + one 52-bit entry (51 + hasClaim:0) = 54
-            // bits -> 7 payload bytes after the id byte. The entry is the exact v3/v4 golden input;
-            // goldened for Version = 5 (the redundancy count + claim bit landed).
+            // count:2 + one 51-bit entry = 53 bits -> 7 payload bytes after the id byte.
+            // Re-goldened for Version = 9 (the claim bit is gone; the entry payload is the v3/v4 shape).
             var pkt = new MoveInputPacket { Count = 1, I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump } };
             var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
-            Assert.That(ToHex(bytes), Is.EqualTo("01090400FF012800"));
-        }
-
-        [Test]
-        public void MoveInputPacket_SingleEntry_WithClaim_GoldenBytes()
-        {
-            // the real client's shape: the claimed post-move position (retail's clientPosition) rides
-            // the snapshot's exact grid -- x:20 + y:18 + z:20 bits after the claim bit = 112 bits total
-            // -> 14 payload bytes after the id byte.
-            var pkt = new MoveInputPacket
-            {
-                Count = 1,
-                I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump,
-                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(12.5f, -3.25f, -100.125f) },
-            };
-            var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
-            Assert.That(ToHex(bytes), Is.EqualTo("01090400FF0128200301F9016F0E1C"));
+            Assert.That(ToHex(bytes), Is.EqualTo(GoldenSingle));
         }
 
         [Test]
         public void MoveInputPacket_ThreeEntries_GoldenBytes()
         {
-            // the steady-state shape: the newest input + the 2 previous, oldest-first, consecutive seqs,
-            // claims on every entry (a real client always claims).
+            // the steady-state redundancy shape: the newest input + the 2 previous, oldest-first.
             var pkt = new MoveInputPacket
             {
                 Count = 3,
-                I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump,
-                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(1f, 2f, 3f) },
-                I1 = new MoveInput { Seq = 259, MoveX = 0f, MoveY = 1f, YawDegrees = 91f, Buttons = MoveInput.PackStance(SDG.Unturned.EPlayerStance.SPRINT),
-                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(1f, 2f, 3.09f) },
-                I2 = new MoveInput { Seq = 260, MoveX = 0.25f, MoveY = -1f, YawDegrees = 271f, Buttons = 0,
-                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(1f, 2f, 3.18f) },
+                I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump },
+                I1 = new MoveInput { Seq = 259, MoveX = 0f, MoveY = 1f, YawDegrees = 91f, Buttons = MoveInput.PackStance(EPlayerStance.SPRINT) },
+                I2 = new MoveInput { Seq = 260, MoveX = 0.25f, MoveY = -1f, YawDegrees = 271f, Buttons = 0 },
             };
             var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
-            Assert.That(ToHex(bytes), Is.EqualTo("010B0400FF012860000104020C10602000E0AF400203082010608017040120FF05061840008100037401"));
+            Assert.That(ToHex(bytes), Is.EqualTo(GoldenTriple));
         }
 
-        [Test]
-        public void MoveInput_Claim_RoundTrip_GridExact()
-        {
-            // the claim must survive the round trip EXACTLY on the snapshot position grid: an adopted
-            // claim becomes the entity position, and the ack the owner receives must equal its recorded
-            // prediction to the grid point (that equality is what makes adoption a ZERO correction)
-            var w = new NetPakWriter { buffer = new byte[64] };
-            w.Reset();
-            var claim = new UnityEngine.Vector3(123.456f, 45.678f, -789.012f);
-            new MoveInput { Seq = 9, MoveY = 1f, HasClaim = true, ClaimedPos = claim }.Write(w);
-            w.Flush();
-            var r = new NetPakReader();
-            r.Reset();
-            r.SetBufferSegment(w.buffer, w.writeByteIndex);
-            Assert.That(MoveInput.TryRead(r, out var read), Is.True);
-            Assert.That(read.HasClaim, Is.True);
-            Assert.That(read.ClaimedPos, Is.EqualTo(PlayerReplication.Quantize(claim)),
-                        "the wire claim IS the quantized claim -- grid-exact, no extra tolerance anywhere");
-
-            // and a claimless entry reads back claimless (never a fabricated zero-claim)
-            w.Reset();
-            new MoveInput { Seq = 10, MoveY = 1f }.Write(w);
-            w.Flush();
-            r.Reset();
-            r.SetBufferSegment(w.buffer, w.writeByteIndex);
-            Assert.That(MoveInput.TryRead(r, out var bare), Is.True);
-            Assert.That(bare.HasClaim, Is.False, "no claim bit -> no claim; the server must have nothing to adopt");
-        }
+        // goldened for Version = 9 on first landing; locked from then on
+        const string GoldenSingle = "01090400FF012800";
+        const string GoldenTriple = "010B0400FF0128602000E0AF4002040120FF050600";
 
         [Test]
         public void MoveInputPacket_RoundTrip_AndRejects()
@@ -170,11 +125,11 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void MoveInput_StanceBits_RoundTrip_AndNoWireBreak()
+        public void MoveInput_StanceBits_RoundTrip()
         {
-            // the mp-inchworm fix: the RESULTING on-foot stance rides buttons bits 1-2 so the server
-            // avatar integrates at the speed the shell predicted. Same byte, same layout -- NOT a wire
-            // break (the golden above still holds); this locks the codec + the jump bit's independence.
+            // the mp-inchworm-era stance bits: the RESULTING on-foot stance rides buttons bits 1-2
+            // (since v9 the SHELL's stance rides PlayerStateCommand instead, same encoding -- this locks
+            // the shared codec + the jump bit's independence).
             var w = new NetPakWriter { buffer = new byte[64] };
             var r = new NetPakReader();
             foreach (var stance in new[] { EPlayerStance.STAND, EPlayerStance.SPRINT, EPlayerStance.CROUCH, EPlayerStance.PRONE })
@@ -199,7 +154,7 @@ namespace UnturnedNet.Tests
         public void MoveInputV1_Truncated_IsRejected()
         {
             // a v1-shaped payload (no buttons byte, 43 bits -> 6 bytes) must fail TryRead, not misparse:
-            // the version gate rejects v2 peers at the handshake, this locks the belt-and-braces behavior
+            // the version gate rejects old peers at the handshake, this locks the belt-and-braces behavior
             var w = new NetPakWriter { buffer = new byte[64] };
             w.Reset();
             w.WriteUInt16(9);
@@ -212,51 +167,6 @@ namespace UnturnedNet.Tests
             r.Reset();
             r.SetBufferSegment(w.buffer, w.writeByteIndex);
             Assert.That(MoveInput.TryRead(r, out _), Is.False, "a truncated (v1) MoveInput must be rejected");
-        }
-
-        // ---- C3: the MispredictionEvent wire (EventMisprediction = 30, diagnosis §7.2 step 2) ----
-
-        [Test]
-        public void MispredictionEvent_RoundTrips_GridExact()
-        {
-            // Pos rides the snapshot's position grid (the same quantized value ServerDrive published that
-            // tick), Vel the 1/64 m/s NetWire vel grid -- both must round-trip to the encoder's own
-            // quantization exactly, or the client's rewind seeds a state the server never had.
-            var evt = new MispredictionEvent
-            {
-                Seq = 4711,
-                Pos = PlayerReplication.Quantize(new UnityEngine.Vector3(12.53f, -3.27f, -100.11f)),
-                Vel = new UnityEngine.Vector3(0f, -4.046875f, 7f),   // exact 1/64 multiples survive verbatim
-                StanceByte = (byte)EPlayerStance.SPRINT,
-                Stamina = 255,
-            };
-            var bytes = NetMessagePak.Pack(ReplicationIds.EventMisprediction, evt.Write);
-            Assert.That(bytes[0], Is.EqualTo(ReplicationIds.EventMisprediction));
-
-            var r = new NetPakReader();
-            r.Reset();
-            r.SetBufferSegment(bytes, bytes.Length);
-            r.ReadUInt8(out _);   // the id byte, like EventRegistry.TryDispatch
-            Assert.That(MispredictionEvent.TryRead(r, out var read), Is.True);
-            Assert.That(read.Seq, Is.EqualTo(evt.Seq));
-            Assert.That(read.Pos, Is.EqualTo(evt.Pos), "a pre-quantized position survives the wire verbatim");
-            Assert.That(read.Vel, Is.EqualTo(evt.Vel), "a grid-aligned velocity survives the wire verbatim");
-            Assert.That(read.Stance, Is.EqualTo(EPlayerStance.SPRINT));
-            Assert.That(read.Stamina, Is.EqualTo(255));
-            // a corrupt stance byte degrades to STAND instead of an undefined enum
-            Assert.That(new MispredictionEvent { StanceByte = 200 }.Stance, Is.EqualTo(EPlayerStance.STAND));
-        }
-
-        [Test]
-        public void MispredictionEvent_UnknownToAnOldClient_IsSkippedGracefully()
-        {
-            // the no-version-bump contract: a pre-C3 client (no handler registered for id 30) must skip
-            // the event -- counted, never thrown -- so the new server can ship without a wire break
-            var evt = new MispredictionEvent { Seq = 1, Pos = default, Vel = default, StanceByte = (byte)EPlayerStance.STAND, Stamina = 255 };
-            var oldClient = new EventRegistry();
-            Assert.That(oldClient.TryDispatch(NetMessagePak.Pack(ReplicationIds.EventMisprediction, evt.Write)), Is.False);
-            Assert.That(oldClient.Diag.UnknownIdSkipped, Is.EqualTo(1), "skipped and counted, exactly like any future event id");
-            Assert.That(oldClient.Diag.HandlerExceptionsCaught, Is.EqualTo(0));
         }
     }
 }

@@ -893,17 +893,18 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // PEI_CLIENT_PLAN §3 Phase C2: server players live on REAL collision, not the flat demo integration.
-    // A dedicated world (fallback ground) with RemoteAvatars on gets a ramp placed in the walker's path;
-    // a remote client joins and (a) holds the MoveInput v2 JUMP bit standing still -- the replicated Y
-    // leaves the ground (the buttons byte drives the body), then (b) walks forward up the ramp -- the
-    // replicated Y climbs it. Both are impossible under IntegrateFlat, which never changes Y. The ack loop
-    // must stay honest (LastProcessedInputSeq flows through ServerDrive), and the run must be DESYNC-QUIET:
-    // the hardening Part C detector (EnableSyncCheck, on for every DedicatedServer) watches a full
-    // snapshot-applying client across the whole real-collision run and must never fire.
-    public class NetServerAvatarTerrain : GameTest
+    // The v9 FOLLOWER-BODY contract (replacing the C2 avatar-terrain test -- the server no longer
+    // simulates any owner's movement, so "avatar climbs real collision" is extinct by design). A raw
+    // NetWorldClient streams envelope-legal PlayerStateCommand claims -- walk, a real jump arc, a ramp
+    // climb -- and the test asserts the whole server pipeline: the entity ADOPTS each claim bit-exact
+    // (position + seq stamped through ServerDrive), the PlayerNetSync FOLLOWER body teleport-tracks the
+    // entity (zombies/ballistics see a real body at the claimed spot), the CLAIMED stance dresses the
+    // body's hitbox (a crouched claim = a crouched capsule), PlayerRegistry carries the body (zombie/
+    // loot streaming compat), and the run is DESYNC-QUIET with exact replica StateHash parity -- the
+    // observer-bit-exact half of the client-auth contract.
+    public class NetClientAuthBodyFollows : GameTest
     {
-        public override string Name => "net.server_avatar_terrain";
+        public override string Name => "net.clientauth_body_follows";
         public override double TimeoutSimSeconds => 30;
 
         public override IEnumerable<Step> Run()
@@ -914,23 +915,19 @@ namespace UnturnedGodot.Testing
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
-            // the ramp: real collision the flat demo integration cannot see. 18 deg (under the shell's 55
-            // FloorMaxAngle), 12 m wide so wire-grid drift still lands on it; its near edge is buried below
-            // the fallback ground (top face crosses y=0 around z~4.7) so the walker strolls straight on.
-            var ramp = new StaticBody3D { CollisionLayer = 1u << 0, Position = new Vector3(0f, 2.5f, 14f), RotationDegrees = new Vector3(-18f, 0f, 0f) };
-            ramp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 1f, 24f) } });
-            World.AddChild(ramp);
-
             var net = new MemNetwork(20260718);
             var walker = new NetWorldClient(new MemClientTransport(net), "climber", contentHash: NetContent.Hash);
             bool desynced = false;
             walker.DesyncDetected += _ => desynced = true;
-            bool sendInput = false; float fwd = 0f; byte buttons = 0;
+            var recovs = new System.Collections.Generic.List<PlayerRecovEvent>();
+            walker.PlayerRecov += e => recovs.Add(e);
+            bool send = false;
+            UnityEngine.Vector3 claim = default, claimVel = default;
+            byte claimButtons = 0;
             var pump = new DelegateSimStep((t, dt) =>
             {
                 net.Tick(); walker.Tick();
-                // yaw 180: the avatar NODE's forward (-Z at yaw 0) turns to +Z -- into the ramp
-                if (sendInput) walker.SendMoveInput(0f, fwd, 180f, buttons);
+                if (send) walker.SendPlayerState(claim, 180f, 0f, claimVel, claimButtons, grounded: true, recovAck: 0);
             }, "l1.clientpump");
             world.Sim.Sim.Add(pump);   // registered BEFORE DedicatedServer -> server sim + player sync + replicate stay after/LAST (§2.5)
             var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
@@ -939,55 +936,65 @@ namespace UnturnedGodot.Testing
 
             yield return Until(() => walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1, 5);
             T.Check("walker joined (join snapshot applied)", walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1);
+            walker.Players.TryGetByOwner(walker.PlayerId, out var spawnE);
+            claim = spawnE.Pos;
+
+            // (a) the claim stream starts -> adoption -> the follower body spawns and tracks
+            send = true;
+            claimButtons = MoveInput.PackStance(EPlayerStance.SPRINT);
+            for (int i = 0; i < 50; i++) { claim.x += 7f * 0.02f; yield return Ticks(1); }
+            yield return Ticks(4);   // the stream keeps repeating the final claim -- let it land + adopt
             yield return Until(() => ded.PlayerSync.TrackedCount == 1, 5);
             bool haveBody = ded.PlayerSync.TryGetBody(walker.PlayerId, out var body);
-            T.Check("a NetAvatar PlayerController body spawned for the remote peer", haveBody && body.NetAvatar);
-            T.Check("the avatar registered in PlayerRegistry (zombie/loot streaming compat)", PlayerRegistry.Count == 1);
+            T.Check("a follower PlayerController body spawned for the remote peer", haveBody && body.NetAvatar && body.NetHold);
+            T.Check("the body registered in PlayerRegistry (zombie/loot streaming compat)", PlayerRegistry.Count == 1);
+            T.Check("the entity is client-driven (adopted, not integrated)", ded.Server.PlayerHost.IsClientDriven(walker.PlayerId));
+            bool sHave = ded.Server.Players.TryGetByOwner(walker.PlayerId, out var se);
+            T.Check($"the entity IS the quantized claim (bit-exact adopt)", sHave && se.Pos == PlayerReplication.Quantize(claim));
+            float bodyGap = haveBody ? body.GlobalPosition.DistanceTo(new Vector3(se.Pos.x, se.Pos.y, se.Pos.z)) : float.MaxValue;
+            T.Check($"the follower body sits ON the entity ({bodyGap:0.###} m)", bodyGap < 0.01f);
+            T.Check($"the body dressed the CLAIMED stance (SPRINT hitbox)", haveBody && body.Stance == EPlayerStance.SPRINT);
 
-            // (a) JUMP standing still: the v2 buttons bit -> ScriptedJump -> the body leaves the ground.
-            // JUMP=7 under 3x gravity peaks ~0.83 m; IntegrateFlat would hold y at exactly 0 forever.
-            sendInput = true; fwd = 0f; buttons = MoveInput.ButtonJump;
-            float jumpMaxY = float.MinValue;
+            // (b) a REAL jump arc claimed tick-by-tick (JUMP=7 under 3x gravity, peak ~0.83 m): the
+            // vertical envelope admits it and the replicated Y flies the arc
+            float vy = SDG.Unturned.PlayerMovementDef.JUMP;
+            float y0 = claim.y;
+            float peakY = float.MinValue;
+            for (int i = 0; i < 25 && (vy > 0f || claim.y > y0); i++)
+            {
+                claim.y = Mathf.Max(y0, claim.y + vy * 0.02f);
+                vy -= SDG.Unturned.PlayerMovementDef.GRAVITY * 0.02f;
+                claimVel = new UnityEngine.Vector3(0f, vy, 0f);
+                yield return Ticks(1);
+                if (walker.Players.TryGetByOwner(walker.PlayerId, out var j)) peakY = Mathf.Max(peakY, j.Pos.y);
+            }
+            claim.y = y0; claimVel = default;
+            yield return Ticks(5);
+            T.Check($"the claimed jump arc replicated back (peak y {peakY:0.00})", peakY > y0 + 0.4f);
+            T.Check($"no recov on a legal jump arc ({recovs.Count})", recovs.Count == 0);
+
+            // (c) a ramp-climb claim track (walk-speed forward + 18-deg rise): the envelope admits the
+            // slope and the follower body tracks the climb -- real collision is the CLIENT's job now
+            claimButtons = MoveInput.PackStance(EPlayerStance.CROUCH);
             for (int i = 0; i < 100; i++)
             {
+                claim.x += 4.5f * 0.02f;
+                claim.y += 4.5f * 0.325f * 0.02f;   // tan(18 deg) x walk speed
                 yield return Ticks(1);
-                if (walker.Players.TryGetByOwner(walker.PlayerId, out var j)) jumpMaxY = Mathf.Max(jumpMaxY, j.Pos.y);
             }
-            T.Check($"the jump bit drove the body off the ground (replicated peak y {jumpMaxY:0.00})", jumpMaxY > 0.4f);
+            yield return Ticks(4);   // let the final climb claim land + adopt before sampling
+            ded.Server.Players.TryGetByOwner(walker.PlayerId, out var climbed);
+            T.Check($"the climb claims adopted (entity y {climbed.Pos.y:0.00} m)", climbed.Pos.y > y0 + 2.5f);
+            T.Check($"no recov on the slope climb ({recovs.Count})", recovs.Count == 0);
+            T.Check("the body dressed the CROUCH claim (crouched hitbox on the way up)", haveBody && body.Stance == EPlayerStance.CROUCH);
+            float climbGap = haveBody ? body.GlobalPosition.DistanceTo(new Vector3(climbed.Pos.x, climbed.Pos.y, climbed.Pos.z)) : float.MaxValue;
+            T.Check($"the follower body tracked the climb ({climbGap:0.###} m)", climbGap < 0.01f);
 
-            // land + settle so no ballistic hop can contaminate the ramp measurement
-            buttons = 0;
-            yield return Ticks(60);
-            walker.Players.TryGetByOwner(walker.PlayerId, out var settled);
-            T.Check($"back on the ground after the hops (y {settled?.Pos.y:0.00})", settled != null && settled.Pos.y < 0.2f);
-
-            // (b) walk forward up the ramp: replicated Y must RISE above the ramp base -- impossible under
-            // IntegrateFlat -- while the input-seq ack keeps flowing through the ServerDrive write-back
-            float rampMaxY = float.MinValue, finalZ = 0f; ushort ackSeq = 0;
-            fwd = 1f;
-            for (int i = 0; i < 250; i++)
-            {
-                yield return Ticks(1);
-                if (walker.Players.TryGetByOwner(walker.PlayerId, out var m))
-                {
-                    rampMaxY = Mathf.Max(rampMaxY, m.Pos.y);
-                    finalZ = m.Pos.z;
-                    ackSeq = m.LastProcessedInputSeq;
-                }
-            }
-            T.Check($"replicated Y climbed the ramp (peak y {rampMaxY:0.00} m)", rampMaxY > 1.5f);
-            T.Check($"the body physically advanced (z {finalZ:0.0} m)", finalZ > 6f);
-            T.Check($"input seqs acked through the ServerDrive write-back (seq {ackSeq})", ackSeq > 0);
-
-            // settle to exact parity (held-keys: explicit stop, then input-QUIET so the last snapshots flush)
-            fwd = 0f;
-            yield return Ticks(40);
-            sendInput = false;
+            // settle to exact parity (stop the stream; the last adopted claim IS the entity)
+            send = false;
             yield return Ticks(60);
             T.Check("players replica == server (StateHash parity)", walker.Players.StateHash() == ded.Server.Players.StateHash());
-            // the C2 promise (PEI_CLIENT_PLAN §3 C2 verify): real-collision server movement produces state
-            // clients CONVERGE to -- the Part C runtime detector stayed silent across the whole run
-            T.Check("DESYNC-QUIET: zero DesyncDetected across the real-collision avatar run", !desynced);
+            T.Check("DESYNC-QUIET: zero DesyncDetected across the whole adopted run", !desynced);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
             world.Sim.Sim.Remove(pump);
@@ -1021,20 +1028,20 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // PEI_CLIENT_PLAN §3 Phase C3: the locally-controlled PREDICTED player shell. A ClientWorldSession
-    // joins a DedicatedServer (RemoteAvatars = the C2 avatar sync) over MemTransport on the fallback
-    // world; the first authoritative own-entity sample spawns a REAL first-person PlayerController shell
-    // (not a NetAvatar) at the server-adopted spawn. The shell walks under its OWN physics while its
-    // input rides the wire, and PredictionReconciler corrections are CONSUMED -- applied TO THE NODE
-    // through ApplyNetCorrection (the §7 risk 5 seam that shifts the manual render-interp samples with
-    // it). Asserts the C3 bar: (a) the shell MOVES; (b) the replicated own-entity CONVERGES to the shell
-    // within the wire grid once settled (loopback-parity style); (c) an injected ~5 m displacement of
-    // the SERVER avatar SNAPS the shell (Reconciler.Snaps) and it re-converges on the displaced
-    // authority; and DESYNC-QUIET throughout -- the Part C runtime detector (EnableSyncCheck, on for
-    // every DedicatedServer) must never fire while corrections are being applied to the node.
-    public class NetShellWalkReconcile : GameTest
+    // The basic client-auth shell walk (v9, replacing the C3 predict/reconcile walk test): a
+    // ClientWorldSession joins a DedicatedServer over MemTransport; the first authoritative own-entity
+    // sample spawns a REAL first-person shell at the server-adopted spawn. The shell walks under its
+    // OWN physics -- the ONLY body its movement has -- and streams its transform; the server envelope-
+    // validates + adopts (ServerPlayerAuthority) and the follower body mirrors it. Asserts: (a) the
+    // shell MOVES and the published entity tracks it with ZERO recovs (client-auth: no owner correction
+    // exists in normal play -- the reconcile-era ack/dead-zone/snap asserts are deleted WITH the
+    // machinery); (b) stop -> the entity lands ON the shell bit-exact; (c) a SERVER-side displacement
+    // (ServerTeleport -- the respawn/console primitive) reaches the shell via the recov path: the
+    // envelope rejects the now-stale claims and the rollback payload IS the teleport target. DESYNC-
+    // QUIET throughout.
+    public class NetShellWalkClientAuth : GameTest
     {
-        public override string Name => "net.shell_walk_reconcile";
+        public override string Name => "net.shell_walk_clientauth";
         public override double TimeoutSimSeconds => 30;
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
@@ -1066,83 +1073,58 @@ namespace UnturnedGodot.Testing
             float seedErr = ownSeed ? (seed.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
             T.Check($"shell adopted the server spawn (err {seedErr:0.###} m)", seedErr < 0.5f);
 
-            // (a) walk forward ~3 s under REAL shell physics; input rides the wire to the C2 avatar body
+            // (a) walk forward ~3 s under REAL shell physics; the transform stream drives the entity
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             var start = sess.Shell.TruePhysicsPosition;
-            yield return Ticks(150);
-            float walked = start.DistanceTo(sess.Shell.TruePhysicsPosition);
-            T.Check($"(a) the shell MOVED under its own physics ({walked:0.0} m)", walked > 4f);
-            T.Check("corrections actually flowed (acks applied)", sess.Reconciler.AcksApplied > 0);
-
-            // (a2) the dead-zone (the "roped back" fix, mp-rubberband-fix): during a STEADY walk the
-            // residual between two healthy bodies is grid/timing noise under DeadZoneMeters, and the
-            // reconciler must apply NO correction at all -- real Unturned corrects only past
-            // errorToleranceDistance (PlayerInput.cs:1817). Pre-dead-zone every ack smeared a
-            // micro-correction into the shell every tick: the constant gentle tug on normal ground.
-            long acksBefore = sess.Reconciler.AcksApplied;
-            float corrBefore = sess.Reconciler.CorrectionAppliedMeters;
-            int tugTicks = 0;
-            for (int i = 0; i < 100; i++)
+            float maxLag = 0f;
+            for (int i = 0; i < 150; i++)
             {
                 yield return Ticks(1);
-                if (sess.Reconciler.PendingError != UnityEngine.Vector3.zero) tugTicks++;
+                if (sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var lagE))
+                    maxLag = Mathf.Max(maxLag, (lagE.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude);
             }
-            float corrApplied = sess.Reconciler.CorrectionAppliedMeters - corrBefore;
-            GD.Print($"[deadzone] steady walk: acks +{sess.Reconciler.AcksApplied - acksBefore}, corrApplied +{corrApplied:0.####} m, tugTicks={tugTicks}/100");
-            T.Check($"(a2) acks kept flowing during the steady walk (+{sess.Reconciler.AcksApplied - acksBefore})", sess.Reconciler.AcksApplied - acksBefore > 40);
-            T.Check($"(a2) dead-zone: ~ZERO correction applied across a steady 2 s walk (+{corrApplied:0.####} m)", corrApplied < 0.02f);
-            T.Check($"(a2) no per-tick tug ({tugTicks}/100 ticks with a live pending error)", tugTicks < 10);
+            float walked = start.DistanceTo(sess.Shell.TruePhysicsPosition);
+            T.Check($"(a) the shell MOVED under its own physics ({walked:0.0} m)", walked > 4f);
+            T.Check($"(a) the server ADOPTED the stream (entity client-driven)", ded.Server.PlayerHost.IsClientDriven(sess.Client.PlayerId));
+            T.Check($"(a) the entity tracked the walk (max lag {maxLag:0.###} m)", maxLag < 1f);
+            T.Check($"(a) ZERO recovs walking on a clean link ({sess.RecovsApplied})", sess.RecovsApplied == 0);
 
-            // (b) stop + settle: the reconciler drains and the replicated own-entity lands ON the node
-            // (both stationary -> residual is pure wire-grid quantization, far under 5 cm)
+            // (b) stop + settle: the published entity lands ON the shell -- it IS the shell's own claim,
+            // quantized, so the residual is EXACT zero on the wire grid
             sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-            yield return Ticks(100);
-            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
-            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            T.Check($"(b) replicated own-entity CONVERGED to the shell (err {err:0.###} m)", own && err < 0.05f);
-            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.01f);
-            T.Check("no snap during a plain reconciled walk", sess.Reconciler.Snaps == 0);
-            T.Check($"DESYNC-QUIET across the corrected walk ({desyncs} fired)", desyncs == 0);
-
-            // (c) shove the SERVER avatar ~5 m sideways (a divergence only the server saw): past the 2 m
-            // SnapThreshold the shell must SNAP onto the displaced authority, not glide. The shove goes
-            // through ApplyNetSnap (a teleport-class displacement; F3 made ApplyNetCorrection a SWEPT
-            // slice) -- a bare GlobalPosition write is UNDONE next tick by the body's own manual-interp
-            // restore (the exact §7 risk 5 failure mode, server-side edition) and would never reach the
-            // ServerDrive write-back.
-            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
-            T.Check("C2 avatar body exists for the shell's peer", haveBody);
-            long snapsBefore = sess.Reconciler.Snaps;
-            body.ApplyNetSnap(new Vector3(5f, 0f, 0f));
             yield return Ticks(50);
-            T.Check($"(c) the 5 m server-side displacement SNAPPED the shell (snaps {sess.Reconciler.Snaps})", sess.Reconciler.Snaps > snapsBefore);
-            bool own2 = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e2);
-            float snapErr = own2 ? (e2.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            T.Check($"shell re-converged on the displaced authority (err {snapErr:0.###} m)", own2 && snapErr < 0.05f);
-            T.Check($"still DESYNC-QUIET after the snap ({desyncs} fired)", desyncs == 0);
+            bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
+            float err = own ? (e.Pos - PlayerReplication.Quantize(ToU(sess.Shell.TruePhysicsPosition))).magnitude : float.MaxValue;
+            T.Check($"(b) published entity == the shell's own quantized claim (err {err:0.####} m)", own && err < 0.001f);
+            T.Check($"DESYNC-QUIET across the walk ({desyncs} fired)", desyncs == 0);
+
+            // (c) a SERVER-side displacement (the respawn/console primitive): teleport the ENTITY 5 m --
+            // the shell's next claims are stale, the envelope rejects them, and the recov payload carries
+            // the teleport target: the rubber-band IS the delivery mechanism now
+            var target = e.Pos + new UnityEngine.Vector3(5f, 0f, 0f);
+            ded.Server.Players.ServerTeleport(sess.Client.PlayerId, target, ded.Server.Session.CurrentTick);
+            yield return Until(() => sess.RecovsApplied >= 1, 5);
+            T.Check($"(c) the server displacement reached the shell via recov ({sess.RecovsApplied})", sess.RecovsApplied >= 1);
+            yield return Ticks(30);
+            float tpErr = (ToU(sess.Shell.TruePhysicsPosition) - target).magnitude;
+            T.Check($"(c) the shell LANDED on the server's target (err {tpErr:0.###} m)", tpErr < 0.5f);
+            T.Check($"still DESYNC-QUIET after the displacement ({desyncs} fired)", desyncs == 0);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
-            // (the session's own steps die with the sandbox's SimDriver; _ExitTree disconnects)
             world.Sim.Sim.Remove(pump);
         }
     }
 
-    // The mp-inchworm regression (branch mp-inchworm-fix): a SPRINTING shell predicted at SPEED_SPRINT (7)
-    // but MoveInput carried no stance, so the server's C2 avatar (PlayerNetSync sets only ScriptedInput --
-    // a NetAvatar never polls Shift) integrated at STAND-WALK (4.5). The gap grew ~(7-4.5)*dt per tick,
-    // blew the 2 m SnapThreshold in under a second, and TakeAll teleported the shell back: the visible
-    // "inchworm" lurch, at ZERO latency -- a missing-wire-field bug, not a jitter bug. The fix rides the
-    // shell's RESULTING stance in the MoveInput buttons byte (bits 1-2 -- state, not key edges, so the
-    // latest-wins unreliable channel self-corrects after a drop) and PlayerNetSync forces it through the
-    // avatar's ScriptedStance, so client-predicted and server-integrated per-tick distances match. The
-    // shell sprints here through the SAME seam the Shift overlay resolves to (PlayerStanceSim.Step's
-    // scriptedStance -> wantStance = SPRINT), so the prediction is genuinely sprint-speed. Asserts: sprint
-    // GROUND IS KEPT (> 15 m in 3 s -- inchworm nets only ~walk distance), the avatar body integrated at
-    // SPRINT, ZERO snaps, PendingError bounded small; then the same sprint stays smooth over a mild
-    // adverse link (latency 3 ticks, jitter 2, 2% loss both ways); then stop -> exact convergence.
-    public class NetShellSprintReconcile : GameTest
+    // Sprint under client authority (v9; historically the mp-inchworm regression -- a sprinting shell
+    // vs a stand-walking server avatar, yanked back every second. That bug class CANNOT recur: there is
+    // no server integration of the owner at any stance). Asserts: sprint ground is KEPT (> 15 m in 3 s
+    // -- walk-speed nets <= 13.5), zero recovs on clean AND jittery links (a 7 m/s sprint sits inside
+    // the envelope's 7 x 1.25 headroom by construction), the FOLLOWER body dresses the claimed stance
+    // (SPRINT while sprinting, STAND after -- the hitbox/stealth surface), and stop -> bit-exact
+    // convergence, desync-quiet.
+    public class NetShellSprintClientAuth : GameTest
     {
-        public override string Name => "net.shell_sprint_reconcile";
+        public override string Name => "net.shell_sprint_clientauth";
         public override double TimeoutSimSeconds => 30;
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
@@ -1169,60 +1151,38 @@ namespace UnturnedGodot.Testing
             T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
             if (sess.Shell == null) yield break;
 
-            // sprint forward ~3 s at ZERO latency: the exact repro. Pre-fix this snaps ~3 times and the
-            // shell nets only ~walk distance (every snap hands back the sprint-vs-walk gap).
+            // sprint forward ~3 s at ZERO latency
             sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             var start = sess.Shell.TruePhysicsPosition;
-            float maxPending = 0f;
-            int hotTicks = 0;   // ticks with pending error above the sustained-mismatch floor -- pre-fix the
-                                // sprint-vs-walk gap holds an ~0.35 m equilibrium the smoother drags at every
-                                // tick (the inchworm sawtooth); post-fix pending is a start transient only
-            for (int i = 0; i < 150; i++)
-            {
-                yield return Ticks(1);
-                float p = sess.Reconciler.PendingError.magnitude;
-                maxPending = Mathf.Max(maxPending, p);
-                if (p > 0.15f) hotTicks++;
-            }
+            yield return Ticks(150);
             float sprinted = start.DistanceTo(sess.Shell.TruePhysicsPosition);
-            GD.Print($"[sprint-repro] clean link: sprinted={sprinted:0.0} m, snaps={sess.Reconciler.Snaps}, maxPending={maxPending:0.###} m, hotTicks={hotTicks}/150");
+            GD.Print($"[sprint-clientauth] clean link: sprinted={sprinted:0.0} m, recovs={sess.RecovsApplied}");
             T.Check($"sprint ground KEPT ({sprinted:0.0} m in 3 s -- walk-speed would be <= 13.5)", sprinted > 15f);
             bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
-            T.Check("server avatar integrated at SPRINT (stance rode the wire)",
+            T.Check("follower body dressed with the CLAIMED stance (SPRINT rode the state stream)",
                     haveBody && body.Stance == EPlayerStance.SPRINT);
-            T.Check($"ZERO snaps during a steady zero-latency sprint (snaps {sess.Reconciler.Snaps})", sess.Reconciler.Snaps == 0);
-            T.Check($"no SUSTAINED mismatch drag ({hotTicks}/150 ticks with pending > 0.15 m)", hotTicks < 15);
-            T.Check($"PendingError stayed transient-small (max {maxPending:0.###} m)", maxPending < 0.25f);
-            T.Check("corrections actually flowed (acks applied)", sess.Reconciler.AcksApplied > 0);
+            T.Check($"ZERO recovs during a zero-latency sprint ({sess.RecovsApplied})", sess.RecovsApplied == 0);
 
-            // hardening: keep sprinting over a mild adverse link -- the fix must hold under real-ish
-            // jitter, not just the zero-latency ideal (snaps stay reserved for genuine >2 m divergence)
+            // keep sprinting over a mild adverse link -- the envelope headroom must hold under real-ish
+            // jitter, not just the zero-latency ideal
             net.ClientToServer.LatencyTicks = 3; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.02;
             net.ServerToClient.LatencyTicks = 3; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.02;
-            long snapsBefore = sess.Reconciler.Snaps;
-            float maxPendingJitter = 0f;
-            for (int i = 0; i < 150; i++)
-            {
-                yield return Ticks(1);
-                maxPendingJitter = Mathf.Max(maxPendingJitter, sess.Reconciler.PendingError.magnitude);
-            }
-            GD.Print($"[sprint-repro] jittery link: snaps={sess.Reconciler.Snaps - snapsBefore} new, maxPending={maxPendingJitter:0.###} m");
-            T.Check($"still ZERO snaps sprinting over the jittery link ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
-            T.Check($"PendingError bounded over the jittery link (max {maxPendingJitter:0.###} m)", maxPendingJitter < 1.5f);
+            long recovsBefore = sess.RecovsApplied;
+            yield return Ticks(150);
+            T.Check($"still ZERO recovs sprinting over the jittery link ({sess.RecovsApplied - recovsBefore} new)", sess.RecovsApplied == recovsBefore);
 
-            // stop on a clean link again (drain the in-flight tail) -> exact wire-grid convergence,
-            // and the avatar drops back to STAND with the shell (stance follows the wire both ways)
+            // stop on a clean link -> the entity lands ON the shell (bit-exact: it IS the shell's claim),
+            // and the follower body drops back to STAND with the stream
             net.ClientToServer.LatencyTicks = 0; net.ClientToServer.ReorderJitterTicks = 0; net.ClientToServer.LossProbability = 0;
             net.ServerToClient.LatencyTicks = 0; net.ServerToClient.ReorderJitterTicks = 0; net.ServerToClient.LossProbability = 0;
             sess.Shell.ScriptedStance = null;
             sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
             yield return Ticks(100);
             bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
-            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            T.Check($"replicated own-entity CONVERGED after the sprint (err {err:0.###} m)", own && err < 0.05f);
-            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.01f);
-            T.Check("avatar back to STAND after the sprint ended", haveBody && body.Stance == EPlayerStance.STAND);
+            float err = own ? (e.Pos - PlayerReplication.Quantize(ToU(sess.Shell.TruePhysicsPosition))).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the sprint (err {err:0.####} m)", own && err < 0.001f);
+            T.Check("follower body back to STAND after the sprint ended", haveBody && body.Stance == EPlayerStance.STAND);
             T.Check($"DESYNC-QUIET across the whole sprint run ({desyncs} fired)", desyncs == 0);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
@@ -1230,21 +1190,11 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // THE mp-inputbuffer regression (branch mp-inputbuffer-fix): the server used to apply the client's
-    // LATEST-held MoveInput once per tick (TryGetHeldInput) instead of consuming the input stream in seq
-    // order. Under jitter/reorder/loss on the input channel the number of distinct input-ticks the server
-    // integrates drifts from the number the client predicted: two inputs landing in one server-tick window
-    // integrate only the newest (a predicted tick of motion is skipped), a gap re-integrates a stale input.
-    // At sprint speed one tick is ~0.14 m, so a 1-3 tick count mismatch is a 0.15-0.4 m gap -- invisible
-    // while moving (the same held axes integrate either way), then resolving as ONE hard correction the
-    // instant the player stops: the "sprint then stop suddenly, hits hard" yank. The fix mirrors real
-    // Unturned (PlayerInput.cs serversidePackets :1054/:1487/:1734): a per-peer in-order queue consumed one
-    // input per tick (PlayerReplication.TryConsumeInput) behind a ~2-tick jitter buffer, coasting on the
-    // last consumed input when starved and substituting a coast tick for small seq holes so the server
-    // integrates the SAME input stream, in the same order and count, the client predicted. This test runs
-    // 5 sprint-then-STOP cycles over a jittery+lossy input link (the exact repro, seeded/deterministic) and
-    // asserts every stop lands SOFT: pending spike and applied correction in each stop window stay bounded
-    // small, zero snaps. Pre-fix the worst stop window spikes ~0.2-0.4 m of correction -- the yank.
+    // Sprint-stop cycles over a jittery/lossy uplink (v9; historically the mp-inputbuffer sprint-stop
+    // yank -- the server's integration count drifting from the client's and resolving as one hard
+    // correction at every stop. Structurally extinct: the server integrates NOTHING for the owner).
+    // The client-auth assert: 5 sprint/hard-stop cycles over the faulty link produce ZERO recovs -- the
+    // latest-wins claim stream self-heals over loss/reorder -- and the stop converges bit-exact.
     public class NetShellSprintStopJitter : GameTest
     {
         public override string Name => "net.shell_sprint_stop_jitter";
@@ -1274,52 +1224,32 @@ namespace UnturnedGodot.Testing
             T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
             if (sess.Shell == null) yield break;
 
-            // the repro link: latency + reorder-jitter + loss on the INPUT channel only (snapshots ride
-            // back clean, so what's measured is the movement pipeline, not ack noise)
+            // the repro link: latency + reorder-jitter + loss on the CLAIM channel
             net.ClientToServer.LatencyTicks = 3;
             net.ClientToServer.ReorderJitterTicks = 2;
             net.ClientToServer.LossProbability = 0.03;
 
-            long snapsStart = sess.Reconciler.Snaps;
-            float worstStopPending = 0f, worstStopCorr = 0f;
             for (int cycle = 0; cycle < 5; cycle++)
             {
-                // sprint ~2 s under the faulty link
                 sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
                 sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+                var legStart = sess.Shell.TruePhysicsPosition;
                 yield return Ticks(100);
-
-                // STOP SUDDENLY (input -> 0): the moment any accumulated integration-count gap resolves.
-                // Pre-fix a 0.2-0.4 m correction rips through the stationary shell right here.
+                T.Check($"cycle {cycle}: sprint leg covered ground ({legStart.DistanceTo(sess.Shell.TruePhysicsPosition):0.0} m)",
+                        legStart.DistanceTo(sess.Shell.TruePhysicsPosition) > 10f);
+                // STOP SUDDENLY -- the old model's yank moment; nothing can yank a client-auth owner
                 sess.Shell.ScriptedStance = null;
                 sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-                float corrBefore = sess.Reconciler.CorrectionAppliedMeters;
-                float maxPend = 0f;
-                for (int i = 0; i < 60; i++)
-                {
-                    yield return Ticks(1);
-                    maxPend = Mathf.Max(maxPend, sess.Reconciler.PendingError.magnitude);
-                }
-                float corr = sess.Reconciler.CorrectionAppliedMeters - corrBefore;
-                GD.Print($"[sprint-stop] cycle {cycle}: stop-window maxPending={maxPend:0.###} m, corrApplied={corr:0.###} m, snaps={sess.Reconciler.Snaps - snapsStart}");
-                worstStopPending = Mathf.Max(worstStopPending, maxPend);
-                worstStopCorr = Mathf.Max(worstStopCorr, corr);
+                yield return Ticks(60);
             }
+            T.Check($"ZERO recovs across all sprint-stop cycles ({sess.RecovsApplied})", sess.RecovsApplied == 0);
 
-            GD.Print($"[sprint-stop] WORST of 5 cycles: maxPending={worstStopPending:0.###} m, corrApplied={worstStopCorr:0.###} m");
-            T.Check($"every sprint-stop landed SOFT (worst stop-window pending {worstStopPending:0.###} m -- pre-fix ~0.2-0.4)",
-                    worstStopPending < 0.15f);
-            T.Check($"post-stop correction stayed small (worst {worstStopCorr:0.###} m applied in a stop window)",
-                    worstStopCorr < 0.20f);
-            T.Check($"ZERO snaps across all stop cycles ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);
-
-            // settle on a clean link -> exact wire-grid convergence, the standard closing bar
+            // settle on a clean link -> the published entity IS the shell's claim, bit-exact
             net.ClientToServer.LatencyTicks = 0; net.ClientToServer.ReorderJitterTicks = 0; net.ClientToServer.LossProbability = 0;
             yield return Ticks(100);
             bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
-            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            T.Check($"replicated own-entity CONVERGED after the stop cycles (err {err:0.###} m)", own && err < 0.05f);
-            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.01f);
+            float err = own ? (e.Pos - PlayerReplication.Quantize(ToU(sess.Shell.TruePhysicsPosition))).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the stop cycles (err {err:0.####} m)", own && err < 0.001f);
             T.Check($"DESYNC-QUIET across the whole run ({desyncs} fired)", desyncs == 0);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
@@ -1327,22 +1257,16 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // FIX 1 of the adversarial review on mp-inputbuffer-fix: the BURSTY link. A ~120 ms stall delivers
-    // ~6 ticks of MoveInput as ONE in-order burst (nothing lost, nothing reordered -- the wifi-hiccup
-    // jitter this whole fix targets). The old consume path drained that backlog by DISCARDING a queued
-    // input per tick past a depth threshold (CatchUpQueueDepth), so the server integrated FEWER ticks
-    // than the shell predicted for the segment and the deficit surfaced as a correction -- the
-    // sprint-stop yank reborn at smaller magnitude. The old L0 test only asserted seq advancement, which
-    // is why it missed this; here the assert is the POSITION deficit itself. The fix never skips:
-    // starved ticks during the stall coast (counted as CoastDebt), the bunched delayed inputs are then
-    // claimed instantly ack-only against that debt (their ticks were already integrated -- never twice,
-    // never dropped, no standing backlog), and consumption continues in order. Asserts: no correction
-    // above the dead-zone through and after the burst, zero snaps, and the stop after the burst lands
-    // soft -- the count invariant (server integrates the SAME order AND COUNT the client predicted)
-    // holds under bursts.
-    public class NetShellStallBurst : GameTest
+    // The network hitch (v9; historically the stall-burst count-invariant test). The envelope's
+    // elapsed-tick ceiling is 1 s (ServerPlayerAuthority.EnvelopeMaxTicks = 50): a REAL stall shorter
+    // than that -- here ~0.7 s at FULL SPRINT, far beyond any jitter buffer the old model had -- must
+    // resume WITHOUT a rubber-band: the first claim through spans the whole gap and the elapsed-scaled
+    // cap absorbs it. This is the false-trip non-regression at its worst legit case. Also asserts the
+    // never-speculate half: while the claims are dark the ENTITY freezes (the server never ghost-runs
+    // an owner on stale intent -- observers see the walker pause, not sprint into a wall).
+    public class NetShellStallHitch : GameTest
     {
-        public override string Name => "net.shell_stall_burst";
+        public override string Name => "net.shell_stall_hitch";
         public override double TimeoutSimSeconds => 30;
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
@@ -1369,51 +1293,33 @@ namespace UnturnedGodot.Testing
             T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
             if (sess.Shell == null) yield break;
 
-            // mild base latency on the input channel, then sprint to steady state
-            net.ClientToServer.LatencyTicks = 2;
+            // sprint to steady state
             sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             yield return Ticks(100);
 
-            // THE STALL: ~120 ms where nothing crosses client->server, then the whole held backlog lands
-            // as one in-order burst -- the input queue jumps well past the old catch-up threshold (4)
-            long snapsBefore = sess.Reconciler.Snaps;
-            float corrBefore = sess.Reconciler.CorrectionAppliedMeters;
-            net.ClientToServer.HoldUntilTick = net.CurrentTick + 6;
-            float maxPend = 0f;
-            for (int i = 0; i < 80; i++)   // through the stall, the burst, and continued sprint after
-            {
-                yield return Ticks(1);
-                maxPend = Mathf.Max(maxPend, sess.Reconciler.PendingError.magnitude);
-            }
-            float corrBurst = sess.Reconciler.CorrectionAppliedMeters - corrBefore;
-            GD.Print($"[stall-burst] burst window: maxPending={maxPend:0.###} m, corrApplied={corrBurst:0.###} m, snaps={sess.Reconciler.Snaps - snapsBefore}");
-            T.Check($"no correction above the dead-zone through the burst (applied {corrBurst:0.###} m)", corrBurst < 0.08f);
-            T.Check($"position deficit stayed small through the burst (maxPending {maxPend:0.###} m)", maxPend < 0.15f);
-            T.Check($"zero snaps through the burst ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
+            // THE HITCH: ~0.7 s where no claim crosses client->server, sprinting throughout (~4.9 m of
+            // silent motion -- inside the 1 s envelope window's 8.75 m allowance)
+            net.ClientToServer.HoldUntilTick = net.CurrentTick + 35;
+            yield return Ticks(8);   // let the in-flight tail drain; the entity then freezes
+            bool ownMid = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var frozen);
+            var frozenPos = ownMid ? frozen.Pos : default;
+            yield return Ticks(20);  // deep inside the hitch
+            sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var still);
+            float ghost = ownMid ? (still.Pos - frozenPos).magnitude : float.MaxValue;
+            T.Check($"the entity FROZE during the hitch -- never ghost-ran on stale intent ({ghost:0.###} m)", ghost < 0.01f);
 
-            // NOW STOP -- the moment any surviving integration-count gap resolves as a yank (pre-fix the
-            // burst's discarded inputs rip through the stationary shell right here)
+            // the hitch ends: the backlog bursts through, the spanning claim adopts, sprint continues
+            yield return Ticks(60);
+            T.Check($"NO rubber-band on a sub-1s sprint hitch ({sess.RecovsApplied} recovs) -- the envelope headroom absorbed it", sess.RecovsApplied == 0);
+
+            // stop + settle -> bit-exact convergence
             sess.Shell.ScriptedStance = null;
             sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-            float corrStopBefore = sess.Reconciler.CorrectionAppliedMeters;
-            float maxPendStop = 0f;
-            for (int i = 0; i < 60; i++)
-            {
-                yield return Ticks(1);
-                maxPendStop = Mathf.Max(maxPendStop, sess.Reconciler.PendingError.magnitude);
-            }
-            float corrStop = sess.Reconciler.CorrectionAppliedMeters - corrStopBefore;
-            GD.Print($"[stall-burst] stop window: maxPending={maxPendStop:0.###} m, corrApplied={corrStop:0.###} m");
-            T.Check($"the stop after the burst landed SOFT (maxPending {maxPendStop:0.###} m)", maxPendStop < 0.15f);
-            T.Check($"stop-window correction stayed small ({corrStop:0.###} m applied)", corrStop < 0.20f);
-            T.Check($"still zero snaps ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
-
-            // settle -> exact wire-grid convergence, the standard closing bar
             yield return Ticks(60);
             bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
-            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            T.Check($"replicated own-entity CONVERGED after the stall-burst (err {err:0.###} m)", own && err < 0.05f);
+            float err = own ? (e.Pos - PlayerReplication.Quantize(ToU(sess.Shell.TruePhysicsPosition))).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the hitch (err {err:0.####} m)", own && err < 0.001f);
             T.Check($"DESYNC-QUIET across the run ({desyncs} fired)", desyncs == 0);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
@@ -1421,18 +1327,16 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // FIX 2 of the adversarial review on mp-inputbuffer-fix: the starvation coast is CAPPED. On an empty
-    // input queue the avatar coasts the last consumed input -- right for jitter-sized gaps (the shell's
-    // held keys almost surely continue) -- but pre-fix it coasted FOREVER, so a long input outage (heavy
-    // loss / stall / pre-disconnect) ghost-ran the avatar at full sprint on stale intent for the whole
-    // outage: a runaway every other client watched, and a hard snap for the owner whose real state had
-    // diverged meanwhile. Post-fix the coast stops after MaxCoastTicks (~240 ms) and the avatar HOLDS
-    // (stand-still, stale acks) until real input resumes. Asserts: a short gap still coasts smoothly
-    // (zero snaps -- the sprint-stop fix intact), a long blackout moves the avatar only the bounded coast
-    // distance then PINS it still, and the world re-converges desync-quiet after the link returns.
-    public class NetShellStarvationHold : GameTest
+    // The LONG outage (v9; historically the starvation-hold ghost-run test). Past the envelope's 1 s
+    // elapsed ceiling a sprinting client legitimately outruns the cap, and the DESIGNED outcome is one
+    // recov: the entity stays frozen at the last adopted claim for the whole blackout (never
+    // ghost-runs -- the old model coasted stale sprint intent for 240 ms and needed a cap to stop), and
+    // on resume the spanning claim exceeds 8.75 m -> the server rolls the owner back to the frozen spot
+    // (safe, just abrupt -- the same posture as the vehicle envelope's long-stall rollback), the ack
+    // echoes, and play resumes adopted. Exactly ONE recov, then clean.
+    public class NetShellOutageRecov : GameTest
     {
-        public override string Name => "net.shell_starvation_hold";
+        public override string Name => "net.shell_outage_recov";
         public override double TimeoutSimSeconds => 30;
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
@@ -1459,54 +1363,39 @@ namespace UnturnedGodot.Testing
             T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
             if (sess.Shell == null) yield break;
 
-            // sprint to steady state on a clean link
+            // sprint to steady state, then the link goes fully dark for ~2 s while the player keeps
+            // sprinting (~14 m of unheard motion -- far past the 8.75 m ceiling allowance)
             sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             yield return Ticks(100);
-            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var body);
-            T.Check("C2 avatar body exists for the shell's peer", haveBody);
-            if (!haveBody) yield break;
-
-            // (a) SHORT gap: ~6 ticks of total input loss -- inside the coast budget, the avatar rides it
-            // on the held axes and the sprint stays smooth (no regression to the sprint-stop fix)
-            long snapsBefore = sess.Reconciler.Snaps;
             net.ClientToServer.LossProbability = 1.0;
-            yield return Ticks(6);
+            yield return Ticks(8);   // drain the in-flight tail
+            sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var frozen);
+            var frozenPos = frozen.Pos;
+            yield return Ticks(92);  // the rest of the ~2 s blackout, still sprinting
+            sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var still);
+            T.Check($"the entity stayed FROZEN for the whole blackout ({(still.Pos - frozenPos).magnitude:0.###} m moved) -- no ghost-run",
+                    (still.Pos - frozenPos).magnitude < 0.01f);
+            T.Check("no recov while the link is dark (nothing arrives to violate)", sess.RecovsApplied == 0);
+
+            // the link returns: the spanning claim violates the ceiling -> exactly one recov rubber-bands
+            // the shell back to the frozen spot, the echo resumes the stream
             net.ClientToServer.LossProbability = 0;
-            float maxPendShort = 0f;
-            for (int i = 0; i < 60; i++)
-            {
-                yield return Ticks(1);
-                maxPendShort = Mathf.Max(maxPendShort, sess.Reconciler.PendingError.magnitude);
-            }
-            GD.Print($"[starve-hold] short gap: maxPending={maxPendShort:0.###} m, snaps={sess.Reconciler.Snaps - snapsBefore}");
-            T.Check($"short gap rode the coast smoothly (maxPending {maxPendShort:0.###} m, {sess.Reconciler.Snaps - snapsBefore} snaps)",
-                    sess.Reconciler.Snaps == snapsBefore && maxPendShort < 0.5f);
-
-            // (b) LONG outage: the link goes fully dark; the player keeps sprinting briefly, then lets
-            // go -- the server hears NONE of it and must not keep running the avatar on stale intent
-            net.ClientToServer.LossProbability = 1.0;
+            yield return Until(() => sess.RecovsApplied >= 1, 5);
+            T.Check($"the >1s sprint outage resolved as EXACTLY ONE recov ({sess.RecovsApplied})", sess.RecovsApplied == 1);
             yield return Ticks(10);
+            float back = (ToU(sess.Shell.TruePhysicsPosition) - frozenPos).magnitude;
+            T.Check($"the shell rubber-banded to the frozen last-good (+ a few resumed steps) ({back:0.0} m from it)", back < 3f);
+
+            // keep sprinting -- the resumed stream adopts without further recovs; stop -> converge
+            yield return Ticks(80);
+            T.Check($"resume clean: still exactly one recov total ({sess.RecovsApplied})", sess.RecovsApplied == 1);
             sess.Shell.ScriptedStance = null;
             sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-            var pStart = body.TruePhysicsPosition;
-            yield return Ticks(25);            // well past the coast cap (MaxCoastTicks=12) + buffer drain
-            var pCap = body.TruePhysicsPosition;
-            yield return Ticks(55);            // the rest of the blackout (~1.9 s total)
-            var pEnd = body.TruePhysicsPosition;
-            float coasted = pStart.DistanceTo(pCap);
-            float creep = pCap.DistanceTo(pEnd);
-            GD.Print($"[starve-hold] blackout: coasted {coasted:0.###} m, then crept {creep:0.###} m over 1.1 s (pre-fix ghost-run: ~{55 * 0.02f * 7f:0.0} m)");
-            T.Check($"the avatar coasted only the bounded budget ({coasted:0.###} m)", coasted > 0.2f && coasted < 3.5f);
-            T.Check($"then PINNED STILL -- no unbounded ghost-run ({creep:0.###} m creep)", creep < 0.15f);
-
-            // (c) the link returns with the shell stopped: the resumed stream adopts, the shell
-            // re-converges on the held authority, desync-quiet
-            net.ClientToServer.LossProbability = 0;
-            yield return Ticks(100);
+            yield return Ticks(60);
             bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
-            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            T.Check($"re-converged after the outage (err {err:0.###} m)", own && err < 0.05f);
+            float err = own ? (e.Pos - PlayerReplication.Quantize(ToU(sess.Shell.TruePhysicsPosition))).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the outage (err {err:0.####} m)", own && err < 0.001f);
             T.Check($"DESYNC-QUIET across the run ({desyncs} fired)", desyncs == 0);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
@@ -1514,23 +1403,17 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // THE mp-rubberband regression (branch mp-rubberband-fix): the client shell and the server avatar are
-    // SEPARATE CharacterBody3Ds, and pre-fix the grounded bool feeding PlayerMovementSim.Step was each
-    // body's own IsOnFloor() -- a physics-engine contact state that DISAGREES between the two bodies on a
-    // downhill near the floor-snap threshold. One body integrates gravity while the other stays glued, Y
-    // diverges, and the reconciler drags the falling shell UP toward the still-grounded avatar: the "walk
-    // downhill and get yanked into the air" rubberband (every IsOnFloor flicker is the same bug at smaller
-    // magnitude). The fix mirrors real Unturned's PlayerMovement.checkGround + ground snap (source
-    // :732-736 / :1371-1374): a DETERMINISTIC downward spherecast decides grounded and a post-move snap
-    // cast glues a descending walker to the slope -- identical on shell + avatar, so both integrate the
-    // SAME vertical motion (DeterministicGround, set ONLY on the MP bodies; SP keeps IsOnFloor untouched).
-    // This test walks the C3 shell UP an 18-deg ramp then back DOWN it and asserts the descent stays
-    // CONVERGED: zero snaps, bounded vertical pending error, no upward yank of the shell mid-descent, the
-    // shell actually reaches the flat ground, and the shell tracks the avatar's Y; then the same descent
-    // again over a mild adverse link (latency 3 / jitter 2 / 2% loss). DESYNC-QUIET throughout.
-    public class NetShellDownhillReconcile : GameTest
+    // Downhill under client authority (v9; historically the mp-rubberband regression -- two separate
+    // CharacterBody3Ds disagreeing on IsOnFloor down a slope, the reconciler yanking the descending
+    // shell into the air. One body: the disagreement cannot exist, and the DeterministicGround fork
+    // that patched it is deleted -- the shell runs the plain SP grounded path). The course still earns
+    // its keep as the ENVELOPE's slope non-regression: climbing 18 deg at walk speed and descending it
+    // (gravity-glued or briefly airborne) must never trip the vertical caps. Asserts: climb + descent
+    // with ZERO recovs on clean and jittery links, no upward yank mid-descent (guards shell physics),
+    // the shell reaches the flat ground, bit-exact convergence, desync-quiet.
+    public class NetShellDownhillClientAuth : GameTest
     {
-        public override string Name => "net.shell_downhill_reconcile";
+        public override string Name => "net.shell_downhill_clientauth";
         public override double TimeoutSimSeconds => 60;
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
@@ -1543,9 +1426,8 @@ namespace UnturnedGodot.Testing
             var world = task.Result;
             T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
 
-            // the ramp, mirrored from net.server_avatar_terrain but at -Z (the shell spawns facing -Z at
-            // yaw 0): 18 deg, 12 m wide, near edge buried below the fallback ground so the shell strolls
-            // straight onto it walking forward and descends back off it walking backward.
+            // the ramp at -Z (the shell spawns facing -Z at yaw 0): 18 deg, 12 m wide, near edge buried
+            // below the fallback ground so the shell strolls straight onto it and descends walking back.
             var ramp = new StaticBody3D { CollisionLayer = 1u << 0, Position = new Vector3(0f, 2.5f, -14f), RotationDegrees = new Vector3(18f, 0f, 0f) };
             ramp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(12f, 1f, 24f) } });
             World.AddChild(ramp);
@@ -1563,23 +1445,19 @@ namespace UnturnedGodot.Testing
             yield return Until(() => sess.Shell != null, 5);
             T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
             if (sess.Shell == null) yield break;
-            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var avatar);
-            T.Check("C2 avatar body exists for the shell's peer", haveBody);
+            bool haveBody = ded.PlayerSync.TryGetBody(sess.Client.PlayerId, out var follower);
+            T.Check("follower body exists for the shell's peer", haveBody);
 
             // ---- climb (clean link): forward is -Z at the spawn yaw -> up the ramp ----
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             yield return Ticks(180);
             float climbY = sess.Shell.TruePhysicsPosition.Y;
             T.Check($"climbed the ramp (shell y {climbY:0.00} m)", climbY > 1.5f);
-            T.Check($"no snap on the climb (snaps {sess.Reconciler.Snaps})", sess.Reconciler.Snaps == 0);
+            T.Check($"ZERO recovs on the climb ({sess.RecovsApplied}) -- the 18-deg ascent sits inside the vertical cap", sess.RecovsApplied == 0);
 
-            // ---- descend (clean link): walk backward -> down the slope. THE repro: pre-fix the two
-            // bodies' IsOnFloor() disagree on the way down, Y diverges, and the reconciler yanks the
-            // shell up / snaps it. Post-fix the descent is glued and converged on both bodies. ----
+            // ---- descend (clean link): walk backward -> down the slope ----
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, -1f);
-            long snapsBefore = sess.Reconciler.Snaps;
-            float maxPend = 0f, maxPendY = 0f, maxRise = 0f, maxYGap = 0f;
-            int hotTicks = 0;
+            float maxRise = 0f, maxFollowGap = 0f;
             float prevY = sess.Shell.TruePhysicsPosition.Y;
             for (int i = 0; i < 260; i++)
             {
@@ -1587,33 +1465,26 @@ namespace UnturnedGodot.Testing
                 float y = sess.Shell.TruePhysicsPosition.Y;
                 if (i >= 10) maxRise = Mathf.Max(maxRise, y - prevY);   // a DESCENDING walker must never move up (skip the turn-around transient)
                 prevY = y;
-                var p = sess.Reconciler.PendingError;
-                maxPend = Mathf.Max(maxPend, p.magnitude);
-                maxPendY = Mathf.Max(maxPendY, Mathf.Abs(p.y));
-                if (p.magnitude > 0.15f) hotTicks++;
-                if (GodotObject.IsInstanceValid(avatar))
-                    maxYGap = Mathf.Max(maxYGap, Mathf.Abs(avatar.GlobalPosition.Y - y));   // zero-latency: the two bodies' CURRENT Y must agree
+                if (GodotObject.IsInstanceValid(follower))   // the follower tracks the adopted claims down the slope
+                    maxFollowGap = Mathf.Max(maxFollowGap, follower.GlobalPosition.DistanceTo(new Vector3(
+                        sess.Shell.TruePhysicsPosition.X, sess.Shell.TruePhysicsPosition.Y, sess.Shell.TruePhysicsPosition.Z)));
             }
-            long descentSnaps = sess.Reconciler.Snaps - snapsBefore;
             float bottomY = sess.Shell.TruePhysicsPosition.Y;
-            GD.Print($"[downhill-repro] clean link: snaps={descentSnaps}, maxPend={maxPend:0.###} m (y {maxPendY:0.###}), maxRise={maxRise:0.###} m, maxYGap={maxYGap:0.###} m, hotTicks={hotTicks}/260, bottomY={bottomY:0.00}");
-            T.Check($"(a) ZERO snaps on the descent (snaps {descentSnaps})", descentSnaps == 0);
-            T.Check($"(b) vertical pending error stayed bounded (max |pend.y| {maxPendY:0.###} m)", maxPendY < 0.2f);
-            T.Check($"(c) no upward yank mid-descent (max per-tick rise {maxRise:0.###} m)", maxRise < 0.05f);
-            T.Check($"(d) shell Y tracked the avatar Y down the slope (max gap {maxYGap:0.###} m)", maxYGap < 0.3f);
-            T.Check($"(e) no sustained correction drag ({hotTicks}/260 ticks with pending > 0.15 m)", hotTicks < 15);
-            T.Check($"(f) the shell reached the flat ground (y {bottomY:0.00} m)", bottomY < 0.3f);
+            GD.Print($"[downhill-clientauth] clean link: recovs={sess.RecovsApplied}, maxRise={maxRise:0.###} m, maxFollowGap={maxFollowGap:0.###} m, bottomY={bottomY:0.00}");
+            T.Check($"(a) ZERO recovs on the descent ({sess.RecovsApplied})", sess.RecovsApplied == 0);
+            T.Check($"(b) no upward yank mid-descent (max per-tick rise {maxRise:0.###} m)", maxRise < 0.05f);
+            T.Check($"(c) the follower body tracked the descent (max gap {maxFollowGap:0.###} m, ~one claim of lag)", maxFollowGap < 0.8f);
+            T.Check($"(d) the shell reached the flat ground (y {bottomY:0.00} m)", bottomY < 0.3f);
 
-            // ---- climb again, then descend over a mild adverse link (the sprint test's jitter profile):
-            // the glue must hold under real-ish latency/jitter/loss, not just the zero-latency ideal ----
+            // ---- climb again, then descend over a mild adverse link ----
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
             yield return Ticks(180);
             T.Check($"re-climbed for the jittery descent (shell y {sess.Shell.TruePhysicsPosition.Y:0.00} m)", sess.Shell.TruePhysicsPosition.Y > 1.2f);
             net.ClientToServer.LatencyTicks = 3; net.ClientToServer.ReorderJitterTicks = 2; net.ClientToServer.LossProbability = 0.02;
             net.ServerToClient.LatencyTicks = 3; net.ServerToClient.ReorderJitterTicks = 2; net.ServerToClient.LossProbability = 0.02;
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, -1f);
-            snapsBefore = sess.Reconciler.Snaps;
-            float maxPendJ = 0f, maxRiseJ = 0f;
+            long recovsBefore = sess.RecovsApplied;
+            float maxRiseJ = 0f;
             prevY = sess.Shell.TruePhysicsPosition.Y;
             for (int i = 0; i < 260; i++)
             {
@@ -1621,24 +1492,20 @@ namespace UnturnedGodot.Testing
                 float y = sess.Shell.TruePhysicsPosition.Y;
                 if (i >= 10) maxRiseJ = Mathf.Max(maxRiseJ, y - prevY);
                 prevY = y;
-                maxPendJ = Mathf.Max(maxPendJ, sess.Reconciler.PendingError.magnitude);
             }
-            GD.Print($"[downhill-repro] jittery link: snaps={sess.Reconciler.Snaps - snapsBefore}, maxPend={maxPendJ:0.###} m, maxRise={maxRiseJ:0.###} m, bottomY={sess.Shell.TruePhysicsPosition.Y:0.00}");
-            T.Check($"(g) ZERO snaps descending over the jittery link ({sess.Reconciler.Snaps - snapsBefore} new)", sess.Reconciler.Snaps == snapsBefore);
-            T.Check($"(h) no upward yank over the jittery link (max rise {maxRiseJ:0.###} m)", maxRiseJ < 0.05f);
-            T.Check($"(i) pending bounded over the jittery link (max {maxPendJ:0.###} m)", maxPendJ < 1.5f);
-            T.Check($"(j) reached the flat ground over the jittery link (y {sess.Shell.TruePhysicsPosition.Y:0.00} m)", sess.Shell.TruePhysicsPosition.Y < 0.3f);
+            GD.Print($"[downhill-clientauth] jittery link: recovs={sess.RecovsApplied - recovsBefore}, maxRise={maxRiseJ:0.###} m, bottomY={sess.Shell.TruePhysicsPosition.Y:0.00}");
+            T.Check($"(e) ZERO recovs descending over the jittery link ({sess.RecovsApplied - recovsBefore} new)", sess.RecovsApplied == recovsBefore);
+            T.Check($"(f) no upward yank over the jittery link (max rise {maxRiseJ:0.###} m)", maxRiseJ < 0.05f);
+            T.Check($"(g) reached the flat ground over the jittery link (y {sess.Shell.TruePhysicsPosition.Y:0.00} m)", sess.Shell.TruePhysicsPosition.Y < 0.3f);
 
-            // ---- settle on a clean link -> convergence + quiet detector, the standard closing bar ----
+            // ---- settle on a clean link -> bit-exact convergence + quiet detector ----
             net.ClientToServer.LatencyTicks = 0; net.ClientToServer.ReorderJitterTicks = 0; net.ClientToServer.LossProbability = 0;
             net.ServerToClient.LatencyTicks = 0; net.ServerToClient.ReorderJitterTicks = 0; net.ServerToClient.LossProbability = 0;
             sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
             yield return Ticks(100);
             bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
-            float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            T.Check($"replicated own-entity CONVERGED after the descents (err {err:0.###} m)", own && err < 0.05f);
-            T.Check($"pending error drained (|pending| {sess.Reconciler.PendingError.magnitude:0.####} m)", sess.Reconciler.PendingError.magnitude < 0.05f);
-            T.Check("corrections actually flowed (acks applied)", sess.Reconciler.AcksApplied > 0);
+            float err = own ? (e.Pos - PlayerReplication.Quantize(ToU(sess.Shell.TruePhysicsPosition))).magnitude : float.MaxValue;
+            T.Check($"replicated own-entity CONVERGED after the descents (err {err:0.####} m)", own && err < 0.001f);
             T.Check($"DESYNC-QUIET across the whole downhill run ({desyncs} fired)", desyncs == 0);
 
             // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
@@ -1714,10 +1581,9 @@ namespace UnturnedGodot.Testing
             T.Check("anyplayer: spawned brains carry Target = null (the ZombieController registry-hunt fallback)", nullTargets);
 
             // ---- hysteresis under anyplayer: B leaves -> B's pocket despawns through the same query ----
-            // (ApplyNetSnap, not a bare GlobalPosition write -- the body's manual-interp restore would
-            // undo the latter next tick, the §7 risk 5 seam; and not the F3 SWEPT slice, which would
-            // sweep 600 m of world instead of teleporting)
-            b.ApplyNetSnap(new Vector3(0f, 0f, 600f));   // B: z 400 -> 1000, ~610 m from its pocket
+            // (TeleportTo, not a bare GlobalPosition write -- the body's manual-interp restore would
+            // undo the latter next tick, the §7 risk 5 seam)
+            b.TeleportTo(b.GlobalPosition + new Vector3(0f, 0f, 600f));   // B: z 400 -> 1000, ~610 m from its pocket
             yield return Ticks(40);
             T.Check("anyplayer: B's pocket despawned once its nearest player left (40 m hysteresis passed)",
                     !field.DebugPocketActive(pkB) && field.DebugLiveCount(pkB) == 0);
@@ -2756,18 +2622,19 @@ namespace UnturnedGodot.Testing
             var spawn = sess.Shell.TruePhysicsPosition;
             var target = spawn + new Vector3(30f, 3f, 20f);   // +3 up = the SP drop-height; both bodies land on the flat ground
 
-            // (a) TEETH -- the PRE-FIX path (DevConsole's old MP behavior verbatim): a client-local
-            // TeleportTo, no server move. The reconciler measures shell-vs-authority at ~36 m, snaps,
-            // and drags the shell straight back to the un-moved server position: the #27 snapback.
-            long snapsBefore = sess.Reconciler.Snaps;
+            // (a) TEETH -- the teleport CHEAT (v9): a client-local TeleportTo with no server say-so is
+            // now a 36 m claim jump the ENVELOPE rejects -- a recov rubber-bands the shell straight back
+            // to the last-good spot and the target is never held. (With the envelope disabled the claim
+            // would adopt verbatim -- the L0 battery proves that seam's teeth.)
+            long recovsBefore = sess.RecovsApplied;
             sess.Shell.TeleportTo(target);
             yield return Ticks(50);
             float backAt = Horiz(sess.Shell.TruePhysicsPosition, spawn);
-            T.Check($"(a) pre-fix: the local-only teleport was dragged BACK to spawn ({backAt:0.0} m off)", backAt < 3f);
+            T.Check($"(a) the local-only teleport was rubber-banded BACK to spawn ({backAt:0.0} m off)", backAt < 3f);
             T.Check($"(a) never held the target ({Horiz(sess.Shell.TruePhysicsPosition, target):0.0} m away)",
                     Horiz(sess.Shell.TruePhysicsPosition, target) > 20f);
-            T.Check($"(a) the reconciler SNAPPED it home (snaps {sess.Reconciler.Snaps - snapsBefore})",
-                    sess.Reconciler.Snaps > snapsBefore);
+            T.Check($"(a) the envelope recov'd it home (recovs {sess.RecovsApplied - recovsBefore})",
+                    sess.RecovsApplied > recovsBefore);
 
             // (b) the FIX: the same jump as coordinates over the existing console wire. DevConsole's MP
             // branch builds exactly this numeric form from a location name; here the coords are the
@@ -2957,10 +2824,14 @@ namespace UnturnedGodot.Testing
             // the WAN link comes up, then a patrol walk: 8 legs of [walk forward 3 s, stop 0.5 s, turn
             // 90 deg] -- the everyday walk shape (movement, corners, pauses), nothing adversarial
             WanLink.Wan(net);
-            float corrStart = sess.Reconciler.CorrectionAppliedMeters;
-            long snapsStart = sess.Reconciler.Snaps;
-            float maxPend = 0f;
-            int hotTicks = 0, windowTicks = 0;
+            // v9 (mp-clientauth-foot): the corr/pending/hot/snap metrics measured the reconciler's
+            // rope-tug -- the OWNER-visible correction the old two-body model produced (pre-fix 13.951
+            // m/min on this exact rig/seed; the C1-C2 ladder got it to 0.570). Under client authority
+            // the owner correction is structurally ZERO in normal play: the assert is now recovs == 0
+            // (the envelope never trips on a legit WAN walk) + the entity tracks the shell.
+            long recovsStart = sess.RecovsApplied;
+            float maxLag = 0f;
+            int windowTicks = 0;
             float yaw = 0f;
             for (int leg = 0; leg < 8; leg++)
             {
@@ -2969,30 +2840,17 @@ namespace UnturnedGodot.Testing
                 {
                     yield return Ticks(1);
                     windowTicks++;
-                    float p = sess.Reconciler.PendingError.magnitude;
-                    maxPend = Mathf.Max(maxPend, p);
-                    if (p > 0.15f) hotTicks++;
+                    if (sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var lagE))
+                        maxLag = Mathf.Max(maxLag, (lagE.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude);
                 }
                 sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-                for (int i = 0; i < 25; i++) { yield return Ticks(1); windowTicks++; if (sess.Reconciler.PendingError.magnitude > 0.15f) hotTicks++; }
+                for (int i = 0; i < 25; i++) { yield return Ticks(1); windowTicks++; }
                 yaw += 90f;
                 sess.Shell.RotationDegrees = new Vector3(0f, yaw, 0f);
             }
-            float corr = sess.Reconciler.CorrectionAppliedMeters - corrStart;
-            float corrPerMin = corr * (3000f / windowTicks);
-            GD.Print($"[wan-walk] {windowTicks} ticks: corrApplied={corr:0.###} m ({corrPerMin:0.###} m/min), maxPending={maxPend:0.###} m, hotTicks={hotTicks}/{windowTicks}, snaps={sess.Reconciler.Snaps - snapsStart}");
-
-            // THE BAR (the worm is dead): a walking minute at WAN RTT costs the owner almost no visible
-            // correction -- the ~LAN level. Pre-C1/C2 (main @ faee89f, this exact rig/seed) this measured
-            // corrApplied 6.511 m over 1400 ticks = 13.951 m/min, maxPending 0.182 m, 4/1400 hot ticks:
-            // a constant sub-0.15 m correction drizzle plus a tug at every corner/stop while simply
-            // walking -- strawberry's residual worm, reproduced at simulated RTT. The fix ladder, same
-            // rig/seed: post-C1 (input redundancy) 11.784 -- loss holes were a minor engine; post-C1.5
-            // (no mispaired write-backs) 1.906; post-C1.6 + C2 (repay-drain exit + the ack band) 0.570
-            // m/min, maxPending 0.117, 0 hot ticks. 24x under the pre-fix number.
-            T.Check($"the WAN walk cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 13.951, post-fix 0.570)", corrPerMin < 2f);
-            T.Check($"no correction spike above 0.25 m (max pending {maxPend:0.###} m -- pre-fix 0.182)", maxPend < 0.25f);
-            T.Check($"ZERO snaps on a WAN walk ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);
+            GD.Print($"[wan-walk] {windowTicks} ticks: recovs={sess.RecovsApplied - recovsStart}, maxEntityLag={maxLag:0.###} m");
+            T.Check($"ZERO recovs on a WAN walk ({sess.RecovsApplied - recovsStart}) -- the envelope never false-trips legit play", sess.RecovsApplied == recovsStart);
+            T.Check($"the published entity tracked the shell (max lag {maxLag:0.###} m, ~one uplink of walk)", maxLag < 1.5f);
             T.Check($"DESYNC-QUIET across the WAN walk ({desyncs} fired)", desyncs == 0);
 
             // settle on a clean link -> exact wire-grid convergence, the standard closing bar
@@ -3042,10 +2900,13 @@ namespace UnturnedGodot.Testing
             yield return Ticks(25);
 
             WanLink.Wan(net);
-            float corrStart = sess.Reconciler.CorrectionAppliedMeters;
-            long snapsStart = sess.Reconciler.Snaps;
-            float maxPend = 0f, worstStopCorr = 0f;
-            int hotTicks = 0, windowTicks = 0;
+            // v9 (mp-clientauth-foot): this course used to measure the sprint-stop yank + weave rope-tug
+            // (pre-fix 30.644 m/min on this rig/seed; the C1-C2 ladder got it to 1.041). Under client
+            // authority the owner-visible correction is structurally zero: the weave asserts recovs == 0
+            // (full-speed direction changes + hard stops never trip the envelope) + entity tracking.
+            long recovsStart = sess.RecovsApplied;
+            float maxLag = 0f;
+            int windowTicks = 0;
             // one weave segment: sprint at these axes for 30 ticks each -- direction changes every 0.6 s,
             // the strafe-dodge cadence of real play
             var weave = new[]
@@ -3063,44 +2924,18 @@ namespace UnturnedGodot.Testing
                     {
                         yield return Ticks(1);
                         windowTicks++;
-                        float p = sess.Reconciler.PendingError.magnitude;
-                        maxPend = Mathf.Max(maxPend, p);
-                        if (p > 0.15f) hotTicks++;
+                        if (sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var lagE))
+                            maxLag = Mathf.Max(maxLag, (lagE.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude);
                     }
                 }
-                // hard stop -- where any accumulated integration gap resolves onto a stationary shell
+                // hard stop -- the old model's yank moment; client-auth: nothing can yank the owner
                 sess.Shell.ScriptedStance = null;
                 sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-                float stopCorrBefore = sess.Reconciler.CorrectionAppliedMeters;
-                for (int i = 0; i < 40; i++)
-                {
-                    yield return Ticks(1);
-                    windowTicks++;
-                    float p = sess.Reconciler.PendingError.magnitude;
-                    maxPend = Mathf.Max(maxPend, p);
-                    if (p > 0.15f) hotTicks++;
-                }
-                float stopCorr = sess.Reconciler.CorrectionAppliedMeters - stopCorrBefore;
-                worstStopCorr = Mathf.Max(worstStopCorr, stopCorr);
-                GD.Print($"[wan-sprint] cycle {cycle}: stop-window corrApplied={stopCorr:0.###} m");
+                for (int i = 0; i < 40; i++) { yield return Ticks(1); windowTicks++; }
             }
-            float corr = sess.Reconciler.CorrectionAppliedMeters - corrStart;
-            float corrPerMin = corr * (3000f / windowTicks);
-            GD.Print($"[wan-sprint] {windowTicks} ticks: corrApplied={corr:0.###} m ({corrPerMin:0.###} m/min), maxPending={maxPend:0.###} m, hotTicks={hotTicks}/{windowTicks}, worstStopCorr={worstStopCorr:0.###} m, snaps={sess.Reconciler.Snaps - snapsStart}");
-
-            // THE BAR: sprint-maneuvering a WAN minute stays at ~LAN correction levels. Pre-C1/C2 (main @
-            // faee89f, this exact rig/seed) this measured corrApplied 11.236 m over 1100 ticks = 30.644
-            // m/min, maxPending 0.358 m, 52/1100 hot ticks, worst stop-window 0.330 m (per-cycle stop
-            // corrections 0.088 / 0.249 / 0.262 / 0.330 / 0.140 -- the sprint-stop yank, back at WAN
-            // cadence): a rope-tug on nearly every direction change -- the inchworm at full maneuvering
-            // cadence. The fix ladder, same rig/seed: post-C1 36.758 (loss holes were not the engine);
-            // post-C1.5 2.675; post-C1.6 + C2 1.041 m/min, maxPending 0.119, 0 hot ticks, worst
-            // stop-window 0.000 m -- every hard stop lands with literally zero correction. 29x under
-            // the pre-fix number.
-            T.Check($"WAN sprint-weave cost ~zero correction ({corrPerMin:0.###} m/min -- pre-fix 30.644, post-fix 1.041)", corrPerMin < 2f);
-            T.Check($"no correction spike above 0.25 m (max pending {maxPend:0.###} m -- pre-fix 0.358)", maxPend < 0.25f);
-            T.Check($"every stop landed soft (worst stop-window corr {worstStopCorr:0.###} m -- pre-fix 0.330)", worstStopCorr < 0.15f);
-            T.Check($"ZERO snaps across the WAN weave ({sess.Reconciler.Snaps - snapsStart})", sess.Reconciler.Snaps == snapsStart);
+            GD.Print($"[wan-sprint] {windowTicks} ticks: recovs={sess.RecovsApplied - recovsStart}, maxEntityLag={maxLag:0.###} m");
+            T.Check($"ZERO recovs across the WAN sprint-weave ({sess.RecovsApplied - recovsStart}) -- full-speed maneuvering never trips the envelope", sess.RecovsApplied == recovsStart);
+            T.Check($"the published entity tracked the sprinting shell (max lag {maxLag:0.###} m)", maxLag < 2.5f);
             T.Check($"DESYNC-QUIET across the WAN weave ({desyncs} fired)", desyncs == 0);
 
             // settle on a clean link -> exact wire-grid convergence, the standard closing bar
@@ -3384,28 +3219,25 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // ---- PREDICTION_GEOMETRY_DIAGNOSIS §8: the four geometry WAN baselines (F0, the teeth) ----
-    // The flat WAN baselines above run on the no-map fallback world -- zero decision cliffs, so they
-    // structurally cannot reproduce strawberry's geometry report (pullback at step-ups / doorways / thin
-    // colliders / jumps at 100+ ms WAN). These four put OBSTACLES in the path. Harness fact that makes
-    // the add minimal: in this rig the ClientWorldSession shell and the DedicatedServer avatar live in
-    // ONE World tree = one physics space, so a test-local StaticBody3D is seen by BOTH bodies -- no
-    // WorldBuilder change. (Corollary: this harness cannot detect H0-class client/server collision-SET
-    // mismatches; §2 closed those by inspection, and the holiday fork gets its own test.)
+    // ---- the four geometry WAN courses (originally PREDICTION_GEOMETRY_DIAGNOSIS §8's teeth) ----
+    // The flat WAN baselines above run on the no-map fallback world -- zero decision cliffs; these four
+    // put OBSTACLES in the path (step-ups / doorway / thin collider / jumps at 100+ ms WAN). Harness
+    // fact that makes the add minimal: in this rig the ClientWorldSession shell and the DedicatedServer
+    // follower body live in ONE World tree = one physics space, so a test-local StaticBody3D is seen by
+    // both -- no WorldBuilder change.
     //
-    // Each course measures the flat baselines' rope-tug metrics PLUS the worst single-tick correction
-    // (the "one hard tug" a per-minute average hides) and, for jumps, the worst VERTICAL pending error
-    // (the ground->apex snapshot-step signature, §5-B).
-    //
-    // THE TEETH CONTRACT (§8 + the regression rule): on the pre-fix code these FAIL their bars -- the
-    // measured pre-fix numbers are recorded in each test's comment the way the flat baselines document
-    // their 13.951 -> 0.570 ladder. Until the fix that owns a bar lands, the bars run SOFT (printed,
-    // not asserted -- §8's land-then-arm sequencing note); each fix commit flips its test's BarsLive
-    // to true in the same commit.
+    // v9 (mp-clientauth-foot) REWROTE the assert set: these courses used to measure the reconciler's
+    // rope-tug (corr/min, pending spikes, worst-tick tug, snaps -- the two-body divergence rendered as
+    // owner correction). Under client authority there IS no server sim of the owner and no reconciler
+    // -- the two-body fork these numbers measured cannot exist. The client-auth reality each course
+    // asserts instead: ZERO recovs (the envelope never false-trips on legit geometry play at WAN -- the
+    // key non-regression; recov is reserved for genuine violations), the own-entity converges bit-exact
+    // on a clean link, and the desync detector stays quiet. The easing/replay-era metric bars were
+    // deleted WITH the machinery they measured, not weakened.
     static class WanGeo
     {
-        /// <summary>A static obstacle both bodies collide with: layer 0, the WorldBuilder object-collider
-        /// rule (WorldBuilder.cs:226) -- the player capsule's mask is (1&lt;&lt;0)|(1&lt;&lt;6).</summary>
+        /// <summary>A static obstacle: layer 0, the WorldBuilder object-collider rule
+        /// (WorldBuilder.cs:226) -- the player capsule's mask is (1&lt;&lt;0)|(1&lt;&lt;6).</summary>
         public static StaticBody3D Box(Node3D world, Vector3 center, Vector3 size)
         {
             var body = new StaticBody3D { CollisionLayer = 1u << 0 };
@@ -3415,38 +3247,29 @@ namespace UnturnedGodot.Testing
             return body;
         }
 
-        /// <summary>A bar armed only once its fix has landed (BarsLive): soft bars print their verdict
-        /// (the pre-fix teeth numbers stay visible in the log) without failing the suite.</summary>
-        public static void Bar(TestContext t, bool live, string desc, bool ok)
-        {
-            if (live) t.Check(desc, ok);
-            else GD.Print($"[geom-bar {(ok ? "pass" : "PRE-FIX FAIL (soft)")}] {desc}");
-        }
-
         public static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
 
-        /// <summary>Per-tick rope-tug metrics over a scripted course: call Sample() after every tick.</summary>
+        /// <summary>Per-tick client-auth observables over a scripted course: call Sample() after every
+        /// tick. Recovs = the owner-correction count (0 in normal play, at any RTT); MaxLag = the worst
+        /// published-entity-vs-shell distance (bounded by ~uplink RTT x speed -- observers render this
+        /// far behind the owner, they never see a wrong position).</summary>
         public sealed class Metrics
         {
-            readonly PredictionReconciler _r;
-            readonly float _corr0; float _lastCorr; readonly long _snaps0;
-            public int Ticks; public float MaxPend, MaxPendY, WorstTickCorr;
-            public Metrics(PredictionReconciler r) { _r = r; _corr0 = _lastCorr = r.CorrectionAppliedMeters; _snaps0 = r.Snaps; }
+            readonly ClientWorldSession _s;
+            readonly long _recovs0;
+            public int Ticks; public float MaxLag;
+            public Metrics(ClientWorldSession s) { _s = s; _recovs0 = s.RecovsApplied; }
             public void Sample()
             {
                 Ticks++;
-                var p = _r.PendingError;
-                float mag = p.magnitude;
-                if (mag > MaxPend) MaxPend = mag;
-                float ay = Mathf.Abs(p.y);
-                if (ay > MaxPendY) MaxPendY = ay;
-                float c = _r.CorrectionAppliedMeters;
-                if (c - _lastCorr > WorstTickCorr) WorstTickCorr = c - _lastCorr;
-                _lastCorr = c;
+                if (_s.Shell != null && GodotObject.IsInstanceValid(_s.Shell)
+                    && _s.Client.Players.TryGetByOwner(_s.Client.PlayerId, out var e))
+                {
+                    float lag = (e.Pos - ToU(_s.Shell.TruePhysicsPosition)).magnitude;
+                    if (lag > MaxLag) MaxLag = lag;
+                }
             }
-            public float Corr => _r.CorrectionAppliedMeters - _corr0;
-            public float CorrPerMin => Ticks > 0 ? Corr * (3000f / Ticks) : 0f;
-            public long Snaps => _r.Snaps - _snaps0;
+            public long Recovs => _s.RecovsApplied - _recovs0;
         }
     }
 
@@ -3502,18 +3325,19 @@ namespace UnturnedGodot.Testing
             Sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-d.X, -d.Z)), 0f);
         }
 
-        /// <summary>The standard closing pattern: desync-quiet is asserted HARD (shell corrections never
-        /// touch the replica plane, broken or not); the clean-link convergence bar arms with the fixes.</summary>
-        public IEnumerable<Step> Close(GameTest test, bool barsLive, WanGeo.Metrics m, string course)
+        /// <summary>The standard client-auth closing pattern: ZERO recovs across the course (the envelope
+        /// never trips on legit play -- THE course bar), desync-quiet, then clean-link convergence (the
+        /// published entity IS the shell's own claim, bit-exact once the stream settles).</summary>
+        public IEnumerable<Step> Close(GameTest test, WanGeo.Metrics m, string course)
         {
-            GD.Print($"[{course}] {m.Ticks} ticks: corrApplied={m.Corr:0.###} m ({m.CorrPerMin:0.###} m/min), " +
-                     $"maxPending={m.MaxPend:0.###} m, maxPendingY={m.MaxPendY:0.###} m, worstTickCorr={m.WorstTickCorr:0.###} m, snaps={m.Snaps}");
+            GD.Print($"[{course}] {m.Ticks} ticks: recovs={m.Recovs}, maxEntityLag={m.MaxLag:0.###} m");
+            test.T.Check($"ZERO recovs across the course ({m.Recovs}) -- client-auth: no owner correction in normal play", m.Recovs == 0);
             test.T.Check($"DESYNC-QUIET across the course ({Desyncs} fired)", Desyncs == 0);
             WanLink.Clean(Net);
             yield return Step.Ticks(100);
             bool own = Sess.Client.Players.TryGetByOwner(Sess.Client.PlayerId, out var e);
             float err = own ? (e.Pos - WanGeo.ToU(Sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
-            WanGeo.Bar(test.T, barsLive, $"replicated own-entity CONVERGED after the course (err {err:0.###} m)", own && err < 0.05f);
+            test.T.Check($"replicated own-entity CONVERGED after the course (err {err:0.###} m)", own && err < 0.05f);
             World.Sim.Sim.Remove(Pump);
         }
     }
@@ -3543,8 +3367,6 @@ namespace UnturnedGodot.Testing
     {
         public override string Name => "net.shell_wan_stepup";
         public override double TimeoutSimSeconds => 160;
-        const bool BarsLive = true;        // the spike/snap/convergence bars (P2)
-        const bool CorrBarLive = false;    // the corr/min bar: C3-gated (the F6 spike failed -- see the verdict above)
 
         public override IEnumerable<Step> Run()
         {
@@ -3558,7 +3380,7 @@ namespace UnturnedGodot.Testing
             WanGeo.Box(World, At(9f, 0.30f), new Vector3(16f, 0.30f, 1f));   // the tall curb (still under StepHeight)
 
             WanLink.Wan(rig.Net);
-            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+            var m = new WanGeo.Metrics(rig.Sess);
             // The course puts input TRANSITIONS at the lips, not just crossings: a straight-line walk
             // keeps the avatar's count-preserving input integration aligned (measured 0.338 m/min -- the
             // curbs alone don't fork two aligned bodies), but a direction change or stop-start landing in
@@ -3606,11 +3428,9 @@ namespace UnturnedGodot.Testing
                     for (int half = 0; half < 2; half++)
                         foreach (var s in Leg(phase == 1, half == 0)) yield return s;
 
-            WanGeo.Bar(T, CorrBarLive, $"curb crossings cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 3.697)", m.CorrPerMin < 2f);
-            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.145)", m.MaxPend < 0.25f);
-            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.050)", m.WorstTickCorr < 0.08f);
-            WanGeo.Bar(T, BarsLive, $"ZERO snaps across the curbs ({m.Snaps})", m.Snaps == 0);
-            foreach (var s in rig.Close(this, BarsLive, m, "wan-stepup")) yield return s;
+            // v9: the corr/pending/tug/snap bars measured the two-body reconciler -- deleted with it.
+            // The client-auth bars (zero recovs + convergence + desync-quiet) live in rig.Close.
+            foreach (var s in rig.Close(this, m, "wan-stepup")) yield return s;
         }
     }
 
@@ -3632,8 +3452,6 @@ namespace UnturnedGodot.Testing
     {
         public override string Name => "net.shell_wan_doorway";
         public override double TimeoutSimSeconds => 160;
-        const bool BarsLive = true;         // corr/min, worst-tick, snap + convergence bars (P2)
-        const bool SpikeBarLive = false;    // the maxPending spike bar: the jamb-pick event is C3-gated (§7)
 
         public override IEnumerable<Step> Run()
         {
@@ -3648,7 +3466,7 @@ namespace UnturnedGodot.Testing
             WanGeo.Box(World, new Vector3(doorC.X, floor + 2.0f, doorC.Z), new Vector3(0.9f, 0.2f, 0.3f));   // lintel: underside y=1.9
 
             WanLink.Wan(rig.Net);
-            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+            var m = new WanGeo.Metrics(rig.Sess);
             for (int phase = 0; phase < 2; phase++)
             {
                 var pace = phase == 0 ? (EPlayerStance?)null : EPlayerStance.SPRINT;
@@ -3678,11 +3496,8 @@ namespace UnturnedGodot.Testing
                     }
             }
 
-            WanGeo.Bar(T, BarsLive, $"doorway passes cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 2.278)", m.CorrPerMin < 2f);
-            WanGeo.Bar(T, SpikeBarLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.426)", m.MaxPend < 0.25f);
-            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.074)", m.WorstTickCorr < 0.08f);
-            WanGeo.Bar(T, BarsLive, $"ZERO snaps through the doorway ({m.Snaps})", m.Snaps == 0);
-            foreach (var s in rig.Close(this, BarsLive, m, "wan-doorway")) yield return s;
+            // v9: the reconciler metric bars are deleted with the reconciler (see WanGeo header).
+            foreach (var s in rig.Close(this, m, "wan-doorway")) yield return s;
         }
     }
 
@@ -3707,11 +3522,6 @@ namespace UnturnedGodot.Testing
     {
         public override string Name => "net.shell_wan_thincollider";
         public override double TimeoutSimSeconds => 120;
-        const bool BarsLive = false;      // the metric bars AND the snap bar: the C3 gate, as §4 predicted (still red
-                                          // after F1-F4; the knife-edge legitimately reaches snap scale -- a solo run
-                                          // measured 5.471 m/min with 0 snaps, an in-suite run 18.481 with 1: the
-                                          // course is chaotically context-sensitive, which IS its §4-2 nature)
-        const bool GuardBarsLive = true;  // clean-link convergence: passes in every context and guards regression
 
         public override IEnumerable<Step> Run()
         {
@@ -3725,7 +3535,7 @@ namespace UnturnedGodot.Testing
             WanGeo.Box(World, hyd, new Vector3(0.12f, 0.6f, 0.12f));
 
             WanLink.Wan(rig.Net);
-            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+            var m = new WanGeo.Metrics(rig.Sess);
             for (int run = 0; run < 9; run++)
             {
                 // aim at the post with a -0.02 / 0 / +0.02 m lateral offset (the knife edge each side),
@@ -3751,11 +3561,10 @@ namespace UnturnedGodot.Testing
                 for (int i = 0; i < 12; i++) { yield return Ticks(1); m.Sample(); }
             }
 
-            WanGeo.Bar(T, BarsLive, $"hydrant grinds cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 10.722)", m.CorrPerMin < 2f);
-            WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.851)", m.MaxPend < 0.25f);
-            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.148)", m.WorstTickCorr < 0.08f);
-            WanGeo.Bar(T, BarsLive, $"ZERO snaps at the hydrant ({m.Snaps})", m.Snaps == 0);
-            foreach (var s in rig.Close(this, GuardBarsLive, m, "wan-thincollider")) yield return s;
+            // v9: the slide-side bifurcation this course used to measure (two bodies picking different
+            // sides of the knife edge) CANNOT EXIST anymore -- there is one body. The course keeps its
+            // value as an envelope non-regression: grinding a thin collider at sprint must never recov.
+            foreach (var s in rig.Close(this, m, "wan-thincollider")) yield return s;
         }
     }
 
@@ -3807,182 +3616,6 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // The C3 FEASIBILITY SPIKE (diagnosis §7.2 step 3 / §9 P5) -- gated on the thincollider baseline
-    // still failing after F1-F4, which it does (§4-2's prediction held: knife-edge slide-side picks
-    // survive every cheap fix). C3 = replace the eased glide with retail's rewind+replay
-    // (ClientResimulate): teleport to the server state, then REPLAY every unacked input through real
-    // physics -- N MoveAndSlide solves inside one physics tick. The kill-criterion is re-steppability:
-    // does running the full movement pipeline N times in ONE engine tick produce the SAME trajectory as
-    // N normal ticks, against real obstacle geometry (StepUp sweeps + MoveAndSlide + the det-ground
-    // recheck)? This test proves exactly that with twin bodies -- one stepped by the engine, one stepped
-    // manually N-in-one-tick -- across a curb. What it deliberately does NOT do is ship C3 (§9: spike
-    // first, report; the kernel extraction + the velocity-bearing correction event stay designed in §7.2).
-    public class NetC3SpikeRestep : GameTest
-    {
-        public override string Name => "net.c3_spike_restep";
-        public override IEnumerable<Step> Run()
-        {
-            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
-                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
-                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
-            var world = task.Result;
-            T.Check("world ready (flat fallback)", world.Ready);
-
-            // twin avatars, byte-identical construction, side by side (out of each other's way), with an
-            // identical 0.30 m curb across each one's path -- the §4-1 decision cliff in the replay path
-            PlayerController Mk(Vector3 at)
-            {
-                var b = new PlayerController { NetAvatar = true, CaptureMouse = false, DeterministicGround = true };
-                World.AddChild(b);
-                b.GlobalPosition = at;
-                b.Spawn = at;
-                b.ScriptedInput = UnityEngine.Vector2.zero;
-                b.ScriptedJump = false;
-                b.ScriptedStance = EPlayerStance.STAND;
-                return b;
-            }
-            var a = Mk(new Vector3(0f, 0.05f, 0f));
-            var b = Mk(new Vector3(40f, 0.05f, 0f));
-            WanGeo.Box(World, new Vector3(0f, 0.15f, -3f), new Vector3(6f, 0.30f, 1f));
-            WanGeo.Box(World, new Vector3(40f, 0.15f, -3f), new Vector3(6f, 0.30f, 1f));
-            yield return Ticks(30);   // settle both onto the ground
-            T.Check($"twins settled at the same local ground (ay={a.GlobalPosition.Y:0.###}, by={b.GlobalPosition.Y:0.###})",
-                    Mathf.Abs(a.GlobalPosition.Y - b.GlobalPosition.Y) < 0.01f);
-
-            // A: 30 ENGINE ticks of sprint at the curb (4.2 m: steps up around tick 16, crosses the 1 m
-            // top, steps off the far side) -- 30 is 3x retail's worst-case replay depth at 200 ms RTT
-            const int N = 30;
-            a.ScriptedStance = EPlayerStance.SPRINT;
-            a.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
-            b.SetPhysicsProcess(false);   // B is stepped MANUALLY below -- freeze its engine callbacks now
-            yield return Ticks(N);
-            a.ScriptedInput = UnityEngine.Vector2.zero;
-            a.ScriptedStance = null;
-
-            // B: the SAME 14 steps executed inside ONE physics tick -- the C3 replay shape (each call is
-            // one 20 ms input tick: the full pipeline incl. StepUp sweeps, MoveAndSlide, det-ground)
-            b.ScriptedStance = EPlayerStance.SPRINT;
-            b.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
-            for (int i = 0; i < N; i++) b._PhysicsProcess(SimClock.FixedDelta);
-            b.ScriptedInput = UnityEngine.Vector2.zero;
-            b.ScriptedStance = null;
-
-            var da = a.GlobalPosition - new Vector3(0f, 0f, 0f);
-            var db = b.GlobalPosition - new Vector3(40f, 0f, 0f);
-            float err = (da - db).Length();
-            GD.Print($"[c3-spike] engine-stepped: {da}, replay-stepped: {db}, err={err:0.####} m " +
-                     $"(N={N} MoveAndSlide solves in one tick, curb crossed by both)");
-            T.Check($"replay-stepped twin CROSSED the curb (dzB={-db.Z:0.##} m, past the far face at 3.5)", -db.Z > 3.6f);
-            T.Check($"N-in-one-tick replay tracks N engine ticks on obstacle geometry (err {err:0.####} m < 0.02)", err < 0.02f);
-            b.SetPhysicsProcess(true);
-            yield return Ticks(2);
-        }
-    }
-
-    // C3 rewind+replay -- the RESOLUTION contract (diagnosis §7.2 step 4). A deterministic middle-band
-    // misprediction is forced on a CLEAN link by nudging the server avatar BODY sideways (0.6 m: over
-    // the 0.08 ack band, far under the 2 m snap -- exactly the band the eased glide used to own): the
-    // next fresh write-back publishes the nudged body, the claim measures over-band, the server fires
-    // MispredictionEvent, and the client must resolve it by ONE discrete teleport+replay -- pending to
-    // EXACT zero the same tick, no eased-glide tail, no snap, desync-quiet, and the post-replay ring
-    // re-record makes every following ack measure dead-zone residue (the "next-ack ~zero" contract).
-    public class NetC3ReplayResolves : GameTest
-    {
-        public override string Name => "net.c3_replay_resolves";
-        public override IEnumerable<Step> Run()
-        {
-            var rig = new WanGeoRig();
-            foreach (var s in rig.Boot(this, 94949, "c3nudged")) yield return s;
-            if (rig.Sess.Shell == null) yield break;
-
-            rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
-            rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
-            for (int i = 0; i < 30; i++) yield return Ticks(1);   // clean-link sprint: adoption engages, zero correction
-            float corr0 = rig.Sess.Reconciler.CorrectionAppliedMeters;
-            long snaps0 = rig.Sess.Reconciler.Snaps;
-            T.Check("clean sprint runs replay-quiet", rig.Sess.ReplaysApplied == 0);
-
-            // the fork: move the avatar BODY (not the entity -- the write-back must publish it as the
-            // body's own truth, not adopt-teleport it back)
-            T.Check("server avatar body reachable", rig.Ded.PlayerSync.TryGetBody(rig.Sess.Client.PlayerId, out var avatar));
-            if (avatar == null) yield break;
-            avatar.TeleportTo(avatar.GlobalPosition + new Vector3(0.6f, 0f, 0f));
-
-            int waited = 0;
-            while (rig.Sess.ReplaysApplied == 0 && waited++ < 30) yield return Ticks(1);
-            T.Check($"the misprediction resolved by REPLAY within the round trip ({waited} ticks)", rig.Sess.ReplaysApplied >= 1);
-            T.Check("pending error is EXACT zero the tick the replay lands (no eased tail to drain)",
-                    rig.Sess.Reconciler.PendingError == UnityEngine.Vector3.zero);
-            float corrReplay = rig.Sess.Reconciler.CorrectionAppliedMeters - corr0;
-            T.Check($"the correction landed DISCRETELY, ~the fork, in one replay ({corrReplay:0.###} m for a 0.6 m nudge)",
-                    corrReplay > 0.3f && corrReplay < 1.2f);
-
-            // the quiet tail: the re-recorded ring makes every later ack measure dead-zone residue --
-            // NOTHING more corrects, pending never re-arms (this is what FAILS with the glide model:
-            // an 8/s exponential tail would still be draining for ~20 ticks)
-            float corr1 = rig.Sess.Reconciler.CorrectionAppliedMeters;
-            long replays1 = rig.Sess.ReplaysApplied;
-            float maxTailPend = 0f;
-            for (int i = 0; i < 50; i++)
-            {
-                yield return Ticks(1);
-                maxTailPend = Mathf.Max(maxTailPend, rig.Sess.Reconciler.PendingError.magnitude);
-            }
-            T.Check($"next-ack residue ~zero: the 50-tick tail stays inside the dead zone (max {maxTailPend:0.###} m)",
-                    maxTailPend <= 0.04f);
-            T.Check($"no correction dribble after the replay ({rig.Sess.Reconciler.CorrectionAppliedMeters - corr1:0.###} m)",
-                    rig.Sess.Reconciler.CorrectionAppliedMeters - corr1 < 0.05f);
-            T.Check($"one replay was enough ({rig.Sess.ReplaysApplied})", rig.Sess.ReplaysApplied <= replays1 + 1);
-            T.Check($"ZERO snaps (the middle band belongs to replay, not the teleport)", rig.Sess.Reconciler.Snaps == snaps0);
-            rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-            rig.Sess.Shell.ScriptedStance = null;
-            foreach (var s in rig.Close(this, true, new WanGeo.Metrics(rig.Sess.Reconciler), "c3-replay")) yield return s;
-        }
-    }
-
-    // The TEETH: the identical fork with replay disabled (the DisableReplay test seam) must NOT resolve
-    // -- with the eased glide deleted, an over-band misprediction has no sub-snap resolution mechanism
-    // left, so the pending error parks at ~the fork forever and zero correction is ever applied. This is
-    // exactly the assertion set that flips when replay is on (net.c3_replay_resolves) -- proof the
-    // replay path, not some leftover glide, is what drives residue to zero.
-    public class NetC3ReplayTeeth : GameTest
-    {
-        public override string Name => "net.c3_replay_teeth";
-        public override IEnumerable<Step> Run()
-        {
-            var rig = new WanGeoRig();
-            foreach (var s in rig.Boot(this, 95959, "c3toothless")) yield return s;
-            if (rig.Sess.Shell == null) yield break;
-            rig.Sess.DisableReplay = true;
-
-            rig.Sess.Shell.ScriptedStance = EPlayerStance.SPRINT;
-            rig.Sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
-            for (int i = 0; i < 30; i++) yield return Ticks(1);
-            float corr0 = rig.Sess.Reconciler.CorrectionAppliedMeters;
-            T.Check("server avatar body reachable", rig.Ded.PlayerSync.TryGetBody(rig.Sess.Client.PlayerId, out var avatar));
-            if (avatar == null) yield break;
-            avatar.TeleportTo(avatar.GlobalPosition + new Vector3(0.6f, 0f, 0f));
-
-            // let the fork publish + the (ignored) events arrive, then hold the course
-            for (int i = 0; i < 20; i++) yield return Ticks(1);
-            int ticksAboveDeadZone = 0;
-            for (int i = 0; i < 100; i++)
-            {
-                yield return Ticks(1);
-                if (rig.Sess.Reconciler.PendingError.magnitude > 0.04f) ticksAboveDeadZone++;
-            }
-            T.Check($"without replay the middle-band error NEVER resolves ({ticksAboveDeadZone}/100 ticks parked over the dead zone)",
-                    ticksAboveDeadZone == 100);
-            T.Check($"and no correction is ever applied ({rig.Sess.Reconciler.CorrectionAppliedMeters - corr0:0.###} m)",
-                    rig.Sess.Reconciler.CorrectionAppliedMeters - corr0 < 0.05f);
-            T.Check("no snap rescued it (0.6 m is squarely sub-snap)", rig.Sess.Reconciler.Snaps == 0);
-            T.Check("replay counter untouched (the seam really disabled it)", rig.Sess.ReplaysApplied == 0);
-            rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
-            rig.Sess.Shell.ScriptedStance = null;
-            foreach (var s in rig.Close(this, false, new WanGeo.Metrics(rig.Sess.Reconciler), "c3-teeth")) yield return s;
-        }
-    }
-
     // §8 baseline 4 -- jumps: (a) 16 sprint-jump arcs on flat with the jump key held ACROSS landings and
     // released mid-air (bunny-hop cadence -- every arc carries a held-bit landing edge and a release
     // edge for the §5-B coast/hole re-present machinery to chew under Wan jitter), then (b) 8
@@ -4010,8 +3643,6 @@ namespace UnturnedGodot.Testing
     {
         public override string Name => "net.shell_wan_jump";
         public override double TimeoutSimSeconds => 120;
-        const bool BarsLive = true;         // corr/min, worst-tick, snap + convergence bars (P2)
-        const bool SpikeBarLive = true;     // ARMED with the real-step StepUp gate (curb-landing pops were the spike)
 
         public override IEnumerable<Step> Run()
         {
@@ -4021,7 +3652,7 @@ namespace UnturnedGodot.Testing
             float floor = rig.Org.Y;
 
             WanLink.Wan(rig.Net);
-            var m = new WanGeo.Metrics(rig.Sess.Reconciler);
+            var m = new WanGeo.Metrics(rig.Sess);
 
             // (a) bunny-hop: a flat arc is 24-25 ticks; hold the key across the landing (t = 20..8 of
             // each 25-tick period) and release mid-air (t = 9..19) -- 16 arcs, 16 held landings, 16
@@ -4038,7 +3669,7 @@ namespace UnturnedGodot.Testing
             rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
             rig.Sess.Shell.ScriptedStance = null;
             for (int i = 0; i < 30; i++) { yield return Ticks(1); m.Sample(); }
-            GD.Print($"[wan-jump] phase (a) hops: corr={m.Corr:0.###} m, maxPending={m.MaxPend:0.###}, maxPendingY={m.MaxPendY:0.###}, worstTick={m.WorstTickCorr:0.###}");
+            GD.Print($"[wan-jump] phase (a) hops: recovs={m.Recovs}, maxEntityLag={m.MaxLag:0.###} m");
 
             // (b) the curb: placed NOW, relative to where the hop run ended (one shared physics space --
             // both bodies see it the same tick; inserted while stopped, converged and 6 m away)
@@ -4072,12 +3703,10 @@ namespace UnturnedGodot.Testing
                 for (int i = 0; i < 12; i++) { yield return Ticks(1); m.Sample(); }
             }
 
-            WanGeo.Bar(T, BarsLive, $"jump courses cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 37.496)", m.CorrPerMin < 2f);
-            WanGeo.Bar(T, SpikeBarLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.791)", m.MaxPend < 0.25f);
-            WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.137)", m.WorstTickCorr < 0.08f);
-            WanGeo.Bar(T, SpikeBarLive, $"no apex teleport: vertical pending under 0.15 m (max {m.MaxPendY:0.###} m -- pre-fix 0.791)", m.MaxPendY < 0.15f);
-            WanGeo.Bar(T, BarsLive, $"ZERO snaps across the jump courses ({m.Snaps})", m.Snaps == 0);
-            foreach (var s in rig.Close(this, BarsLive, m, "wan-jump")) yield return s;
+            // v9: the apex-teleport signature (ground->apex pending in one snapshot) was a two-body
+            // artifact -- gone with the server sim. The jump envelope non-regression is rig.Close's
+            // zero-recov bar: bunny-hops + curb takeoffs must never trip the vertical caps.
+            foreach (var s in rig.Close(this, m, "wan-jump")) yield return s;
         }
     }
 }

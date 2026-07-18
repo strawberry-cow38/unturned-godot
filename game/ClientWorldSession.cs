@@ -6,28 +6,20 @@ using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
-    // The joined-client composition node (PEI_CLIENT_PLAN §2.2 / §3 C3) -- the MpLoopback shape for the
-    // REMOTE case. Owns the NetWorldClient session, the replica views, and the LOCAL PLAYER SHELL: a real
-    // PlayerController (real input/camera/viewmodel -- NOT a NetAvatar) spawned at the FIRST authoritative
-    // own-entity sample (the server-adopted spawn), whose captured input goes over the wire each 50 Hz tick
-    // (SendMoveInput, held-keys model) and whose node is reconciled against the server's authority through
-    // a PredictionReconciler. The one mechanism new vs MpLoopback: corrections are CONSUMED and applied TO
-    // THE NODE (loopback discards them -- there the node IS the authority via ServerDrive).
+    // The joined-client composition node -- the MpLoopback shape for the REMOTE case. Owns the
+    // NetWorldClient session, the replica views, and the LOCAL PLAYER SHELL: a real PlayerController
+    // (real input/camera/viewmodel -- NOT a NetAvatar) spawned at the FIRST authoritative own-entity
+    // sample (the server-adopted spawn).
     //
-    // Why this converges (§2.3): shell and server avatar step the SAME PlayerMovementSim constants on the
-    // SAME world geometry (client world == server world, same files), so residuals are quantization- and
-    // timing-sized (a walk-start/stop transient of ~2 ticks of velocity from the send->apply->write-back
-    // pipeline). Real divergence (a shove only one side saw) trips the 2 m SnapThreshold -> TakeAll.
-    //
-    // C3 reconciliation (PREDICTION_GEOMETRY_DIAGNOSIS §7, retail's ClientResimulate): errors under the
-    // dead zone are simply acked (no correction); errors over the snap threshold hard-adopt; the middle
-    // band -- the geometry divergences the eased glide used to render as the inchworm/pullback -- is
-    // resolved by REWIND+REPLAY: the server fires a MispredictionEvent when its ack band disengages,
-    // and ReplayMisprediction teleports the shell to that state and re-steps every unacked recorded
-    // input through the live movement kernel inside one tick. Corrections/replays land in the sim step
-    // that runs BEFORE the shell's _PhysicsProcess (SimDriver is first in the tree), through seams that
-    // shift the manual render-interp samples WITH the node (§7 risk 5: a bare GlobalPosition write would
-    // be overwritten by the interp restore one tick later and never render).
+    // ON-FOOT MOVEMENT IS CLIENT-AUTHORITATIVE (mp-clientauth-foot, wire v9 -- the Part A vehicle model
+    // widened to walking): the shell runs the exact SP movement path and each 50 Hz tick STREAMS its
+    // transform (SendPlayerState); the server envelope-validates the claim (ServerPlayerAuthority) and
+    // adopts it bit-exact. There is ONE body per player and NOTHING to reconcile -- the C1-C3
+    // predict/reconcile/rewind-replay stack is deleted, and in normal play the owner feels zero
+    // correction at any RTT. The only rubber-band left is PlayerRecovEvent: a genuine envelope
+    // violation (speed/fly/teleport) or a server-side teleport (console/respawn), applied in ShellStep
+    // through TeleportTo (§7 risk 5: corrections must shift the render-interp samples WITH the node).
+    // Driving is the same model for the vehicle (Part A); every OTHER entity is a replica view.
     public partial class ClientWorldSession : Node3D
     {
         public string Host = "127.0.0.1";
@@ -72,20 +64,6 @@ namespace UnturnedGodot
         byte _recovAck;
         PlayerRecovEvent? _pendingRecov;
         public long RecovsApplied { get; private set; }
-        // DEAD since the v9 switch (nothing feeds or consumes it -- the owner is client-authoritative);
-        // deleted with the rest of the C1-C3 reconcile stack in the removals commit.
-        public readonly PredictionReconciler Reconciler = new PredictionReconciler();
-        // C3 rewind+replay (diagnosis §7.2 step 4): the newest misprediction fact from this tick's pump,
-        // consumed by ShellStep BEFORE the ack/send; the scratch lists for the unacked input window and
-        // its re-recorded results; the replay counter the L1 teeth assert on. DisableReplay is the test
-        // seam that proves the teeth (with it set, an over-band misprediction has NO sub-snap resolution
-        // and the pending error parks forever -- net.c3_replay_teeth).
-        MispredictionEvent? _pendingMisprediction;
-        readonly System.Collections.Generic.List<PredictionReconciler.ReplayInput> _replayWindow = new();
-        struct ReplayStepResult { public Vector3 Pos; public UnityEngine.Vector3 Vel; public bool Grounded; }
-        readonly System.Collections.Generic.List<ReplayStepResult> _replaySteps = new();
-        public long ReplaysApplied { get; private set; }
-        public bool DisableReplay;
 
         CanvasLayer _statusLayer;
         Label _status;
@@ -303,74 +281,6 @@ namespace UnturnedGodot
                                    Shell.MoveSimVelocity, buttons, Shell.LastGroundedInput, _recovAck);
 
             if (NetLog.Enabled) LogClientAuthRollupIfDue();
-        }
-
-        // C3 (diagnosis §7.2 step 4 / retail ClientResimulate, U3 PlayerInput.cs:1268-1346): rewind the
-        // shell to the server's post-step state for the acked seq and re-step every remaining unacked
-        // recorded input through the SAME movement kernel the live tick runs -- N MoveAndSlide solves
-        // inside this one tick (re-steppability proven by net.c3_spike_restep). There is no two-body
-        // fork left to ease: the shell ends ON the server's trajectory, the window re-records under the
-        // replayed positions (replace semantics), and the next ack measures ~zero -- whatever two-solve
-        // residue remains is the dead zone's job (§7.2 item 4).
-        void ReplayMisprediction(MispredictionEvent mp)
-        {
-            if (Shell == null || !IsInstanceValid(Shell) || Shell.IsDriving) return;
-            // the same front door a snapshot ack walks through: stale seqs no-op, the dead zone zeroes
-            // (this collapses the server's per-tick event burst during the RTT tail into ~one replay --
-            // later events measure against the RE-RECORDED ring and land under the dead zone), and a
-            // >Snap error takes the unchanged hard-adopt path.
-            if (Reconciler.OnAuthoritative(mp.Seq, mp.Pos))
-            {
-                var d = Reconciler.TakeAll();
-                Shell.ApplyNetSnap(new Vector3(d.x, d.y, d.z));
-                Reconciler.NoteCorrectionApplied(d);
-                return;
-            }
-            if (Reconciler.PendingError == UnityEngine.Vector3.zero) return;
-            // the unacked input window; a torn ring (evicted/hole) skips the replay -- the pending error
-            // stays parked and the next event (or the snap path) recovers
-            if (!Reconciler.CollectReplayWindow(mp.Seq, _replayWindow)) return;
-
-            var before = Shell.TruePhysicsPosition;
-            float liveYaw = Shell.RotationDegrees.Y;
-            var pendingStance = Shell.Stance;   // the stance the LAST live physics tick consumed -- captured before the replay mutates _move.Stance
-            Shell.TeleportTo(new Vector3(mp.Pos.x, mp.Pos.y, mp.Pos.z));   // interp snapshots reset + velocity zeroed (§7 risk 5)
-            Shell.NetReplayRestore(mp.Vel, mp.Stance);                     // sim velocity + stance/capsule := payload; det-grounded re-derived at the restored position
-            _replaySteps.Clear();
-            for (int i = 0; i < _replayWindow.Count; i++)
-            {
-                var r = _replayWindow[i];
-                Shell.RotationDegrees = new Vector3(0f, r.YawDegrees, 0f);   // the recorded facing IS part of the input
-                Shell.StepMovementOnce(r.MoveX, r.MoveY, r.Jump, r.Stance, (float)SimClock.FixedDelta);
-                _replaySteps.Add(new ReplayStepResult { Pos = Shell.GlobalPosition, Vel = Shell.MoveSimVelocity, Grounded = Shell.DetGroundedNow });
-            }
-            // ... plus the PENDING tick: the last live physics tick already ran, but its input is only
-            // sent/recorded as the NEXT seq (step 3 below, this same ShellStep). Skipping it rolls the
-            // shell one input BEHIND its own send cursor and every following claim runs exactly one
-            // tick behind the avatar -- a permanent standing skew of one move-tick (measured 0.137 m at
-            // sprint = events every write-back, replays forever). Retail resimulates through the
-            // CURRENT frame for the same reason (ClientResimulate covers every un-acked input).
-            Shell.RotationDegrees = new Vector3(0f, liveYaw, 0f);   // the pending tick's facing = the live yaw (what step 3 sends)
-            Shell.StepMovementOnce(Shell.LastMoveInput.x, Shell.LastMoveInput.y, Shell.LastJumpInput, pendingStance, (float)SimClock.FixedDelta);
-            Shell.NetReplayFinish();                                // render the endpoint: the replay is one tick's resolution
-            var after = Shell.TruePhysicsPosition;
-
-            // accounting order matters: resolve the pending error, report the NET displacement as
-            // applied correction (observability + the appliedSince baseline), THEN re-record the window
-            // under the post-replay trajectory -- so the re-records' correction stamps postdate the
-            // displacement and the next ack measures pure residue.
-            Reconciler.TakeAll();
-            Reconciler.NoteCorrectionApplied(new UnityEngine.Vector3(after.X - before.X, after.Y - before.Y, after.Z - before.Z));
-            for (int i = 0; i < _replayWindow.Count; i++)
-            {
-                var r = _replayWindow[i];
-                var s = _replaySteps[i];
-                Reconciler.Record(r.Seq, new UnityEngine.Vector3(s.Pos.X, s.Pos.Y, s.Pos.Z),
-                                  r.MoveX, r.MoveY, r.YawDegrees, r.Buttons, s.Vel, s.Grounded);
-            }
-            ReplaysApplied++;
-            if (NetLog.Enabled)
-                NetLog.Sink($"[NET-CLIENT] replay: seq {mp.Seq} +{_replayWindow.Count} inputs, moved {(after - before).Length():0.###} m");
         }
 
         // ---- Part A driving-local machinery (CLIENT_PREDICTION_PLAN §5.2 A1/A4) ----
