@@ -191,6 +191,29 @@ namespace UnturnedGodot
         public int RoadMaterial(int road) => road >= 0 && road < _roads.Count ? _roads[road].Material : 0;
         public void SetRoadMaterial(int road, int m) { if (road >= 0 && road < _roads.Count) { _roads[road].Material = m; RebuildRoad(road); } }
         public int MaterialCount => _mats.Count;
+        // Roads.unity3d container order (same as TexHeight) -> friendly names for the picker; concrete/dirt as a fallback tag
+        static readonly string[] MatNames = { "Highway_0", "Highway_1", "Racetrack", "Road", "Tracks", "Trail", "White", "Yellow", "Road_8", "Road_9" };
+        public string RoadMaterialName(int road)
+        {
+            int m = RoadMaterial(road);
+            string name = m >= 0 && m < MatNames.Length ? MatNames[m] : $"mat{m}";
+            return $"{m}:{name}";
+        }
+
+        // editor reopen: replace the map's roads with the SAVED edits (same Paths.dat format), so edits round-trip
+        public bool ReloadPaths(string pathsFile)
+        {
+            if (!File.Exists(pathsFile)) return false;
+            foreach (var r in _roads) { r.Mi?.QueueFree(); r.Body?.QueueFree(); }
+            _roads.Clear();
+            foreach (var r in ParsePathsDat(pathsFile))
+            {
+                _roads.Add(r);
+                if (r.Joints.Count >= 2 && r.Material >= 0 && r.Material < _mats.Count) BuildRoadNode(r);
+            }
+            GD.Print($"[roads] reloaded {_roads.Count} roads from saved edits ({pathsFile})");
+            return true;
+        }
 
         // editor Save(): write Paths.dat back (exact reverse of ParsePathsDat, same version/guids/modes). G() negates Z on
         // read (Unity z -> Godot -z), so undo it here: unityZ = -godotZ. Saved to an editor path, NOT the retail install.
