@@ -210,14 +210,15 @@ namespace UnturnedGodot
             //    record AFTER the tick's correction slice, replace semantics, no double-count).
             //    The stance the sim consumed rides in the buttons bits (the mp-inchworm fix): the
             //    server avatar must integrate at the SAME speed this shell just predicted at.
+            //    C2: the SAME position rides the wire as the claim (retail's clientPosition,
+            //    U3 PlayerInput.cs:867-873/:1607) -- the server ack band adopts it when the avatar
+            //    agrees to within AckBandMeters, so this ack round-trips as exactly rec[seq].
             float yaw = Shell.RotationDegrees.Y;
             byte buttons = (byte)((Shell.LastJumpInput ? MoveInput.ButtonJump : (byte)0) | MoveInput.PackStance(Shell.Stance));
-            ushort seq = Client.SendMoveInput(Shell.LastMoveInput.x, Shell.LastMoveInput.y, yaw, buttons);
-            if (seq != 0)
-            {
-                var p = Shell.TruePhysicsPosition;
-                Reconciler.Record(seq, new UnityEngine.Vector3(p.X, p.Y, p.Z));
-            }
+            var p = Shell.TruePhysicsPosition;
+            var claim = new UnityEngine.Vector3(p.X, p.Y, p.Z);
+            ushort seq = Client.SendMoveInput(Shell.LastMoveInput.x, Shell.LastMoveInput.y, yaw, buttons, claim);
+            if (seq != 0) Reconciler.Record(seq, claim);
 
             if (NetLog.Enabled) LogReconcileRollupIfDue();
         }

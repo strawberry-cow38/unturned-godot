@@ -109,6 +109,20 @@ namespace UnturnedGodot.Net
         public float MoveY;       // forward axis [-1,1]
         public float YawDegrees;  // facing, wrapped into [0,360) by the wire encoding
         public byte Buttons;      // v2: held-button bits (ButtonJump | PackStance(...))
+        // C2 (CLIENT_PREDICTION_PLAN §4.2, Version 5): the shell's post-move position for THIS input's
+        // tick -- the direct analogue of retail's WalkingPlayerInputPacket.clientPosition ("Resulting
+        // transform.position immediately after movement.simulate was called", U3 PlayerInput.cs:854-857,
+        // captured :1607, on the wire :867-873). The server's ack band compares it against the avatar's
+        // own result and ADOPTS a sub-band claim (retail's sub-2cm ack, :1820-1838) so healthy two-solve
+        // skew resolves server-ward -- invisibly -- instead of as client-visible correction traffic.
+        // Rides the same position grid as the snapshot (PlayerReplication.Quantize), so an adopted claim
+        // acks back as EXACTLY the client's recorded prediction.
+        public Vector3 ClaimedPos;
+        // On the wire as one bit: claimless senders (headless demo walkers whose flat prediction doesn't
+        // track a real-physics avatar) must not have a fabricated (0,0,0) "claim" adopted. Also cleared
+        // at consume time on the synthesized ticks (hole-substitution / hold) whose held input carries a
+        // claim belonging to a DIFFERENT seq.
+        public bool HasClaim;
 
         public bool Jump => (Buttons & ButtonJump) != 0;
 
@@ -148,6 +162,15 @@ namespace UnturnedGodot.Net
             w.WriteSignedNormalizedFloat(Clamp1(MoveY), 8);
             w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(Buttons);   // v2 (NetProtocol.Version 3): the buttons byte -- v2 peers version-reject before ever parsing this
+            // C2 (Version 5): hasClaim:1, then the claimed post-move position on the snapshot's exact
+            // position grid -- only when the sender actually captured one
+            w.WriteBits(HasClaim ? 1u : 0u, 1);
+            if (HasClaim)
+            {
+                w.WriteClampedFloat(ClaimedPos.x, NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits);
+                w.WriteClampedFloat(ClaimedPos.y, NetQuantization.PositionYIntBits, NetQuantization.PositionYFracBits);
+                w.WriteClampedFloat(ClaimedPos.z, NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits);
+            }
         }
 
         public static bool TryRead(NetPakReader r, out MoveInput cmd)
@@ -158,7 +181,16 @@ namespace UnturnedGodot.Net
             if (!r.ReadSignedNormalizedFloat(8, out float my)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt8(out byte buttons)) return false;
-            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons };
+            if (!r.ReadBits(1, out uint hasClaim)) return false;
+            float cx = 0f, cy = 0f, cz = 0f;
+            if (hasClaim != 0)
+            {
+                if (!r.ReadClampedFloat(NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits, out cx)) return false;
+                if (!r.ReadClampedFloat(NetQuantization.PositionYIntBits, NetQuantization.PositionYFracBits, out cy)) return false;
+                if (!r.ReadClampedFloat(NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits, out cz)) return false;
+            }
+            cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons,
+                                  ClaimedPos = new Vector3(cx, cy, cz), HasClaim = hasClaim != 0 };
             return true;
         }
 
@@ -258,6 +290,14 @@ namespace UnturnedGodot.Net
             // SP-loopback local player, MP_PLAN §4 Phase 4) steps the REAL sim-core + physics and writes
             // the result here; the internal flat-ground integration must not fight it.
             internal bool ExternallyDriven;
+            // C2 anti-cheat: the remaining claim-adoption allowance (metres). Accrues at
+            // AdoptBudgetMetersPerSecond up to the cap; each adoption drains the GROWTH of the
+            // claim-vs-body skew since the last adoption (AdoptedSkew is that baseline).
+            internal float AdoptBudget;
+            internal float AdoptedSkew;
+            // C2 hysteresis (the Schmitt trigger): adoption disengages past the band and re-engages only
+            // once the skew has CONVERGED under AdoptReentryMeters -- see ServerTryAdoptClaim.
+            internal bool AdoptEngaged;
             /// <summary>Read-only view for game-side drivers (C2 PlayerNetSync must not adopt an entity
             /// another shell already ServerDrives -- double-driving the seam would fight over it).</summary>
             public bool IsExternallyDriven => ExternallyDriven;
@@ -456,7 +496,8 @@ namespace UnturnedGodot.Net
                 e.LastConsumedSeq++;
                 e.AppliedInput.Seq = e.LastConsumedSeq;
                 input = e.AppliedInput;
-                seqAdvanced = true;   // the claimed hole seq is fresh -- its (pos, seq) pairing is exact
+                input.HasClaim = false;   // the held input's ClaimedPos belongs to ITS seq, not the substituted one
+                seqAdvanced = true;       // the claimed hole seq is fresh -- its (pos, seq) pairing is exact
                 return true;
             }
             var inp = q.Dequeue();
@@ -476,6 +517,7 @@ namespace UnturnedGodot.Net
             input.MoveX = 0f;
             input.MoveY = 0f;
             input.Buttons = 0;
+            input.HasClaim = false;   // the stale claim must not be adopted onto a hold tick
         }
 
         /// <summary>One 50 Hz authoritative movement step for every server-owned player. Held-key model:
@@ -515,6 +557,78 @@ namespace UnturnedGodot.Net
                 0f,
                 (vel.z * cos - vel.x * sin) * dt);
             return Quantize(pos + worldDelta);
+        }
+
+        // ---- C2: the server ack band (CLIENT_PREDICTION_PLAN §4.2, retail's model adapted) ----
+        // Retail re-simulates the client's inputs and ACKS any result within errorToleranceDistance =
+        // 0.02 m of the claimed clientPosition -- below tolerance the client keeps its position and the
+        // skew is simply tolerated (U3 PlayerInput.cs:1820-1838). The port's adoption is ENTITY-ONLY:
+        // a sub-band claim becomes the PUBLISHED state (so the ack the owner receives is exactly its
+        // recorded prediction -> zero correction, and observers render the owner's own view of itself),
+        // while the avatar BODY keeps its own untainted physics path -- the body is never steered by a
+        // claim. The first cut nudged the body onto the claim and the §3 WAN harness caught the flaw:
+        // two delayed controllers chasing each other (the body adopting RTT-stale claims while the owner
+        // eased toward the body's RTT-stale acks) is an oscillator -- the sprint baseline got WORSE
+        // (2.7 -> 18 m/min). Body-sovereign adoption has no feedback path: claims can never move server
+        // physics, so the worst a lying claim can ever do is place the PUBLISHED position AckBandMeters
+        // from the true body.
+
+        /// <summary>Adoption band: a claim within this of the avatar body's own result is publishable,
+        /// and therefore also the hard ceiling on the standing published-vs-true skew a client can hold.
+        /// 2x the client dead-zone (0.04) and 4x retail's 2 cm -- we carry two-distinct-physics-solves
+        /// noise retail's re-simulation doesn't. Tuned on the §3 WAN harness.</summary>
+        public const float AckBandMeters = 0.08f;
+        /// <summary>Anti-cheat ramp bound (the part retail gets implicitly from re-simulating the
+        /// inputs: a cheater can skew at most 2 cm per 80 ms packet ~= 0.25 m/s). The budget drains on
+        /// the GROWTH of the claim-vs-body skew, so it meters how fast the published lie can ramp --
+        /// while the band caps how big it can ever stand. A steady healthy skew (the same few mm every
+        /// tick) drains ~nothing, so legitimate tracking never duty-cycles.</summary>
+        public const float AdoptBudgetMetersPerSecond = 0.5f;
+        /// <summary>Budget accrual cap: bounds the burst a long-quiet player can bank (just under 2x the
+        /// band -- an occasional full-band adoption stays possible, a teleport never).</summary>
+        public const float AdoptBudgetCapMeters = 0.15f;
+        /// <summary>The hysteresis re-entry threshold (the Schmitt trigger's lower edge). After a real
+        /// over-band divergence the published frame is the BODY's, and the client eases toward it; if
+        /// adoption re-engaged the moment the skew dipped back under the band, the ack frame would flip
+        /// to the client's own (RTT-stale) claims 8 cm away and UNDO the correction -- a permanent limit
+        /// cycle at the band edge (the §3 sprint baseline measured it: 19 m/min of oscillation).
+        /// Re-engaging only once the skew has CONVERGED under this -- safely inside the client's 0.04
+        /// dead-zone -- makes the frame flip invisible: below the dead-zone NEITHER frame corrects.</summary>
+        public const float AdoptReentryMeters = 0.03f;
+
+        /// <summary>The C2 ack-band decision for one write-back: claimedPos is the client's post-move
+        /// position for the input the avatar just integrated (MoveInput.ClaimedPos), serverPos the
+        /// avatar body's own result. Engaged and within band AND skew-growth budget: returns the
+        /// wire-quantized claim; the caller publishes it (ServerDrive) INSTEAD of the body position --
+        /// the body itself is never moved. Beyond the band: disengages -- the body position is published
+        /// and the client corrects, exactly as before C2, until the skew converges under
+        /// AdoptReentryMeters (the hysteresis above). Engine-free so the band/budget/hysteresis policy
+        /// is L0-testable; claims arrive wire-quantized, so NaN/extent sanity is structural (quantized
+        /// ints), not a gate.</summary>
+        public bool ServerTryAdoptClaim(ushort ownerPlayerId, Vector3 claimedPos, Vector3 serverPos, float dt, out Vector3 adoptedPos)
+        {
+            adoptedPos = default;
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return false;
+            e.AdoptBudget = System.Math.Min(AdoptBudgetCapMeters, e.AdoptBudget + AdoptBudgetMetersPerSecond * dt);
+            var claim = Quantize(claimedPos);
+            float dist = (claim - serverPos).magnitude;
+            if (dist > AckBandMeters)                 // real divergence: publish the body's truth, the client corrects
+            {
+                e.AdoptEngaged = false;               // ... and stay on the body's frame until CONVERGED (hysteresis)
+                return false;
+            }
+            if (!e.AdoptEngaged)
+            {
+                if (dist > AdoptReentryMeters) return false;   // still converging: keep the frames from flipping mid-correction
+                e.AdoptEngaged = true;
+                e.AdoptedSkew = dist;                 // fresh engagement: the entry skew is the new growth baseline
+            }
+            float growth = System.Math.Max(0f, dist - e.AdoptedSkew);
+            if (growth > e.AdoptBudget) return false; // the lie is ramping faster than the allowance: the body's truth is published
+            e.AdoptBudget -= growth;
+            e.AdoptedSkew = dist;
+            adoptedPos = claim;
+            return true;
         }
 
         /// <summary>Authoritative write-through for an entity whose sim runs OUTSIDE this class -- the

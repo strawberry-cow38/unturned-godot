@@ -463,11 +463,14 @@ namespace UnturnedGodot.Net
         /// sent) so the shell can record its prediction under the same seq. buttons = the v2 held-button
         /// bits (MoveInput.ButtonJump | ...). C1 (plan §4.2): the datagram carries the newest input plus
         /// the previous two (MoveInputPacket), so a single lost/overtaken datagram costs the server
-        /// nothing -- the next one backfills the hole.</summary>
-        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0)
+        /// nothing -- the next one backfills the hole. C2: claimedPos = the shell's post-move position
+        /// for this input's tick (what the caller Records under the same seq) -- retail's
+        /// walkingPacket.clientPosition; the server ack band adopts sub-band claims server-ward.</summary>
+        public ushort SendMoveInput(float moveX, float moveY, float yawDegrees, byte buttons = 0, Vector3? claimedPos = null)
         {
             if (Session.State != NetSessionState.Connected) return 0;
-            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons };
+            var cmd = new MoveInput { Seq = ++_inputSeq, MoveX = moveX, MoveY = moveY, YawDegrees = yawDegrees, Buttons = buttons,
+                                      ClaimedPos = claimedPos ?? default, HasClaim = claimedPos.HasValue };
             if (_inputSeq == 0) cmd.Seq = ++_inputSeq;   // seq 0 is the reconciler's "none" sentinel; skip it on wrap
             // a PAUSE in the send stream (ride mode, respawn -- anything that stopped ShellStep sending)
             // voids the redundancy ring: the server cleared its input state at the pause boundary

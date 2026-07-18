@@ -40,6 +40,8 @@ namespace UnturnedGodot
             public UnityEngine.Vector3 LastDrivenPos;   // what we last wrote (wire-quantized) -- a differing entity pos means someone else teleported it
             public bool Seated;
             public bool PairingExact = true;            // C1.5: false while the body's last step was a stale-seq coast/hold -- publishing that position would re-pair an already-acked seq with newer motion (the phantom correction)
+            public UnityEngine.Vector3 ClaimedPos;      // C2: the shell's claimed post-move position for the input the body last stepped (pairs with LastInputSeq)
+            public bool HasClaim;                       // false on coast/hold/substituted ticks and claimless senders -- nothing to adopt
         }
         readonly Dictionary<ushort, Tracked> _tracked = new();
         readonly List<ushort> _stale = new();
@@ -95,6 +97,7 @@ namespace UnturnedGodot
                     t.Body.ScriptedJump = false;
                     t.LastDrivenPos = e.Pos;
                     t.Seated = true;
+                    t.HasClaim = false;   // C2: any held walk claim predates the seat -- never adopt it
                     continue;
                 }
                 if (t.Seated || (e.Pos - t.LastDrivenPos).sqrMagnitude > 1e-9f)
@@ -109,14 +112,30 @@ namespace UnturnedGodot
                     t.Seated = false;
                     t.Body.TeleportTo(ToG(e.Pos));
                     t.LastDrivenPos = e.Pos;
+                    t.HasClaim = false;   // C2: the held claim predates the external teleport -- adopting it would fight ServerTeleport (the §7 guard sequencing)
                 }
                 else if (t.PairingExact)
                 {
                     // 1) authoritative write-back: last tick's post-physics result, under the seq of the
-                    // input that produced it (ServerDrive quantizes + marks ExternallyDriven)
+                    // input that produced it (ServerDrive quantizes + marks ExternallyDriven).
                     var pos = t.Body.GlobalPosition;
                     float yaw = t.Body.RotationDegrees.Y;
-                    _server.Players.ServerDrive(e.OwnerPlayerId, ToU(pos), yaw, t.LastInputSeq, tick);
+                    // C2, the server ack band (retail's sub-2cm ack, U3 PlayerInput.cs:1820-1838): when
+                    // the shell's claimed post-move position for THIS seq sits within AckBandMeters of
+                    // the avatar body's own result -- and within the skew-growth budget -- PUBLISH the
+                    // claim instead of the body position (entity-only adoption): the ack the owner gets
+                    // back is exactly its recorded prediction -> zero correction, and the healthy
+                    // two-solve skew stays server-side, invisible. The BODY is never steered by a claim
+                    // (the first cut nudged it and oscillated -- see ServerTryAdoptClaim's comment); so
+                    // beyond band/budget the body's truth is published and the client corrects, exactly
+                    // as before C2. Adoption lives in THIS branch only, under the same "entity moved
+                    // outside this sync" guard sequencing as ServerTeleport, so it can never fight an
+                    // external teleport.
+                    if (t.HasClaim && _server.Players.ServerTryAdoptClaim(e.OwnerPlayerId, t.ClaimedPos, ToU(pos),
+                                                                          (float)SimClock.FixedDelta, out var adopted))
+                        _server.Players.ServerDrive(e.OwnerPlayerId, adopted, yaw, t.LastInputSeq, tick);
+                    else
+                        _server.Players.ServerDrive(e.OwnerPlayerId, ToU(pos), yaw, t.LastInputSeq, tick);
                     t.LastDrivenPos = e.Pos;   // ServerDrive just stamped the quantized pos onto the entity
                 }
                 // else (C1.5, the phantom-pairing fix -- found by the plan §3 WAN harness): the body's
@@ -145,6 +164,8 @@ namespace UnturnedGodot
                     t.Body.ScriptedStance = inp.Stance;   // integrate at the stance the shell predicted at (the inchworm fix)
                     t.LastInputSeq = inp.Seq;
                     t.PairingExact = seqAdvanced;   // stale-seq coast/hold ticks must not be written back (C1.5)
+                    t.HasClaim = seqAdvanced && inp.HasClaim;   // C2: the claim pairs with a FRESH seq only
+                    t.ClaimedPos = inp.ClaimedPos;
                 }
                 else
                 {
@@ -152,6 +173,7 @@ namespace UnturnedGodot
                     t.Body.ScriptedJump = false;
                     t.Body.ScriptedStance = EPlayerStance.STAND;
                     t.PairingExact = true;   // nothing consumed since spawn/clear: the body stands at the last exact pairing
+                    t.HasClaim = false;
                 }
             }
 

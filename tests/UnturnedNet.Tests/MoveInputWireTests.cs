@@ -7,10 +7,11 @@ using UnturnedGodot.Net;
 namespace UnturnedNet.Tests
 {
     // Golden bytes + round-trip for the MoveInput wire format. The DATAGRAM is a MoveInputPacket since
-    // C1 (CLIENT_PREDICTION_PLAN §4.2, the Version 4->5 break): count:2 bits + count MoveInput entries
-    // oldest-first, each seq:16 + moveX:8 + moveY:8 + yaw:11 + buttons:8. A failure here means the
-    // movement command's format drifted -- an intentional change bumps NetProtocol.Version and
-    // re-goldens in the same commit.
+    // C1+C2 (CLIENT_PREDICTION_PLAN §4.2, the Version 4->5 break): count:2 bits + count MoveInput
+    // entries oldest-first, each seq:16 + moveX:8 + moveY:8 + yaw:11 + buttons:8 + hasClaim:1
+    // (+ claimed post-move position on the snapshot grid when set -- retail's clientPosition,
+    // U3 PlayerInput.cs:867-873). A failure here means the movement command's format drifted -- an
+    // intentional change bumps NetProtocol.Version and re-goldens in the same commit.
     [TestFixture]
     public class MoveInputWireTests
     {
@@ -22,30 +23,78 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
-        public void MoveInputPacket_SingleEntry_GoldenBytes()
+        public void MoveInputPacket_SingleEntry_NoClaim_GoldenBytes()
         {
-            // the spawn-time shape (nothing sent yet to backfill): count:2 + one 51-bit entry = 53 bits
-            // -> 7 payload bytes after the id byte. The entry is the exact v3/v4 golden input; goldened
-            // for Version = 5 (the redundancy count landed in front of it).
+            // the claimless spawn/demo-walker shape: count:2 + one 52-bit entry (51 + hasClaim:0) = 54
+            // bits -> 7 payload bytes after the id byte. The entry is the exact v3/v4 golden input;
+            // goldened for Version = 5 (the redundancy count + claim bit landed).
             var pkt = new MoveInputPacket { Count = 1, I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump } };
             var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
             Assert.That(ToHex(bytes), Is.EqualTo("01090400FF012800"));
         }
 
         [Test]
+        public void MoveInputPacket_SingleEntry_WithClaim_GoldenBytes()
+        {
+            // the real client's shape: the claimed post-move position (retail's clientPosition) rides
+            // the snapshot's exact grid -- x:20 + y:18 + z:20 bits after the claim bit = 112 bits total
+            // -> 14 payload bytes after the id byte.
+            var pkt = new MoveInputPacket
+            {
+                Count = 1,
+                I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump,
+                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(12.5f, -3.25f, -100.125f) },
+            };
+            var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
+            Assert.That(ToHex(bytes), Is.EqualTo("01090400FF0128200301F9016F0E1C"));
+        }
+
+        [Test]
         public void MoveInputPacket_ThreeEntries_GoldenBytes()
         {
-            // the steady-state shape: the newest input + the 2 previous, oldest-first, consecutive seqs.
-            // count:2 + 3 x 51 bits = 155 bits -> 20 payload bytes after the id byte.
+            // the steady-state shape: the newest input + the 2 previous, oldest-first, consecutive seqs,
+            // claims on every entry (a real client always claims).
             var pkt = new MoveInputPacket
             {
                 Count = 3,
-                I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump },
-                I1 = new MoveInput { Seq = 259, MoveX = 0f, MoveY = 1f, YawDegrees = 91f, Buttons = MoveInput.PackStance(SDG.Unturned.EPlayerStance.SPRINT) },
-                I2 = new MoveInput { Seq = 260, MoveX = 0.25f, MoveY = -1f, YawDegrees = 271f, Buttons = 0 },
+                I0 = new MoveInput { Seq = 258, MoveX = -0.5f, MoveY = 1f, YawDegrees = 90f, Buttons = MoveInput.ButtonJump,
+                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(1f, 2f, 3f) },
+                I1 = new MoveInput { Seq = 259, MoveX = 0f, MoveY = 1f, YawDegrees = 91f, Buttons = MoveInput.PackStance(SDG.Unturned.EPlayerStance.SPRINT),
+                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(1f, 2f, 3.09f) },
+                I2 = new MoveInput { Seq = 260, MoveX = 0.25f, MoveY = -1f, YawDegrees = 271f, Buttons = 0,
+                                     HasClaim = true, ClaimedPos = new UnityEngine.Vector3(1f, 2f, 3.18f) },
             };
             var bytes = NetMessagePak.Pack(ReplicationIds.CommandMoveInput, pkt.Write);
-            Assert.That(ToHex(bytes), Is.EqualTo("010B0400FF0128602000E0AF4002040120FF050600"));
+            Assert.That(ToHex(bytes), Is.EqualTo("010B0400FF012860000104020C10602000E0AF400203082010608017040120FF05061840008100037401"));
+        }
+
+        [Test]
+        public void MoveInput_Claim_RoundTrip_GridExact()
+        {
+            // the claim must survive the round trip EXACTLY on the snapshot position grid: an adopted
+            // claim becomes the entity position, and the ack the owner receives must equal its recorded
+            // prediction to the grid point (that equality is what makes adoption a ZERO correction)
+            var w = new NetPakWriter { buffer = new byte[64] };
+            w.Reset();
+            var claim = new UnityEngine.Vector3(123.456f, 45.678f, -789.012f);
+            new MoveInput { Seq = 9, MoveY = 1f, HasClaim = true, ClaimedPos = claim }.Write(w);
+            w.Flush();
+            var r = new NetPakReader();
+            r.Reset();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(MoveInput.TryRead(r, out var read), Is.True);
+            Assert.That(read.HasClaim, Is.True);
+            Assert.That(read.ClaimedPos, Is.EqualTo(PlayerReplication.Quantize(claim)),
+                        "the wire claim IS the quantized claim -- grid-exact, no extra tolerance anywhere");
+
+            // and a claimless entry reads back claimless (never a fabricated zero-claim)
+            w.Reset();
+            new MoveInput { Seq = 10, MoveY = 1f }.Write(w);
+            w.Flush();
+            r.Reset();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(MoveInput.TryRead(r, out var bare), Is.True);
+            Assert.That(bare.HasClaim, Is.False, "no claim bit -> no claim; the server must have nothing to adopt");
         }
 
         [Test]
