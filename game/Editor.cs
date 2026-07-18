@@ -6,7 +6,7 @@ namespace UnturnedGodot
     // owns the edit session -- the active mode (which sub-editor is live) + the loaded map -- and fans Save()
     // out to the sub-editors. The heavy lifting lives in per-mode sub-editors (Objects/Terrain/Spawns/...),
     // ported phase by phase. Phase 1 = the shell + mode switching + the free-fly cam + dashboard.
-    public enum EEditorMode { Objects, Terrain, Environment, Spawns, Volumes }   // dashboard tabs (source EditorDashboardUI)
+    public enum EEditorMode { Terrain, Environment, Spawns, Level }   // the source dashboard's 4 tabs (EditorDashboardUI); Objects live UNDER Level (EditorLevelObjectsUI)
 
     public partial class Editor : Node3D
     {
@@ -18,7 +18,7 @@ namespace UnturnedGodot
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 
-        EEditorMode _mode = EEditorMode.Objects;
+        EEditorMode _mode = EEditorMode.Level;   // open on the Level tab (where object placement lives)
         public EEditorMode Mode
         {
             get => _mode;

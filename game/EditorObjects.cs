@@ -164,7 +164,7 @@ namespace UnturnedGodot
 
         public override void _UnhandledInput(InputEvent ev)
         {
-            if (_editor.Mode != EEditorMode.Objects || _flyCam.Flying) return;   // Objects tab only; never while flying (RMB)
+            if (_editor.Mode != EEditorMode.Level || _flyCam.Flying) return;   // Level tab only (object placement lives under Level); never while flying (RMB)
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
             {
                 if (mb.Pressed)
