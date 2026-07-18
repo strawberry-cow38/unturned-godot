@@ -251,13 +251,21 @@ namespace UnturnedGodot.Net
                 st.Recovering = false;
             }
 
-            // ---- the envelope: accrue real server time into the banks, then measure the claim's
-            // delta against the entity's last PUBLISHED position (quantized, like the claim) ----
-            float accrue = (tick - st.LastAccrueTick) * (float)SimClock.FixedDelta;
-            st.LastAccrueTick = tick;
-            st.HBank = Math.Min(HorizontalCeiling, st.HBank + HorizontalRate * accrue);
-            st.UpBank = Math.Min(UpCeiling, st.UpBank + UpRate * accrue);
-            st.DownBank = Math.Min(DownCeiling, st.DownBank + DownRate * accrue);
+            // ---- the envelope: at each NEW arrival tick, pin the leftover banks down to the jitter
+            // reserve (a flowing stream never accumulates blink allowance), then accrue the real server
+            // time since the last arrival (silence banks, up to the ceiling). Claims landing in the SAME
+            // server tick share that tick's bank un-pinned -- a queued hitch backlog is N small claims
+            // bursting in one tick and must spend the silence they represent, not be pinned apart by
+            // their first sibling. Then measure the claim's delta against the entity's last PUBLISHED
+            // position (quantized, like the claim). ----
+            if (tick > st.LastAccrueTick)
+            {
+                float accrue = (tick - st.LastAccrueTick) * (float)SimClock.FixedDelta;
+                st.LastAccrueTick = tick;
+                st.HBank = Math.Min(HorizontalCeiling, Math.Min(st.HBank, HorizontalReserve) + HorizontalRate * accrue);
+                st.UpBank = Math.Min(UpCeiling, Math.Min(st.UpBank, UpReserve) + UpRate * accrue);
+                st.DownBank = Math.Min(DownCeiling, Math.Min(st.DownBank, DownReserve) + DownRate * accrue);
+            }
 
             float dx = cmd.Pos.x - e.Pos.x, dz = cmd.Pos.z - e.Pos.z;
             float dist = (float)Math.Sqrt(dx * dx + dz * dz);
@@ -281,11 +289,10 @@ namespace UnturnedGodot.Net
                 return;   // the entity keeps the last-good -- observers never see the violating claim; banks undrained
             }
 
-            // ---- adopt: drain the spent motion and PIN the leftover bank to the jitter reserve --
-            // silence banks allowance, a flowing stream never does (the anti-blink half of the bucket) ----
-            st.HBank = Math.Min(st.HBank - dist, HorizontalReserve);
-            st.UpBank = Math.Min(st.UpBank - Math.Max(dy, 0f), UpReserve);
-            st.DownBank = Math.Min(st.DownBank - Math.Max(-dy, 0f), DownReserve);
+            // ---- adopt: drain the spent motion (the reserve pin happens at the next arrival tick) ----
+            st.HBank -= dist;
+            st.UpBank -= Math.Max(dy, 0f);
+            st.DownBank -= Math.Max(-dy, 0f);
             st.HasAdopted = true;
             st.Adopted = new DrivenPlayerState
             {
