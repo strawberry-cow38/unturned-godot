@@ -27,20 +27,21 @@ namespace UnturnedGodot
             head.AddThemeFontSizeOverride("font_size", 18);
             box.AddChild(head);
 
-            var sel = new Button { Text = "Select / move  (no placement)" };
-            sel.Pressed += () => { _objects.PlaceName = null; _list.DeselectAll(); };
+            var hint = new Label { Text = "click a prop below → E places it\nclick a placed prop → E moves it\nT gizmo · Del · Ctrl+Z undo" };
+            hint.AddThemeFontSizeOverride("font_size", 11);
+            hint.AddThemeColorOverride("font_color", new Color(0.75f, 0.8f, 0.85f));
+            box.AddChild(hint);
+
+            var sel = new Button { Text = "Select-only (clear place type)" };
+            sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); };
             box.AddChild(sel);
 
             _search = new LineEdit { PlaceholderText = "search…" };
             _search.TextChanged += _ => Rebuild();
             box.AddChild(_search);
 
-            _list = new ItemList { CustomMinimumSize = new Vector2(240, 500), SizeFlagsVertical = SizeFlags.ExpandFill };
-            _list.ItemSelected += idx =>
-            {
-                var name = _list.GetItemText((int)idx);
-                _objects.PlaceName = name;
-            };
+            _list = new ItemList { CustomMinimumSize = new Vector2(240, 500), SizeFlagsVertical = SizeFlags.ExpandFill, FocusMode = Control.FocusModeEnum.None };
+            _list.ItemSelected += idx => _objects.SetPlaceType(_list.GetItemText((int)idx));   // pick the type to E-place (+ clears any instance selection)
             box.AddChild(_list);
 
             Rebuild();

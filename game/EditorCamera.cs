@@ -30,6 +30,7 @@ namespace UnturnedGodot
                 {
                     _flying = mb.Pressed;
                     Input.MouseMode = _flying ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+                    if (_flying) GetViewport().GuiReleaseFocus();   // drop any UI keyboard focus (e.g. the prop-search box) so WASD flies instead of typing
                 }
                 else if (_flying && mb.Pressed && mb.ButtonIndex == MouseButton.WheelUp)
                     _speed = Mathf.Clamp(_speed + 0.2f * _speed, 0.5f, 2048f);   // source: speed += mouse_z*0.2*speed

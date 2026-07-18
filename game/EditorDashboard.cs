@@ -13,6 +13,7 @@ namespace UnturnedGodot
 
         Label _status;
         EditorObjectBrowser _browser;   // the Objects-tab palette (shown only in Objects mode)
+        EditorTerrainPanel _terrainPanel;   // the Terrain-tab tool buttons (shown only in Terrain mode)
         readonly Dictionary<EEditorMode, Button> _tabs = new();
 
         public override void _Ready()
@@ -56,6 +57,7 @@ namespace UnturnedGodot
             AddChild(_status);
 
             if (Editor?.Objects != null) { _browser = new EditorObjectBrowser(Editor.Objects); AddChild(_browser); }
+            if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
             if (Editor != null) Editor.ModeChanged += _ => Refresh();
             Refresh();
         }
@@ -65,6 +67,7 @@ namespace UnturnedGodot
             var active = Editor?.Mode ?? EEditorMode.Level;
             foreach (var kv in _tabs) kv.Value.ButtonPressed = kv.Key == active;
             if (_browser != null) _browser.Visible = active == EEditorMode.Level;   // the object browser lives under the Level tab
+            if (_terrainPanel != null) _terrainPanel.Visible = active == EEditorMode.Terrain;   // terrain tool buttons under the Terrain tab
         }
 
         public override void _Process(double delta)
@@ -72,8 +75,12 @@ namespace UnturnedGodot
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
             string space = Editor.Objects != null && Editor.Objects.GizmoLocalSpace ? "local" : "global";
-            string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · drag arrows = move · G = space[{space}] · Del delete" : "";
-            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}   ·   map: {Editor.MapName}";
+            string gm = Editor.Objects?.GizmoModeText ?? "move";
+            string obj = Editor.Mode == EEditorMode.Level ? $"   ·   LMB place/select · drag box-select · Shift multi · {gm} gizmo (T) · Ctrl+C/V dup · Ctrl+B/N align · Del" : "";
+            string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
+            string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadsEd != null ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}" : "";
+            string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
+            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{spawn}{envs}{terr}   ·   map: {Editor.MapName}";
         }
     }
 }

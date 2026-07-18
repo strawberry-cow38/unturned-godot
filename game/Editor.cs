@@ -15,6 +15,10 @@ namespace UnturnedGodot
         public Node3D World { get; private set; }        // the loaded map (terrain + objects) = the edit target
         public EditorCamera Camera { get; private set; }
         public EditorObjects Objects;                     // Phase 2 objects sub-editor (set by BuildEditor)
+        public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
+        public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
+        public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
+        public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, paving mode)
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 
@@ -30,10 +34,28 @@ namespace UnturnedGodot
             Instance = this; MapName = mapName; World = world; Camera = cam;
         }
 
+        // Source EditorInteract gates ALL world input on Glazier.ShouldGameProcessInput (false when the pointer is over UI).
+        // Godot equivalent: a Control is under the mouse (dashboard buttons/panels). Every tool checks this so clicks/keys
+        // over the UI never fire a tool into the world behind it. (Marquee/help overlays use MouseFilter=Ignore, so they
+        // don't count.) True = the pointer is over the editor UI -> the world should NOT process this input.
+        public static bool PointerOverUI(Node n)
+        {
+            var vp = n.GetViewport();
+            return vp != null && vp.GuiGetHoveredControl() != null;
+        }
+
         public override void _ExitTree() { if (Instance == this) Instance = null; }
 
         // source Editor.save() -> EditorInteract.save() + EditorObjects.save() + EditorSpawns.save().
         // wired per-phase as the sub-editors land; Phase 1 has nothing persistent yet.
-        public void Save() => GD.Print($"[editor] save '{MapName}' (Phase 1: no sub-editors persist yet)");
+        public void Save()   // source Editor.save() -> fans out to the sub-editors
+        {
+            int n = Objects?.Save() ?? 0;
+            int s = Spawns?.Save() ?? 0;
+            int e = Environment?.Save() ?? 0;
+            int t = TerrainEd?.Save() ?? 0;
+            int r = RoadsEd?.Save() ?? 0;
+            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads)");
+        }
     }
 }
