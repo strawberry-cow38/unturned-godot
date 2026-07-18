@@ -1506,7 +1506,7 @@ namespace UnturnedGodot
         async void BuildEditor()
         {
             _worldBuild = true;
-            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Aerial, _mapRoot, _mapPlace, noZombies: true,
+            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, _mapPlace, noZombies: true,
                                                         syncLoad: false, bakeNav: false, ActiveHoliday());
             // Clean, legible editor lighting. The DayNightCycle re-applies a warm-tan ambient + fog + glow EVERY
             // frame (source-faithful sky, but it reads as thick haze from the aerial editor cam), so freeze its
@@ -1528,10 +1528,16 @@ namespace UnturnedGodot
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
             editor.AddChild(cam);
-            editor.Setup("PEI", null, cam);   // World ref lands in Phase 2 (object-picking); Phase 1 doesn't need it
+            editor.Setup("PEI", null, cam);
+            var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
+            editor.AddChild(objs);
+            editor.Objects = objs;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             if (res.Ready) _worldReady = true;
-            GD.Print("[editor] Phase 1 up: PEI loaded + free-fly cam + dashboard");
+            // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORDEMO") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () => objs.DemoPlace();
+            GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
 
         // Exit the editor back to the main menu. Simplest reliable teardown of the async world + editor = reload

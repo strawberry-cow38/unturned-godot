@@ -59,5 +59,6 @@ namespace UnturnedGodot
         }
 
         public float Speed => _speed;
+        public bool Flying => _flying;   // RMB held (mouse captured) -- the Objects editor ignores LMB place/select while flying
     }
 }

@@ -12,6 +12,7 @@ namespace UnturnedGodot
         public Editor Editor;                // set by Main before AddChild
 
         Label _status;
+        EditorObjectBrowser _browser;   // the Objects-tab palette (shown only in Objects mode)
         readonly Dictionary<EEditorMode, Button> _tabs = new();
 
         public override void _Ready()
@@ -54,6 +55,7 @@ namespace UnturnedGodot
             _status.AddThemeConstantOverride("outline_size", 3);
             AddChild(_status);
 
+            if (Editor?.Objects != null) { _browser = new EditorObjectBrowser(Editor.Objects); AddChild(_browser); }
             if (Editor != null) Editor.ModeChanged += _ => Refresh();
             Refresh();
         }
@@ -62,6 +64,7 @@ namespace UnturnedGodot
         {
             var active = Editor?.Mode ?? EEditorMode.Objects;
             foreach (var kv in _tabs) kv.Value.ButtonPressed = kv.Key == active;
+            if (_browser != null) _browser.Visible = active == EEditorMode.Objects;
         }
 
         public override void _Process(double delta)
