@@ -15,11 +15,16 @@ namespace UnturnedGodot
         readonly Terrain _terr;
         const uint TerrainLayer = 1u << 0;
         Node3D _ring;
-        float _radius = 28f, _strength = 8f;   // brush radius (world m) + strength (world Y per stroke)
+        float _radius = 28f, _strength = 20f;   // brush radius (world m) + strength (world Y PER SECOND, source held brush is dt-scaled)
         enum EBrush { Raise, Flatten, Smooth }   // source Devkit heightmap modes (ADJUST / FLATTEN / SMOOTH)
         EBrush _brush = EBrush.Raise;
+        bool _paint;   // false = height sculpt (Height tab), true = Materials splat-paint
+        int _layer;    // 0-7 splat layer to paint
+        static readonly string[] LayerNames = { "Dirt", "Wheat", "Grass", "Gravel", "Road", "Sand", "Snow", "Stone" };
 
-        public string ModeText => $"{_brush}{(_brush == EBrush.Raise ? " (Shift=lower)" : "")} · radius {_radius:0}m · strength {_strength:0}";
+        public string ModeText => _paint
+            ? $"PAINT {LayerNames[_layer]} · radius {_radius:0}m · P=sculpt · L=layer"
+            : $"{_brush}{(_brush == EBrush.Raise ? " (Shift=lower)" : "")} · radius {_radius:0}m · strength {_strength:0} · P=paint";
         static string SavePath => ProjectSettings.GlobalizePath("res://content/terrain/") + "editor_heightmap.bin";
 
         public int Save()   // Editor.Save() fan-out: persist the sculpted heightmap (only if edited)
@@ -64,32 +69,34 @@ namespace UnturnedGodot
             _ring.Position = pt + Vector3.Up * 0.5f;
             _ring.Scale = new Vector3(_radius, 1f, _radius);
             _ring.Visible = true;
+            // source-accurate HELD-DRAG: the brush applies every frame while LMB is held, dt-scaled (Devkit continuous brush)
+            if (_terr != null && Input.IsMouseButtonPressed(MouseButton.Left))
+            {
+                float dt = (float)d;
+                if (_paint) _terr.PaintSplat(pt.X, pt.Z, _radius, _layer);
+                else switch (_brush)
+                {
+                    case EBrush.Raise: _terr.EditHeight(pt.X, pt.Z, _radius, _strength * dt * (Input.IsKeyPressed(Key.Shift) ? -1f : 1f)); break;   // height += dt*strength*alpha
+                    case EBrush.Flatten: _terr.EditFlatten(pt.X, pt.Z, _radius, Mathf.Clamp(_strength * dt * 0.15f, 0.01f, 1f)); break;
+                    case EBrush.Smooth: _terr.EditSmooth(pt.X, pt.Z, _radius, Mathf.Clamp(_strength * dt * 0.15f, 0.01f, 1f)); break;
+                }
+            }
         }
 
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Terrain || (_flyCam != null && _flyCam.Flying) || _terr == null) return;
-            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
+            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && !mb.Pressed)
             {
-                if (mb.Pressed)
-                {
-                    if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
-                    float fac = Mathf.Clamp(_strength / 40f, 0.05f, 1f);   // flatten/smooth blend factor from the strength dial
-                    switch (_brush)
-                    {
-                        case EBrush.Raise: _terr.EditHeight(pt.X, pt.Z, _radius, _strength * (Input.IsKeyPressed(Key.Shift) ? -1f : 1f)); break;   // Shift = lower
-                        case EBrush.Flatten: _terr.EditFlatten(pt.X, pt.Z, _radius, fac); break;
-                        case EBrush.Smooth: _terr.EditSmooth(pt.X, pt.Z, _radius, fac); break;
-                    }
-                    GD.Print($"[editor-terrain] {_brush} at ({pt.X:0},{pt.Z:0}) r={_radius:0} s={_strength:0}");
-                }
-                else _terr?.RebuildCollider();   // stroke end (mouse-up): refresh the heavy collider once, off the stroke
+                if (!_paint) _terr?.RebuildCollider();   // held-drag stroke end (mouse-up): refresh the collider once (sculpt only)
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 switch (k.Keycode)
                 {
-                    case Key.M: _brush = (EBrush)(((int)_brush + 1) % 3); break;            // cycle Raise/Flatten/Smooth (source Devkit modes)
+                    case Key.P: _paint = !_paint; break;                                       // toggle Height sculpt <-> Materials paint
+                    case Key.L: if (_paint) _layer = (_layer + 1) % 8; break;                  // cycle the paint layer
+                    case Key.M: if (!_paint) _brush = (EBrush)(((int)_brush + 1) % 3); break;   // cycle Raise/Flatten/Smooth (source Devkit modes)
                     case Key.Bracketleft: _radius = Mathf.Max(6f, _radius - 4f); break;    // brush radius (source brushRadius)
                     case Key.Bracketright: _radius = Mathf.Min(140f, _radius + 4f); break;
                     case Key.Comma: _strength = Mathf.Max(1f, _strength - 2f); break;      // brush strength
