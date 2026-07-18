@@ -79,11 +79,24 @@ namespace UnturnedGodot
         // palette textures skip mipmaps. Glass/foliage nuances are simplified for the editor.
         StandardMaterial3D MatFor(string name)
         {
+            if (name.StartsWith("Glass"))   // source glass = shader-based transparent; give it a see-through look (matches WorldBuilder.MatFor)
+                return new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(0.62f, 0.73f, 0.78f, 0.26f),
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    Metallic = 0f, Roughness = 0.06f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                };
             var mm = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = Dir + name + "_tex.png";
             var img = new Image();
             if (System.IO.File.Exists(tp) && img.Load(tp) == Error.Ok)
             {
+                if (img.GetFormat() == Image.Format.Rgba8)   // leaf/foliage cutout: real transparency (>0.25% of texels) -> alpha-scissor (matches WorldBuilder)
+                {
+                    var data = img.GetData(); int tr = 0;
+                    for (int i = 3; i < data.Length; i += 4) if (data[i] < 200) tr++;
+                    if (tr > data.Length / 400) { mm.Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor; mm.AlphaScissorThreshold = 0.5f; }
+                }
                 bool palette = img.GetWidth() <= 16 && img.GetHeight() <= 16;
                 if (!palette) img.GenerateMipmaps();
                 mm.AlbedoTexture = ImageTexture.CreateFromImage(img);
@@ -136,20 +149,34 @@ namespace UnturnedGodot
             return true;
         }
 
-        // returns true if the click placed or selected a prop; false if it hit empty ground (caller arms a box drag-select)
-        bool TryPlaceOrSelect(Vector2 screen)
+        // source EditorObjects: LMB SELECTS the prop under the cursor (never places -- placement is E, master). Shift toggles
+        // into the multi-selection. Returns true if a prop was selected; false if empty ground (caller arms box drag-select).
+        bool TrySelect(Vector2 screen)
         {
-            bool additive = Input.IsKeyPressed(Key.Shift);   // source 'modify' key -> toggle into the multi-selection
-            if (PlaceName != null && !additive)   // place mode: drop the prop where the ray meets terrain / another prop
-            {
-                if (Raycast(screen, TerrainLayer | SmallPropLayer | EditorPickLayer, out var pt, out _))
-                    Select(Place(PlaceName, pt, Upright(_placeYaw)));
-                return true;   // place mode consumes the click
-            }
+            bool additive = Input.IsKeyPressed(Key.Shift);
             if (Raycast(screen, EditorPickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
-                { Select(obj, additive); return true; }   // Shift+click toggles; plain click single-selects
+                { Select(obj, additive); return true; }
             return false;   // clicked empty ground
         }
+
+        // source tool_2 (E): with a prop selected, move the whole selection to the cursor; else summon the list-selected prop.
+        void PlaceOrMoveAtCursor()
+        {
+            if (Editor.PointerOverUI(this)) return;
+            var mp = GetViewport().GetMousePosition();
+            if (!Raycast(mp, TerrainLayer | SmallPropLayer | EditorPickLayer, out var pt, out _)) return;
+            if (Primary != null)   // E with a prop selected -> move it to the cursor
+            {
+                var delta = pt - Primary.GlobalPosition;
+                foreach (var s in _selection) s.GlobalPosition += delta;
+                _gizmo.Attach(Primary); PositionMarkers();
+            }
+            else if (PlaceName != null) Place(PlaceName, pt, Upright(_placeYaw));   // E with only a list type -> summon one (stays unselected so E keeps placing)
+        }
+
+        // browser list-click: arm this prop type for E-placement + clear any instance selection (so E summons, not moves)
+        public void SetPlaceType(string name) { PlaceName = name; Select(null); }
+        public void ClearPlaceType() { PlaceName = null; }   // "select/move only" button
 
         // select obj; additive (Shift) toggles it in the multi-selection, else it replaces the selection; null clears
         void Select(Node3D obj, bool additive = false)
@@ -273,7 +300,7 @@ namespace UnturnedGodot
                 {
                     if (Editor.PointerOverUI(this)) return;                                  // clicking the dashboard/browser must not fire tools into the world
                     if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); return; }              // gizmo grab -> drag (capture group-relative transforms)
-                    if (!TryPlaceOrSelect(mp)) { _boxDragging = true; _boxStart = mp; }     // empty ground -> arm a box drag-select
+                    if (!TrySelect(mp)) { _boxDragging = true; _boxStart = mp; }            // click selects a prop; empty ground -> arm a box drag-select
                 }
                 else if (_gizmo.Dragging) { _gizmo.EndDrag(); PositionMarkers(); }
                 else if (_boxDragging) { FinishBoxSelect(mp); _boxDragging = false; _marquee.Visible = false; }
@@ -291,6 +318,7 @@ namespace UnturnedGodot
                 else if (ctrl && k.Keycode == Key.V) PasteSelection();                   // Ctrl+V paste objects (source EditorObjects)
                 else if (ctrl && k.Keycode == Key.B) CopyTransform();                    // Ctrl+B copy transform (source)
                 else if (ctrl && k.Keycode == Key.N) PasteTransform();                   // Ctrl+N paste transform (source)
+                else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
                 else if (k.Keycode == Key.Escape) Select(null);
