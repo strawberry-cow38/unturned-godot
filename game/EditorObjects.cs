@@ -149,15 +149,15 @@ namespace UnturnedGodot
                     Mesh = new BoxMesh { Size = Vector3.One },
                     MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.85f, 0.15f, 0.28f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded },
                     Visible = false,
+                    TopLevel = true,   // we drive its world transform from the selected object directly
                 };
                 AddChild(_marker);
             }
             if (_selected == null) { _marker.Visible = false; return; }
             var mi = _selected.GetChildCount() > 0 ? _selected.GetChild(0) as MeshInstance3D : null;
-            var aabb = mi != null ? mi.GetAabb() : new Aabb(Vector3.Zero, Vector3.One);
-            var sz = aabb.Size; var wsz = new Vector3(sz.X, sz.Z, sz.Y);   // the ex=270 pitch swaps the mesh's local Y/Z into world height/depth
-            _marker.GlobalPosition = _selected.GlobalPosition + _selected.GlobalTransform.Basis * (aabb.Position + aabb.Size * 0.5f);
-            _marker.Scale = wsz * 1.06f;
+            var aabb = mi != null ? mi.GetAabb() : new Aabb(-Vector3.One * 0.5f, Vector3.One);
+            // carry the mesh's LOCAL AABB box through the object's FULL transform, so the outline rotates + scales WITH it
+            _marker.GlobalTransform = _selected.GlobalTransform * new Transform3D(Basis.FromScale(aabb.Size * 1.06f), aabb.Position + aabb.Size * 0.5f);
             _marker.Visible = true;
         }
 
@@ -263,15 +263,15 @@ namespace UnturnedGodot
             if (_placed.Count > 0)
             {
                 var pr = _placed[0];
-                var rb = pr.GlobalTransform.Basis.Orthonormalized().Rotated(Vector3.Right, Mathf.DegToRad(24f)).Rotated(Vector3.Up, Mathf.DegToRad(37f));
-                pr.GlobalTransform = new Transform3D(rb * Basis.FromScale(new Vector3(1.4f, 1.4f, 0.7f)), pr.GlobalPosition);   // arbitrary rotate + non-uniform scale
+                var rb = pr.GlobalTransform.Basis.Orthonormalized().Rotated(Vector3.Right, Mathf.DegToRad(24f)).Rotated(Vector3.Up, Mathf.DegToRad(37f)).Rotated(Vector3.Forward, Mathf.DegToRad(32f));
+                pr.GlobalTransform = new Transform3D(rb * Basis.FromScale(new Vector3(1.5f, 1.5f, 0.6f)), pr.GlobalPosition);   // arbitrary rotate (incl roll) + non-uniform scale
                 var a = pr.GlobalTransform.Basis.Orthonormalized();
                 var (ex, ey, ez) = DecomposeEuler(a);
                 var re = FromEuler(ex, ey, ez);
                 float err = (a.X - re.X).Length() + (a.Y - re.Y).Length() + (a.Z - re.Z).Length();
                 var sc = pr.GlobalTransform.Basis.Scale;
                 GD.Print($"[editordemo] euler round-trip err={err:0.####} (ex={ex:0.#} ey={ey:0.#} ez={ez:0.#}) scale=({sc.X:0.##},{sc.Y:0.##},{sc.Z:0.##})");
-                Select(pr); _gizmo.CycleMode(); _gizmo.CycleMode();   // Translate->Rotate->Scale: show the scale handles on the transformed prop
+                Select(pr);   // translate-mode gizmo (thin) so the selection outline reads clearly in the render
             }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
