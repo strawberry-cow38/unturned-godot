@@ -2,11 +2,11 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // Terrain sub-editor (Height slice), ported from SDG.Unturned EditorTerrain (Devkit heightmap ADJUST). LMB raises the
-    // terrain under the brush, Shift+LMB lowers it (radial cos-falloff); '[' ']' size the brush, ',' '.' strength. Drives
-    // Terrain.EditHeight -> modifies the in-memory _grid + rebuilds the mesh/collider. Shown on the Terrain dashboard tab.
-    // NOTE: a stroke rebuilds the WHOLE merged island mesh (fine for the shot / occasional edits; chunking is a perf
-    // follow-up). Materials (splat paint), Flatten/Smooth brushes, and the heightmap save are the next slices.
+    // Terrain sub-editor, ported from SDG.Unturned EditorTerrain (Devkit heightmap brushes). LMB raises the terrain under
+    // the brush, Shift+LMB lowers it (source linear getBrushAlpha falloff); M cycles Raise/Flatten/Smooth, P toggles
+    // Materials splat-paint, L cycles the layer; '[' ']' size the brush, ',' '.' strength. Held-drag applies every frame
+    // dt-scaled (source continuous brush). Drives Terrain.EditHeight/EditFlatten/EditSmooth/PaintSplat -> edits the
+    // in-memory _grid; only the CHUNKS under the brush rebuild, colliders deferred to mouse-up (FlushColliders) = smooth.
     public partial class EditorTerrain : Node3D
     {
         readonly Editor _editor;
@@ -88,7 +88,7 @@ namespace UnturnedGodot
             if (_editor.Mode != EEditorMode.Terrain || (_flyCam != null && _flyCam.Flying) || _terr == null) return;
             if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && !mb.Pressed)
             {
-                if (!_paint) _terr?.RebuildCollider();   // held-drag stroke end (mouse-up): refresh the collider once (sculpt only)
+                if (!_paint) _terr?.FlushColliders();   // held-drag stroke end (mouse-up): rebuild trimesh colliders for the touched chunks
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
@@ -111,7 +111,7 @@ namespace UnturnedGodot
             if (_terr == null) return;
             _terr.EditHeight(at.X, at.Z, 45f, 110f);                             // a sharp spike (raise)
             for (int i = 0; i < 4; i++) _terr.EditSmooth(at.X, at.Z, 62f, 0.5f);   // smooth it into a rounded hill (verifies Smooth)
-            _terr.RebuildCollider();                                             // stroke end
+            _terr.FlushColliders();                                              // stroke end
             GD.Print("[editorterrain] raised + smoothed a demo hill");
         }
     }

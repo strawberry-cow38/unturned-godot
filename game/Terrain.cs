@@ -84,7 +84,8 @@ void fragment() {
         // Merged-map height grid + placement, stashed so gameplay can sample the ground height at a world XZ (spawns etc.).
         float[,] _grid; int _gw, _gh; float _bx, _bz;
         byte[,] _dom; int _dw, _dh;   // dominant splatmap layer per texel -> SampleDominantLayer (grassy-spawn picking)
-        MeshInstance3D _mi; StaticBody3D _collider; Vector2[] _uvs; Color[] _cols; int[] _idx;   // editor terrain sculpt: rebuild the mesh + collider from _grid
+        MeshInstance3D[,] _chunkMi; StaticBody3D[,] _chunkBody; int _chunksX, _chunksY; Material _terrMat; bool _withCollider;   // editor sculpt: per-chunk meshes so a stroke rebuilds ONLY the touched chunks
+        const int CHUNK = 48;   // grid cells per chunk side (chunks share edge verts, so no seams)
         Image _s0Img, _s1Img; ImageTexture _s0Tex, _s1Tex;   // editor splat paint: the live 8-layer weight textures (splat0=layers 0-3, splat1=4-7)
 
         // Paint the splat map: set every texel in a world-radius brush to a single dominant layer, then re-upload the
@@ -124,11 +125,11 @@ void fragment() {
                     float dx = (gx - cx) * UNIT, dy = (gy - cy) * UNIT;
                     float dist = Mathf.Sqrt(dx * dx + dy * dy);
                     if (dist > radiusWorld) continue;
-                    float falloff = 0.5f + 0.5f * Mathf.Cos(Mathf.Pi * dist / radiusWorld);   // smooth (cos) brush falloff
+                    float falloff = BrushAlpha(dist / radiusWorld);   // source linear falloff (getBrushAlpha)
                     _grid[gx, gy] = Mathf.Clamp(_grid[gx, gy] + dNorm * falloff, 0f, 1f);
                 }
             _dirty = true;
-            RebuildMesh();
+            RebuildChunksIn(cgx - rg, cgx + rg, cgy - rg, cgy + rg);
         }
 
         bool _dirty;
@@ -149,7 +150,7 @@ void fragment() {
             using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
             if (r.ReadInt32() != _gw || r.ReadInt32() != _gh) return false;
             for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) _grid[x, y] = r.ReadSingle();
-            RebuildMesh(); RebuildCollider();
+            RebuildAll();
             return true;
         }
 
@@ -168,7 +169,7 @@ void fragment() {
                     float f = BrushAlpha(dist / radiusWorld);   // source linear falloff
                     _grid[gx, gy] = Mathf.Lerp(_grid[gx, gy], target, Mathf.Clamp(strength * f, 0f, 1f));
                 }
-            _dirty = true; RebuildMesh();
+            _dirty = true; RebuildChunksIn(cgx - rg, cgx + rg, cgy - rg, cgy + rg);
         }
 
         public void EditSmooth(float worldX, float worldZ, float radiusWorld, float strength)   // average each sample with its 4 neighbours (Devkit SMOOTH)
@@ -188,34 +189,75 @@ void fragment() {
                     next.Add((gx, gy, Mathf.Lerp(_grid[gx, gy], avg, Mathf.Clamp(strength * f, 0f, 1f))));
                 }
             foreach (var (gx, gy, nv) in next) _grid[gx, gy] = nv;
-            _dirty = true; RebuildMesh();
+            _dirty = true; RebuildChunksIn(cgx - rg, cgx + rg, cgy - rg, cgy + rg);
         }
 
-        public void RebuildMesh()   // regenerate vertices + normals from _grid (VISUAL mesh only -- fast; RebuildCollider on stroke-end)
+        readonly System.Collections.Generic.HashSet<(int, int)> _dirtyChunks = new();   // chunks whose collider went stale mid-stroke (flushed on mouse-up)
+
+        // Rebuild ONE chunk's mesh (+ optional trimesh collider) from the (global) _grid. Reads neighbour cells for edge normals.
+        public void RebuildChunk(int cxi, int cyi, bool withCollider = true)
         {
-            if (_grid == null || _mi == null) return;
-            int nv = _gw * _gh;
-            var verts = new Vector3[nv]; var norms = new Vector3[nv];
-            for (int x = 0; x < _gw; x++)
-                for (int y = 0; y < _gh; y++)
+            if (_grid == null || _chunkMi == null || cxi < 0 || cyi < 0 || cxi >= _chunksX || cyi >= _chunksY) return;
+            int x0 = cxi * CHUNK, y0 = cyi * CHUNK;
+            int x1 = System.Math.Min(x0 + CHUNK, _gw - 1), y1 = System.Math.Min(y0 + CHUNK, _gh - 1);
+            int nx = x1 - x0 + 1, ny = y1 - y0 + 1;
+            if (nx < 2 || ny < 2) return;
+            int nv = nx * ny;
+            var verts = new Vector3[nv]; var norms = new Vector3[nv]; var uvs = new Vector2[nv]; var cols = new Color[nv];
+            for (int lx = 0; lx < nx; lx++)
+                for (int ly = 0; ly < ny; ly++)
                 {
-                    int i = x * _gh + y;
-                    verts[i] = new Vector3(_bx + x * UNIT, _grid[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f, -(_bz + y * UNIT));
-                    float hl = _grid[System.Math.Max(0, x - 1), y], hr = _grid[System.Math.Min(_gw - 1, x + 1), y];
-                    float hd = _grid[x, System.Math.Max(0, y - 1)], hu = _grid[x, System.Math.Min(_gh - 1, y + 1)];
+                    int gx = x0 + lx, gy = y0 + ly; int i = lx * ny + ly;
+                    verts[i] = new Vector3(_bx + gx * UNIT, _grid[gx, gy] * TILE_HEIGHT - TILE_HEIGHT / 2f, -(_bz + gy * UNIT));
+                    uvs[i] = new Vector2(gx / (float)(_gw - 1), gy / (float)(_gh - 1));
+                    cols[i] = _dom != null ? LayerColor(_dom[System.Math.Min(gx, _dw - 1), System.Math.Min(gy, _dh - 1)]) : new Color(0.34f, 0.42f, 0.26f);
+                    float hl = _grid[System.Math.Max(0, gx - 1), gy], hr = _grid[System.Math.Min(_gw - 1, gx + 1), gy];
+                    float hd = _grid[gx, System.Math.Max(0, gy - 1)], hu = _grid[gx, System.Math.Min(_gh - 1, gy + 1)];
                     norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
+                }
+            var idx = new int[(nx - 1) * (ny - 1) * 6]; int t = 0;
+            for (int lx = 0; lx < nx - 1; lx++)
+                for (int ly = 0; ly < ny - 1; ly++)
+                {
+                    int i00 = lx * ny + ly, i10 = (lx + 1) * ny + ly, i01 = lx * ny + (ly + 1), i11 = (lx + 1) * ny + (ly + 1);
+                    idx[t++] = i00; idx[t++] = i01; idx[t++] = i10; idx[t++] = i10; idx[t++] = i01; idx[t++] = i11;
                 }
             var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
             arr[(int)Mesh.ArrayType.Vertex] = verts; arr[(int)Mesh.ArrayType.Normal] = norms;
-            arr[(int)Mesh.ArrayType.TexUV] = _uvs; arr[(int)Mesh.ArrayType.Color] = _cols; arr[(int)Mesh.ArrayType.Index] = _idx;
+            arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Color] = cols; arr[(int)Mesh.ArrayType.Index] = idx;
             var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
-            _mi.Mesh = mesh;
+            var mi = _chunkMi[cxi, cyi];
+            if (mi == null) { mi = new MeshInstance3D { MaterialOverride = _terrMat }; _chunkMi[cxi, cyi] = mi; AddChild(mi); }
+            mi.Mesh = mesh;
+            if (_withCollider && withCollider)
+            {
+                var body = _chunkBody[cxi, cyi];
+                if (body == null) { body = new StaticBody3D { CollisionLayer = 1u << 0 }; body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass); body.AddToGroup("terrain"); body.AddChild(new CollisionShape3D()); _chunkBody[cxi, cyi] = body; AddChild(body); }
+                foreach (var c in body.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = mesh.CreateTrimeshShape();
+            }
         }
 
-        public void RebuildCollider()   // trimesh collider from the current mesh -- heavy (whole island), so deferred to stroke-end (mouse-up)
+        // Rebuild every chunk overlapping a grid cell range (a brush edit) -- 1-chunk margin so shared edges/normals update.
+        // withCollider=false (default for strokes): MESH ONLY (fast) + mark the chunk dirty; FlushColliders rebuilds the heavy trimesh on mouse-up.
+        void RebuildChunksIn(int gx0, int gx1, int gy0, int gy1, bool withCollider = false)
         {
-            if (_collider == null || _mi?.Mesh is not ArrayMesh am) return;
-            foreach (var c in _collider.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = am.CreateTrimeshShape();
+            int cx0 = System.Math.Max(0, gx0 / CHUNK - 1), cx1 = System.Math.Min(_chunksX - 1, gx1 / CHUNK);
+            int cy0 = System.Math.Max(0, gy0 / CHUNK - 1), cy1 = System.Math.Min(_chunksY - 1, gy1 / CHUNK);
+            for (int cx = cx0; cx <= cx1; cx++) for (int cy = cy0; cy <= cy1; cy++) { RebuildChunk(cx, cy, withCollider); if (!withCollider) _dirtyChunks.Add((cx, cy)); }
+        }
+
+        public void RebuildAll() { if (_chunkMi != null) for (int cx = 0; cx < _chunksX; cx++) for (int cy = 0; cy < _chunksY; cy++) RebuildChunk(cx, cy, true); }   // full build (mesh + collider)
+
+        public void FlushColliders()   // stroke end (mouse-up): rebuild trimesh colliders only for the chunks the drag touched
+        {
+            if (_withCollider)
+                foreach (var (cx, cy) in _dirtyChunks)
+                {
+                    var body = _chunkBody[cx, cy];
+                    if (_chunkMi[cx, cy]?.Mesh is ArrayMesh am && body != null)
+                        foreach (var c in body.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = am.CreateTrimeshShape();
+                }
+            _dirtyChunks.Clear();
         }
         public float SampleHeight(float worldX, float worldZ)
         {
@@ -381,43 +423,21 @@ void fragment() {
             var splat0Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf0);
             var splat1Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf1);
 
-            int nv = GW * GH;
-            var verts = new Vector3[nv]; var norms = new Vector3[nv]; var uvs = new Vector2[nv]; var cols = new Color[nv];
             float baseX = minX * TILE_SIZE, baseZ = minY * TILE_SIZE;
-            for (int x = 0; x < GW; x++)
-                for (int y = 0; y < GH; y++)
-                {
-                    int i = x * GH + y;
-                    float wy = g[x, y] * TILE_HEIGHT - TILE_HEIGHT / 2f;
-                    verts[i] = new Vector3(baseX + x * UNIT, wy, -(baseZ + y * UNIT));
-                    uvs[i] = new Vector2(x / (float)(GW - 1), y / (float)(GH - 1));
-                    cols[i] = splats.Count > 0 ? LayerColor(dom[System.Math.Min(x, GWs - 1), System.Math.Min(y, GHs - 1)])   // real splatmap material layout (grass/dirt/sand/forest)
-                                               : (wy < 0f ? new Color(0.20f, 0.36f, 0.55f) : (wy < 30f ? new Color(0.74f, 0.68f, 0.48f) : new Color(0.34f, 0.42f, 0.26f)));   // height fallback
-                    float hl = g[System.Math.Max(0, x - 1), y], hr = g[System.Math.Min(GW - 1, x + 1), y];
-                    float hd = g[x, System.Math.Max(0, y - 1)], hu = g[x, System.Math.Min(GH - 1, y + 1)];
-                    norms[i] = new Vector3(-(hr - hl) * TILE_HEIGHT, 2f * UNIT, (hu - hd) * TILE_HEIGHT).Normalized();
-                }
-            var idx = new int[(GW - 1) * (GH - 1) * 6]; int t = 0;
-            for (int x = 0; x < GW - 1; x++)
-                for (int y = 0; y < GH - 1; y++)
-                {
-                    int i00 = x * GH + y, i10 = (x + 1) * GH + y, i01 = x * GH + (y + 1), i11 = (x + 1) * GH + (y + 1);
-                    idx[t++] = i00; idx[t++] = i01; idx[t++] = i10;
-                    idx[t++] = i10; idx[t++] = i01; idx[t++] = i11;
-                }
-
-            var arr = new Godot.Collections.Array(); arr.Resize((int)Mesh.ArrayType.Max);
-            arr[(int)Mesh.ArrayType.Vertex] = verts; arr[(int)Mesh.ArrayType.Normal] = norms;
-            arr[(int)Mesh.ArrayType.TexUV] = uvs; arr[(int)Mesh.ArrayType.Color] = cols; arr[(int)Mesh.ArrayType.Index] = idx;
-            var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
-
-            var mi = new MeshInstance3D { Mesh = mesh };
             ImageTexture s0t = splats.Count > 0 ? ImageTexture.CreateFromImage(splat0Img) : null;
             ImageTexture s1t = splats.Count > 0 ? ImageTexture.CreateFromImage(splat1Img) : null;
             var texMat = splats.Count > 0 ? BuildTerrainMaterial(s0t, s1t) : null;   // real per-layer albedos, blended by per-texel splat weights
             GD.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
-            mi.MaterialOverride = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
-            terr.AddChild(mi); terr._mi = mi; terr._uvs = uvs; terr._cols = cols; terr._idx = idx; terr._s0Img = splat0Img; terr._s1Img = splat1Img; terr._s0Tex = s0t; terr._s1Tex = s1t;   // stash for live sculpt + splat paint
+            terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = baseX; terr._bz = baseZ;   // SampleHeight (spawns) + chunk sculpt
+            terr._dom = dom; terr._dw = GWs; terr._dh = GHs;   // SampleDominantLayer + chunk vertex colours
+            terr._s0Img = splat0Img; terr._s1Img = splat1Img; terr._s0Tex = s0t; terr._s1Tex = s1t;   // live splat paint
+            terr._terrMat = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
+            terr._withCollider = withCollider;
+            // CHUNKED mesh: one MeshInstance per chunk so a sculpt stroke rebuilds ONLY the touched chunks (smooth held-drag).
+            terr._chunksX = (GW - 2) / CHUNK + 1; terr._chunksY = (GH - 2) / CHUNK + 1;
+            terr._chunkMi = new MeshInstance3D[terr._chunksX, terr._chunksY];
+            terr._chunkBody = new StaticBody3D[terr._chunksX, terr._chunksY];
+            terr.RebuildAll();   // builds every chunk's mesh + collider from _grid
 
             // translucent ocean surface at PEI's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18, v12 = 0.1)
             // UG_NOWATER=1 skips the water plane -> see a map's raw terrain/textures from above (esp. flat custom maps below sea level)
@@ -441,17 +461,7 @@ void fragment() {
                 wbody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(wsize.X, 0.2f, wsize.Y) } });
                 terr.AddChild(wbody);
             }
-            if (withCollider)
-            {
-                var body = new StaticBody3D { CollisionLayer = 1u << 0 };
-                body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass);   // fallback if SurfAt has no splat data
-                body.AddToGroup("terrain");                                                 // bullet impacts sample SurfAt per-point
-                body.AddChild(new CollisionShape3D { Shape = mesh.CreateTrimeshShape() });
-                terr.AddChild(body); terr._collider = body;
-            }
-            terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = baseX; terr._bz = baseZ;   // for SampleHeight (spawns)
-            terr._dom = dom; terr._dw = GWs; terr._dh = GHs;   // for SampleDominantLayer (grassy-spawn picking)
-            return terr;
+            return terr;   // (grid/dom/material/chunks all stored above, before RebuildAll)
         }
     }
 }
