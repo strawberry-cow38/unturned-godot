@@ -1532,6 +1532,9 @@ namespace UnturnedGodot
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
+            var spawns = new EditorSpawns(editor, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
+            editor.AddChild(spawns);
+            editor.Spawns = spawns;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
@@ -1546,6 +1549,18 @@ namespace UnturnedGodot
                         cam.GlobalPosition = p + new Vector3(7f, 5f, 12f);
                         cam.LookAt(p + Vector3.Up * 1.5f, Vector3.Up);
                     }
+                };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORSPAWNS") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Spawns;   // switch to the Spawns tab so the markers show
+                    if (spawns.Positions.Count > 0)
+                    {
+                        var c = spawns.Positions[0];    // close-up on the first spawn (the 22 are spread across the whole island)
+                        cam.GlobalPosition = c + new Vector3(0f, 28f, 24f);
+                        cam.LookAt(c, Vector3.Up);
+                    }
+                    GD.Print($"[editorspawns] {spawns.PlayerCount} player + {spawns.AltCount} alt spawns visualized");
                 };
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }

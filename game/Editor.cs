@@ -15,6 +15,7 @@ namespace UnturnedGodot
         public Node3D World { get; private set; }        // the loaded map (terrain + objects) = the edit target
         public EditorCamera Camera { get; private set; }
         public EditorObjects Objects;                     // Phase 2 objects sub-editor (set by BuildEditor)
+        public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 
