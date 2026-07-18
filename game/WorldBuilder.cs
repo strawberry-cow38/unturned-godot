@@ -13,7 +13,7 @@ namespace UnturnedGodot
     //               objects + colliders + roads/foliage/trees + day-night, but NO local player, NO camera,
     //               NO local-authority spawns (zombies/loot/animals/vehicles/jeep/crops) and NO navmesh
     //               (puppets don't path); authoritative state arrives as replicas rendered by client views.
-    public enum WorldMode { Aerial, Playable, Dedicated, Client }
+    public enum WorldMode { Aerial, Playable, Dedicated, Client, Editor }   // Editor = colliders (mode != Aerial) for object picking, but NO player (mode != Playable) -- the map editor's free-fly world
 
     public sealed class WorldBuildResult
     {

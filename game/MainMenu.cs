@@ -18,6 +18,7 @@ namespace UnturnedGodot
         public System.Action<bool> OnPlay;        // legacy flat-terrain survival build (test flags only)
         public System.Action<bool> OnDrivePEI;    // bool = noZombies -- the real PEI world; the dashboard's Play opens this
         public System.Action OnMultiplayer;       // top-level "Multiplayer": connect to the MP test server (VoX: always our test server for now; server browser later)
+        public System.Action OnEditor;            // Workshop -> the singleplayer map editor
 
         // --- camera anchors (framings of the barn). Tuned against the render; index 0 = Title (idle). ---
         // pos + look-at, world space. Title is a pulled-back 3/4 hero shot; each tab reframes the barn.
@@ -44,6 +45,7 @@ namespace UnturnedGodot
         bool _reachedTitle;          // MenuUI.hasReachedTitleCameraTransform: first pan to Title is slow, then snappy
         Control _stubPanel;          // the "coming to Cow.0" placeholder for unimplemented tabs
         Control _playPanel;          // Play submenu: PEI / PEI no-zombies (our real modes)
+        Control _workshopPanel;      // Workshop submenu: Editor (PEI)
 
         static string G(string res) => ProjectSettings.GlobalizePath(res);
 
@@ -182,10 +184,11 @@ namespace UnturnedGodot
             MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, 1, () => OnMultiplayer?.Invoke());   // connect straight to the MP test server (no panel; server browser later)
             MenuButton(layer, "survivors",     "Survivors",     290f, false, 2, () => ShowStub("Survivors"));
             MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ShowStub("Configuration"));
-            MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ShowStub("Workshop"));
+            MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ToggleWorkshopPanel());
             MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
 
             BuildPlayPanel(layer);
+            BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
         }
 
@@ -245,7 +248,31 @@ namespace UnturnedGodot
             bool show = !_playPanel.Visible;
             _playPanel.Visible = show;
             if (_stubPanel != null) _stubPanel.Visible = false;
+            if (_workshopPanel != null) _workshopPanel.Visible = false;
             _targetTab = 1;   // hold the Play framing while the panel is open
+        }
+
+        // Workshop submenu -- vanilla has Editor / Manage / browse; ours ships the Editor (PEI) for now.
+        void BuildWorkshopPanel(CanvasLayer layer)
+        {
+            _workshopPanel = new PanelContainer { Position = new Vector2(240f, 410f), Visible = false };
+            var box = new VBoxContainer();
+            box.AddThemeConstantOverride("separation", 10);
+            ((PanelContainer)_workshopPanel).AddChild(box);
+            var head = new Label { Text = "WORKSHOP" };
+            head.AddThemeFontSizeOverride("font_size", 22);
+            box.AddChild(head);
+            box.AddChild(SubButton("Editor — Prince Edward Island", () => OnEditor?.Invoke()));
+            layer.AddChild(_workshopPanel);
+        }
+
+        void ToggleWorkshopPanel()
+        {
+            bool show = !_workshopPanel.Visible;
+            _workshopPanel.Visible = show;
+            if (_playPanel != null) _playPanel.Visible = false;
+            if (_stubPanel != null) _stubPanel.Visible = false;
+            _targetTab = 4;   // hold the Workshop framing while the panel is open
         }
 
         void BuildStubPanel(CanvasLayer layer)

@@ -60,7 +60,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null;
             bool deployTest = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -69,6 +69,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--menushot=")) menuShot = arg["--menushot=".Length..];   // render the 3D barn main menu + capture each of the 5 camera anchors (menu_00..04.png)
                 else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
+                else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
@@ -224,6 +225,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 _peiPlayable = true;
                 BuildObjectsTest();
+                return;
+            }
+
+            if (editorMode)   // --editor: boot the map editor (the Workshop path); --shot=OUT captures once the world's loaded
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildEditor();
                 return;
             }
 
@@ -444,6 +453,7 @@ namespace UnturnedGodot
                 menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
                 menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; _peiPlayable = true; BuildObjectsTest(); };
                 menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // in-game MP-test entry (replaces the launcher checkbox): same path as --connect=claw.bitvox.me
+                menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor
                 AddChild(menu);
                 return;
             }
@@ -1487,6 +1497,55 @@ namespace UnturnedGodot
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             AttachMpLoopback(res);    // --mploopback only; default SP is untouched
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+        }
+
+        // Workshop -> the map EDITOR (singleplayer, ported from SDG.Unturned Edit/). Phase 1: load PEI as the
+        // edit target (Aerial = world, no player, no colliders), drop in the free-fly EditorCamera + the mode-tab
+        // dashboard + the Editor controller. Fly + view + switch modes now; the per-mode sub-editors (Objects/
+        // Terrain/Spawns/...) + .level save land in the later phases.
+        async void BuildEditor()
+        {
+            _worldBuild = true;
+            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, _mapPlace, noZombies: true,
+                                                        syncLoad: false, bakeNav: false, ActiveHoliday());
+            // Clean, legible editor lighting. The DayNightCycle re-applies a warm-tan ambient + fog + glow EVERY
+            // frame (source-faithful sky, but it reads as thick haze from the aerial editor cam), so freeze its
+            // visuals first, then set a bright fog-free environment so the map is clearly editable.
+            if (res.DayNight != null) res.DayNight.VisualsEnabled = false;
+            foreach (var n in GetChildren())
+                if (n is WorldEnvironment we && we.Environment is Godot.Environment ev)
+                {
+                    ev.SetFogEnabled(false);
+                    ev.BackgroundMode = Godot.Environment.BGMode.Color;
+                    ev.BackgroundColor = new Color(0.53f, 0.67f, 0.86f);   // clear sky blue
+                    ev.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+                    ev.AmbientLightColor = new Color(0.92f, 0.92f, 0.94f);
+                    ev.AmbientLightEnergy = 1.15f;
+                    ev.GlowEnabled = false;
+                    break;
+                }
+            var editor = new Editor();
+            AddChild(editor);
+            var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
+            editor.AddChild(cam);
+            editor.Setup("PEI", null, cam);
+            var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
+            editor.AddChild(objs);
+            editor.Objects = objs;
+            editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
+            if (res.Ready) _worldReady = true;
+            // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORDEMO") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () => objs.DemoPlace();
+            GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
+        }
+
+        // Exit the editor back to the main menu. Simplest reliable teardown of the async world + editor = reload
+        // the scene (no --args -> the default menu boot).
+        void ReturnToMenu()
+        {
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+            GetTree().ReloadCurrentScene();
         }
 
         bool _mpLoopback;   // --mploopback: opt-in SP listen-server over MemTransport (MP_PLAN §4 Phase 4)
