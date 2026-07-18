@@ -811,17 +811,18 @@ namespace UnturnedGodot.Testing
             T.Check("found the jeep's replicated entity by its spawn position", netId != 0);
             yield return Ticks(50);   // let the spawn drop settle onto the fallback ground
 
-            // enter (raw request; the seat fact latches ride mode through ShellStep) + drive up to speed
+            // enter (raw request; the seat fact builds the Part A local vehicle through ShellStep) + drive
             sess.Client.SendEnterVehicle(netId);
-            yield return Until(() => sess.Shell.IsRiding, 5);
-            T.Check("seat handoff: riding, server DriverPlayerId == the peer", sess.Shell.IsRiding &&
+            yield return Until(() => sess.Shell.IsDriving, 5);
+            T.Check("seat handoff: driving-local, server DriverPlayerId == the peer", sess.Shell.IsDriving &&
                     ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == sess.Client.PlayerId);
             sess.Shell.ScriptedDrive = new Vector2(0f, 1f);   // (steer, throttle): straight ahead, full throttle
             yield return Ticks(100);
 
-            // INBOUND-ONLY blackout, the live WAN profile: the driver keeps ticking + sending (DriveInput
-            // streams, so the real server car keeps driving) but receives NOTHING for 200 ticks -- past
-            // the 64-tick ack-gap latch, under the 250-tick session timeout. The recovery full + hold
+            // INBOUND-ONLY blackout, the live WAN profile: the driver keeps ticking + sending (Part A:
+            // the local car keeps driving and the VehicleState stream flows, so the server keeps ADOPTING
+            // -- its node follows the blind driver) but receives NOTHING for 200 ticks -- past the
+            // 64-tick ack-gap latch, under the 250-tick session timeout. The recovery full + hold
             // latch mid-window; everything reliable queues behind the wall.
             bool haveRep = sess.Client.Vehicles.TryGet(netId, out var repAtBlackout);
             var frozenAt = haveRep ? repAtBlackout.Pos : default;
@@ -832,7 +833,7 @@ namespace UnturnedGodot.Testing
             bool stillFrozen = sess.Client.Vehicles.TryGet(netId, out var repMid) && (repMid.Pos - frozenAt).magnitude < 0.01f;
             T.Check("mid-blackout: the driver's replica froze at the blackout-start state", haveRep && stillFrozen);
             float diverged = jeep.GlobalPosition.DistanceTo(new Vector3(frozenAt.x, frozenAt.y, frozenAt.z));
-            T.Check($"...while the SERVER car kept driving under the streamed input ({diverged:0.0} m past the frozen state)", diverged > 15f);
+            T.Check($"...while the SERVER car kept moving under the adopted state stream ({diverged:0.0} m past the frozen state)", diverged > 15f);
             T.Check($"the recovery full latched during the blackout (fulls +{ded.Server.Composer.Diag.FullSnapshotsComposed - fullsBefore})",
                     ded.Server.Composer.Diag.FullSnapshotsComposed > fullsBefore);
 
@@ -861,7 +862,7 @@ namespace UnturnedGodot.Testing
             yield return Ticks(25);
             T.Check("server freed the seat while the client is still blind",
                     ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
-            T.Check("the exited fact is HELD -- the client still thinks it's riding", !captured && sess.Shell.IsRiding);
+            T.Check("the exited fact is HELD -- the client still thinks it's driving", !captured && sess.Shell.IsDriving);
             T.Check("the exit teleport routed through AdjustExitSpot (§7 risk 6 seam)", exitSpotAdjusted);
 
             // blackout lifts -> the queued reliable burst delivers (recovery full first, then the exited
@@ -870,7 +871,7 @@ namespace UnturnedGodot.Testing
             // deliberately the NODE, not the player entity: the entity is re-written from the RemoteAvatars
             // body post-exit, and the seated body's own physics history is not what this bug is about.
             yield return Until(() => captured, 5);
-            T.Check("the exited fact applied after the blackout lifted", captured && !sess.Shell.IsRiding);
+            T.Check("the exited fact applied after the blackout lifted", captured && !sess.Shell.IsDriving);
             float exitToCar = exitShellPos.DistanceTo(serverCarPos);
             float exitToFrozen = (ToU(exitShellPos) - frozenRepPos).magnitude;
             float frozenToCar = serverCarPos.DistanceTo(new Vector3(frozenRepPos.x, frozenRepPos.y, frozenRepPos.z));
@@ -2038,7 +2039,7 @@ namespace UnturnedGodot.Testing
             yield return Ticks(25);   // reliable command lands within a couple ticks; give it a second
             bool stillEmpty = ded.Server.Vehicles.TryGet(netId, out var rejE) && rejE.DriverPlayerId == 0;
             T.Check("REACH-REJECT: an Enter from across the field never takes the seat", stillEmpty);
-            T.Check("...and no seat fact reached the client", sess.RidingVehicle == 0 && !sess.Shell.IsRiding);
+            T.Check("...and no seat fact reached the client", sess.RidingVehicle == 0 && !sess.Shell.IsRiding && !sess.Shell.IsDriving);
 
             // walk to the vehicle (the C6 story: walk up, get in) -- REAL shell physics, input on the wire
             sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
@@ -2053,16 +2054,21 @@ namespace UnturnedGodot.Testing
             int enterFacts = 0;
             sess.Client.VehicleEntered += e => { if (e.PlayerId == sess.Client.PlayerId) enterFacts++; };
             T.Check("the interact seam found the puppet + requested the seat", sess.Shell.RequestEnterNearestPuppet());
-            yield return Until(() => sess.Shell.IsRiding, 5);
+            yield return Until(() => sess.Shell.IsDriving, 5);
             bool seated = ded.Server.Vehicles.TryGet(netId, out var seatE) && seatE.DriverPlayerId == sess.Client.PlayerId;
             T.Check("SEAT HANDOFF: server DriverPlayerId == the peer", seated);
             T.Check($"the VehicleEntered fact reached the driver ({enterFacts})", enterFacts > 0);
-            T.Check("ride mode latched: shell hidden + frozen, chasing the puppet", sess.Shell.IsRiding && !sess.Shell.Visible);
+            // Part A: the seat fact now builds a CLIENT-LOCAL real Vehicle and seats the shell through the
+            // SP direct-drive path (retail client authority) -- ride-the-puppet mode is gone for drivers
+            T.Check("driving-local latched: shell hidden, a real local Vehicle exists, its puppet suppressed",
+                    sess.Shell.IsDriving && !sess.Shell.Visible && sess.LocalVehicle != null
+                    && !sess.VehicleView.TryGetPuppet(netId, out _));
             yield return Until(() => observer.Vehicles.TryGet(netId, out var oe) && oe.DriverPlayerId == sess.Client.PlayerId, 5);
             T.Check("the observer sees the seat taken",
                     observer.Vehicles.TryGet(netId, out var obsSeat) && obsSeat.DriverPlayerId == sess.Client.PlayerId);
 
-            // DRIVE ~4 s: ScriptedDrive -> RidePuppet captures intent -> the session streams SendDriveInput
+            // DRIVE ~4 s: ScriptedDrive -> the shell drives its LOCAL vehicle (0-tick wheel) -> the session
+            // streams VehicleState @25 Hz -> the server ADOPTS it onto its held node + entity
             bool haveObsPup = obsView.TryGetPuppet(netId, out var obsPup);
             T.Check("the observer materialized a puppet", haveObsPup);
             var jeepStart = jeep.GlobalPosition;
@@ -2070,7 +2076,8 @@ namespace UnturnedGodot.Testing
             sess.Shell.ScriptedDrive = new Vector2(0f, 1f);   // (steer, throttle): straight ahead, full throttle
             yield return Ticks(200);
             float driven = jeep.GlobalPosition.DistanceTo(jeepStart);
-            T.Check($"the server vehicle PHYSICALLY DROVE under the streamed input ({driven:0.0} m)", driven > 8f);
+            T.Check($"the server node MOVED under the adopted driver state ({driven:0.0} m)", driven > 8f);
+            T.Check("the server node is HELD (frozen kinematic adopt -- retail updatePhysics)", jeep.Freeze && jeep.NetHeld);
             float obsDriven = haveObsPup ? obsPup.GlobalPosition.DistanceTo(obsPupStart) : 0f;
             T.Check($"...and the observer's puppet drove with it ({obsDriven:0.0} m) -- everyone else sees it", obsDriven > 8f);
             T.Check("the shell rode along (cam/exit anchor)", sess.Shell.GlobalPosition.DistanceTo(jeep.GlobalPosition) < 6f);
@@ -2084,10 +2091,11 @@ namespace UnturnedGodot.Testing
             bool exitSpotAdjusted = false;
             ded.Server.VehicleHost.AdjustExitSpot = p => { exitSpotAdjusted = true; return p; };
             T.Check("the exit seam fired", sess.Shell.RequestExitPuppet());
-            yield return Until(() => !sess.Shell.IsRiding, 5);
+            yield return Until(() => !sess.Shell.IsDriving, 5);
             T.Check("seat freed server-side", ded.Server.Vehicles.TryGet(netId, out var freedE) && freedE.DriverPlayerId == 0);
             T.Check("the exit teleport routed through AdjustExitSpot (§7 risk 6 seam)", exitSpotAdjusted);
-            T.Check("the shell RE-APPEARED", !sess.Shell.IsRiding && sess.Shell.Visible);
+            T.Check("the shell RE-APPEARED", !sess.Shell.IsDriving && sess.Shell.Visible);
+            T.Check("the local vehicle was destroyed + the puppet view resumed", sess.LocalVehicle == null);
             var doorFlat = sess.Shell.GlobalPosition - jeep.GlobalPosition; doorFlat.Y = 0f;
             T.Check($"...beside the door, not in the seat and not at the curb it entered from ({doorFlat.Length():0.0} m from center)",
                     doorFlat.Length() > 1.0f && doorFlat.Length() < 8f);
@@ -2792,6 +2800,276 @@ namespace UnturnedGodot.Testing
             bool own = sess.Client.Players.TryGetByOwner(sess.Client.PlayerId, out var e);
             float err = own ? (e.Pos - ToU(sess.Shell.TruePhysicsPosition)).magnitude : float.MaxValue;
             T.Check($"replicated own-entity CONVERGED after the weave (err {err:0.###} m)", own && err < 0.05f);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // ---- CLIENT_PREDICTION_PLAN §5 Part A: vehicle client authority (the felt-latency killer) ----
+
+    // §5.4 L1 #1 -- THE FEEL BAR under WAN: the driver's wheel must answer in ~0 ticks regardless of RTT,
+    // because the driver's client OWNS the driven vehicle's physics (retail client authority,
+    // U3 InteractableVehicle.cs:1490-1519). TEETH (measured on pre-A code, this rig's WAN profile,
+    // 2026-07-18): the ride-the-puppet driver's rendered vehicle first responded to a throttle step at
+    // tick 20 (400 ms) -- server node first motion tick 11 (uplink + accel lag) + ~9 more ticks of
+    // snapshot downlink + dead-reckon glide -- and NO local control surface existed at all (the wheel
+    // "answered" only via the server round trip). Post-A the bar: a real local Vehicle whose
+    // EngineForce/steering answer within 1 TICK of input, at any RTT.
+    public class NetShellDrivePredicted : GameTest
+    {
+        public override string Name => "net.shell_drive_predicted";
+        public override double TimeoutSimSeconds => 90;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260718);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "preddriver" };
+            World.AddChild(sess);
+            var observer = new NetWorldClient(new MemClientTransport(net), "observer", contentHash: NetContent.Hash);
+            var obsPump = new DelegateSimStep((t, dt) => observer.Tick(), "l1.obspump");
+            world.Sim.Sim.Add(obsPump);
+            var obsView = new VehicleReplicaView { Client = observer };
+            World.AddChild(obsView);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0, recovs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+            observer.DesyncDetected += _ => desyncs++;
+            sess.Client.VehicleRecov += _ => recovs++;
+            observer.Connect();
+
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(0f, 1.2f, -4f);
+
+            yield return Until(() => sess.Shell != null && observer.State == NetSessionState.Connected, 5);
+            yield return Until(() => sess.Client.Vehicles.Count == 1 && observer.Vehicles.Count == 1, 5);
+            uint netId = 0;
+            foreach (var e in sess.Client.Vehicles.All) { netId = e.NetIdValue; break; }
+            T.Check("vehicle replicated to both clients", netId != 0);
+            yield return Ticks(50);   // settle the spawn drop
+
+            WanLink.Wan(net);   // the WHOLE drive runs at ~120-200 ms RTT -- the profile the pre-A teeth were measured on
+            yield return Ticks(25);
+
+            sess.Client.SendEnterVehicle(netId);
+            yield return Until(() => sess.Shell.IsDriving, 5);
+            var veh = sess.LocalVehicle;
+            T.Check("the driver OWNS a real local Vehicle (retail client authority)", sess.Shell.IsDriving && veh != null);
+            yield return Ticks(25);   // settle the seat; car at rest, no input
+
+            // ---- THE FEEL BAR: input -> local control surface within 1 tick, at WAN RTT ----
+            T.Check("pre-input: engine idle", Mathf.Abs(veh.EngineForce) < 0.001f);
+            sess.Shell.ScriptedDrive = new Vector2(1f, 1f);   // (steer, throttle) step
+            yield return Ticks(1);
+            T.Check($"1 TICK after input the local ENGINE answered (EngineForce {veh.EngineForce:0.0}) -- pre-A: no local vehicle existed; rendered response tick 20 (400 ms)",
+                    Mathf.Abs(veh.EngineForce) > 1f);
+            yield return Ticks(2);
+            T.Check($"the local STEERING is ramping within 3 ticks (steer {veh.SteerAngleDegrees:0.00} deg)",
+                    Mathf.Abs(veh.SteerAngleDegrees) > 0.05f);
+            // first visible motion: pre-A tick 20 under this profile; locally it is pure engine accel lag
+            var restPos = veh.GlobalPosition;
+            int firstMotion = -1;
+            for (int i = 1; i <= 60 && firstMotion < 0; i++)
+            {
+                yield return Ticks(1);
+                if (veh.GlobalPosition.DistanceTo(restPos) > 0.02f) firstMotion = i;
+            }
+            GD.Print($"[drive-predicted] first driver-visible motion {firstMotion} ticks after input (pre-A baseline: 20)");
+            T.Check($"driver-visible motion begins at engine-accel lag only ({firstMotion} ticks -- pre-A 20 = accel + a full wire round trip)",
+                    firstMotion > 0 && firstMotion <= 12);
+
+            // ---- convergence: server entity + observer puppet follow the driver's track ----
+            sess.Shell.ScriptedDrive = new Vector2(0.3f, 1f);   // gentle sustained turn
+            yield return Ticks(200);
+            float srvErr = jeep.GlobalPosition.DistanceTo(veh.GlobalPosition);
+            T.Check($"the server node converged on the driver's track (err {srvErr:0.00} m -- adoption lag ~RTT/2 of top speed)", srvErr < 3.5f);
+            bool havePup = obsView.TryGetPuppet(netId, out var pup);
+            float pupErr = havePup ? pup.GlobalPosition.DistanceTo(jeep.GlobalPosition) : float.MaxValue;
+            T.Check($"the observer's puppet tracks the adopted truth (err {pupErr:0.00} m)", havePup && pupErr < 3.5f);
+            float driven = veh.GlobalPosition.DistanceTo(restPos);
+            T.Check($"the drive actually went somewhere ({driven:0.0} m)", driven > 15f);
+            T.Check($"recov-quiet: a legitimate WAN driver never trips the envelope ({recovs})", recovs == 0);
+
+            // ---- exit: the shell restores at the SERVER's authoritative spot ----
+            sess.Shell.ScriptedDrive = new Vector2(0f, 0f);
+            yield return Ticks(100);
+            T.Check("the exit seam fired", sess.Shell.RequestExitPuppet());
+            yield return Until(() => !sess.Shell.IsDriving, 5);
+            T.Check("shell restored + local vehicle destroyed", sess.Shell.Visible && sess.LocalVehicle == null);
+            var doorFlat = sess.Shell.GlobalPosition - jeep.GlobalPosition; doorFlat.Y = 0f;
+            T.Check($"...at the server spot beside the door ({doorFlat.Length():0.0} m from center)",
+                    doorFlat.Length() > 1.0f && doorFlat.Length() < 8f);
+
+            yield return Ticks(60);
+            T.Check($"DESYNC-QUIET across the whole predicted drive ({desyncs} fired)", desyncs == 0);
+
+            world.Sim.Sim.Remove(pump);
+            world.Sim.Sim.Remove(obsPump);
+            observer.Disconnect();
+        }
+    }
+
+    // §5.4 L1 #2 -- the recov rollback lands END-TO-END: an out-of-envelope teleport injected into the
+    // driver's local vehicle mid-drive (what a teleport cheat or a physics bug would produce) makes the
+    // server refuse + roll the driver back to the last-good state (retail tellRecov), and driving RESUMES
+    // cleanly afterwards. Without the envelope the server would adopt the 50 m jump verbatim (the L0
+    // teeth); this proves the CLIENT side of the loop -- teleport-back + freeze + echo + resume.
+    public class NetShellDriveRecov : GameTest
+    {
+        public override string Name => "net.shell_drive_recov";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var net = new MemNetwork(20260719);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "recovdriver" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int recovs = 0;
+            sess.Client.VehicleRecov += _ => recovs++;
+
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(0f, 1.2f, -4f);
+
+            yield return Until(() => sess.Shell != null, 5);
+            yield return Until(() => sess.Client.Vehicles.Count == 1, 5);
+            uint netId = 0;
+            foreach (var e in sess.Client.Vehicles.All) { netId = e.NetIdValue; break; }
+            yield return Ticks(50);
+            sess.Client.SendEnterVehicle(netId);
+            yield return Until(() => sess.Shell.IsDriving, 5);
+            var veh = sess.LocalVehicle;
+            T.Check("driving locally", veh != null);
+
+            sess.Shell.ScriptedDrive = new Vector2(0f, 1f);
+            yield return Ticks(100);   // up to speed, adoption flowing
+            T.Check("pre-inject: server node tracks the local car", jeep.GlobalPosition.DistanceTo(veh.GlobalPosition) < 2f);
+
+            // INJECT: a 50 m teleport -- far past the envelope (cap = 12.5 x 0.5 s x 1.25 = 7.8 m even at
+            // the clamped max interval). The next state packet reports it; the server must refuse.
+            var beforeJump = veh.GlobalPosition;
+            veh.GlobalPosition = beforeJump + new Vector3(50f, 0f, 0f);
+            yield return Until(() => recovs > 0, 3);
+            T.Check($"the recov event landed on the driver ({recovs})", recovs > 0);
+            yield return Ticks(5);   // the echo send + release happen on the next DriveStep
+            float rollbackErr = veh.GlobalPosition.DistanceTo(jeep.GlobalPosition);
+            T.Check($"ROLLBACK: the local vehicle teleported back onto the server's last-good ({rollbackErr:0.00} m)",
+                    rollbackErr < 3f);
+            T.Check("the local vehicle resumed (unfrozen) after the RecovAck echo", !veh.Freeze && !veh.NetHeld);
+
+            // driving resumes: the same held throttle keeps working and the server adopts again
+            var resumeFrom = veh.GlobalPosition;
+            yield return Ticks(150);
+            float resumed = veh.GlobalPosition.DistanceTo(resumeFrom);
+            T.Check($"driving RESUMED after the rollback ({resumed:0.0} m)", resumed > 8f);
+            T.Check($"the server keeps adopting the resumed track (err {jeep.GlobalPosition.DistanceTo(veh.GlobalPosition):0.00} m)",
+                    jeep.GlobalPosition.DistanceTo(veh.GlobalPosition) < 3f);
+            T.Check($"exactly one recov (the discard window never double-fires) ({recovs})", recovs == 1);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // §5.4 L1 #3 -- the authority handoff: enter -> the server node freezes under adoption; exit -> the
+    // node resumes REAL physics seeded from the last adopted state (retail removePlayer -> updatePhysics)
+    // and the SP exit effects park it; driver DISCONNECT mid-drive frees the seat + releases the hold the
+    // same way (NetWorldHost.OnPeerDisconnected -> ServerExit).
+    public class NetShellDriveHandoff : GameTest
+    {
+        public override string Name => "net.shell_drive_handoff";
+        public override double TimeoutSimSeconds => 60;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var net = new MemNetwork(20260720);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "handoff" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = new Vector3(0f, 1.2f, -4f);
+
+            yield return Until(() => sess.Shell != null, 5);
+            yield return Until(() => sess.Client.Vehicles.Count == 1, 5);
+            uint netId = 0;
+            foreach (var e in sess.Client.Vehicles.All) { netId = e.NetIdValue; break; }
+            yield return Ticks(50);
+
+            // ---- exit handoff ----
+            sess.Client.SendEnterVehicle(netId);
+            yield return Until(() => sess.Shell.IsDriving, 5);
+            sess.Shell.ScriptedDrive = new Vector2(0f, 1f);
+            yield return Until(() => jeep.NetHeld, 5);
+            T.Check("under adoption the server node is HELD (frozen, teleport-following the driver)", jeep.NetHeld && jeep.Freeze);
+            yield return Ticks(150);   // up to speed
+            float speedAtExit = sess.LocalVehicle != null ? sess.LocalVehicle.LinearVelocity.Length() : 0f;
+            T.Check($"at speed before the exit ({speedAtExit:0.0} m/s)", speedAtExit > 5f);
+            // exit WHILE at full throttle -- the seeded-velocity assert needs real speed at handoff, and it
+            // must be read on the FIRST freed ticks: the freed wheels resume at rotation speed 0, so the
+            // seeded ~10 m/s skid-brakes away in ~0.2 s (the net.vehicle_freeze_hold spike's documented shape)
+            T.Check("exit requested", sess.Shell.RequestExitPuppet());
+            float maxFreedV = 0f;
+            for (int i = 0; i < 55 && (sess.Shell.IsDriving || i < 8); i++)
+            {
+                yield return Ticks(1);
+                if (!jeep.NetHeld) maxFreedV = Mathf.Max(maxFreedV, jeep.LinearVelocity.Length());
+            }
+            T.Check("exit landed", !sess.Shell.IsDriving);
+            T.Check("HANDOFF: the node unfroze (authority back to the server)", !jeep.NetHeld && !jeep.Freeze);
+            T.Check($"...seeded with the last adopted velocity (peak freed v {maxFreedV:0.0} m/s -- not a dead stop)", maxFreedV > 2f);
+            var exitSpot = jeep.GlobalPosition;
+            yield return Ticks(200);
+            T.Check($"...then SETTLED under real physics + the SP exit park (v {jeep.LinearVelocity.Length():0.00} m/s)",
+                    jeep.LinearVelocity.Length() < 1f);
+            T.Check("the shell stands beside the car, back on the walk plane", sess.Shell.Visible && !sess.Shell.IsDriving
+                    && sess.Shell.GlobalPosition.DistanceTo(exitSpot) < 12f);
+
+            // ---- disconnect handoff ----
+            yield return Until(() => sess.Shell.RequestEnterNearestPuppet(), 5);   // the freed seat is takeable again (walk-up range)
+            yield return Until(() => sess.Shell.IsDriving, 5);
+            sess.Shell.ScriptedDrive = new Vector2(0f, 1f);
+            yield return Until(() => jeep.NetHeld, 5);
+            yield return Ticks(100);
+            T.Check("second drive held + moving", jeep.NetHeld && jeep.GlobalPosition.DistanceTo(exitSpot) > 3f);
+            sess.Client.Disconnect();
+            yield return Ticks(25);
+            bool freed = ded.Server.Vehicles.TryGet(netId, out var fe) && fe.DriverPlayerId == 0;
+            T.Check("DISCONNECT freed the seat (OnPeerDisconnected -> ServerExit)", freed);
+            T.Check("...and released the hold -- the node is the server's again", !jeep.NetHeld && !jeep.Freeze);
+            yield return Until(() => jeep.LinearVelocity.Length() < 0.8f, 8);
+            T.Check($"the abandoned car settled under server physics (v {jeep.LinearVelocity.Length():0.00} m/s)",
+                    jeep.LinearVelocity.Length() < 0.8f);
 
             world.Sim.Sim.Remove(pump);
         }

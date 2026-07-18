@@ -71,7 +71,7 @@ namespace UnturnedGodot.Net
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources);
             Transactions.Register(Commands);
-            VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent);
+            VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             VehicleHost.Register(Commands);
             Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
@@ -353,6 +353,9 @@ namespace UnturnedGodot.Net
         // Phase 7 vehicle facts (occupancy also rides the snapshot; the event gives the requester immediacy)
         public event System.Action<VehicleEnteredEvent> VehicleEntered;
         public event System.Action<VehicleExitedEvent> VehicleExited;
+        // Part A: the server rolled this driver's vehicle back (out-of-envelope state) -- teleport the
+        // local vehicle to the payload, freeze, echo RecovCounter in the outgoing state stream
+        public event System.Action<VehicleRecovEvent> VehicleRecov;
 
         // Phase 8 world-state facts (§3.7 -- already applied to the replicas when these fire)
         public event System.Action<CropPlantedEvent> CropPlanted;
@@ -423,6 +426,8 @@ namespace UnturnedGodot.Net
                 e => { Vehicles.ApplyEntered(e, Applier.LastAppliedServerTick); VehicleEntered?.Invoke(e); });
             Events.Register<VehicleExitedEvent>(ReplicationIds.EventVehicleExited, VehicleExitedEvent.TryRead,
                 e => { Vehicles.ApplyExited(e, Applier.LastAppliedServerTick); VehicleExited?.Invoke(e); });
+            Events.Register<VehicleRecovEvent>(ReplicationIds.EventVehicleRecov, VehicleRecovEvent.TryRead,
+                e => VehicleRecov?.Invoke(e));   // touches no replica -- the rollback targets the driver's LOCAL vehicle only
             // Phase 8: world-state facts apply straight onto the replicas, then surface for fx/views
             Events.Register<CropPlantedEvent>(ReplicationIds.EventCropPlanted, CropPlantedEvent.TryRead,
                 e => { Crops.ApplyPlanted(e, Applier.LastAppliedServerTick); CropPlanted?.Invoke(e); });
@@ -617,6 +622,28 @@ namespace UnturnedGodot.Net
         }
 
         ushort _driveSeq;
+
+        /// <summary>Part A (CLIENT_PREDICTION_PLAN §5.2 A2): the predicted driver's reported vehicle state
+        /// -- UnreliableSequenced, sent by the session every 2nd tick (25 Hz). recovAck echoes the last
+        /// VehicleRecovEvent counter received (the session tracks it; 0 = none yet). Returns the seq
+        /// (0 = not connected, nothing sent).</summary>
+        public ushort SendVehicleState(uint vehicleNetId, Vector3 pos, Vector3 eulerDegrees, Vector3 linVel, Vector3 angVel,
+                                       float steerDegrees, float throttle, float steer, bool handbrake, byte flags, byte recovAck)
+        {
+            if (Session.State != NetSessionState.Connected) return 0;
+            if (++_vehStateSeq == 0) _vehStateSeq = 1;
+            var cmd = new VehicleStateCommand
+            {
+                Seq = _vehStateSeq, NetId = vehicleNetId, RecovAck = recovAck,
+                Pos = pos, YawDegrees = eulerDegrees.y, PitchDegrees = eulerDegrees.x, RollDegrees = eulerDegrees.z,
+                LinVel = linVel, AngVel = angVel, SteerDegrees = steerDegrees,
+                Throttle = throttle, Steer = steer, Handbrake = handbrake, Flags = flags,
+            };
+            Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandVehicleState, cmd.Write));
+            return cmd.Seq;
+        }
+
+        ushort _vehStateSeq;
 
         public void Disconnect() => Session.Disconnect();
     }

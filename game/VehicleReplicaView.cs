@@ -31,6 +31,13 @@ namespace UnturnedGodot
         }
         readonly Dictionary<uint, Tracked> _puppets = new();
 
+        /// <summary>Part A (CLIENT_PREDICTION_PLAN §5.2 A1): NetIds whose puppet this VIEW must not render
+        /// -- the driver's own vehicle, replaced by the session's client-local real Vehicle. VIEW-only by
+        /// design: the replica STORE keeps mirroring snapshots verbatim (hash parity + "replicas mirror
+        /// snapshots" stay intact); this is the port's retail tellState-early-return
+        /// (U3 InteractableVehicle.cs:2113-2116). Owned by ClientWorldSession.</summary>
+        public readonly HashSet<uint> Suppressed = new();
+
         public int PuppetCount => _puppets.Count;
         public bool TryGetPuppet(uint netId, out VehiclePuppet node)
         {
@@ -49,6 +56,7 @@ namespace UnturnedGodot
             var seen = new HashSet<uint>();
             foreach (var e in Client.Vehicles.All)
             {
+                if (Suppressed.Contains(e.NetIdValue)) continue;   // driver's own predicted vehicle: no puppet (the gone-sweep below retires an existing one)
                 seen.Add(e.NetIdValue);
                 if (!_puppets.TryGetValue(e.NetIdValue, out var t) || !IsInstanceValid(t.Node))
                 {

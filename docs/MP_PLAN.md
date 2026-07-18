@@ -264,6 +264,16 @@ A lean hardening pass then addressed the adversarial review (`mp-hardening` bran
   friendly co-op server, editing each other's bases is a feature. Gate these three validators on
   owner/group before public play (`// TODO(mp-security)` markers in `ServerTransactions.Register`).
 - **No connect cookie / HMAC challenge**, no encryption, no auth — per §5's deferred list.
+- **Vehicle client authority (Part A, mp-predict-a)** — the DRIVEN vehicle's transform is a deliberate,
+  envelope-bounded carve-out from "the server owns all truth": the driver's client owns its physics
+  (retail's public-server posture, `U3 InteractableVehicle.cs:1490-1519`), the server plausibility-bounds
+  each reported state (spec-derived horizontal delta cap, fuel-empty override, 12.5/25 m/s vertical caps
+  — `ServerVehicles.OnVehicleState`) and rolls violators back via `EventVehicleRecov`. Speed/rotation/
+  steer are dressing, not validated (retail ships the same). The envelope IS the anti-cheat; tighten it
+  (or re-take authority) before untrusted hosting. Two collision deferrals ride along: a driven vehicle's
+  body is layer-ghosted (other VEHICLES pass through it; players/bullets still collide — `Vehicle.NetGhost`),
+  and the driver's client collides only with the STATIC world (content-hash-matched by the join gate; any
+  future destructible/server-mutated world must replicate before that assumption breaks).
 
 ---
 

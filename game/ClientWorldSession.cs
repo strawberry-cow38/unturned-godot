@@ -44,6 +44,14 @@ namespace UnturnedGodot
         public PlayerController Shell { get; private set; }   // null until the first authoritative own-entity sample
         public uint RidingVehicle => _ridingNetId;             // NetId of the vehicle the server seated us in (0 = on foot)
         uint _ridingNetId;                                     // latched by VehicleEntered(self), cleared by VehicleExited(self)
+        // Part A (CLIENT_PREDICTION_PLAN §5.2 A1): the driver's CLIENT-LOCAL real Vehicle -- one physics
+        // instance, zero steady-state corrections at any RTT (retail client authority). Built from the
+        // replica on the seat fact, destroyed on exit; the puppet VIEW for its NetId is suppressed while
+        // it lives. Exposed for the L1 rigs.
+        public Vehicle LocalVehicle => _localVehicle;
+        Vehicle _localVehicle;
+        byte _vehRecovAck;    // the last VehicleRecovEvent counter received -- echoed on every state send
+        bool _vehRecovHold;   // frozen by a recov; released after the echo goes out (retail isFrozen, 1 send)
         // The session's OWN reconciler -- NOT Client.Prediction.Reconciler: NetWorldClient.Tick feeds that
         // one through ClientPrediction.Reconcile (the headless-walker path), which would consume the snap
         // onto the dead Prediction.Pos and corrupt the node's correction accounting.
@@ -88,6 +96,20 @@ namespace UnturnedGodot
             // itself (SendEnterVehicle is a REQUEST; the seat lands only when the validated fact comes back)
             Client.VehicleEntered += e => { if (e.PlayerId == Client.PlayerId) _ridingNetId = e.NetId; };
             Client.VehicleExited += OnVehicleExited;
+            // Part A: the server rolled our driven vehicle back (out-of-envelope state) -- retail tellRecov
+            // (U3 InteractableVehicle.cs:2095-2109): teleport the LOCAL vehicle to the last-good payload,
+            // zero velocity, freeze; DriveStep sends the RecovAck echo next tick and releases.
+            Client.VehicleRecov += e =>
+            {
+                if (e.NetId != _ridingNetId || _localVehicle == null || !IsInstanceValid(_localVehicle)) return;
+                var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(e.PitchDegrees),
+                    Mathf.DegToRad(e.YawDegrees), Mathf.DegToRad(e.RollDegrees)));
+                _localVehicle.NetBeginHold();   // freeze + zero velocities (retail isFrozen/kinematic)
+                _localVehicle.NetHoldTeleport(new Transform3D(basis, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z)));
+                _vehRecovAck = e.RecovCounter;
+                _vehRecovHold = true;
+                GD.Print($"[CLIENT] vehicle recov #{e.RecovCounter} -- rolled back to ({e.Pos.x:0.0},{e.Pos.y:0.0},{e.Pos.z:0.0})");
+            };
             // C5 (§3): the remaining world-state views -- all read-only replica consumers. Zombie puppets,
             // world items as static visuals, the synced clock anchoring the local sky, and server-felled
             // resources dropping their client visual + trunk collider (§7 risk 7).
@@ -177,20 +199,13 @@ namespace UnturnedGodot
                 if (Client.Players.TryGetByOwner(Client.PlayerId, out var me)) SpawnShell(me);
                 return;
             }
-            if (Shell.IsDriving) return;   // the SP direct-drive path (never taken in MP -- no Vehicle nodes on a client world)
-
-            // C6 RIDE MODE (§3.6 v1): seated in a replicated vehicle. The shell is hidden/frozen (EnterPuppet);
-            // this step streams its captured drive intent @50 Hz (held-input model, latest-wins server-side)
+            // Part A DRIVING (CLIENT_PREDICTION_PLAN §5.2 A1, replacing the C6 v1 puppet-ride): seated in a
+            // replicated vehicle -- the shell drives a CLIENT-LOCAL real Vehicle through the SP direct-drive
+            // path (0 ms wheel response; retail client authority) and this step streams VehicleState @25 Hz
             // INSTEAD of MoveInput -- the server drops a seated peer's walk input at the choke point anyway,
             // and the reconciler idles (the seat teleport owns the entity; corrections must never fight it).
-            if (_ridingNetId != 0)
-            {
-                if (Shell.IsRiding)
-                    Client.SendDriveInput(_ridingNetId, Shell.LastDriveInput.y, Shell.LastDriveInput.x, Shell.LastHandbrakeInput);
-                else if (VehicleView.TryGetPuppet(_ridingNetId, out var pup))
-                    Shell.EnterPuppet(pup);   // seat confirmed; puppet materialized -> hide/freeze + chase-cam it
-                return;                       // (else: puppet not spawned yet -- wait, never walk-send from under the seat)
-            }
+            if (_ridingNetId != 0) { DriveStep(); return; }
+            if (Shell.IsDriving) return;   // the SP direct-drive guard (unreachable in MP -- the seat always latches _ridingNetId first)
 
             // 1) consume the newest authoritative own-entity sample (stale/duplicate acks no-op inside),
             //    and apply this tick's correction TO THE NODE -- the one real new mechanism vs MpLoopback
@@ -221,6 +236,113 @@ namespace UnturnedGodot
             if (seq != 0) Reconciler.Record(seq, claim);
 
             if (NetLog.Enabled) LogReconcileRollupIfDue();
+        }
+
+        // ---- Part A driving-local machinery (CLIENT_PREDICTION_PLAN §5.2 A1/A4) ----
+
+        void DriveStep()
+        {
+            // The seat owns the entity (per-tick vehicle teleport) -- the walk reconciler must IDLE, but
+            // its ack CURSOR has to keep tracking: acks in flight when the seat latched land DURING the
+            // drive (the entity's LastProcessedInputSeq froze at the last pre-seat input), and leaving them
+            // unconsumed made the FIRST post-exit walk tick measure that stale seq against a PRE-ENTER
+            // recorded claim -- a garbage ~26 m "error" that snapped the shell clean off the exit spot
+            // (found by net.shell_drive_predicted under WAN, where 2-4 acks are always in flight across
+            // the seat latch). Consume + DISCARD: the cursor stays current, the node is never touched.
+            if (Client.Players.TryGetByOwner(Client.PlayerId, out var me))
+            {
+                Reconciler.OnAuthoritative(me.LastProcessedInputSeq, me.Pos);
+                Reconciler.TakeAll();
+            }
+
+            bool haveRep = Client.Vehicles.TryGet(_ridingNetId, out var rep);
+            if (_localVehicle != null && IsInstanceValid(_localVehicle))
+            {
+                // A4 mid-drive despawn/explode: the snapshot's Exploded flag (or a vanished entity)
+                // force-exits locally -- the reliable VehicleExited fact may lag or never come (despawn)
+                if (!haveRep || rep.Exploded) { ForceExitLocal(); return; }
+                if (_vehRecovHold)
+                {
+                    // the recov echo: one state send carrying the new RecovAck, then release the freeze
+                    // (retail clears isFrozen on the next simulate tick, U3 InteractableVehicle.cs:3438)
+                    SendVehicleState();
+                    _vehRecovHold = false;
+                    _localVehicle.NetEndHold(Vector3.Zero, Vector3.Zero);   // resume from rest at the rolled-back pose (retail zeroes velocity)
+                    return;
+                }
+                if (Client.Session.CurrentTick % 2 == 0) SendVehicleState();   // 25 Hz -- the snapshot cadence
+                return;
+            }
+            // seat fact latched but no local vehicle yet: build it from the replica (the entity may lag
+            // the reliable fact by a snapshot; never drive blind)
+            if (!haveRep) return;
+            if (rep.Exploded) { _ridingNetId = 0; return; }   // seated-into-a-wreck race -- don't build
+            BuildLocalVehicle(rep);
+        }
+
+        void BuildLocalVehicle(VehicleReplication.VehicleEntity e)
+        {
+            // VIEW-only suppression: the replica STORE keeps mirroring snapshots verbatim (hash parity),
+            // only the puppet render for this NetId stops -- retail tellState's isDriver early-return
+            VehicleView.Suppressed.Add(_ridingNetId);
+            string key = e.TypeId < Vehicle.SpecNames.Length ? Vehicle.SpecNames[e.TypeId] : "jeep";
+            var v = Vehicle.BuildByName(key, e.Variant);
+            v.NetClientPredicted = true;    // server owns health/explosion (replica Exploded flag); local damage is a no-op
+            v.RemoveFromGroup("vehicles");  // never a group-scan target (VehicleNetSync minting in a shared-tree L1 host, tow/roadkill/grenade scans)
+            v.CollisionLayer = 0;           // nothing collides INTO the local car; it collides OUT via its mask (bit0: the static world -- plan A4's collision posture)
+            AddChild(v);
+            var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(e.PitchDegrees),
+                Mathf.DegToRad(e.YawDegrees), Mathf.DegToRad(e.RollDegrees)));
+            v.GlobalTransform = new Transform3D(basis, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z));
+            v.Wake();
+            v.LinearVelocity = new Vector3(e.LinVel.x, e.LinVel.y, e.LinVel.z);
+            v.AngularVelocity = new Vector3(e.AngVel.x, e.AngVel.y, e.AngVel.z);
+            _localVehicle = v;
+            _vehRecovAck = 0; _vehRecovHold = false;
+            Shell.EnterVehicle(v);   // the EXACT SP direct-drive seat (hide shell, free cam, HUD binds, engine on)
+            GD.Print($"[CLIENT] driving {key} LOCALLY (NetId {_ridingNetId}) -- Part A client authority, 0-tick wheel");
+        }
+
+        void SendVehicleState()
+        {
+            var v = _localVehicle;
+            var euler = v.GlobalTransform.Basis.GetEuler() * (180f / Mathf.Pi);   // YXZ euler, degrees (the VehicleNetSync publish convention)
+            byte flags = (byte)((v.EngineOn ? VehicleReplication.FlagEngineOn : 0)
+                              | (v.HeadlightsOn ? VehicleReplication.FlagHeadlights : 0)
+                              | (v.TaillightsOn ? VehicleReplication.FlagTaillights : 0)
+                              | (v.SirenOn ? VehicleReplication.FlagSiren : 0)
+                              | (v.BrakingNow ? VehicleReplication.FlagBraking : 0));
+            Client.SendVehicleState(_ridingNetId, ToU(v.GlobalPosition), new UnityEngine.Vector3(euler.X, euler.Y, euler.Z),
+                ToU(v.LinearVelocity), ToU(v.AngularVelocity), v.SteerAngleDegrees,
+                Shell.LastDriveInput.y, Shell.LastDriveInput.x, Shell.LastHandbrakeInput, flags, _vehRecovAck);
+        }
+
+        /// <summary>A4: despawn/explode force-exit -- destroy the local vehicle, restore the shell at the
+        /// SP beside-the-door spot (the authoritative VehicleExited fact, if it comes later, no-ops on the
+        /// cleared _ridingNetId; post-exit walk reconciliation absorbs any residual).</summary>
+        void ForceExitLocal()
+        {
+            uint id = _ridingNetId;
+            _ridingNetId = 0;
+            var v = _localVehicle;
+            Vector3 spot = Shell.GlobalPosition;
+            if (v != null && IsInstanceValid(v))
+                spot = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f;
+            if (Terr != null)
+            {
+                float h = Terr.SampleHeight(spot.X, spot.Z);
+                if (spot.Y < h + 0.1f) spot = new Vector3(spot.X, h + 0.5f, spot.Z);
+            }
+            Shell.ExitVehicleAt(spot);
+            CleanupLocalVehicle(id);
+        }
+
+        void CleanupLocalVehicle(uint netId)
+        {
+            if (_localVehicle != null && IsInstanceValid(_localVehicle)) _localVehicle.QueueFree();
+            _localVehicle = null;
+            _vehRecovAck = 0; _vehRecovHold = false;
+            VehicleView.Suppressed.Remove(netId);   // the puppet view resumes rendering the server's truth
         }
 
         // ---- CLIENT_PREDICTION_PLAN §3 Phase-0 observability: the client mirror of the server's
@@ -297,7 +419,9 @@ namespace UnturnedGodot
         {
             if (evt.PlayerId != Client.PlayerId || evt.NetId != _ridingNetId) return;
             _ridingNetId = 0;
-            if (Shell == null || !IsInstanceValid(Shell) || !Shell.IsRiding) return;
+            if (Shell == null || !IsInstanceValid(Shell)) { CleanupLocalVehicle(evt.NetId); return; }
+            bool drivingLocal = Shell.IsDriving && _localVehicle != null;   // Part A mode (else the legacy puppet-ride shape)
+            if (!drivingLocal && !Shell.IsRiding) { CleanupLocalVehicle(evt.NetId); return; }
             Vector3 exit;
             if (evt.Pos != UnityEngine.Vector3.zero)
                 exit = new Vector3(evt.Pos.x, evt.Pos.y, evt.Pos.z);
@@ -313,7 +437,14 @@ namespace UnturnedGodot
                 float h = Terr.SampleHeight(exit.X, exit.Z);
                 if (exit.Y < h + 0.1f) exit = new Vector3(exit.X, h + 0.5f, exit.Z);   // §7 risk 6: never below the slope
             }
-            Shell.ExitPuppet(exit);
+            if (drivingLocal)
+            {
+                // Part A: restore the shell at the AUTHORITATIVE spot (the server computed it from ITS node,
+                // which holds the adopted transform -- consistent by construction), destroy the local vehicle
+                Shell.ExitVehicleAt(exit);
+                CleanupLocalVehicle(evt.NetId);
+            }
+            else Shell.ExitPuppet(exit);
         }
 
         public override void _Process(double delta)
