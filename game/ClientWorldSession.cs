@@ -62,6 +62,8 @@ namespace UnturnedGodot
         Label _desyncLabel;
         string _desyncAlert = "";
         Label _toast; float _toastT;   // brief interaction feedback line (pickup denied, etc.)
+        Label _disconnectBanner;       // big centered DISCONNECTED overlay when the server link drops
+        bool _wasConnected;            // latches once Connected -> a later non-Connected state is a LOST link (not the initial connect)
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
 
@@ -178,6 +180,18 @@ namespace UnturnedGodot
             _toast = new Label { Position = new Vector2(24, 86), Modulate = new Color(1f, 0.85f, 0.4f) };
             _toast.AddThemeFontSizeOverride("font_size", 20);
             _statusLayer.AddChild(_toast);
+            // DISCONNECTED overlay: full-rect, centered, big + red -- shown only after a link that WAS connected drops
+            _disconnectBanner = new Label
+            {
+                Text = "⚠  DISCONNECTED\nconnection to server lost",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Modulate = new Color(1f, 0.30f, 0.28f),
+                Visible = false,
+            };
+            _disconnectBanner.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            _disconnectBanner.AddThemeFontSizeOverride("font_size", 48);
+            _statusLayer.AddChild(_disconnectBanner);
             AddChild(_statusLayer);
 
             // §2.5 step order on the world's SimRoot: net pump FIRST (receive datagrams + apply snapshots
@@ -453,6 +467,11 @@ namespace UnturnedGodot
                 _status.Text = Shell == null ? $"connecting to {Host}:{Port}   ·   {Client.State}   ·   players {Client.Players.Count}" : "";
             if (_desyncLabel != null) _desyncLabel.Text = _desyncAlert;
             if (_toast != null && _toastT > 0f) { _toastT -= (float)delta; if (_toastT <= 0f) _toast.Text = ""; }
+            // DISCONNECTED overlay: latch once we've been Connected, then show the banner whenever the link
+            // is no longer Connected -- so a server bounce / dropped link reads as DISCONNECTED, not a silent freeze
+            if (Client.State == NetSessionState.Connected) _wasConnected = true;
+            if (_disconnectBanner != null)
+                _disconnectBanner.Visible = _wasConnected && Client.State != NetSessionState.Connected;
         }
 
         public override void _ExitTree()
