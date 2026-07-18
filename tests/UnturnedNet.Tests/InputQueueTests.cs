@@ -298,6 +298,44 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void SeqAdvancedFlag_FreshConsumesTrue_StaleRepeatsFalse()
+        {
+            // C1.5 (the phantom-pairing fix, CLIENT_PREDICTION_PLAN §3 harness finding): the avatar
+            // driver must know whether a consumed tick carries a FRESH seq (real dequeue, or a
+            // hole-substitution that claimed the lost seq -- both produce an exact (pos, seq) pairing to
+            // write back) or a stale REPEAT (starved coast / hold / prime-wait -- the body still
+            // integrates, but publishing that advanced position under the already-acked seq is the
+            // phantom correction the jittered 25 Hz snapshot stream shows the owner).
+            PrimeWith(1, 2, 3);
+            Assert.That(_players.TryConsumeInput(Owner, out var real, out bool adv), Is.True);
+            Assert.That(real.Seq, Is.EqualTo(2));
+            Assert.That(adv, Is.True, "a real dequeue advances the seq -- exact pairing, write back");
+            _players.TryConsumeInput(Owner, out _, out _);   // 3 -> queue empty
+
+            // starved coast: motion integrates (held axes) but the seq repeats -- NOT write-back-safe
+            Assert.That(_players.TryConsumeInput(Owner, out var coast, out adv), Is.True);
+            Assert.That(coast.Seq, Is.EqualTo(3));
+            Assert.That(adv, Is.False, "a starved coast repeats the stale seq -- publishing it re-pairs an acked seq with newer motion");
+
+            // hole substitution: the missing seq is CLAIMED, its pairing is exact -- write-back-safe.
+            // The one coasted tick's debt repays seq 4; seq 5's hole substitutes a coast tick that
+            // CLAIMS 5 (adv true -- fresh seq, exact pairing); then 6 consumes for real.
+            _players.ServerQueueInput(Owner, In(6));   // 4 was coasted (debt repays it); 5 lost in flight
+            Assert.That(_players.TryConsumeInput(Owner, out var sub, out adv), Is.True);
+            Assert.That(sub.Seq, Is.EqualTo(5), "the hole's seq is claimed by the substituted coast tick");
+            Assert.That(adv, Is.True, "the claimed hole seq is FRESH -- its (pos, seq) pairing is exact, write back");
+            Assert.That(_players.TryConsumeInput(Owner, out var real6, out adv), Is.True);
+            Assert.That(real6.Seq, Is.EqualTo(6));
+            Assert.That(adv, Is.True, "a fresh-seq consume after the gap is exact again");
+
+            // hold (past the coast cap): zero motion, stale seq -- NOT write-back-safe
+            for (int i = 0; i < PlayerReplication.MaxCoastTicks; i++) _players.TryConsumeInput(Owner, out _, out _);
+            Assert.That(_players.TryConsumeInput(Owner, out var hold, out adv), Is.True);
+            Assert.That(hold.MoveY, Is.EqualTo(0f), "past the cap the avatar holds");
+            Assert.That(adv, Is.False, "a hold tick repeats the stale seq too");
+        }
+
+        [Test]
         public void SparseSender_SingleInput_StillConsumedAfterPrimeWait()
         {
             // a harness that sends ONE input and relies on the held model must not stall behind the prime

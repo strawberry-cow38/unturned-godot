@@ -39,6 +39,7 @@ namespace UnturnedGodot
             public ushort LastInputSeq;                 // seq of the input the body last physics-stepped (pairs with the write-back)
             public UnityEngine.Vector3 LastDrivenPos;   // what we last wrote (wire-quantized) -- a differing entity pos means someone else teleported it
             public bool Seated;
+            public bool PairingExact = true;            // C1.5: false while the body's last step was a stale-seq coast/hold -- publishing that position would re-pair an already-acked seq with newer motion (the phantom correction)
         }
         readonly Dictionary<ushort, Tracked> _tracked = new();
         readonly List<ushort> _stale = new();
@@ -109,7 +110,7 @@ namespace UnturnedGodot
                     t.Body.TeleportTo(ToG(e.Pos));
                     t.LastDrivenPos = e.Pos;
                 }
-                else
+                else if (t.PairingExact)
                 {
                     // 1) authoritative write-back: last tick's post-physics result, under the seq of the
                     // input that produced it (ServerDrive quantizes + marks ExternallyDriven)
@@ -118,6 +119,16 @@ namespace UnturnedGodot
                     _server.Players.ServerDrive(e.OwnerPlayerId, ToU(pos), yaw, t.LastInputSeq, tick);
                     t.LastDrivenPos = e.Pos;   // ServerDrive just stamped the quantized pos onto the entity
                 }
+                // else (C1.5, the phantom-pairing fix -- found by the plan §3 WAN harness): the body's
+                // last step was a starved-coast/hold tick (TryConsumeInput repeated a stale seq). The
+                // BODY keeps integrating the held intent (the count invariant: a delayed input's tick is
+                // integrated once, when it coasts), but the ENTITY holds the last exact (pos, seq)
+                // pairing -- publishing the coast-advanced position under the already-acked seq made the
+                // jittered 25 Hz snapshot stream show the owner a 1-3-tick "error" that was never real:
+                // the residual WAN inchworm's dominant engine (13.951 m/min of phantom correction on the
+                // wan_walk baseline). Retail never publishes speculated state either: no packet -> no
+                // simulate (U3 PlayerInput.cs). Observers just see this avatar 1-2 ticks stale during a
+                // starve; the next real consume write-back carries the accumulated motion.
 
                 // 2) consume this tick's input IN SEQ ORDER (the mp-inputbuffer fix, real Unturned's
                 // serversidePackets model): one dequeue per tick so the avatar integrates the same input
@@ -126,19 +137,21 @@ namespace UnturnedGodot
                 // yank. Starvation coasts on the last consumed input inside TryConsumeInput (bounded by
                 // MaxCoastTicks, then a zero-motion hold -- no ghost-running stale intent); false means
                 // nothing to integrate at all -> stand still (death/enter-vehicle cleared it, or none yet)
-                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp))
+                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp, out bool seqAdvanced))
                 {
                     t.Body.RotationDegrees = new Vector3(0f, inp.YawDegrees, 0f);
                     t.Body.ScriptedInput = new UnityEngine.Vector2(inp.MoveX, inp.MoveY);
                     t.Body.ScriptedJump = inp.Jump;
                     t.Body.ScriptedStance = inp.Stance;   // integrate at the stance the shell predicted at (the inchworm fix)
                     t.LastInputSeq = inp.Seq;
+                    t.PairingExact = seqAdvanced;   // stale-seq coast/hold ticks must not be written back (C1.5)
                 }
                 else
                 {
                     t.Body.ScriptedInput = UnityEngine.Vector2.zero;
                     t.Body.ScriptedJump = false;
                     t.Body.ScriptedStance = EPlayerStance.STAND;
+                    t.PairingExact = true;   // nothing consumed since spawn/clear: the body stands at the last exact pairing
                 }
             }
 

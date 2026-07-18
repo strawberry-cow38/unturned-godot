@@ -388,8 +388,22 @@ namespace UnturnedGodot.Net
         /// caller must pair with the produced position (during a coast/hold it repeats the last consumed
         /// seq, which the client's reconciler already treats as stale).</summary>
         public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input)
+            => TryConsumeInput(ownerPlayerId, out input, out _);
+
+        /// <summary>The full consume: seqAdvanced reports whether the returned input carries a FRESH seq
+        /// (a real dequeue or a hole-substitution that claimed the lost seq) or a stale REPEAT (starved
+        /// coast, hold, prime-wait). The distinction is the C1.5 phantom-pairing fix: a coast tick still
+        /// integrates motion on the avatar body, but publishing that advanced position under the repeated
+        /// seq re-pairs an already-acked seq with a NEWER position -- and the 25 Hz jittered snapshot
+        /// stream often shows the client ONLY the phantom pairing for that seq, which measures as 1-3
+        /// ticks of error that was never real (the residual high-RTT inchworm's dominant engine, found by
+        /// the plan §3 WAN harness). The avatar driver must NOT ServerDrive a stale-seq tick's result --
+        /// hold the entity at the last exact (pos, seq) pairing until the stream resumes, exactly like
+        /// retail's never-speculate server (U3 PlayerInput.cs: no packet -> no simulate -> no new state).</summary>
+        public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input, out bool seqAdvanced)
         {
             input = default;
+            seqAdvanced = false;
             if (!TryGetByOwner(ownerPlayerId, out var e) || e.Sim == null) return false;
             var q = e.PendingInputs;
             if (q != null && q.Count > 0 && !e.Primed)
@@ -442,6 +456,7 @@ namespace UnturnedGodot.Net
                 e.LastConsumedSeq++;
                 e.AppliedInput.Seq = e.LastConsumedSeq;
                 input = e.AppliedInput;
+                seqAdvanced = true;   // the claimed hole seq is fresh -- its (pos, seq) pairing is exact
                 return true;
             }
             var inp = q.Dequeue();
@@ -450,6 +465,7 @@ namespace UnturnedGodot.Net
             e.HasApplied = true;
             e.CoastTicks = 0;
             input = inp;
+            seqAdvanced = true;
             return true;
         }
 
