@@ -171,6 +171,27 @@ namespace UnturnedGodot
             _roads.RemoveAt(road);
         }
 
+        // --- inc3: bezier tangent handles + per-road material ---
+        bool Valid(int road, int joint) => road >= 0 && road < _roads.Count && joint >= 0 && joint < _roads[road].Joints.Count;
+        public Vector3 TangentPos(int road, int joint, int ti)   // world handle position = vertex + tangent
+        {
+            if (!Valid(road, joint)) return Vector3.Zero;
+            var jt = _roads[road].Joints[joint];
+            return jt.Vertex + (ti == 0 ? jt.Tan0 : jt.Tan1);
+        }
+        public void SetTangent(int road, int joint, int ti, Vector3 handleWorld)   // source moveTangent: setTangent(ti, handle - vertex), mode-aware, then re-extrude
+        {
+            if (!Valid(road, joint)) return;
+            var jt = _roads[road].Joints[joint];
+            jt.SetTangent(ti, handleWorld - jt.Vertex);
+            RebuildRoad(road);
+        }
+        public byte JointMode(int road, int joint) => Valid(road, joint) ? _roads[road].Joints[joint].Mode : (byte)0;
+        public void SetJointMode(int road, int joint, byte m) { if (Valid(road, joint)) _roads[road].Joints[joint].Mode = m; }   // affects the NEXT setTangent; no geometry change now
+        public int RoadMaterial(int road) => road >= 0 && road < _roads.Count ? _roads[road].Material : 0;
+        public void SetRoadMaterial(int road, int m) { if (road >= 0 && road < _roads.Count) { _roads[road].Material = m; RebuildRoad(road); } }
+        public int MaterialCount => _mats.Count;
+
         // editor Save(): write Paths.dat back (exact reverse of ParsePathsDat, same version/guids/modes). G() negates Z on
         // read (Unity z -> Godot -z), so undo it here: unityZ = -godotZ. Saved to an editor path, NOT the retail install.
         public bool SavePaths(string path)

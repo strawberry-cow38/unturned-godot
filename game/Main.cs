@@ -1621,6 +1621,13 @@ namespace UnturnedGodot
                 Vector3 focus;
                 if (System.Environment.GetEnvironmentVariable("UG_ROADCLEAN") == "1")
                     focus = roadsEd.DemoPave(0, roadsEd.DemoJointCount(0) / 2);    // markers only, NO edit -> roads render exactly as authored
+                else if (System.Environment.GetEnvironmentVariable("UG_ROADTAN") == "1")
+                {
+                    Vector3 j = roadsEd.DemoJoint(0, 1);
+                    roadsEd.DemoMoveTangent(0, 1, 0, j + new Vector3(0f, 0f, 45f));   // inc3: pull a bezier handle -> the road curves
+                    roadsEd.DemoSetMaterial(3, 2);                                    // inc3: verify the material picker (road 3 -> material 2)
+                    focus = j;
+                }
                 else if (System.Environment.GetEnvironmentVariable("UG_ROADADD") == "1")
                 {
                     focus = roadsEd.DemoAddVertex(0, new Vector3(35f, 0f, 20f));   // inc2: extend road 0 with a NEW joint -> the spline grows

@@ -3,12 +3,12 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot
 {
-    // Roads sub-editor, ported from SDG.Unturned EditorRoads (isPaving mode). Lives under the Environment tab (source
-    // EditorEnvironmentRoadsUI). Press R to toggle PAVING: a marker sphere appears at every road's bezier vertices.
-    // LMB a marker selects that joint; G snaps the selected joint to the cursor's terrain point (source tool_2
-    // moveVertex) -> the road's spline mesh re-extrudes LIVE. Save writes Paths.dat back (RoadField.SavePaths).
-    // Increment 1 = select + move vertices. Tangent handles, add/remove vertex, add/remove road, and the material
-    // picker are the NEXT slices -- source EditorRoads has all of them (addVertex/removeVertex/moveTangent/selected).
+    // Roads sub-editor, ported from SDG.Unturned EditorRoads (isPaving mode). Under the Environment tab. R toggles PAVING:
+    // a YELLOW sphere at every bezier vertex + two CYAN handles (the tangents) per joint, joined by lines. LMB a marker to
+    // select it. G snaps the selection to the cursor's terrain point -> vertex = source moveVertex, handle = source
+    // moveTangent (mode-aware: MIRROR/ALIGNED/FREE). LMB on ground adds a vertex (or a road); Del/Ctrl+Del removes a
+    // joint/road; N cycles the selected joint's tangent mode; M cycles the selected road's material. Each edit re-extrudes
+    // just that road (RoadField.RebuildRoad) + rebuilds markers. Save writes Paths.dat back. Source EditorRoads = the spec.
     public partial class EditorRoads : Node3D
     {
         readonly Editor _editor;
@@ -17,17 +17,21 @@ namespace UnturnedGodot
         readonly RoadField _roads;
         const uint RoadPickLayer = 1u << 10;   // own pick layer so road markers don't clash with object/terrain picking
         const uint TerrainLayer = 1u << 0;
+        static readonly string[] ModeNames = { "MIRROR", "ALIGNED", "FREE" };
 
         bool _paving;
-        int _selRoad = -1, _selJoint = -1;
+        int _selRoad = -1, _selJoint = -1, _selTan = -1;   // _selTan: -1 = vertex selected, 0/1 = a tangent handle
         StaticBody3D _selBody;
         readonly List<StaticBody3D> _markers = new();
-        readonly Dictionary<StaticBody3D, (int r, int j)> _markerMap = new();
-        static readonly Color MarkerColor = new(1f, 0.85f, 0.2f), SelColor = new(1f, 0.15f, 0.1f);
+        readonly Dictionary<StaticBody3D, (int r, int j, int t)> _markerMap = new();
+        MeshInstance3D _handleLines;
+        static readonly Color VertColor = new(1f, 0.85f, 0.2f), TanColor = new(0.2f, 0.85f, 1f), SelColor = new(1f, 0.15f, 0.1f);
 
         public bool Paving => _paving;
         public string ModeText => _paving
-            ? $"PAVING · LMB select/add · G move · Del/Ctrl+Del rm joint/road · {(_selRoad >= 0 ? $"r{_selRoad} j{_selJoint}" : "none")} · R=off"
+            ? (_selRoad >= 0
+                ? $"PAVING · r{_selRoad} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · G move · N mode({ModeNames[_roads.JointMode(_selRoad, _selJoint)]}) · M mat({_roads.RoadMaterial(_selRoad)}) · Del rm · R=off"
+                : "PAVING · LMB marker=select · LMB ground=add road · R=off")
             : "R = roads paving";
 
         static string SavePath => ProjectSettings.GlobalizePath("res://content/roads/") + "editor_Paths.dat";
@@ -51,25 +55,45 @@ namespace UnturnedGodot
         {
             ClearMarkers();
             if (_roads == null) return;
-            var mesh = new SphereMesh { Radius = 1.4f, Height = 2.8f, RadialSegments = 8, Rings = 5 };
+            var vmesh = new SphereMesh { Radius = 1.4f, Height = 2.8f, RadialSegments = 8, Rings = 5 };
+            var tmesh = new SphereMesh { Radius = 0.9f, Height = 1.8f, RadialSegments = 7, Rings = 4 };
+            var im = new ImmediateMesh();
+            im.SurfaceBegin(Mesh.PrimitiveType.Lines, new StandardMaterial3D { AlbedoColor = TanColor, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded });
             for (int r = 0; r < _roads.RoadCount; r++)
                 for (int j = 0; j < _roads.JointCount(r); j++)
                 {
-                    var body = new StaticBody3D { CollisionLayer = RoadPickLayer, CollisionMask = 0, Position = _roads.JointPos(r, j) + Vector3.Up * 1.2f };
-                    body.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = 1.7f } });
-                    body.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MarkerMat(MarkerColor) });
-                    AddChild(body);
-                    _markers.Add(body);
-                    _markerMap[body] = (r, j);
+                    Vector3 v = _roads.JointPos(r, j) + Vector3.Up * 1.2f;
+                    AddMarker(vmesh, v, VertColor, r, j, -1);
+                    for (int t = 0; t < 2; t++)
+                    {
+                        Vector3 h = _roads.TangentPos(r, j, t) + Vector3.Up * 1.2f;
+                        if (h.DistanceSquaredTo(v) < 0.5f) continue;   // zero tangent -> handle sits on the vertex, skip
+                        AddMarker(tmesh, h, TanColor, r, j, t);
+                        im.SurfaceAddVertex(v); im.SurfaceAddVertex(h);   // the bezier handle line
+                    }
                 }
-            GD.Print($"[editor-roads] paving ON: {_markers.Count} joints across {_roads.RoadCount} roads");
+            im.SurfaceEnd();
+            _handleLines = new MeshInstance3D { Mesh = im };
+            AddChild(_handleLines);
+            GD.Print($"[editor-roads] paving ON: {_markers.Count} markers across {_roads.RoadCount} roads");
+        }
+
+        void AddMarker(Mesh mesh, Vector3 pos, Color col, int r, int j, int t)
+        {
+            var body = new StaticBody3D { CollisionLayer = RoadPickLayer, CollisionMask = 0, Position = pos };
+            body.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = t < 0 ? 1.7f : 1.1f } });
+            body.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MarkerMat(col) });
+            AddChild(body);
+            _markers.Add(body);
+            _markerMap[body] = (r, j, t);
         }
 
         void ClearMarkers()
         {
             foreach (var m in _markers) m.QueueFree();
             _markers.Clear(); _markerMap.Clear();
-            _selBody = null; _selRoad = _selJoint = -1;
+            _handleLines?.QueueFree(); _handleLines = null;
+            _selBody = null; _selRoad = _selJoint = -1; _selTan = -1;
         }
 
         static StandardMaterial3D MarkerMat(Color c) => new() { AlbedoColor = c, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true };
@@ -83,42 +107,54 @@ namespace UnturnedGodot
             if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             {
                 var body = PickMarker(GetViewport().GetMousePosition());
-                if (body != null && _markerMap.TryGetValue(body, out var rj)) Select(body, rj.r, rj.j);
-                else if (RaycastTerrain(GetViewport().GetMousePosition(), out var pt))   // source: LMB on ground = add vertex (road selected) / add road (nothing selected)
+                if (body != null && _markerMap.TryGetValue(body, out var rj)) Select(body, rj.r, rj.j, rj.t);
+                else if (RaycastTerrain(GetViewport().GetMousePosition(), out var pt))   // source: LMB on ground = add vertex (a vertex selected) / add road (nothing)
                 {
-                    if (_selRoad >= 0)
+                    if (_selRoad >= 0 && _selTan < 0)
                     {
                         int road = _selRoad, ni = _roads.AddVertexNearSelected(road, _selJoint, pt);
-                        BuildMarkers(); if (ni >= 0) SelectJoint(road, ni);
+                        BuildMarkers(); if (ni >= 0) SelectMarker(road, ni, -1);
                     }
-                    else { int nr = _roads.AddRoad(pt); BuildMarkers(); SelectJoint(nr, 0); }
+                    else if (_selRoad < 0) { int nr = _roads.AddRoad(pt); BuildMarkers(); SelectMarker(nr, 0, -1); }
                 }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.G } && _selRoad >= 0)
             {
                 if (RaycastTerrain(GetViewport().GetMousePosition(), out var pt))
                 {
-                    _roads.SetJointPos(_selRoad, _selJoint, pt);   // source moveVertex -> RebuildRoad re-extrudes the spline live
-                    if (_selBody != null) _selBody.Position = pt + Vector3.Up * 1.2f;
+                    if (_selTan >= 0) _roads.SetTangent(_selRoad, _selJoint, _selTan, pt);   // source moveTangent (mode-aware) -> re-extrude
+                    else _roads.SetJointPos(_selRoad, _selJoint, pt);                        // source moveVertex -> re-extrude
+                    int r = _selRoad, j = _selJoint, t = _selTan;
+                    BuildMarkers(); SelectMarker(r, j, t);   // handles move with the edit -> rebuild markers + reselect
                 }
             }
-            else if (ev is InputEventKey { Pressed: true, Echo: false } dk && (dk.Keycode == Key.Delete || dk.Keycode == Key.Backspace) && _selRoad >= 0)
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.N } && _selRoad >= 0)   // cycle the joint's tangent mode
             {
-                if (Input.IsKeyPressed(Key.Ctrl)) _roads.RemoveRoad(_selRoad);          // source Ctrl+Del: remove the whole road
-                else _roads.RemoveVertex(_selRoad, _selJoint);                          // source Del: remove the joint (whole road if <2 left)
-                _selRoad = _selJoint = -1; _selBody = null; BuildMarkers();
+                _roads.SetJointMode(_selRoad, _selJoint, (byte)((_roads.JointMode(_selRoad, _selJoint) + 1) % 3));
+            }
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.M } && _selRoad >= 0 && _roads.MaterialCount > 0)   // cycle the road's material
+            {
+                _roads.SetRoadMaterial(_selRoad, (_roads.RoadMaterial(_selRoad) + 1) % _roads.MaterialCount);
+                int r = _selRoad, j = _selJoint, t = _selTan; BuildMarkers(); SelectMarker(r, j, t);
+            }
+            else if (ev is InputEventKey { Pressed: true, Echo: false } dk && (dk.Keycode == Key.Delete || dk.Keycode == Key.Backspace) && _selRoad >= 0 && _selTan < 0)
+            {
+                if (Input.IsKeyPressed(Key.Ctrl)) _roads.RemoveRoad(_selRoad);   // source Ctrl+Del: whole road
+                else _roads.RemoveVertex(_selRoad, _selJoint);                   // source Del: the joint (whole road if <2 left)
+                _selRoad = _selJoint = -1; _selTan = -1; _selBody = null; BuildMarkers();
             }
         }
 
-        void SelectJoint(int road, int joint)   // after add/remove (indices shifted + markers rebuilt): re-highlight a joint
+        void SelectMarker(int road, int joint, int tan)   // after a rebuild: re-highlight (road, joint, tan)
         {
-            foreach (var kv in _markerMap) if (kv.Value.r == road && kv.Value.j == joint) { Select(kv.Key, road, joint); return; }
+            foreach (var kv in _markerMap) if (kv.Value.r == road && kv.Value.j == joint && kv.Value.t == tan) { Select(kv.Key, road, joint, tan); return; }
         }
 
-        void Select(StaticBody3D body, int road, int joint)
+        void Select(StaticBody3D body, int road, int joint, int tan)
         {
-            if (_selBody != null) SetMarkerColor(_selBody, MarkerColor);
-            _selBody = body; _selRoad = road; _selJoint = joint;
+            if (_selBody != null && IsInstanceValid(_selBody) && _markerMap.TryGetValue(_selBody, out var old))
+                SetMarkerColor(_selBody, old.t < 0 ? VertColor : TanColor);
+            _selBody = body; _selRoad = road; _selJoint = joint; _selTan = tan;
             SetMarkerColor(body, SelColor);
         }
 
@@ -142,20 +178,19 @@ namespace UnturnedGodot
             pt = (Vector3)hit["position"]; return true;
         }
 
-        // harness (UG_EDITORROADS): enable paving + move a joint so a headless render shows the road bending
-        public void DemoMove(int road, int joint, Vector3 to)
+        // --- harness demos (UG_EDITORROADS [+ UG_ROADADD / UG_ROADTAN / UG_ROADCLEAN]) ---
+        public void DemoMove(int road, int joint, Vector3 to)   // inc1: move a vertex
         {
             SetPaving(true);
             if (road < _roads.RoadCount && joint < _roads.JointCount(road))
             {
-                _selRoad = road; _selJoint = joint;
+                _selRoad = road; _selJoint = joint; _selTan = -1;
                 _roads.SetJointPos(road, joint, to);
                 GD.Print($"[editor-roads] demo moved road {road} joint {joint} -> {to}");
             }
         }
 
-        // harness (UG_EDITORROADS + UG_ROADADD): extend a road with a new vertex so a render shows the added joint + kink
-        public Vector3 DemoAddVertex(int road, Vector3 offset)
+        public Vector3 DemoAddVertex(int road, Vector3 offset)   // inc2: extend a road with a new vertex
         {
             SetPaving(true);
             if (road >= _roads.RoadCount || _roads.JointCount(road) < 1) return Vector3.Zero;
@@ -166,8 +201,7 @@ namespace UnturnedGodot
             return at;
         }
 
-        // harness: exercise remove (inc2) + log the joint-count delta so a run proves it rebuilds without crashing
-        public void DemoRemoveVertex(int road, int joint)
+        public void DemoRemoveVertex(int road, int joint)   // inc2: remove (logs the joint-count delta)
         {
             if (road >= _roads.RoadCount) return;
             int before = _roads.JointCount(road);
@@ -175,9 +209,29 @@ namespace UnturnedGodot
             GD.Print($"[editor-roads] demo removed road {road} joint {joint}: {before} joints -> {(removedRoad ? "ROAD removed" : _roads.JointCount(road) + " joints")}");
         }
 
-        public Vector3 DemoPave(int road, int joint) { SetPaving(true); return DemoJoint(road, joint); }   // harness: markers on, NO edit (clean roads shot)
-        public int DemoJointCount(int road) => _roads != null ? _roads.JointCount(road) : 0;
+        public Vector3 DemoMoveTangent(int road, int joint, int ti, Vector3 handleWorld)   // inc3: pull a bezier handle -> the road curves
+        {
+            SetPaving(true);
+            if (road < _roads.RoadCount && joint < _roads.JointCount(road))
+            {
+                _selRoad = road; _selJoint = joint; _selTan = ti;
+                _roads.SetTangent(road, joint, ti, handleWorld);
+                BuildMarkers();
+                GD.Print($"[editor-roads] demo moved road {road} joint {joint} tangent {ti} -> handle {handleWorld} (mode {ModeNames[_roads.JointMode(road, joint)]})");
+            }
+            return handleWorld;
+        }
 
+        public void DemoSetMaterial(int road, int m)   // inc3: verify the material picker rebuilds with a different material
+        {
+            if (road >= _roads.RoadCount) return;
+            int before = _roads.RoadMaterial(road);
+            _roads.SetRoadMaterial(road, m);
+            GD.Print($"[editor-roads] demo set road {road} material {before} -> {_roads.RoadMaterial(road)} (of {_roads.MaterialCount})");
+        }
+
+        public Vector3 DemoPave(int road, int joint) { SetPaving(true); return DemoJoint(road, joint); }   // markers on, NO edit
+        public int DemoJointCount(int road) => _roads != null ? _roads.JointCount(road) : 0;
         public bool HasRoads => _roads != null && _roads.RoadCount > 0;
         public Vector3 DemoJoint(int road, int joint) => HasRoads && road < _roads.RoadCount && joint < _roads.JointCount(road) ? _roads.JointPos(road, joint) : Vector3.Zero;
     }
