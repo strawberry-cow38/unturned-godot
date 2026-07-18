@@ -365,7 +365,7 @@ namespace UnturnedGodot
             }
         }
 
-        static string SavePath => Dir + "editor_PEI.txt";   // editor placements (port format); loaded on open in addition to the baked map
+        string SavePath => Dir + $"editor_{_editor.MapName}.txt";   // per-map editor placements (port format); loaded on open
 
         // Save the editor-placed props in the port's placements format (guid px py pz ex ey ez sx sy sz) so edits
         // persist + reload. The SOURCE persists objects via LevelObjects' binary .level Block; the port loads the baked

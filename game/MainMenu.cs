@@ -18,7 +18,8 @@ namespace UnturnedGodot
         public System.Action<bool> OnPlay;        // legacy flat-terrain survival build (test flags only)
         public System.Action<bool> OnDrivePEI;    // bool = noZombies -- the real PEI world; the dashboard's Play opens this
         public System.Action OnMultiplayer;       // top-level "Multiplayer": connect to the MP test server (VoX: always our test server for now; server browser later)
-        public System.Action OnEditor;            // Workshop -> the singleplayer map editor
+        public System.Action OnEditor;            // Workshop -> the singleplayer map editor (PEI)
+        public System.Action OnNewMap;            // Workshop -> a fresh blank map in the editor
 
         // --- camera anchors (framings of the barn). Tuned against the render; index 0 = Title (idle). ---
         // pos + look-at, world space. Title is a pulled-back 3/4 hero shot; each tab reframes the barn.
@@ -263,6 +264,7 @@ namespace UnturnedGodot
             head.AddThemeFontSizeOverride("font_size", 22);
             box.AddChild(head);
             box.AddChild(SubButton("Editor — Prince Edward Island", () => OnEditor?.Invoke()));
+            box.AddChild(SubButton("Create New Map", () => OnNewMap?.Invoke()));
             layer.AddChild(_workshopPanel);
         }
 

@@ -39,7 +39,7 @@ namespace UnturnedGodot
         public string ModeText => _paint
             ? $"PAINT {LayerNames[_layer]} · radius {_radius:0}m"
             : $"{BrushNames[(int)_brush]}{(_brush == EBrush.Ramp ? " (click begin, click end)" : "")} · radius {_radius:0}m · strength {_strength:0}";
-        static string SavePath => ProjectSettings.GlobalizePath("res://content/terrain/") + "editor_heightmap.bin";
+        string SavePath => ProjectSettings.GlobalizePath("res://content/terrain/") + $"editor_{_editor.MapName}_heightmap.bin";
 
         public int Save()
         {

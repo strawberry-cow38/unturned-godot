@@ -68,7 +68,7 @@ namespace UnturnedGodot
 
         void RefreshVisibility() { Visible = _editor.Mode == EEditorMode.Spawns; }
 
-        string TranslatorPath(ECategory c) => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{c.ToString().ToLower()}.txt";
+        string TranslatorPath(ECategory c) => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{_editor.MapName}_{c.ToString().ToLower()}.txt";
 
         void LoadCategory()   // the editor translator (edited state) if present, else the retail .dat
         {

@@ -52,7 +52,7 @@ namespace UnturnedGodot
             }
         }
 
-        static string SavePath => ProjectSettings.GlobalizePath("res://content/spawns/") + "editor_environment.txt";
+        static string SavePath => ProjectSettings.GlobalizePath("res://content/spawns/") + $"editor_{Editor.Instance?.MapName ?? "PEI"}_environment.txt";
 
         void Load()
         {

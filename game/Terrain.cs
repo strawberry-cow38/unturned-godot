@@ -376,6 +376,37 @@ void fragment() {
             return node;
         }
 
+        // NEW MAP: a flat, all-grass, sculptable terrain (no heightmap file). Same chunked mesh + splat material as a
+        // loaded map, so every editor tool (sculpt/ramp/paint) works on it. tiles = size in 1024-unit Landscape tiles.
+        public static Terrain CreateFlat(int tilesX = 3, int tilesZ = 3, bool withCollider = true)
+        {
+            var terr = new Terrain { Name = "Terrain" };
+            Active = terr;
+            int GW = tilesX * 256 + 1, GH = tilesZ * 256 + 1, GWs = tilesX * SRES, GHs = tilesZ * SRES;
+            float flat = (30f + TILE_HEIGHT / 2f) / TILE_HEIGHT;   // flat land ~Y30 (above the 25.6 sea level)
+            var g = new float[GW, GH];
+            for (int x = 0; x < GW; x++) for (int y = 0; y < GH; y++) g[x, y] = flat;
+            var dom = new byte[GWs, GHs];
+            for (int x = 0; x < GWs; x++) for (int y = 0; y < GHs; y++) dom[x, y] = 2;   // layer 2 = grass
+            var sbuf0 = new byte[GWs * GHs * 4]; var sbuf1 = new byte[GWs * GHs * 4];
+            for (int i = 0; i < GWs * GHs; i++) sbuf0[i * 4 + 2] = 255;   // splat0 B channel = layer 2 (grass) weight 1
+            var splat0Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf0);
+            var splat1Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf1);
+            var s0t = ImageTexture.CreateFromImage(splat0Img); var s1t = ImageTexture.CreateFromImage(splat1Img);
+            var texMat = BuildTerrainMaterial(s0t, s1t);
+            terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = 0f; terr._bz = 0f;
+            terr._dom = dom; terr._dw = GWs; terr._dh = GHs;
+            terr._s0Img = splat0Img; terr._s1Img = splat1Img; terr._s0Tex = s0t; terr._s1Tex = s1t;
+            terr._terrMat = texMat != null ? (Material)texMat : new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 1f };
+            terr._withCollider = withCollider;
+            terr._chunksX = (GW - 2) / CHUNK + 1; terr._chunksY = (GH - 2) / CHUNK + 1;
+            terr._chunkMi = new MeshInstance3D[terr._chunksX, terr._chunksY];
+            terr._chunkBody = new StaticBody3D[terr._chunksX, terr._chunksY];
+            terr.RebuildAll();
+            GD.Print($"[terrain] flat NEW map {tilesX}x{tilesZ} tiles ({GW}x{GH} verts)");
+            return terr;
+        }
+
         // Load every Tile_*_Source.heightmap in a map's Landscape/Heightmaps folder into one Terrain node (the whole island).
         public static Terrain LoadMap(string heightmapsDir, bool withCollider = true)
         {

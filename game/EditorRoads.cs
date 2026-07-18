@@ -37,7 +37,7 @@ namespace UnturnedGodot
                 : "PAVING · LMB marker=select · LMB ground=new road · R=off")
             : "R = roads paving";
 
-        static string SavePath => ProjectSettings.GlobalizePath("res://content/roads/") + "editor_Paths.dat";
+        string SavePath => ProjectSettings.GlobalizePath("res://content/roads/") + $"editor_{_editor.MapName}_Paths.dat";
 
         public int Save()   // Editor.Save() fan-out: write Paths.dat back (only if there are roads)
         {
