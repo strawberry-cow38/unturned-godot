@@ -22,6 +22,7 @@ namespace UnturnedGodot
         public DayNightCycle DayNight;               // optional (WorldBuildResult.DayNight): tick-derived day-night (§3.7)
         public ResourceField Resources;              // optional (WorldBuildResult.Resources): the §3.7 alive-bitmap index space
         public string MapRoot;                       // optional: loads the 19 nav pockets as relevancy cells (§2.6)
+        public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
 
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
@@ -51,7 +52,8 @@ namespace UnturnedGodot
 
             Server = new NetWorldServer(TransportOverride ?? new UdpServerTransport(Port),
                 (conn, reason, isError) => GD.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
-                contentHash: NetContent.Hash);   // §2.2: joiners with a different content identity are rejected
+                contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
+                activeHoliday: ActiveHoliday);   // P3: joiners build THIS world's holiday props/colliders, not their own clock's
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
             Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
             Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");

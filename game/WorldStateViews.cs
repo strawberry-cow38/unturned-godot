@@ -53,6 +53,11 @@ namespace UnturnedGodot
 
         long _appliedVersion;
 
+        /// <summary>P3: the client's ResourceField loads LATE (with the server's holiday, at Accept) --
+        /// re-apply the whole bitmap even if its replica Version was already consumed against the empty
+        /// field, or trees felled before the join would stay visually alive until the next fell event.</summary>
+        public void Refresh() => _appliedVersion = -1;
+
         public override void _PhysicsProcess(double delta)
         {
             if (Client == null || Field == null || !GodotObject.IsInstanceValid(Field)) return;

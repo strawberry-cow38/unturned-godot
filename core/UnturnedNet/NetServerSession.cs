@@ -38,6 +38,11 @@ namespace UnturnedGodot.Net
         readonly byte _version;
         readonly int _maxPeers;
         readonly ulong _contentHash;
+        // P3 holiday parity (wire v6): the server world's activeHoliday rides the Accept so the joining
+        // client builds the SERVER's holiday-gated props/colliders, not its own wall clock's -- the one
+        // static-collision decision the content hash cannot cover (it hashes content identity, not the
+        // local-clock gate).
+        readonly string _activeHoliday;
         readonly byte[] _rx = new byte[NetProtocol.MaxDatagramBytes];
         readonly NetPakReader _peekReader = new NetPakReader();
         readonly NetPakWriter _rawWriter = new NetPakWriter { buffer = new byte[NetProtocol.MaxDatagramBytes] };
@@ -72,7 +77,8 @@ namespace UnturnedGodot.Net
                                 int maxPeers = 32,
                                 ulong contentHash = 0,
                                 int maxHalfOpen = 8,
-                                int maxPeersPerSource = 8)
+                                int maxPeersPerSource = 8,
+                                string activeHoliday = "")
         {
             _transport = transport;
             _connectionFailure = connectionFailureCallback;
@@ -81,6 +87,7 @@ namespace UnturnedGodot.Net
             _contentHash = contentHash;
             _maxHalfOpen = maxHalfOpen;
             _maxPeersPerSource = maxPeersPerSource;
+            _activeHoliday = activeHoliday ?? "";
             _transport.Initialize(connectionFailureCallback);
         }
 
@@ -221,6 +228,7 @@ namespace UnturnedGodot.Net
             {
                 w.WriteUInt16(peer.PlayerId);
                 w.WriteUInt32(serverTick);
+                w.WriteString(_activeHoliday);   // wire v6: the server world's holiday -- the client builds THIS holiday's props/colliders
             });
         }
 

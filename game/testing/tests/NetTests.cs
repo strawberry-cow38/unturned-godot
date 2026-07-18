@@ -3122,8 +3122,11 @@ namespace UnturnedGodot.Testing
     {
         public override string Name => "net.shell_wan_thincollider";
         public override double TimeoutSimSeconds => 120;
-        const bool BarsLive = false;      // the metric bars: the C3 gate, as §4 predicted (still red after F1-F4)
-        const bool GuardBarsLive = true;  // snaps + convergence: pass today and guard against regression
+        const bool BarsLive = false;      // the metric bars AND the snap bar: the C3 gate, as §4 predicted (still red
+                                          // after F1-F4; the knife-edge legitimately reaches snap scale -- a solo run
+                                          // measured 5.471 m/min with 0 snaps, an in-suite run 18.481 with 1: the
+                                          // course is chaotically context-sensitive, which IS its §4-2 nature)
+        const bool GuardBarsLive = true;  // clean-link convergence: passes in every context and guards regression
 
         public override IEnumerable<Step> Run()
         {
@@ -3166,8 +3169,56 @@ namespace UnturnedGodot.Testing
             WanGeo.Bar(T, BarsLive, $"hydrant grinds cost ~zero correction ({m.CorrPerMin:0.###} m/min -- pre-fix 10.722)", m.CorrPerMin < 2f);
             WanGeo.Bar(T, BarsLive, $"no correction spike above 0.25 m (max pending {m.MaxPend:0.###} m -- pre-fix 0.851)", m.MaxPend < 0.25f);
             WanGeo.Bar(T, BarsLive, $"no single-tick tug above 0.08 m (worst {m.WorstTickCorr:0.###} m -- pre-fix 0.148)", m.WorstTickCorr < 0.08f);
-            WanGeo.Bar(T, GuardBarsLive, $"ZERO snaps at the hydrant ({m.Snaps})", m.Snaps == 0);
+            WanGeo.Bar(T, BarsLive, $"ZERO snaps at the hydrant ({m.Snaps})", m.Snaps == 0);
             foreach (var s in rig.Close(this, GuardBarsLive, m, "wan-thincollider")) yield return s;
+        }
+    }
+
+    // P3 holiday parity (PREDICTION_GEOMETRY_DIAGNOSIS §2 footnote 1, wire v6): ~285 placed props carry
+    // COLLIDERS and are gated by activeHoliday, which each side derived from its LOCAL wall clock -- a
+    // client across a holiday boundary silently built a DIFFERENT static collision set the content-hash
+    // join gate never catches (it hashes content identity, not the clock decision). The server's holiday
+    // now rides the Accept, and the client's holiday-gated world content is DEFERRED at build and placed
+    // by WorldBuildResult.ApplyHoliday with the SERVER's string (ClientWorldSession invokes it once, on
+    // the first Connected tick). This test proves the full wire + plumbing: the callback fires exactly
+    // once, with the server's holiday, before the shell spawns -- a value nothing client-side knows.
+    // (The placement parity itself is by construction: ApplyHoliday replays the SAME PlaceObject body the
+    // inline build runs; the flat CI world has no objects to place, so that half can't run here.)
+    public class NetShellHolidayHandshake : GameTest
+    {
+        public override string Name => "net.shell_holiday_handshake";
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(95959);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            string applied = null; int calls = 0; bool shellExistedAtApply = false;
+            ClientWorldSession sess = null;
+            sess = new ClientWorldSession
+            {
+                Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "wanclaus",
+                ApplyServerHoliday = h => { applied = h; calls++; shellExistedAtApply = sess.Shell != null; },
+            };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net),
+                                            RemoteAvatars = true, ActiveHoliday = "CHRISTMAS" };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            T.Check($"the client built the SERVER's holiday world ('{applied}')", applied == "CHRISTMAS");
+            T.Check($"the deferred holiday content applied exactly once ({calls})", calls == 1);
+            T.Check("and BEFORE the shell spawned (colliders exist before the player stands among them)", !shellExistedAtApply);
+            yield return Ticks(20);
+            T.Check($"no re-application on later ticks ({calls})", calls == 1);
+
+            world.Sim.Sim.Remove(pump);
         }
     }
 

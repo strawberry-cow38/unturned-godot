@@ -30,6 +30,14 @@ namespace UnturnedGodot
         public Vector3 PlayerSpawn;        // Client only: a real Spawns/Players.dat point (terrain-height Y) -- pre-join reference (the C3 shell spawns at the SERVER-adopted entity pos, not here)
         public bool HasPlayerSpawn;
         public bool Ready;                 // true once the whole build finished (the old _worldReady)
+        /// <summary>P3 holiday parity (Client mode only, else null): the holiday-gated world content --
+        /// the ~285 tagged props WITH their colliders, and the whole resource field -- is DEFERRED at
+        /// build time and placed by this callback with the SERVER's activeHoliday (from the wire-v6
+        /// Accept), so a joining client can never build a different static collision set than the
+        /// server because its wall clock sits across a holiday boundary. One-shot. Resources defer
+        /// WHOLE (not tagged-only): the §3.7 alive-bitmap index space is manifest-ordered, and a late
+        /// tagged append would misalign every index against the server's interleaved order.</summary>
+        public System.Action<string> ApplyHoliday;
     }
 
     // The one real-world assembly path, extracted verbatim from Main.BuildObjectsTest/BuildPeiPlay so
@@ -184,13 +192,14 @@ namespace UnturnedGodot
             if (System.IO.File.Exists(hpath))
                 foreach (var hl in System.IO.File.ReadLines(hpath)) { var q = hl.Split(' ', System.StringSplitOptions.RemoveEmptyEntries); if (q.Length >= 2) holidayOf[q[0]] = q[1]; }
             int holidaySkipped = 0;
-            foreach (var line in System.IO.File.ReadLines(dir + mapPlace))
+            // P3 (Client mode): holiday-tagged placements are NOT decided by this machine's clock -- they
+            // defer, and result.ApplyHoliday places the ones matching the SERVER's holiday at join time
+            // (the same PlaceObject body, so parity with an inline build is by construction).
+            var deferredHoliday = mode == WorldMode.Client ? new System.Collections.Generic.List<(string[] p, string name, string holiday)>() : null;
+            void PlaceObject(string[] p, string name)
             {
-                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
-                if (holidayOf.TryGetValue(p[0], out var ph) && ph != activeHoliday) { holidaySkipped++; continue; }   // out-of-season holiday prop
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
-                if (mesh == null) continue;
+                if (mesh == null) return;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
                 var gpos = new Vector3(px, py, -pz);
                 // negate-Z LAYOUT (keeps the map orientation) with a RAW mesh (un-mirrored geometry): rotation = old C_z-conjugated euler
@@ -235,8 +244,19 @@ namespace UnturnedGodot
                 cellSum.TryGetValue(cell, out Vector3 cs); cellSum[cell] = cs + gpos;
                 if (cc + 1 > bestN) { bestN = cc + 1; bestCell = cell; }
             }
+            foreach (var line in System.IO.File.ReadLines(dir + mapPlace))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
+                if (holidayOf.TryGetValue(p[0], out var ph))
+                {
+                    if (deferredHoliday != null) { deferredHoliday.Add((p, name, ph)); continue; }   // P3: the SERVER's holiday decides, at join (ApplyHoliday)
+                    if (ph != activeHoliday) { holidaySkipped++; continue; }                          // out-of-season holiday prop
+                }
+                PlaceObject(p, name);
+            }
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
-            GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped} (active={activeHoliday})");
+            GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
 
             // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static
             // so the dedicated server's SpawnProvider reads the SAME points -- behavior-identical here).
@@ -263,7 +283,12 @@ namespace UnturnedGodot
                     await Phase("Trees");
                     var rsf = new ResourceField();
                     root.AddChild(rsf);
-                    rsf.LoadResources(activeHoliday);   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
+                    // P3 (Client): the WHOLE load waits for the server's holiday -- the §3.7 alive-bitmap
+                    // index space is manifest-ordered, so it must be built in ONE pass with the same
+                    // holiday the server used, or every replicated fell/respawn index lands on the wrong
+                    // tree. Pre-join there is no camera, so nobody sees the empty field.
+                    if (mode != WorldMode.Client)
+                        rsf.LoadResources(activeHoliday);   // gate CHRISTMAS resources (candy canes/snow piles) like the objects
                     result.Resources = rsf;
                 }
             }
@@ -514,6 +539,22 @@ namespace UnturnedGodot
                     result.PlayerSpawn = new Vector3(pick.x, terr.SampleHeight(pick.x, pick.z), pick.z);
                     result.HasPlayerSpawn = true;
                 }
+                // P3: the deferred holiday content lands here, with the SERVER's holiday from the Accept
+                // (ClientWorldSession.ApplyServerHoliday -> this). One-shot; the placement body is the
+                // same PlaceObject the inline build runs, so prop/collider parity is by construction.
+                bool holidayApplied = false;
+                var rsfDeferred = result.Resources;
+                result.ApplyHoliday = holiday =>
+                {
+                    if (holidayApplied) return;
+                    holidayApplied = true;
+                    int before = placed;
+                    if (deferredHoliday != null)
+                        foreach (var (p, name, ph) in deferredHoliday)
+                            if (ph == holiday) PlaceObject(p, name);
+                    if (rsfDeferred != null && GodotObject.IsInstanceValid(rsfDeferred)) rsfDeferred.LoadResources(holiday);
+                    GD.Print($"[WORLD] client holiday content applied: {holiday} ({placed - before} props of {deferredHoliday?.Count ?? 0} deferred, + resources)");
+                };
             }
             else
             {

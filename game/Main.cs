@@ -1924,14 +1924,16 @@ namespace UnturnedGodot
             // log and no bound socket. Surface anything that goes wrong + hard-exit so systemd restarts cleanly.
             try
             {
+                string holiday = ActiveHoliday();   // P3: ONE decision -- the world builds with it AND it rides the Accept (joiners build the same collision set)
                 var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Dedicated, _mapRoot, _mapPlace,
                     // C4: the dedicated world is POPULATED -- zombies ON by default for the test server;
                     // --nozombies or UG_DEDICATED_NOZOMBIES=1 gives a quiet server, no code change
                     noZombies: _noZombies || System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1",
-                    syncLoad: true, bakeNav: false, activeHoliday: ActiveHoliday());
+                    syncLoad: true, bakeNav: false, activeHoliday: holiday);
                 AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
                     DayNight = res.DayNight, Resources = res.Resources, MapRoot = _mapRoot,          // Phase 8: tick-derived clock + resource bitmap + nav-pocket relevancy cells (§3.7/§2.6)
                     RemoteAvatars = true,                                                            // C2: remote peers get real avatar bodies (real spawns/collision/jump) on this world
+                    ActiveHoliday = holiday,                                                         // P3 (wire v6): joiners build THIS holiday's props/colliders
                     AllowCheats = System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1" });   // test server: give/xp/skill console cheats ON (useful for testing); set UG_DEDICATED_NOCHEATS=1 to lock them off, no code change (review C1 toggle)
                 _worldReady = res.Ready;
                 GD.Print($"[DEDICATED] world up (terrain={(res.Terr != null ? "real map" : "fallback plane")}); listening on udp {PortEnv()}");
@@ -1993,11 +1995,13 @@ namespace UnturnedGodot
                 {
                     AddChild(new ClientWorldSession { Host = _connectHost, Port = PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
                                                       DayNight = res.DayNight, Resources = res.Resources,   // C5: the world-state views drive these
-                                                      Terr = res.Terr });                                    // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
+                                                      Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
+                                                      ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
                     GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");
                 }
                 else   // bare --client (C1 demo shape): overhead cam over the spawn region + ClientNode capsules
                 {
+                    res.ApplyHoliday?.Invoke(ActiveHoliday());   // P3: the demo renderer has no join-handshake consumer -- place the deferred holiday content by local clock, the pre-P3 behavior
                     var cam = new Camera3D { Current = true, Fov = 62f, Far = 20000f };
                     AddChild(cam);
                     var ctr = res.HasPlayerSpawn ? res.PlayerSpawn : Vector3.Zero;   // hover the real spawn region, not the origin (open water on PEI)
