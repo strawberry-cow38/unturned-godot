@@ -38,6 +38,7 @@ namespace UnturnedGodot
             _editor = editor; _world = world; _cam = cam; _flyCam = cam;
             _gizmo = new EditorGizmo(cam); AddChild(_gizmo);   // the source TransformHandles translate gizmo, shown on the selection
             LoadCatalog();
+            LoadSaved();   // restore any previously-saved editor placements
             if (_catalog.Count > 0) PlaceName = _catalog[0];   // default to placing the first prop
         }
 
@@ -49,7 +50,10 @@ namespace UnturnedGodot
             foreach (var line in System.IO.File.ReadLines(gm))
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
-                if (p.Length >= 2 && seen.Add(p[1])) _catalog.Add(p[1]);
+                if (p.Length < 2) continue;
+                if (seen.Add(p[1])) _catalog.Add(p[1]);
+                _nameToGuid.TryAdd(p[1], p[0]);   // name -> first guid (for writing placements on save)
+                _guidToName.TryAdd(p[0], p[1]);   // guid -> mesh name (for loading placements)
             }
             _catalog.Sort();
         }
@@ -88,6 +92,8 @@ namespace UnturnedGodot
             var rot = new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(270f));
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
             root.SetMeta("obj_name", name);
+            root.SetMeta("guid", _nameToGuid.TryGetValue(name, out var g) ? g : "");   // for the placements save
+            root.SetMeta("yaw", yawDeg);
             root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name) });
             var shp = mesh.CreateTrimeshShape();   // trimesh collider so the prop is pickable (+ later walkable)
             if (shp != null)
@@ -185,6 +191,44 @@ namespace UnturnedGodot
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
                 else if (k.Keycode == Key.Escape) Select(null);
             }
+        }
+
+        static string SavePath => Dir + "editor_PEI.txt";   // editor placements (port format); loaded on open in addition to the baked map
+
+        // Save the editor-placed props in the port's placements format (guid px py pz ex ey ez sx sy sz) so edits
+        // persist + reload. The SOURCE persists objects via LevelObjects' binary .level Block; the port loads the baked
+        // placements.txt, so this is the translator-to-our-format save master accepted (real binary .level = a later
+        // refinement). gpos.Z negates back to pz; ex=270 + ey=180-yaw mirror the load/WorldBuilder convention.
+        public int Save()
+        {
+            using var w = new System.IO.StreamWriter(SavePath, false);
+            int n = 0;
+            foreach (var p in _placed)
+            {
+                string guid = p.HasMeta("guid") ? (string)p.GetMeta("guid") : "";
+                if (guid.Length == 0) continue;
+                var gp = p.GlobalPosition;
+                float yaw = p.HasMeta("yaw") ? (float)p.GetMeta("yaw") : 0f;
+                w.WriteLine($"{guid} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} 270 {(180f - yaw):0.###} 0 1 1 1");
+                n++;
+            }
+            GD.Print($"[editor] saved {n} placed props -> {SavePath}");
+            return n;
+        }
+
+        void LoadSaved()   // restore previously-saved editor placements on open
+        {
+            if (!System.IO.File.Exists(SavePath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(SavePath))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 10 || !_guidToName.TryGetValue(p[0], out var name)) continue;
+                if (!float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz) || !float.TryParse(p[5], out var ey)) continue;
+                Place(name, new Vector3(px, py, -pz), 180f - ey);   // gpos = (px,py,-pz); yaw = 180 - ey
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor] loaded {n} saved props");
         }
 
         // harness hook (--editor): scatter a few props so a headless render shows placement working

@@ -1539,6 +1539,7 @@ namespace UnturnedGodot
                 GetTree().CreateTimer(0.8).Timeout += () =>
                 {
                     objs.DemoPlace();
+                    objs.Save();   // verify the round-trip: writes editor_PEI.txt; a re-run without the demo loads it back
                     if (objs.DemoPositions.Count > 0)   // pull the cam in close on a placed prop so the render shows it upright
                     {
                         var p = objs.DemoPositions[0];
