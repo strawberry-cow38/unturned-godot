@@ -82,6 +82,21 @@ namespace UnturnedGodot.Net
             PlayerHost = new ServerPlayerAuthority(Players, CombatState, VehicleHost.IsDriver,
                                                    () => Session.CurrentTick, SendEventTo);
             PlayerHost.Register(Commands);
+            // mp-event-coalesce (v10): route each deduped carried combat event to the ServerCombat handler
+            // by Kind. The authority holds only a PlayerCombatReplication (for IsAlive); the OnFire/etc
+            // handlers live on ServerCombat, so the carry is dispatched through this delegate. The standalone
+            // CommandFire/Melee/Grenade/Reload registrations below stay in place but dormant (the client no
+            // longer sends them) -- mirrors MoveInput staying registered for demo walkers/loopback.
+            PlayerHost.CombatDispatch = (sender, ev, tick) =>
+            {
+                switch (ev.Kind)
+                {
+                    case CombatEventKind.Fire:    Combat.OnFire(sender, ev.Fire, tick); break;
+                    case CombatEventKind.Melee:   Combat.OnMelee(sender, ev.Melee, tick); break;
+                    case CombatEventKind.Grenade: Combat.OnGrenade(sender, ev.Grenade, tick); break;
+                    case CombatEventKind.Reload:  Combat.OnReload(sender, ev.Reload, tick); break;
+                }
+            };
             Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
             Commands.Register<MoveInputPacket>(ReplicationIds.CommandMoveInput, MoveInputPacket.TryRead,
@@ -478,6 +493,11 @@ namespace UnturnedGodot.Net
             // reconcile the predicted local player against the newest own-entity authoritative state
             if (Session.State == NetSessionState.Connected)
                 Prediction.Reconcile(Players, Session.PlayerId);
+            // v10 (mp-event-coalesce): drain the redundant combat ring up to the owner-facing combat ack the
+            // just-applied snapshot carries -- once the server has applied an event we stop re-including it.
+            // Single-path (only the shell client sends combat; loopback's ring is always empty -> a no-op).
+            if (Session.State == NetSessionState.Connected && Players.TryGetByOwner(Session.PlayerId, out var self))
+                AckCombat(self.LastProcessedCombatSeq);
         }
 
         bool ApplySnapshot(byte[] data, int length) => Applier.Apply(data, length);
@@ -514,14 +534,19 @@ namespace UnturnedGodot.Net
         int _movePrevCount;
         long _lastMoveSendTick = long.MinValue;
 
-        // ---- Phase 5 combat commands (ReliableOrdered -- transactional, §2.3). Each returns the seq the
-        // server will echo in HitConfirm (0 = not connected, nothing sent). ----
+        // ---- Phase 5 combat commands. mp-event-coalesce (v10): these no longer ride their OWN
+        // ReliableOrdered datagram (a single drop head-of-line-blocks the reliable-ordered channel and
+        // stalls all following combat). Each now ENQUEUES a CarriedCombatEvent into a bounded pending ring;
+        // SendPlayerState folds the whole (unacked) ring into the 50 Hz unreliable transform stream every
+        // tick, and keeps re-including each event until the server ACKs it (AckCombat) -- so a dropped
+        // datagram is covered by the next one. The signature is unchanged: each returns the seq the server
+        // echoes in HitConfirm (0 = not connected, nothing enqueued), which the caller uses to correlate. ----
 
         public ushort SendFire(Vector3 origin, Vector3 dir)
         {
             if (Session.State != NetSessionState.Connected) return 0;
             var cmd = new FireCommand { Seq = NextCombatSeq(), Origin = origin, Dir = dir };
-            Session.SendReliable(NetMessagePak.Pack(ReplicationIds.CommandFire, cmd.Write));
+            EnqueueCombat(new CarriedCombatEvent { Kind = CombatEventKind.Fire, Fire = cmd });
             return cmd.Seq;
         }
 
@@ -529,7 +554,7 @@ namespace UnturnedGodot.Net
         {
             if (Session.State != NetSessionState.Connected) return 0;
             var cmd = new MeleeCommand { Seq = NextCombatSeq(), Strong = strong, YawDegrees = yawDegrees };
-            Session.SendReliable(NetMessagePak.Pack(ReplicationIds.CommandMelee, cmd.Write));
+            EnqueueCombat(new CarriedCombatEvent { Kind = CombatEventKind.Melee, Melee = cmd });
             return cmd.Seq;
         }
 
@@ -537,7 +562,7 @@ namespace UnturnedGodot.Net
         {
             if (Session.State != NetSessionState.Connected) return 0;
             var cmd = new GrenadeCommand { Seq = NextCombatSeq(), Origin = origin, Velocity = velocity };
-            Session.SendReliable(NetMessagePak.Pack(ReplicationIds.CommandGrenade, cmd.Write));
+            EnqueueCombat(new CarriedCombatEvent { Kind = CombatEventKind.Grenade, Grenade = cmd });
             return cmd.Seq;
         }
 
@@ -545,7 +570,7 @@ namespace UnturnedGodot.Net
         {
             if (Session.State != NetSessionState.Connected) return 0;
             var cmd = new ReloadCommand { Seq = NextCombatSeq() };
-            Session.SendReliable(NetMessagePak.Pack(ReplicationIds.CommandReload, cmd.Write));
+            EnqueueCombat(new CarriedCombatEvent { Kind = CombatEventKind.Reload, Reload = cmd });
             return cmd.Seq;
         }
 
@@ -553,6 +578,56 @@ namespace UnturnedGodot.Net
         {
             if (++_combatSeq == 0) _combatSeq = 1;
             return _combatSeq;
+        }
+
+        // ---- the redundant combat pending ring (mp-event-coalesce v10) ----
+        // Up to MaxCarriedEvents recent UNACKED events, oldest-first. SendPlayerState re-includes them all
+        // every tick; AckCombat drops the ones the server has applied. Bounded: on overflow the oldest is
+        // dropped (only reachable under unrealistic sustained saturation with no acks coming back).
+        readonly CarriedCombatEvent[] _combatRing = new CarriedCombatEvent[PlayerStateCommand.MaxCarriedEvents];
+        int _combatRingCount;
+
+        // Test seams (the DisableEnvelope pattern), all default-off:
+        /// <summary>Clear the ring after each SendPlayerState include -- simulates the pre-v10 send-once
+        /// behaviour. Teeth for the "redundancy survives a dropped packet" test.</summary>
+        public bool DisableCombatRedundancy;
+        /// <summary>Make AckCombat a no-op so the ring never drains. Teeth for the "ack drains the ring" test.</summary>
+        public bool DisableCombatAck;
+        /// <summary>Write the ring newest-first instead of oldest-first. With the server's strictly-increasing
+        /// dedup guard this makes all but the newest event get dropped -- teeth for the "oldest-first" test.</summary>
+        public bool CombatRingReverseOrder;
+
+        void EnqueueCombat(in CarriedCombatEvent ev)
+        {
+            if (_combatRingCount == _combatRing.Length)
+            {
+                // ring full: drop the OLDEST (shift left one), keeping the newest MaxCarriedEvents-1
+                System.Array.Copy(_combatRing, 1, _combatRing, 0, _combatRingCount - 1);
+                _combatRingCount--;
+            }
+            _combatRing[_combatRingCount++] = ev;
+        }
+
+        /// <summary>Drop every pending event whose combat seq is NOT strictly newer than ackedSeq (i.e.
+        /// applied server-side already). Wrap-aware via NetSeq; the 0 sentinel ("no ack yet") drains nothing.
+        /// Stable compaction preserves the oldest-first ordering of the survivors.</summary>
+        public void AckCombat(ushort ackedSeq)
+        {
+            if (DisableCombatAck || ackedSeq == 0) return;
+            int w = 0;
+            for (int i = 0; i < _combatRingCount; i++)
+                if (NetSeq.IsNewer(_combatRing[i].Seq, ackedSeq))
+                    _combatRing[w++] = _combatRing[i];
+            _combatRingCount = w;
+        }
+
+        /// <summary>Test-visible pending-ring depth.</summary>
+        public int PendingCombatCount => _combatRingCount;
+        /// <summary>Test helper: does the pending ring still hold this combat seq?</summary>
+        public bool PendingCombatContains(ushort seq)
+        {
+            for (int i = 0; i < _combatRingCount; i++) if (_combatRing[i].Seq == seq) return true;
+            return false;
         }
 
         // ---- Phase 6 transactional commands (all ReliableOrdered -- §2.3). Each returns false when not
@@ -677,7 +752,20 @@ namespace UnturnedGodot.Net
                 Pos = pos, YawDegrees = yawDegrees, PitchDegrees = pitchDegrees,
                 LinVel = velocity, Buttons = buttons, Grounded = grounded,
             };
+            // v10 (mp-event-coalesce): fold the whole pending combat ring in, oldest-first. The ring array
+            // is shared by reference (Write consumes only the first EventCount entries synchronously here) so
+            // the steady-state carry allocates nothing; the reverse-order test seam takes the copy path.
+            cmd.EventCount = (byte)_combatRingCount;
+            if (CombatRingReverseOrder && _combatRingCount > 0)
+            {
+                var rev = new CarriedCombatEvent[_combatRingCount];
+                for (int i = 0; i < _combatRingCount; i++) rev[i] = _combatRing[_combatRingCount - 1 - i];
+                cmd.Events = rev;
+            }
+            else cmd.Events = _combatRing;
             Session.SendUnreliableSequenced(NetMessagePak.Pack(ReplicationIds.CommandPlayerState, cmd.Write));
+            // redundancy = keep re-including until acked; the seam clears here to model the pre-v10 send-once
+            if (DisableCombatRedundancy) _combatRingCount = 0;
             return cmd.Seq;
         }
 

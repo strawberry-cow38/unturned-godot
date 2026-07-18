@@ -37,14 +37,32 @@ namespace UnturnedNet.Tests
             }
 
             // one 50 Hz tick in §2.5 order: inputs (caller), transport, client sessions, server sim
-            // (receive/input-apply/player-sim/combat), replication LAST
+            // (receive/input-apply/player-sim/combat), replication LAST.
+            // v10 (mp-event-coalesce): combat commands are no longer standalone datagrams -- SendFire/etc
+            // just enqueue into the client's pending ring, and the ring only crosses the wire folded into a
+            // PlayerStateCommand. So after the caller's inputs (which may SendFire) we FLUSH each connected
+            // client's ring by streaming its transform (the shell client does this every tick). We echo the
+            // entity's own current server position so the flush is envelope-neutral (delta ~0, always
+            // adopted) and combat-test players stay put exactly where SpawnPosition placed them.
             public void Step(System.Action perTickInputs = null)
             {
                 perTickInputs?.Invoke();
+                FlushCombat();
                 Net.Tick();
                 foreach (var c in Clients) c.Tick();
                 Server.TickSimulation();
                 Server.TickReplication();
+            }
+
+            void FlushCombat()
+            {
+                foreach (var c in Clients)
+                {
+                    if (c.State != NetSessionState.Connected) continue;
+                    Vector3 pos = Vector3.zero; float yaw = 0f;
+                    if (Server.Players.TryGetByOwner(c.PlayerId, out var e)) { pos = e.Pos; yaw = e.YawDegrees; }
+                    c.SendPlayerState(pos, yaw, 0f, Vector3.zero, 0, grounded: true, recovAck: 0);
+                }
             }
 
             public void Step(int ticks, System.Action perTickInputs = null)

@@ -90,6 +90,7 @@ namespace UnturnedNet.Tests
         {
             var h = new TransactionalHarness(9065);
             h.Server.KillExperience = 3;   // the §3.2 kill-award hook; default is 0 until SP awards kill XP
+            h.PumpCombatState = true;      // v10: SendFire now rides the PlayerStateCommand stream -- flush it each tick
             h.Connected("a");
             var a = h.Clients[0];
             uint awarded = 0;

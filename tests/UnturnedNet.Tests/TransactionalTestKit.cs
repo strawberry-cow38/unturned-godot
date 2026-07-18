@@ -38,9 +38,22 @@ namespace UnturnedNet.Tests
             return c;
         }
 
+        /// <summary>Opt-in (default off): v10 (mp-event-coalesce) combat commands only cross the wire folded
+        /// into a PlayerStateCommand, so a test that fires must flush each client's ring every tick. Off by
+        /// default so the Phase 6 batteries (which never fire) keep their players undriven and unmoved.</summary>
+        public bool PumpCombatState;
+
         public void Step(System.Action perTickInputs = null)
         {
             perTickInputs?.Invoke();
+            if (PumpCombatState)
+                foreach (var c in Clients)
+                {
+                    if (c.State != NetSessionState.Connected) continue;
+                    UnityEngine.Vector3 pos = UnityEngine.Vector3.zero; float yaw = 0f;
+                    if (Server.Players.TryGetByOwner(c.PlayerId, out var e)) { pos = e.Pos; yaw = e.YawDegrees; }
+                    c.SendPlayerState(pos, yaw, 0f, UnityEngine.Vector3.zero, 0, grounded: true, recovAck: 0);
+                }
             Net.Tick();
             foreach (var c in Clients) c.Tick();
             Server.TickSimulation();
