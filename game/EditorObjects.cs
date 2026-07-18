@@ -122,9 +122,10 @@ namespace UnturnedGodot
             else Select(null);
         }
 
-        void Select(Node3D obj)
+        void Select(Node3D obj) { _selected = obj; RefreshMarker(); }
+
+        void RefreshMarker()
         {
-            _selected = obj;
             if (_marker == null)
             {
                 _marker = new MeshInstance3D
@@ -135,12 +136,20 @@ namespace UnturnedGodot
                 };
                 AddChild(_marker);
             }
-            if (obj == null) { _marker.Visible = false; return; }
-            var mi = obj.GetChildCount() > 0 ? obj.GetChild(0) as MeshInstance3D : null;
+            if (_selected == null) { _marker.Visible = false; return; }
+            var mi = _selected.GetChildCount() > 0 ? _selected.GetChild(0) as MeshInstance3D : null;
             var aabb = mi != null ? mi.GetAabb() : new Aabb(Vector3.Zero, Vector3.One);
-            _marker.GlobalPosition = obj.GlobalPosition + obj.GlobalTransform.Basis * (aabb.Position + aabb.Size * 0.5f);
-            _marker.Scale = aabb.Size * 1.04f;
+            var sz = aabb.Size; var wsz = new Vector3(sz.X, sz.Z, sz.Y);   // the ex=270 pitch swaps the mesh's local Y/Z into world height/depth
+            _marker.GlobalPosition = _selected.GlobalPosition + _selected.GlobalTransform.Basis * (aabb.Position + aabb.Size * 0.5f);
+            _marker.Scale = wsz * 1.06f;
             _marker.Visible = true;
+        }
+
+        void MoveSelected(Vector3 pos) { if (_selected != null) { _selected.GlobalPosition = pos; RefreshMarker(); } }
+        void RotateStep()
+        {
+            if (_selected != null) { _selected.RotateY(Mathf.DegToRad(45f)); RefreshMarker(); }   // spin the selected prop about world-up (keeps the upright pitch)
+            else _placeYaw = (_placeYaw + 45f) % 360f;                                             // else rotate the next placement
         }
 
         public void DeleteSelected()
@@ -153,15 +162,24 @@ namespace UnturnedGodot
             Select(null);
         }
 
+        bool _dragging;
+
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Objects || _flyCam.Flying) return;   // Objects tab only; never while flying (RMB)
-            if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
-                HandleClick(GetViewport().GetMousePosition());
+            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
+            {
+                if (mb.Pressed) { HandleClick(GetViewport().GetMousePosition()); _dragging = PlaceName == null && _selected != null; }   // in Select mode, holding on a prop drags it
+                else _dragging = false;
+            }
+            else if (ev is InputEventMouseMotion && _dragging && _selected != null)
+            {
+                if (Raycast(GetViewport().GetMousePosition(), TerrainLayer | SmallPropLayer, out var pt, out _)) MoveSelected(pt);   // slide it along the ground
+            }
             else if (ev is InputEventKey { Pressed: true, Echo: false } k)
             {
                 if (k.Keycode == Key.Delete || k.Keycode == Key.X) DeleteSelected();
-                else if (k.Keycode == Key.R) { _placeYaw = (_placeYaw + 45f) % 360f; }   // rotate the next placement (and the selected, if any)
+                else if (k.Keycode == Key.R) RotateStep();
                 else if (k.Keycode == Key.Escape) Select(null);
             }
         }
