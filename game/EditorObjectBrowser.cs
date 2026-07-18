@@ -35,7 +35,7 @@ namespace UnturnedGodot
             _search.TextChanged += _ => Rebuild();
             box.AddChild(_search);
 
-            _list = new ItemList { CustomMinimumSize = new Vector2(240, 500), SizeFlagsVertical = SizeFlags.ExpandFill };
+            _list = new ItemList { CustomMinimumSize = new Vector2(240, 500), SizeFlagsVertical = SizeFlags.ExpandFill, FocusMode = Control.FocusModeEnum.None };
             _list.ItemSelected += idx =>
             {
                 var name = _list.GetItemText((int)idx);

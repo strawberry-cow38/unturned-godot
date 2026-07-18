@@ -271,6 +271,7 @@ namespace UnturnedGodot
                 var mp = GetViewport().GetMousePosition();
                 if (mb.Pressed)
                 {
+                    if (Editor.PointerOverUI(this)) return;                                  // clicking the dashboard/browser must not fire tools into the world
                     if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); return; }              // gizmo grab -> drag (capture group-relative transforms)
                     if (!TryPlaceOrSelect(mp)) { _boxDragging = true; _boxStart = mp; }     // empty ground -> arm a box drag-select
                 }

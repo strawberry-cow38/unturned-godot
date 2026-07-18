@@ -61,7 +61,7 @@ namespace UnturnedGodot
 
         public override void _Process(double d)
         {
-            if (!Visible || (_flyCam != null && _flyCam.Flying) || !RaycastTerrain(GetViewport().GetMousePosition(), out var pt))
+            if (!Visible || (_flyCam != null && _flyCam.Flying) || Editor.PointerOverUI(this) || !RaycastTerrain(GetViewport().GetMousePosition(), out var pt))
             {
                 if (_ring != null) _ring.Visible = false;
                 return;

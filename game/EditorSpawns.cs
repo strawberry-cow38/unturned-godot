@@ -364,7 +364,7 @@ namespace UnturnedGodot
         public override void _UnhandledInput(InputEvent ev)
         {
             if (_editor.Mode != EEditorMode.Spawns || (_flyCam != null && _flyCam.Flying)) return;
-            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed)
+            if (ev is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left && mb.Pressed && !Editor.PointerOverUI(this))
             {
                 if (!RaycastTerrain(GetViewport().GetMousePosition(), out var pt)) return;
                 if (_removeMode) RemoveNear(pt); else AddSpawn(pt, _rotation, _alt, _vehType);

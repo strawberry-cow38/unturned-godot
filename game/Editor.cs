@@ -34,6 +34,16 @@ namespace UnturnedGodot
             Instance = this; MapName = mapName; World = world; Camera = cam;
         }
 
+        // Source EditorInteract gates ALL world input on Glazier.ShouldGameProcessInput (false when the pointer is over UI).
+        // Godot equivalent: a Control is under the mouse (dashboard buttons/panels). Every tool checks this so clicks/keys
+        // over the UI never fire a tool into the world behind it. (Marquee/help overlays use MouseFilter=Ignore, so they
+        // don't count.) True = the pointer is over the editor UI -> the world should NOT process this input.
+        public static bool PointerOverUI(Node n)
+        {
+            var vp = n.GetViewport();
+            return vp != null && vp.GuiGetHoveredControl() != null;
+        }
+
         public override void _ExitTree() { if (Instance == this) Instance = null; }
 
         // source Editor.save() -> EditorInteract.save() + EditorObjects.save() + EditorSpawns.save().

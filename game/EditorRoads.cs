@@ -33,7 +33,7 @@ namespace UnturnedGodot
         public bool Paving => _paving;
         public string ModeText => _paving
             ? (_selRoad >= 0
-                ? $"PAVING r{_selRoad}{(_roads.RoadIsLoop(_selRoad) ? "(loop)" : "")} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · G move · N {ModeNames[_roads.JointMode(_selRoad, _selJoint)]} · M {_roads.RoadMaterialName(_selRoad)} · L loop · [/] h={_roads.JointOffset(_selRoad, _selJoint):0} · I ign={(_roads.JointIgnoreTerrain(_selRoad, _selJoint) ? "on" : "off")} · Del · Esc"
+                ? $"PAVING r{_selRoad}{(_roads.RoadIsLoop(_selRoad) ? "(loop)" : "")} {(_selTan >= 0 ? $"tan{_selTan}" : $"j{_selJoint}")} · E move · N {ModeNames[_roads.JointMode(_selRoad, _selJoint)]} · M {_roads.RoadMaterialName(_selRoad)} · L loop · [/] h={_roads.JointOffset(_selRoad, _selJoint):0} · I ign={(_roads.JointIgnoreTerrain(_selRoad, _selJoint) ? "on" : "off")} · Del · Esc"
                 : "PAVING · LMB marker=select · LMB ground=new road · R=off")
             : "R = roads paving";
 
@@ -123,7 +123,7 @@ namespace UnturnedGodot
             if (_editor.Mode != EEditorMode.Environment || (_flyCam != null && _flyCam.Flying)) return;
             if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.R }) { SetPaving(!_paving); return; }
             if (!_paving) return;
-            if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+            if (ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } && !Editor.PointerOverUI(this))
             {
                 var body = PickMarker(GetViewport().GetMousePosition());
                 if (body != null && _markerMap.TryGetValue(body, out var rj)) Select(body, rj.r, rj.j, rj.t);
@@ -137,7 +137,7 @@ namespace UnturnedGodot
                     else if (_selRoad < 0) { int nr = _roads.AddRoad(pt); RefreshAndSelect(nr, 0, -1); }
                 }
             }
-            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.G } && _selRoad >= 0)
+            else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.E } && _selRoad >= 0)   // source tool_2 = E: move the selected vertex/handle to the cursor
             {
                 if (RaycastTerrain(GetViewport().GetMousePosition(), out var pt))
                 {
