@@ -42,7 +42,8 @@ namespace UnturnedGodot
             int n = Objects?.Save() ?? 0;
             int s = Spawns?.Save() ?? 0;
             int e = Environment?.Save() ?? 0;
-            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env)");
+            int t = TerrainEd?.Save() ?? 0;
+            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain)");
         }
     }
 }

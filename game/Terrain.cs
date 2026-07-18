@@ -102,7 +102,30 @@ void fragment() {
                     float falloff = 0.5f + 0.5f * Mathf.Cos(Mathf.Pi * dist / radiusWorld);   // smooth (cos) brush falloff
                     _grid[gx, gy] = Mathf.Clamp(_grid[gx, gy] + dNorm * falloff, 0f, 1f);
                 }
+            _dirty = true;
             RebuildMesh();
+        }
+
+        bool _dirty;
+        public bool Dirty => _dirty;
+
+        public void SaveHeightmap(string path)   // the edited merged grid (port translator; writing the retail .heightmap tiles would clobber the install)
+        {
+            if (_grid == null) return;
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+            using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            w.Write(_gw); w.Write(_gh);
+            for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) w.Write(_grid[x, y]);
+        }
+
+        public bool LoadHeightmap(string path)   // apply a saved sculpt over the freshly-built retail terrain (dims must match)
+        {
+            if (_grid == null || !System.IO.File.Exists(path)) return false;
+            using var r = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+            if (r.ReadInt32() != _gw || r.ReadInt32() != _gh) return false;
+            for (int x = 0; x < _gw; x++) for (int y = 0; y < _gh; y++) _grid[x, y] = r.ReadSingle();
+            RebuildMesh();
+            return true;
         }
 
         public void RebuildMesh()   // regenerate vertices + normals from _grid (uvs/colours/indices unchanged); refresh the collider

@@ -18,10 +18,20 @@ namespace UnturnedGodot
         float _radius = 28f, _strength = 8f;   // brush radius (world m) + strength (world Y per stroke)
 
         public string ModeText => $"raise (Shift=lower) · radius {_radius:0}m · strength {_strength:0}";
+        static string SavePath => ProjectSettings.GlobalizePath("res://content/terrain/") + "editor_heightmap.bin";
+
+        public int Save()   // Editor.Save() fan-out: persist the sculpted heightmap (only if edited)
+        {
+            if (_terr == null || !_terr.Dirty) return 0;
+            _terr.SaveHeightmap(SavePath);
+            GD.Print($"[editor-terrain] saved heightmap -> {SavePath}");
+            return 1;
+        }
 
         public EditorTerrain(Editor editor, Camera3D cam, Terrain terr)
         {
             _editor = editor; _cam = cam; _flyCam = cam as EditorCamera; _terr = terr;
+            if (_terr != null && _terr.LoadHeightmap(SavePath)) GD.Print("[editor-terrain] loaded saved sculpt");
             _ring = new Node3D { Visible = false };
             _ring.AddChild(new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = 0.93f, OuterRadius = 1f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.9f, 0.2f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, NoDepthTest = true } });
             AddChild(_ring);

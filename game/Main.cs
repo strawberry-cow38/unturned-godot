@@ -1595,6 +1595,7 @@ namespace UnturnedGodot
                     editor.Mode = EEditorMode.Terrain;
                     Vector3 at = spawns != null && spawns.Positions.Count > 0 ? spawns.Positions[0] : Vector3.Zero;   // a known land point
                     terrainEd.DemoSculpt(at);
+                    terrainEd.Save();   // verify the heightmap round-trip: a plain --editor re-run loads the sculpt back
                     cam.GlobalPosition = at + new Vector3(75f, 55f, 75f);
                     cam.LookAt(at + Vector3.Up * 40f, Vector3.Up);
                 };
