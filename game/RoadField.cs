@@ -79,6 +79,14 @@ namespace UnturnedGodot
             GD.Print($"[roads] built {built} spline roads ({roads.Count} in Paths.dat, {_mats.Count} materials)");
         }
 
+        // NEW MAP: load only the road MATERIALS (from a shared Roads.dat) so roads can be ADDED, with no roads to start.
+        public void LoadMaterialsOnly(string envDir)
+        {
+            _mats = ParseRoadsDat(Path.Combine(envDir, "Roads.dat"));
+            _roads.Clear();
+            GD.Print($"[roads] new-map materials loaded ({_mats.Count})");
+        }
+
         // build (or rebuild) the MeshInstance + collider for one road, stashing them on the RoadData (flat top-ribbon collider)
         void BuildRoadNode(RoadData r)
         {

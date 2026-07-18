@@ -1528,7 +1528,10 @@ namespace UnturnedGodot
             var spawns = new EditorSpawns(editor, cam, MapDir("NewMap")); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             var envEd = new EditorEnvironment(editor, dayNight, SetCleanEditorLighting); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
-            var roadsEd = new EditorRoads(editor, cam, null); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;   // roads on a new map: follow-up (needs road materials)
+            var rf = new RoadField { Terr = terr };
+            rf.LoadMaterialsOnly(_mapRoot + "/Environment");   // shared road materials so roads can be added on the blank map
+            AddChild(rf);
+            var roadsEd = new EditorRoads(editor, cam, rf); editor.AddChild(roadsEd); editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             _worldReady = true;
             GD.Print("[editor] NEW blank map (flat 3x3) up");
