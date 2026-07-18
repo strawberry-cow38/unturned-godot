@@ -359,9 +359,13 @@ namespace UnturnedGodot.Net
                 if (!_state.TryGet(pm.Attacker, out var acs) || !acs.Alive) continue;   // died mid-swing
                 if (!_players.TryGetByOwner(pm.Attacker, out var ape)) continue;
 
-                // re-evaluate targets NOW against server positions (the SP deferred-hit rule: a moving target can be missed)
+                // re-evaluate targets NOW against server positions (the SP deferred-hit rule: a moving target can be missed).
+                // pm.YawDegrees is the shell's RotationDegrees.Y verbatim (PlayerController.cs NetMelee(strong, RotationDegrees.Y)),
+                // so forward is the GODOT convention -- (-sin,0,-cos), a body at yaw 0 faces -Z -- the SAME frame the pickup
+                // cone (ServerTransactions.SenderFacingItem) and SP melee (-cam.Basis.Z) use, and against which the entity
+                // positions below are measured. The old (+sin,+cos) was 180-degrees inverted: the swing hit BEHIND the attacker.
                 float yawRad = pm.YawDegrees * (Mathf.PI / 180f);
-                var fwd = new Vector3(Mathf.Sin(yawRad), 0f, Mathf.Cos(yawRad));
+                var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
                 var origin = ape.Pos + new Vector3(0f, 1.2f, 0f);
                 float reach = DefaultMelee.Range + 0.5f;
                 float mult = pm.Strong ? DefaultMelee.StrongMult : 1f;

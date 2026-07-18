@@ -75,7 +75,12 @@ namespace UnturnedGodot
                     Mathf.DegToRad(e.PitchDegrees), Mathf.DegToRad(e.YawDegrees), Mathf.DegToRad(e.RollDegrees)));
                 t.Node.Basis = t.Node.Basis.Orthonormalized().Slerp(targetBasis, a);
 
-                float fwdSpeed = vel.Dot(-targetBasis.Z);   // signed forward speed -> wheel roll rate
+                // signed forward speed -> wheel roll rate. Past the dead-reckon horizon the target position
+                // is FROZEN (line above caps SinceSnap), so the puppet has stopped translating -- freeze the
+                // wheels too, else a stalled/desynced car does a "burnout in place" (wheels spinning on the
+                // stale velocity while the body sits still). Only trips on a real snapshot stall (>0.5 s),
+                // never on the 40 ms 25 Hz cadence.
+                float fwdSpeed = t.SinceSnap < MaxExtrapolationSeconds ? vel.Dot(-targetBasis.Z) : 0f;
                 t.Node.DressWheels(e.SteerSigned, fwdSpeed, dt);
             }
 

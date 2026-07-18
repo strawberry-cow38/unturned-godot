@@ -294,10 +294,13 @@ namespace UnturnedGodot.Net
             if (jar?.item == null) return;
             page.removeItem(index);
 
-            // drop it just ahead of the avatar with a small toss -- clients run the cosmetic tumble (§3.3)
+            // drop it just ahead of the avatar with a small toss -- clients run the cosmetic tumble (§3.3).
+            // Godot convention (-sin,0,-cos): p.YawDegrees is the shell's RotationDegrees.Y, body faces -Z at yaw 0 --
+            // the SAME frame SenderFacingItem uses. (Still latent -- no client sends DropItem yet -- but aligned so a
+            // toss lands in FRONT of the player, not behind, when the seam wires up.)
             _players.TryGetByOwner(sender, out var p);
             float yawRad = (p?.YawDegrees ?? 0f) * (Mathf.PI / 180f);
-            var fwd = new Vector3(Mathf.Sin(yawRad), 0f, Mathf.Cos(yawRad));
+            var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
             var origin = (p?.Pos ?? Vector3.zero) + fwd * 1.2f + new Vector3(0f, 1.0f, 0f);
             SpawnWorldItem(jar.item, origin, fwd * 2.5f + new Vector3(0f, 2f, 0f));
         }
@@ -557,9 +560,9 @@ namespace UnturnedGodot.Net
         /// (-sin yaw, 0, -cos yaw) -- because that is what PlayerEntity.YawDegrees actually holds: the
         /// shell sends RotationDegrees.Y verbatim and the production server's avatars ServerDrive it back
         /// unchanged (a Godot body at yaw 0 faces -Z; PlayerController maps sim-forward to local -Z).
-        /// NOTE this is the NEGATION of the (+sin,+cos) convention OnDropItem/ServerCombat.StepMelee use --
-        /// those are latent (nothing sends DropItem yet; see PROGRESS.md) and get aligned when their seams
-        /// wire up. Using their convention here would reject every honest look-at pickup.</summary>
+        /// This same (-sin,0,-cos) frame is now used by ServerCombat.StepMelee and OnDropItem -- they
+        /// carried an inverted (+sin,+cos) that hit/tossed BEHIND the attacker (StepMelee was LIVE; the
+        /// review caught it), fixed alongside this.</summary>
         bool SenderFacingItem(ushort sender, Vector3 itemPos)
         {
             if (!_players.TryGetByOwner(sender, out var p)) return false;

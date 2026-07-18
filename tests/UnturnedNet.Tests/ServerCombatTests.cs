@@ -299,9 +299,11 @@ namespace UnturnedNet.Tests
             var a = h.Clients[0];
             var b = h.Clients[1];
 
-            // victim spawns 2 m along +X; the attacker faces it with yaw 90 (forward = (sin,0,cos))
-            a.SendMelee(strong: false, yawDegrees: 90f);
-            a.SendMelee(strong: false, yawDegrees: 90f);   // immediate second swing -> cooldown-rejected
+            // victim spawns 2 m along +X; the attacker faces it with yaw 270 -- forward is the GODOT
+            // convention (-sin,0,-cos), so yaw 270 -> +X (yaw 90 would face -X, AWAY from the victim).
+            // Teeth: on the pre-fix (+sin,+cos) code this yaw faced -X and the swing missed (no damage).
+            a.SendMelee(strong: false, yawDegrees: 270f);
+            a.SendMelee(strong: false, yawDegrees: 270f);   // immediate second swing -> cooldown-rejected
             h.Step(5);
 
             Assert.That(h.Server.Combat.Diag.MeleeAccepted, Is.EqualTo(1), "one swing accepted");
@@ -313,7 +315,7 @@ namespace UnturnedNet.Tests
             Assert.That(bState.Health, Is.EqualTo(60), "melee landed for Player_Damage 40 after the delay");
 
             h.Step(20);   // past CooldownTicks -> a STRONG swing goes through at 1.5x
-            a.SendMelee(strong: true, yawDegrees: 90f);
+            a.SendMelee(strong: true, yawDegrees: 270f);   // still facing +X (Godot (-sin,-cos))
             h.Step(25);
             Assert.That(bState.Health, Is.EqualTo(0), "strong swing = 40 x 1.5 = 60 -> dead");
             Assert.That(bState.Alive, Is.False);
@@ -356,7 +358,7 @@ namespace UnturnedNet.Tests
 
             // melee at the bystander (in reach, in the cone): the swing resolves but finds no player target
             h.Step(25);   // clear the melee cooldown window
-            a.SendMelee(strong: false, yawDegrees: 90f);   // forward = +X, straight at the bystander
+            a.SendMelee(strong: false, yawDegrees: 270f);   // forward = +X (Godot (-sin,-cos)), straight at the bystander
             h.Step(25);   // past HitDelayTicks -- the deferred hit re-evaluated and skipped the player
 
             // a point-blank grenade: the blast spares BOTH players (self-damage included -- a D1 shell has
