@@ -2525,6 +2525,43 @@ namespace UnturnedGodot.Testing
             yield return Until(() => sess.Shell.Inventory.getItemCount(95) == serverBefore - 1, 5);
             T.Check("(c) the shell's bag echoed the deletion", sess.Shell.Inventory.getItemCount(95) == serverBefore - 1);
 
+            // ---- P5 (MP_VITALS_PLAN §7): the flip -- the shell NEVER self-applies; the server derives
+            // the full effect set from the validated item and the owner block echoes the gain ----
+            bool vHave = ded.Server.Vitals.TryGet(sess.Client.PlayerId, out var sv);
+            T.Check("server vitals entry live", vHave);
+            if (!vHave) yield break;
+            sv.Sim.Food = 0.4f;   // pre-drain (test hook); the next Vitals.Step stamps + echoes it
+            yield return Until(() => Mathf.Abs(sess.Shell.Food - 0.4f) < 0.01f, 3);
+            T.Check($"pre-drained food echoed to the HUD ({sess.Shell.Food:0.##})",
+                    Mathf.Abs(sess.Shell.Food - 0.4f) < 0.01f);
+
+            var beans = Assets.find(13);
+            T.Check("Canned Beans resolve (useHealth 10 / useFood 55)",
+                    beans != null && beans.useFood == 55 && beans.IsConsumable);
+            sess.Shell.EquipHeldConsumable(beans, null);
+            sess.Shell.StartConsume();
+            sess.Shell.DebugConsumeTick(30f);   // the completion runs the NetConsume seam branch SYNCHRONOUSLY
+            // TEETH (the :720 flip): sampled BEFORE any tick -- with the flip reverted, the local
+            // Consume() self-applies +0.55 right here and this reads ~0.95 instead of the parked 0.4
+            T.Check($"(d) the shell did NOT self-apply ahead of the echo (food still {sess.Shell.Food:0.##})",
+                    Mathf.Abs(sess.Shell.Food - 0.4f) < 0.02f);
+
+            yield return Until(() => sv.Sim.Food > 0.9f, 5);
+            T.Check($"(e) the SERVER derived the full effect set (food {sv.Sim.Food:0.##})",
+                    Mathf.Abs(sv.Sim.Food - 0.95f) < 0.01f);
+            yield return Until(() => sess.Shell.Food > 0.9f, 3);
+            T.Check($"(e) ... and the echo landed the gain on the HUD ({sess.Shell.Food:0.##})",
+                    Mathf.Abs(sess.Shell.Food - 0.95f) < 0.02f);
+
+            // (f) a consume of an EMPTY cell changes nothing anywhere (Phase A would have self-fed)
+            long rejBefore = ded.Server.Transactions.Diag.ConsumesRejected;
+            sess.Client.SendConsume(2, 3, 2);   // an empty pocket cell
+            yield return Until(() => ded.Server.Transactions.Diag.ConsumesRejected > rejBefore, 5);
+            T.Check("(f) empty-cell consume rejected server-side",
+                    ded.Server.Transactions.Diag.ConsumesRejected == rejBefore + 1);
+            T.Check($"(f) nothing changed anywhere (server food {sv.Sim.Food:0.##}, HUD {sess.Shell.Food:0.##})",
+                    Mathf.Abs(sv.Sim.Food - 0.95f) < 0.02f && Mathf.Abs(sess.Shell.Food - 0.95f) < 0.02f);
+
             world.Sim.Sim.Remove(pump);
         }
     }

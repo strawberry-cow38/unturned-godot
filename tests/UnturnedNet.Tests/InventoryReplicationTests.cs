@@ -230,8 +230,11 @@ namespace UnturnedNet.Tests
             h.Step(10);
 
             a.SendConsume(2, 0, 0);
-            Assert.That(h.StepUntil(() => ce.HealthExact == 60f), Is.True,
+            // P5: beans apply the FULL effect set (useHealth 10 + useFood 55). Food 0.2 -> 0.75 re-opens
+            // the regen gate, so health passes THROUGH 60 and keeps regenerating -- assert the crossing.
+            Assert.That(h.StepUntil(() => ce.HealthExact >= 60f), Is.True,
                         $"beans healed 10 on the server (seed={h.Net.Seed})");
+            Assert.That(ve.Sim.Food, Is.EqualTo(0.75f).Within(0.01f), "beans fed 0.55 into the server sim (P5)");
             h.Server.Inventories.TryGet(a.PlayerId, out var sInv);
             Assert.That(sInv.Inventory.getItemCount(TransactionalFixtures.BeansId), Is.EqualTo(0), "eaten");
             Assert.That(h.Server.Transactions.Diag.ConsumesApplied, Is.EqualTo(1));

@@ -264,6 +264,12 @@ A lean hardening pass then addressed the adversarial review (`mp-hardening` bran
   friendly co-op server, editing each other's bases is a feature. Gate these three validators on
   owner/group before public play (`// TODO(mp-security)` markers in `ServerTransactions.Register`).
 - **No connect cookie / HMAC challenge**, no encryption, no auth — per §5's deferred list.
+- **Stamina does not gate the server's movement** (mp-vitals) — vitals are fully server-authoritative
+  (MP_VITALS_PLAN, wire v8: the owner-only SystemId 13 block) and the server drains/regens stamina, but
+  the wire STANCE is client-resolved (`PlayerController :1671 AlwaysHeadroom` / `:3099` "a NetAvatar
+  takes the wire stance"), so an abusive client can sprint at 0 stamina; server stamina is bookkeeping
+  for HUD/regen/consume. Same class as the stance trust note above — enforce stamina at the input choke
+  point before public play (`// TODO(mp-security)` beside the M2 markers in `ServerTransactions.cs`).
 - **Vehicle client authority (Part A, mp-predict-a)** — the DRIVEN vehicle's transform is a deliberate,
   envelope-bounded carve-out from "the server owns all truth": the driver's client owns its physics
   (retail's public-server posture, `U3 InteractableVehicle.cs:1490-1519`), the server plausibility-bounds

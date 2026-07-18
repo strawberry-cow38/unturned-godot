@@ -724,7 +724,10 @@ namespace UnturnedGodot
             _consumeTimer -= dt;
             if (_consumeTimer <= 0f && _heldConsumable != null)
             {
-                Consume(_heldConsumable);   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
+                // P5 (MP_VITALS_PLAN §7): SP/loopback apply locally (seam null, byte-identical); the MP
+                // shell sends ONLY the delete intent below -- the server derives the full effect set from
+                // the validated item and the owner-block echo lands the gains on the HUD (~1 snapshot).
+                if (NetConsume == null) Consume(_heldConsumable);
                 ushort id = _heldConsumable.id;
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");

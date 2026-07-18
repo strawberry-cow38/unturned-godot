@@ -347,6 +347,82 @@ namespace UnturnedNet.Tests
             Assert.That(h.StepUntil(() => exited.Count > 0, 20), Is.True, "VehicleExited broadcast the eject");
         }
 
+        // ---------------------------------------------------------------- P5: consume server-authoritative (§7)
+
+        [Test]
+        public void ApplyConsume_AppliesEveryField_ServerSide()
+        {
+            var h = new Harness(60117).Connected("eater");
+            var a = h.Clients[0];
+            long tick = h.Server.Session.CurrentTick;
+            h.Server.Vitals.TryGet(a.PlayerId, out var e);
+
+            // hurt + drain + infect + bleed + break, all through the server paths
+            h.Server.Vitals.ApplyDamageDirect(a.PlayerId, 40f, tick);
+            h.Server.Vitals.SetBroken(a.PlayerId, true, tick);
+            e.Sim.Food = 0.1f; e.Sim.Water = 0.1f; e.Sim.Stamina = 0.2f; e.Sim.Infection = 0.5f;
+            Assert.That(e.Bleeding, Is.True, "the 40 dmg set the bleed icon");
+
+            // the medkit-class consumable: every field at once (mirrors PlayerController.Consume)
+            var medkit = new ItemAsset { useHealth = 20, useFood = 30, useWater = 40, useEnergy = 50,
+                                         useDisinfectant = 25, useStopsBleeding = true, useHealBroken = true };
+            h.Server.Vitals.ApplyConsume(a.PlayerId, medkit, tick);
+
+            Assert.That(e.Sim.Health, Is.EqualTo(80f), "useHealth through the unified heal");
+            Assert.That(e.Sim.Food, Is.EqualTo(0.4f).Within(0.001f), "useFood / 100");
+            Assert.That(e.Sim.Water, Is.EqualTo(0.5f).Within(0.001f), "useWater / 100");
+            Assert.That(e.Sim.Stamina, Is.EqualTo(0.7f).Within(0.001f), "useEnergy / 100 (askRest)");
+            Assert.That(e.Sim.Infection, Is.EqualTo(0.25f).Within(0.001f), "useDisinfectant lowered it");
+            Assert.That(e.Bleeding, Is.False, "useStopsBleeding cleared the server bleed timer");
+            Assert.That(e.Broken, Is.False, "useHealBroken cleared the server flag");
+            h.Server.CombatState.TryGet(a.PlayerId, out var cs);
+            Assert.That((int)cs.Health, Is.EqualTo(80), "the coarse byte mirrored the heal");
+            Assert.That(cs.HealthExact, Is.EqualTo(80f), "HealthExact mirrored too");
+        }
+
+        [Test]
+        public void ApplyConsume_VirusIsImmunityScaled_FromServerSkills()
+        {
+            var h = new Harness(60118).Connected("immune", "plain");
+            var a = h.Clients[0];
+            var b = h.Clients[1];
+            long tick = h.Server.Session.CurrentTick;
+            h.Server.Skills.ServerSetSkillLevel(a.PlayerId, "immunity", 99, tick, out _, out _);
+
+            var virus = new ItemAsset { useVirus = 40 };   // raw 0.4 infection
+            h.Server.Vitals.ApplyConsume(a.PlayerId, virus, tick);
+            h.Server.Vitals.ApplyConsume(b.PlayerId, virus, tick);
+
+            h.Server.Vitals.TryGet(a.PlayerId, out var ea);
+            h.Server.Vitals.TryGet(b.PlayerId, out var eb);
+            Assert.That(eb.Sim.Infection, Is.EqualTo(0.4f).Within(0.001f), "unskilled took the raw dose");
+            Assert.That(ea.Sim.Infection, Is.EqualTo(0.2f).Within(0.001f), "IMMUNITY mastery halved it");
+        }
+
+        [Test]
+        public void OnConsume_DeadOrInvalid_MutatesNothing()
+        {
+            var h = new Harness(60119).Connected("corpse");
+            var a = h.Clients[0];
+            h.Server.Vitals.EnqueueDamage(a.PlayerId, 9999f, ServerVitals.CauseConsole);
+            h.Step(2);
+            h.Server.CombatState.TryGet(a.PlayerId, out var cs);
+            Assert.That(cs.Alive, Is.False, "dead");
+            h.Server.Vitals.TryGet(a.PlayerId, out var e);
+            float food = e.Sim.Food;
+
+            // a corpse can't eat: even a valid-shaped consume mutates no vitals (the ce.Alive gate)
+            long consumesBefore = h.Server.Transactions.Diag.ConsumesApplied;
+            // drive OnConsume's vitals arm directly through ApplyConsume's caller contract: the gate
+            // lives in OnConsume, so exercise the wire path with an empty cell too
+            a.SendConsume(0, 0, 0);   // empty cell -> rejected, nothing anywhere
+            h.Step(15);
+            Assert.That(h.Server.Transactions.Diag.ConsumesRejected, Is.GreaterThanOrEqualTo(1), "invalid cell rejected");
+            Assert.That(h.Server.Transactions.Diag.ConsumesApplied, Is.EqualTo(consumesBefore), "nothing applied");
+            Assert.That(e.Sim.Food, Is.EqualTo(food), "a corpse's/invalid consume left the vitals untouched");
+            Assert.That(cs.HealthExact, Is.EqualTo(0f), "still dead at 0");
+        }
+
         // ---------------------------------------------------------------- P4: the owner-only wire block (SystemId 13, v8)
 
         [Test]

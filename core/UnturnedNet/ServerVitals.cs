@@ -191,6 +191,30 @@ namespace UnturnedGodot.Net
             StampIfChanged(e, tick);
         }
 
+        /// <summary>The FULL consume effect set (MP_VITALS_PLAN §7, the P5 flip), mirroring
+        /// PlayerController.Consume field-for-field: useHealth through the unified heal, useFood/Water/
+        /// Energy divided by 100 into the 0..1 sim, useVirus IMMUNITY-scaled with the SERVER's skills,
+        /// useDisinfectant, useStopsBleeding (clears the server bleed timer), useHealBroken (clears the
+        /// server flag; PlayerNetSync pushes the clear onto the avatar body and the owner-block echo's
+        /// clear edge releases the shell's local gate -- §10 risk 7). The caller owns the alive gate.</summary>
+        public void ApplyConsume(ushort owner, ItemAsset a, long tick)
+        {
+            if (a == null || !_byOwner.TryGetValue(owner, out var e)) return;
+            if (a.useHealth > 0) ApplyHealDirect(owner, a.useHealth, tick);
+            if (a.useFood > 0) e.Sim.Food = MathF.Min(1f, e.Sim.Food + a.useFood / 100f);
+            if (a.useWater > 0) e.Sim.Water = MathF.Min(1f, e.Sim.Water + a.useWater / 100f);
+            if (a.useEnergy > 0) e.Sim.Stamina = MathF.Min(1f, e.Sim.Stamina + a.useEnergy / 100f);   // askRest
+            if (a.useVirus > 0)
+            {
+                float mult = _skills.TryGet(owner, out var sk) ? sk.Skills.ImmunityInfectionMultiplier() : 1f;
+                e.Sim.Infection = Math.Clamp(e.Sim.Infection + (a.useVirus / 100f) * mult, 0f, 1f);
+            }
+            if (a.useDisinfectant > 0) e.Sim.Infection = MathF.Max(0f, e.Sim.Infection - a.useDisinfectant / 100f);
+            if (a.useStopsBleeding) { e.Bleeding = false; e.BleedUntilTick = 0; }
+            if (a.useHealBroken) e.Broken = false;
+            StampIfChanged(e, tick);
+        }
+
         /// <summary>The death write: health floors to 0 through the same mirror (called by
         /// ServerCombat.KillPlayer so console kills / overkill damage leave a coherent 0/0/0).</summary>
         public void ForceDead(ushort victim, long tick)

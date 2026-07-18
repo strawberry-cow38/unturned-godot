@@ -361,13 +361,14 @@ namespace UnturnedGodot.Net
             inv.removeItemAmount(asset.id, 1);   // the SP consume path removes by id (PlayerController.TickConsume)
             Diag.ConsumesApplied++;
 
-            // vitals: health routes through the ONE write-through helper (MP_VITALS_PLAN §10 risk 6 --
-            // this also killed the old RoundToInt-vs-Ceiling coarse-byte divergence). The full effect set
-            // (food/water/stamina/virus/bandage/splint) lands with the P5 consume flip.
-            if (asset.useHealth > 0 && _combat.TryGet(sender, out var ce) && ce.Alive)
+            // P5 (MP_VITALS_PLAN §7): the server derives the FULL effect set from the validated item in
+            // the server grid -- the client no longer self-applies anything (the TickConsume :720 flip);
+            // the echo is the owner vitals block, no new event. This closes the Phase-A gap where a
+            // client could claim any consume effect. The `ce.Alive` gate stays: a corpse can't eat.
+            if (_combat.TryGet(sender, out var ce) && ce.Alive)
             {
-                if (Vitals != null) Vitals.ApplyHealDirect(sender, asset.useHealth, _tick());
-                else   // bare fixture without vitals wiring: the pre-split direct patch
+                if (Vitals != null) Vitals.ApplyConsume(sender, asset, _tick());
+                else if (asset.useHealth > 0)   // bare fixture without vitals wiring: the pre-split health patch
                 {
                     ce.HealthExact = Mathf.Min(100f, ce.HealthExact + asset.useHealth);
                     ce.Health = (byte)Mathf.Ceil(ce.HealthExact);
