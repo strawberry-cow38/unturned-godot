@@ -15,6 +15,10 @@ namespace UnturnedGodot
         public Node3D World { get; private set; }        // the loaded map (terrain + objects) = the edit target
         public EditorCamera Camera { get; private set; }
         public EditorObjects Objects;                     // Phase 2 objects sub-editor (set by BuildEditor)
+        public EditorSpawns Spawns;                       // Phase 3 spawns sub-editor (set by BuildEditor)
+        public EditorEnvironment Environment;             // Phase 4 environment sub-editor (set by BuildEditor)
+        public EditorTerrain TerrainEd;                   // Phase 5 terrain sub-editor (set by BuildEditor)
+        public EditorRoads RoadsEd;                       // Phase 6 roads sub-editor (Environment tab, paving mode)
 
         [Signal] public delegate void ModeChangedEventHandler(int mode);
 
@@ -34,6 +38,14 @@ namespace UnturnedGodot
 
         // source Editor.save() -> EditorInteract.save() + EditorObjects.save() + EditorSpawns.save().
         // wired per-phase as the sub-editors land; Phase 1 has nothing persistent yet.
-        public void Save() => GD.Print($"[editor] save '{MapName}' (Phase 1: no sub-editors persist yet)");
+        public void Save()   // source Editor.save() -> fans out to the sub-editors
+        {
+            int n = Objects?.Save() ?? 0;
+            int s = Spawns?.Save() ?? 0;
+            int e = Environment?.Save() ?? 0;
+            int t = TerrainEd?.Save() ?? 0;
+            int r = RoadsEd?.Save() ?? 0;
+            GD.Print($"[editor] saved '{MapName}' ({n} props, {s} spawns, {e} env, {t} terrain, {r} roads)");
+        }
     }
 }

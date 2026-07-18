@@ -1511,19 +1511,23 @@ namespace UnturnedGodot
             // Clean, legible editor lighting. The DayNightCycle re-applies a warm-tan ambient + fog + glow EVERY
             // frame (source-faithful sky, but it reads as thick haze from the aerial editor cam), so freeze its
             // visuals first, then set a bright fog-free environment so the map is clearly editable.
+            void SetCleanEditorLighting()   // the editor's clean fog-free look; restored when leaving the Environment tab
+            {
+                foreach (var n in GetChildren())
+                    if (n is WorldEnvironment we && we.Environment is Godot.Environment ev)
+                    {
+                        ev.SetFogEnabled(false);
+                        ev.BackgroundMode = Godot.Environment.BGMode.Color;
+                        ev.BackgroundColor = new Color(0.53f, 0.67f, 0.86f);   // clear sky blue
+                        ev.AmbientLightSource = Godot.Environment.AmbientSource.Color;
+                        ev.AmbientLightColor = new Color(0.92f, 0.92f, 0.94f);
+                        ev.AmbientLightEnergy = 1.15f;
+                        ev.GlowEnabled = false;
+                        break;
+                    }
+            }
             if (res.DayNight != null) res.DayNight.VisualsEnabled = false;
-            foreach (var n in GetChildren())
-                if (n is WorldEnvironment we && we.Environment is Godot.Environment ev)
-                {
-                    ev.SetFogEnabled(false);
-                    ev.BackgroundMode = Godot.Environment.BGMode.Color;
-                    ev.BackgroundColor = new Color(0.53f, 0.67f, 0.86f);   // clear sky blue
-                    ev.AmbientLightSource = Godot.Environment.AmbientSource.Color;
-                    ev.AmbientLightColor = new Color(0.92f, 0.92f, 0.94f);
-                    ev.AmbientLightEnergy = 1.15f;
-                    ev.GlowEnabled = false;
-                    break;
-                }
+            SetCleanEditorLighting();
             var editor = new Editor();
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
@@ -1532,6 +1536,25 @@ namespace UnturnedGodot
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
+            var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
+            editor.AddChild(spawns);
+            editor.Spawns = spawns;
+            var env = new EditorEnvironment(editor, res.DayNight, SetCleanEditorLighting);   // Phase 4: lighting/time/weather (Environment tab)
+            editor.AddChild(env);
+            editor.Environment = env;
+            var terrainEd = new EditorTerrain(editor, cam, res.Terr);   // Phase 5: heightmap sculpt (Terrain tab)
+            editor.AddChild(terrainEd);
+            editor.TerrainEd = terrainEd;
+            RoadField rf = null;   // Phase 6: WorldMode.Editor skips WorldBuilder's roads step, so build the road splines here
+            if (res.Terr != null)
+            {
+                rf = new RoadField { Terr = res.Terr };
+                rf.LoadFromEnvironment(_mapRoot + "/Environment");
+                AddChild(rf);
+            }
+            var roadsEd = new EditorRoads(editor, cam, rf);   // roads paving under the Environment tab (R to toggle)
+            editor.AddChild(roadsEd);
+            editor.RoadsEd = roadsEd;
             editor.AddChild(new EditorDashboard { Editor = editor, OnExit = ReturnToMenu });
             if (res.Ready) _worldReady = true;
             // headless render-verify: scatter a few props once the colliders are live (UG_EDITORDEMO=1)
@@ -1539,6 +1562,7 @@ namespace UnturnedGodot
                 GetTree().CreateTimer(0.8).Timeout += () =>
                 {
                     objs.DemoPlace();
+                    objs.Save();   // verify the round-trip: writes editor_PEI.txt; a re-run without the demo loads it back
                     if (objs.DemoPositions.Count > 0)   // pull the cam in close on a placed prop so the render shows it upright
                     {
                         var p = objs.DemoPositions[0];
@@ -1546,6 +1570,84 @@ namespace UnturnedGodot
                         cam.LookAt(p + Vector3.Up * 1.5f, Vector3.Up);
                     }
                 };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORSPAWNS") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Spawns;   // switch to the Spawns tab so the markers show
+                    if (spawns.Positions.Count > 0)
+                    {
+                        var c = spawns.Positions[0];
+                        // verify player add/remove + save round-trip (headless can't drive real clicks)
+                        int b0 = spawns.PlayerCount;
+                        spawns.RemoveNear(c);   // remove the original spawn under the cam (verify remove)
+                        spawns.AddSpawn(c, 45f, false); spawns.AddSpawn(c + new Vector3(7f, 0f, 0f), 90f, false); spawns.AddSpawn(c + new Vector3(-7f, 0f, 0f), 0f, true);   // rotated x2 + an ALT
+                        GD.Print($"[editorspawns] player remove-near from {b0} -> {spawns.PlayerCount}");
+                        spawns.Save();
+                    }
+                    spawns.DemoGoAnimal();   // cycle to the Animal category (Fauna.dat MultiMesh)
+                    if (spawns.Positions.Count > 0)
+                    {
+                        var zc = spawns.Positions[spawns.Positions.Count / 2];   // frame a mid animal cluster
+                        cam.GlobalPosition = zc + new Vector3(0f, 34f, 30f);
+                        cam.LookAt(zc, Vector3.Up);
+                    }
+                    GD.Print($"[editorspawns] animal spawns: {spawns.Count}");
+                };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORENV") == "1")
+                GetTree().CreateTimer(0.8).Timeout += () =>
+                {
+                    env.DemoSet(0.5f, false);   // preview noon lighting through the Environment tab
+                    GD.Print($"[editorenv] preview time={env.Time:0.00} ({(env.Overcast ? "overcast" : "clear")})");
+                };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORTERRAIN") == "1")
+                GetTree().CreateTimer(0.9).Timeout += () =>
+                {
+                    editor.Mode = EEditorMode.Terrain;
+                    Vector3 at = spawns != null && spawns.Positions.Count > 0 ? spawns.Positions[0] : Vector3.Zero;   // a known land point
+                    terrainEd.DemoSculpt(at);
+                    terrainEd.Save();   // verify the heightmap round-trip: a plain --editor re-run loads the sculpt back
+                    cam.GlobalPosition = at + new Vector3(75f, 55f, 75f);
+                    cam.LookAt(at + Vector3.Up * 40f, Vector3.Up);
+                    if (System.Environment.GetEnvironmentVariable("UG_EDITORPAINT") == "1")
+                    {
+                        terrainEd.DemoPaint(at, 6);   // snow-cap the hill -> Materials splat-paint proof
+                        cam.GlobalPosition = at + new Vector3(150f, 175f, 150f);
+                        cam.LookAt(at, Vector3.Up);
+                    }
+                };
+            if (System.Environment.GetEnvironmentVariable("UG_EDITORROADS") == "1" && roadsEd.HasRoads)
+            {   // synchronous (no timer): set before the first frame so the frame-45 --shot reliably captures the demoed state
+                editor.Mode = EEditorMode.Environment;
+                Vector3 focus;
+                bool loopDemo = System.Environment.GetEnvironmentVariable("UG_ROADLOOP") == "1";
+                if (System.Environment.GetEnvironmentVariable("UG_ROADCLEAN") == "1")
+                    focus = roadsEd.DemoPave(0, roadsEd.DemoJointCount(0) / 2);    // markers only, NO edit -> roads render exactly as authored
+                else if (loopDemo)
+                    focus = roadsEd.DemoDataModel(0);                             // polish: loop + per-joint offset + ignore-terrain
+                else if (System.Environment.GetEnvironmentVariable("UG_ROADTAN") == "1")
+                {
+                    Vector3 j = roadsEd.DemoJoint(0, 1);
+                    roadsEd.DemoMoveTangent(0, 1, 0, j + new Vector3(0f, 0f, 45f));   // inc3: pull a bezier handle -> the road curves
+                    roadsEd.DemoSetMaterial(3, 2);                                    // inc3: verify the material picker (road 3 -> material 2)
+                    focus = j;
+                }
+                else if (System.Environment.GetEnvironmentVariable("UG_ROADADD") == "1")
+                {
+                    focus = roadsEd.DemoAddVertex(0, new Vector3(35f, 0f, 20f));   // inc2: extend road 0 with a NEW joint -> the spline grows
+                    roadsEd.DemoRemoveVertex(5, 1);                                // inc2: remove a joint from road 5 (functional check both paths rebuild)
+                }
+                else
+                {
+                    Vector3 j = roadsEd.DemoJoint(0, 1);
+                    roadsEd.DemoMove(0, 1, j + new Vector3(12f, 0f, 0f));          // inc1: a GENTLE nudge (not the mangling 40m yank)
+                    focus = j + new Vector3(6f, 0f, 0f);
+                }
+                cam.GlobalPosition = focus + (loopDemo ? new Vector3(30f, 135f, 30f) : new Vector3(48f, 54f, 48f));   // loop: taller aerial to see the closed shape
+                cam.LookAt(focus, Vector3.Up);
+                if (res.DayNight != null) res.DayNight.VisualsEnabled = false;   // Environment preview hazes -> clean lighting for the render
+                SetCleanEditorLighting();
+                editor.Save();   // verify the Paths.dat round-trip (writes content/roads/editor_Paths.dat)
+            }
             GD.Print("[editor] up: PEI + free-fly cam + dashboard + objects editor");
         }
 
