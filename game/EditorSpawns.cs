@@ -211,10 +211,13 @@ namespace UnturnedGodot
             _markers.Clear(); Positions.Clear();
             if (IsPointCloud)   // dense cloud (item 2470 / zombie ~1456) -> one MultiMesh, per-instance colour
             {
-                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f }, InstanceCount = _spawns.Count };
+                bool zombie = _category == ECategory.Zombie;
+                Mesh cloud = zombie ? new BoxMesh { Size = new Vector3(0.65f, 1.9f, 0.65f) } : new BoxMesh { Size = new Vector3(0.9f, 0.9f, 0.9f) };   // zombie = human-height block, item = cube
+                float yoff = zombie ? 0.95f : 0.45f;
+                var mm = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, Mesh = cloud, InstanceCount = _spawns.Count };
                 for (int i = 0; i < _spawns.Count; i++)
                 {
-                    mm.SetInstanceTransform(i, new Transform3D(Basis.Identity, _spawns[i].Pos + Vector3.Up * 0.6f));
+                    mm.SetInstanceTransform(i, new Transform3D(Basis.Identity, _spawns[i].Pos + Vector3.Up * yoff));
                     mm.SetInstanceColor(i, MarkerColor(_spawns[i]));
                     Positions.Add(_spawns[i].Pos);
                 }
@@ -266,7 +269,9 @@ namespace UnturnedGodot
             }
             else if (IsPointCloud)
             {
-                _addBody.Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f }; _addBody.Position = new Vector3(0, 0.6f, 0);
+                bool zombie = _category == ECategory.Zombie;
+                _addBody.Mesh = zombie ? new BoxMesh { Size = new Vector3(0.65f, 1.9f, 0.65f) } : new BoxMesh { Size = new Vector3(0.9f, 0.9f, 0.9f) };
+                _addBody.Position = new Vector3(0, zombie ? 0.95f : 0.45f, 0);
                 _addArrow.Mesh = null;   // item/zombie spawns are points -- no facing arrow
             }
             else
