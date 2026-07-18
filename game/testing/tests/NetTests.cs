@@ -2947,13 +2947,19 @@ namespace UnturnedGodot.Testing
     // POST-P2 (F3 swept corrections + slice cap + F4): corr 3.377 m/min (unchanged -- the residue is
     // pure §4-1 binary-StepUp forks, the F6 gate), maxPending 0.145, worstTickCorr 0.049. The spike
     // bars ARM here (P2 owns them: pre-cap the swept-blocked pending piled to 0.562 and released as a
-    // 0.098 tug); the corr/min bar arms with F6.
+    // 0.098 tug).
+    // F6 SPIKE VERDICT: the doc's de-binarized StepUp FAILED its spike -- the minimal clearing height
+    // at a graze is a knife-edge function of lateral offset (the hydrant baseline blew up: 30.763
+    // m/min + 2 snaps) and the curb number still missed the bar (2.989). What survived is the
+    // real-step gate (binary raise, only onto a walkable raised top): hydrant 7.824 -> 5.471 with 0
+    // snaps, stepup 3.488 (unchanged). The remaining stepup drizzle is two-body step/slide TIMING skew
+    // at maneuvering cadence -- rewind/replay territory: the corr/min bar is C3-gated (§7).
     public class NetShellWanStepUp : GameTest
     {
         public override string Name => "net.shell_wan_stepup";
         public override double TimeoutSimSeconds => 160;
         const bool BarsLive = true;        // the spike/snap/convergence bars (P2)
-        const bool CorrBarLive = false;    // the corr/min bar: F6 (de-binarized StepUp) owns it
+        const bool CorrBarLive = false;    // the corr/min bar: C3-gated (the F6 spike failed -- see the verdict above)
 
         public override IEnumerable<Step> Run()
         {
@@ -3036,7 +3042,7 @@ namespace UnturnedGodot.Testing
     // POST-P2 (F3 swept corrections + slice cap + F4 wire-stance trust): corr 1.957 m/min (bar 2 --
     // passes; margin is thin because the residue is the jamb slide-side pick, the same knife-edge
     // family as the hydrant), worstTickCorr 0.060, maxPending 0.440 (the one bifurcation event per
-    // course -- the C3-class spike, stays soft).
+    // course -- the C3-class spike, stays soft). POST-F6-SPIKE (real-step gate): 1.800 m/min.
     public class NetShellWanDoorway : GameTest
     {
         public override string Name => "net.shell_wan_doorway";
@@ -3108,7 +3114,10 @@ namespace UnturnedGodot.Testing
     // FAILS the corr/min, maxPending and worst-tick bars.
     // POST-P2 (F1-F4 + slice cap): 7.824 m/min, maxPending 1.20, worstTickCorr 0.061 -- the worst-tick
     // TUG is tamed but the slide-side bifurcation itself is untouched, exactly as §4-2 predicted: no
-    // cheap fix picks the same side twice. This is the C3 (rewind+replay) gate; metric bars stay soft.
+    // cheap fix picks the same side twice. POST-F6-SPIKE (the real-step StepUp gate): 5.471 m/min,
+    // maxPending 0.609 -- the binary raise no longer fires on step-less grazes past the post, the
+    // course's best numbers yet. The residue is pure slide-side bifurcation: the C3 (rewind+replay)
+    // gate; metric bars stay soft.
     public class NetShellWanThinCollider : GameTest
     {
         public override string Name => "net.shell_wan_thincollider";
@@ -3182,16 +3191,15 @@ namespace UnturnedGodot.Testing
     // ON FLAT GROUND -- a phantom step-up that relaunches every arc ~0.4 m high. That is F3's bug
     // (corrections applied through geometry), so the bars arm with P2/F3.
     // POST-P2 (F3 killed the phantom flat-ground StepUp; slice cap): corr 1.665 m/min (22x under
-    // pre-fix), worstTickCorr 0.060, snaps 0 -- ARMED. maxPending/maxPendingY 0.354/0.339 stay soft:
-    // a rare starve-window arc still piles ~0.35 m of transient vertical pending (consumed as a capped
-    // glide or replaced by the next ack -- the corr/min number shows how little of it is ever felt);
-    // closing the spike itself is rewind/replay territory (the C3 gate, §7).
+    // pre-fix), worstTickCorr 0.060, snaps 0. POST-F6-SPIKE (the real-step StepUp gate): 1.444 m/min,
+    // maxPending 0.160, maxPendingY 0.110, worstTickCorr 0.048 -- the curb-landing step pops were the
+    // spike source, so ALL bars arm here (26x under pre-fix overall).
     public class NetShellWanJump : GameTest
     {
         public override string Name => "net.shell_wan_jump";
         public override double TimeoutSimSeconds => 120;
         const bool BarsLive = true;         // corr/min, worst-tick, snap + convergence bars (P2)
-        const bool SpikeBarLive = false;    // the pending-spike bars: C3-gated (§7)
+        const bool SpikeBarLive = true;     // ARMED with the real-step StepUp gate (curb-landing pops were the spike)
 
         public override IEnumerable<Step> Run()
         {

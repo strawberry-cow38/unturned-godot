@@ -1406,9 +1406,44 @@ namespace UnturnedGodot
             if (!grounded) return;
             Vector3 motion = new Vector3(Velocity.X, 0f, Velocity.Z) * delta;
             if (motion.LengthSquared() < 1e-6f) return;
+            if (!TestMove(GlobalTransform, motion)) return;   // not blocked at foot level
             var raised = new Transform3D(GlobalTransform.Basis, GlobalPosition + Vector3.Up * StepHeight);
-            if (TestMove(GlobalTransform, motion) && !TestMove(raised, motion))
-                GlobalPosition += Vector3.Up * StepHeight;
+            if (TestMove(raised, motion)) return;             // blocked even raised: a wall, not a step
+            if (!DeterministicGround) { GlobalPosition += Vector3.Up * StepHeight; return; }   // SP/loopback: the binary pop, byte-identical
+            // F6 spike outcome (PREDICTION_GEOMETRY_DIAGNOSIS §4-1, gated on the wan_stepup baseline
+            // still failing after F1-F4): MP bodies step ONLY onto a real step.
+            //  - real-step gate: a thin collider (the hydrant) can clear the raised sweep on a knife-edge
+            //    graze with NO step top to land on -- raising there just pops the body into the graze
+            //    slide, which the variable-height search amplified into full snaps (measured 30.763
+            //    m/min + 2 snaps on the thincollider baseline). Probe rays just past the blocked face:
+            //    a walkable surface ABOVE the current floor must exist, or this is a wall-graze, not a
+            //    step -- slide instead.
+            // The raise itself stays BINARY: the spike also tried the doc's minimal-clearing-height
+            // search (F6 as designed) and it FAILED -- the minimal height at a graze is a knife-edge
+            // function of lateral offset, so two bodies centimetres apart got raises differing by the
+            // full range and the hydrant baseline blew up (30.763 m/min + 2 snaps vs 7.824 binary);
+            // it also left the curb baseline over its bar anyway (2.989 vs 2.0). FloorSnap pulls the
+            // 0.5 pop down onto the real step top within the tick, so the binary height costs little
+            // once only REAL steps fire.
+            var dir = motion.Normalized();
+            bool realStep = false;
+            for (float ahead = 0.47f; ahead <= 0.78f && !realStep; ahead += 0.15f)   // just past the capsule face .. one tread deeper
+            {
+                var from = GlobalPosition + dir * ahead + Vector3.Up * (StepHeight + 0.10f);
+                var rq = new PhysicsRayQueryParameters3D
+                {
+                    From = from,
+                    To = from + Vector3.Down * (StepHeight + 0.05f),
+                    CollisionMask = CollisionMask,
+                    Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+                };
+                var hit = GetWorld3D().DirectSpaceState.IntersectRay(rq);
+                realStep = hit.Count > 0
+                    && ((Vector3)hit["position"]).Y >= GlobalPosition.Y + 0.03f
+                    && ((Vector3)hit["normal"]).AngleTo(Vector3.Up) < FloorMaxAngle;
+            }
+            if (!realStep) return;
+            GlobalPosition += Vector3.Up * StepHeight;
         }
 
         static readonly System.Func<float, bool> AlwaysHeadroom = _ => true;   // F4: the NetAvatar stance-FSM stub -- the wire stance is already headroom-resolved client-side
