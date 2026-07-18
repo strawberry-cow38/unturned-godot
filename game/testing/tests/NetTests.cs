@@ -3158,11 +3158,18 @@ namespace UnturnedGodot.Testing
     // error in one snapshot step), worstTickCorr 0.137 m, snaps 0 -- the WORST of the four courses,
     // 66x the flat wan_walk, exactly §5's ranking of jumps as the worst felt item. FAILS all four
     // metric bars.
+    // POST-P1 (F1 takeoff-edge + strip + deferral, F2 grounded-tolerance, F2b phase join): 3.323
+    // m/min, maxPending 0.402, maxPendingY 0.402, worstTickCorr 0.070 -- 11x better, worst-tick bar
+    // now passes. The residue was traced tick-by-tick to §4-4, NOT a jump mechanism: an eased downward
+    // correction slice lands the capsule fractionally inside the floor on the landing tick, the next
+    // tick's StepUp foot-sweep reads the stuck capsule as "blocked at foot" and fires the +0.5 m raise
+    // ON FLAT GROUND -- a phantom step-up that relaunches every arc ~0.4 m high. That is F3's bug
+    // (corrections applied through geometry), so the bars arm with P2/F3.
     public class NetShellWanJump : GameTest
     {
         public override string Name => "net.shell_wan_jump";
         public override double TimeoutSimSeconds => 120;
-        const bool BarsLive = false;   // armed by P1 (F1 takeoff-edge jump bit + F2 grounded-tolerance own the jump)
+        const bool BarsLive = false;   // arms with P2/F3: the post-P1 residue is the §4-4 correction-embed -> phantom StepUp (see header)
 
         public override IEnumerable<Step> Run()
         {
@@ -3189,6 +3196,7 @@ namespace UnturnedGodot.Testing
             rig.Sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
             rig.Sess.Shell.ScriptedStance = null;
             for (int i = 0; i < 30; i++) { yield return Ticks(1); m.Sample(); }
+            GD.Print($"[wan-jump] phase (a) hops: corr={m.Corr:0.###} m, maxPending={m.MaxPend:0.###}, maxPendingY={m.MaxPendY:0.###}, worstTick={m.WorstTickCorr:0.###}");
 
             // (b) the curb: placed NOW, relative to where the hop run ended (one shared physics space --
             // both bodies see it the same tick; inserted while stopped, converged and 6 m away)

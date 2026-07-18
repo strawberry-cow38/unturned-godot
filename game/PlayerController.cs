@@ -1159,6 +1159,10 @@ namespace UnturnedGodot
         public EPlayerStance? ScriptedStance;
         // Likewise forces jump (bypassing Space) -- PlayerNetSync injects the MoveInput v2 jump bit here.
         public bool? ScriptedJump;
+        // F2b (PREDICTION_GEOMETRY_DIAGNOSIS §5): how many ticks late the injected takeoff fires (a
+        // repaid takeoff deferred by TryConsumeInput). The avatar joins the arc IN PHASE at this offset
+        // instead of launching a label-offset arc. 0 = on time; only PlayerNetSync ever sets it.
+        public int ScriptedJumpLateTicks;
 
         // C6 MP RIDE MODE (PEI_CLIENT_PLAN §3 C6 / MP_PLAN §3.6 v1): driving a REPLICATED vehicle -- a
         // mesh-only VehiclePuppet the server dead-reckons, not a local Vehicle. Session-only: SP never
@@ -2787,7 +2791,7 @@ namespace UnturnedGodot
             bool jump = (ScriptedJump ?? (!NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Space))) && !Broken;   // broken legs can't jump (PlayerMovement.cs:1310); ScriptedJump = the wire's MoveInput v2 jump bit (C2)
 
             LastMoveInput = new UnityEngine.Vector2(strafe, forward);   // shell-captured axes for the MP input command
-            LastJumpInput = jump;                                       // + the jump the sim consumed (C3: the MoveInput v2 jump bit)
+            // LastJumpInput (the wire bit) is set below, once grounded is known -- F1 takeoff-edge semantics
 
             // feed the viewmodel its locomotion so the walk bob picks the right SPEED_*/BOB_* + gates on movement
             bool moving = Mathf.Abs(forward) > 0.01f || Mathf.Abs(strafe) > 0.01f;
@@ -2811,7 +2815,41 @@ namespace UnturnedGodot
             }
 
             bool grounded = DeterministicGround ? _detGrounded : IsOnFloor();   // MP bodies: the deterministic check, so shell + avatar integrate identical vertical motion
-            var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded, (float)delta);
+            // F1 (PREDICTION_GEOMETRY_DIAGNOSIS §5): the wire jump bit is the TAKEOFF EDGE -- true only
+            // on the tick this sim actually consumes a grounded jump (the tick Velocity.y becomes JUMP),
+            // never the held key. The held bit re-presented by the server's coast/hole machinery was §5-B:
+            // the avatar launched whole arcs the client never predicted. Local sim behavior is unchanged
+            // (jump stays held-key semantics for the body itself).
+            LastJumpInput = jump && grounded;
+            // F2: the avatar honors the wire takeoff within a grounded-tolerance window. The bit arrives
+            // RTT-late and the avatar's own grounded flag carries the §4 geometry skew, so re-deriving the
+            // takeoff tick here dropped/delayed real jumps at curbs (§5-A, the time-offset arcs). Validate
+            // plausibility instead of re-deriving: accept when the body is grounded OR not ascending and
+            // within StepHeight of the ground (det cast). Worst abuse is a jump from a 0.5 m hover --
+            // bounded, the same class of tolerance the C2 ack band already accepts; fly/teleport stay
+            // gated by the band + adopt budget. NetAvatar-only: SP and the client shell are byte-identical.
+            bool lateJump = NetAvatar && jump && !grounded && Velocity.Y <= 0.01f && DetGroundCast(StepHeight, out _);
+            var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded || lateJump, (float)delta);
+            // F2b: a DEFERRED repaid takeoff (TryConsumeInput) fires s ticks after the client's real
+            // takeoff tick -- launched at phase 0 the two arcs stay label-offset for their whole flight
+            // (~0.14 m of vertical pending per tick of lateness, the wan_jump residue). The ballistic
+            // DOF is replayable in closed form (input-free, collision-free until landing), so join the
+            // client's arc IN PHASE: lift to the arc height at phase s and take the phase-s vertical
+            // velocity. Upward-sweep guarded -- blocked overhead falls back to the phase-0 jump. The
+            // 10-tick cap keeps v.y positive so the det ground-snap can't immediately eat the join.
+            if (NetAvatar && jump && (grounded || lateJump) && ScriptedJumpLateTicks > 0)
+            {
+                float lateT = Mathf.Min(ScriptedJumpLateTicks, 10) * (float)delta;
+                float yOff = PlayerMovementDef.JUMP * lateT - 0.5f * PlayerMovementDef.GRAVITY * lateT * lateT;
+                if (yOff > 0f && !TestMove(GlobalTransform, Vector3.Up * yOff))
+                {
+                    GlobalPosition += Vector3.Up * yOff;
+                    var vel = _move.Velocity;
+                    vel.y = PlayerMovementDef.JUMP - PlayerMovementDef.GRAVITY * lateT;
+                    _move.Velocity = vel;
+                    v.y = vel.y;
+                }
+            }
             Vector3 world = GlobalTransform.Basis * new Vector3(v.x, 0f, -v.z);
             bool wasAirborne = !grounded;                     // ground state going into this step
             Velocity = new Vector3(world.X, v.y, world.Z);

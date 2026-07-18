@@ -156,11 +156,12 @@ namespace UnturnedGodot
                 // yank. Starvation coasts on the last consumed input inside TryConsumeInput (bounded by
                 // MaxCoastTicks, then a zero-motion hold -- no ghost-running stale intent); false means
                 // nothing to integrate at all -> stand still (death/enter-vehicle cleared it, or none yet)
-                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp, out bool seqAdvanced))
+                if (_server.Players.TryConsumeInput(e.OwnerPlayerId, out var inp, out bool seqAdvanced, out int jumpLate))
                 {
                     t.Body.RotationDegrees = new Vector3(0f, inp.YawDegrees, 0f);
                     t.Body.ScriptedInput = new UnityEngine.Vector2(inp.MoveX, inp.MoveY);
                     t.Body.ScriptedJump = inp.Jump;
+                    t.Body.ScriptedJumpLateTicks = jumpLate;   // F2b: a deferred repaid takeoff joins the arc in phase (PlayerController)
                     t.Body.ScriptedStance = inp.Stance;   // integrate at the stance the shell predicted at (the inchworm fix)
                     t.LastInputSeq = inp.Seq;
                     t.PairingExact = seqAdvanced;   // stale-seq coast/hold ticks must not be written back (C1.5)
@@ -171,6 +172,7 @@ namespace UnturnedGodot
                 {
                     t.Body.ScriptedInput = UnityEngine.Vector2.zero;
                     t.Body.ScriptedJump = false;
+                    t.Body.ScriptedJumpLateTicks = 0;
                     t.Body.ScriptedStance = EPlayerStance.STAND;
                     t.PairingExact = true;   // nothing consumed since spawn/clear: the body stands at the last exact pairing
                     t.HasClaim = false;

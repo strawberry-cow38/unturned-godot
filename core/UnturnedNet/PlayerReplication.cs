@@ -428,7 +428,10 @@ namespace UnturnedGodot.Net
         /// caller must pair with the produced position (during a coast/hold it repeats the last consumed
         /// seq, which the client's reconciler already treats as stale).</summary>
         public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input)
-            => TryConsumeInput(ownerPlayerId, out input, out _);
+            => TryConsumeInput(ownerPlayerId, out input, out _, out _);
+
+        public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input, out bool seqAdvanced)
+            => TryConsumeInput(ownerPlayerId, out input, out seqAdvanced, out _);
 
         /// <summary>The full consume: seqAdvanced reports whether the returned input carries a FRESH seq
         /// (a real dequeue or a hole-substitution that claimed the lost seq) or a stale REPEAT (starved
@@ -439,11 +442,15 @@ namespace UnturnedGodot.Net
         /// ticks of error that was never real (the residual high-RTT inchworm's dominant engine, found by
         /// the plan §3 WAN harness). The avatar driver must NOT ServerDrive a stale-seq tick's result --
         /// hold the entity at the last exact (pos, seq) pairing until the stream resumes, exactly like
-        /// retail's never-speculate server (U3 PlayerInput.cs: no packet -> no simulate -> no new state).</summary>
-        public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input, out bool seqAdvanced)
+        /// retail's never-speculate server (U3 PlayerInput.cs: no packet -> no simulate -> no new state).
+        /// jumpLateTicks (F1/F2, PREDICTION_GEOMETRY_DIAGNOSIS §5): when the returned input carries a
+        /// DEFERRED repaid takeoff, how many ticks after the client's real takeoff tick it fires (0 for
+        /// an on-time takeoff) -- the avatar driver uses it to join the arc in phase (F2b).</summary>
+        public bool TryConsumeInput(ushort ownerPlayerId, out MoveInput input, out bool seqAdvanced, out int jumpLateTicks)
         {
             input = default;
             seqAdvanced = false;
+            jumpLateTicks = 0;
             if (!TryGetByOwner(ownerPlayerId, out var e) || e.Sim == null) return false;
             var q = e.PendingInputs;
             if (q != null && q.Count > 0 && !e.Primed)
@@ -453,6 +460,7 @@ namespace UnturnedGodot.Net
                 if (q.Count < PrimeDepth + 1 && ++e.PrimeWait <= PrimeDepth)
                 {
                     input = e.AppliedInput;
+                    StripJump(ref input);   // F1: a prime-wait repeat is a stale re-present (defensive -- ServerClearInput resets HasApplied, so this path can't practically carry a bit)
                     return e.HasApplied;
                 }
                 e.Primed = true;
@@ -461,13 +469,25 @@ namespace UnturnedGodot.Net
             // already integrated by the starved coasts -- claim them (and any lost seq's hole among
             // them) without a second integration. A jump past the substitutable window means the coasts
             // stood in for nothing recoverable: void the debt and let the adopt below handle it.
-            bool repaidDequeue = false, repaidHole = false;
+            // F1 deferred takeoff: a repaid input's MOTION was already integrated (the coast ran its
+            // held axes) but its JUMP was not (coasts integrate flat -- StripJump). Eating the bit ate
+            // the whole arc: the client flew, the avatar ran flat, ~0.8 m of vertical pullback per
+            // starve-overlapped takeoff (the wan_jump baseline's post-strip residue). Defer the bit to
+            // THIS call's integrating tick instead -- the only integration that impulse ever gets, a
+            // few ticks late, validated by the avatar's F2 grounded-tolerance. Voided with the debt on
+            // a hitch-sized gap (an ancient takeoff must not fire into the adopted fresh stream).
+            bool repaidDequeue = false, repaidHole = false, repaidJump = false;
+            ushort repaidJumpSeq = 0;
             while (q != null && q.Count > 0 && e.CoastDebt > 0)
             {
                 int gap = (ushort)(q.Peek().Seq - e.LastConsumedSeq);
-                if (gap > MaxGapCoastTicks + 1) { e.CoastDebt = 0; break; }
+                if (gap > MaxGapCoastTicks + 1) { e.CoastDebt = 0; repaidJump = false; break; }
                 if (gap > 1) { e.LastConsumedSeq++; repaidHole = true; repaidDequeue = false; }
-                else { var pre = q.Dequeue(); e.LastConsumedSeq = pre.Seq; e.AppliedInput = pre; repaidDequeue = true; repaidHole = false; }
+                else
+                {
+                    var pre = q.Dequeue(); e.LastConsumedSeq = pre.Seq; e.AppliedInput = pre; repaidDequeue = true; repaidHole = false;
+                    if (pre.Jump && !repaidJump) { repaidJump = true; repaidJumpSeq = pre.Seq; }   // remember the EARLIEST pending takeoff's own seq (its lateness feeds the F2b phase join)
+                }
                 e.CoastDebt--;
             }
             // C1.6 (the §3 harness's second find): when repayment drains the queue EMPTY, the last
@@ -481,7 +501,11 @@ namespace UnturnedGodot.Net
             if ((repaidDequeue || repaidHole) && q.Count == 0)
             {
                 input = e.AppliedInput;
-                if (repaidHole) { input.Seq = e.LastConsumedSeq; input.HasClaim = false; }
+                // F1 pairing rule (same as HasClaim): the queue only empties via a dequeue, so this tick
+                // presents an input under its OWN seq -- its takeoff bit is a legitimate same-seq consume
+                // and RIDES; a hole-synthesized seq is not the bit's own tick and strips it.
+                if (repaidHole) { input.Seq = e.LastConsumedSeq; input.HasClaim = false; StripJump(ref input); }
+                if (repaidJump) { input.Buttons |= MoveInput.ButtonJump; jumpLateTicks = (ushort)(input.Seq - repaidJumpSeq); }   // the deferred repaid takeoff fires on this integrating tick
                 e.CoastTicks = 0;
                 seqAdvanced = true;
                 return true;
@@ -490,6 +514,7 @@ namespace UnturnedGodot.Net
             {
                 if (!e.HasApplied) return false;   // nothing consumed since spawn/clear: stand still
                 input = e.AppliedInput;            // stale seq: the repeated ack is ignored client-side
+                StripJump(ref input);              // F1 (diagnosis §5-B): a coast NEVER re-presents the takeoff bit -- pre-fix the held bit re-jumped the avatar on coast ticks, a whole arc the client never predicted (the wan_jump baseline's dominant engine)
                 if (e.CoastTicks >= MaxCoastTicks)
                 {
                     // past the jitter-gap budget this is an outage, not a gap: hold still instead of
@@ -514,6 +539,8 @@ namespace UnturnedGodot.Net
                 e.AppliedInput.Seq = e.LastConsumedSeq;
                 input = e.AppliedInput;
                 input.HasClaim = false;   // the held input's ClaimedPos belongs to ITS seq, not the substituted one
+                StripJump(ref input);     // F1: the held input's takeoff belongs to ITS seq too -- a substituted tick integrates flat
+                if (repaidJump) { input.Buttons |= MoveInput.ButtonJump; jumpLateTicks = (ushort)(input.Seq - repaidJumpSeq); }   // ... unless it carries a deferred repaid takeoff (this tick integrates)
                 seqAdvanced = true;       // the claimed hole seq is fresh -- its (pos, seq) pairing is exact
                 return true;
             }
@@ -523,9 +550,18 @@ namespace UnturnedGodot.Net
             e.HasApplied = true;
             e.CoastTicks = 0;
             input = inp;
+            if (repaidJump) { input.Buttons |= MoveInput.ButtonJump; jumpLateTicks = (ushort)(input.Seq - repaidJumpSeq); }   // F1 deferred takeoff: a mid-backlog repaid jump fires on this call's real integration
             seqAdvanced = true;
             return true;
         }
+
+        /// <summary>F1 (PREDICTION_GEOMETRY_DIAGNOSIS §5): ButtonJump is TAKEOFF-EDGE semantics -- the
+        /// client sets it only on the tick its sim consumed a grounded jump, so the bit belongs to
+        /// exactly that seq. Every path that re-presents an input under any OTHER pairing (starved
+        /// coast, prime-wait repeat, hole substitution) must strip it, or the avatar launches arcs the
+        /// client never predicted (§5-B: the coast re-jump / instant-apex-teleport engine). Stance bits
+        /// are NOT stripped: coasting on the held stance is the held-keys model's virtue.</summary>
+        static void StripJump(ref MoveInput input) => input.Buttons &= unchecked((byte)~MoveInput.ButtonJump);
 
         /// <summary>Zero a returned input's motion (axes, jump, stance -> STAND) while keeping seq and
         /// yaw: a hold tick -- the avatar stands (facing still tracks) and no fresh ack is emitted.</summary>
