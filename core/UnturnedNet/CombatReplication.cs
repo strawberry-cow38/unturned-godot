@@ -105,6 +105,67 @@ namespace UnturnedGodot.Net
     }
 
     // ---------------------------------------------------------------------------------------------------
+    // mp-event-coalesce (wire v10): the four combat commands no longer ride their OWN ReliableOrdered
+    // datagram (a single drop head-of-line-blocks the reliable-ordered channel and stalls all subsequent
+    // combat -- the "complex-packet stutter"). Instead the client folds recent combat events REDUNDANTLY
+    // into the 50 Hz UNRELIABLE PlayerStateCommand transform stream and keeps re-including each event until
+    // the server ACKs it; the server dedups by a strictly-increasing combat seq (idempotent redundancy,
+    // exactly the MoveInputPacket / ServerQueueInput pattern). One CarriedCombatEvent is a Kind tag plus
+    // the embedded command (which already carries the combat Seq -- never duplicated). REUSES the existing
+    // Fire/Melee/Grenade/Reload Write/TryRead so the encoding stays byte-identical to the standalone form.
+    // ---------------------------------------------------------------------------------------------------
+    public enum CombatEventKind : byte { Fire = 0, Melee = 1, Grenade = 2, Reload = 3 }
+
+    /// <summary>One combat event carried inside PlayerStateCommand. The embedded command owns the Seq; the
+    /// Kind byte selects which one is live. TryRead bound-checks the Kind byte (>3 = malformed = reject).</summary>
+    public struct CarriedCombatEvent
+    {
+        public CombatEventKind Kind;
+        public FireCommand Fire;
+        public MeleeCommand Melee;
+        public GrenadeCommand Grenade;
+        public ReloadCommand Reload;
+
+        /// <summary>The combat seq the server dedups on -- the embedded command's own seq.</summary>
+        public ushort Seq => Kind switch
+        {
+            CombatEventKind.Fire => Fire.Seq,
+            CombatEventKind.Melee => Melee.Seq,
+            CombatEventKind.Grenade => Grenade.Seq,
+            CombatEventKind.Reload => Reload.Seq,
+            _ => 0,
+        };
+
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt8((byte)Kind);
+            switch (Kind)
+            {
+                case CombatEventKind.Fire: Fire.Write(w); break;
+                case CombatEventKind.Melee: Melee.Write(w); break;
+                case CombatEventKind.Grenade: Grenade.Write(w); break;
+                case CombatEventKind.Reload: Reload.Write(w); break;
+            }
+        }
+
+        public static bool TryRead(NetPakReader r, out CarriedCombatEvent ev)
+        {
+            ev = default;
+            if (!r.ReadUInt8(out byte kind)) return false;
+            if (kind > (byte)CombatEventKind.Reload) return false;   // malformed kind -> reject the whole packet
+            ev.Kind = (CombatEventKind)kind;
+            switch (ev.Kind)
+            {
+                case CombatEventKind.Fire:    if (!FireCommand.TryRead(r, out ev.Fire)) return false; break;
+                case CombatEventKind.Melee:   if (!MeleeCommand.TryRead(r, out ev.Melee)) return false; break;
+                case CombatEventKind.Grenade: if (!GrenadeCommand.TryRead(r, out ev.Grenade)) return false; break;
+                case CombatEventKind.Reload:  if (!ReloadCommand.TryRead(r, out ev.Reload)) return false; break;
+            }
+            return true;
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------
     // Events (server -> client, ReliableOrdered). Facts the server asserts; clients render fx locally from
     // these (§3.4 "client fx stay client-local, triggered by events -- the viewmodel never crosses the wire").
     // ---------------------------------------------------------------------------------------------------

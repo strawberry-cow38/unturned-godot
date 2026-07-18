@@ -241,6 +241,11 @@ namespace UnturnedGodot.Net
             public Vector3 Pos { get; internal set; }
             public float YawDegrees { get; internal set; }
             public ushort LastProcessedInputSeq { get; internal set; }
+            // mp-event-coalesce (v10): the owner-facing ACK for the redundant combat carry -- the highest
+            // combat seq the server has applied from this owner's PlayerStateCommand stream. Rides every
+            // snapshot beside LastProcessedInputSeq; the owner's client drops acked events from its pending
+            // ring (NetWorldClient.AckCombat) so it stops re-including them.
+            public ushort LastProcessedCombatSeq { get; internal set; }
             public long LastChangedTick { get; internal set; }
 
             // server-only integration state; null on client replicas
@@ -390,6 +395,18 @@ namespace UnturnedGodot.Net
             if (changed) e.LastChangedTick = tick;
         }
 
+        /// <summary>mp-event-coalesce (v10): stamp the owner-facing combat ack (the highest applied combat
+        /// seq) onto the entity so it rides the next snapshot beside LastProcessedInputSeq. Marks the entity
+        /// dirty only when the value actually advances, so a steady stream costs no extra delta traffic. The
+        /// owner's client reads it back and drops acked events from its redundant pending ring.</summary>
+        public void SetCombatAck(ushort ownerPlayerId, ushort combatSeq, long tick)
+        {
+            if (!TryGetByOwner(ownerPlayerId, out var e)) return;
+            if (e.LastProcessedCombatSeq == combatSeq) return;
+            e.LastProcessedCombatSeq = combatSeq;
+            e.LastChangedTick = tick;
+        }
+
         /// <summary>Server-side teleport (Phase 5 respawn): move the entity without consulting its input.
         /// Works for driven and undriven entities alike -- a driven shell re-asserts its own transform on
         /// its next ServerDrive anyway.</summary>
@@ -495,6 +512,7 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixFloat(h, e.Pos.z);
                 h = NetHash.MixFloat(h, e.YawDegrees);
                 h = NetHash.MixUInt32(h, e.LastProcessedInputSeq);
+                h = NetHash.MixUInt32(h, e.LastProcessedCombatSeq);   // v10 (mp-event-coalesce): the combat ack
             }
             return h;
         }
@@ -508,6 +526,7 @@ namespace UnturnedGodot.Net
             w.WriteClampedFloat(e.Pos.z, NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits);
             w.WriteDegrees(e.YawDegrees, NetQuantization.YawBits);
             w.WriteUInt16(e.LastProcessedInputSeq);
+            w.WriteUInt16(e.LastProcessedCombatSeq);   // v10 (mp-event-coalesce): the combat ack rides beside the input ack
         }
 
         static bool ReadEntity(NetPakReader r, out PlayerEntity e)
@@ -520,6 +539,7 @@ namespace UnturnedGodot.Net
             if (!r.ReadClampedFloat(NetQuantization.PositionXZIntBits, NetQuantization.PositionXZFracBits, out float z)) return false;
             if (!r.ReadDegrees(out float yaw, NetQuantization.YawBits)) return false;
             if (!r.ReadUInt16(out ushort seq)) return false;
+            if (!r.ReadUInt16(out ushort combatSeq)) return false;   // v10 (mp-event-coalesce): the combat ack
             e = new PlayerEntity
             {
                 NetIdValue = id,
@@ -527,6 +547,7 @@ namespace UnturnedGodot.Net
                 Pos = new Vector3(x, y, z),
                 YawDegrees = yaw,
                 LastProcessedInputSeq = seq,
+                LastProcessedCombatSeq = combatSeq,
             };
             return true;
         }

@@ -30,6 +30,20 @@ namespace UnturnedGodot.Net
                                    // (drives the server body's hitbox capsule + zombie stealth radius)
         public bool Grounded;      // the shell's deterministic grounded flag (diagnostics/future envelope refinement)
 
+        // mp-event-coalesce (wire v10): a REDUNDANT list of recent combat events (Fire/Melee/Grenade/
+        // Reload) the client keeps re-including every tick until the server ACKs them (see AckCombat). The
+        // server dedups by a strictly-increasing combat seq, so a single dropped state datagram no longer
+        // stalls combat (no reliable-ordered head-of-line block) and no event is double-processed. On send
+        // Events points at the client's pending ring (only the first EventCount entries are valid); on read
+        // it is a freshly-allocated array sized to EventCount.
+        public CarriedCombatEvent[] Events;
+        public byte EventCount;
+
+        /// <summary>Wire cap on the redundant carry -- also the client ring depth. 16 events x ~14 B = ~224 B,
+        /// well under the 1200 B datagram budget on top of the ~14 B base transform packet. A count byte
+        /// above this on read = malformed = reject.</summary>
+        public const int MaxCarriedEvents = 16;
+
         public bool Jump => (Buttons & MoveInput.ButtonJump) != 0;
         public EPlayerStance Stance => new MoveInput { Buttons = Buttons }.Stance;
 
@@ -43,6 +57,10 @@ namespace UnturnedGodot.Net
             NetWire.WriteVel(w, LinVel);
             w.WriteUInt8(Buttons);
             w.WriteBit(Grounded);
+            // v10: the redundant combat-event carry, oldest-first (see CarriedCombatEvent). EventCount is
+            // bounded by MaxCarriedEvents at the fill site; Events holds at least that many valid entries.
+            w.WriteUInt8(EventCount);
+            for (int i = 0; i < EventCount; i++) Events[i].Write(w);
         }
 
         public static bool TryRead(NetPakReader r, out PlayerStateCommand cmd)
@@ -56,10 +74,20 @@ namespace UnturnedGodot.Net
             if (!NetWire.ReadVel(r, out Vector3 vel)) return false;
             if (!r.ReadUInt8(out byte buttons)) return false;
             if (!r.ReadBit(out bool grounded)) return false;
+            if (!r.ReadUInt8(out byte eventCount)) return false;
+            if (eventCount > MaxCarriedEvents) return false;   // malformed carry -> reject the whole claim
+            CarriedCombatEvent[] events = null;
+            if (eventCount > 0)
+            {
+                events = new CarriedCombatEvent[eventCount];
+                for (int i = 0; i < eventCount; i++)
+                    if (!CarriedCombatEvent.TryRead(r, out events[i])) return false;
+            }
             cmd = new PlayerStateCommand
             {
                 Seq = seq, RecovAck = recovAck, Pos = pos, YawDegrees = yaw, PitchDegrees = pitch,
                 LinVel = vel, Buttons = buttons, Grounded = grounded,
+                Events = events, EventCount = eventCount,
             };
             return true;
         }
@@ -156,6 +184,16 @@ namespace UnturnedGodot.Net
         /// verbatim -- the teeth proof that the envelope, not luck, is what rejects the cheats.</summary>
         public bool DisableEnvelope;
 
+        /// <summary>mp-event-coalesce (v10): the sink for each deduped carried combat event -- wired in
+        /// NetWorldHost to route Kind -> ServerCombat.OnFire/OnMelee/OnGrenade/OnReload (ServerCombat lives
+        /// on a different object, so the authority can't call it directly). (sender, event, tick).</summary>
+        public Action<ushort, CarriedCombatEvent, long> CombatDispatch;
+
+        /// <summary>Test seam (the DisableEnvelope pattern): with the dedup off, every carried event is
+        /// dispatched on every delivery -- the teeth proof that the strictly-increasing combat-seq guard,
+        /// not incidental fire-rate/cooldown timing, is what makes the redundant carry idempotent.</summary>
+        public bool DisableCombatDedup;
+
         /// <summary>The raw adopted claim beyond what the entity itself stores -- the game-side follower
         /// body (PlayerNetSync) dresses stance/pitch/velocity from here.</summary>
         public struct DrivenPlayerState
@@ -178,6 +216,9 @@ namespace UnturnedGodot.Net
             public bool Recovering;                // discard claims until RecovAck echoes the counter
             public bool HasAdopted;
             public DrivenPlayerState Adopted;
+            // mp-event-coalesce (v10): the strictly-increasing combat-seq guard that dedups the redundant
+            // combat-event carry (the ServerQueueInput shape). Resets clean with the DrivenState on recycle.
+            public bool HasCombatSeq; public ushort LastCombatSeq;
         }
         readonly Dictionary<ushort, DrivenState> _driven = new Dictionary<ushort, DrivenState>();
 
@@ -241,6 +282,27 @@ namespace UnturnedGodot.Net
             // can still deliver two commands out of order)
             if (st.HasSeq && !NetSeq.IsNewer(cmd.Seq, st.LastSeq)) return;
             st.HasSeq = true; st.LastSeq = cmd.Seq;
+
+            // ---- mp-event-coalesce (v10): apply the redundant combat carry BEFORE the recov-ack gate and
+            // the envelope, so a player who momentarily trips the movement envelope still legitimately fired
+            // their gun -- combat is not gated on the movement claim's outcome. Events arrive oldest-first;
+            // the strictly-increasing combat-seq guard (the ServerQueueInput shape) makes re-delivery
+            // idempotent, so a dropped state datagram costs nothing and no event is ever double-processed.
+            // The ack (highest applied seq) rides the next snapshot via SetCombatAck; the owner's client
+            // then drops those events from its pending ring. ----
+            for (int i = 0; i < cmd.EventCount; i++)
+            {
+                var ev = cmd.Events[i];
+                bool dispatch = DisableCombatDedup || !st.HasCombatSeq || NetSeq.IsNewer(ev.Seq, st.LastCombatSeq);
+                if (dispatch) CombatDispatch?.Invoke(sender, ev, tick);
+                // advance the ack monotonically regardless (never regress it, even with dedup disabled)
+                if (!st.HasCombatSeq || NetSeq.IsNewer(ev.Seq, st.LastCombatSeq))
+                {
+                    st.HasCombatSeq = true;
+                    st.LastCombatSeq = ev.Seq;
+                }
+            }
+            if (st.HasCombatSeq) _players.SetCombatAck(sender, st.LastCombatSeq, tick);
 
             // recov ack wait: while recovering, discard every claim whose RecovAck lags the counter --
             // the client is still walking a rolled-back-in-flight position. The event rides

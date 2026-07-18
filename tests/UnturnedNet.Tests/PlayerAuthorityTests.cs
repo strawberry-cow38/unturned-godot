@@ -329,7 +329,8 @@ namespace UnturnedNet.Tests
         [Test]
         public void PlayerState_WireRoundTrip_GoldenBytes()
         {
-            // Locks the Version 9 PlayerStateCommand layout. An INTENTIONAL change must bump
+            // Locks the Version 10 PlayerStateCommand layout (mp-event-coalesce: the trailing EventCount
+            // byte for the redundant combat carry -- 0 here = no events). An INTENTIONAL change must bump
             // NetProtocol.Version and re-golden this constant in the same commit.
             var cmd = new PlayerStateCommand
             {
@@ -341,7 +342,7 @@ namespace UnturnedNet.Tests
                 Grounded = true,
             };
             byte[] packed = NetMessagePak.Pack(ReplicationIds.CommandPlayerState, cmd.Write);
-            Assert.That(ToHex(packed), Is.EqualTo(GoldenStateHex), "PlayerStateCommand golden bytes (v9)");
+            Assert.That(ToHex(packed), Is.EqualTo(GoldenStateHex), "PlayerStateCommand golden bytes (v10)");
 
             var r = new SDG.NetPak.NetPakReader();
             r.SetBufferSegment(packed, packed.Length);
@@ -381,8 +382,8 @@ namespace UnturnedNet.Tests
             Assert.That(read.RecovCounter, Is.EqualTo(7));
         }
 
-        // goldened on first landing (v9); locked from then on
-        const string GoldenStateHex = "1B0201030C040C08103E6000A91E043AF0040602";
+        // goldened on first landing (v9); v10 (mp-event-coalesce) appends the EventCount=0 byte
+        const string GoldenStateHex = "1B0201030C040C08103E6000A91E043AF004060200";
         const string GoldenRecovHex = "1F6404640844328011F840163800";
 
         static string ToHex(byte[] buffer)
