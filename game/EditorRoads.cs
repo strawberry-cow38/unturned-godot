@@ -27,7 +27,7 @@ namespace UnturnedGodot
 
         public bool Paving => _paving;
         public string ModeText => _paving
-            ? $"PAVING · LMB select joint · G move to cursor · {(_selRoad >= 0 ? $"road {_selRoad} joint {_selJoint}" : "none sel")} · R=off"
+            ? $"PAVING · LMB select/add · G move · Del/Ctrl+Del rm joint/road · {(_selRoad >= 0 ? $"r{_selRoad} j{_selJoint}" : "none")} · R=off"
             : "R = roads paving";
 
         static string SavePath => ProjectSettings.GlobalizePath("res://content/roads/") + "editor_Paths.dat";
@@ -84,6 +84,15 @@ namespace UnturnedGodot
             {
                 var body = PickMarker(GetViewport().GetMousePosition());
                 if (body != null && _markerMap.TryGetValue(body, out var rj)) Select(body, rj.r, rj.j);
+                else if (RaycastTerrain(GetViewport().GetMousePosition(), out var pt))   // source: LMB on ground = add vertex (road selected) / add road (nothing selected)
+                {
+                    if (_selRoad >= 0)
+                    {
+                        int road = _selRoad, ni = _roads.AddVertexNearSelected(road, _selJoint, pt);
+                        BuildMarkers(); if (ni >= 0) SelectJoint(road, ni);
+                    }
+                    else { int nr = _roads.AddRoad(pt); BuildMarkers(); SelectJoint(nr, 0); }
+                }
             }
             else if (ev is InputEventKey { Pressed: true, Echo: false, Keycode: Key.G } && _selRoad >= 0)
             {
@@ -93,6 +102,17 @@ namespace UnturnedGodot
                     if (_selBody != null) _selBody.Position = pt + Vector3.Up * 1.2f;
                 }
             }
+            else if (ev is InputEventKey { Pressed: true, Echo: false } dk && (dk.Keycode == Key.Delete || dk.Keycode == Key.Backspace) && _selRoad >= 0)
+            {
+                if (Input.IsKeyPressed(Key.Ctrl)) _roads.RemoveRoad(_selRoad);          // source Ctrl+Del: remove the whole road
+                else _roads.RemoveVertex(_selRoad, _selJoint);                          // source Del: remove the joint (whole road if <2 left)
+                _selRoad = _selJoint = -1; _selBody = null; BuildMarkers();
+            }
+        }
+
+        void SelectJoint(int road, int joint)   // after add/remove (indices shifted + markers rebuilt): re-highlight a joint
+        {
+            foreach (var kv in _markerMap) if (kv.Value.r == road && kv.Value.j == joint) { Select(kv.Key, road, joint); return; }
         }
 
         void Select(StaticBody3D body, int road, int joint)
@@ -133,6 +153,30 @@ namespace UnturnedGodot
                 GD.Print($"[editor-roads] demo moved road {road} joint {joint} -> {to}");
             }
         }
+
+        // harness (UG_EDITORROADS + UG_ROADADD): extend a road with a new vertex so a render shows the added joint + kink
+        public Vector3 DemoAddVertex(int road, Vector3 offset)
+        {
+            SetPaving(true);
+            if (road >= _roads.RoadCount || _roads.JointCount(road) < 1) return Vector3.Zero;
+            int last = _roads.JointCount(road) - 1;
+            Vector3 at = _roads.JointPos(road, last) + offset;
+            int ni = _roads.AddVertexNearSelected(road, last, at);
+            GD.Print($"[editor-roads] demo added vertex to road {road} -> joint {ni} at {at}");
+            return at;
+        }
+
+        // harness: exercise remove (inc2) + log the joint-count delta so a run proves it rebuilds without crashing
+        public void DemoRemoveVertex(int road, int joint)
+        {
+            if (road >= _roads.RoadCount) return;
+            int before = _roads.JointCount(road);
+            bool removedRoad = _roads.RemoveVertex(road, joint);
+            GD.Print($"[editor-roads] demo removed road {road} joint {joint}: {before} joints -> {(removedRoad ? "ROAD removed" : _roads.JointCount(road) + " joints")}");
+        }
+
+        public Vector3 DemoPave(int road, int joint) { SetPaving(true); return DemoJoint(road, joint); }   // harness: markers on, NO edit (clean roads shot)
+        public int DemoJointCount(int road) => _roads != null ? _roads.JointCount(road) : 0;
 
         public bool HasRoads => _roads != null && _roads.RoadCount > 0;
         public Vector3 DemoJoint(int road, int joint) => HasRoads && road < _roads.RoadCount && joint < _roads.JointCount(road) ? _roads.JointPos(road, joint) : Vector3.Zero;

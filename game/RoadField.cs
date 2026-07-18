@@ -14,7 +14,16 @@ namespace UnturnedGodot
         public Terrain Terr;
 
         struct RoadMat { public float Width, Height, Depth, Offset; public bool Concrete; }
-        class Joint { public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; public byte Mode; }   // class so the editor can move a vertex in place
+        class Joint   // class so the editor can move a vertex/tangent in place
+        {
+            public Vector3 Vertex, Tan0, Tan1; public float Offset; public bool IgnoreTerrain; public byte Mode;
+            public void SetTangent(int i, Vector3 t)   // source RoadJoint.setTangent: MIRROR mirrors, ALIGNED matches length, FREE independent
+            {
+                if (i == 0) Tan0 = t; else Tan1 = t;
+                if (Mode == 0) { if (i == 0) Tan1 = -t; else Tan0 = -t; }                                                  // MIRROR
+                else if (Mode == 1) { float m = (i == 0 ? Tan1 : Tan0).Length(); var a = -t.Normalized() * m; if (i == 0) Tan1 = a; else Tan0 = a; }   // ALIGNED
+            }
+        }
         class RoadData { public int Material; public bool IsLoop; public List<Joint> Joints = new(); public byte[] GuidBytes; public MeshInstance3D Mi; public StaticBody3D Body; }
 
         // editor state: the parsed roads + materials kept live so a joint move can rebuild one road + save Paths.dat back
@@ -91,6 +100,75 @@ namespace UnturnedGodot
         {
             if (i >= 0 && i < _roads.Count && _roads[i].Joints.Count >= 2 && _roads[i].Material >= 0 && _roads[i].Material < _mats.Count)
                 BuildRoadNode(_roads[i]);
+        }
+
+        // source EditorRoads.primary: with a road selected, LMB on ground adds a vertex; before/after chosen by which
+        // tangent the new point projects onto (Vector3.Dot). Returns the inserted joint index (or -1).
+        public int AddVertexNearSelected(int road, int selJoint, Vector3 point)
+        {
+            if (road < 0 || road >= _roads.Count) return -1;
+            var r = _roads[road];
+            int insertIndex;
+            if (selJoint < 0 || selJoint >= r.Joints.Count) insertIndex = r.Joints.Count;
+            else
+            {
+                var jt = r.Joints[selJoint];
+                insertIndex = (point - jt.Vertex).Dot(jt.Tan0) > (point - jt.Vertex).Dot(jt.Tan1) ? selJoint : selJoint + 1;
+            }
+            AddVertex(r, insertIndex, point);
+            RebuildRoad(road);
+            return insertIndex;
+        }
+
+        void AddVertex(RoadData r, int vertexIndex, Vector3 point)   // source Road.addVertex: default tangents (2.5f, pointing at neighbours)
+        {
+            var joint = new Joint { Vertex = point };
+            if (r.Joints.Count == 1)   // the 2nd joint: both tangents point at each other
+            {
+                r.Joints[0].SetTangent(1, (point - r.Joints[0].Vertex).Normalized() * 2.5f);
+                joint.SetTangent(0, (r.Joints[0].Vertex - point).Normalized() * 2.5f);
+            }
+            else if (r.Joints.Count > 1)
+            {
+                if (vertexIndex == 0)
+                    joint.SetTangent(1, (r.IsLoop ? r.Joints[0].Vertex - r.Joints[^1].Vertex : r.Joints[0].Vertex - point).Normalized() * 2.5f);
+                else if (vertexIndex == r.Joints.Count)
+                {
+                    if (r.IsLoop) joint.SetTangent(1, (r.Joints[0].Vertex - r.Joints[^1].Vertex).Normalized() * 2.5f);
+                    else joint.SetTangent(0, (r.Joints[^1].Vertex - point).Normalized() * 2.5f);
+                }
+                else joint.SetTangent(1, (r.Joints[vertexIndex].Vertex - r.Joints[vertexIndex - 1].Vertex).Normalized() * 2.5f);
+            }
+            r.Joints.Insert(vertexIndex, joint);
+        }
+
+        // source removeVertex: fewer than 2 joints left -> remove the whole road. Returns true if the road itself was removed.
+        public bool RemoveVertex(int road, int joint)
+        {
+            if (road < 0 || road >= _roads.Count) return false;
+            var r = _roads[road];
+            if (r.Joints.Count < 2 || joint < 0 || joint >= r.Joints.Count) { RemoveRoad(road); return true; }
+            r.Joints.RemoveAt(joint);
+            if (r.Joints.Count < 2) { RemoveRoad(road); return true; }
+            RebuildRoad(road);
+            return false;
+        }
+
+        // source LevelRoads.addRoad: new road, material 0, ONE joint (renders once a 2nd vertex is added). Returns the road index.
+        public int AddRoad(Vector3 point)
+        {
+            var r = new RoadData { Material = 0, GuidBytes = System.Array.Empty<byte>() };
+            r.Joints.Add(new Joint { Vertex = point });
+            _roads.Add(r);
+            return _roads.Count - 1;
+        }
+
+        public void RemoveRoad(int road)
+        {
+            if (road < 0 || road >= _roads.Count) return;
+            var r = _roads[road];
+            r.Mi?.QueueFree(); r.Body?.QueueFree();
+            _roads.RemoveAt(road);
         }
 
         // editor Save(): write Paths.dat back (exact reverse of ParsePathsDat, same version/guids/modes). G() negates Z on

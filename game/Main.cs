@@ -1618,11 +1618,23 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_EDITORROADS") == "1" && roadsEd.HasRoads)
             {   // synchronous (no timer): set before the first frame so the frame-45 --shot reliably captures the demoed state
                 editor.Mode = EEditorMode.Environment;
-                Vector3 j = roadsEd.DemoJoint(0, 1);            // a joint on the first road
-                roadsEd.DemoMove(0, 1, j + new Vector3(40f, 0f, 0f));   // shove it sideways -> the spline visibly bends
-                cam.GlobalPosition = j + new Vector3(38f, 42f, 38f);
-                cam.LookAt(j + new Vector3(20f, 0f, 0f), Vector3.Up);   // aim at the midpoint so the kink is centred
-                if (res.DayNight != null) res.DayNight.VisualsEnabled = false;   // Environment preview hazes the view -> clean lighting for the render
+                Vector3 focus;
+                if (System.Environment.GetEnvironmentVariable("UG_ROADCLEAN") == "1")
+                    focus = roadsEd.DemoPave(0, roadsEd.DemoJointCount(0) / 2);    // markers only, NO edit -> roads render exactly as authored
+                else if (System.Environment.GetEnvironmentVariable("UG_ROADADD") == "1")
+                {
+                    focus = roadsEd.DemoAddVertex(0, new Vector3(35f, 0f, 20f));   // inc2: extend road 0 with a NEW joint -> the spline grows
+                    roadsEd.DemoRemoveVertex(5, 1);                                // inc2: remove a joint from road 5 (functional check both paths rebuild)
+                }
+                else
+                {
+                    Vector3 j = roadsEd.DemoJoint(0, 1);
+                    roadsEd.DemoMove(0, 1, j + new Vector3(12f, 0f, 0f));          // inc1: a GENTLE nudge (not the mangling 40m yank)
+                    focus = j + new Vector3(6f, 0f, 0f);
+                }
+                cam.GlobalPosition = focus + new Vector3(48f, 54f, 48f);
+                cam.LookAt(focus, Vector3.Up);
+                if (res.DayNight != null) res.DayNight.VisualsEnabled = false;   // Environment preview hazes -> clean lighting for the render
                 SetCleanEditorLighting();
                 editor.Save();   // verify the Paths.dat round-trip (writes content/roads/editor_Paths.dat)
             }
