@@ -54,6 +54,7 @@ namespace UnturnedGodot.Net
         public const byte CommandDriveInput = 23;      // Phase 7: @50 Hz UnreliableSeq, driver-only, feeds Vehicle.Drive
         public const byte CommandPlantCrop = 24;       // Phase 8 (§3.7): consumes the seed item; server owns the growth clock
         public const byte CommandHarvestCrop = 25;     // Phase 8: server checks growth + rolls the AGRICULTURE second yield
+        public const byte CommandVehicleState = 26;    // Part A (CLIENT_PREDICTION_PLAN §5.2): the predicted DRIVER's reported vehicle state @25 Hz UnreliableSeq -- envelope-validated at the choke point, then ADOPTED as the vehicle's truth (retail client authority). CommandDriveInput 23 stays registered as the non-predicted fallback.
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -84,6 +85,7 @@ namespace UnturnedGodot.Net
         public const byte EventCropHarvested = 26;
         public const byte EventResourceHarvested = 27; // Phase 8: tree/resource alive-bit flips by load-order index
         public const byte EventResourceRespawned = 28;
+        public const byte EventVehicleRecov = 29;      // Part A: server rollback of an out-of-envelope predicted driver (retail tellRecov, U3 InteractableVehicle.cs:2095-2109) -- ReliableOrdered, driver-unicast
     }
 
     /// <summary>
