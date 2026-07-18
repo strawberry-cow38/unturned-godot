@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "yM2VWBYbke8=",
+  "dgSpecHash": "C1F7Nr1dME8=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/unturned-godot/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/projects/ug-geomfix/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

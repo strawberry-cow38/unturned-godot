@@ -3222,6 +3222,78 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The C3 FEASIBILITY SPIKE (diagnosis §7.2 step 3 / §9 P5) -- gated on the thincollider baseline
+    // still failing after F1-F4, which it does (§4-2's prediction held: knife-edge slide-side picks
+    // survive every cheap fix). C3 = replace the eased glide with retail's rewind+replay
+    // (ClientResimulate): teleport to the server state, then REPLAY every unacked input through real
+    // physics -- N MoveAndSlide solves inside one physics tick. The kill-criterion is re-steppability:
+    // does running the full movement pipeline N times in ONE engine tick produce the SAME trajectory as
+    // N normal ticks, against real obstacle geometry (StepUp sweeps + MoveAndSlide + the det-ground
+    // recheck)? This test proves exactly that with twin bodies -- one stepped by the engine, one stepped
+    // manually N-in-one-tick -- across a curb. What it deliberately does NOT do is ship C3 (§9: spike
+    // first, report; the kernel extraction + the velocity-bearing correction event stay designed in §7.2).
+    public class NetC3SpikeRestep : GameTest
+    {
+        public override string Name => "net.c3_spike_restep";
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (flat fallback)", world.Ready);
+
+            // twin avatars, byte-identical construction, side by side (out of each other's way), with an
+            // identical 0.30 m curb across each one's path -- the §4-1 decision cliff in the replay path
+            PlayerController Mk(Vector3 at)
+            {
+                var b = new PlayerController { NetAvatar = true, CaptureMouse = false, DeterministicGround = true };
+                World.AddChild(b);
+                b.GlobalPosition = at;
+                b.Spawn = at;
+                b.ScriptedInput = UnityEngine.Vector2.zero;
+                b.ScriptedJump = false;
+                b.ScriptedStance = EPlayerStance.STAND;
+                return b;
+            }
+            var a = Mk(new Vector3(0f, 0.05f, 0f));
+            var b = Mk(new Vector3(40f, 0.05f, 0f));
+            WanGeo.Box(World, new Vector3(0f, 0.15f, -3f), new Vector3(6f, 0.30f, 1f));
+            WanGeo.Box(World, new Vector3(40f, 0.15f, -3f), new Vector3(6f, 0.30f, 1f));
+            yield return Ticks(30);   // settle both onto the ground
+            T.Check($"twins settled at the same local ground (ay={a.GlobalPosition.Y:0.###}, by={b.GlobalPosition.Y:0.###})",
+                    Mathf.Abs(a.GlobalPosition.Y - b.GlobalPosition.Y) < 0.01f);
+
+            // A: 30 ENGINE ticks of sprint at the curb (4.2 m: steps up around tick 16, crosses the 1 m
+            // top, steps off the far side) -- 30 is 3x retail's worst-case replay depth at 200 ms RTT
+            const int N = 30;
+            a.ScriptedStance = EPlayerStance.SPRINT;
+            a.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            b.SetPhysicsProcess(false);   // B is stepped MANUALLY below -- freeze its engine callbacks now
+            yield return Ticks(N);
+            a.ScriptedInput = UnityEngine.Vector2.zero;
+            a.ScriptedStance = null;
+
+            // B: the SAME 14 steps executed inside ONE physics tick -- the C3 replay shape (each call is
+            // one 20 ms input tick: the full pipeline incl. StepUp sweeps, MoveAndSlide, det-ground)
+            b.ScriptedStance = EPlayerStance.SPRINT;
+            b.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            for (int i = 0; i < N; i++) b._PhysicsProcess(SimClock.FixedDelta);
+            b.ScriptedInput = UnityEngine.Vector2.zero;
+            b.ScriptedStance = null;
+
+            var da = a.GlobalPosition - new Vector3(0f, 0f, 0f);
+            var db = b.GlobalPosition - new Vector3(40f, 0f, 0f);
+            float err = (da - db).Length();
+            GD.Print($"[c3-spike] engine-stepped: {da}, replay-stepped: {db}, err={err:0.####} m " +
+                     $"(N={N} MoveAndSlide solves in one tick, curb crossed by both)");
+            T.Check($"replay-stepped twin CROSSED the curb (dzB={-db.Z:0.##} m, past the far face at 3.5)", -db.Z > 3.6f);
+            T.Check($"N-in-one-tick replay tracks N engine ticks on obstacle geometry (err {err:0.####} m < 0.02)", err < 0.02f);
+            b.SetPhysicsProcess(true);
+            yield return Ticks(2);
+        }
+    }
+
     // §8 baseline 4 -- jumps: (a) 16 sprint-jump arcs on flat with the jump key held ACROSS landings and
     // released mid-air (bunny-hop cadence -- every arc carries a held-bit landing edge and a release
     // edge for the §5-B coast/hole re-present machinery to chew under Wan jitter), then (b) 8
