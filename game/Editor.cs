@@ -34,6 +34,25 @@ namespace UnturnedGodot
             Instance = this; MapName = mapName; World = world; Camera = cam;
         }
 
+        // Undo stack (source EditorInteract Ctrl+Z). Each reversible action pushes a label + a closure that undoes it;
+        // Ctrl+Z pops + runs the newest. General so every sub-editor can register (objects wired first).
+        readonly System.Collections.Generic.List<(string label, System.Action undo)> _history = new();
+        public void PushUndo(string label, System.Action undo)
+        {
+            _history.Add((label, undo));
+            if (_history.Count > 256) _history.RemoveAt(0);   // cap the stack
+        }
+        public bool Undo()
+        {
+            if (_history.Count == 0) return false;
+            var e = _history[^1];
+            _history.RemoveAt(_history.Count - 1);
+            e.undo();
+            GD.Print($"[editor] undo: {e.label} ({_history.Count} left)");
+            return true;
+        }
+        public int UndoDepth => _history.Count;
+
         // Source EditorInteract gates ALL world input on Glazier.ShouldGameProcessInput (false when the pointer is over UI).
         // Godot equivalent: a Control is under the mouse (dashboard buttons/panels). Every tool checks this so clicks/keys
         // over the UI never fire a tool into the world behind it. (Marquee/help overlays use MouseFilter=Ignore, so they

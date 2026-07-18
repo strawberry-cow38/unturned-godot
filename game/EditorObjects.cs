@@ -39,6 +39,29 @@ namespace UnturnedGodot
         Vector2 _boxStart;
         MarqueeOverlay _marquee;
         readonly List<Transform3D> _groupRel = new();   // each selected's transform relative to Primary, captured at gizmo drag-start
+        List<(Node3D n, Transform3D x)> _dragCapture;   // selection transforms at gizmo drag-start, for the move undo
+
+        // --- undo helpers (Editor.PushUndo / Ctrl+Z) ---
+        List<(Node3D n, Transform3D x)> CaptureSelection()
+        {
+            var l = new List<(Node3D, Transform3D)>();
+            foreach (var s in _selection) l.Add((s, s.GlobalTransform));
+            return l;
+        }
+        void RestoreTransforms(List<(Node3D n, Transform3D x)> cap)
+        {
+            foreach (var (n, x) in cap) if (IsInstanceValid(n)) n.GlobalTransform = x;
+            if (Primary != null) { _gizmo.Attach(Primary); PositionMarkers(); }
+        }
+        void RemoveProp(Node3D n)   // fully detach a placed prop (used by delete + place/paste undo)
+        {
+            if (n == null) return;
+            _placed.Remove(n); _selection.Remove(n);
+            foreach (var kv in new List<KeyValuePair<Rid, Node3D>>(_pickToObj)) if (kv.Value == n) _pickToObj.Remove(kv.Key);
+            if (IsInstanceValid(n)) n.QueueFree();
+            _gizmo.Attach(Primary); RefreshMarkers();
+        }
+        Node3D RePlace(string guid, Transform3D x) => _guidToName.TryGetValue(guid, out var nm) ? Place(nm, x.Origin, x.Basis) : null;
 
         public EditorObjects(Editor editor, Node world, EditorCamera cam)
         {
@@ -167,11 +190,17 @@ namespace UnturnedGodot
             if (!Raycast(mp, TerrainLayer | SmallPropLayer | EditorPickLayer, out var pt, out _)) return;
             if (Primary != null)   // E with a prop selected -> move it to the cursor
             {
+                var cap = CaptureSelection();
                 var delta = pt - Primary.GlobalPosition;
                 foreach (var s in _selection) s.GlobalPosition += delta;
                 _gizmo.Attach(Primary); PositionMarkers();
+                _editor.PushUndo("move", () => RestoreTransforms(cap));
             }
-            else if (PlaceName != null) Place(PlaceName, pt, Upright(_placeYaw));   // E with only a list type -> summon one (stays unselected so E keeps placing)
+            else if (PlaceName != null)   // E with only a list type -> summon one (stays unselected so E keeps placing)
+            {
+                var n = Place(PlaceName, pt, Upright(_placeYaw));
+                if (n != null) _editor.PushUndo("place", () => RemoveProp(n));
+            }
         }
 
         // browser list-click: arm this prop type for E-placement + clear any instance selection (so E summons, not moves)
@@ -217,6 +246,8 @@ namespace UnturnedGodot
         public void DeleteSelected()   // source: delete the whole selection
         {
             if (_selection.Count == 0) return;
+            var cap = new List<(string guid, Transform3D x)>();   // for undo: re-place the deleted props
+            foreach (var sel in _selection) { string g = sel.HasMeta("guid") ? (string)sel.GetMeta("guid") : ""; if (g.Length > 0) cap.Add((g, sel.GlobalTransform)); }
             foreach (var sel in new List<Node3D>(_selection))
             {
                 _placed.Remove(sel);
@@ -225,6 +256,12 @@ namespace UnturnedGodot
                 sel.QueueFree();
             }
             Select(null);
+            if (cap.Count > 0) _editor.PushUndo("delete", () =>
+            {
+                _selection.Clear();
+                foreach (var (g, x) in cap) { var nn = RePlace(g, x); if (nn != null) _selection.Add(nn); }
+                _gizmo.Attach(Primary); RefreshMarkers();
+            });
         }
 
         // source EditorObjects Ctrl+C/Ctrl+V: copy stores each selected prop's (guid + world transform); paste re-creates
@@ -244,9 +281,11 @@ namespace UnturnedGodot
         {
             if (_copies.Count == 0) return;
             _selection.Clear();
+            var pasted = new List<Node3D>();
             foreach (var (g, x) in _copies)
-                if (_guidToName.TryGetValue(g, out var name)) { var nn = Place(name, x.Origin, x.Basis); if (nn != null) _selection.Add(nn); }
+                if (_guidToName.TryGetValue(g, out var name)) { var nn = Place(name, x.Origin, x.Basis); if (nn != null) { _selection.Add(nn); pasted.Add(nn); } }
             _gizmo.Attach(Primary); RefreshMarkers();
+            if (pasted.Count > 0) _editor.PushUndo("paste", () => { foreach (var n in pasted) RemoveProp(n); });
             GD.Print($"[editor] pasted {_selection.Count} prop(s)");
         }
 
@@ -299,10 +338,10 @@ namespace UnturnedGodot
                 if (mb.Pressed)
                 {
                     if (Editor.PointerOverUI(this)) return;                                  // clicking the dashboard/browser must not fire tools into the world
-                    if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); return; }              // gizmo grab -> drag (capture group-relative transforms)
+                    if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); _dragCapture = CaptureSelection(); return; }   // gizmo grab -> drag (+ capture for undo)
                     if (!TrySelect(mp)) { _boxDragging = true; _boxStart = mp; }            // click selects a prop; empty ground -> arm a box drag-select
                 }
-                else if (_gizmo.Dragging) { _gizmo.EndDrag(); PositionMarkers(); }
+                else if (_gizmo.Dragging) { _gizmo.EndDrag(); PositionMarkers(); if (_dragCapture != null) { var c = _dragCapture; _dragCapture = null; _editor.PushUndo("move", () => RestoreTransforms(c)); } }
                 else if (_boxDragging) { FinishBoxSelect(mp); _boxDragging = false; _marquee.Visible = false; }
             }
             else if (ev is InputEventMouseMotion)
@@ -318,6 +357,7 @@ namespace UnturnedGodot
                 else if (ctrl && k.Keycode == Key.V) PasteSelection();                   // Ctrl+V paste objects (source EditorObjects)
                 else if (ctrl && k.Keycode == Key.B) CopyTransform();                    // Ctrl+B copy transform (source)
                 else if (ctrl && k.Keycode == Key.N) PasteTransform();                   // Ctrl+N paste transform (source)
+                else if (ctrl && k.Keycode == Key.Z) _editor.Undo();                      // Ctrl+Z undo (source EditorInteract)
                 else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
@@ -441,6 +481,12 @@ namespace UnturnedGodot
                 _gizmo.LocalSpace = false; CopyTransform();   // verify: global Ctrl+B = position only
                 _gizmo.LocalSpace = true; CopyTransform();    // verify: local Ctrl+B = pos+rot+scale
                 _gizmo.LocalSpace = false;                    // back to global for the render
+            }
+            // undo self-test (headless can't press Ctrl+Z): place a prop, push its undo, undo it, confirm it's gone
+            if (_catalog.Count > 0 && Raycast(new Vector2(640, 400), TerrainLayer, out var up, out _))
+            {
+                var t = Place(_catalog[0], up, Upright(0f));
+                if (t != null) { _editor.PushUndo("test", () => RemoveProp(t)); int b = _placed.Count; _editor.Undo(); GD.Print($"[editordemo] undo self-test: {b} -> {_placed.Count} placed (expect {b - 1})"); }
             }
             GD.Print($"[editordemo] placed {n}/6 props via raycast (catalog {_catalog.Count} types)");
         }
