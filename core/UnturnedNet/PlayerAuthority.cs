@@ -104,31 +104,53 @@ namespace UnturnedGodot.Net
     /// </summary>
     public sealed class ServerPlayerAuthority
     {
-        // ---- the on-foot plausibility envelope ----
+        // ---- the on-foot plausibility envelope: a per-axis leaky allowance (token bucket) ----
+        // The Part A vehicle envelope caps each packet by speed x SERVER-ARRIVAL elapsed time. That
+        // formula false-trips walkers: WAN jitter COMPRESSES arrivals -- claims spanning ~5 client
+        // ticks routinely land 1-2 server ticks apart (the sequenced channel drops the overtaken ones)
+        // -- so 5 ticks of legit sprint motion measured against 2 ticks of arrival time reads as a
+        // violation (the WAN courses measured 2-11 false recovs each under the per-packet form). The
+        // bucket separates the two bounds honestly:
+        //   SUSTAINED rate -- allowance accrues per SERVER tick (uninflatable real time; a cheater
+        //                     cannot mint it with seq games) at max-speed x the retail 1.25 slack;
+        //   BURST size     -- on every ACCEPT the leftover bank is pinned down to a small jitter
+        //                     RESERVE (arrival compression never exceeds it), and the bank grows
+        //                     toward the 1 s CEILING only across real arrival silence -- so a network
+        //                     hitch's spanning claim is covered, while a cheater with a FLOWING claim
+        //                     stream can never blink farther than the reserve.
+        // A real stall past the ceiling still rolls the walker back via recov: safe, just abrupt.
+        // Sustained-hover stays out of envelope scope, same as the vehicle envelope (MP_PLAN §7).
+
         /// <summary>Horizontal base speed: the fastest on-foot stance (PlayerMovementDef.SPEED_SPRINT,
         /// 7 m/s -- the server never trusts the CLAIMED stance for validation, so the cap is the max).</summary>
         public const float MaxSpeedMps = PlayerMovementDef.SPEED_SPRINT;
-        /// <summary>The retail 25 % slack (the Part A vehicle envelope's EnvelopeSlack, from U3
-        /// VehicleAsset.cs:2319-2333) -- what keeps legit high-ping + jitter from EVER false-tripping.</summary>
+        /// <summary>The retail 25 % slack (U3 VehicleAsset.cs:2319-2333, the Part A constant).</summary>
         public const float EnvelopeSlack = 1.25f;
-        /// <summary>Vertical climb cap: jump takeoff is 7 m/s (PlayerMovementDef.JUMP), but the shell's
-        /// binary StepUp pops +0.5 m (PlayerController.StepHeight) inside one tick, which measured over
-        /// the min-clamped 2-tick window is 12.5 m/s apparent climb -- x the 1.25 slack = 15.6, so 16.
-        /// Statelessly bounds ASCENT rate; sustained-hover is out of envelope scope, same as the vehicle
-        /// envelope (MP_PLAN §7 revisit item for untrusted hosting).</summary>
-        public const float ValidSpeedUp = 16f;
-        /// <summary>Fall cap: |PlayerMovementDef.TERMINAL_VELOCITY| = 100 m/s is a LEGAL sustained fall
-        /// speed for a player (unlike retail's 25 m/s car default) -- cap at terminal + 10 %.</summary>
-        public const float ValidSpeedDown = 110f;
-        /// <summary>Elapsed-tick clamp floor: the state stream is per-tick, but a burst delivered inside
-        /// one server tick must not shrink the cap to zero (the ServerVehicles rule).</summary>
-        public const int EnvelopeMinTicks = 2;
-        /// <summary>Elapsed clamp ceiling: 1 s (the vehicle envelope uses 0.5 s; on-foot base speed is low
-        /// enough that the resulting blink-teleport bound -- 7 x 1.0 x 1.25 = 8.75 m -- stays under even a
-        /// slow car's half-second bound, while a full second of REAL network hitch at sprint (7 m moved)
-        /// resumes without a rubber-band). A longer real stall rolls the walker back via recov: safe,
-        /// just abrupt. Fabricated silence banks nothing beyond MaxSpeed x Slack sustained.</summary>
-        public const int EnvelopeMaxTicks = 50;
+        /// <summary>Horizontal accrual: sprint x slack per second of server time = the sustained ceiling
+        /// a cheater can never exceed.</summary>
+        public const float HorizontalRate = MaxSpeedMps * EnvelopeSlack;          // 8.75 m/s
+        /// <summary>Horizontal jitter reserve: ~10 ticks (0.2 s) of sprint-rate compression headroom --
+        /// twice the WAN profile's worst arrival bunching -- and the standing blink bound while claims
+        /// are flowing.</summary>
+        public const float HorizontalReserve = 1.75f;
+        /// <summary>Horizontal bank ceiling: 1 s of real silence (a full-sprint 1 s hitch resumes
+        /// without a rubber-band; the post-silence blink bound stays under even a slow car's Part A
+        /// half-second bound).</summary>
+        public const float HorizontalCeiling = HorizontalRate * 1f;               // 8.75 m
+        /// <summary>Vertical climb accrual: jump takeoff is 7 (PlayerMovementDef.JUMP), the binary
+        /// StepUp pops +0.5 m in one tick, and sprinting the steepest walkable slope climbs ~10 m/s --
+        /// 16 covers all sustained legit ascent with slack.</summary>
+        public const float UpRate = 16f;
+        /// <summary>Climb reserve: one 0.5 m step pop + a compressed jump-arc arrival window + margin.
+        /// The instant-fly blink bound while claims are flowing.</summary>
+        public const float UpReserve = 2f;
+        public const float UpCeiling = UpRate * 1f;
+        /// <summary>Fall accrual: |PlayerMovementDef.TERMINAL_VELOCITY| = 100 m/s is a LEGAL sustained
+        /// fall speed (unlike retail's 25 m/s car default) -- terminal + 10 %.</summary>
+        public const float DownRate = 110f;
+        /// <summary>Fall reserve: a compressed terminal-fall arrival window (0.2 s at terminal).</summary>
+        public const float DownReserve = 22f;
+        public const float DownCeiling = DownRate * 1f;
 
         /// <summary>Test seam (the DisableReplay pattern): with the envelope off every claim adopts
         /// verbatim -- the teeth proof that the envelope, not luck, is what rejects the cheats.</summary>
@@ -150,7 +172,8 @@ namespace UnturnedGodot.Net
         sealed class DrivenState
         {
             public bool HasSeq; public ushort LastSeq;
-            public long LastAcceptedTick;          // envelope interval baseline
+            public long LastAccrueTick;            // server tick the banks last accrued at
+            public float HBank, UpBank, DownBank;  // the per-axis allowance banks (metres)
             public byte RecovCounter;              // increments per violation (the retail input.recov shape)
             public bool Recovering;                // discard claims until RecovAck echoes the counter
             public bool HasAdopted;
@@ -206,9 +229,13 @@ namespace UnturnedGodot.Net
             long tick = _tick();
 
             if (!_driven.TryGetValue(sender, out var st))
-                // first claim ever: the interval baseline opens at the max window -- the entity sits at
-                // the server spawn and the shell spawned there too, so the first delta is ~zero anyway
-                _driven[sender] = st = new DrivenState { LastAcceptedTick = tick - EnvelopeMaxTicks };
+                // first claim ever: the banks open at their ceilings (join forgiveness) -- the entity
+                // sits at the server spawn and the shell spawned there too, so the first delta is ~zero
+                _driven[sender] = st = new DrivenState
+                {
+                    LastAccrueTick = tick,
+                    HBank = HorizontalCeiling, UpBank = UpCeiling, DownBank = DownCeiling,
+                };
 
             // latest-wins by Seq (UnreliableSequenced dedups per datagram, but a fragment/burst boundary
             // can still deliver two commands out of order)
@@ -224,31 +251,26 @@ namespace UnturnedGodot.Net
                 st.Recovering = false;
             }
 
-            // ---- the envelope, against the entity's last PUBLISHED position (quantized, like the claim) ----
-            float dt = Math.Clamp(tick - st.LastAcceptedTick, EnvelopeMinTicks, EnvelopeMaxTicks) * (float)SimClock.FixedDelta;
-            bool violation = false;
-            if (!DisableEnvelope)
-            {
-                float dx = cmd.Pos.x - e.Pos.x, dz = cmd.Pos.z - e.Pos.z;
-                float cap = MaxSpeedMps * dt * EnvelopeSlack;
-                violation = dx * dx + dz * dz > cap * cap;
-                if (!violation)
-                {
-                    float dy = cmd.Pos.y - e.Pos.y;
-                    float validSpeed = dy > 0f ? ValidSpeedUp : ValidSpeedDown;
-                    violation = Math.Abs(dy) / dt > validSpeed;
-                }
-            }
+            // ---- the envelope: accrue real server time into the banks, then measure the claim's
+            // delta against the entity's last PUBLISHED position (quantized, like the claim) ----
+            float accrue = (tick - st.LastAccrueTick) * (float)SimClock.FixedDelta;
+            st.LastAccrueTick = tick;
+            st.HBank = Math.Min(HorizontalCeiling, st.HBank + HorizontalRate * accrue);
+            st.UpBank = Math.Min(UpCeiling, st.UpBank + UpRate * accrue);
+            st.DownBank = Math.Min(DownCeiling, st.DownBank + DownRate * accrue);
+
+            float dx = cmd.Pos.x - e.Pos.x, dz = cmd.Pos.z - e.Pos.z;
+            float dist = (float)Math.Sqrt(dx * dx + dz * dz);
+            float dy = cmd.Pos.y - e.Pos.y;
+            bool violation = !DisableEnvelope
+                && (dist > st.HBank || (dy > 0f ? dy > st.UpBank : -dy > st.DownBank));
 
             if (violation)
             {
                 st.RecovCounter++;
                 st.Recovering = true;
                 if (NetLog.Enabled)
-                {
-                    float dxl = cmd.Pos.x - e.Pos.x, dzl = cmd.Pos.z - e.Pos.z;
-                    NetLog.Sink($"[NET] player {sender}: walk claim out of envelope (d {Math.Sqrt(dxl * dxl + dzl * dzl):0.0} m horiz / dy {cmd.Pos.y - e.Pos.y:0.0} m in {dt:0.00} s) -> recov #{st.RecovCounter}");
-                }
+                    NetLog.Sink($"[NET] player {sender}: walk claim out of envelope (d {dist:0.0} m horiz vs bank {st.HBank:0.0} / dy {dy:0.0} m vs {(dy > 0f ? st.UpBank : st.DownBank):0.0}) -> recov #{st.RecovCounter}");
                 var evt = new PlayerRecovEvent
                 {
                     Pos = e.Pos,
@@ -256,11 +278,14 @@ namespace UnturnedGodot.Net
                     RecovCounter = st.RecovCounter,
                 };
                 _sendTo?.Invoke(sender, NetMessagePak.Pack(ReplicationIds.EventPlayerRecov, evt.Write));
-                return;   // the entity keeps the last-good -- observers never see the violating claim
+                return;   // the entity keeps the last-good -- observers never see the violating claim; banks undrained
             }
 
-            // ---- adopt: the owner's report becomes the entity's truth ----
-            st.LastAcceptedTick = tick;
+            // ---- adopt: drain the spent motion and PIN the leftover bank to the jitter reserve --
+            // silence banks allowance, a flowing stream never does (the anti-blink half of the bucket) ----
+            st.HBank = Math.Min(st.HBank - dist, HorizontalReserve);
+            st.UpBank = Math.Min(st.UpBank - Math.Max(dy, 0f), UpReserve);
+            st.DownBank = Math.Min(st.DownBank - Math.Max(-dy, 0f), DownReserve);
             st.HasAdopted = true;
             st.Adopted = new DrivenPlayerState
             {

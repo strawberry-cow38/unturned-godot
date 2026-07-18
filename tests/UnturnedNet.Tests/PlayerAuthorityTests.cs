@@ -137,8 +137,8 @@ namespace UnturnedNet.Tests
             var lastGood = h.Entity(a).Pos;
             Assert.That(h.Server.PlayerHost.IsClientDriven(a.PlayerId), Is.True, "driven latched on good claims");
 
-            // THE TEETH: a 30 m horizontal jump -- far past cap = 7 x 1.0 s x 1.25 = 8.75 m even at the
-            // clamped max interval. Without the envelope this position would be adopted verbatim.
+            // THE TEETH: a 30 m horizontal jump -- past even the full 8.75 m bank ceiling, let alone the
+            // flowing-stream reserve. Without the envelope this position would be adopted verbatim.
             var far = lastGood + new Vector3(30f, 0f, 0f);
             SendState(a, far);
             Assert.That(h.StepUntil(() => recovs.Count > 0, 50), Is.True, "the jump triggered a recov event");
@@ -234,14 +234,14 @@ namespace UnturnedNet.Tests
             Assert.That(recovs.Count, Is.EqualTo(0), "a real jump arc never trips the vertical cap");
             Assert.That(h.Entity(a).Pos.y, Is.GreaterThan(pos.y - 0.05f).And.LessThan(pos.y + 0.05f), "the arc adopted");
 
-            // the FLY hack: +3 m of climb claimed in one tick-pair window = 75 m/s > ValidSpeedUp 16
+            // the FLY hack: +3 m of instant climb with claims flowing -- over the UpReserve 2 m burst pin
             float goodY = h.Entity(a).Pos.y;
             SendState(a, new Vector3(pos.x, goodY + 3f, pos.z));
             Assert.That(h.StepUntil(() => recovs.Count == 1, 50), Is.True, "the fly claim triggered recov");
             Assert.That(h.Entity(a).Pos.y, Is.InRange(goodY - 0.01f, goodY + 0.01f), "entity Y kept last-good");
 
-            // resume, then a -40 m instant drop: 50 silent ticks make dt clamp at 1 s -> 40 m/s < 110
-            // would pass; sent immediately (dt 2 ticks) it is 1000 m/s > ValidSpeedDown -> recov
+            // resume, then a -40 m instant drop with claims flowing: over the DownReserve 22 m burst pin
+            // (after a real 1 s silence the same drop would bank legal -- terminal falls are fast)
             SendState(a, new Vector3(pos.x, goodY, pos.z), recovAck: 1);
             h.Step(5);
             SendState(a, new Vector3(pos.x, goodY - 40f, pos.z), recovAck: 1);
@@ -251,9 +251,10 @@ namespace UnturnedNet.Tests
         [Test]
         public void PlayerState_Teleport_Rejected()
         {
-            // the small-but-instant teleport: 6 m sideways with claims flowing every tick -- dt clamps
-            // at the 2-tick floor, cap = 7 x 0.04 x 1.25 = 0.35 m, so 6 m is a violation even though it
-            // would be LEGAL after a 1 s silence. The envelope is rate-based, not distance-based.
+            // the small-but-instant teleport: 6 m sideways with claims FLOWING every tick -- the bank is
+            // pinned at the jitter reserve (1.75 m) by the flowing accepts, so 6 m is a violation even
+            // though it would be LEGAL after a 1 s arrival silence (the bank ceiling). Silence banks
+            // allowance; a flowing stream never does.
             var h = new Harness(9206).Connected("owner");
             var a = h.Clients[0];
             var recovs = new List<PlayerRecovEvent>();
