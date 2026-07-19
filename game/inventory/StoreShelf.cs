@@ -285,11 +285,17 @@ namespace UnturnedGodot
                 // LIE FLAT, DETAIL-SIDE UP: use the icon FRONT (or shortest axis if no data) as the up direction, snapped
                 // to the nearest local axis so it rests flat; longer remaining axis -> shelf WIDTH (keeps long items off
                 // the back wall), the other -> depth.
-                // rest on the BROAD face: shortest axis up (so it lies flat, never on a side/edge). If the icon FRONT is on
-                // that broad face, use its sign so the label lands on TOP (medkit cross, MRE text); otherwise default up.
+                // lie with the item's PRESENTED (icon-front) face UP so its label/working side shows on top -- medkit
+                // cross, MRE text, the carjack's grey top; fall back to the shortest axis when there's no icon data.
                 Vector3 front = pose.Ok ? pose.Front : Vector3.Zero;
-                int upA = ax[0];
-                float upSign = (front.LengthSquared() > 0.01f && Mathf.Abs(front[upA]) > 0.5f) ? (front[upA] >= 0f ? 1f : -1f) : 1f;
+                int upA; float upSign;
+                if (front.LengthSquared() > 0.01f)
+                {
+                    float fx0 = Mathf.Abs(front.X), fy0 = Mathf.Abs(front.Y), fz0 = Mathf.Abs(front.Z);
+                    upA = (fx0 >= fy0 && fx0 >= fz0) ? 0 : (fy0 >= fz0 ? 1 : 2);
+                    upSign = front[upA] >= 0f ? 1f : -1f;
+                }
+                else { upA = ax[0]; upSign = 1f; }
                 int o1 = (upA + 1) % 3, o2 = (upA + 2) % 3;
                 int wide = d[o1] >= d[o2] ? o1 : o2, deep = d[o1] >= d[o2] ? o2 : o1;
                 var c = new Vector3[3];
