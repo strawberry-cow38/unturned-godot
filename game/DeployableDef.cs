@@ -88,7 +88,26 @@ namespace UnturnedGodot
         public static readonly DeployableDef Splitter3 = MakeSplitter(9102, "3-Way Splitter", 0.80f, new[] { -0.26f, 0f, 0.26f });
         public static readonly DeployableDef Splitter4 = MakeSplitter(9103, "4-Way Splitter", 1.05f, new[] { -0.36f, -0.12f, 0.12f, 0.36f });
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4 };
+        // --- Combiner (custom): the splitter's mirror -- N inputs (one per source, orange, on the back) feed ONE output
+        //     (cyan, front) that re-exports their SUMMED wattage, and the downstream load splits back across the sources
+        //     proportionally (see PowerSolver). Each input is a 0-watt relay Consumer; the output is a Passthrough. ---
+        static DeployableDef MakeCombiner(ushort id, string name, float width, float[] inX)
+        {
+            var ports = new Port[inX.Length + 1];
+            for (int i = 0; i < inX.Length; i++)
+                ports[i] = new Port { Kind = PortKind.Consumer, Pos = new Vector3(inX[i], -0.18f, 0f), Watts = 0f };   // inputs, one per source, across the back face
+            ports[inX.Length] = new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f, 0.18f, 0f), Watts = 0f };   // the single combined output, front face
+            return new DeployableDef
+            {
+                Id = id, Name = name, ProcBox = true, PlaceSound = "metalplacement",
+                Size = new Vector3(width, 0.36f, 0.5f),
+                Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f, Fuel = 0f,   // same placement/clearance as the splitters
+                Ports = ports,
+            };
+        }
+        public static readonly DeployableDef Combiner2 = MakeCombiner(9104, "2-Way Combiner", 0.55f, new[] { -0.14f, 0.14f });
+
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2 };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -96,6 +115,7 @@ namespace UnturnedGodot
             9101 => Splitter2,
             9102 => Splitter3,
             9103 => Splitter4,
+            9104 => Combiner2,
             _ => null,
         };
 

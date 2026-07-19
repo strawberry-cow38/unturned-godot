@@ -186,6 +186,46 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
+        public void Combiner_Sums_Two_Sources_And_Splits_The_Load_Proportionally()
+        {
+            // two generators (4000w + 1000w) -> a 2-way combiner -> one 5000w load. The combiner's output = 4000+1000
+            // = 5000 (ADDED), the load runs, and each generator carries the load in PROPORTION to what it provides.
+            var genA = Generator(watts: 4000f);
+            var genB = Generator(watts: 1000f);
+            var comb = new PowerDevice();
+            var inA = comb.AddPort(PowerPortKind.Consumer, 0f);
+            var inB = comb.AddPort(PowerPortKind.Consumer, 0f);
+            var cOut = comb.AddPort(PowerPortKind.Passthrough, 0f);
+            var load = new PowerDevice();
+            var lIn = load.AddPort(PowerPortKind.Consumer, 5000f);
+            PowerSolver.Solve(
+                new[] { genA.Dev, genB.Dev, comb, load },
+                new[] { Wire(genA.Out, inA), Wire(genB.Out, inB), Wire(cOut, lIn) });
+
+            Assert.That(cOut.Live, Is.EqualTo(5000f).Within(0.01f), "output = the two sources ADDED together");
+            Assert.That(lIn.Powered, Is.True, "the 5000w load runs on the combined 5000w");
+            Assert.That(genA.Out.Draw, Is.EqualTo(4000f).Within(0.01f), "the 4000w source carries its 4000w share");
+            Assert.That(genB.Out.Draw, Is.EqualTo(1000f).Within(0.01f), "the 1000w source carries its 1000w share");
+        }
+
+        [Test]
+        public void Combiner_With_One_Source_Just_Passes_It_Through()
+        {
+            // only one input wired: the combiner exports that single source and it carries the whole load (ratio 1).
+            var gen = Generator(watts: 4000f);
+            var comb = new PowerDevice();
+            var inA = comb.AddPort(PowerPortKind.Consumer, 0f);
+            comb.AddPort(PowerPortKind.Consumer, 0f);   // inB left unwired
+            var cOut = comb.AddPort(PowerPortKind.Passthrough, 0f);
+            var spot = Spotlight();
+            PowerSolver.Solve(new[] { gen.Dev, comb, spot.Dev }, new[] { Wire(gen.Out, inA), Wire(cOut, spot.In) });
+
+            Assert.That(cOut.Live, Is.EqualTo(4000f).Within(0.01f));
+            Assert.That(spot.In.Powered, Is.True);
+            Assert.That(gen.Out.Draw, Is.EqualTo(250f).Within(0.01f));   // the one source carries the whole 250w load
+        }
+
+        [Test]
         public void Two_Generators_One_Consumer_Last_Wire_Wins_And_Both_Trace_The_Load()
         {
             // CURRENT semantics, pinned: each pass overwrites consumer.Live per wire in list order, so the LAST

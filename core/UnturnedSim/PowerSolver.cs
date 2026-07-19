@@ -8,9 +8,11 @@ namespace SDG.Unturned
     // wire. Iterated so chains (genny -> spot -> spot -> ...) settle in one Solve. A SPLITTER is just a device
     // whose input is a 0-watt consumer (a relay -- takes nothing for itself) with SEVERAL passthroughs: each
     // re-exports the full input (leftover = input - 0), so one wire fans out to 2/3/4 wires without dividing the
-    // wattage (each downstream device draws what it needs). The game's PowerNet.Recompute is a thin adapter: it
-    // walks the "deployables"/"wires" groups into these plain records, calls Solve, and writes Live/Powered/Draw
-    // back to the ConnectionPort nodes.
+    // wattage (each downstream device draws what it needs). A COMBINER is the mirror: TWO 0-watt consumer inputs and
+    // one passthrough that re-exports their SUM (input1 + input2 added), and the downstream load is traced back to the
+    // sources in PROPORTION to what each provides (so two gens split the load, capped at each one's output). The
+    // game's PowerNet.Recompute is a thin adapter: it walks the "deployables"/"wires" groups into these plain records,
+    // calls Solve, and writes Live/Powered/Draw back to the ConnectionPort nodes.
     public enum PowerPortKind { Output, Consumer, Passthrough }
 
     public sealed class PowerPort
@@ -64,19 +66,23 @@ namespace SDG.Unturned
                         w.Consumer.Live = w.Source.Live;   // the consumer receives whatever the source is exporting
                 foreach (var d in devices)
                 {
-                    PowerPort cons = null;
+                    // score EVERY consumer on the device (a combiner has two inputs), then re-export the SUM of their
+                    // leftovers to every passthrough -- spotlight: one 250w consumer -> its leftover; splitter: one 0w
+                    // relay -> its full input fanned to N outputs; combiner: two 0w relays -> input1 + input2 ADDED.
+                    float exported = 0f; bool anyConsumer = false;
                     foreach (var p in d.Ports)
-                        if (p.Kind == PowerPortKind.Consumer) { cons = p; break; }
-                    if (cons != null)
-                    {
-                        // a normal consumer (Watts>0) needs at least its usage; a 0-watt RELAY (a splitter's input)
-                        // just needs any live input, since it takes nothing for itself.
-                        bool hasInput = cons.Watts > 0f ? cons.Live >= cons.Watts : cons.Live > 0f;
-                        cons.Powered = !d.OnFire && hasInput;   // a burning consumer stops conducting
-                        float exported = cons.Powered ? cons.Live - cons.Watts : 0f;   // leftover (spotlight) or the FULL input (splitter, Watts=0)
-                        foreach (var p in d.Ports)   // re-export to EVERY passthrough -> a splitter fans one input out to N outputs, each carrying the full power
+                        if (p.Kind == PowerPortKind.Consumer)
+                        {
+                            anyConsumer = true;
+                            // a normal consumer (Watts>0) needs at least its usage; a 0-watt RELAY (splitter/combiner
+                            // input) just needs any live input, since it takes nothing for itself.
+                            bool hasInput = p.Watts > 0f ? p.Live >= p.Watts : p.Live > 0f;
+                            p.Powered = !d.OnFire && hasInput;   // a burning consumer stops conducting
+                            if (p.Powered) exported += p.Live - p.Watts;
+                        }
+                    if (anyConsumer)
+                        foreach (var p in d.Ports)
                             if (p.Kind == PowerPortKind.Passthrough) p.Live = exported;
-                    }
                 }
             }
 
@@ -93,20 +99,29 @@ namespace SDG.Unturned
         {
             float draw = 0f;
             var seen = new HashSet<PowerPort>();   // guard against a wiring cycle
-            var stack = new Stack<PowerPort>();
-            stack.Push(output);
+            var stack = new Stack<(PowerPort port, float share)>();
+            stack.Push((output, 1f));   // share = the fraction of the downstream load THIS source carries (a combiner splits it across its sources)
             while (stack.Count > 0)
             {
-                var src = stack.Pop();
+                var (src, share) = stack.Pop();
                 if (!seen.Add(src)) continue;
                 PowerPort consumer = null;
                 foreach (var w in wires)   // the one wire fed by this source port (1 wire/port)
                     if (w.Source == src && w.Consumer != null) { consumer = w.Consumer; break; }
                 if (consumer == null) continue;
-                if (consumer.Powered) draw += consumer.Watts;   // a splitter's own input is 0w -> adds nothing itself
-                if (consumer.Owner != null)
-                    foreach (var pp in consumer.Owner.Ports)   // fork into ALL the owner's passthroughs (a splitter re-exports several)
-                        if (pp.Kind == PowerPortKind.Passthrough) stack.Push(pp);
+                if (consumer.Powered) draw += consumer.Watts * share;   // a splitter/combiner relay input is 0w -> adds nothing itself
+                var owner = consumer.Owner;
+                if (owner == null) continue;
+                // continue into the device's passthrough(s). A COMBINER has two inputs feeding one output: this source
+                // carries the downstream load only in PROPORTION to what it provides (its input / the device's total
+                // input), so two gens SPLIT the load. Single-input devices (spotlight/splitter) -> ratio 1, unchanged.
+                float totalIn = 0f;
+                foreach (var pp in owner.Ports)
+                    if (pp.Kind == PowerPortKind.Consumer && pp.Powered) totalIn += pp.Live;
+                float subShare = totalIn > 0f ? share * (consumer.Live / totalIn) : 0f;
+                if (subShare > 0f)
+                    foreach (var pp in owner.Ports)   // fork into ALL the owner's passthroughs (a splitter re-exports several)
+                        if (pp.Kind == PowerPortKind.Passthrough) stack.Push((pp, subShare));
             }
             return draw;
         }

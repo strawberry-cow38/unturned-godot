@@ -116,6 +116,35 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Combiner (master's own system): two generators -> a 2-way combiner -> one spotlight. The combiner's output is
+    // the two gens ADDED (8000w), the spotlight runs, and the 250w load splits evenly across the two equal sources.
+    public class PowerCombinerSumsSources : GameTest
+    {
+        public override string Name => "power.combiner_sums_sources";
+        public override IEnumerable<Step> Run()
+        {
+            var genA = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-4f, 0f, -2f), 0f);
+            var genB = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-4f, 0f, 2f), 0f);
+            var comb = Deployable.Spawn(World, DeployableDef.Combiner2, new Vector3(0f, 0f, 0f), 0f);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(4f, 0f, 0f), 0f);
+            var outA = genA.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var outB = genB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var ins = comb.Ports.FindAll(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var cOut = comb.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+            var cons = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            T.Check($"2-way combiner has 2 inputs + 1 output (got {ins.Count} in)", ins.Count == 2 && cOut != null);
+            PowerRig.Connect(World, outA, ins[0]);
+            PowerRig.Connect(World, outB, ins[1]);
+            PowerRig.Connect(World, cOut, cons);
+            yield return Ticks(1);
+            genA.TogglePower(); genB.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("both combiner inputs powered by their sources", ins[0].Powered && ins[1].Powered);
+            T.Check($"output = both gens ADDED = 8000w (got {cOut.Live:0})", PowerRig.Approx(cOut.Live, 8000f));
+            T.Check("spotlight powered off the combined output", cons.Powered);
+            T.Check($"the 250w load splits evenly across the two sources = 125w each (got A {outA.Draw:0} / B {outB.Draw:0})", PowerRig.Approx(outA.Draw, 125f) && PowerRig.Approx(outB.Draw, 125f));
+        }
+    }
+
     // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
     // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
     public class PowerWreckDropsWires : GameTest

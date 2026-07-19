@@ -1302,15 +1302,16 @@ namespace UnturnedGodot
             // rear view onto the input face.
             if (showSplit)
             {
-                var sp2 = Deployable.Spawn(this, DeployableDef.Splitter2, new Vector3(-2.3f, 0f, 0f), 0f);
-                var sp3 = Deployable.Spawn(this, DeployableDef.Splitter3, new Vector3(0.1f, 0f, 0f), 0f);
-                var sp4 = Deployable.Spawn(this, DeployableDef.Splitter4, new Vector3(2.8f, 0f, 0f), 0f);
-                foreach (var dep in new[] { sp2, sp3, sp4 })
+                var sp2 = Deployable.Spawn(this, DeployableDef.Splitter2, new Vector3(-3.0f, 0f, 0f), 0f);
+                var sp3 = Deployable.Spawn(this, DeployableDef.Splitter3, new Vector3(-0.6f, 0f, 0f), 0f);
+                var sp4 = Deployable.Spawn(this, DeployableDef.Splitter4, new Vector3(2.2f, 0f, 0f), 0f);
+                var cm2 = Deployable.Spawn(this, DeployableDef.Combiner2, new Vector3(4.8f, 0f, 0f), 0f);   // rightmost: 2 inputs (back) + 1 output (front) = the splitter's mirror
+                foreach (var dep in new[] { sp2, sp3, sp4, cm2 })
                     foreach (var pt in dep.Ports) pt.SetArrowState(true, true);
-                look = new Vector3(0.2f, 0.35f, 0f);
+                look = new Vector3(0.9f, 0.35f, 0f);
                 bool back = System.Environment.GetEnvironmentVariable("UG_SPLITBACK") == "1";
-                cam.Position = back ? new Vector3(0.2f, 1.5f, -4.6f) : new Vector3(1.7f, 1.5f, 5.4f);
-                cam.Fov = 44f;
+                cam.Position = back ? new Vector3(0.9f, 1.7f, -5.4f) : new Vector3(2.2f, 1.8f, 6.6f);
+                cam.Fov = 50f;
                 cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")

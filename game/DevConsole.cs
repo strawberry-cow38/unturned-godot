@@ -174,8 +174,9 @@ namespace UnturnedGodot
                                   : (a == "split2" || a == "splitter2" || a == "9101") ? DeployableDef.Splitter2
                                   : (a == "split3" || a == "splitter3" || a == "9102") ? DeployableDef.Splitter3
                                   : (a == "split4" || a == "splitter4" || a == "9103") ? DeployableDef.Splitter4
+                                  : (a == "combine2" || a == "combiner2" || a == "9104") ? DeployableDef.Combiner2
                                   : null;
-                if (def == null) { Log("usage: deploy <generator|spot|split2|split3|split4>"); return; }
+                if (def == null) { Log("usage: deploy <generator|spot|split2|split3|split4|combine2>"); return; }
                 if (Player == null) { Log("no player"); return; }
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");

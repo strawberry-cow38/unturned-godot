@@ -31,6 +31,7 @@ namespace SDG.Unturned
             Add(9101, "2-Way Splitter", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that splits one power wire into two. Each output carries the full wattage -- devices draw only what they need.");
             Add(9102, "3-Way Splitter", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that splits one power wire into three. Each output carries the full wattage -- devices draw only what they need.");
             Add(9103, "4-Way Splitter", 3, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that splits one power wire into four. Each output carries the full wattage -- devices draw only what they need.");
+            Add(9104, "2-Way Combiner", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that combines two power sources into one output -- their wattages add together, and the load splits back across the sources.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();
