@@ -40,6 +40,17 @@ namespace SDG.Unturned
         public float fallingDamageMultiplier = 1f;
         public bool preventsFallingBoneBreak;   // ItemClothingAsset.preventsFallingBrokenBones: if ANY worn piece has it, a hard fall doesn't break legs
 
+        // ItemClothingAsset behavioral fields (P1 clothing port). Defaulted so non-clothing items are unaffected.
+        // movementSpeedMultiplier: source aggregates worn clothing as a product (1.0 = no change).
+        public float movementSpeedMultiplier = 1f;
+        // Proof_* are whole-body immunities in source (any worn piece with the flag grants it). Stored for when the
+        // port models water/fire/radiation damage; default false.
+        public bool proofWater, proofFire, proofRadiation;
+        // Hair_Visible/Beard_Visible drive whether the player's hair/beard render under this piece (default visible).
+        public bool hairVisible = true, beardVisible = true;
+        // ItemVestAsset.hasFallbackShirt: a shirtless-visible vest (oversize/zip-up) shows a fallback shirt mesh.
+        public bool hasFallbackShirt;
+
         // ItemConsumeableAsset effects applied on Use, then the item is consumed. Health is absolute (0-100);
         // Food/Water are the .dat 0-100 values (the port's vitals are 0..1, so divided by 100 on apply).
         public int useHealth, useFood, useWater;
