@@ -22,6 +22,7 @@ namespace UnturnedGodot
         const float ExplodeDelay = 4f, SmokeHealth = 200f, HeavySmokeHealth = 100f;   // source EXPLODE=4s, SMOKE_1<200, SMOKE_0<100
         const float FootBrakeScale = 6f, HandbrakeScale = 13f;   // Godot Brake calibration (raw .dat Brake too weak, but 15/35 flipped the car onto its nose -- master); S foot-brake vs Space handbrake bite
         public bool Exploded => _exploded;
+        public bool OnFire => _deadTimer >= 0f || _exploded;   // caught fire at 0 HP (burning toward explosion) or a wreck -> engine is DEAD + unfixable (master)
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes;   // wheels: VehicleWheel3D auto-rolls its node (mesh child inherits it), so no manual spin. _wMeshes kept for debris/hide.
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
@@ -1786,6 +1787,7 @@ namespace UnturnedGodot
                 float loud = 48f * ForwardSpeedPct();
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
+            if (OnFire) EngineOn = false;   // caught fire -> engine force-killed EVERY frame: can't drive, can't restart, unfixable (master)
             if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
                 Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
             if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;   // ran DRY (or entered an empty car) -> cut the engine; Drive gates on EngineOn so it coasts to a stop. Refuel (gas can / pump) + re-enter to restart (master)

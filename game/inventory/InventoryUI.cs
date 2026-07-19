@@ -430,6 +430,8 @@ namespace UnturnedGodot
                     AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
                 by += 44;
             }
+            if (asset.IsFuelContainer)   // a gas can gets an extra "Empty" action -> dump its fuel (master)
+            { AddActionButton(panel, "Empty", new Vector2(228, by), EmptyFuelSelected); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
@@ -495,6 +497,19 @@ namespace UnturnedGodot
             CloseSelection();
             Close();   // leave the inventory so LMB pours / RMB sucks
             Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+
+        // Dump a gas can's contents (master): set its fuel to 0. Works from the bag or while held.
+        void EmptyFuelSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || !asset.IsFuelContainer || jar.item == null) return;
+            jar.item.fuelLevel = 0f;
+            Refresh();
         }
 
         // Equip a deployable (generator/spotlight) -> close the inventory so the player aims the placement ghost and
@@ -763,11 +778,12 @@ namespace UnturnedGodot
                 tile.AddChild(amt);
             }
 
-            if (asset?.IsFuelContainer == true && jar.item != null)   // a gas can shows its fuel LEVEL as a bar on the icon (master)
+            if (asset?.IsFuelContainer == true && jar.item != null)   // a gas can ALWAYS shows a fuel-level bar on its icon, even at 0 (master)
             {
                 float frac = asset.fuelCapacity > 0f ? Mathf.Clamp(Mathf.Max(0f, jar.item.fuelLevel) / asset.fuelCapacity, 0f, 1f) : 0f;
-                tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.65f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });
-                tile.AddChild(new ColorRect { Color = new Color(0.95f, 0.78f, 0.2f), Position = new Vector2(4, h - 8), Size = new Vector2((w - 8) * frac, 4), MouseFilter = Control.MouseFilterEnum.Ignore });
+                tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.85f), Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline -> visible on any icon
+                tile.AddChild(new ColorRect { Color = new Color(0.32f, 0.32f, 0.35f, 1f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // empty track (grey) -> the bar reads even at 0
+                if (frac > 0f) tile.AddChild(new ColorRect { Color = new Color(0.95f, 0.78f, 0.2f), Position = new Vector2(3, h - 9), Size = new Vector2((w - 6) * frac, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // fuel fill (yellow)
             }
             return tile;
         }

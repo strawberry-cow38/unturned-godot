@@ -851,6 +851,7 @@ namespace UnturnedGodot
                 return item != null ? ReferenceEquals(_heldItem, item) : (_heldItem != null && _heldItem.id == asset.id);
             if (_melee != null && _melee.Name != "fists") return asset.meleeName != null && asset.meleeName == _heldMeleeName;
             if (_heldConsumable != null) return _heldConsumable.id == asset.id;
+            if (_heldFuelItem != null) return item != null ? ReferenceEquals(_heldFuelItem, item) : asset.IsFuelContainer;   // a held gas can -> dropping it goes unarmed (master)
             if (_deployable != null) return _deployable.Id == asset.id;
             if (HoldingWireTool) return asset.id == 65;
             return false;
@@ -3075,7 +3076,7 @@ namespace UnturnedGodot
             if (v.NetClientPredicted) { _rideLookYaw = 0f; _rideLookPitch = FpRideGazePitchDeg; }   // Part A free-look starts at the classic forward gaze, like EnterPuppet (#37)
             _driving = v;
             _burstLeft = 0;                                    // entering a vehicle cancels an in-progress burst (no resume on exit)
-            v.EngineOn = true;                                 // start burning fuel (source: engine on)
+            v.EngineOn = !v.OnFire;                            // start the engine (source) -- but a burnt/on-fire car stays dead (master)
             if (Hud != null) Hud.Vehicle = v;                  // show the vehicle status box (fuel/health/battery)
             _viewmodel?.SetShown(false);                       // no gun while driving
             if (_cam != null) _cam.TopLevel = true;            // free the camera into world space
