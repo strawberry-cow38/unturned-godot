@@ -57,7 +57,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
             bool deployTest = false;
             bool skillsui = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
@@ -80,6 +80,8 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
+                else if (arg.StartsWith("--clothtest=")) clothtest = arg["--clothtest=".Length..];   // dress a RiggedCharacter with shirt,pants item ids -> UV-atlas render gate (P3a); frames land in --shot=DIR
+                else if (arg == "--clothtest") clothtest = "";                                        // bare flag -> default outfit (shirt 3 + pants 2)
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
                 else if (arg == "--attach") _vmAttach = true;
@@ -398,6 +400,24 @@ namespace UnturnedGodot
                 return; // frame strip captured in _Process
             }
 
+            if (clothtest != null)   // P3a render gate: a dressed RiggedCharacter (real ripped shirt+pants painted on the body UV0)
+            {
+                int shirtId = 3, pantsId = 2;   // default outfit: Orange Hoodie (shirt 3) + Work Jeans (pants 2)
+                var cp = clothtest.Split(',', System.StringSplitOptions.RemoveEmptyEntries);
+                if (cp.Length >= 1) int.TryParse(cp[0], out shirtId);
+                if (cp.Length >= 2) int.TryParse(cp[1], out pantsId);
+                // PNG strip dir: $UG_CLOTHDIR, else a temp dir (--shot= is taken by the prop showcase). The
+                // xvfb --write-movie AVI renders regardless; this strip is the still-frame convenience copy.
+                _rigDir = System.Environment.GetEnvironmentVariable("UG_CLOTHDIR") ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clothtest");
+                System.IO.Directory.CreateDirectory(_rigDir);
+                _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_QUICK") == "1"
+                    ? new[] { 20 }                        // one settled idle frame
+                    : new[] { 8, 14, 20, 26, 32, 40 };    // a few settled idle frames (front 3/4) to eyeball the UV atlas
+                GetWindow().Size = new Vector2I(900, 1100);
+                BuildClothTest(shirtId, pantsId);
+                return; // frame strip captured in _Process
+            }
+
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
@@ -567,6 +587,54 @@ namespace UnturnedGodot
             }
 
             // 3/4 front view, framed on a ~1.9m character
+            var cam = new Camera3D { Fov = 42f };
+            AddChild(cam);
+            cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
+        }
+
+        // --clothtest=<shirtId>,<pantsId> : the P3a render gate. Spawn a 3P RiggedCharacter (clothes-shader body +
+        // the Skull face decal) at idle, paint the real ripped shirt+pants textures (loaded via ClothingContent
+        // from clothing_content.tsv) onto its body UV0 through the ported StandardClothes composite, and frame it
+        // 3/4-front. This is the visual proof the shirt paints the torso/arms + pants the legs on the right texels.
+        void BuildClothTest(int shirtId, int pantsId)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D
+            {
+                RotationDegrees = new Vector3(-42f, -38f, 0f),
+                LightEnergy = 1.25f,
+                ShadowEnabled = true,
+                LightAngularDistance = 1.6f,
+                DirectionalShadowMaxDistance = 14f,
+                ShadowBias = 0.03f,
+                ShadowNormalBias = 1.5f,
+                ShadowBlur = 1.4f,
+            });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
+            AddChild(ground);
+
+            // player skin tint + the Skull face-quad decal (kept exactly as-is) -> the clothes-shader body path (albedoTexPath null)
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+            if (rc == null) { GD.PrintErr("[clothtest] build failed"); GetTree().Quit(); return; }
+            AddChild(rc);
+            _rc = rc;
+
+            var shirt = ClothingContent.LoadTextures(shirtId);
+            var pants = ClothingContent.LoadTextures(pantsId);
+            rc.SetShirt(shirt.Albedo, shirt.Emission, shirt.Metallic);
+            rc.SetPants(pants.Albedo, pants.Emission, pants.Metallic);
+            GD.Print($"[clothtest] shirt {shirtId} albedo={(shirt.Albedo != null)} emis={(shirt.Emission != null)} metal={(shirt.Metallic != null)} | pants {pantsId} albedo={(pants.Albedo != null)} emis={(pants.Emission != null)} metal={(pants.Metallic != null)}");
+            rc.Play("Idle_Stand");
+
             var cam = new Camera3D { Fov = 42f };
             AddChild(cam);
             cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
