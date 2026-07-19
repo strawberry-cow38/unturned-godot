@@ -59,6 +59,12 @@ namespace UnturnedGodot
             ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", 6, false, "Fridge"),      // fridge x17 -> Food
             ["8388edfa33b84f78ad7f5d277412433b"] = ("Wardrobe_0", 19, false, "Wardrobe"), // wardrobe x24 -> Cloth
             ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
+            // business/industrial containers (crates + shipping containers) -> prime in-genre loot
+            ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
+            ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
+            ["aa7fd5bc5e634a0c846770a28ff6cd65"] = ("Container_0", 2, false, "Container"), // shipping container x15 -> Military Canada
+            ["d010fb4c4feb4f8fab81f1a5695617ba"] = ("Container_1", 2, false, "Container"), // shipping container x20 -> Military Canada
+            ["4f2b60ecae204b899eec282891a79e05"] = ("Container_2", 2, false, "Container"), // shipping container x19 -> Military Canada
         };
 
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
