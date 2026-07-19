@@ -414,12 +414,14 @@ namespace UnturnedGodot
             float by = 150;
             bool isDeploy = DeployableDef.ById(asset.id) != null;   // generator/spotlight -> equip into placement mode
             bool isWire = asset.id == 65;   // the Wire tool -> equip into wiring mode
-            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable || isDeploy || isWire)
+            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable || isDeploy || isWire || asset.IsFuelContainer)
             {
                 if (Player != null && Player.IsHeld(asset, jar.item))
                     AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); });
                 else if (asset.IsConsumable)
                     AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected);   // hold it in-hand -> LMB to eat/drink
+                else if (asset.IsFuelContainer)
+                    AddActionButton(panel, "Hold", new Vector2(228, by), HoldFuelSelected);   // equip the gas can -> LMB pours into a gen/vehicle, RMB sucks from a pump
                 else if (isDeploy)
                     AddActionButton(panel, "Equip", new Vector2(228, by), PlaceSelected);   // equip the deployable -> close inventory, aim the ghost, LMB plants it
                 else if (isWire)
@@ -477,6 +479,21 @@ namespace UnturnedGodot
             Player?.EquipHeldConsumable(asset, mesh);
             CloseSelection();
             Close();   // leave the inventory so the player can click to eat/drink
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+
+        // Equip a gas can INTO the hands -> close the inventory. LMB pours it into a gen/vehicle, RMB sucks from a pump.
+        void HoldFuelSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || !asset.IsFuelContainer) return;
+            Player?.EquipHeldFuelCan(asset, jar.item);
+            CloseSelection();
+            Close();   // leave the inventory so LMB pours / RMB sucks
             Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
