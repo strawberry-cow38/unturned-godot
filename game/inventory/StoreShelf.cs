@@ -81,7 +81,8 @@ namespace UnturnedGodot
         {
             var pr = Prof(meshName);
             var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label, RenderMesh = renderMesh,
-                                     Width = (byte)pr.PerTier, Height = (byte)pr.TierY.Length };   // grid mirrors the shelf 1:1 (PerTier cols x tier rows) so a UI position == a shelf position
+                                     // a DISPLAY shelf's grid mirrors its tiers 1:1 (UI pos == shelf pos); a SOLID container (fridge/counter/crate) has no visual mirror -> keep normal 8x6 storage
+                                     Width = showItems ? (byte)pr.PerTier : (byte)8, Height = showItems ? (byte)pr.TierY.Length : (byte)6 };
             parent.AddChild(s);
             s.GlobalTransform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
             return s;
@@ -112,10 +113,10 @@ namespace UnturnedGodot
         // the crate open/close code calls these so the shelf display updates as items are dragged in/out, not just on close
         public void BeginLiveDisplay(Items page)
         {
-            if (page == null) return;
+            if (page == null || !ShowItems) return;   // solid containers (fridge/crate) have no on-tier display -> nothing to live-update
             _livePage = page;
             page.onStateUpdated += SyncDisplay;   // any add/remove/move in the open grid -> re-sync immediately
-            if (ShowItems) SyncDisplay();
+            SyncDisplay();
         }
         public void EndLiveDisplay()
         {
