@@ -17,6 +17,8 @@ namespace UnturnedGodot
         public string MeshName = "Shelf_1";
         public bool ShowItems = true;        // open shelves show their loot on the tiers; solid props (fridge/wardrobe) don't
         public string LabelText = "Store Shelf";
+        readonly List<Node3D> _displayNodes = new();   // the item models currently on the tiers -> rebuilt when the grid changes (items taken via F)
+        float _syncT; int _syncHash = int.MinValue;
 
         // per-shelf-type tier layout: TierY = shelf-surface heights as fractions of the STANDING AABB; PerTier = item
         // slots across the width; WidthUse = fraction of width used (end margins); FrontZ = how far toward the front face.
@@ -98,7 +100,6 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             base._Ready();   // Storage grid + BuildVisual (shelf mesh + label) + "crates" group
-            var ids = new List<int>();
             var rng = new RandomNumberGenerator();
             int n = rng.RandiRange(MinItems, MaxItems);
             for (int i = 0; i < n; i++)
@@ -106,10 +107,10 @@ namespace UnturnedGodot
                 int id = LootTables.Roll(TableIndex);
                 if (id < 0) continue;
                 var item = Assets.makeLoot((ushort)id);
-                if (item != null) { Add(item); ids.Add(id); }
+                if (item != null) Add(item);
             }
-            if (ShowItems) DisplayItems(ids);   // open shelves show loot on tiers; solid props hold it hidden (F to see)
-            GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {ids.Count} items{(ShowItems ? " on tiers" : " (F-open)")}");
+            if (ShowItems) RefreshDisplay();   // open shelves show loot on tiers; solid props hold it hidden (F to see)
+            GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {Storage.getItemCount()} items{(ShowItems ? " on tiers" : " (F-open)")}");
         }
 
         // place each stored item's real model on a tier slot (static, no physics -- the "neatly placed" display).
@@ -135,7 +136,36 @@ namespace UnturnedGodot
                 vis.Position = pos;
                 vis.RotationDegrees = new Vector3(90f, col * 37f, 0f);   // lay the model upright-ish on the shelf (drop pose); yaw varies so it's not a clone row
                 AddChild(vis);
+                _displayNodes.Add(vis);
             }
+        }
+
+        // rebuild the tier display from the CURRENT grid contents (source refreshDisplay: the shown models track the
+        // items as they're taken/added via F). Cheap + only fires when the grid actually changes (contents hash).
+        void RefreshDisplay()
+        {
+            foreach (var nd in _displayNodes) if (IsInstanceValid(nd)) nd.QueueFree();
+            _displayNodes.Clear();
+            var ids = new List<int>();
+            for (byte i = 0; i < Storage.getItemCount(); i++) { var j = Storage.getItem(i); if (j?.item != null) ids.Add(j.item.id); }
+            DisplayItems(ids);
+            _syncHash = ContentsHash();
+        }
+
+        int ContentsHash()
+        {
+            int h = 17;
+            for (byte i = 0; i < Storage.getItemCount(); i++) { var j = Storage.getItem(i); h = h * 31 + (j?.item?.id ?? 0); }
+            return h * 31 + Storage.getItemCount();
+        }
+
+        public override void _Process(double delta)   // poll the grid ~2-3x/sec; on change (item taken/added via F), refresh the tier models
+        {
+            if (!ShowItems) return;
+            _syncT += (float)delta;
+            if (_syncT < 0.4f) return;
+            _syncT = 0f;
+            if (ContentsHash() != _syncHash) RefreshDisplay();
         }
     }
 }

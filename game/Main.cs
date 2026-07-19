@@ -1499,7 +1499,19 @@ namespace UnturnedGodot
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             AttachMpLoopback(res);    // --mploopback only; default SP is untouched
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
-            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); }   // stock the map with editor-placed loot containers
+            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnMapContainers(res); }   // stock the map with loot containers
+        }
+
+        // Spawn the convert-on-load containers WorldBuilder flagged (map props -> lootable containers). Deferred to HERE,
+        // after BuildFullWorld, so the asset DB is loaded -> the loot roll's tryAddItem can size items into the grid
+        // (spawning during the build left the containers EMPTY -- looked stocked, opened empty).
+        void SpawnMapContainers(WorldBuildResult res)
+        {
+            if (res?.Containers == null || res.Containers.Count == 0) return;
+            LootTables.Load(_mapRoot + "/Spawns/Items.dat");
+            foreach (var c in res.Containers)
+                StoreShelf.Spawn(this, c.pos, c.mesh, c.table, c.yaw, c.display, c.label);
+            GD.Print($"[containers] spawned {res.Containers.Count} map containers post-build (asset DB ready)");
         }
 
         // Spawn the loot crates the editor saved for PEI (editor_PEI_crates.txt), each rolling its PEI item table (LootCrate).

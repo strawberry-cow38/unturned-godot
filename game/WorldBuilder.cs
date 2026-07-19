@@ -30,6 +30,10 @@ namespace UnturnedGodot
         public Vector3 PlayerSpawn;        // Client only: a real Spawns/Players.dat point (terrain-height Y) -- pre-join reference (the C3 shell spawns at the SERVER-adopted entity pos, not here)
         public bool HasPlayerSpawn;
         public bool Ready;                 // true once the whole build finished (the old _worldReady)
+        // convert-on-load containers: the placement loop FLAGS them here (skipping the decoration mesh); the caller
+        // spawns the real StoreShelves AFTER the build, once the asset DB is loaded -- else the roll's tryAddItem
+        // can't size the items + the containers come out EMPTY (looked stocked, weren't). (mesh,table,display,label,pos,yaw)
+        public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> Containers = new();
         /// <summary>P3 holiday parity (Client mode only, else null): the holiday-gated world content --
         /// the ~285 tagged props WITH their colliders, and the whole resource field -- is DEFERRED at
         /// build time and placed by this callback with the SERVER's activeHoliday (from the wire-v6
@@ -272,8 +276,8 @@ namespace UnturnedGodot
             bool TryContainer(string[] q)
             {
                 if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
-                if (!LootTables.Loaded) LootTables.Load(mapRoot + "/Spawns/Items.dat");
-                StoreShelf.Spawn(root, new Vector3(F(q[1]), F(q[2]), -F(q[3])), cfg.mesh, cfg.table, 180f - F(q[5]), cfg.display, cfg.label);   // ex=270/ez=0 upright -> yaw only
+                // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
+                result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));   // ex=270/ez=0 upright -> yaw only
                 converted++;
                 return true;
             }
@@ -289,7 +293,7 @@ namespace UnturnedGodot
                 if (TryContainer(p)) continue;   // registered map prop -> lootable container (SP), skip the decoration mesh
                 PlaceObject(p, name);
             }
-            if (converted > 0) GD.Print($"[containers] converted {converted} map props to lootable StoreShelves (SP)");
+            if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
 
