@@ -16,6 +16,8 @@ namespace UnturnedGodot
         OptionButton _presetDrop;  // grid-power preset picker (shown only when a grid box is selected)
         LineEdit _gridNameEdit, _gridWattEdit;
         Control _gridBox;
+        LineEdit _stationEdit;     // gas-pump station-id field (shown only when a gas pump is selected)
+        Control _pumpBox;
 
         public EditorObjectBrowser(EditorObjects objects) { _objects = objects; }
 
@@ -70,8 +72,21 @@ namespace UnturnedGodot
             gbox.AddChild(_gridWattEdit);
             box.AddChild(gbox);
 
+            // gas-pump station-id config -- appears when a placed ⛽ Gas Pump is selected
+            var pbox = new VBoxContainer { Visible = false };
+            _pumpBox = pbox;
+            var pl = new Label { Text = "▼ GAS PUMP — station id (same id shares a tank):" };
+            pl.AddThemeFontSizeOverride("font_size", 13);
+            pl.AddThemeColorOverride("font_color", new Color(0.95f, 0.75f, 0.3f));
+            pbox.AddChild(pl);
+            _stationEdit = new LineEdit { PlaceholderText = "station id (Enter to set)", CustomMinimumSize = new Vector2(240, 0) };
+            _stationEdit.TextSubmitted += t => { if (int.TryParse(t, out var s)) { _objects.SetSelectedStationId(s); SyncPumpPicker(); } };
+            pbox.AddChild(_stationEdit);
+            box.AddChild(pbox);
+
             _objects.SelectionChanged += SyncCratePicker;
             _objects.SelectionChanged += SyncGridPicker;
+            _objects.SelectionChanged += SyncPumpPicker;
 
             var sel = new Button { Text = "Select-only (clear place type)" };
             sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); };
@@ -117,6 +132,14 @@ namespace UnturnedGodot
                 for (int i = 0; i < GridPowerSource.Presets.Length; i++) if (Mathf.Abs(GridPowerSource.Presets[i].watts - _objects.SelectedGridWatts) < 0.5f) { match = i; break; }
                 _presetDrop.Selected = match;
             }
+        }
+
+        void SyncPumpPicker()   // selection changed: show the station-id field for a selected gas pump + reflect it
+        {
+            if (_pumpBox == null) return;
+            _pumpBox.Visible = _objects.GasPumpSelected;
+            if (_objects.GasPumpSelected && _stationEdit != null && !_stationEdit.HasFocus())
+                _stationEdit.Text = _objects.SelectedStationId.ToString();
         }
     }
 }

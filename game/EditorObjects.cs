@@ -93,6 +93,7 @@ namespace UnturnedGodot
             _catalog.Insert(0, LootCrateName);   // loot crate pinned to the top of the palette
             _catalog.Insert(1, StoreShelfName);  // store shelf right below it
             _catalog.Insert(2, GridPowerName);   // grid power box below that
+            _catalog.Insert(3, GasPumpName);     // gas pump (station-id configurable) below that
         }
 
         ArrayMesh MeshFor(string name)
@@ -144,12 +145,14 @@ namespace UnturnedGodot
         public const string LootCrateName = "★ Loot Crate";   // a placeable loot CONTAINER (not a mesh prop) -- rolls a PEI table in SP
         public const string StoreShelfName = "🛒 Store Shelf";   // the real Shelf_1 gondola AS a loot container -- rolls a PEI table + shows items on its tiers in SP
         public const string GridPowerName = "⚡ Grid Power";   // the Circuit_0 breaker box AS a configurable mains SOURCE -- name + wattage (custom or preset) set in the editor, spawns a GridPowerSource in SP
+        public const string GasPumpName = "⛽ Gas Pump";   // a Gas_Pump_0 fuel pump with an editable STATION ID -- pumps sharing an id share one underground tank (master); spawns a GasPump in SP
 
         public Node3D Place(string name, Vector3 pos, Basis rot)
         {
             if (name == LootCrateName) return PlaceLootCrate(pos, rot);
             if (name == StoreShelfName) return PlaceStoreShelf(pos, rot);
             if (name == GridPowerName) return PlaceGridPower(pos, rot);
+            if (name == GasPumpName) return PlaceGasPump(pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -279,6 +282,47 @@ namespace UnturnedGodot
             if (!GridSelected) return;
             Primary.SetMeta("grid_name", n ?? "");
             UpdateGridLabel(Primary);
+        }
+
+        // a Gas_Pump_0 placed with a STATION ID: the real mesh; the SP loader spawns a real GasPump (station-shared fuel
+        // tank, 750w powered consumer) here. Pumps sharing a station id share one underground tank (master).
+        Node3D PlaceGasPump(Vector3 pos, Basis rot)
+        {
+            var mesh = MeshFor("Gas_Pump_0");
+            if (mesh == null) return null;
+            float yaw = Mathf.Atan2(-rot.X.Z, rot.X.X);
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));   // flat-authored (Z=height) -> stand it up
+            var root = new Node3D { Transform = new Transform3D(new Basis(Vector3.Up, yaw), pos) };
+            root.SetMeta("gas_pump_edit", true);
+            root.SetMeta("station_id", 0);
+            root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor("Gas_Pump_0"), Basis = stand });
+            root.AddChild(new Label3D { Text = GasPumpLabelText(0), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.007f, Position = new Vector3(0f, 2.6f, 0f), Modulate = new Color(0.95f, 0.75f, 0.3f), NoDepthTest = true, FontSize = 40, OutlineSize = 8 });
+            var shp = mesh.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Basis = stand };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        static string GasPumpLabelText(int station) => $"⛽ Gas Pump\nStation #{station}";
+        void UpdateGasPumpLabel(Node3D pump)
+        {
+            int st = pump.HasMeta("station_id") ? (int)pump.GetMeta("station_id") : 0;
+            foreach (var c in pump.GetChildren()) if (c is Label3D lbl) lbl.Text = GasPumpLabelText(st);
+        }
+        public bool GasPumpSelected => Primary != null && Primary.HasMeta("gas_pump_edit");
+        public int SelectedStationId => GasPumpSelected && Primary.HasMeta("station_id") ? (int)Primary.GetMeta("station_id") : 0;
+        public void SetSelectedStationId(int s)
+        {
+            if (!GasPumpSelected) return;
+            Primary.SetMeta("station_id", Mathf.Max(0, s));
+            UpdateGasPumpLabel(Primary);
         }
 
         bool Raycast(Vector2 screen, uint mask, out Vector3 point, out Rid collider)
@@ -511,6 +555,7 @@ namespace UnturnedGodot
             SaveLootCrates();
             SaveStoreShelves();
             SaveGridPower();
+            SaveGasPump();
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
         }
@@ -541,6 +586,7 @@ namespace UnturnedGodot
             LoadLootCrates();
             LoadStoreShelves();
             LoadGridPower();
+            LoadGasPump();
             if (!System.IO.File.Exists(SavePath)) return;
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(SavePath))
@@ -637,6 +683,37 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} grid-power boxes");
+        }
+
+        string GasPumpPath => Dir + $"editor_{_editor.MapName}_gaspump.txt";   // per-map editor gas pumps (station id + world pos + yaw)
+        void SaveGasPump()
+        {
+            var pumps = _placed.FindAll(p => IsInstanceValid(p) && p.HasMeta("gas_pump_edit"));
+            using var w = new System.IO.StreamWriter(GasPumpPath, false);
+            foreach (var b in pumps)
+            {
+                int st = b.HasMeta("station_id") ? (int)b.GetMeta("station_id") : 0;
+                var gp = b.GlobalPosition;
+                float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
+                w.WriteLine($"{st} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###}");
+            }
+            if (pumps.Count > 0) GD.Print($"[editor] saved {pumps.Count} gas pumps -> {GasPumpPath}");
+        }
+        void LoadGasPump()
+        {
+            if (!System.IO.File.Exists(GasPumpPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(GasPumpPath))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4 || !int.TryParse(p[0], out var st)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                float yawDeg = 0f; if (p.Length >= 5) float.TryParse(p[4], out yawDeg);
+                var root = PlaceGasPump(new Vector3(px, py, -pz), Upright(yawDeg));
+                if (root != null) { root.SetMeta("station_id", st); UpdateGasPumpLabel(root); }
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor] loaded {n} gas pumps");
         }
 
         // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)

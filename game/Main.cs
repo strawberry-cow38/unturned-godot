@@ -1673,7 +1673,7 @@ namespace UnturnedGodot
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             AttachMpLoopback(res);    // --mploopback only; default SP is untouched
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
-            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnMapContainers(res); }   // stock the map with loot containers + configurable grid-power boxes
+            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnEditorGasPump(); SpawnMapContainers(res); }   // stock the map with loot containers + configurable grid-power boxes + gas pumps
         }
 
         // Spawn the convert-on-load containers WorldBuilder flagged (map props -> lootable containers). Deferred to HERE,
@@ -1764,6 +1764,42 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[grid-power] spawned {n} editor grid boxes in SP");
+        }
+
+        // Spawn the gas pumps the editor saved for PEI (editor_PEI_gaspump.txt): the Gas_Pump_0 mesh + a GasPump fuel
+        // tank at the configured station id (pumps sharing an id share a tank). Same flow as the grid boxes.
+        void SpawnEditorGasPump()
+        {
+            string file = ProjectSettings.GlobalizePath("res://content/objects/") + "editor_PEI_gaspump.txt";
+            if (!System.IO.File.Exists(file)) return;
+            var mesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Gas_Pump_0.obj"));
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(file))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4 || !int.TryParse(p[0], out var station)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                float yaw = 0f; if (p.Length >= 5) float.TryParse(p[4], out yaw);
+                var basis = new Basis(Vector3.Up, Mathf.DegToRad(yaw)) * stand;
+                var pos = new Vector3(px, py, -pz);
+                if (mesh != null)
+                    AddChild(new MeshInstance3D { Mesh = mesh, Transform = new Transform3D(basis, pos), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.67f, 0.7f), Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });
+                var gp = GasPump.Attach(this, pos, basis, GasPump.PortLocal, mesh, station);
+                if (mesh != null)
+                {
+                    var shp = mesh.CreateTrimeshShape();
+                    if (shp != null)
+                    {
+                        var body = new StaticBody3D { Transform = new Transform3D(basis, pos) };
+                        body.AddChild(new CollisionShape3D { Shape = shp });
+                        body.SetMeta("gaspump", gp);   // look-ray -> the GasPump (outline + tooltip + rmb-suck/lmb-pour)
+                        AddChild(body);
+                    }
+                }
+                n++;
+            }
+            if (n > 0) GD.Print($"[gas-pump] spawned {n} editor gas pumps in SP");
         }
 
         // Workshop -> "New Map": boot the editor with a fresh FLAT all-grass map (no props/spawns/roads) to build from
