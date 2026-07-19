@@ -178,10 +178,10 @@ namespace UnturnedGodot
                         float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestV) { bestV = d; hitVeh = v; }
                     }
-                    else if (c is ShelfItemBody sib && IsInstanceValid(sib))   // an item sitting on a shelf -> grab it straight off (F)
+                    else if (c is ShelfItemBody sib && IsInstanceValid(sib))   // an item sitting on a shelf -> grab it straight off (F). Outline the ITEM only, not its whole shelf.
                     {
                         float d = sib.GlobalPosition.DistanceSquaredTo(_lookEnd);
-                        if (d < bestSI) { bestSI = d; hitShelfItem = sib; hitShelf = sib.Shelf; }
+                        if (d < bestSI) { bestSI = d; hitShelfItem = sib; }
                     }
                     // MP: the hit collider is a puppet's detection body (bit 5 car / bit 7 item); its parent is the
                     // IPuppetFocusable render node. SP never reaches this branch (real Vehicle/WorldItem matched above).
@@ -1158,7 +1158,7 @@ namespace UnturnedGodot
         {
             StorageCrate near = null; float best = 6.25f;   // 2.5 m, squared
             foreach (var n in GetTree().GetNodesInGroup("crates"))
-                if (n is StorageCrate c)
+                if (n is StorageCrate c && !(c is StoreShelf ss && ss.ShowItems))   // DISPLAY shelves aren't proximity-opened -- you grab items straight off them (look + F); solid containers (fridge/crate) still open
                 {
                     float d = GlobalPosition.DistanceSquaredTo(c.GlobalPosition);
                     if (d < best) { best = d; near = c; }
@@ -2091,7 +2091,7 @@ namespace UnturnedGodot
                 if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
-                else if (_focusItem != null) TryPickup();                  // looking at an item: pick it up
+                else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
