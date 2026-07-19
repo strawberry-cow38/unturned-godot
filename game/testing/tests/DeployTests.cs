@@ -145,4 +145,30 @@ namespace UnturnedGodot.Testing
             T.Check("a fresh generator still spawns full HP + fuel", Mathf.Abs(gen3.Health - gen3.HealthMax) < 0.01f && Mathf.Abs(gen3.Fuel - gen3.FuelMax) < 0.01f);
         }
     }
+
+    // Bug 2 (master 2026-07-19): a generator that runs OUT of fuel must shut off (cooldown) and STAY off -- refuelling
+    // alone must NOT auto-resume it; it needs a manual [F] restart. Then a poured can (deposit) refuels it.
+    public class DeployGeneratorRunsDry : GameTest
+    {
+        public override string Name => "deploy.generator_runs_dry";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, Vector3.Zero, 0f);
+            yield return Ticks(1);
+            gen.Fuel = 0.004f;      // almost empty
+            gen.TogglePower();      // switch it ON
+            yield return Ticks(1);
+            T.Check("running while it still has fuel", gen.IsPowered);
+            yield return Ticks(120);   // let the idle sip burn it dry
+            T.Check($"ran DRY -> stops producing (fuel {gen.Fuel:0.000})", gen.Fuel <= 0f && !gen.IsPowered);
+
+            gen.Fuel = gen.FuelMax;    // refuel (as a poured can would) WITHOUT touching the switch
+            yield return Ticks(2);
+            T.Check("refuelled but does NOT auto-restart (needs manual [F])", !gen.IsPowered);
+
+            if (gen.CanTogglePower) gen.TogglePower();   // manual restart
+            yield return Ticks(2);
+            T.Check("manual restart brings it back online", gen.IsPowered);
+        }
+    }
 }

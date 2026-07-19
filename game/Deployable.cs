@@ -351,8 +351,11 @@ namespace UnturnedGodot
             // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
             // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
             float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
-            if (FuelMax > 0f && pTarget > 0.5f && Fuel > 0f)   // a RUNNING generator burns fuel, scaled by LOAD (master): idle sips ~20%, a fully-loaded base guzzles. At 0 the RunTarget Fuel>0 gate cuts it out next frame.
+            if (FuelMax > 0f && pTarget > 0.5f && Fuel > 0f)   // a RUNNING generator burns fuel, scaled by LOAD (master): idle sips ~20%, a fully-loaded base guzzles.
+            {
                 Fuel = Mathf.Max(0f, Fuel - DeployableDef.GenFuelBurnPerSec * (0.2f + 0.8f * LoadFraction) * (float)delta);
+                if (Fuel <= 0f && _powered) { _powered = false; PowerNet.MarkDirty(); }   // ran DRY -> flip the toggle OFF (RunTarget was already 0 from the Fuel gate, so the cooldown ramp plays); needs a refuel + a manual [F] restart, NOT an auto-resume (master)
+            }
             if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)

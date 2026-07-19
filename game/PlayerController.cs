@@ -789,6 +789,26 @@ namespace UnturnedGodot
             }
         }
 
+        // RMB with a gas can in hand + looking at a GENERATOR (any FuelMax deployable): POUR the can into it
+        // (source UseableFuel EUseMode.Deposit). Moves min(what's in the can, the tank's free space). This is how
+        // you refuel a generator that ran dry -- then a manual [F] restarts it (it doesn't auto-resume).
+        void TryDepositFuel()
+        {
+            if (_heldFuelItem == null || !IsInstanceValid(_focusDeployable)) return;
+            var d = _focusDeployable;
+            if (d.FuelMax <= 0f) return;   // not a fuel-holding deployable (spotlight/splitter draw from a gen, no tank)
+            float canFuel = Mathf.Max(0f, _heldFuelItem.fuelLevel);
+            if (canFuel <= 0.01f) { GD.Print("[fuel] can is empty"); return; }
+            float space = d.FuelMax - d.Fuel;
+            if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
+            float poured = Mathf.Min(canFuel, space);
+            d.Fuel += poured;
+            _heldFuelItem.fuelLevel = canFuel - poured;
+            _invUI?.Refresh();
+            PowerNet.MarkDirty();   // a dry gen just got fuel back -> re-evaluate the net (still needs a manual restart)
+            GD.Print($"[fuel] poured {poured:0} -> {d.Def?.Name} {d.Fuel:0}/{d.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+        }
+
         // A closure that re-equips whatever is held RIGHT NOW (used to revert after a consumable stack empties);
         // a gun/melee reverts only if it's still in the bag, else fists.
         System.Action _revertEquip;
@@ -2207,7 +2227,7 @@ namespace UnturnedGodot
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
-                else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered pump to fill it (master's fluids)
+                else if (_heldFuelItem != null) { if (rmb.Pressed) { if (IsInstanceValid(_focusDeployable) && _focusDeployable.FuelMax > 0f) TryDepositFuel(); else TryExtractFuel(); } }   // gas can in hand: RMB a GENERATOR to POUR in (refuel), or a powered PUMP to fill the can (master's fluids)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }

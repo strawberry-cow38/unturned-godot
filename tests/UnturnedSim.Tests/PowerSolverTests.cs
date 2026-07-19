@@ -209,6 +209,28 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
+        public void Generator_Caps_Total_Output_At_Its_Rating()
+        {
+            // gen 4000w -> 2-way splitter -> two 3000w loads (6000w demanded). The splitter re-exports the full input
+            // to each branch, but the GENERATOR can't source more than 4000w: it powers ONE 3000w branch and STARVES
+            // the other, so the total draw is capped at the rating (master: no infinite draw past 4000w).
+            var gen = Generator(watts: 4000f);
+            var split = new PowerDevice();
+            var sIn = split.AddPort(PowerPortKind.Consumer, 0f);        // relay input
+            var sA = split.AddPort(PowerPortKind.Passthrough, 0f);
+            var sB = split.AddPort(PowerPortKind.Passthrough, 0f);
+            var loadA = new PowerDevice(); var lA = loadA.AddPort(PowerPortKind.Consumer, 3000f);
+            var loadB = new PowerDevice(); var lB = loadB.AddPort(PowerPortKind.Consumer, 3000f);
+            PowerSolver.Solve(
+                new[] { gen.Dev, split, loadA, loadB },
+                new[] { Wire(gen.Out, sIn), Wire(sA, lA), Wire(sB, lB) });
+
+            Assert.That(lA.Powered && lB.Powered, Is.False, "can't run two 3000w loads on a 4000w generator");
+            Assert.That(lA.Powered || lB.Powered, Is.True, "but ONE 3000w load fits under the 4000w cap");
+            Assert.That(gen.Out.Draw, Is.EqualTo(3000f).Within(0.01f), "draw capped at the one powered branch, not 6000w");
+        }
+
+        [Test]
         public void Combiner_With_One_Source_Just_Passes_It_Through()
         {
             // only one input wired: the combiner exports that single source and it carries the whole load (ratio 1).

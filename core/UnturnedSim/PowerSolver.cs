@@ -86,6 +86,80 @@ namespace SDG.Unturned
                 }
             }
 
+            // OUTPUT CAP: a source can't power more than its rated Watts. Walk each producing output's tree in
+            // wire order, greedily charging powered consumers against a shared budget; a consumer (and everything
+            // downstream of it) that would push past the budget is switched OFF. This stops a SPLITTER -- which
+            // re-exports the full input to every branch -- from letting you draw unlimited power past the generator's
+            // rating (master: "the generator should stop powering new devices above the threshold"). Only bites on
+            // OVERLOAD; an under-budget net is untouched. `drawn` is global so a combiner's two sources each spend
+            // their own budget on the shared load without double-charging (and #2 picks up what #1 couldn't afford).
+            // PASS 1 charges each producing output's tree against its budget, threading the combiner load-SHARE (same
+            // ratio TraceLoad uses) so a consumer fed by two sources only costs each one its proportional slice; a
+            // consumer a source can't cover its share of is STARVED. Deterministic (wire order) so it's the first
+            // ~4000w of devices that stay lit -- master's "stop powering NEW devices above the threshold".
+            var starved = new HashSet<PowerPort>();
+            foreach (var d in devices)
+                foreach (var o in d.Ports)
+                {
+                    if (o.Kind != PowerPortKind.Output || o.Live <= 0f) continue;
+                    float remaining = o.Watts;
+                    var seen = new HashSet<PowerPort>();
+                    var stack = new Stack<(PowerPort port, float share)>();
+                    stack.Push((o, 1f));
+                    while (stack.Count > 0)
+                    {
+                        var (src, share) = stack.Pop();
+                        if (!seen.Add(src)) continue;
+                        PowerPort consumer = null;
+                        foreach (var w in wires) if (w.Source == src && w.Consumer != null) { consumer = w.Consumer; break; }
+                        if (consumer == null || !consumer.Powered) continue;
+                        float cost = consumer.Watts * share;   // this source's proportional slice of the load (share==1 outside a combiner)
+                        if (cost > 0f)
+                        {
+                            if (remaining >= cost) remaining -= cost;
+                            else { starved.Add(consumer); continue; }   // over budget -> starve it + don't feed its subtree from this source
+                        }
+                        var owner = consumer.Owner;
+                        if (owner == null) continue;
+                        float totalIn = 0f;
+                        foreach (var pp in owner.Ports) if (pp.Kind == PowerPortKind.Consumer && pp.Powered) totalIn += pp.Live;
+                        float subShare = totalIn > 0f ? share * (consumer.Live / totalIn) : 0f;
+                        if (subShare > 0f)
+                            foreach (var pp in owner.Ports)
+                                if (pp.Kind == PowerPortKind.Passthrough) stack.Push((pp, subShare));
+                    }
+                }
+            // PASS 2 (only if something starved): re-walk the live sources, stopping at starved consumers, and switch
+            // off any powered consumer no longer reachable (the starved loads + everything downstream of them).
+            if (starved.Count > 0)
+            {
+                var reached = new HashSet<PowerPort>();
+                foreach (var d in devices)
+                    foreach (var o in d.Ports)
+                    {
+                        if (o.Kind != PowerPortKind.Output || o.Live <= 0f) continue;
+                        var seen = new HashSet<PowerPort>();
+                        var stack = new Stack<PowerPort>();
+                        stack.Push(o);
+                        while (stack.Count > 0)
+                        {
+                            var src = stack.Pop();
+                            if (!seen.Add(src)) continue;
+                            PowerPort consumer = null;
+                            foreach (var w in wires) if (w.Source == src && w.Consumer != null) { consumer = w.Consumer; break; }
+                            if (consumer == null || !consumer.Powered || starved.Contains(consumer)) continue;
+                            reached.Add(consumer);
+                            if (consumer.Owner != null)
+                                foreach (var pp in consumer.Owner.Ports)
+                                    if (pp.Kind == PowerPortKind.Passthrough) stack.Push(pp);
+                        }
+                    }
+                foreach (var d in devices)
+                    foreach (var p in d.Ports)
+                        if (p.Kind == PowerPortKind.Consumer && p.Powered && !reached.Contains(p))
+                            p.Powered = false;
+            }
+
             // per-output LOAD: trace each output's chain/tree (output -> wire -> consumer -> that consumer's
             // passthrough(s) -> ...) and sum the usage of every powered consumer it feeds (the generator's usage
             // bar + vibration). A splitter forks the trace, so this is a tree walk, not a single chain.
