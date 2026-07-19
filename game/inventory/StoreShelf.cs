@@ -79,7 +79,8 @@ namespace UnturnedGodot
         public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf")
         {
             var pr = Prof(meshName);
-            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label };
+            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label,
+                                     Width = (byte)pr.PerTier, Height = (byte)pr.TierY.Length };   // grid mirrors the shelf 1:1 (PerTier cols x tier rows) so a UI position == a shelf position
             parent.AddChild(s);
             s.GlobalTransform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
             return s;
@@ -179,10 +180,9 @@ namespace UnturnedGodot
             if (mesh == null) return;
             var pr = Prof(MeshName);
             var box = StoodAabb(mesh);
-            int slots = pr.TierY.Length * pr.PerTier;
             int gx = cellKey >> 8, gy = cellKey & 0xFF;
-            int slot = (gx + gy * Width) % slots;                 // stable grid cell -> slot
-            int tier = slot / pr.PerTier, col = slot % pr.PerTier;
+            int col = gx, tier = (pr.TierY.Length - 1) - gy;      // shelf MIRRORS the container-UI grid: column = grid x, tier = grid row (UI top row -> top shelf tier)
+            if (col < 0 || col >= pr.PerTier || tier < 0 || tier >= pr.TierY.Length) return;   // a grid cell beyond the shelf's slots -> not shown
             float fx = pr.PerTier > 1 ? col / (float)(pr.PerTier - 1) : 0.5f;
             float x0 = box.Position.X + box.Size.X * (1f - pr.WidthUse) * 0.5f;
             float xspan = box.Size.X * pr.WidthUse;
