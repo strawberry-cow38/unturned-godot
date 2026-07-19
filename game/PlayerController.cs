@@ -771,42 +771,59 @@ namespace UnturnedGodot
 
         // RMB with a gas can in hand + looking at a POWERED pump: fill the can as much as possible = min(its free space,
         // the pump's remaining fuel). One click (master). Nothing happens if the pump's unpowered/empty or the can's full.
+        // RMB = SUCK fuel INTO the can: from a powered pump, else OUT of a vehicle you're looking at (master: cars are suckable).
         void TryExtractFuel()
         {
-            if (_heldFuelItem == null || !IsInstanceValid(_focusGasPump)) return;
+            if (_heldFuelItem == null) return;
             var asset = _heldFuelItem.GetAsset();
             if (asset == null || !asset.IsFuelContainer) return;
-            if (!_focusGasPump.IsPowered) { GD.Print("[fuel] that pump has no power"); return; }
             float canFuel = Mathf.Max(0f, _heldFuelItem.fuelLevel);
             float space = asset.fuelCapacity - canFuel;
             if (space <= 0.01f) { GD.Print("[fuel] can is full"); return; }
-            float pulled = _focusGasPump.Extract(space);   // drains the pump's tank, capped at what's left
-            if (pulled > 0f)
+            if (IsInstanceValid(_focusGasPump))
             {
-                _heldFuelItem.fuelLevel = canFuel + pulled;
-                _invUI?.Refresh();
-                GD.Print($"[fuel] +{pulled:0} -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}; pump {_focusGasPump.Fluid.Amount:0} left");
+                if (!_focusGasPump.IsPowered) { GD.Print("[fuel] that pump has no power"); return; }
+                float pulled = _focusGasPump.Extract(space);   // drains the pump's shared station tank, capped at what's left
+                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GD.Print($"[fuel] +{pulled:0} from pump -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}"); }
+            }
+            else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)   // siphon fuel out of a car
+            {
+                float pulled = Mathf.Min(space, _focusVehicle.Fuel);
+                if (pulled <= 0.01f) { GD.Print("[fuel] that vehicle is empty"); return; }
+                _focusVehicle.Fuel -= pulled; _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh();
+                GD.Print($"[fuel] siphoned {pulled:0} from {_focusVehicle.DisplayName} -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}");
             }
         }
 
         // RMB with a gas can in hand + looking at a GENERATOR (any FuelMax deployable): POUR the can into it
         // (source UseableFuel EUseMode.Deposit). Moves min(what's in the can, the tank's free space). This is how
         // you refuel a generator that ran dry -- then a manual [F] restarts it (it doesn't auto-resume).
+        // LMB = POUR the can's fuel INTO a generator (any FuelMax deployable), else a vehicle you're looking at (master:
+        // cars are fillable). Refuel a dead gen -> manual [F] restart; refuel a dead car -> re-enter restarts it.
         void TryDepositFuel()
         {
-            if (_heldFuelItem == null || !IsInstanceValid(_focusDeployable)) return;
-            var d = _focusDeployable;
-            if (d.FuelMax <= 0f) return;   // not a fuel-holding deployable (spotlight/splitter draw from a gen, no tank)
+            if (_heldFuelItem == null) return;
+            var asset = _heldFuelItem.GetAsset();
+            if (asset == null || !asset.IsFuelContainer) return;
             float canFuel = Mathf.Max(0f, _heldFuelItem.fuelLevel);
             if (canFuel <= 0.01f) { GD.Print("[fuel] can is empty"); return; }
-            float space = d.FuelMax - d.Fuel;
-            if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
-            float poured = Mathf.Min(canFuel, space);
-            d.Fuel += poured;
-            _heldFuelItem.fuelLevel = canFuel - poured;
-            _invUI?.Refresh();
-            PowerNet.MarkDirty();   // a dry gen just got fuel back -> re-evaluate the net (still needs a manual restart)
-            GD.Print($"[fuel] poured {poured:0} -> {d.Def?.Name} {d.Fuel:0}/{d.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+            if (IsInstanceValid(_focusDeployable) && _focusDeployable.FuelMax > 0f)
+            {
+                float space = _focusDeployable.FuelMax - _focusDeployable.Fuel;
+                if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
+                float poured = Mathf.Min(canFuel, space);
+                _focusDeployable.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
+                PowerNet.MarkDirty();   // a dry gen just got fuel back -> re-evaluate the net (still needs a manual restart)
+                GD.Print($"[fuel] poured {poured:0} -> {_focusDeployable.Def?.Name} {_focusDeployable.Fuel:0}/{_focusDeployable.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+            }
+            else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)
+            {
+                float space = _focusVehicle.FuelMax - _focusVehicle.Fuel;
+                if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
+                float poured = Mathf.Min(canFuel, space);
+                _focusVehicle.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
+                GD.Print($"[fuel] poured {poured:0} -> {_focusVehicle.DisplayName} {_focusVehicle.Fuel:0}/{_focusVehicle.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+            }
         }
 
         // A closure that re-equips whatever is held RIGHT NOW (used to revert after a consumable stack empties);

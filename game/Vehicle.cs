@@ -1708,6 +1708,7 @@ namespace UnturnedGodot
             if (NetHeld)   // MP Part A: a driver's client owns this body's physics -- the frozen node only burns fuel + counts down its explosion (retail simulateBurnFuel / explode run server-side for driven cars too); settle/damage/gear sim all skip
             {
                 if (EngineOn && Fuel > 0f) Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
+                if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;   // ran dry -> cut the engine (master)
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
             }
@@ -1787,6 +1788,7 @@ namespace UnturnedGodot
             }
             if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
                 Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
+            if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;   // ran DRY (or entered an empty car) -> cut the engine; Drive gates on EngineOn so it coasts to a stop. Refuel (gas can / pump) + re-enter to restart (master)
             if (_headlightsOn)   // source: headlights burn the battery (EBatteryMode.Burn); die when it's empty
             {
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);

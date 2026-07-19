@@ -762,6 +762,13 @@ namespace UnturnedGodot
                 amt.MouseFilter = Control.MouseFilterEnum.Ignore;
                 tile.AddChild(amt);
             }
+
+            if (asset?.IsFuelContainer == true && jar.item != null)   // a gas can shows its fuel LEVEL as a bar on the icon (master)
+            {
+                float frac = asset.fuelCapacity > 0f ? Mathf.Clamp(Mathf.Max(0f, jar.item.fuelLevel) / asset.fuelCapacity, 0f, 1f) : 0f;
+                tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.65f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });
+                tile.AddChild(new ColorRect { Color = new Color(0.95f, 0.78f, 0.2f), Position = new Vector2(4, h - 8), Size = new Vector2((w - 8) * frac, 4), MouseFilter = Control.MouseFilterEnum.Ignore });
+            }
             return tile;
         }
 
