@@ -94,6 +94,7 @@ namespace UnturnedGodot
         public Color? ConsumableColor;   // flat _Color for a no-texture consumable (cheese=yellow, potato=brown) -> used instead of the gray default
         public string DeployableMesh, DeployableAlbedo;   // set (instead of GunName) to HOLD a deployable (generator/spotlight): item.prefab carry mesh + palette, Deploy_Equip hold + Deploy_Use place anim, no gun FX
         public string ToolMesh; public Color? ToolColor;   // set (instead of GunName) to HOLD a tool in-hand (the Wire wiring tool): static mesh + generic ready hold, flat colour, no gun/deploy FX
+        public bool NaturalHold;   // for a DeployableMesh that is HELD not PLACED (the portable gas can): use the Melee_Equip ready-hold + tool offset instead of the low carry-to-place stance
         // Sight/Mag are null when the gun's sights + magazine are baked into Model_0 (the Masterkey shotgun — no
         // separate sight/mag prefab). MuzzleHook = the model's Effect hook (bore, port frame). Shoot/Reload = the
         // gun's own AudioClips (the assault rifles share the Eaglefire's).
@@ -239,7 +240,7 @@ namespace UnturnedGodot
                     foreach (var c in new[] { "_Equip", "_Weak", "_Strong", "_Start_Swing", "_Stop_Swing", "_Inspect" }) _arms.SetClipLoop(_meleeCap + c, false);
                 string equipClip = (EmptyHands || Fists) ? "Melee_Equip"   // unarmed / carry: the generic melee READY hold (one-shot, no loop) -- NOT the 3P Idle_Hands_0 that was looping ("grab off back")
                                  : ToolMesh != null ? "Melee_Equip"   // held tool (wire): the generic one-hand ready hold
-                                 : DeployableMesh != null ? (_arms.ClipLength("Deploy_Equip") > 0f ? "Deploy_Equip" : "Melee_Equip")   // deployable: the src barricade "Equip" raise-to-hold (UseableBarricade.equip plays "Equip")
+                                 : DeployableMesh != null ? (NaturalHold ? "Melee_Equip" : (_arms.ClipLength("Deploy_Equip") > 0f ? "Deploy_Equip" : "Melee_Equip"))   // deployable: the src barricade "Equip" raise-to-hold (UseableBarricade.equip plays "Equip"); NaturalHold (gas can) = the ready hold, not carry-to-place
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
                 _arms.SetClipLoop(equipClip, false);   // equip/ready-hold ALWAYS plays once and holds (src: one-shot wrapMode) -- the looping empty-hand pose was the bug
@@ -735,11 +736,13 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_DROLL") is string _dr && _dr.Split(',').Length == 3)
                 { var pp = _dr.Split(','); droll = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 var drollB = Basis.FromEuler(new Vector3(Mathf.DegToRad(droll.X), Mathf.DegToRad(droll.Y), Mathf.DegToRad(droll.Z)));
-                if (System.Environment.GetEnvironmentVariable("UG_VMSCALE") is string _sc2 && float.TryParse(_sc2, out var _s2)) drollB = drollB.Scaled(new Vector3(_s2, _s2, _s2));
+                float natScale = NaturalHold ? 0.3f : 1f;   // the gas-can mesh is ~0.84m (no source viewmodel scale) -> shrink to a hand-held size that sits naturally in-frame
+                if (System.Environment.GetEnvironmentVariable("UG_VMSCALE") is string _sc2 && float.TryParse(_sc2, out var _s2)) natScale = _s2;
+                if (natScale != 1f) drollB = drollB.Scaled(new Vector3(natScale, natScale, natScale));
                 // The generator is a big object centered on the hand -> it hangs mostly below the view. Lift it into
                 // frame in VIEW space (the arms live in the SubViewport, whose world axes are the camera axes: +Y up,
                 // -Z forward). Tunable via UG_DPOS="x,y,z".
-                Vector3 dpos = ToolMesh != null ? new Vector3(0f, 0.02f, 0.04f) : new Vector3(0f, 0.30f, -0.10f);   // a small tool sits in the hand; the big generator gets lifted into frame
+                Vector3 dpos = (ToolMesh != null || NaturalHold) ? new Vector3(0f, 0.02f, 0.04f) : new Vector3(0f, 0.30f, -0.10f);   // a small tool / held gas can sits in the hand; the big generator gets lifted into frame
                 if (System.Environment.GetEnvironmentVariable("UG_DPOS") is string _dp && _dp.Split(',').Length == 3)
                 { var pp = _dp.Split(','); dpos = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 _gun.GlobalTransform = new Transform3D(datt.GlobalTransform.Basis * drollB, datt.GlobalPosition + dpos);

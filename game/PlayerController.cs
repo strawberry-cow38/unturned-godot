@@ -763,7 +763,7 @@ namespace UnturnedGodot
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFuelItem = backing;
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { EmptyHands = true };
+            _viewmodel = new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true };   // the ripped 1P gas-can model held in-hand (Melee_Equip ready hold via NaturalHold -- a can is carried, not placed/eaten); HoldingDeployable stays false (no _deployable) so RMB still extracts
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             GD.Print($"[fuel] holding {asset?.itemName} -- {(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f):0}/{asset?.fuelCapacity:0} fuel (RMB a powered pump to fill)");

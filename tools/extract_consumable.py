@@ -36,9 +36,11 @@ for ch in item_tr.read_typetree().get("m_Children", []):
     cgo = by_id.get(ct.read_typetree().get("m_GameObject", {}).get("m_PathID"))
     if cgo and cgo.read_typetree().get("m_Name") == "Model_0":
         model0_go = cgo
-if not model0_go:
-    print("NO Model_0 for", NAME); sys.exit(1)
-m0tt = model0_go.read_typetree()
+if model0_go:
+    m0tt = model0_go.read_typetree()
+else:
+    m0tt = prefab.read_typetree()   # single-mesh items (e.g. the gas can) hang the MeshFilter on the Item ROOT, no Model_0 child
+    print("(no Model_0 -> using the Item root mesh for", NAME + ")")
 
 mf = comp_of(m0tt, ("MeshFilter",))
 mesh = by_id.get(mf.read_typetree().get("m_Mesh", {}).get("m_PathID")) if mf else None
