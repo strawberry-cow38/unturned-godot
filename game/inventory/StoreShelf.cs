@@ -33,6 +33,31 @@ namespace UnturnedGodot
         static readonly Dictionary<string, ArrayMesh> _meshes = new();
         static readonly Dictionary<string, Material> _mats = new();
 
+        // per-item "front": the detail-face normal (medkit cross, MRE text) in the Godot mesh frame, ripped from each
+        // prefab's "Icon" transform (the pose the game photographs its inventory icon from -- tools/extract_item_fronts.py).
+        // Lets us lay flat items DETAIL-SIDE-UP instead of guessing (master: "the ones laying flat are upside down").
+        static Dictionary<int, Vector3> _fronts;
+        static Vector3 FrontOf(int id)
+        {
+            if (_fronts == null)
+            {
+                _fronts = new Dictionary<int, Vector3>();
+                string p = ProjectSettings.GlobalizePath("res://content/items/item_fronts.json");
+                try
+                {
+                    if (System.IO.File.Exists(p))
+                        foreach (var kv in Json.ParseString(System.IO.File.ReadAllText(p)).AsGodotDictionary())
+                        {
+                            var a = kv.Value.AsGodotArray();
+                            if (a.Count == 3 && int.TryParse(kv.Key.ToString(), out int fid))
+                                _fronts[fid] = new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle());
+                        }
+                }
+                catch (System.Exception e) { GD.PrintErr($"[store-shelf] item_fronts load failed: {e.Message}"); }
+            }
+            return _fronts.TryGetValue(id, out var v) ? v : Vector3.Zero;
+        }
+
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
         public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf")
@@ -154,8 +179,9 @@ namespace UnturnedGodot
             // type, and no random yaw (master: face them consistently, not scattered):
             //  - a CONSUMABLE that's tall with a ~square/round base (cans, bottles, chemicals) -> STAND upright (+90 X,
             //    the game's drop pose; the label wraps so facing reads fine either way).
-            //  - EVERYTHING ELSE (tools, guns, flat slabs, boxy food like MREs, medkit cases) -> LIE FLAT: shortest axis
-            //    up, LONGEST axis along the shelf WIDTH (keeps long/deep items from poking the back wall), middle = depth.
+            //  - EVERYTHING ELSE (tools, guns, flat slabs, boxy food like MREs, medkit cases) -> LIE FLAT, DETAIL-side up
+            //    via the game's per-item icon "front" (item_fronts.json), LONGEST axis along the shelf WIDTH (keeps long
+            //    items off the back wall), middle = depth.
             var s = (vis.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One * 0.1f)).Size;
             float[] d = { s.X, s.Y, s.Z };
             int[] ax = { 0, 1, 2 };
@@ -170,13 +196,34 @@ namespace UnturnedGodot
                 oriented = new Basis(Vector3.Right, Mathf.DegToRad(90f));   // drop-pose upright
             else
             {
-                var c = new Vector3[3];                       // permute local axes -> world by size rank
-                c[ax[2]] = new Vector3(1, 0, 0);              // longest  -> X (shelf width)
-                c[ax[1]] = new Vector3(0, 0, 1);              // middle   -> Z (depth)
-                c[ax[0]] = new Vector3(0, 1, 0);              // shortest -> Y (up)
+                // LIE FLAT, DETAIL-SIDE UP. The game's per-item "front" (item_fronts.json, from the prefab's Icon pose)
+                // says which face is the labelled one; use it as the up axis (snapped to the nearest local axis so the
+                // item rests flat) -- for flat/elongated items that's the broad/side face, so it reads as "lying flat"
+                // with the label up. No icon data -> fall back to the shortest axis (arbitrary side). Longer of the two
+                // remaining axes -> shelf WIDTH (keeps long items off the back wall), the other -> depth.
+                Vector3 front = FrontOf(id);
+                int upA; float upSign;
+                if (front.LengthSquared() > 0.01f)
+                {
+                    float fx0 = Mathf.Abs(front.X), fy0 = Mathf.Abs(front.Y), fz0 = Mathf.Abs(front.Z);
+                    upA = (fx0 >= fy0 && fx0 >= fz0) ? 0 : (fy0 >= fz0 ? 1 : 2);
+                    upSign = front[upA] >= 0f ? 1f : -1f;
+                }
+                else { upA = ax[0]; upSign = 1f; }
+                int o1 = (upA + 1) % 3, o2 = (upA + 2) % 3;
+                int wide = d[o1] >= d[o2] ? o1 : o2, deep = d[o1] >= d[o2] ? o2 : o1;
+                var c = new Vector3[3];
+                c[upA]  = new Vector3(0, upSign, 0);   // detail axis -> up (+Y); the FRONT face ends up on top
+                c[wide] = new Vector3(1, 0, 0);        // longer flat axis -> shelf width
+                c[deep] = new Vector3(0, 0, 1);        // remaining -> depth
                 oriented = Basis.Identity;
                 oriented.X = c[0]; oriented.Y = c[1]; oriented.Z = c[2];
-                if (oriented.Determinant() < 0f) oriented.X = -oriented.X;   // keep it a proper rotation (no reflection)
+                if (oriented.Determinant() < 0f)       // fix handedness on the DEPTH axis (never the up/width) so detail stays up
+                {
+                    if (deep == 0) oriented.X = -oriented.X;
+                    else if (deep == 1) oriented.Y = -oriented.Y;
+                    else oriented.Z = -oriented.Z;
+                }
             }
 
             // SCALE oversized items down to fit the slot (master's "cheat"): cap the footprint to the slot width + the
@@ -189,14 +236,16 @@ namespace UnturnedGodot
             if (ob.Size.Y > tierGap && ob.Size.Y > 0.0001f) sc = Mathf.Min(sc, tierGap / ob.Size.Y);
             vis.Basis = oriented.Scaled(new Vector3(sc, sc, sc));
 
-            // POSITION by the final bounds: base flush on the tier + a tiny lift (master: sit a touch higher); footprint
-            // FRONT-biased for visibility, but CLAMPED so its back edge never passes the back wall (fixes the MRE/medkit
-            // clipping); centered on the slot (X).
+            // POSITION by the final bounds: base flush on the tier + a tiny lift (master: sit a touch higher); centered
+            // on the slot (X). Front of the shelf = HIGH Z (the aisle -- the visible side), back wall = LOW Z: bias items
+            // toward the front and keep their back (low-Z) edge well off the wall (master: "move away from the back wall").
             var rb = new Transform3D(vis.Basis, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
             float tierSurfaceY = box.Position.Y + box.Size.Y * pr.TierY[tier];
-            float zPos = (box.Position.Z + box.Size.Z * 0.64f) - (rb.Position.Z + rb.Size.Z * 0.5f);   // front-biased center
-            float minBack = box.Position.Z + box.Size.Z * 0.18f;                                        // keep the back edge this far off the wall
+            float zPos = (box.Position.Z + box.Size.Z * 0.70f) - (rb.Position.Z + rb.Size.Z * 0.5f);   // front-biased center (front = high Z)
+            float minBack = box.Position.Z + box.Size.Z * 0.28f;                                        // back edge (low Z) stays this far off the wall
             if (zPos + rb.Position.Z < minBack) zPos = minBack - rb.Position.Z;
+            float frontLip = box.Position.Z + box.Size.Z * 0.96f;                                        // don't overhang the front lip (high Z)
+            if (zPos + rb.Position.Z + rb.Size.Z > frontLip) zPos = frontLip - (rb.Position.Z + rb.Size.Z);
             vis.Position = new Vector3(
                 (x0 + xspan * fx) - (rb.Position.X + rb.Size.X * 0.5f),
                 tierSurfaceY - rb.Position.Y + rb.Size.Y * 0.03f,

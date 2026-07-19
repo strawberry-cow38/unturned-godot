@@ -2103,6 +2103,11 @@ namespace UnturnedGodot
                 AddChild(scam);
                 scam.GlobalPosition = new Vector3(3.4f, 2.0f, 1.2f);
                 scam.LookAt(new Vector3(0f, 1.2f, -4.5f), Vector3.Up);
+                if (System.Environment.GetEnvironmentVariable("UG_SHELFCAM") == "top")   // high angle: verify lying items are detail-side UP
+                {
+                    scam.GlobalPosition = new Vector3(0.2f, 3.9f, -2.4f);
+                    scam.LookAt(new Vector3(0f, 1.3f, -4.6f), Vector3.Up);
+                }
                 scam.Current = true;
                 return;
             }
