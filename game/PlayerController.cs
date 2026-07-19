@@ -318,8 +318,8 @@ namespace UnturnedGodot
             if (_wiring)
             {
                 if (!IsInstanceValid(_wireSrc)) { CancelWire(); WireHudSet(null); return; }   // source deployable gone -> drop the wire
-                bool snapConsumer = _wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Usable && _wirePort.Owner != _wireSrc.Owner && !PortWired(_wirePort);   // an already-wired / burning consumer won't accept a snap
-                Vector3 end = snapConsumer ? _wirePort.GlobalPosition : WirePlacePoint();
+                bool snapEnd = CanCompleteWire(_wireSrc, _wirePort);   // snap to the compatible opposite-role port (an already-wired / burning / same-device port won't accept it)
+                Vector3 end = snapEnd ? _wirePort.GlobalPosition : WirePlacePoint();
                 var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
                 pts.AddRange(_wireNodes); pts.Add(end);
                 float len = PolyLen(pts);
@@ -340,6 +340,15 @@ namespace UnturnedGodot
         }
         // a SOURCE end: an output, or a passthrough re-exporting its leftover (daisy-chaining the next spotlight)
         static bool IsSourcePort(ConnectionPort p) => p != null && (p.Kind == DeployableDef.PortKind.Output || p.Kind == DeployableDef.PortKind.Passthrough);
+        // a CONSUMER end: a device input (a spotlight's usage, a splitter's relay input)
+        static bool IsConsumerPort(ConnectionPort p) => p != null && p.Kind == DeployableDef.PortKind.Consumer;
+        // a wire has one SOURCE end + one CONSUMER end; you can start routing from EITHER (strawberry). Can `target`
+        // complete a wire started at `start`? -> opposite roles, usable, unwired, on a different deployable.
+        bool CanCompleteWire(ConnectionPort start, ConnectionPort target) =>
+            start != null && target != null && target.Usable && target.Owner != start.Owner && !PortWired(target)
+            && (IsSourcePort(start) ? IsConsumerPort(target) : IsSourcePort(target));
+        // order the two picked ends into (source, consumer) for the power graph, regardless of which you started from
+        static (ConnectionPort src, ConnectionPort cons) OrderWireEnds(ConnectionPort a, ConnectionPort b) => IsSourcePort(a) ? (a, b) : (b, a);
 
         // LMB with the wire tool: pick a SOURCE (output/passthrough) to start, place a node while routing, or complete on a CONSUMER.
         void WireLmb()
@@ -347,7 +356,8 @@ namespace UnturnedGodot
             if (_dead) return;   // no wiring from the death cam
             if (!_wiring)
             {
-                if (IsSourcePort(_wirePort) && _wirePort.Usable && !PortWired(_wirePort))   // 1 wire/port + not on a burning/wrecked deployable
+                // start from EITHER end -- a source (output/passthrough) OR a consumer input (strawberry: wire from the input side too)
+                if ((IsSourcePort(_wirePort) || IsConsumerPort(_wirePort)) && _wirePort.Usable && !PortWired(_wirePort))   // 1 wire/port + not on a burning/wrecked deployable
                 {
                     _wiring = true; _wireSrc = _wirePort; _wireNodes.Clear();
                     _wirePreview = new Wire(); GetParent().AddChild(_wirePreview);
@@ -355,8 +365,8 @@ namespace UnturnedGodot
                 }
                 return;
             }
-            if (_wirePort != null && _wirePort.Kind == DeployableDef.PortKind.Consumer && _wirePort.Usable && _wirePort.Owner != _wireSrc?.Owner && !PortWired(_wirePort))
-            {   // complete on a fresh consumer -- but only if the finished wire is within the same 20-node/40m budget as node placement
+            if (CanCompleteWire(_wireSrc, _wirePort))
+            {   // complete on the compatible opposite-role port -- but only if the finished wire is within the same 20-node/40m budget as node placement
                 var cpts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition }; cpts.AddRange(_wireNodes); cpts.Add(_wirePort.GlobalPosition);
                 if (_wireNodes.Count <= MaxWireNodes && PolyLen(cpts) <= MaxWireLen) CompleteWire(_wirePort);
                 return;
@@ -375,23 +385,24 @@ namespace UnturnedGodot
             else _wireNodes.RemoveAt(_wireNodes.Count - 1);
         }
 
-        void CompleteWire(ConnectionPort consumer)
+        void CompleteWire(ConnectionPort target)
         {
             if (_wirePreview == null || !IsInstanceValid(_wireSrc)) { CancelWire(); return; }
-            if (RequestConnectWire(_wireSrc, consumer))
+            var (src, cons) = OrderWireEnds(_wireSrc, target);   // you may have started from the consumer end -> order into (source, consumer)
+            if (RequestConnectWire(src, cons))
             {   // MP: the link is a REQUEST -- drop the local preview; the committed wire renders when
                 // WireConnected echoes through the replica view (server wires are 2-point, nodes are SP cosmetics)
-                GD.Print($"[wire] connect requested {_wireSrc.ProviderName} -> {consumer.ProviderName} (wire)");
+                GD.Print($"[wire] connect requested {src.ProviderName} -> {cons.ProviderName} (wire)");
                 CancelWire();
                 return;
             }
             var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
-            pts.AddRange(_wireNodes); pts.Add(consumer.GlobalPosition);
-            _wirePreview.Source = _wireSrc; _wirePreview.Consumer = consumer;
+            pts.AddRange(_wireNodes); pts.Add(target.GlobalPosition);   // the preview polyline follows the ROUTE you drew (visual); the graph endpoints are ordered source->consumer
+            _wirePreview.Source = src; _wirePreview.Consumer = cons;
             _wirePreview.SetPoints(pts, valid: true);
             _wirePreview.AddToGroup("wires");
             PowerNet.MarkDirty();   // a new wire changes the graph
-            GD.Print($"[wire] connected {_wireSrc.ProviderName} -> {consumer.ProviderName} ({_wireNodes.Count} nodes)");
+            GD.Print($"[wire] connected {src.ProviderName} -> {cons.ProviderName} ({_wireNodes.Count} nodes)");
             _wirePreview = null; _wiring = false; _wireSrc = null; _wireNodes.Clear();
         }
 
@@ -479,8 +490,14 @@ namespace UnturnedGodot
             if (_cam == null) return GlobalPosition;
             var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
-            _wirePlaceRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 6), Exclude = new Godot.Collections.Array<Rid> { GetRid() } };
+            _wirePlaceRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 6) };
             _wirePlaceRayQ.From = from; _wirePlaceRayQ.To = from + fwd * WirePlaceReach;
+            // the wire routes STRAIGHT THROUGH deployables (strawberry) -- exclude the player + every deployable body so the
+            // free end lands on the ground/structure behind them instead of sticking to a generator/splitter/box face.
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                if (n is Deployable dep && GodotObject.IsInstanceValid(dep)) exclude.Add(dep.GetRid());
+            _wirePlaceRayQ.Exclude = exclude;
             var hit = space.IntersectRay(_wirePlaceRayQ);
             return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * WirePlaceReach;
         }
