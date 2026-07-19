@@ -375,12 +375,17 @@ namespace UnturnedGodot
             {
                 Text = asset?.itemName ?? "?",
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Modulate = rar.Lerp(Colors.White, 0.35f),
-                PixelSize = 0.006f, NoDepthTest = true, FontSize = 64, OutlineSize = 10, TopLevel = true,
+                PixelSize = 0.006f, NoDepthTest = true, FontSize = 64, OutlineSize = 10,
                 Visible = System.Environment.GetEnvironmentVariable("UG_SHELFLABELS") == "1",   // hidden until focused; UG_SHELFLABELS=1 forces them on to verify positioning
             };
             vis.AddChild(label);
-            var la = new Transform3D(vis.Basis, vis.Position) * a;   // item AABB in the SHELF's LOCAL frame (vis's basis/position are valid immediately; its GlobalTransform may not be yet)
-            label.Position = ToGlobal(new Vector3(la.Position.X + la.Size.X * 0.5f, la.Position.Y + la.Size.Y + 0.12f, la.Position.Z + la.Size.Z * 0.5f));
+            // float the tag world-up above the item -- purely LOCAL so Godot applies the shelf's FINAL transform at render
+            // (Spawn sets GlobalTransform AFTER _Ready, so a ToGlobal snapshot here lands at the origin). vis is scaled +
+            // oriented, so aim at the vis-local direction that maps to world-up (shelves aren't tilted) + counter the scale.
+            var wb = new Transform3D(vis.Basis, Vector3.Zero) * a;
+            float sc = vis.Basis.Scale.X;
+            label.Position = vis.Basis.Inverse() * (Vector3.Up * (wb.Size.Y + 0.12f));
+            label.Scale = Vector3.One * (sc > 0.001f ? 1f / sc : 1f);
             body.Label = label;
         }
 
