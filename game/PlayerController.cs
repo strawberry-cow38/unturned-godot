@@ -130,7 +130,8 @@ namespace UnturnedGodot
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
-        const float DeployPickupTime = 0.55f;   // hold F this long over a deployable to pick it back up (wires disconnect)
+        const float DeployPickupTime = 1.0f;    // hold F this long over a deployable to pick it back up (wires disconnect)
+        const float PickupBarDeadzone = 0.2f;   // hide the progress bar for the first 20% of the hold, so a quick tap-to-toggle doesn't flash it
         IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
@@ -539,7 +540,8 @@ namespace UnturnedGodot
                 return;
             }
             _deployPickupTimer += delta;
-            _fHeldDeploy.PickupProgress = Mathf.Clamp(_deployPickupTimer / DeployPickupTime, 0f, 1f);
+            float frac = Mathf.Clamp(_deployPickupTimer / DeployPickupTime, 0f, 1f);
+            _fHeldDeploy.PickupProgress = frac >= PickupBarDeadzone ? frac : 0f;   // deadzone: no bar for the first 20% -> a quick tap-to-toggle shows nothing
             if (_deployPickupTimer >= DeployPickupTime)
             {
                 var d = _fHeldDeploy;
