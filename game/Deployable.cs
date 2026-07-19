@@ -65,9 +65,13 @@ namespace UnturnedGodot
         }
 
         // `surface` = the ground contact point (the raycast hit); the model is lifted so its base sits there.
-        public static Deployable Spawn(Node parent, DeployableDef def, Vector3 surface, float yawDeg)
+        // `backing` = the inventory item being planted (null = fresh/console spawn); a picked-up deployable carries its
+        // HP (item.quality %) + fuel (item.deployFuel) so re-placing it restores them instead of resetting to full.
+        public static Deployable Spawn(Node parent, DeployableDef def, Vector3 surface, float yawDeg, SDG.Unturned.Item backing = null)
         {
-            var d = new Deployable { Def = def, Health = def.Health, HealthMax = def.Health, Fuel = def.Fuel, FuelMax = def.Fuel };
+            var d = new Deployable { Def = def, HealthMax = def.Health, FuelMax = def.Fuel };
+            d.Health = backing != null ? Mathf.Clamp(def.Health * backing.quality / 100f, 1f, def.Health) : def.Health;
+            d.Fuel = (backing != null && backing.deployFuel >= 0f) ? Mathf.Min(backing.deployFuel, def.Fuel) : def.Fuel;
             var mi = BuildMesh(def, out Aabb ab);
             d._mesh = mi;
             d.AddChild(mi);

@@ -558,12 +558,18 @@ namespace UnturnedGodot
             ushort id = d.Def?.Id ?? 0;
             string name = d.Def?.Name;
             Vector3 pos = d.GlobalPosition;
-            d.Pickup();   // frees any wires plugged into it + despawns
-            if (id != 0)
+            var item = id != 0 ? SDG.Unturned.Assets.makeLoot(id) : null;
+            if (item != null)   // stamp the current HP (quality %) + fuel onto the item so re-placing restores them
             {
-                var item = SDG.Unturned.Assets.makeLoot(id);
+                if (d.HealthMax > 0f) item.quality = (byte)Mathf.Clamp(Mathf.RoundToInt(d.Health / d.HealthMax * 100f), 1, 100);
+                if (d.FuelMax > 0f) item.deployFuel = d.Fuel;
+            }
+            d.Pickup();   // frees any wires plugged into it + despawns
+            if (item != null)
+            {
+                bool handsFree = Unarmed;
                 if (!(Inventory?.tryAddItem(item) ?? false)) DropWorldItem(item, pos + Vector3.Up * 1f);   // bag full -> drop where it stood
-                _invUI?.Refresh();
+                else { _invUI?.Refresh(); if (handsFree) EquipItemAsset(item.GetAsset(), item); }   // hands free -> hold it (a deployable re-enters placement mode)
             }
             GD.Print($"[deploy] picked up #{id} ({name})");
         }
@@ -640,7 +646,8 @@ namespace UnturnedGodot
                 if (Inventory.tryAddItem(grabbed))
                 {
                     GD.Print($"[shelf-grab] {grabbed.GetAsset()?.itemName}");
-                    _invUI?.Refresh();   // straight into the bag -- don't force it into hands (most shelf items have no held model -> invisible)
+                    _invUI?.Refresh();
+                    if (Unarmed) EquipItemAsset(grabbed.GetAsset(), grabbed);   // hands free -> hold it (strawberry: restore force-into-hands on pickup, for all items)
                 }
                 else shelf.Storage.tryAddItem(grabbed);   // inventory full -> put it back on the shelf
                 return;
@@ -952,7 +959,7 @@ namespace UnturnedGodot
                         _viewmodel?.PlayDeployHold();
                         return;
                     }
-                    Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw);
+                    Deployable.Spawn(GetParent(), _deployable, _placePoint, _placeYaw, _deployItem);   // backing item restores a picked-up generator's fuel + HP
                     PlayPlaceSound(_deployable.PlaceSound, _placePoint);   // src: playSound(barricadeAsset.use) on build -- the .dat PlacementAudioClip
                     GD.Print($"[deploy] placed {_deployable.Name} at {_placePoint}");
                     // consume one from the bag (like a placed barricade). Console `deploy` has no backing item -> infinite.

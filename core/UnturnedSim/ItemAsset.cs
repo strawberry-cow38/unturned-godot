@@ -94,6 +94,9 @@ namespace SDG.Unturned
         public int gunFiremode = -1;   // fire-mode index (Safety/Semi/Burst/Auto)
         public int gunMagId = -1;      // the magazine item id currently loaded
         public int gunAttach = -1;     // attachment bitmask (which slots are attached; -1 = unset -> gun's defaults)
+        // Deployable state carried on the item so a generator REMEMBERS its fuel + HP through pickup <-> inventory <-> drop
+        // <-> re-place (strawberry). HP rides on `quality` (0-100 %); fuel needs its own float. -1 = fresh (full tank).
+        public float deployFuel = -1f;
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {

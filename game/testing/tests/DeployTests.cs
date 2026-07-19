@@ -122,4 +122,27 @@ namespace UnturnedGodot.Testing
             T.Check("4-way splitter is VALID on open ground too", placer.Aim(cam));
         }
     }
+
+    // Fuel + HP ride the item through pickup -> re-place (master): a damaged, half-fuelled generator picked up and
+    // planted again comes back with the same HP + fuel, not reset to full. A fresh item (no state) still spawns full.
+    public class DeployStatePersists : GameTest
+    {
+        public override string Name => "deploy.state_persists";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, Vector3.Zero, 0f);
+            yield return Ticks(1);
+            gen.Health = gen.HealthMax * 0.5f;   // damage to 50%
+            gen.Fuel = gen.FuelMax * 0.3f;       // burn down to 30% fuel
+            var item = SDG.Unturned.Assets.makeLoot(DeployableDef.Generator.Id);   // mimic PickupDeployable stamping the item
+            item.quality = (byte)Mathf.RoundToInt(gen.Health / gen.HealthMax * 100f);
+            item.deployFuel = gen.Fuel;
+            var gen2 = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(5f, 0f, 0f), 0f, item);   // re-place from that item
+            yield return Ticks(1);
+            T.Check($"HP restored to ~50% (got {gen2.Health / gen2.HealthMax:0.00})", Mathf.Abs(gen2.Health / gen2.HealthMax - 0.5f) < 0.02f);
+            T.Check($"fuel restored to 30% (got {gen2.Fuel / gen2.FuelMax:0.00})", Mathf.Abs(gen2.Fuel / gen2.FuelMax - 0.3f) < 0.01f);
+            var gen3 = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(10f, 0f, 0f), 0f);   // a fresh item (no state) -> full
+            T.Check("a fresh generator still spawns full HP + fuel", Mathf.Abs(gen3.Health - gen3.HealthMax) < 0.01f && Mathf.Abs(gen3.Fuel - gen3.FuelMax) < 0.01f);
+        }
+    }
 }
