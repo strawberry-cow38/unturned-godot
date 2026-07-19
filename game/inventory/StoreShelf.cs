@@ -371,6 +371,16 @@ namespace UnturnedGodot
             var body = new ShelfItemBody { Shelf = this, CellKey = cellKey, Glow = glow, Rarity = rar, ItemName = asset?.itemName ?? "?", CollisionLayer = ShelfItemHitLayer, CollisionMask = 0 };
             body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = a.Size * 1.1f }, Position = a.Position + a.Size * 0.5f });
             vis.AddChild(body);
+            var label = new Label3D   // name tag (hidden until looked at) -- TopLevel so it floats in WORLD space above the item, ignoring its orientation
+            {
+                Text = asset?.itemName ?? "?",
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Modulate = rar.Lerp(Colors.White, 0.35f),
+                PixelSize = 0.006f, NoDepthTest = true, FontSize = 64, OutlineSize = 10, Visible = false, TopLevel = true,
+            };
+            vis.AddChild(label);
+            var ob = vis.GlobalTransform * a;   // world AABB -> float the tag just above the item
+            label.Position = new Vector3(ob.Position.X + ob.Size.X * 0.5f, ob.Position.Y + ob.Size.Y + 0.12f, ob.Position.Z + ob.Size.Z * 0.5f);
+            body.Label = label;
         }
 
         // take the item at a grid cell into the grabber's hands: remove it from the grid (the display syncs it away).
@@ -419,12 +429,14 @@ namespace UnturnedGodot
         public StoreShelf Shelf;
         public int CellKey;
         public Godot.MeshInstance3D Glow;
+        public Godot.Label3D Label;
         public Godot.Color Rarity = Godot.Colors.White;
         public string ItemName = "?";
         public void SetFocused(bool on)
         {
             if (on) WorldItem.FocusColor = Rarity;
             if (Glow != null && Godot.GodotObject.IsInstanceValid(Glow)) Glow.Visible = on;
+            if (Label != null && Godot.GodotObject.IsInstanceValid(Label)) Label.Visible = on;
         }
     }
 }

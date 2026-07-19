@@ -160,7 +160,12 @@ namespace UnturnedGodot
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
                 // a placed deployable (generator) stops the ray on the world layer -> focus it directly from the ray hit
                 // (LOS-correct: a wall in the way stops the ray first). The LookReach IS the look-at radius.
-                if (rhit.Count > 0 && rhit["collider"].As<GodotObject>() is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
+                if (rhit.Count > 0)
+                {
+                    var rcol = rhit["collider"].As<GodotObject>();
+                    if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
+                    else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
+                }
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
@@ -192,6 +197,7 @@ namespace UnturnedGodot
                     }
                 }
                 if (hitItem != null && hitVeh != null) { if (bestV < bestI) hitItem = null; else hitVeh = null; }   // focus the nearer of the two
+                if (hitShelfItem != null) hitShelf = null;   // looking at an ITEM on the shelf -> outline the item only, not the whole shelf
                 if (hitVeh == null && hitItem == null)   // seats/steering seen through windows have no collider -> focus a car whose visual bounds the look-ray passes through (master). DISTANCE-CULLED so it isn't O(all vehicles) every frame (perf regression fix).
                 {
                     float maxD = (LookReach + 6f) * (LookReach + 6f);
@@ -568,10 +574,8 @@ namespace UnturnedGodot
                 if (grabbed == null) return;
                 if (Inventory.tryAddItem(grabbed))
                 {
-                    var ga = grabbed.GetAsset(); bool wasBare = Unarmed;
-                    GD.Print($"[shelf-grab] {ga?.itemName}");
-                    _invUI?.Refresh();
-                    if (wasBare) EquipItemAsset(ga, grabbed);
+                    GD.Print($"[shelf-grab] {grabbed.GetAsset()?.itemName}");
+                    _invUI?.Refresh();   // straight into the bag -- don't force it into hands (most shelf items have no held model -> invisible)
                 }
                 else shelf.Storage.tryAddItem(grabbed);   // inventory full -> put it back on the shelf
                 return;
@@ -1154,17 +1158,30 @@ namespace UnturnedGodot
 
         // F: open the nearest storage crate within ~2.5 m -- loads its grid into the STORAGE page (7) so the existing
         // dashboard + TryDrag handle it, and opens the dashboard.
+        static StoreShelf ShelfOf(Node n)   // walk up from a look-ray collider to its StoreShelf (the trimesh body is a grandchild of the shelf)
+        {
+            for (int i = 0; i < 4 && n != null; i++) { if (n is StoreShelf s) return s; n = n.GetParent(); }
+            return null;
+        }
+
         public bool OpenNearestCrate()
         {
             StorageCrate near = null; float best = 6.25f;   // 2.5 m, squared
             foreach (var n in GetTree().GetNodesInGroup("crates"))
-                if (n is StorageCrate c && !(c is StoreShelf ss && ss.ShowItems))   // DISPLAY shelves aren't proximity-opened -- you grab items straight off them (look + F); solid containers (fridge/crate) still open
+                if (n is StorageCrate c && c is not StoreShelf)   // shelves/containers are LOOK-based (OpenCrate on the focused shelf), never proximity -- so a shelf behind you never opens
                 {
                     float d = GlobalPosition.DistanceSquaredTo(c.GlobalPosition);
                     if (d < best) { best = d; near = c; }
                 }
-            if (near == null) return false;
-            if (near is StoreShelf shelf) near = shelf.ResolveSide(GlobalPosition);   // double-sided gondola: open the side the player is standing on
+            return OpenCrate(near);
+        }
+
+        // open a specific container -- the shelf you're LOOKING at, or a nearby non-shelf crate: loads its grid into STORAGE page 7.
+        public bool OpenCrate(StorageCrate crate)
+        {
+            if (crate == null) return false;
+            if (crate is StoreShelf shelf) crate = shelf.ResolveSide(GlobalPosition);   // double-sided gondola: open the side the player is on
+            var near = crate;
             _openCrate = near;
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
             (near as StoreShelf)?.BeginLiveDisplay(Inventory.items[PlayerInventory.STORAGE]);   // live-update the shelf models as the grid is edited (not just on close)
@@ -2100,6 +2117,7 @@ namespace UnturnedGodot
                     if (!RequestToggleDeployable(_focusDeployable)) _focusDeployable.TogglePower();
                 }
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
+                else if (_focusShelf != null && IsInstanceValid(_focusShelf) && OpenCrate(_focusShelf)) { }   // looking at a shelf/container -> open it (look-based, not proximity)
                 else if (OpenNearestCrate()) { }                           // open a nearby storage crate
                 else if (_melee != null) _viewmodel?.PlayMeleeInspect();   // nothing to interact with -> inspect (melee plays its own Inspect clip)
                 else _viewmodel?.PlayInspect();                            // ...or the gun's own inspect
