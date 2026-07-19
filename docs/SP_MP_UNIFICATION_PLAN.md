@@ -63,6 +63,13 @@ is proven + VoX signs off.
   the simplest). Build the general capability: the local player renders/consumes the replica for a
   subsystem and routes its commands through the loopback server. **Pattern-setter** — every later
   phase copies it. Gate: subsystem-1 replica-SP ≡ direct-SP.
+- **P1b — Inventory server-authority (inserted; surfaced by P1).** The local player's inventory
+  becomes server-owned + owner-replicated in consume mode (mirror the MP client: seed the server's
+  inventory for the local player at loopback init, set the `NetMoveItem/NetEquipItem/NetDropItem/
+  NetConsume/NetCraft` seams, `AdoptReplicatedInventory`). This CLOSES P1's gap — deployable placement
+  now validates the item-spend server-side — and unblocks crafting, consuming, and combat ammo. Second
+  pattern-setter. Gate: end-to-end place-a-deployable (spends a real server-side item) + inventory
+  move/consume round-trip in consume-SP; full suite green.
 - **P2 — Vehicles consume replica.** Driver already client-auth Part A; extend so occupancy + other
   vehicles consume replicas locally. Gate: vehicle parity in replica-SP + non-live MP.
 - **P3 — Combat + vitals split-authority (HARD, checkpoint before).** Server-auth HP with client-auth
