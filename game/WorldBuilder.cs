@@ -253,6 +253,11 @@ namespace UnturnedGodot
                 // gas pumps (master): a powered FLUID TANK -- the GasPump hosts the 750w port + 100L... err, fuel; the world
                 // still draws the mesh below. Created before the collider so we can tag it (look-ray -> collider -> GasPump).
                 GasPump gasPump = (mode == WorldMode.Playable && name == "Gas_Pump_0") ? GasPump.Attach(root, gpos, basis, GasPump.PortLocal, mesh) : null;
+                // grid power (SP/stable only): every Circuit_0 breaker box becomes a 10kW mains SOURCE -- a wire-able
+                // green output like a generator's, live while PowerNet.GlobalPower is on (F1 `toggleGlobalPower`). Gated
+                // to Playable (the SP world path): the source wires SP-local (NetId 0), so it needs no MP replication --
+                // the dedicated/client object builds skip it until that's ported (a later task).
+                if (mode == WorldMode.Playable && name == "Circuit_0") GridPowerSource.Attach(root, gpos, basis, GridPowerSource.PortLocal);
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
                     if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
