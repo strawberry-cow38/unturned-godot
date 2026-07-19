@@ -14,7 +14,17 @@ namespace UnturnedGodot
         static bool _dirty = true;
         static int _lastWires = -1, _lastDeployables = -1;
         public static void MarkDirty() => _dirty = true;
-        public static void ResetForTests() { _dirty = true; _lastWires = -1; _lastDeployables = -1; }   // L1 test isolation between sandboxes
+
+        // Global grid-power flag (SP): while ON, every GridPowerSource (a Circuit_0 breaker box) feeds its 10kW into
+        // the wire graph; while OFF the mains are dead. Default OFF -- the grid starts unpowered and the F1 console
+        // `toggleGlobalPower` energizes it. A flag flip is NOT a structural change (the wire/deployable counts don't
+        // move), so the toggle path MUST MarkDirty() or RecomputeIfDirty's count-backstop would skip the recompute.
+        static bool _globalPower = false;
+        public static bool GlobalPower => _globalPower;
+        public static bool ToggleGlobalPower() { _globalPower = !_globalPower; MarkDirty(); return _globalPower; }
+        public static void SetGlobalPower(bool on) { if (_globalPower != on) { _globalPower = on; MarkDirty(); } }
+
+        public static void ResetForTests() { _dirty = true; _lastWires = -1; _lastDeployables = -1; _globalPower = false; }   // L1 test isolation between sandboxes
 
         public static void RecomputeIfDirty(SceneTree tree)
         {
