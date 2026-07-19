@@ -247,7 +247,7 @@ namespace UnturnedGodot
 
             if (peiplay)   // drop the player onto real PEI terrain (colliders on) + walk -> the whole session's work on an actual map
             {
-                GetWindow().Size = new Vector2I(1280, 720);
+                GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_FUELCAN") == "1" ? new Vector2I(1600, 900) : new Vector2I(1280, 720);   // crisper capture for the gas-can viewmodel check
                 _peiPlay = true;
                 _shotPath = shot;   // captured at a LATE frame (below) so the drop+enter+drive plays out first
                 BuildPeiPlay();
