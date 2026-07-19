@@ -13,6 +13,7 @@ namespace UnturnedGodot
     {
         public PlayerInventory Inv;
         public PlayerController Player;   // for Use -> apply consumable effects to the vitals
+        public PlayerClothingController Clothing;   // P5: equip/unequip drives BOTH worn-slot state AND the on-body visual (RiggedCharacter) through this controller
 
         const int CELL = 50;         // SleekItems cell size
         const int HEADER = 30;       // per-page header strip (source SizeOffset_Y = height*50 + 30)
@@ -21,7 +22,10 @@ namespace UnturnedGodot
         const int GUTTER = 24;       // gap between clothing column and storage
 
         Control _root, _dash, _storageCol;
-        readonly List<(Control slot, Label label, System.Func<Item> worn)> _clothing = new();
+        // each clothing equip slot carries its EItemType so a drop can be matched to it (shirt->SHIRT slot) and its worn
+        // garment grabbed for a drag-out unequip. These Controls are the clothing drop targets (worn state lives in Inv.worn*,
+        // NOT a page grid, so they can't go in _drop which is page-indexed -- they're hit-tested via PointToClothSlot).
+        readonly List<(Control slot, Label label, System.Func<Item> worn, EItemType type)> _clothing = new();
         bool _open;
         float _storageW, _storageH;
 
@@ -29,6 +33,8 @@ namespace UnturnedGodot
         readonly List<(byte page, Control ctl, bool isSlot)> _drop = new();
         bool _dragging;
         byte _dragPage, _dragX0, _dragY0, _dragRot;
+        bool _dragFromCloth;          // the drag started on a clothing equip slot (the worn garment, not a page cell)
+        EItemType _dragClothType;     // which clothing slot it was grabbed from (only meaningful when _dragFromCloth)
         ItemJar _dragJar;
         Vector2 _grab;          // cursor offset within the grabbed item's top-left cell
         Control _dragTile;      // the floating tile that follows the cursor
@@ -151,10 +157,24 @@ namespace UnturnedGodot
 
         void StartDrag(Vector2 global)
         {
+            // grabbing a WORN garment off a clothing equip slot (the worn item lives in Inv.worn*, not a page) -> a drag-out
+            // unequip if dropped on a grid, or a re-equip if dropped back on a slot. The tile is a transient jar over the item.
+            if (PointToClothSlot(global, out int ci))
+            {
+                var wornIt = _clothing[ci].worn();
+                if (wornIt == null) return;   // empty slot -> nothing to grab
+                _dragFromCloth = true; _dragClothType = _clothing[ci].type;
+                _dragJar = new ItemJar(wornIt); _dragRot = 0;
+                _grab = global - _clothing[ci].slot.GlobalPosition;
+                _dragging = true;
+                RebuildDragTile();
+                return;
+            }
             if (!PointToCell(global, out byte page, out byte cx, out byte cy, out Control ctl, out bool isSlot)) return;
             var pg = Inv.items[page];
             byte idx = pg.getIndex(cx, cy);
             if (idx == byte.MaxValue) return;
+            _dragFromCloth = false;
             _dragJar = pg.getItem(idx);
             _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
             Vector2 itemTopLeft = ctl.GlobalPosition + (isSlot ? Vector2.Zero : new Vector2(_dragJar.x * CELL, _dragJar.y * CELL));
@@ -179,10 +199,40 @@ namespace UnturnedGodot
         void Drop(Vector2 global)
         {
             byte sp = _dragPage, sx = _dragX0, sy = _dragY0, srot = _dragRot;
+            bool fromCloth = _dragFromCloth; EItemType fromType = _dragClothType;
+            _dragFromCloth = false;
             _dragging = false;
             _dragTile?.QueueFree(); _dragTile = null;
             // the held item's top-left lands where the cursor is minus the grab; +half a cell so it snaps to the nearest
             Vector2 topLeft = global - _grab + new Vector2(CELL / 2f, CELL / 2f);
+
+            // TARGET is a clothing equip slot -> EQUIP (wear) the dropped item, if its type matches the slot (source:
+            // PlayerDashboardInventoryUI.checkAction -> PlayerClothing.sendSwap<Slot>). A garment dragged from ANOTHER
+            // slot (a type mismatch, since a slot only ever holds its own type) is rejected -> snaps home.
+            if (PointToClothSlot(topLeft, out int tci))
+            {
+                if (fromCloth)
+                {
+                    // dropped a worn garment back onto its own slot -> no-op; onto a different-type slot -> just repaint (mismatch)
+                    Refresh();
+                    return;
+                }
+                WearFromGrid(_clothing[tci].type, sp, sx, sy);   // type-checked inside; a mismatch is a no-op -> snaps home
+                CloseSelection();
+                Refresh();
+                return;
+            }
+
+            // ORIGIN was a clothing slot + it wasn't dropped on a slot -> UNEQUIP into the grid (source: dragging the worn
+            // piece off the paperdoll -> sendSwap<Slot>(255,255,255) -> the garment forceAddItem's back to the inventory).
+            if (fromCloth)
+            {
+                TakeOff(fromType);
+                CloseSelection();
+                Refresh();
+                return;
+            }
+
             if (!PointToCell(topLeft, out byte page, out byte x1, out byte y1, out _, out _)) return;
             if (page == sp && x1 == sx && y1 == sy) return;   // released in place -> no-op (the item menu is RMB now)
             // MP: the move is a REQUEST -- the server's TryDrag validates+applies and the owner echo
@@ -211,6 +261,78 @@ namespace UnturnedGodot
             }
             page = cx = cy = 0; ctl = null; isSlot = false; return false;
         }
+
+        // hit-test a clothing equip slot (Hat/Shirt/... in the left column) under a screen point -> its index in _clothing
+        bool PointToClothSlot(Vector2 global, out int idx)
+        {
+            for (int i = 0; i < _clothing.Count; i++)
+                if (new Rect2(_clothing[i].slot.GlobalPosition, _clothing[i].slot.Size).HasPoint(global)) { idx = i; return true; }
+            idx = -1; return false;
+        }
+
+        // --- clothing equip/unequip: the port of PlayerClothing.ReceiveSwap<Slot> + askWear<Slot>. Equip/unequip goes
+        // through PlayerClothingController (Clothing) so it drives BOTH the worn-slot STATE (Inv.wear*) AND the on-body
+        // VISUAL (RiggedCharacter). The previously-worn garment returns to the grid (source forceAddItem). ---
+
+        // the item currently worn in a given clothing slot
+        Item WornFor(EItemType t) => t switch
+        {
+            EItemType.HAT      => Inv?.wornHat,
+            EItemType.GLASSES  => Inv?.wornGlasses,
+            EItemType.MASK     => Inv?.wornMask,
+            EItemType.SHIRT    => Inv?.wornShirt,
+            EItemType.VEST     => Inv?.wornVest,
+            EItemType.BACKPACK => Inv?.wornBackpack,
+            EItemType.PANTS    => Inv?.wornPants,
+            _ => null,
+        };
+
+        void WearVisual(Item it) { if (Clothing != null) Clothing.Wear(it); else Player?.WearClothing(it); }
+        void UnwearVisual(EItemType t) { if (Clothing != null) Clothing.Unwear(t); else Player?.UnwearClothing(t); }
+
+        // return a garment to the inventory grid (source: forceAddItem) -> auto-place in the first page with room, else drop it in the world
+        void ReturnToGrid(Item it)
+        {
+            if (it == null || Inv == null) return;
+            if (Inv.tryAddItem(it)) return;
+            if (Player != null) Player.DropWorldItem(it, Player.GlobalPosition - Player.GlobalTransform.Basis.Z * 0.6f + Vector3.Up * 0.1f);
+        }
+
+        // WEAR the item at grid (page,x,y) into clothing slot `slotType` (must match the item's type). Mirrors
+        // ReceiveSwap<Slot>Request(page,x,y): remove the item from the grid, wear it (state+visual, +bag-page resize),
+        // then forceAddItem the previously-worn garment back to the grid. Returns true if it equipped.
+        public bool WearFromGrid(EItemType slotType, byte page, byte x, byte y)
+        {
+            if (Inv == null || page >= Inv.items.Length) return false;
+            var pg = Inv.items[page];
+            byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return false;
+            var jar = pg.getItem(idx);
+            var asset = jar?.GetAsset();
+            if (asset == null || asset.type != slotType) return false;   // reject a mismatched type (a hat onto the shirt slot)
+            var item = jar.item;
+            var old = WornFor(slotType);
+            if (ReferenceEquals(old, item)) return false;                // already worn here -> nothing to do
+            pg.removeItem(idx);                                          // out of the grid (source: inventory.removeItem)
+            WearVisual(item);                                            // state + on-body visual (+ resize this slot's bag page)
+            if (old != null && !ReferenceEquals(old, item)) ReturnToGrid(old);   // the displaced garment goes back to the grid
+            return true;
+        }
+
+        // UNEQUIP clothing slot `slotType` -> clear its state+visual and drop the garment back into the grid. Mirrors
+        // ReceiveSwap<Slot>Request(255,255,255): wear nothing; the old garment forceAddItem's to the inventory. Returns true if it removed something.
+        public bool TakeOff(EItemType slotType)
+        {
+            var old = WornFor(slotType);
+            if (old == null) return false;
+            UnwearVisual(slotType);   // clears the worn slot + the on-body visual (+ resizes a bag page to 0x0)
+            ReturnToGrid(old);
+            return true;
+        }
+
+        // demo/verify seams (headless can't drive the mouse): run the SAME equip/unequip core the drop handler uses.
+        public bool DebugWearFromGrid(EItemType slotType, byte page, byte x, byte y) { bool r = WearFromGrid(slotType, page, x, y); Refresh(); return r; }
+        public bool DebugTakeOff(EItemType slotType) { bool r = TakeOff(slotType); Refresh(); return r; }
 
         // --- selection panel (openSelection): the item's big tile + name/info + Equip/Drop actions ---
         void OpenSelection(byte page, byte x, byte y)
@@ -413,15 +535,15 @@ namespace UnturnedGodot
             _dash.AddChild(box);
             box.AddChild(Header("CLOTHING", new Vector2(10, 8), CLOTHW - 20));
 
-            (string name, System.Func<Item> worn)[] rows =
+            (string name, System.Func<Item> worn, EItemType type)[] rows =
             {
-                ("Hat",      () => Inv?.wornHat),      ("Glasses",  () => Inv?.wornGlasses),
-                ("Mask",     () => Inv?.wornMask),     ("Shirt",    () => Inv?.wornShirt),
-                ("Vest",     () => Inv?.wornVest),     ("Backpack", () => Inv?.wornBackpack),
-                ("Pants",    () => Inv?.wornPants),
+                ("Hat",      () => Inv?.wornHat,      EItemType.HAT),      ("Glasses",  () => Inv?.wornGlasses,  EItemType.GLASSES),
+                ("Mask",     () => Inv?.wornMask,     EItemType.MASK),     ("Shirt",    () => Inv?.wornShirt,    EItemType.SHIRT),
+                ("Vest",     () => Inv?.wornVest,     EItemType.VEST),     ("Backpack", () => Inv?.wornBackpack, EItemType.BACKPACK),
+                ("Pants",    () => Inv?.wornPants,    EItemType.PANTS),
             };
             float y = 42;
-            foreach (var (name, worn) in rows)
+            foreach (var (name, worn, type) in rows)
             {
                 var slot = new Panel { Position = new Vector2(12, y), Size = new Vector2(CELL, CELL) };
                 StyleBox(slot, new Color(0f, 0f, 0f, 0.5f));
@@ -429,7 +551,7 @@ namespace UnturnedGodot
                 var lbl = new Label { Text = name, Position = new Vector2(CELL + 14, y + 14) };
                 lbl.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
                 box.AddChild(lbl);
-                _clothing.Add((slot, lbl, worn));
+                _clothing.Add((slot, lbl, worn, type));
                 y += CELL + 10;
             }
         }
@@ -440,7 +562,7 @@ namespace UnturnedGodot
             CloseSelection();   // the panel points at a specific item; drop it when the layout rebuilds
 
             // worn clothing into the equip slots
-            foreach (var (slot, lbl, worn) in _clothing)
+            foreach (var (slot, lbl, worn, _) in _clothing)
             {
                 foreach (Node c in slot.GetChildren()) c.QueueFree();
                 var it = worn();

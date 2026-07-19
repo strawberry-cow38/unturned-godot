@@ -2031,7 +2031,7 @@ namespace UnturnedGodot
             // add a starter shirt + hat, then Refresh() paints/attaches every worn slot so the player isn't bare skin.
             _clothing = new PlayerClothingController(_body, Inventory);
             ApplyDefaultOutfit();
-            _invUI = new InventoryUI { Inv = Inventory, Player = this };
+            _invUI = new InventoryUI { Inv = Inventory, Player = this, Clothing = _clothing };   // P5: drop-to-slot equip drives the on-body visual through the same controller
             AddChild(_invUI);
             _craftUI = new CraftingUI { Inv = Inventory, Player = this };
             AddChild(_craftUI);
