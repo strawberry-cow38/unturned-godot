@@ -160,30 +160,34 @@ namespace UnturnedGodot
         // polled ~2x/s (the crate close-out writes the edited grid back).
         void SyncDisplay()
         {
-            var current = new Dictionary<int, (ushort id, ItemAsset a)>();
+            var current = new Dictionary<int, (ushort id, ItemAsset a, int w, int h)>();
             for (byte i = 0; i < Storage.getItemCount(); i++)
             {
                 var j = Storage.getItem(i);
                 if (j?.item == null) continue;
-                current[(j.x << 8) | j.y] = (j.item.id, Assets.find(j.item.id) as ItemAsset);
+                int w = j.rot % 2 == 1 ? j.size_y : j.size_x;   // rotation-adjusted footprint (matches the grid packing)
+                int h = j.rot % 2 == 1 ? j.size_x : j.size_y;
+                current[(j.x << 8) | j.y] = (j.item.id, Assets.find(j.item.id) as ItemAsset, System.Math.Max(1, w), System.Math.Max(1, h));
             }
             foreach (var key in new List<int>(_display.Keys))   // taken -> despawn its model, leave the rest in place
                 if (!current.ContainsKey(key)) { if (IsInstanceValid(_display[key])) _display[key].QueueFree(); _display.Remove(key); }
             foreach (var kv in current)                         // added -> place at its fixed slot
-                if (!_display.ContainsKey(kv.Key)) PlaceItem(kv.Key, kv.Value.id, kv.Value.a);
+                if (!_display.ContainsKey(kv.Key)) PlaceItem(kv.Key, kv.Value.id, kv.Value.a, kv.Value.w, kv.Value.h);
         }
 
         // place one item's real model at the STABLE slot derived from its grid cell -- oriented + scaled to sit neatly.
-        void PlaceItem(int cellKey, ushort id, ItemAsset asset)
+        void PlaceItem(int cellKey, ushort id, ItemAsset asset, int effW = 1, int effH = 1)
         {
             var mesh = ShelfMesh();
             if (mesh == null) return;
             var pr = Prof(MeshName);
             var box = StoodAabb(mesh);
             int gx = cellKey >> 8, gy = cellKey & 0xFF;
-            int col = gx, tier = (pr.TierY.Length - 1) - gy;      // shelf MIRRORS the container-UI grid: column = grid x, tier = grid row (UI top row -> top shelf tier)
-            if (col < 0 || col >= pr.PerTier || tier < 0 || tier >= pr.TierY.Length) return;   // a grid cell beyond the shelf's slots -> not shown
-            float fx = pr.PerTier > 1 ? col / (float)(pr.PerTier - 1) : 0.5f;
+            int tier = (pr.TierY.Length - 1) - gy;                // shelf MIRRORS the grid: tier = grid row (UI top row -> top shelf tier)
+            if (gx < 0 || gx >= pr.PerTier || tier < 0 || tier >= pr.TierY.Length) return;   // a grid cell beyond the shelf's slots -> not shown
+            effW = Mathf.Clamp(effW, 1, pr.PerTier - gx);         // WIDE items SPAN their footprint columns (clamped so they don't run off the end),
+            float centerCol = gx + (effW - 1) * 0.5f;             // centered on that span
+            float fx = pr.PerTier > 1 ? centerCol / (pr.PerTier - 1) : 0.5f;
             float x0 = box.Position.X + box.Size.X * (1f - pr.WidthUse) * 0.5f;
             float xspan = box.Size.X * pr.WidthUse;
 
@@ -265,7 +269,7 @@ namespace UnturnedGodot
             // SCALE oversized items down to fit the slot (master's "cheat"): cap the footprint to the slot width + the
             // height to the tier gap.
             var ob = new Transform3D(oriented, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
-            float slotW = (xspan / Mathf.Max(1, pr.PerTier)) * 0.9f;
+            float slotW = (xspan / Mathf.Max(1, pr.PerTier)) * effW * 0.9f;   // a 2-wide item may be up to 2 slots wide
             float tierGap = box.Size.Y * 0.24f;
             float sc = 1f, foot = Mathf.Max(ob.Size.X, ob.Size.Z);
             if (foot > slotW && foot > 0.0001f) sc = Mathf.Min(sc, slotW / foot);
@@ -290,11 +294,19 @@ namespace UnturnedGodot
             _display[cellKey] = vis;
         }
 
-        // test hook: drop fixed ids into sequential grid cells + display them (no asset DB / no roll) -- UG_SHELFDEMO harness.
+        // test hook: pack fixed ids left-to-right RESPECTING each item's grid footprint (so wide items span) -- UG_SHELFDEMO.
         public void DebugDisplay(List<int> ids)
         {
-            for (int i = 0; i < ids.Count; i++)
-                PlaceItem(((i % Width) << 8) | (i / Width), (ushort)ids[i], Assets.find((ushort)ids[i]) as ItemAsset);
+            int cx = 0, cy = 0;
+            foreach (int idv in ids)
+            {
+                var a = Assets.find((ushort)idv) as ItemAsset;
+                int w = System.Math.Max(1, (int)(a?.size_x ?? 1)), h = System.Math.Max(1, (int)(a?.size_y ?? 1));
+                if (cx + w > Width) { cx = 0; cy++; }        // wrap to the next row when the item won't fit
+                if (cy >= Height) break;
+                PlaceItem((cx << 8) | cy, (ushort)idv, a, w, h);
+                cx += w;                                      // advance past the footprint
+            }
         }
 
         public override void _Process(double delta)   // poll the grid ~2x/s; SyncDisplay only touches CHANGED cells (stable)
