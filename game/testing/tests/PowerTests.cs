@@ -85,6 +85,40 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // master's "wire multiple batteries together = a bigger battery": daisy-chain A.OUT -> B.IN so the upstream battery
+    // refills the downstream one while it powers a load. Proves the POOLING -- the load's energy is drawn from A's reserve
+    // (A drains, B stays topped by A), so A+B back the load together = a bigger effective battery.
+    public class PowerBatteryDaisyChain : GameTest
+    {
+        public override string Name => "power.battery_daisy_chain";
+        public override IEnumerable<Step> Run()
+        {
+            var batA = Deployable.Spawn(World, DeployableDef.Battery, new Vector3(-3f, 0f, 0f), 0f);
+            var batB = Deployable.Spawn(World, DeployableDef.Battery, new Vector3(0f, 0f, 0f), 0f);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(3f, 0f, 0f), 0f);
+            yield return Ticks(1);
+            batA.Energy = DeployableDef.Battery.EnergyMax;      // both batteries start full
+            batB.Energy = DeployableDef.Battery.EnergyMax;
+            var aOut = batA.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var bIn = batB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var bOut = batB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+
+            PowerRig.Connect(World, aOut, bIn);                 // battery A OUT -> battery B IN  (A refills B)
+            PowerRig.Connect(World, bOut, spotIn);              // battery B OUT -> the load
+            PowerNet.Recompute(Tree);
+            yield return Ticks(1); PowerNet.Recompute(Tree);
+            T.Check("load runs off the daisy-chained batteries", spotIn.Powered);
+
+            float a0 = batA.Energy, b0 = batB.Energy;
+            yield return Ticks(60);                             // ~1s: B powers the load, A keeps B topped up
+            PowerNet.Recompute(Tree);
+            T.Check("load still powered after a second", spotIn.Powered);
+            T.Check($"upstream battery A drains feeding B (energy {batA.Energy:0} < {a0:0})", batA.Energy < a0 - 1f);
+            T.Check($"downstream battery B stays topped by A (energy {batB.Energy:0} >= 90% of {b0:0})", batB.Energy >= b0 * 0.9f);
+        }
+    }
+
     public class PowerWireClearUnpowers : GameTest
     {
         public override string Name => "power.wire_clear_unpowers";
