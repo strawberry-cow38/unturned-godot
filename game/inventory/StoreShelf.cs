@@ -128,13 +128,15 @@ namespace UnturnedGodot
             {
                 int tier = i / pr.PerTier, col = i % pr.PerTier;
                 float fx = pr.PerTier > 1 ? col / (float)(pr.PerTier - 1) : 0.5f;
-                var pos = new Vector3(x0 + xspan * fx, box.Position.Y + box.Size.Y * pr.TierY[tier], zFront);
-
                 var asset = Assets.find((ushort)ids[i]) as ItemAsset;
                 Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
                 var vis = WorldItem.BuildReplicaVisual((ushort)ids[i], rar);
-                vis.Position = pos;
-                vis.RotationDegrees = new Vector3(90f, col * 37f, 0f);   // lay the model upright-ish on the shelf (drop pose); yaw varies so it's not a clone row
+                vis.RotationDegrees = new Vector3(90f, col * 37f, 0f);   // lay the model on the shelf (drop pose); yaw varies so it's not a clone row
+                // sit the item's BASE flush on the tier surface: models have their origin in varying spots (center/base/top),
+                // so placing the ORIGIN at the tier made some float + some clip through. Place by the ROTATED mesh bottom instead.
+                float tierSurfaceY = box.Position.Y + box.Size.Y * pr.TierY[tier];
+                var rotAabb = new Transform3D(vis.Basis, Vector3.Zero) * vis.GetAabb();
+                vis.Position = new Vector3(x0 + xspan * fx, tierSurfaceY - rotAabb.Position.Y, zFront);
                 AddChild(vis);
                 _displayNodes.Add(vis);
             }
