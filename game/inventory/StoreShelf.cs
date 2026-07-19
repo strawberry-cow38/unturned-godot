@@ -71,6 +71,9 @@ namespace UnturnedGodot
             return a;
         }
 
+        // items master pinned to LIE flat even though their icon stands them -- produce that reads better lying in a bin.
+        static readonly HashSet<int> _forceLie = new() { 329, 344, 335, 342 };   // carrot, wheat, corn, potato
+
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
         public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf")
@@ -198,9 +201,10 @@ namespace UnturnedGodot
             System.Array.Sort(ax, (a, b) => d[a].CompareTo(d[b]));   // ax[0]=shortest .. ax[2]=longest
             Pose pose = PoseOf(id);
             bool flatSlab = d[ax[0]] < d[ax[1]] * 0.45f;   // one clearly-thin dim => a flat package/slab -> lie flat (don't stand it on edge)
+            bool lieFlat = flatSlab || _forceLie.Contains(id);   // a slab, or an item master pinned to lie (produce)
 
             Basis oriented;
-            if (pose.Ok && !flatSlab)
+            if (pose.Ok && !lieFlat)
             {
                 // STAND UPRIGHT as the icon poses it, but SNAP up/front to the nearest local axes so items stand clean-
                 // vertical (not tilted like a 3/4 icon view): local UP-axis -> world +Y, local FRONT-axis -> +Z (aisle).
@@ -256,7 +260,7 @@ namespace UnturnedGodot
             }
 
             if (System.Environment.GetEnvironmentVariable("UG_SHELFDBG") == "1")
-                GD.Print($"[shelf-item] id={id} dims=({s.X:0.00},{s.Y:0.00},{s.Z:0.00}) flat={flatSlab} poseOk={pose.Ok} up={pose.Up} front={pose.Front} -> {(pose.Ok && !flatSlab ? "STAND" : "LIE")}");
+                GD.Print($"[shelf-item] id={id} dims=({s.X:0.00},{s.Y:0.00},{s.Z:0.00}) flat={flatSlab} poseOk={pose.Ok} up={pose.Up} front={pose.Front} -> {(pose.Ok && !lieFlat ? "STAND" : "LIE")}");
 
             // SCALE oversized items down to fit the slot (master's "cheat"): cap the footprint to the slot width + the
             // height to the tier gap.
