@@ -48,6 +48,7 @@ namespace UnturnedGodot
         static readonly bool DbgFlicker = System.Environment.GetEnvironmentVariable("UG_WIREFLICKER") == "1";
 
         bool _lookFocused;
+        public float PickupProgress;   // 0 = idle; >0 = the hold-F pickup fraction (PlayerController drives it, the billboard shows "Picking up... X%")
         System.Collections.Generic.List<MeshInstance3D> _outlineMeshes;
         InfoBillboard _info;
         static readonly Color OutlineColor = new Color(0.82f, 0.83f, 0.90f);   // same neutral tint as vehicles (no per-deployable rarity yet)
@@ -295,6 +296,15 @@ namespace UnturnedGodot
             foreach (var p in Ports) if (IsInstanceValid(p)) p.Deactivate();
         }
 
+        // Hold-F pickup (master): a LIVE placed deployable is returned to the bag -> free any wires plugged into it
+        // (they disconnect on pickup) and despawn. The item grant is the caller's (PlayerController) job. A wreck is
+        // blowtorch-salvaged instead, so this is gated to non-wrecks up in PlayerController.
+        public void Pickup()
+        {
+            DisconnectWires();   // wires plugged into our ports vanish with us (strawberry) + marks the net dirty
+            QueueFree();
+        }
+
         // test-only: jump straight to a damage stage for the --deploytest render (smoke / heavy / fire / wreck)
         public void DebugStage(string s)
         {
@@ -391,9 +401,14 @@ namespace UnturnedGodot
                 _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
                 _info.SetBar(1, FuelMax > 0f ? Fuel / FuelMax : 0f, InfoBillboard.FuelColor, FuelMax > 0f);   // fuel bar (yellow); hidden if no tank
                 _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null);   // usage bar (cyan): load / capacity -- generators only
-                // src checkHint: GENERATOR_OFF when on, GENERATOR_ON when off. _powered is the target -> reads as the next
-                // action even mid-ramp. No prompt once it's on fire.
-                _info.SetPrompt(Def != null && Def.Fuel > 0f && !OnFire ? $"[F] Turn {(_powered ? "Off" : "On")}" : "", OutlineColor);
+                // While the player HOLDS F to pick it up, show the progress; otherwise the interact hint. src checkHint:
+                // GENERATOR_OFF when on, GENERATOR_ON when off (_powered is the target -> reads as the next action even
+                // mid-ramp). A generator adds a tap-toggle in front of the hold-to-pick-up. No prompt once on fire.
+                string prompt;
+                if (PickupProgress > 0.01f) prompt = $"Picking up... {Mathf.Clamp((int)(PickupProgress * 100f), 0, 99)}%";
+                else if (OnFire) prompt = "";
+                else prompt = (Def != null && Def.Fuel > 0f ? $"[F] Turn {(_powered ? "Off" : "On")} · " : "") + "Hold [F]: pick up";
+                _info.SetPrompt(prompt, OutlineColor);
             }
         }
     }

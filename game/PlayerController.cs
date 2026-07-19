@@ -128,6 +128,9 @@ namespace UnturnedGodot
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
+        Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
+        float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
+        const float DeployPickupTime = 0.55f;   // hold F this long over a deployable to pick it back up (wires disconnect)
         IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
@@ -520,6 +523,47 @@ namespace UnturnedGodot
                 _wireHudLayer.AddChild(_wireHudLabel);
             }
             _wireHudLabel.Text = text; _wireHudLabel.Visible = true;
+        }
+
+        // Hold F over a placed deployable to pick it back up into the bag (master): its wires disconnect. A quick TAP
+        // instead toggles a generator (handled on F release). Wrecks/burning ones are blowtorch-salvaged, not picked up.
+        void UpdateDeployPickup(float delta)
+        {
+            if (_fHeldDeploy == null) return;
+            bool fHeld = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsPhysicalKeyPressed(Key.F);
+            if (!fHeld || !IsInstanceValid(_fHeldDeploy) || _fHeldDeploy != _focusDeployable
+                || _fHeldDeploy.IsWreck || _fHeldDeploy.OnFire || _dead || _driving != null)
+            {   // released, looked away, or it can't be picked up -> cancel the hold
+                if (IsInstanceValid(_fHeldDeploy)) _fHeldDeploy.PickupProgress = 0f;
+                _fHeldDeploy = null; _deployPickupTimer = 0f;
+                return;
+            }
+            _deployPickupTimer += delta;
+            _fHeldDeploy.PickupProgress = Mathf.Clamp(_deployPickupTimer / DeployPickupTime, 0f, 1f);
+            if (_deployPickupTimer >= DeployPickupTime)
+            {
+                var d = _fHeldDeploy;
+                _fHeldDeploy = null; _deployPickupTimer = 0f; d.PickupProgress = 0f;
+                PickupDeployable(d);
+            }
+        }
+
+        // Return a live placed deployable to the bag: disconnect its wires + despawn, grant the item back (dropped at its
+        // feet if the bag is full). A REPLICATED (MP) deployable would need a server request -- SP/local nodes only for now.
+        void PickupDeployable(Deployable d)
+        {
+            if (d == null || !IsInstanceValid(d) || d.IsWreck || d.OnFire || d.NetId != 0) return;
+            ushort id = d.Def?.Id ?? 0;
+            string name = d.Def?.Name;
+            Vector3 pos = d.GlobalPosition;
+            d.Pickup();   // frees any wires plugged into it + despawns
+            if (id != 0)
+            {
+                var item = SDG.Unturned.Assets.makeLoot(id);
+                if (!(Inventory?.tryAddItem(item) ?? false)) DropWorldItem(item, pos + Vector3.Up * 1f);   // bag full -> drop where it stood
+                _invUI?.Refresh();
+            }
+            GD.Print($"[deploy] picked up #{id} ({name})");
         }
 
         // Wreck salvage (master): a focused wreck shows a state prompt -- red "Too hot" while burning, red "Requires blowtorch"
@@ -2136,15 +2180,25 @@ namespace UnturnedGodot
                 else if (RequestPickupFocusedPuppet()) { }                 // MP: looking at a REPLICATED dropped item -> ask the server for it (like SP, a focused item wins over a nearby vehicle)
                 else if (_focusVehicle != null && IsInstanceValid(_focusVehicle) && !_focusVehicle.IsWreck && !_focusVehicle.IsTrailer) EnterVehicle(_focusVehicle); // looking at a LIVE, drivable vehicle: get in (a wreck is salvaged with LMB; a trailer is towed, not driven)
                 else if (RequestEnterNearestPuppet()) { }                  // MP shell near a REPLICATED vehicle: ask the server for the seat (C6; false in SP -- no puppets)
-                else if (_focusDeployable != null && IsInstanceValid(_focusDeployable) && _focusDeployable.CanTogglePower)
-                {   // looking at a generator: toggle its power (src InteractableGenerator.use); a replicated one is a REQUEST (echo -> NetSetPowered)
-                    if (!RequestToggleDeployable(_focusDeployable)) _focusDeployable.TogglePower();
+                else if (_focusDeployable != null && IsInstanceValid(_focusDeployable))
+                {   // looking at a placed deployable: F starts a HOLD -> pick it up (UpdateDeployPickup); a quick TAP toggles
+                    // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
+                    _fHeldDeploy = _focusDeployable; _deployPickupTimer = 0f;
                 }
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (_focusShelf != null && IsInstanceValid(_focusShelf) && OpenCrate(_focusShelf)) { }   // looking at a shelf/container -> open it (look-based, not proximity)
                 else if (OpenNearestCrate()) { }                           // open a nearby storage crate
                 else if (_melee != null) _viewmodel?.PlayMeleeInspect();   // nothing to interact with -> inspect (melee plays its own Inspect clip)
                 else _viewmodel?.PlayInspect();                            // ...or the gun's own inspect
+            }
+            else if (@event is InputEventKey { Pressed: false, Keycode: Key.F } && _fHeldDeploy != null)
+            {   // released F over a deployable: a quick TAP toggles a generator (a long hold already picked it up in UpdateDeployPickup)
+                if (IsInstanceValid(_fHeldDeploy) && _deployPickupTimer < DeployPickupTime && _fHeldDeploy.CanTogglePower)
+                {
+                    if (!RequestToggleDeployable(_fHeldDeploy)) _fHeldDeploy.TogglePower();
+                }
+                if (IsInstanceValid(_fHeldDeploy)) _fHeldDeploy.PickupProgress = 0f;
+                _fHeldDeploy = null; _deployPickupTimer = 0f;
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
@@ -2808,6 +2862,7 @@ namespace UnturnedGodot
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
+            UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)

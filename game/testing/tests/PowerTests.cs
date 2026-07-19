@@ -145,6 +145,26 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Hold-F pickup (master): picking a wired deployable back up frees its wires (Deployable.Pickup) + despawns it --
+    // same wire teardown as a wreck, but it returns to the bag instead of shattering. The generator's load drops to 0.
+    public class PowerPickupFreesWires : GameTest
+    {
+        public override string Name => "power.pickup_frees_wires";
+        public override IEnumerable<Step> Run()
+        {
+            var r = PowerRig.Build(World);
+            yield return Ticks(1);
+            r.Gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("powered before pickup", r.ConsA.Powered);
+            r.Spot.Pickup();                 // hold-F pickup: frees the wire + despawns (no husk, unlike a wreck)
+            yield return Ticks(2);           // let the QueueFrees flush out of the tree/groups
+            T.Check("wire freed when the spotlight was picked up", !GodotObject.IsInstanceValid(r.Wire));
+            T.Check("picked-up spotlight removed from the tree", !GodotObject.IsInstanceValid(r.Spot));
+            PowerNet.Recompute(Tree);
+            T.Check($"generator load back to 0w (got {r.GenOut.Draw:0})", PowerRig.Approx(r.GenOut.Draw, 0f));
+        }
+    }
+
     // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
     // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
     public class PowerWreckDropsWires : GameTest
