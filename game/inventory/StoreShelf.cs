@@ -241,14 +241,14 @@ namespace UnturnedGodot
             // toward the front and keep their back (low-Z) edge well off the wall (master: "move away from the back wall").
             var rb = new Transform3D(vis.Basis, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
             float tierSurfaceY = box.Position.Y + box.Size.Y * pr.TierY[tier];
-            float zPos = (box.Position.Z + box.Size.Z * 0.70f) - (rb.Position.Z + rb.Size.Z * 0.5f);   // front-biased center (front = high Z)
-            float minBack = box.Position.Z + box.Size.Z * 0.28f;                                        // back edge (low Z) stays this far off the wall
+            float zPos = (box.Position.Z + box.Size.Z * 0.76f) - (rb.Position.Z + rb.Size.Z * 0.5f);   // front-biased center (front = high Z)
+            float minBack = box.Position.Z + box.Size.Z * 0.34f;                                        // back edge (low Z) stays this far off the wall
             if (zPos + rb.Position.Z < minBack) zPos = minBack - rb.Position.Z;
             float frontLip = box.Position.Z + box.Size.Z * 0.96f;                                        // don't overhang the front lip (high Z)
             if (zPos + rb.Position.Z + rb.Size.Z > frontLip) zPos = frontLip - (rb.Position.Z + rb.Size.Z);
             vis.Position = new Vector3(
                 (x0 + xspan * fx) - (rb.Position.X + rb.Size.X * 0.5f),
-                tierSurfaceY - rb.Position.Y + rb.Size.Y * 0.03f,
+                tierSurfaceY - rb.Position.Y + rb.Size.Y * 0.03f + 0.02f,   // small lift so items sit ON the tier, not sunk in (master)
                 zPos);
             AddChild(vis);
             _display[cellKey] = vis;
