@@ -2248,8 +2248,10 @@ namespace UnturnedGodot
         {
             if (_clothing == null) return;
             _clothing.Wear(new Item(3));    // Orange Hoodie -> shirt texture on torso/arms
-            _clothing.Wear(new Item(27));   // Tophat -> mesh on the Skull bone
-            _clothing.Refresh();            // sync all worn slots (shirt + hat above + the demo's Cargo Pants)
+            // NOTE: gear (hat/vest) attach works structurally but its per-slot placement/scale is not yet
+            // tuned (renders oversized/offset -- see docs/CLOTHING_PLAN.md P3b-tune), so the default outfit
+            // ships shirt+pants only. Re-add gear here once AttachGear offsets are hand-tuned per slot.
+            _clothing.Refresh();            // sync all worn slots (shirt above + the demo's Cargo Pants)
         }
 
         /// <summary>The demo kit, shared by the SP shell (above) and the dedicated server's join seeding
