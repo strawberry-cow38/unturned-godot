@@ -99,4 +99,27 @@ namespace UnturnedGodot.Testing
             T.Check("aiming at a wall is INVALID", !placer.Aim(cam));
         }
     }
+
+    // Regression (master 2026-07-19): a splitter must place on open ground. Its clearance-sphere Offset was set
+    // SMALLER than its Radius, so the sphere dipped into flat terrain and every spot read blocked/red -- unplaceable.
+    public class DeploySplitterPlacement : GameTest
+    {
+        public override string Name => "deploy.splitter_placement";
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var cam = new Camera3D { Current = false };
+            World.AddChild(cam);
+            cam.Position = new Vector3(8f, 3f, -6f);
+            cam.LookAt(new Vector3(8f, 0f, -6f), Vector3.Back);   // straight down at open ground
+            var placer = new DeployablePlacer();
+            World.AddChild(placer);
+            placer.SetDef(DeployableDef.Splitter2);
+            yield return Ticks(2);   // let the ground collider register with the physics space
+            T.Check("2-way splitter is VALID on open ground (clearance sphere clears terrain)", placer.Aim(cam));
+            placer.SetDef(DeployableDef.Splitter4);
+            yield return Ticks(1);
+            T.Check("4-way splitter is VALID on open ground too", placer.Aim(cam));
+        }
+    }
 }

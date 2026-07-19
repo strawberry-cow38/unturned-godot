@@ -80,7 +80,7 @@ namespace UnturnedGodot
             {
                 Id = id, Name = name, ProcBox = true, PlaceSound = "metalplacement",
                 Size = new Vector3(width, 0.36f, 0.5f),   // flat frame: X = width, Y = depth (front/back port faces), Z = height (stands up)
-                Offset = 0.35f, Radius = 0.4f, Range = 4f, Health = 200f, Fuel = 0f,   // passive: no fuel gauge, no engine
+                Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f, Fuel = 0f,   // passive: no fuel/engine. Offset > Radius so the clearance sphere clears flat ground (else it dips in -> always "blocked"/red)
                 Ports = ports,
             };
         }
