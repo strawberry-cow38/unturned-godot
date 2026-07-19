@@ -2100,11 +2100,11 @@ namespace UnturnedGodot
                 }
                 string mesh = System.Environment.GetEnvironmentVariable("UG_SHELFMESH") ?? "Shelf_1";
                 var shelf = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 0f, true, mesh);
-                shelf.DebugDisplay(new System.Collections.Generic.List<int> {   // master's latest per-item pass: flat foods/mags LIE, cans/juice/gas-can STAND
-                    83, 84, 464, 88, 469, 468,                 // chocolate, candy, cheese, canned bacon, canned ham, ham sandwich -> LIE
-                    6, 20, 79, 90, 13, 28,                     // military mag (now 2x1), timberwolf mag -> LIE; tuna, sardines, beans, gas can -> STAND
-                    91, 92, 463, 465, 76, 340,                 // apple juice, grape juice, OJ (stand+face out), soda, blowtorch, tomato -> STAND
-                    14, 15, 81, 460, 1159, 462 });             // water(stand), medkit/MRE/bread(lie), maple(stand), milk(stand)
+                shelf.DebugDisplay(new System.Collections.Generic.List<int> {   // carjack + clothing LIE FLAT (+scale); tins/juice/cans STAND; medkit/MRE stay detail-up
+                    277, 3, 2, 11, 10, 15,                     // carjack, hoodie, pants, mask, vest (LIE+scale), medkit(lie detail-up)
+                    81, 6, 88, 79, 91, 463,                    // MRE(lie), mil mag(lie), bacon(stand tin), tuna(stand), apple juice(stand), OJ(stand)
+                    13, 14, 465, 340, 76, 1159,                // beans, water, soda, tomato, blowtorch, maple -> STAND
+                    83, 84, 464, 462, 460, 468 });             // chocolate, candy, cheese (lie), milk(stand), bread(lie), sandwich(lie)
                 var back = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 180f, true, mesh, false);   // BACK side: shares the mesh, stocks the far tiers, faces the other aisle
                 back.DebugDisplay(new System.Collections.Generic.List<int> { 472, 465, 13, 14, 462, 340, 15, 81 });   // a few items so we can see the back is stocked
                 AddChild(new OmniLight3D { GlobalPosition = new Vector3(2f, 3f, -1.5f), OmniRange = 24f, LightEnergy = 3f });

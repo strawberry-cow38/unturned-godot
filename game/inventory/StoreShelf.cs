@@ -73,9 +73,9 @@ namespace UnturnedGodot
         }
 
         // items master pinned to LIE flat even though their icon stands them (flat foods the 1x1 shape-check misses):
-        // carrot/wheat/corn/potato (produce), chocolate/candy/cheese. Gun magazines + any sandwich lie via the type/name
-        // rules in PlaceItem. (Canned bacon/ham are round TINS -> they stand on their base like tuna/sardines, NOT here.)
-        static readonly HashSet<int> _forceLie = new() { 329, 344, 335, 342, 83, 84, 464 };
+        // carrot/wheat/corn/potato (produce), chocolate/candy/cheese, carjack (a GENERIC tool that stands otherwise). Gun
+        // magazines + sandwiches lie via type/name rules in PlaceItem. (Canned bacon/ham are round TINS -> stand, NOT here.)
+        static readonly HashSet<int> _forceLie = new() { 329, 344, 335, 342, 83, 84, 464, 277 };
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
@@ -250,7 +250,8 @@ namespace UnturnedGodot
             bool round = d[ax[1]] >= d[ax[2]] * 0.85f;   // two largest dims ~equal => a round/square upright (tin can, jerry can) that sits on its base -- NOT a flat slab
             bool flatSlab = d[ax[0]] < d[ax[1]] * 0.45f && !round;   // one clearly-thin dim (and not a round tin) => a flat package/slab -> lie flat
             bool isDrink = asset != null && asset.type == EItemType.WATER;   // juice/soda/water always STAND (even flat juice boxes) -- they're containers
-            bool lieFlat = !isDrink && (flatSlab || _forceLie.Contains(id)   // a flat slab, a pinned flat food, a gun magazine, or a sandwich -> lie flat
+            bool isClothing = asset != null && asset.type <= EItemType.GLASSES;   // HAT..GLASSES (worn items) fold flat on the shelf
+            bool lieFlat = !isDrink && (flatSlab || isClothing || _forceLie.Contains(id)   // a flat slab, clothing, a pinned flat food, a gun magazine, or a sandwich -> lie flat
                 || (asset != null && (asset.type == EItemType.MAGAZINE || (asset.itemName != null && asset.itemName.Contains("Sandwich")))));
 
             Basis oriented;
@@ -284,15 +285,11 @@ namespace UnturnedGodot
                 // LIE FLAT, DETAIL-SIDE UP: use the icon FRONT (or shortest axis if no data) as the up direction, snapped
                 // to the nearest local axis so it rests flat; longer remaining axis -> shelf WIDTH (keeps long items off
                 // the back wall), the other -> depth.
+                // rest on the BROAD face: shortest axis up (so it lies flat, never on a side/edge). If the icon FRONT is on
+                // that broad face, use its sign so the label lands on TOP (medkit cross, MRE text); otherwise default up.
                 Vector3 front = pose.Ok ? pose.Front : Vector3.Zero;
-                int upA; float upSign;
-                if (front.LengthSquared() > 0.01f)
-                {
-                    float fx0 = Mathf.Abs(front.X), fy0 = Mathf.Abs(front.Y), fz0 = Mathf.Abs(front.Z);
-                    upA = (fx0 >= fy0 && fx0 >= fz0) ? 0 : (fy0 >= fz0 ? 1 : 2);
-                    upSign = front[upA] >= 0f ? 1f : -1f;
-                }
-                else { upA = ax[0]; upSign = 1f; }
+                int upA = ax[0];
+                float upSign = (front.LengthSquared() > 0.01f && Mathf.Abs(front[upA]) > 0.5f) ? (front[upA] >= 0f ? 1f : -1f) : 1f;
                 int o1 = (upA + 1) % 3, o2 = (upA + 2) % 3;
                 int wide = d[o1] >= d[o2] ? o1 : o2, deep = d[o1] >= d[o2] ? o2 : o1;
                 var c = new Vector3[3];
