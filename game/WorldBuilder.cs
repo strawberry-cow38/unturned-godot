@@ -63,6 +63,8 @@ namespace UnturnedGodot
             ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", 6, false, "Fridge"),      // fridge x17 -> Food
             ["8388edfa33b84f78ad7f5d277412433b"] = ("Wardrobe_0", 19, false, "Wardrobe"), // wardrobe x24 -> Cloth
             ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
+            ["0aeeefaf364f46f9906aff76c40c6d2b"] = ("Counter_1", 17, false, "Counter"),   // counter x22 -> Kitchen
+            ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", 17, false, "Counter"),   // counter x23 -> Kitchen
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
             ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
