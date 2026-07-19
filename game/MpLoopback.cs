@@ -26,7 +26,14 @@ namespace UnturnedGodot
         // does it (ClientWorldSession). Opt-in and behavior-neutral when false: SP/loopback keep the direct
         // path byte-for-byte. This is the first subsystem to prove the "consume a replica, don't own a node"
         // seam inside the loopback; later phases copy this shape for the other subsystems.
+        //
+        // P1b (SAME --spconsume flag): P1 surfaced that a wire placement SPENDS an item server-side before
+        // broadcasting, but the loopback local player's SERVER inventory was never stocked/owner-replicated,
+        // so a real placement would be server-REJECTED. P1b closes that: the server owns a stocked inventory
+        // for the local player (seeded from the SP demo kit on join) and the local grid/consume/craft seams
+        // route over the wire + adopt the owner block -- the MP client's exact end-to-end inventory authority.
         public bool ConsumeDeployables;
+        bool _localInventoryAdopted;   // P1b: latches the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457)
 
         public MemNetwork Net { get; private set; }
         public NetWorldServer Server { get; private set; }
@@ -82,7 +89,46 @@ namespace UnturnedGodot
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
                 Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
                 Player.NetCloseStorage = () => Client.SendCloseStorage();
-                GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables as replicas (direct path disabled for this subsystem)");
+
+                // (c) P1b -- server-authoritative inventory for the LOCAL player. The placement seam above
+                //     (P1) routes over the wire, where OnPlaceDeployable SPENDS the deployable item before
+                //     broadcasting; its validator requires getItemCount(defId) > 0 on the SERVER grid. So the
+                //     local player's server inventory must be STOCKED and OWNER-REPLICATED, exactly as the MP
+                //     client's is. Without this a real placement is server-rejected -- the gap P1 surfaced.
+                //
+                //     SEED: grant the SP demo kit into the SERVER grid when the local peer joins -- verbatim
+                //     from DedicatedServer:67-71. Fires AFTER core's Inventories.ServerAdd (subscribed first,
+                //     in the NetWorldServer ctor) and BEFORE the join snapshot composes in TickReplication, so
+                //     the kit rides the join snapshot. PopulateDemoKit is the exact loadout PopulateDemoInventory
+                //     grants the SP shell, so server and local shell start from the identical bag.
+                Server.Session.PeerConnected += peer =>
+                {
+                    if (Server.Inventories.TryGet(peer.PlayerId, out var inv))
+                        PlayerController.PopulateDemoKit(inv.Inventory);
+                };
+                // SEAMS (verbatim from ClientWorldSession.SpawnShell:441-445): the local player's grid/consume/
+                //     craft actions route as INTENT over the wire. Each is null in default SP/loopback, so the
+                //     direct mutation stays byte-identical; SETTING it makes PlayerController take the wire
+                //     branch (RequestMoveItem/RequestEquipItem/RequestDropItem @1744-1763, TickConsume @1038)
+                //     and SKIP its local mutation -- the server owns every spend, the owner echo re-adopts.
+                //     INVARIANT (no double-mutation): the SP direct removeItemAmount/TryDrag paths are
+                //     superseded while these seams are non-null (mirrors the P1 deployable invariant above).
+                Player.NetMoveItem = (p0, x0, y0, p1, x1, y1, rot1) => Client.SendMoveItem(p0, x0, y0, p1, x1, y1, rot1);
+                Player.NetEquipItem = (page, x, y, slot) => Client.SendEquipItem(page, x, y, slot);
+                Player.NetDropItem = (page, x, y) => Client.SendDropItem(page, x, y);
+                Player.NetConsume = (page, x, y) => Client.SendConsume(page, x, y);
+                Player.NetCraft = index => Client.SendCraft(index);
+                // ADOPT (mirror ClientWorldSession:190-194): every owner-block echo re-adopts the SERVER grid
+                //     into the local Player's EXISTING Inventory instance (copy-in-place -- the InventoryUI /
+                //     hotbar / reload-mag hunt all hold that reference; the UI's signature poll repaints). The
+                //     local bag now mirrors server truth instead of the boot-time SP demo fiction. The initial
+                //     pull (ClientWorldSession.SpawnShell:456-457) is done in TickLocal once Connected.
+                Client.Inventories.ReplicaUpdated += owner =>
+                {
+                    if (owner != Client.PlayerId || Player == null || !IsInstanceValid(Player)) return;
+                    if (Client.Inventories.TryGet(owner, out var inv)) Player.AdoptReplicatedInventory(inv.Inventory);
+                };
+                GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables as replicas + SERVER-AUTHORITATIVE inventory (direct paths disabled for these subsystems)");
             }
 
             Driver.Sim.Add(new DelegateSimStep((t, dt) => TickLocal((float)dt), "mp.loopback.local"));
@@ -135,6 +181,17 @@ namespace UnturnedGodot
             Net.Tick();
             Client.Tick();
             if (Client.State != NetSessionState.Connected || Player == null || !IsInstanceValid(Player)) return;
+
+            // P1b: the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457). The
+            // ReplicaUpdated subscription re-adopts every echo AFTER this; this catches the join snapshot's
+            // owner block if it landed before Connected latched Client.PlayerId. Idempotent + guarded, so it
+            // runs at most once (adopting an identical demo bag over itself would be a harmless no-op anyway).
+            if (ConsumeDeployables && !_localInventoryAdopted
+                && Client.Inventories.TryGet(Client.PlayerId, out var invEntry))
+            {
+                Player.AdoptReplicatedInventory(invEntry.Inventory);
+                _localInventoryAdopted = true;
+            }
 
             // 1) the shell's captured input goes over the wire as this tick's MoveInput (held-keys model)
             float yaw = Player.RotationDegrees.Y;

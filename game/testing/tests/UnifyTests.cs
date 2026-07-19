@@ -142,4 +142,149 @@ namespace UnturnedGodot.Testing
             client.Disconnect();
         }
     }
+
+    // SP/MP-unify P1b phase gate (SECOND pattern-setter). Closes the gap P1 surfaced: a wire placement (P1)
+    // SPENDS an item server-side BEFORE broadcasting, so the local loopback player's SERVER inventory must be
+    // STOCKED + owner-replicated or a real placement is server-REJECTED. This proves the server-authoritative
+    // inventory end-to-end -- the exact shape MpLoopback now takes under --spconsume (seed the demo kit into
+    // the server grid on join, route the grid/consume seams over the wire, adopt the owner block).
+    //
+    // Net setup modeled on unify.deploy_consume_parity + NetTests: ONE client stands in for the local loopback
+    // player. It drives inventory/placement over the wire (Client.Send*, as MpLoopback's seams now do) and
+    // reads its OWN owner-replicated inventory (client.Inventories -- exactly what AdoptReplicatedInventory
+    // copies into the shell). The DedicatedServer seeds the demo kit into the SERVER grid on join
+    // (DedicatedServer:67-71 = the same PopulateDemoKit seed MpLoopback now does under --spconsume).
+    //
+    // TEETH (the whole point of server-authority inventory): a placement of an item the SERVER grid does NOT
+    // hold is REJECTED -- no spend, no materialization. And after the seeded item is spent, a SECOND identical
+    // placement is REJECTED too, proving the decrement was real on the authoritative grid, not cosmetic. On
+    // the old empty-server-inventory loopback the spend could never validate, so this test cannot pass there.
+    //
+    // AllowCheats stays OFF: this phase seeds the server grid DIRECTLY (as P1b does) and spends the SEEDED
+    // item -- NOT console-give (that was P1's stand-in). The spend must validate against a real server bag.
+    public class UnifyInventoryAuthority : GameTest
+    {
+        public override string Name => "unify.inventory_authority";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // item 458 (generator) + 95 (Bandage) resolve against the real catalog
+
+            // net stack over MemTransport -- ONE client, the local loopback player's stand-in. Client pump is
+            // registered BEFORE the DedicatedServer so each tick runs delivery + client BEFORE the server sim,
+            // replicate staying LAST (§2.5). Cheats OFF: no console-give -- the server grid is seeded directly.
+            var net = new MemNetwork(20260713);
+            var client = new NetWorldClient(new MemClientTransport(net), "local", contentHash: NetContent.Hash);
+            DeployableNetSchema.RegisterAll(client.Deployables.Schema);   // (server side is registered by DedicatedServer)
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);   // seeds the demo kit into the SERVER grid on join (DedicatedServer:67-71 = the P1b seed)
+
+            client.Connect();
+            yield return Until(() => client.State == NetSessionState.Connected, 5);
+            T.Check("local client joined the loopback server", client.State == NetSessionState.Connected);
+
+            // the P1b invariant: the server OWNS a stocked inventory for the local player (demo kit seeded on
+            // join), and it is owner-replicated back to the client -- the grid the shell adopts.
+            yield return Until(() => ded.Server.Inventories.TryGet(client.PlayerId, out var s0)
+                                  && s0.Inventory.getItemCount(4) == 1, 5);
+            T.Check("server owns a STOCKED inventory for the local player (demo-kit Eaglefire present)",
+                    ded.Server.Inventories.TryGet(client.PlayerId, out var sBag) && sBag.Inventory.getItemCount(4) == 1);
+            yield return Until(() => client.Inventories.TryGet(client.PlayerId, out var r0)
+                                  && r0.Inventory.getItemCount(4) == 1, 5);
+            T.Check("the owner block replicates the stocked inventory back (what AdoptReplicatedInventory copies in)",
+                    client.Inventories.TryGet(client.PlayerId, out var rBag) && rBag.Inventory.getItemCount(4) == 1);
+
+            // TEETH #1 -- empty of the deployable: the demo kit holds NO generator (458). A wire placement of an
+            // item the SERVER grid doesn't hold is REJECTED at the validator (getItemCount(458) > 0 is false):
+            // no spend, no broadcast, no materialization. This is exactly the gap P1 surfaced.
+            client.SendPlaceDeployable(458, new UnityEngine.Vector3(-2f, 0f, 0f), 0f);
+            yield return Ticks(20);
+            T.Check("placement REJECTED with no 458 in the server grid (no materialization)", client.Deployables.Count == 0);
+            T.Check("nothing spent from an item the grid never held",
+                    ded.Server.Inventories.TryGet(client.PlayerId, out var sEmpty) && sEmpty.Inventory.getItemCount(458) == 0);
+
+            // SEED a placeable deployable into the SERVER grid directly (models the P1b seed granting a stocked
+            // item -- here a generator so the placement can SPEND it). Not console-give: the spend must validate
+            // against a REAL server inventory, so a real item goes in it.
+            ded.Server.Inventories.TryGet(client.PlayerId, out var bag);
+            bool seeded = bag.Inventory.tryAddItem(new Item(458));
+            T.Check("seeded a generator (458) into the local player's SERVER inventory", seeded && bag.Inventory.getItemCount(458) == 1);
+            yield return Until(() => client.Inventories.TryGet(client.PlayerId, out var r1) && r1.Inventory.getItemCount(458) == 1, 5);
+            T.Check("the seeded item replicated to the owner block", client.Inventories.TryGet(client.PlayerId, out var r1b) && r1b.Inventory.getItemCount(458) == 1);
+
+            // (a) + (b): a REAL placement over the wire spending the SEEDED item -- assert BOTH the deployable
+            // materialized with a server NetId AND the server-side inventory item was CONSUMED (1 -> 0), proving
+            // the spend validated against the real server grid (P1's console-give never proved the CONSUME half).
+            client.SendPlaceDeployable(458, new UnityEngine.Vector3(-2f, 0f, 0f), 0f);
+            yield return Until(() => client.Deployables.Count == 1, 5);
+            uint genId = 0;
+            foreach (var e in client.Deployables.All) if (e.DefId == 458) genId = e.NetIdValue;
+            T.Check($"(a) the deployable MATERIALIZED over the wire with a server NetId ({genId})", genId != 0);
+            yield return Until(() => ded.Server.Inventories.TryGet(client.PlayerId, out var s2) && s2.Inventory.getItemCount(458) == 0, 5);
+            T.Check("(b) the SERVER inventory item was CONSUMED (spend validated against the real server grid)",
+                    ded.Server.Inventories.TryGet(client.PlayerId, out var sSpent) && sSpent.Inventory.getItemCount(458) == 0);
+            yield return Until(() => client.Inventories.TryGet(client.PlayerId, out var r2) && r2.Inventory.getItemCount(458) == 0, 5);
+            T.Check("the consumed spend echoed to the owner block (the shell's bag would mirror it)",
+                    client.Inventories.TryGet(client.PlayerId, out var rSpent) && rSpent.Inventory.getItemCount(458) == 0);
+
+            // TEETH #2 -- the item was really spent: a second identical placement is REJECTED (count is truly 0
+            // on the authoritative grid). Proves the decrement was real, not a cosmetic client prediction.
+            client.SendPlaceDeployable(458, new UnityEngine.Vector3(-4f, 0f, 0f), 0f);
+            yield return Ticks(20);
+            T.Check("second placement REJECTED -- the seeded item was really spent (still just 1 deployable)", client.Deployables.Count == 1);
+
+            // (move round-trip): drag a demo Bandage (95, 1x1) to a free cell in the POCKETS page over the wire.
+            // Assert the REPLICATED owner inventory reflects the new layout -- the grid the shell adopts.
+            var spg = bag.Inventory.items[2];   // POCKETS (server-side truth)
+            byte sx = 255, sy = 255;
+            for (byte i = 0; i < spg.getItemCount(); i++) { var j = spg.getItem(i); if (j.item?.id == 95) { sx = j.x; sy = j.y; break; } }
+            T.Check("found a demo Bandage on the server POCKETS grid", sx != 255);
+            byte dx = 255, dy = 255;
+            for (byte y = 0; y < spg.height && dx == 255; y++)
+                for (byte x = 0; x < spg.width && dx == 255; x++)
+                    if (spg.checkSpaceEmpty(x, y, 1, 1, 0)) { dx = x; dy = y; }
+            T.Check("found a free destination cell", dx != 255 && (dx != sx || dy != sy));
+            long movesBefore = ded.Server.Transactions.Diag.GridMovesApplied;
+            client.SendMoveItem(2, sx, sy, 2, dx, dy, 0);
+            yield return Until(() => ded.Server.Transactions.Diag.GridMovesApplied == movesBefore + 1, 5);
+            T.Check("(move) the SERVER grid applied the drag", ded.Server.Transactions.Diag.GridMovesApplied == movesBefore + 1);
+            yield return Until(() => client.Inventories.TryGet(client.PlayerId, out var rm)
+                                  && rm.Inventory.items[2].getIndex(dx, dy) != byte.MaxValue, 5);
+            bool moved = client.Inventories.TryGet(client.PlayerId, out var rmv)
+                      && rmv.Inventory.items[2].getIndex(dx, dy) != byte.MaxValue
+                      && rmv.Inventory.items[2].getItem(rmv.Inventory.items[2].getIndex(dx, dy)).item?.id == 95;
+            T.Check("(move) the REPLICATED owner inventory reflects the new layout (what the shell adopts)", moved);
+
+            // (consume round-trip): eat a demo Bandage (95) over the wire -- assert the SERVER count decremented
+            // AND the replicated owner block echoed it (the server deletes by id; the cell just names one).
+            int serverBefore = bag.Inventory.getItemCount(95);
+            T.Check("server grid carries the demo Bandages", serverBefore >= 2);
+            byte cx = 255, cy = 255;
+            for (byte i = 0; i < spg.getItemCount(); i++) { var j = spg.getItem(i); if (j.item?.id == 95) { cx = j.x; cy = j.y; break; } }
+            T.Check("found a Bandage cell to name in the consume", cx != 255);
+            long consumesBefore = ded.Server.Transactions.Diag.ConsumesApplied;
+            client.SendConsume(2, cx, cy);
+            yield return Until(() => ded.Server.Transactions.Diag.ConsumesApplied == consumesBefore + 1, 5);
+            T.Check("(consume) the SERVER deleted a Bandage (Diag.ConsumesApplied bumped)",
+                    ded.Server.Transactions.Diag.ConsumesApplied == consumesBefore + 1);
+            yield return Until(() => ded.Server.Inventories.TryGet(client.PlayerId, out var s3) && s3.Inventory.getItemCount(95) == serverBefore - 1, 5);
+            T.Check("(consume) the SERVER Bandage count decremented",
+                    ded.Server.Inventories.TryGet(client.PlayerId, out var sCons) && sCons.Inventory.getItemCount(95) == serverBefore - 1);
+            yield return Until(() => client.Inventories.TryGet(client.PlayerId, out var r3) && r3.Inventory.getItemCount(95) == serverBefore - 1, 5);
+            T.Check("(consume) the replicated owner block echoed the deletion",
+                    client.Inventories.TryGet(client.PlayerId, out var rCons) && rCons.Inventory.getItemCount(95) == serverBefore - 1);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            client.Disconnect();
+        }
+    }
 }
