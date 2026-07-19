@@ -107,6 +107,23 @@ namespace UnturnedGodot
             return (playerPos - GlobalPosition).Dot(GlobalTransform.Basis.Z) >= 0f ? this : _twin;
         }
 
+        Items _livePage;   // while this shelf is OPEN, its grid lives in the player's STORAGE page -> mirror THAT (live), not the stale own-copy
+
+        // the crate open/close code calls these so the shelf display updates as items are dragged in/out, not just on close
+        public void BeginLiveDisplay(Items page)
+        {
+            if (page == null) return;
+            _livePage = page;
+            page.onStateUpdated += SyncDisplay;   // any add/remove/move in the open grid -> re-sync immediately
+            if (ShowItems) SyncDisplay();
+        }
+        public void EndLiveDisplay()
+        {
+            if (_livePage != null) _livePage.onStateUpdated -= SyncDisplay;
+            _livePage = null;
+            if (ShowItems) SyncDisplay();          // final sync from the own grid (the close writes the edits back into it)
+        }
+
         ArrayMesh ShelfMesh()
         {
             if (_meshes.TryGetValue(MeshName, out var m)) return m;
@@ -182,10 +199,11 @@ namespace UnturnedGodot
         // polled ~2x/s (the crate close-out writes the edited grid back).
         void SyncDisplay()
         {
+            var src = _livePage ?? Storage;   // while OPEN, mirror the live grid in the player's STORAGE page; else our own grid
             var current = new Dictionary<int, (ushort id, ItemAsset a, int w, int h)>();
-            for (byte i = 0; i < Storage.getItemCount(); i++)
+            for (byte i = 0; i < src.getItemCount(); i++)
             {
-                var j = Storage.getItem(i);
+                var j = src.getItem(i);
                 if (j?.item == null) continue;
                 int w = j.rot % 2 == 1 ? j.size_y : j.size_x;   // rotation-adjusted footprint (matches the grid packing)
                 int h = j.rot % 2 == 1 ? j.size_x : j.size_y;

@@ -1130,6 +1130,7 @@ namespace UnturnedGodot
             if (near is StoreShelf shelf) near = shelf.ResolveSide(GlobalPosition);   // double-sided gondola: open the side the player is standing on
             _openCrate = near;
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
+            (near as StoreShelf)?.BeginLiveDisplay(Inventory.items[PlayerInventory.STORAGE]);   // live-update the shelf models as the grid is edited (not just on close)
             GD.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
             _invUI?.Open();
             Input.MouseMode = Input.MouseModeEnum.Visible;
@@ -1148,6 +1149,7 @@ namespace UnturnedGodot
             }
             if (_openCrate == null) return;
             CopyPage(Inventory.items[PlayerInventory.STORAGE], _openCrate.Storage, _openCrate.Width, _openCrate.Height);
+            (_openCrate as StoreShelf)?.EndLiveDisplay();   // stop mirroring page 7; final sync from the written-back grid
             var s = Inventory.items[PlayerInventory.STORAGE];
             s.clear(); s.loadSize(0, 0);
             _openCrate = null;
