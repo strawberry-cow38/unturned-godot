@@ -732,7 +732,7 @@ namespace UnturnedGodot
             {
                 // Deployable: FOLLOW THE HAND BONE so the Deploy_Equip raise + Deploy_Use place anims move the carry model
                 // (same as consumable/melee). Held-model localRotation = Euler(0,0,90) (source PlayerEquipment.firstModel), tunable via UG_DROLL.
-                Vector3 droll = new Vector3(0f, 0f, 90f);
+                Vector3 droll = NaturalHold ? new Vector3(180f, 0f, 90f) : new Vector3(0f, 0f, 90f);   // gas can (NaturalHold): +180 pitch so the yellow CAP sits UP (the baked mesh + Fuel_Equip pose left it cap-down / upside-down)
                 if (System.Environment.GetEnvironmentVariable("UG_DROLL") is string _dr && _dr.Split(',').Length == 3)
                 { var pp = _dr.Split(','); droll = new Vector3(float.Parse(pp[0]), float.Parse(pp[1]), float.Parse(pp[2])); }
                 var drollB = Basis.FromEuler(new Vector3(Mathf.DegToRad(droll.X), Mathf.DegToRad(droll.Y), Mathf.DegToRad(droll.Z)));
