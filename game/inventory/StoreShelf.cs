@@ -149,41 +149,42 @@ namespace UnturnedGodot
             Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
             var vis = WorldItem.BuildReplicaVisual(id, rar);
 
-            // ORIENT by shape + type: tools/guns/melee/fishing (long, awkward) + flat/thin slabs (candy bars) LIE FLAT
-            // (thinnest axis up); tall/round items (cans, bottles, chemicals) STAND (longest axis up). Robust to authoring.
+            // ORIENT with the models' NATURAL right-side-up poses (axis-align flipped them upside down): a consumable that
+            // isn't a flat slab STANDS via the game's +90 X drop pose (cans, bottles, chemicals); everything else -- tools,
+            // guns, melee, and flat slabs (candy bars, bandages) -- lies flat in the natural 0 X pose. Type decides stand
+            // vs lie because a can and a flashlight are the same SHAPE.
             var s = (vis.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One * 0.1f)).Size;
             float[] d = { s.X, s.Y, s.Z };
             int mn = 0, mx = 0;
             for (int k = 1; k < 3; k++) { if (d[k] < d[mn]) mn = k; if (d[k] > d[mx]) mx = k; }
             float mid = s.X + s.Y + s.Z - d[mn] - d[mx];
-            // only consumables/drinks/chemicals STAND (when tall); everything else (guns, melee, tools like the flashlight,
-            // clothing, misc) LIES FLAT -- a can/bottle/chemical and a flashlight are the SAME shape, so type decides.
             bool standable = asset != null && (asset.type == EItemType.FOOD || asset.type == EItemType.WATER || asset.type == EItemType.MEDICAL || asset.type == EItemType.SUPPLY);
-            bool layFlat = !standable || d[mn] < mid * 0.55f;
-            int up = layFlat ? mn : mx;
-            Basis stand = up == 0 ? new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(90f))
-                        : up == 2 ? new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-90f))
-                        : Basis.Identity;
-            Basis oriented = new Basis(Vector3.Up, Mathf.DegToRad(col * 11f)) * stand;
+            bool standUp = standable && d[mn] >= mid * 0.55f;   // consumable + not a flat slab -> stand it up (else lie flat)
+            vis.RotationDegrees = new Vector3(standUp ? 90f : 0f, col * 11f, 0f);
+            Basis oriented = vis.Basis;
 
             // SCALE oversized items down to fit the slot (master's "cheat"): cap the footprint to the slot width + the
             // height to the tier gap.
             var ob = new Transform3D(oriented, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
-            float slotW = (xspan / Mathf.Max(1, pr.PerTier)) * 0.92f;
-            float tierGap = box.Size.Y * 0.26f;
+            float slotW = (xspan / Mathf.Max(1, pr.PerTier)) * 0.9f;
+            float tierGap = box.Size.Y * 0.24f;
             float sc = 1f, foot = Mathf.Max(ob.Size.X, ob.Size.Z);
             if (foot > slotW && foot > 0.0001f) sc = Mathf.Min(sc, slotW / foot);
             if (ob.Size.Y > tierGap && ob.Size.Y > 0.0001f) sc = Mathf.Min(sc, tierGap / ob.Size.Y);
             vis.Basis = oriented.Scaled(new Vector3(sc, sc, sc));
 
-            // POSITION by the final (rotated+scaled) bounds: base flush on the tier (Y), footprint centered in the shelf
-            // DEPTH (front-biased) so nothing pokes the back wall (Z), centered on the slot (X).
+            // POSITION by the final bounds: base flush on the tier + a tiny lift (master: sit a touch higher); footprint
+            // FRONT-biased for visibility, but CLAMPED so its back edge never passes the back wall (fixes the MRE/medkit
+            // clipping); centered on the slot (X).
             var rb = new Transform3D(vis.Basis, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
             float tierSurfaceY = box.Position.Y + box.Size.Y * pr.TierY[tier];
+            float zPos = (box.Position.Z + box.Size.Z * 0.60f) - (rb.Position.Z + rb.Size.Z * 0.5f);   // front-biased center
+            float minBack = box.Position.Z + box.Size.Z * 0.12f;                                        // keep the back edge this far off the wall
+            if (zPos + rb.Position.Z < minBack) zPos = minBack - rb.Position.Z;
             vis.Position = new Vector3(
                 (x0 + xspan * fx) - (rb.Position.X + rb.Size.X * 0.5f),
-                tierSurfaceY - rb.Position.Y,
-                (box.Position.Z + box.Size.Z * (0.5f + 0.5f * pr.FrontZ)) - (rb.Position.Z + rb.Size.Z * 0.5f));
+                tierSurfaceY - rb.Position.Y + rb.Size.Y * 0.03f,
+                zPos);
             AddChild(vis);
             _display[cellKey] = vis;
         }

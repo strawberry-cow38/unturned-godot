@@ -2077,7 +2077,24 @@ namespace UnturnedGodot
 
             if (System.Environment.GetEnvironmentVariable("UG_SHELFDEMO") == "1")   // StoreShelf tier-layout harness: isolate a display shelf + fixed items (UG_SHELFMESH=Shelf_0/1)
             {
+                GetWindow().Size = new Vector2I(1280, 720);
                 SDG.Unturned.ItemCatalog.RegisterAll();   // so Assets.find(id).type resolves -> the stand/lie orientation rule works in the harness
+                if (System.Environment.GetEnvironmentVariable("UG_PROBE") == "1")   // orientation probe: id 13 (a can) at 6 rotations, to SEE which stands it upright
+                {
+                    int probeId = int.TryParse(System.Environment.GetEnvironmentVariable("UG_PROBEID"), out var pid) ? pid : 13;
+                    var rots = new[] { new Vector3(0, 0, 0), new Vector3(90, 0, 0), new Vector3(180, 0, 0), new Vector3(270, 0, 0), new Vector3(0, 0, 90), new Vector3(0, 0, 270) };
+                    for (int r = 0; r < 6; r++)
+                    {
+                        var v = WorldItem.BuildReplicaVisual((ushort)probeId, Colors.White);
+                        v.RotationDegrees = rots[r];
+                        v.Position = new Vector3(-1.5f + r * 0.6f, 1.2f, -4.5f);
+                        AddChild(v);
+                    }
+                    AddChild(new OmniLight3D { GlobalPosition = new Vector3(0f, 3f, -2f), OmniRange = 20f, LightEnergy = 3f });
+                    var pc = new Camera3D { Fov = 45f };
+                    AddChild(pc); pc.GlobalPosition = new Vector3(0f, 1.5f, -1.2f); pc.LookAt(new Vector3(0f, 1.1f, -4.5f), Vector3.Up); pc.Current = true;
+                    return;
+                }
                 string mesh = System.Environment.GetEnvironmentVariable("UG_SHELFMESH") ?? "Shelf_1";
                 var shelf = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 0f, true, mesh);
                 shelf.DebugDisplay(new System.Collections.Generic.List<int> { 4, 13, 15, 95, 81, 14, 4, 13, 15, 95, 81, 14, 4, 13, 15, 95, 81, 14 });
