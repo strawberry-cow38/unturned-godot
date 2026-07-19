@@ -2097,10 +2097,10 @@ namespace UnturnedGodot
                 }
                 string mesh = System.Environment.GetEnvironmentVariable("UG_SHELFMESH") ?? "Shelf_1";
                 var shelf = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 0f, true, mesh);
-                shelf.DebugDisplay(new System.Collections.Generic.List<int> {   // master's callout items: cans/bottles/veggies/cartons should STAND right-side-up, flat stuff lies
-                    465, 340, 1159, 463, 15, 81,    // soda, tomato, maple syrup, OJ carton, medkit, MRE
-                    472, 342, 335, 462, 95, 13,     // cola, potato, corn, milk carton, bandage, beans
-                    344, 329, 338, 470, 460, 14 }); // wheat, carrot, lettuce, eggs, bread, water
+                shelf.DebugDisplay(new System.Collections.Generic.List<int> {   // master's callout items across full rows of 8: stand vs lie + tight spacing
+                    465, 340, 1159, 463, 15, 81, 472, 342,     // soda, tomato, maple, OJ, medkit, MRE, cola, potato
+                    335, 462, 95, 13, 344, 329, 338, 470,      // corn, milk, bandage, beans, wheat, carrot, lettuce, eggs
+                    460, 14, 473, 340, 15, 465, 1159, 81 });   // bread, water, soda2, tomato, medkit, soda, maple, MRE
                 AddChild(new OmniLight3D { GlobalPosition = new Vector3(2f, 3f, -1.5f), OmniRange = 24f, LightEnergy = 3f });
                 var scam = new Camera3D { Fov = 55f };
                 AddChild(scam);
