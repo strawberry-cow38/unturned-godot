@@ -13,18 +13,67 @@ namespace UnturnedGodot
     public partial class RiggedCharacter : Node3D
     {
         AnimationPlayer _ap;
-        StandardMaterial3D _bodyMat;   // body surface material, for the FLANKER_STALK ghost toggle
-        Color _bodyTint;               // solid-state albedo, restored when un-ghosting
+        StandardMaterial3D _bodyMat;   // body surface material (baked-atlas path: zombies/animals), for the FLANKER_STALK ghost toggle
+        ShaderMaterial _clothesMat;    // ported StandardClothes shader (player body / arms path); skin + SetShirt/SetPants painting
+        Color _bodyTint;               // solid-state albedo/skin, restored when un-ghosting
         public Skeleton3D Skeleton { get; private set; }
         public string[] ClipNames { get; private set; } = Array.Empty<string>();
 
         // FLANKER_STALK: swap the body to a faint translucent shimmer (Unturned's ZombieClothing.ghostMaterial) --
         // NOT fully gone; a keen eye can still pick out the stalker. Restores the solid tint when off.
+        // Clothes-shader body: drive the ghost_alpha uniform (1.0 solid / 0.2 shimmer). Atlas body: the old
+        // StandardMaterial3D transparency path (unchanged -- FLANKER zombies use the atlas path).
         public void SetGhost(bool ghost)
         {
+            if (_clothesMat != null) { _clothesMat.SetShaderParameter("ghost_alpha", ghost ? 0.2f : 1f); return; }
             if (_bodyMat == null) return;
             _bodyMat.Transparency = ghost ? BaseMaterial3D.TransparencyEnum.Alpha : BaseMaterial3D.TransparencyEnum.Disabled;
             _bodyMat.AlbedoColor = new Color(_bodyTint.R, _bodyTint.G, _bodyTint.B, ghost ? 0.2f : 1f);
+        }
+
+        // ---- clothing (P3a): the ported StandardClothes composite paints shirt+pants textures onto the body's
+        //      UV0 atlas over the skin base. No-ops on the atlas (zombie/animal) path where _clothesMat is null.
+        //      An unassigned texture reads as transparent (has_* = false) -> skin shows through.
+        public void SetSkinColor(Color c) { _bodyTint = c; _clothesMat?.SetShaderParameter("skin_color", c); }
+
+        public void SetFlipShirt(bool flip) => _clothesMat?.SetShaderParameter("flip_shirt", flip);   // _FlipShirt (left-hand mirror); SP body leaves false
+
+        public void SetShirt(Texture2D albedo, Texture2D emission = null, Texture2D metallic = null)
+        {
+            if (_clothesMat == null) return;
+            _clothesMat.SetShaderParameter("has_shirt_albedo", albedo != null);
+            if (albedo != null) _clothesMat.SetShaderParameter("shirt_albedo", albedo);
+            _clothesMat.SetShaderParameter("has_shirt_emission", emission != null);
+            if (emission != null) _clothesMat.SetShaderParameter("shirt_emission", emission);
+            _clothesMat.SetShaderParameter("has_shirt_metallic", metallic != null);
+            if (metallic != null) _clothesMat.SetShaderParameter("shirt_metallic", metallic);
+        }
+
+        public void SetPants(Texture2D albedo, Texture2D emission = null, Texture2D metallic = null)
+        {
+            if (_clothesMat == null) return;
+            _clothesMat.SetShaderParameter("has_pants_albedo", albedo != null);
+            if (albedo != null) _clothesMat.SetShaderParameter("pants_albedo", albedo);
+            _clothesMat.SetShaderParameter("has_pants_emission", emission != null);
+            if (emission != null) _clothesMat.SetShaderParameter("pants_emission", emission);
+            _clothesMat.SetShaderParameter("has_pants_metallic", metallic != null);
+            if (metallic != null) _clothesMat.SetShaderParameter("pants_metallic", metallic);
+        }
+
+        public void ClearShirt()
+        {
+            if (_clothesMat == null) return;
+            _clothesMat.SetShaderParameter("has_shirt_albedo", false);
+            _clothesMat.SetShaderParameter("has_shirt_emission", false);
+            _clothesMat.SetShaderParameter("has_shirt_metallic", false);
+        }
+
+        public void ClearPants()
+        {
+            if (_clothesMat == null) return;
+            _clothesMat.SetShaderParameter("has_pants_albedo", false);
+            _clothesMat.SetShaderParameter("has_pants_emission", false);
+            _clothesMat.SetShaderParameter("has_pants_metallic", false);
         }
 
         string _loco;
@@ -370,28 +419,42 @@ namespace UnturnedGodot
             skel.AddChild(mi);
             mi.Skin = skin;
             mi.Skeleton = mi.GetPathTo(skel);
-            // Unturned's character body is a flat skin-tone colour (clothing is separate meshes); skin.png
-            // turned out to be a cosmetic item-skin atlas, not the body. Flat tint per team.
-            var bodyMat = new StandardMaterial3D
-            {
-                AlbedoColor = tint,
-                CullMode = BaseMaterial3D.CullModeEnum.Front, // Z-flip reverses winding -> cull the (reversed) BACK faces = single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer)
-            };
-            // optional baked skin atlas (ZombieClothing composite: skin + shirt + pants -- NO face; the face-in-atlas
-            // bake landed on the LEFT ARM's texels, see tools/bake_zombie_variants.py + the Skull quad below). The tint
-            // multiplies it, so a NORMAL zombie passes white for the natural look, specials an accent colour.
+            // Two body-material paths:
+            //  - albedoTexPath != null (zombies/animals): a pre-baked skin+shirt+pants atlas (ZombieClothing
+            //    composite -- NO face; the face-in-atlas bake landed on the LEFT ARM's texels, see
+            //    tools/bake_zombie_variants.py + the Skull quad below) on a flat StandardMaterial3D. Kept as-is:
+            //    it's opaque + cheap (horde perf) and already contains the clothing, so it must NOT go through
+            //    the clothes shader (which would paint plain skin over it).
+            //  - albedoTexPath == null (player 3P body, corpse, 1P arms): the ported StandardClothes shader --
+            //    a skin base that SetShirt/SetPants paint real clothing textures onto (P3a). A bare body reads
+            //    as plain skin_color (no shirt/pants bound). skin.png turned out to be a cosmetic item-skin
+            //    atlas, not the body; the skin is the flat tint per team.
+            root._bodyTint = tint;
             if (albedoTexPath != null)
             {
+                var bodyMat = new StandardMaterial3D
+                {
+                    AlbedoColor = tint,
+                    CullMode = BaseMaterial3D.CullModeEnum.Front, // Z-flip reverses winding -> cull the (reversed) BACK faces = single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer)
+                };
                 var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(albedoTexPath));
                 if (img != null)
                 {
                     bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
                     bodyMat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // blocky Unturned pixels
                 }
+                mi.MaterialOverride = bodyMat;
+                root._bodyMat = bodyMat;
             }
-            mi.MaterialOverride = bodyMat;
-            root._bodyMat = bodyMat;
-            root._bodyTint = tint;
+            else
+            {
+                // clothes.gdshader ports StandardClothes: cull_front replaces CullMode.Front; skin_color = the
+                // team/skin tint. No shirt/pants bound -> renders as plain skin (identical to the old flat tint).
+                var cm = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/clothes.gdshader") };
+                cm.SetShaderParameter("skin_color", tint);
+                mi.MaterialOverride = cm;
+                root._clothesMat = cm;
+            }
 
             // Unturned's face is a shader-painted decal, NOT in the mesh UV (the head-front UV0 is a skin-only
             // sliver + there's no UV1). Reproduce it as a small quad on the head-front, textured with the real
