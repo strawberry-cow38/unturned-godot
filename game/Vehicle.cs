@@ -119,6 +119,24 @@ namespace UnturnedGodot
         const float JackknifeLimit = 90f;                // trailer yaw is clamped to +-this many degrees of the cab heading (no folding into the cab)
         const float RollDisconnectDeg = 50f;             // cab OR trailer tipped past this from upright -> drop the trailer
         float _ripTimer;                                 // cab: how long the trailer's velocity has diverged hard from ours (clipped something -> yank it off)
+
+        // --- rope tow (strawberry 2026-07-19): a generic hemp rope from ANY vehicle's REAR tow node to ANY other
+        // vehicle's FRONT tow node -- tied like a wire, held by a spring-tension pull (the rope only PULLS, never pushes),
+        // and the tower drives a bit sluggish. Distinct from the semi fifth-wheel PinJoint hitch above: a SOFT link
+        // between two independent cars, not a rigid articulated coupling. SP/integrated-server only (needs both bodies
+        // in one physics space -- MP replication is a fast-follow). ---
+        public Vector3 FrontTowLocal, RearTowLocal;   // bumper-height attach points (front / rear face centre), derived from the box in Build
+        public Vehicle Towing;      // I am the tower -> the car roped behind me (my rear -> their front); null = not towing
+        public Vehicle TowedBy;     // I am towed -> the car towing me; null = not towed
+        TowRope _rope;              // the visual rope, owned by the TOWER, re-pointed each physics tick, freed on detach
+        MeshInstance3D _towFrontNub, _towRearNub;   // small marker cubes shown while a rope tool is out (mirrors the wire-tool port arrows)
+        float _towRestLen;          // this rope's natural length (set at attach = clamped current gap) -> slack below it, tension above
+        public const float TowRestMin = 2.0f;       // floor on the rope's rest length (a bumper-to-bumper tie still gets a 2m rope, slack)
+        public const float TowAttachReach = 4.5f;   // max rear<->front world gap allowed when tying (walk the cars close first) -> also the rest-length CEILING, so the rope always forms at exactly the current gap and never yanks on attach
+        public const float TowBreakLen = 7.5f;     // stretched past this -> the rope snaps (overload / one car driving off)
+        const float TowStiffness = 7000f;          // spring: newtons per metre of stretch beyond rest
+        const float TowDamping = 1600f;            // spring damper along the rope axis (kills bounce/oscillation)
+        const float TowMaxForce = 13000f;          // clamp so a hard yank can't explode the 900kg bodies at the physics rate
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float BatteryMax = 10000f;   // battery full = 10000 (fuel burn is now per-class -> Vehicle.FuelBurn, set by FuelClassOf)
@@ -305,6 +323,7 @@ namespace UnturnedGodot
         void Explode()   // source explode: launch up + spin, fire on, char the body, disable
         {
             if (CoupledTrailer != null || CoupledCab != null) Uncouple();   // a blown-up cab or trailer drops its partner so the wreck doesn't fling the whole rig (strawberry)
+            if (Towing != null || TowedBy != null) DetachTow();   // a wrecked car also drops its rope tow (both ends) so the wreck doesn't drag or get dragged
             _exploded = true;
             Freeze = false;   // unfreeze the parked/kinematic car so the wreck flies + tumbles
             foreach (var w in _wNodes) { w.SuspensionStiffness = 0.5f; w.SuspensionMaxForce = 0f; }   // KILL the suspension -> the hulk collapses flush onto its body instead of perching on ghost-wheels (master "kill it completely")
@@ -1119,6 +1138,17 @@ namespace UnturnedGodot
             }
             v.BodyExtents = s.BoxSize * 0.5f; v.BodyCenter = s.BoxCenter;   // for the zombie swipe-reach
 
+            // rope-tow attach nodes (generic -- every vehicle gets them): bumper-height centre of the front / rear faces,
+            // nudged just outside the hull so the rope clears the body. front = -Z (forward), rear = +Z. (strawberry rope tow)
+            float towFrontZ = s.BoxCenter.Z - s.BoxSize.Z * 0.5f - 0.15f;
+            float towRearZ  = s.BoxCenter.Z + s.BoxSize.Z * 0.5f + 0.15f;
+            float towY = s.BoxCenter.Y - s.BoxSize.Y * 0.30f;   // low bumper height
+            v.FrontTowLocal = new Vector3(s.BoxCenter.X, towY, towFrontZ);
+            v.RearTowLocal  = new Vector3(s.BoxCenter.X, towY, towRearZ);
+            v._towFrontNub = MakeTowNub(new Color(0.30f, 0.62f, 1f), v.FrontTowLocal);   // blue nub = front (the TOWED end)
+            v._towRearNub  = MakeTowNub(new Color(0.25f, 0.85f, 0.30f), v.RearTowLocal);  // green nub = rear (the TOWER end)
+            v.AddChild(v._towFrontNub); v.AddChild(v._towRearNub);
+
             // front bumper trigger (source Bumper): a forward volume that roadkills characters (enemy layer bit 1) the
             // vehicle drives into. Trigger only -- the body's own mask ignores the enemy layer, so it plows through.
             var bumper = new Area3D { CollisionLayer = 0, CollisionMask = 1u << 1 };
@@ -1309,6 +1339,7 @@ namespace UnturnedGodot
             bool neutral = handbrake && speed < 0.5f;   // near-stop + handbrake -> NEUTRAL: cut engine force so a slow reverse doesn't fight the brake + jitter (master)
             float eng = (footBrake || neutral) ? 0f : throttle * _engineForce;
             if (CoupledTrailer != null) eng *= 0.5f;   // towing a loaded trailer halves the pull -> even slower accel while hooked up (strawberry 2026-07-15)
+            if (Towing != null) eng *= 0.7f;   // towing a car on a rope: a bit sluggish -> slower accel while hauling the load (strawberry 2026-07-19)
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
@@ -1388,6 +1419,116 @@ namespace UnturnedGodot
                 trailer.DriveTrailerLights(false, false);   // cab no longer drives them -> kill the trailer's brake/tail lights (its own logic resumes now CoupledCab is null)
                 trailer.Park();   // re-park so a dropped trailer settles + freezes in place instead of free-rolling off on its low-friction wheels
             }
+        }
+
+        // --- Rope tow (strawberry 2026-07-19). SP/integrated-server only (both bodies must live in one physics space). ---
+        public Vector3 FrontTowWorld => ToGlobal(FrontTowLocal);
+        public Vector3 RearTowWorld  => ToGlobal(RearTowLocal);
+
+        // small nub cube marking a tow node; hidden until a rope tool is out (PlayerController toggles them, like port arrows)
+        static MeshInstance3D MakeTowNub(Color c, Vector3 pos)
+        {
+            var m = new StandardMaterial3D { AlbedoColor = c, ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Metallic = 0f, Roughness = 0.6f };
+            return new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * 0.16f }, MaterialOverride = m, Position = pos, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+        }
+        public void SetTowNodesVisible(bool on) { if (_towFrontNub != null) _towFrontNub.Visible = on; if (_towRearNub != null) _towRearNub.Visible = on; }
+        public void SetTowNubHighlighted(bool rear, bool on)   // brighten the looked-at node while roping
+        {
+            var nub = rear ? _towRearNub : _towFrontNub;
+            if (nub != null && nub.MaterialOverride is StandardMaterial3D m) { m.EmissionEnabled = on; m.Emission = m.AlbedoColor; m.EmissionEnergyMultiplier = on ? 1.0f : 0f; }
+        }
+
+        float[] _towSavedSlip;   // towed: original per-wheel friction slip, saved while towed, restored on release
+        const float TowedFreeRollSlip = 0.5f;   // a towed car's wheel friction slip while roped: low enough the rope can drag it, high enough it still tracks laterally (grippy default is ~6)
+        // While roped behind another car, a towed car FREE-ROLLS (like the semi trailer's low-friction wheels): drop the
+        // grippy traction friction (slip 6) to ~1.5 so the rope can actually drag it, instead of the wheels gripping the
+        // ground and resisting the pull. Idempotent; restores the saved per-wheel slip on release.
+        public void SetTowedFreeRoll(bool on)
+        {
+            if (_wNodes == null) return;
+            if (on)
+            {
+                if (_towSavedSlip != null) return;
+                _towSavedSlip = new float[_wNodes.Length];
+                for (int i = 0; i < _wNodes.Length; i++) { _towSavedSlip[i] = _wNodes[i].WheelFrictionSlip; _wNodes[i].WheelFrictionSlip = TowedFreeRollSlip; }
+            }
+            else if (_towSavedSlip != null)
+            {
+                for (int i = 0; i < _wNodes.Length && i < _towSavedSlip.Length; i++) _wNodes[i].WheelFrictionSlip = _towSavedSlip[i];
+                _towSavedSlip = null;
+            }
+        }
+
+        // Tie a rope: THIS car (the tower) hooks its REAR node to `towed`'s FRONT node. Rejects if either end is already
+        // roped, they're the same car, either is wrecked, or they're too far apart. The rest length is the current gap
+        // clamped to [TowRestMin, TowAttachReach] -> always short, and (since dist <= reach at tie) never yanks on attach.
+        public bool AttachTow(Vehicle towed)
+        {
+            if (towed == null || towed == this || _exploded || towed._exploded) return false;
+            if (Towing != null || TowedBy != null || towed.Towing != null || towed.TowedBy != null) return false;   // one rope per car end
+            if (towed == CoupledTrailer || towed == CoupledCab || this == towed.CoupledTrailer || this == towed.CoupledCab) return false;   // already joined by the semi hitch -> don't double-link (they share the collision-exception set)
+            float gap = RearTowWorld.DistanceTo(towed.FrontTowWorld);
+            if (gap > TowAttachReach) return false;   // walk the cars closer first
+            _towRestLen = Mathf.Clamp(gap, TowRestMin, TowAttachReach);   // ceiling == attach reach -> restLen is exactly the current gap, never < it (no snap-on-attach yank)
+            Towing = towed; towed.TowedBy = this;
+            towed.SetTowedFreeRoll(true);   // the towed car free-rolls so the rope can drag it (else its grippy wheels resist the pull)
+            AddCollisionExceptionWith(towed); towed.AddCollisionExceptionWith(this);   // a short rope keeps them close -> don't let the bumpers bash
+            _rope = new TowRope();
+            GetParent().AddChild(_rope);   // sibling in the world (like the hitch joint)
+            _rope.SetEndpoints(RearTowWorld, towed.FrontTowWorld, _towRestLen);
+            Wake(); towed.Wake(); Sleeping = false; towed.Sleeping = false;   // both dynamic + awake so the pull force takes effect
+            return true;
+        }
+
+        // Untie the rope. Callable on the tower OR the towed car (resolves to the tower). Frees the visual + restores collision.
+        public void DetachTow()
+        {
+            var tower = Towing != null ? this : (TowedBy != null ? TowedBy : null);
+            if (tower == null || tower.Towing == null) return;
+            var towed = tower.Towing;
+            if (tower._rope != null && IsInstanceValid(tower._rope)) tower._rope.QueueFree();
+            tower._rope = null; tower.Towing = null;
+            if (towed != null)
+            {
+                towed.TowedBy = null;
+                towed.SetTowedFreeRoll(false);   // restore the towed car's grippy wheels now it drives/parks on its own again
+                tower.RemoveCollisionExceptionWith(towed); towed.RemoveCollisionExceptionWith(tower);
+                towed.Wake();
+            }
+            tower.Wake();
+        }
+
+        // Per-tick spring-tension pull (runs on the TOWER's _PhysicsProcess). The rope only PULLS: past its rest length it
+        // applies a damped spring force dragging the two tow nodes together (towed forward, tower back = the load); slack
+        // does nothing. Snaps on overstretch (TowBreakLen) or a wrecked car. Redraws the rope every tick.
+        void UpdateTow(float delta)
+        {
+            var towed = Towing;
+            if (towed == null || !IsInstanceValid(towed) || _exploded || towed._exploded) { DetachTow(); return; }
+            Vector3 a = RearTowWorld, b = towed.FrontTowWorld, d = b - a;
+            float dist = d.Length();
+            if (dist > TowBreakLen) { DetachTow(); return; }   // yanked apart -> the rope snaps
+            if (_rope != null) _rope.SetEndpoints(a, b, _towRestLen);
+            if (dist < 1e-3f) return;
+            Vector3 dir = d / dist;
+            if (dist > _towRestLen)   // in tension: pull the nodes together (a rope can't push)
+            {
+                float stretch = dist - _towRestLen;
+                float sepVel = (towed.LinearVelocity - LinearVelocity).Dot(dir);   // >0 = separating -> damping ADDS tension
+                float f = Mathf.Clamp(TowStiffness * stretch + TowDamping * sepVel, 0f, TowMaxForce);
+                // keep both bodies awake + dynamic: a settled car is Sleeping (and Godot ignores continuous ApplyForce on
+                // a sleeping body) and may be Freeze-Static from the park settle -- Wake clears Freeze, Sleeping=false clears sleep.
+                towed.Wake(); Wake(); towed.Sleeping = false; Sleeping = false;
+                // positioned forces (offset from each body's CoM, world frame): towed pulled toward the tower (forward +
+                // yaws its nose to follow), tower pulled toward the towed (the drag/load).
+                towed.ApplyForce(-dir * f, towed.FrontTowWorld - towed.ToGlobal(towed.CenterOfMass));
+                ApplyForce(dir * f, RearTowWorld - ToGlobal(CenterOfMass));
+            }
+        }
+
+        public override void _ExitTree()   // a despawned/unloaded car drops its rope (either end) so no dangling TowedBy/Towing ref survives
+        {
+            if (Towing != null || TowedBy != null) DetachTow();
         }
 
         // Swap this trailer's body layer bit0->bit6 while a cab is coupled/backing under. This is ONLY for the cab's
@@ -1715,6 +1856,7 @@ namespace UnturnedGodot
             }
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
+            if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {
                 var cam = GetViewport().GetCamera3D();
@@ -1730,7 +1872,7 @@ namespace UnturnedGodot
             _angAvg = _angAvg.Lerp(AngularVelocity, 0.12f);   // cancels to ~0 in the running average, but a real roll / handbrake nose-dive REBOUND (sustained,
             // directional) survives the filter -- so we wait for the suspension to normalize yet never deadlock on the jitter. Reverted to the CLEAN
             // d9588d3 low-pass (no dwell, no raised thresholds) per master. The wreck branch keeps the no-wheel-contact check (killed suspension).
-            bool towed = CoupledCab != null;   // a trailer being PULLED by a cab: never let the settle/park logic freeze-static or damp it -- that would anchor the whole rig (the 2mph stall)
+            bool towed = CoupledCab != null || TowedBy != null || Towing != null;   // a trailer PULLED by a cab, OR either end of a rope tow: never let the settle/park logic freeze-static or damp it -- that would anchor the link (the 2mph stall)
             bool wantHold = !towed && _angAvg.LengthSquared() < 0.03f && (_exploded ? (anyGrounded && _velAvg.LengthSquared() < 1.0f)
                                                                           : mostlyGrounded && (_parked ? (_spawnGrace <= 0f && _velAvg.LengthSquared() < 1.0f)
                                                                                                        : (_handbraking && _velAvg.LengthSquared() < 0.06f)));

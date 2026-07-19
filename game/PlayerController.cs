@@ -407,6 +407,109 @@ namespace UnturnedGodot
             else _wireNodes.RemoveAt(_wireNodes.Count - 1);
         }
 
+        // --- Tow rope tool (item 64, strawberry 2026-07-19): tie a hemp rope from one vehicle's REAR node to another's
+        // FRONT node, exactly like wiring two ports. LMB (looking at a rear node) starts; LMB (looking at a front node of
+        // a DIFFERENT car) completes -> Vehicle.AttachTow applies the spring pull. RMB cancels a pending tie, or unties a
+        // roped car you're looking at. Node picking is analytic (aim ray vs the two world tow points) -- no port colliders. ---
+        const float RopeReach = 6f;          // how far you can aim at a tow node
+        const float RopePickRadius = 0.7f;   // aim within this of a node (perpendicular) to select it
+        bool _roping;                        // mid-tie: a rear source node is picked, waiting for a front dest
+        Vehicle _ropeSrc;                    // the tower whose rear node we started from
+        TowRope _ropePreview;                // the live rope being tied (follows the aim)
+        Vehicle _ropeLookVeh; bool _ropeLookRear;   // the tow node currently aimed at (null = none)
+        bool _ropeNubsOn;                    // are all vehicles' tow nubs currently shown (rope tool out)?
+
+        void SetAllTowNubs(bool on)
+        {
+            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                if (n is Vehicle v && IsInstanceValid(v)) v.SetTowNodesVisible(on);
+            _ropeNubsOn = on;
+        }
+
+        // Per-frame while the rope tool is out: toggle the nubs, pick the aimed tow node, drive the tie preview.
+        void UpdateRopeLook()
+        {
+            if (!HoldingRopeTool)
+            {
+                if (_ropeNubsOn) SetAllTowNubs(false);
+                if (_roping) CancelRope();
+                if (_ropeLookVeh != null) { if (IsInstanceValid(_ropeLookVeh)) _ropeLookVeh.SetTowNubHighlighted(_ropeLookRear, false); _ropeLookVeh = null; }
+                return;
+            }
+            if (!_ropeNubsOn) SetAllTowNubs(true);
+
+            Vehicle bestVeh = null; bool bestRear = false; float bestPerp = RopePickRadius;
+            if (_cam != null && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            {
+                Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+                foreach (var n in GetTree().GetNodesInGroup("vehicles"))
+                {
+                    if (n is not Vehicle v || !IsInstanceValid(v) || v.Exploded) continue;
+                    ConsiderTowNode(v, true,  v.RearTowWorld,  from, fwd, ref bestVeh, ref bestRear, ref bestPerp);
+                    ConsiderTowNode(v, false, v.FrontTowWorld, from, fwd, ref bestVeh, ref bestRear, ref bestPerp);
+                }
+            }
+            if (bestVeh != _ropeLookVeh || bestRear != _ropeLookRear)
+            {
+                if (_ropeLookVeh != null && IsInstanceValid(_ropeLookVeh)) _ropeLookVeh.SetTowNubHighlighted(_ropeLookRear, false);
+                _ropeLookVeh = bestVeh; _ropeLookRear = bestRear;
+                _ropeLookVeh?.SetTowNubHighlighted(_ropeLookRear, true);
+            }
+
+            if (_roping)
+            {
+                if (!IsInstanceValid(_ropeSrc)) { CancelRope(); return; }
+                bool onDest = _ropeLookVeh != null && !_ropeLookRear && _ropeLookVeh != _ropeSrc;
+                Vector3 a = _ropeSrc.RearTowWorld;
+                Vector3 b = onDest ? _ropeLookVeh.FrontTowWorld : (_cam.GlobalPosition + (-_cam.GlobalTransform.Basis.Z) * RopeReach);
+                _ropePreview?.SetEndpoints(a, b, Vehicle.TowRestMin, valid: onDest);
+            }
+        }
+
+        void ConsiderTowNode(Vehicle v, bool rear, Vector3 p, Vector3 from, Vector3 fwd, ref Vehicle bestVeh, ref bool bestRear, ref float bestPerp)
+        {
+            float t = (p - from).Dot(fwd);
+            if (t < 0f || t > RopeReach) return;   // behind the camera or out of reach
+            float perp = (p - (from + fwd * t)).Length();
+            if (perp < bestPerp) { bestPerp = perp; bestVeh = v; bestRear = rear; }
+        }
+
+        // LMB with the rope tool: start from a REAR node, or complete on a FRONT node of a different car.
+        void RopeLmb()
+        {
+            if (_dead) return;
+            if (!_roping)
+            {
+                if (_ropeLookVeh != null && _ropeLookRear && _ropeLookVeh.Towing == null && _ropeLookVeh.TowedBy == null)
+                {
+                    _roping = true; _ropeSrc = _ropeLookVeh;
+                    _ropePreview = new TowRope(); GetParent().AddChild(_ropePreview);
+                    GD.Print($"[rope] tow started from {_ropeSrc.DisplayName} (rear)");
+                }
+                return;
+            }
+            if (!IsInstanceValid(_ropeSrc)) { CancelRope(); return; }   // source car despawned mid-tie -> drop the pending rope
+            if (_ropeLookVeh != null && !_ropeLookRear && _ropeLookVeh != _ropeSrc)
+            {
+                if (_ropeSrc.AttachTow(_ropeLookVeh)) GD.Print($"[rope] towing {_ropeLookVeh.DisplayName}");
+                CancelRope();
+            }
+        }
+
+        // RMB with the rope tool: cancel a pending tie, or untie a rope on the car you're looking at.
+        void RopeRmb()
+        {
+            if (_roping) { CancelRope(); return; }
+            if (_ropeLookVeh != null && (_ropeLookVeh.Towing != null || _ropeLookVeh.TowedBy != null)) _ropeLookVeh.DetachTow();
+        }
+
+        void CancelRope()
+        {
+            _roping = false; _ropeSrc = null;
+            if (_ropePreview != null && IsInstanceValid(_ropePreview)) _ropePreview.QueueFree();
+            _ropePreview = null;
+        }
+
         void CompleteWire(ConnectionPort target)
         {
             if (_wirePreview == null || !IsInstanceValid(_wireSrc)) { CancelWire(); return; }
@@ -756,6 +859,7 @@ namespace UnturnedGodot
             var deploy = DeployableDef.ById(asset.id);
             if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
             if (asset.id == 65) { EquipWireTool(backing); return true; }   // Wire (item 65) = the wiring tool
+            if (asset.id == 64) { EquipRopeTool(backing); return true; }   // Rope (item 64) = the vehicle tow-rope tool
             if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
             return false;
         }
@@ -862,6 +966,7 @@ namespace UnturnedGodot
             if (_heldFuelItem != null) return item != null ? ReferenceEquals(_heldFuelItem, item) : asset.IsFuelContainer;   // a held gas can -> dropping it goes unarmed (master)
             if (_deployable != null) return _deployable.Id == asset.id;
             if (HoldingWireTool) return asset.id == 65;
+            if (HoldingRopeTool) return asset.id == 64;
             return false;
         }
 
@@ -875,6 +980,7 @@ namespace UnturnedGodot
 
         // --- Deployables held in hand (generator / spotlight): equip -> aim shows a placement ghost -> LMB plants it. ---
         public bool HoldingWireTool => _viewmodel != null && _viewmodel.IsWireViewmodel;   // Wire tool (item 65) in hand -> wiring mode (LMB/RMB build/cancel wires); derived from the viewmodel so no state to clear
+        public bool HoldingRopeTool => _viewmodel != null && _viewmodel.IsRopeViewmodel;   // Rope tool (item 64) in hand -> tow mode (LMB tie rear->front, RMB cancel/untie); derived from the viewmodel
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
         DeployablePlacer _placer;       // the world-space ghost preview
@@ -1006,6 +1112,22 @@ namespace UnturnedGodot
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             GD.Print("[wire] holding the Wire tool");
+        }
+
+        // Equip the Rope tool (item 64): the vehicle tow-rope. Held in hand -> HoldingRopeTool drives tow mode (LMB ties
+        // this car's REAR node to another car's FRONT node like a wire; RMB cancels/unties). Reuses the wire hold mesh
+        // tinted hemp-brown. SP/integrated-server only (the pull force needs both vehicle bodies in one physics space).
+        public void EquipRopeTool(SDG.Unturned.Item backing = null)
+        {
+            SaveGunState();
+            if (!HoldingRopeTool) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
+            _reloading = false; _torchAnimOn = false; ClearDeployable();
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.42f, 0.30f, 0.16f), IsRopeTool = true };   // hemp brown
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print("[rope] holding the Tow Rope tool");
         }
 
         // Put the held deployable away (called whenever another item is equipped).
@@ -2240,6 +2362,7 @@ namespace UnturnedGodot
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
                 else if (_riding != null) { }                          // riding a replicated vehicle: no net horn in v1
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
+                else if (HoldingRopeTool) RopeLmb();                    // rope tool: pick a rear tow node / complete on a front tow node
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
@@ -2253,6 +2376,7 @@ namespace UnturnedGodot
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
+                else if (HoldingRopeTool) { if (rmb.Pressed) RopeRmb(); }    // rope tool: cancel a pending tie, or untie a roped car you're looking at
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
@@ -2967,6 +3091,7 @@ namespace UnturnedGodot
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
+            UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes

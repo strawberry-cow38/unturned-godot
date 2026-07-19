@@ -609,7 +609,9 @@ namespace UnturnedGodot
         // True only when this viewmodel is actually showing a GUN (not fists / a melee / a consumable / empty hands).
         // GetAttachMask is meaningless on a non-gun viewmodel -> callers must gate on this before saving a gun's mask.
         public bool IsGunViewmodel => !EmptyHands && !Fists && MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
-        public bool IsWireViewmodel => ToolMesh != null;
+        public bool IsRopeTool;   // this tool viewmodel is the tow ROPE (item 64), not the power wire (65) -- both set ToolMesh
+        public bool IsWireViewmodel => ToolMesh != null && !IsRopeTool;
+        public bool IsRopeViewmodel => ToolMesh != null && IsRopeTool;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
         public void ApplyAttachMask(int mask) { for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i])) SetSlotAttached(AttachSlots[i], (mask & (1 << i)) != 0); }
         // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to

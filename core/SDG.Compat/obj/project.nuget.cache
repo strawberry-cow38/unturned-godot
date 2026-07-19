@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "KW1VCWq3jlA=",
+  "dgSpecHash": "gtOQ09njc0A=",
   "success": true,
-  "projectFilePath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj",
+  "projectFilePath": "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/home/ec2-user/projects/ug-coalesce/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj": {}
+    "/home/ec2-user/projects/ug-ropetow/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj": {}
   },
   "projects": {
-    "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj": {
+    "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj",
         "projectName": "SDG.Compat",
-        "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj",
+        "projectPath": "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/obj/",
+        "outputPath": "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -64,14 +64,14 @@
         }
       }
     },
-    "/home/ec2-user/projects/ug-coalesce/core/UnturnedDat/UnturnedDat.csproj": {
+    "/home/ec2-user/projects/ug-ropetow/core/UnturnedDat/UnturnedDat.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/ec2-user/projects/ug-coalesce/core/UnturnedDat/UnturnedDat.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/ug-ropetow/core/UnturnedDat/UnturnedDat.csproj",
         "projectName": "UnturnedDat",
-        "projectPath": "/home/ec2-user/projects/ug-coalesce/core/UnturnedDat/UnturnedDat.csproj",
+        "projectPath": "/home/ec2-user/projects/ug-ropetow/core/UnturnedDat/UnturnedDat.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/home/ec2-user/projects/ug-coalesce/core/UnturnedDat/obj/",
+        "outputPath": "/home/ec2-user/projects/ug-ropetow/core/UnturnedDat/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -87,8 +87,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj": {
-                "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj"
+              "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj"
               }
             }
           }
@@ -128,14 +128,14 @@
         }
       }
     },
-    "/home/ec2-user/projects/ug-coalesce/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj": {
+    "/home/ec2-user/projects/ug-ropetow/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/ec2-user/projects/ug-coalesce/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj",
+        "projectUniqueName": "/home/ec2-user/projects/ug-ropetow/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj",
         "projectName": "UnturnedDat.Tests",
-        "projectPath": "/home/ec2-user/projects/ug-coalesce/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj",
+        "projectPath": "/home/ec2-user/projects/ug-ropetow/tests/UnturnedDat.Tests/UnturnedDat.Tests.csproj",
         "packagesPath": "/home/ec2-user/.nuget/packages/",
-        "outputPath": "/home/ec2-user/projects/ug-coalesce/tests/UnturnedDat.Tests/obj/",
+        "outputPath": "/home/ec2-user/projects/ug-ropetow/tests/UnturnedDat.Tests/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/ec2-user/.nuget/NuGet/NuGet.Config"
@@ -151,11 +151,11 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj": {
-                "projectPath": "/home/ec2-user/projects/ug-coalesce/core/SDG.Compat/SDG.Compat.csproj"
+              "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj": {
+                "projectPath": "/home/ec2-user/projects/ug-ropetow/core/SDG.Compat/SDG.Compat.csproj"
               },
-              "/home/ec2-user/projects/ug-coalesce/core/UnturnedDat/UnturnedDat.csproj": {
-                "projectPath": "/home/ec2-user/projects/ug-coalesce/core/UnturnedDat/UnturnedDat.csproj"
+              "/home/ec2-user/projects/ug-ropetow/core/UnturnedDat/UnturnedDat.csproj": {
+                "projectPath": "/home/ec2-user/projects/ug-ropetow/core/UnturnedDat/UnturnedDat.csproj"
               }
             }
           }
