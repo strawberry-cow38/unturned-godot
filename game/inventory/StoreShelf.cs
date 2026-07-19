@@ -20,6 +20,8 @@ namespace UnturnedGodot
         public string LabelText = "Store Shelf";
         readonly Dictionary<int, Node3D> _display = new();   // grid cell (gx<<8|gy) -> its item model; a STABLE slot per cell so taking items doesn't re-organize the shelf
         float _syncT;
+        public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
+        MeshInstance3D _shelfGlow;                         // whole-shelf outline silhouette, shown while the shelf is looked at
 
         // per-shelf-type tier layout: TierY = shelf-surface heights as fractions of the STANDING AABB; PerTier = item
         // slots across the width; WidthUse = fraction of width used (end margins); FrontZ = how far toward the front face.
@@ -171,6 +173,13 @@ namespace UnturnedGodot
                 var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = ShelfMat(), Basis = _upright };
                 AddChild(mi);
                 mi.CreateTrimeshCollision();   // solid shelf on the world layer: the player collides with the actual geometry (spine/tiers); the look-ray still passes through the open gaps to reach items
+                _shelfGlow = new MeshInstance3D   // whole-shelf outline silhouette (hidden until looked at)
+                {
+                    Mesh = mesh, Basis = _upright, Visible = false, Layers = OutlineOverlay.OutlineLayer,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                };
+                AddChild(_shelfGlow);
                 var box = StoodAabb(mesh); top = box.Position.Y + box.Size.Y + 0.3f;   // float the label just above the standing prop (fridge/counter are shorter)
             }
             AddChild(new Label3D
@@ -342,8 +351,41 @@ namespace UnturnedGodot
                 tierSurfaceY - rb.Position.Y + rb.Size.Y * 0.03f + 0.05f,   // lift so items sit ON the tier, not sunk in (master: "everything needs raising")
                 zPos);
             AddChild(vis);
+            AddFocus(vis, cellKey, asset, rar);   // hitbox (look-ray) + glow silhouette (outline) so the item can be looked at + grabbed
             _display[cellKey] = vis;
         }
+
+        // give a placed item a look-ray HITBOX (bit 11, links back to shelf+cell) + a hidden GLOW silhouette (OutlineOverlay
+        // layer). Both are children of the visual so they inherit its transform+scale. UpdateLookFocus toggles the glow.
+        void AddFocus(MeshInstance3D vis, int cellKey, ItemAsset asset, Color rar)
+        {
+            if (vis.Mesh == null) return;
+            var a = vis.Mesh.GetAabb();
+            var glow = new MeshInstance3D
+            {
+                Mesh = vis.Mesh, Visible = false, Layers = OutlineOverlay.OutlineLayer,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+            };
+            vis.AddChild(glow);
+            var body = new ShelfItemBody { Shelf = this, CellKey = cellKey, Glow = glow, Rarity = rar, ItemName = asset?.itemName ?? "?", CollisionLayer = ShelfItemHitLayer, CollisionMask = 0 };
+            body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = a.Size * 1.1f }, Position = a.Position + a.Size * 0.5f });
+            vis.AddChild(body);
+        }
+
+        // take the item at a grid cell into the grabber's hands: remove it from the grid (the display syncs it away).
+        public Item GrabItem(int cellKey)
+        {
+            int gx = cellKey >> 8, gy = cellKey & 0xFF;
+            for (byte i = 0; i < Storage.getItemCount(); i++)
+            {
+                var j = Storage.getItem(i);
+                if (j != null && j.x == gx && j.y == gy) { var it = j.item; Storage.removeItem(i); return it; }
+            }
+            return null;
+        }
+
+        public void SetShelfFocused(bool on) { if (_shelfGlow != null && IsInstanceValid(_shelfGlow)) _shelfGlow.Visible = on; }
 
         // test hook: pack fixed ids left-to-right RESPECTING each item's grid footprint (so wide items span) -- UG_SHELFDEMO.
         public void DebugDisplay(List<int> ids)
@@ -367,6 +409,22 @@ namespace UnturnedGodot
             if (_syncT < 0.4f) return;
             _syncT = 0f;
             SyncDisplay();
+        }
+    }
+
+    // a grabbable item sitting on a shelf: the player's look-ray hits this hitbox (bit 11), focus glows its silhouette,
+    // and the grab handler calls Shelf.GrabItem(CellKey). Mirrors WorldItem's focus (rarity FocusColor + glow toggle).
+    public partial class ShelfItemBody : Godot.StaticBody3D
+    {
+        public StoreShelf Shelf;
+        public int CellKey;
+        public Godot.MeshInstance3D Glow;
+        public Godot.Color Rarity = Godot.Colors.White;
+        public string ItemName = "?";
+        public void SetFocused(bool on)
+        {
+            if (on) WorldItem.FocusColor = Rarity;
+            if (Glow != null && Godot.GodotObject.IsInstanceValid(Glow)) Glow.Visible = on;
         }
     }
 }

@@ -123,6 +123,8 @@ namespace UnturnedGodot
         }
 
         WorldItem _focusItem;   // the dropped item the player is currently LOOKING AT (glowing + named), pickup target for E
+        ShelfItemBody _focusShelfItem;   // the SHELF display item being looked at (glowing, F to grab straight off the shelf)
+        StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
@@ -142,6 +144,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null;
+            ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
             {
@@ -159,9 +162,9 @@ namespace UnturnedGodot
                 // (LOS-correct: a wall in the way stops the ray first). The LookReach IS the look-at radius.
                 if (rhit.Count > 0 && rhit["collider"].As<GodotObject>() is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
-                _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5), Exclude = _lookExclude };
+                _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookSphereQ.Transform = new Transform3D(Basis.Identity, _lookEnd);
-                float bestI = float.MaxValue, bestV = float.MaxValue, bestP = float.MaxValue;
+                float bestI = float.MaxValue, bestV = float.MaxValue, bestP = float.MaxValue, bestSI = float.MaxValue;
                 foreach (var h in space.IntersectShape(_lookSphereQ, 8))
                 {
                     var c = h["collider"].As<GodotObject>();
@@ -174,6 +177,11 @@ namespace UnturnedGodot
                     {
                         float d = v.GlobalPosition.DistanceSquaredTo(_lookEnd);
                         if (d < bestV) { bestV = d; hitVeh = v; }
+                    }
+                    else if (c is ShelfItemBody sib && IsInstanceValid(sib))   // an item sitting on a shelf -> grab it straight off (F)
+                    {
+                        float d = sib.GlobalPosition.DistanceSquaredTo(_lookEnd);
+                        if (d < bestSI) { bestSI = d; hitShelfItem = sib; hitShelf = sib.Shelf; }
                     }
                     // MP: the hit collider is a puppet's detection body (bit 5 car / bit 7 item); its parent is the
                     // IPuppetFocusable render node. SP never reaches this branch (real Vehicle/WorldItem matched above).
@@ -213,6 +221,18 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusDeployable)) _focusDeployable.SetLookFocused(false);
                 _focusDeployable = hitDeploy;
                 _focusDeployable?.SetLookFocused(true);
+            }
+            if (hitShelfItem != _focusShelfItem)   // looked-at shelf item glows (F grabs it)
+            {
+                if (IsInstanceValid(_focusShelfItem)) _focusShelfItem.SetFocused(false);
+                _focusShelfItem = hitShelfItem;
+                _focusShelfItem?.SetFocused(true);
+            }
+            if (hitShelf != _focusShelf)           // and its shelf gets the whole-shelf outline
+            {
+                if (IsInstanceValid(_focusShelf)) _focusShelf.SetShelfFocused(false);
+                _focusShelf = hitShelf;
+                _focusShelf?.SetShelfFocused(true);
             }
             // MP puppet outline: clears when hitPuppet is null (guarded look-block sets it null -> outline drops on death/ride too).
             if (!ReferenceEquals(hitPuppet, _focusPuppet))
@@ -539,6 +559,23 @@ namespace UnturnedGodot
         // F (interact): pick up the item you're LOOKING AT (the focused one), adding it to the inventory.
         public void TryPickup()
         {
+            // grab an item you're looking at straight off a shelf (before the dropped-item path)
+            if (_focusShelfItem != null && IsInstanceValid(_focusShelfItem) && _focusShelfItem.Shelf != null)
+            {
+                var shelf = _focusShelfItem.Shelf;
+                var grabbed = shelf.GrabItem(_focusShelfItem.CellKey);   // removes it from the grid -> the display syncs the model away
+                _focusShelfItem = null;
+                if (grabbed == null) return;
+                if (Inventory.tryAddItem(grabbed))
+                {
+                    var ga = grabbed.GetAsset(); bool wasBare = Unarmed;
+                    GD.Print($"[shelf-grab] {ga?.itemName}");
+                    _invUI?.Refresh();
+                    if (wasBare) EquipItemAsset(ga, grabbed);
+                }
+                else shelf.Storage.tryAddItem(grabbed);   // inventory full -> put it back on the shelf
+                return;
+            }
             var wi = _focusItem;
             if (wi == null || !IsInstanceValid(wi) || !Inventory.tryAddItem(wi.Item)) return;
             var item = wi.Item; var asset = item.GetAsset();
