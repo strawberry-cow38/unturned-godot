@@ -119,4 +119,23 @@ hard, checkpointed phases.
 6. **Edges** — pause freezes the loopback server (verify resume); SP save/load absent + state ownership
    moves server-side (decide scope in P7).
 
+## Progress + open architecture decision (2026-07-19)
+
+Done + gated on `sp-mp-unify` (full suite 1449 green, not merged):
+- **P0** — baseline + inventory + template.
+- **P1** (2d61e306) — deployables/power consume replica behind `--spconsume`; parity test (16 checks, teeth).
+- **P1b** (43f93a80) — server-authoritative inventory for the loopback local player; end-to-end test (21
+  checks, teeth: empty→reject, real spend, second→reject, move/consume round-trip).
+
+**Holding here for a VoX decision before the physics cluster (vehicles / combat-vitals / zombies).**
+The fork: **entity-based** subsystems (deployables, loot, inventory) are clean — the in-process server
+holds plain data, the client materializes the only Godot nodes, zero duplication. But **physics-body**
+subsystems (vehicles = `VehicleBody3D`, zombies = nav) can't do pure host-consume without the server
+owning a real body AND the client rendering a puppet = two bodies in one process. Retail's actual model
+is the **listen-server**: the host KEEPS the real bodies and runs server logic on them directly
+(write-once because the server logic is the only logic), and only REMOTE clients get puppets — which also
+preserves the client-auth/inchworm decisions (the driven car stays the real client-auth body, never
+re-simmed). **Lean: hybrid — listen-server (host keeps real bodies) for physics subsystems, pure-consume
+for entity subsystems.** This decides the shape of vehicles/zombies/combat, so it's a checkpoint.
+
 Subsumes the "port SP features missing in MP" task.
