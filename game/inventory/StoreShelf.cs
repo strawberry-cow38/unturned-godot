@@ -122,7 +122,6 @@ namespace UnturnedGodot
             var box = StoodAabb(mesh);
             float x0 = box.Position.X + box.Size.X * (1f - pr.WidthUse) * 0.5f;
             float xspan = box.Size.X * pr.WidthUse;
-            float zFront = box.Position.Z + box.Size.Z * (0.5f + 0.5f * pr.FrontZ);   // toward the front face
             int slots = pr.TierY.Length * pr.PerTier;
             for (int i = 0; i < ids.Count && i < slots; i++)
             {
@@ -131,16 +130,31 @@ namespace UnturnedGodot
                 var asset = Assets.find((ushort)ids[i]) as ItemAsset;
                 Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
                 var vis = WorldItem.BuildReplicaVisual((ushort)ids[i], rar);
-                vis.RotationDegrees = new Vector3(90f, col * 37f, 0f);   // lay the model on the shelf (drop pose); yaw varies so it's not a clone row
-                // sit the item's BASE flush on the tier surface: models have their origin in varying spots (center/base/top),
-                // so placing the ORIGIN at the tier made some float + some clip through. Place by the ROTATED mesh bottom instead.
+                // orient by SHAPE (master): tall/round items (cans, water bottles) STAND upright; flat/thin items (candy
+                // bars, papers) LIE FLAT (+90 X = the game's dropped-item pose). "Flat" = one mesh dimension much thinner
+                // than the next -> a slab, not a can. Slight yaw variety on top.
+                var sz = (vis.Mesh?.GetAabb() ?? new Aabb()).Size;
+                float[] dims = { sz.X, sz.Y, sz.Z };
+                System.Array.Sort(dims);   // dims[0]=thinnest .. dims[2]=longest
+                bool flat = dims[1] > 0.0001f && dims[0] < dims[1] * 0.55f;
+                vis.RotationDegrees = new Vector3(flat ? 90f : 0f, col * 11f, 0f);
+                // position by the item's ROTATED MESH bounds (origins vary per model, so use bounds not origin): base flush
+                // on the tier (Y), footprint centered in the shelf DEPTH (front-biased) so nothing pokes the back wall (Z),
+                // centered on the slot (X). This fixes both the sinking AND the rotate-into-the-back-wall.
+                var rb = new Transform3D(vis.Basis, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
                 float tierSurfaceY = box.Position.Y + box.Size.Y * pr.TierY[tier];
-                var rotAabb = new Transform3D(vis.Basis, Vector3.Zero) * vis.GetAabb();
-                vis.Position = new Vector3(x0 + xspan * fx, tierSurfaceY - rotAabb.Position.Y, zFront);
+                vis.Position = new Vector3(
+                    (x0 + xspan * fx) - (rb.Position.X + rb.Size.X * 0.5f),
+                    tierSurfaceY - rb.Position.Y,
+                    (box.Position.Z + box.Size.Z * (0.5f + 0.5f * pr.FrontZ)) - (rb.Position.Z + rb.Size.Z * 0.5f));
                 AddChild(vis);
                 _displayNodes.Add(vis);
             }
         }
+
+        // display a fixed id list on the tiers WITHOUT the asset DB (BuildReplicaVisual reads content/items directly) --
+        // the UG_SHELFDEMO tier-layout harness uses this to eyeball item placement in an isolated scene.
+        public void DebugDisplay(List<int> ids) => DisplayItems(ids);
 
         // rebuild the tier display from the CURRENT grid contents (source refreshDisplay: the shown models track the
         // items as they're taken/added via F). Cheap + only fires when the grid actually changes (contents hash).

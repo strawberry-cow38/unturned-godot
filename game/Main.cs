@@ -2075,6 +2075,20 @@ namespace UnturnedGodot
             ground.AddChild(gmesh);
             AddChild(ground);
 
+            if (System.Environment.GetEnvironmentVariable("UG_SHELFDEMO") == "1")   // StoreShelf tier-layout harness: isolate a display shelf + fixed items (UG_SHELFMESH=Shelf_0/1)
+            {
+                string mesh = System.Environment.GetEnvironmentVariable("UG_SHELFMESH") ?? "Shelf_1";
+                var shelf = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 0f, true, mesh);
+                shelf.DebugDisplay(new System.Collections.Generic.List<int> { 4, 13, 15, 95, 81, 14, 4, 13, 15, 95, 81, 14, 4, 13, 15, 95, 81, 14 });
+                AddChild(new OmniLight3D { GlobalPosition = new Vector3(2f, 3f, -1.5f), OmniRange = 24f, LightEnergy = 3f });
+                var scam = new Camera3D { Fov = 55f };
+                AddChild(scam);
+                scam.GlobalPosition = new Vector3(3.4f, 2.0f, 1.2f);
+                scam.LookAt(new Vector3(0f, 1.2f, -4.5f), Vector3.Up);
+                scam.Current = true;
+                return;
+            }
+
             var player = new PlayerController { CaptureMouse = false };
             player.LoadGun(gunPath ?? "res://content/eaglefire.dat");
             AddChild(player);                    // _Ready builds the inventory + dashboard
