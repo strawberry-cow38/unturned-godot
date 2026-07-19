@@ -177,4 +177,42 @@ namespace UnturnedGodot.Testing
             T.Check("pants returned to the grid", inv.getItemCount(209) == 1);
         }
     }
+
+    // P5 REGRESSION (the bug that shipped): the DebugWearFromGrid test above proves the equip CORE but NOT the mouse
+    // Drop() hit-test. Drop() originally hit-tested the dragged item's TOP-LEFT (offset by the grab) instead of the
+    // CURSOR, so dropping onto the small (~40px) clothing slot missed -> equip silently failed in-game while dequip
+    // (cursor-grab) worked. This drives the ACTUAL Drop() at the slot's screen center via DebugDropGestureOnSlot, so
+    // the real hit-test is exercised. Guarded on the Control tree actually laying out headless (else verified in-game).
+    public class ClothingInventoryDropGesture : GameTest
+    {
+        public override string Name => "clothing.inventory_drop_gesture";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var body = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+            T.Check("body built", body != null);
+            if (body == null) yield break;
+            World.AddChild(body);
+            yield return Ticks(2);
+            var shaderMat = body.Body?.MaterialOverride as ShaderMaterial;
+
+            var inv = new PlayerInventory();
+            var ui = new InventoryUI { Inv = inv, Clothing = new PlayerClothingController(body, inv) };
+            World.AddChild(ui);
+            yield return Ticks(2);   // _Ready builds + lays out the clothing column
+
+            inv.items[2].addItem(0, 0, 0, new Item(3));   // a Shirt in pockets to equip
+            bool equipped = ui.DebugDropGestureOnSlot(EItemType.SHIRT, 2, 0, 0, out bool layoutValid);
+            yield return Ticks(1);
+            if (!layoutValid)
+            {
+                GD.Print("[clothing.drop_gesture] Controls not laid out headless -- real drop-gesture verified in-game only");
+                yield break;   // no spurious failure; the gesture is exercised in-game (strawberry's test is the gate here)
+            }
+            T.Check("real Drop() gesture onto the SHIRT slot equipped it (cursor hit-test)", equipped);
+            T.Check("wornShirt = 3 after the real drop gesture", inv.wornShirt != null && inv.wornShirt.id == 3);
+            T.Check("the gesture drove the on-body visual (has_shirt_albedo TRUE)",
+                    shaderMat != null && shaderMat.GetShaderParameter("has_shirt_albedo").AsBool());
+        }
+    }
 }

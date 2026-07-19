@@ -209,7 +209,10 @@ namespace UnturnedGodot
             // TARGET is a clothing equip slot -> EQUIP (wear) the dropped item, if its type matches the slot (source:
             // PlayerDashboardInventoryUI.checkAction -> PlayerClothing.sendSwap<Slot>). A garment dragged from ANOTHER
             // slot (a type mismatch, since a slot only ever holds its own type) is rejected -> snaps home.
-            if (PointToClothSlot(topLeft, out int tci))
+            // hit-test the clothing slots with the CURSOR (global), not the item top-left: the slots are small
+            // (~40px) and you aim the cursor at them -- symmetric with StartDrag's grab. Using topLeft (offset
+            // by the grab) made drops miss the slot, so equip silently failed while dequip (cursor-grab) worked.
+            if (PointToClothSlot(global, out int tci))
             {
                 if (fromCloth)
                 {
@@ -333,6 +336,30 @@ namespace UnturnedGodot
         // demo/verify seams (headless can't drive the mouse): run the SAME equip/unequip core the drop handler uses.
         public bool DebugWearFromGrid(EItemType slotType, byte page, byte x, byte y) { bool r = WearFromGrid(slotType, page, x, y); Refresh(); return r; }
         public bool DebugTakeOff(EItemType slotType) { bool r = TakeOff(slotType); Refresh(); return r; }
+
+        /// <summary>Verify the REAL mouse gesture (not the WearFromGrid bypass): set up the drag from the grid
+        /// item at (page,x,y) as StartDrag's grid branch does, then call the actual Drop() at the clothing
+        /// slot's screen center -- exercising Drop's PointToClothSlot(global) hit-test. Returns true if the
+        /// drop equipped it. This is the path the DebugWearFromGrid bypass could NOT cover (it caught the
+        /// topLeft-vs-cursor hit-test regression that shipped equip broken in-game).</summary>
+        public bool DebugDropGestureOnSlot(EItemType slotType, byte page, byte x, byte y, out bool layoutValid)
+        {
+            layoutValid = false;
+            if (Inv == null || page >= Inv.items.Length) return false;
+            var pg = Inv.items[page]; byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return false;
+            int ci = _clothing.FindIndex(c => c.type == slotType);
+            if (ci < 0) return false;
+            var s = _clothing[ci].slot;
+            layoutValid = s.Size.X > 1f && s.Size.Y > 1f;   // Control laid out (GlobalPosition/Size meaningful)
+            if (!layoutValid) return false;
+            _dragFromCloth = false; _dragJar = pg.getItem(idx);
+            _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
+            _grab = Vector2.Zero; _dragging = true;
+            Drop(s.GlobalPosition + s.Size * 0.5f);         // the actual Drop handler + the fixed cursor hit-test
+            Refresh();
+            return WornFor(slotType) != null;
+        }
 
         // --- selection panel (openSelection): the item's big tile + name/info + Equip/Drop actions ---
         void OpenSelection(byte page, byte x, byte y)
