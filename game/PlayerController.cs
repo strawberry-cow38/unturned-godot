@@ -32,6 +32,7 @@ namespace UnturnedGodot
         const float FpRideGazePitchDeg = -8.75f;
         readonly bool _ugFp = System.Environment.GetEnvironmentVariable("UG_FP") == "1";   // render harness: force 1st-person to screenshot the FP viewmodel
         RiggedCharacter _body;        // live 3rd-person player model (RiggedCharacter), visible when !_fp
+        PlayerClothingController _clothing;   // P4 equip->visual wiring (drives shirt/pants paint + gear bone-attach off the worn slots)
         // Damage feedback, both source-exact and fired from TakeDamage: the red hurt flash (PlayerUI.painAlpha) and the
         // camera flinch (PlayerLook.flinchLocalRotation, an angular kick perpendicular to the hit that decays to level).
         public float PainAlpha;                     // PlayerUI.pain: red overlay alpha, set on hit, fades at 1/s
@@ -1889,6 +1890,7 @@ namespace UnturnedGodot
             GlobalPosition = Spawn;
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
+            _clothing?.Refresh();   // re-sync the worn clothing onto the (persistent) body after death (source re-applies thirdClothes on spawn)
             _viewmodel?.SetShown(true);
             if (_cam != null)
             {
@@ -2025,6 +2027,10 @@ namespace UnturnedGodot
             ItemCatalog.RegisterAll();
             Inventory = new PlayerInventory();
             PopulateDemoInventory();
+            // P4: dress the 3P body off the worn slots. The demo kit already wears Cargo Pants (209) + Alicepack (253);
+            // add a starter shirt + hat, then Refresh() paints/attaches every worn slot so the player isn't bare skin.
+            _clothing = new PlayerClothingController(_body, Inventory);
+            ApplyDefaultOutfit();
             _invUI = new InventoryUI { Inv = Inventory, Player = this };
             AddChild(_invUI);
             _craftUI = new CraftingUI { Inv = Inventory, Player = this };
@@ -2228,6 +2234,23 @@ namespace UnturnedGodot
         // seed the inventory with real items: wear the Alicepack (8x7) + Cargo Pants (6x3) so those pages open up,
         // put both guns in the hand slots, and scatter medical/food/water across pockets + backpack to show packing
         void PopulateDemoInventory() => PopulateDemoKit(Inventory);
+
+        // DevConsole `wear`/`unwear` seam: equip clothing by item (state + visual) / clear a slot. No-op on a NetAvatar
+        // (no local body/clothing controller). Public so the F1 console can drive live equip testing.
+        public void WearClothing(Item item) => _clothing?.Wear(item);
+        public void UnwearClothing(EItemType slot) => _clothing?.Unwear(slot);
+
+        // SP starter outfit so a fresh spawn isn't bare skin. Wear the Orange Hoodie (shirt 3) + Tophat (hat 27) --
+        // both catalog-loaded with 0x0 storage, so no inventory-grid disruption -- then Refresh() paints/attaches every
+        // worn slot, including the demo kit's already-worn Cargo Pants (209, a ripped-texture pants). Cargo Pants keeps
+        // its 6x3 storage; picking a fresh pants id here would resize the PANTS page and drop the demo's in-pants item.
+        void ApplyDefaultOutfit()
+        {
+            if (_clothing == null) return;
+            _clothing.Wear(new Item(3));    // Orange Hoodie -> shirt texture on torso/arms
+            _clothing.Wear(new Item(27));   // Tophat -> mesh on the Skull bone
+            _clothing.Refresh();            // sync all worn slots (shirt + hat above + the demo's Cargo Pants)
+        }
 
         /// <summary>The demo kit, shared by the SP shell (above) and the dedicated server's join seeding
         /// (DedicatedServer -- MP pickup Step 4: the same bag the client always showed, now granted into

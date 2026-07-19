@@ -59,6 +59,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
             bool deployTest = false;
+            bool wearcloth = false;
             bool skillsui = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
@@ -82,6 +83,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--clothtest=")) clothtest = arg["--clothtest=".Length..];   // dress a RiggedCharacter with shirt,pants item ids -> UV-atlas render gate (P3a); frames land in --shot=DIR
                 else if (arg == "--clothtest") clothtest = "";                                        // bare flag -> default outfit (shirt 3 + pants 2)
+                else if (arg == "--wearcloth") wearcloth = true;                                      // P4 render gate: dress a body through the REAL equip path (PlayerClothingController) incl. gear (hat + vest)
                 else if (arg.StartsWith("--anim=")) anim = arg["--anim=".Length..];
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
                 else if (arg == "--attach") _vmAttach = true;
@@ -418,6 +420,18 @@ namespace UnturnedGodot
                 return; // frame strip captured in _Process
             }
 
+            if (wearcloth)   // P4 render gate: a full outfit driven through the ACTUAL equip path (PlayerClothingController), incl. gear
+            {
+                _rigDir = System.Environment.GetEnvironmentVariable("UG_CLOTHDIR") ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wearcloth");
+                System.IO.Directory.CreateDirectory(_rigDir);
+                _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_QUICK") == "1"
+                    ? new[] { 20 }
+                    : new[] { 8, 14, 20, 26, 32, 40 };
+                GetWindow().Size = new Vector2I(900, 1100);
+                BuildWearClothTest();
+                return; // frame strip captured in _Process
+            }
+
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
@@ -633,6 +647,57 @@ namespace UnturnedGodot
             rc.SetShirt(shirt.Albedo, shirt.Emission, shirt.Metallic);
             rc.SetPants(pants.Albedo, pants.Emission, pants.Metallic);
             GD.Print($"[clothtest] shirt {shirtId} albedo={(shirt.Albedo != null)} emis={(shirt.Emission != null)} metal={(shirt.Metallic != null)} | pants {pantsId} albedo={(pants.Albedo != null)} emis={(pants.Emission != null)} metal={(pants.Metallic != null)}");
+            rc.Play("Idle_Stand");
+
+            var cam = new Camera3D { Fov = 42f };
+            AddChild(cam);
+            cam.LookAtFromPosition(new Vector3(-2.5f, 1.2f, -3.4f), new Vector3(0f, 0.92f, 0f), Vector3.Up);
+        }
+
+        // --wearcloth : the P4 render gate. Same scene as --clothtest, but the outfit is equipped through the REAL
+        // PlayerClothingController.Wear dispatch (not the P3a SetShirt/SetPants shortcut): shirt+pants paint the body
+        // and the hat (Skull) + vest (Spine) bone-attach as ripped .obj meshes. This proves the P4 equip wiring +
+        // P3b gear attach end-to-end. Frame strip lands in $UG_CLOTHDIR (else a temp dir).
+        void BuildWearClothTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.55f, 0.57f, 0.6f),
+                AmbientLightEnergy = 0.8f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D
+            {
+                RotationDegrees = new Vector3(-42f, -38f, 0f),
+                LightEnergy = 1.25f,
+                ShadowEnabled = true,
+                LightAngularDistance = 1.6f,
+                DirectionalShadowMaxDistance = 14f,
+                ShadowBias = 0.03f,
+                ShadowNormalBias = 1.5f,
+                ShadowBlur = 1.4f,
+            });
+            var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) } };
+            ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
+            AddChild(ground);
+
+            var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
+            if (rc == null) { GD.PrintErr("[wearcloth] build failed"); GetTree().Quit(); return; }
+            AddChild(rc);
+            _rc = rc;
+
+            // the ACTUAL SP equip path: PlayerInventory worn-slot state + the controller drives the visual off it
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var inv = new SDG.Unturned.PlayerInventory();
+            var clothing = new PlayerClothingController(rc, inv);
+            clothing.Wear(new SDG.Unturned.Item(3));     // Orange Hoodie (shirt) -> body paint
+            clothing.Wear(new SDG.Unturned.Item(209));   // Cargo Pants (pants)   -> body paint
+            clothing.Wear(new SDG.Unturned.Item(27));    // Tophat (hat)          -> Skull-bone mesh
+            clothing.Wear(new SDG.Unturned.Item(10));    // Police Vest (vest)    -> Spine-bone mesh
+            GD.Print($"[wearcloth] worn: shirt={inv.wornShirt?.id} pants={inv.wornPants?.id} hat={inv.wornHat?.id} vest={inv.wornVest?.id} | fall x{inv.FallingDamageMultiplier:0.###} explo x{inv.ExplosionArmor:0.###}");
             rc.Play("Idle_Stand");
 
             var cam = new Camera3D { Fov = 42f };

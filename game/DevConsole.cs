@@ -24,7 +24,8 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "wear", "unwear" };
+        static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
 
@@ -195,7 +196,24 @@ namespace UnturnedGodot
                                                : !PlayerController.SurvivalDrain;
                 Log($"hunger/thirst {(PlayerController.SurvivalDrain ? "ENABLED" : "disabled")}");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival");
+            else if (verb == "wear")
+            {
+                // wear <clothing item id|name>  -- equip clothing (shirt/pants -> body paint; hat/vest/... -> bone mesh)
+                var asset = ResolveItem(arg);
+                if (asset == null) { Log($"no item matching '{arg}'"); return; }
+                if (System.Array.IndexOf(ClothingTypes, asset.type) < 0) { Log($"{asset.itemName} (#{asset.id}) is {asset.type}, not clothing"); return; }
+                Player?.WearClothing(new Item(asset.id));
+                Log($"wearing {asset.itemName} (#{asset.id}) [{asset.type}]");
+            }
+            else if (verb == "unwear")
+            {
+                // unwear <slot>  -- remove a worn slot (shirt|pants|hat|vest|mask|glasses|backpack)
+                if (!System.Enum.TryParse<EItemType>(arg.Trim(), true, out var slot) || System.Array.IndexOf(ClothingTypes, slot) < 0)
+                { Log("usage: unwear <shirt|pants|hat|vest|mask|glasses|backpack>"); return; }
+                Player?.UnwearClothing(slot);
+                Log($"removed {slot.ToString().ToLowerInvariant()}");
+            }
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival / wear / unwear");
         }
 
         /// <summary>MP teleport (#27): location name -> the numeric `teleport <x> <y> <z>` wire form
