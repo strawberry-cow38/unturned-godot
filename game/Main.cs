@@ -740,7 +740,7 @@ namespace UnturnedGodot
                 : isDeploy
                 ? new Viewmodel { DeployableMesh = "generator_hold.obj", DeployableAlbedo = "generator_hold_tex.png" }   // deployable carry model in-hand + Deploy_Equip/Use
                 : isFuel
-                ? new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true }   // gas can: 1P mesh held in-hand (Melee_Equip ready hold via NaturalHold -- the game's EquipHeldFuelCan path)
+                ? new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true }   // gas can: BIG two-handed carry via its own Fuel_Equip anim (both hands, in-your-face)
                 : isMelee
                 ? new Viewmodel { MeleeMesh = $"{gunName}.txt", MeleeAlbedo = $"{gunName}_albedo.png" }
                 : new Viewmodel { GunName = gunName };   // self-contained: own SubViewport camera at FOV 60, composited on top
@@ -2632,7 +2632,7 @@ namespace UnturnedGodot
             {
                 _peiFrame++;
                 if (System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1") { if (_peiFrame >= 55 && (_peiFrame % 12 == 0 || _peiFrame >= 156)) _peiPlayer.Fire(); }   // impact-render test: stay on foot + fire forward; sustained burst 156+ so a muzzle FLASH lands on the frame-160 capture (glow showcase)
-                else if (System.Environment.GetEnvironmentVariable("UG_FP") == "1") { if (System.Environment.GetEnvironmentVariable("UG_EAT") is string _eatAt && _eatAt.Length > 0 && _peiFrame == (int.TryParse(_eatAt, out var _ef) ? _ef : 100)) _peiPlayer.StartConsume(); }   // UG_FP: on foot for the FP viewmodel; UG_EAT=<startFrame> click-eat (frame-160 capture lands that many frames into the eat/drink)
+                else if (System.Environment.GetEnvironmentVariable("UG_FP") == "1") { if (System.Environment.GetEnvironmentVariable("UG_EAT") is string _eatAt && _eatAt.Length > 0 && _peiFrame == (int.TryParse(_eatAt, out var _ef) ? _ef : 100)) _peiPlayer.StartConsume(); if (System.Environment.GetEnvironmentVariable("UG_FUELCAN") == "1" && _peiFrame == 30) { var _gcit = new SDG.Unturned.Item(28); _peiPlayer.EquipHeldFuelCan(_gcit.GetAsset(), _gcit); } }   // UG_FP: on foot for the FP viewmodel; UG_EAT=<startFrame> click-eat; UG_FUELCAN=1 equips the gas can (verify the real two-handed hold in the game FP camera)
                 else if (_peiFrame == 50) _peiPlayer.EnterNearestVehicle(); else if (_peiFrame >= 55) _peiPlayer.ScriptedDrive = new Vector2(0f, 1f);   // settle onto PEI, hop in, drive forward (--horde: the loud drive aggros the zombie field -> roadkill)
             }
             if (_peiPlayable && _pdPlayer != null && System.Environment.GetEnvironmentVariable("UG_AUTOFIRE") == "1" && _worldReady && _pdFireT++ % 8 == 0) _pdPlayer.Fire();   // peidrive: fire at the real terrain -> verify the SurfAt material impacts render
