@@ -112,6 +112,7 @@ namespace UnturnedGodot
                 else if (arg == "--dedicated") dedicated = true;   // headless dedicated server: the REAL world (WorldBuilder dedicated mode) + NetServerSession on UDP
                 else if (arg == "--netlog") UnturnedGodot.Net.NetLog.Enabled = true;   // net-diagnostics logging (equivalent: UG_NETLOG=1); sinks wired in DedicatedServer/ClientNode
                 else if (arg == "--mploopback") _mpLoopback = true;   // OPT-IN (MP_PLAN §4 Phase 4): SP runs as an in-process listen-server + local client over MemTransport; without the flag SP keeps the direct path
+                else if (arg == "--spconsume") _spConsume = true;      // SP/MP-unify P1: with --mploopback, the local player CONSUMES deployables as server replicas instead of the direct SP path (opt-in; equivalent env UG_SPCONSUME=1)
                 else if (arg == "--client") client = true;   // bare demo/test client: real world + the C1 overhead cam + ClientNode capsules (no player shell)
                 else if (arg.StartsWith("--connect=")) { client = true; _playableClient = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP -- C3: the PLAYABLE client (ClientWorldSession: predicted first-person shell)
                 else if (arg == "--smoke") smoke = true;
@@ -2010,11 +2011,14 @@ namespace UnturnedGodot
         }
 
         bool _mpLoopback;   // --mploopback: opt-in SP listen-server over MemTransport (MP_PLAN §4 Phase 4)
+        bool _spConsume;    // --spconsume (or UG_SPCONSUME=1): SP/MP-unify P1 -- only meaningful with --mploopback
         void AttachMpLoopback(WorldBuildResult res)
         {
             if (!_mpLoopback || res.Player == null || res.Sim == null) return;
+            bool consume = _spConsume || System.Environment.GetEnvironmentVariable("UG_SPCONSUME") == "1";   // P1: route local deployables through the loopback + consume replicas
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
-                                      DayNight = res.DayNight, Resources = res.Resources });   // Phase 8 world-state syncs (§3.7)
+                                      DayNight = res.DayNight, Resources = res.Resources,   // Phase 8 world-state syncs (§3.7)
+                                      ConsumeDeployables = consume });                      // P1 --spconsume (no-op unless set)
         }
 
         // --navshot=OUT: a VERIFY screenshot for the zombie nav rework -- synchronous world (loads reliably offline),

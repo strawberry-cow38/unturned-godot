@@ -21,10 +21,18 @@ namespace UnturnedGodot
         public DayNightCycle DayNight;    // Phase 8 (§3.7): the world clock this session publishes
         public ResourceField Resources;   // Phase 8 (§3.7): the resource alive-bitmap index space
 
+        // SP/MP-unify P1 (pattern-setter, --spconsume): when set, the LOCAL player stops OWNING deployables
+        // via the direct SP path and instead CONSUMES them as server replicas -- exactly how the MP client
+        // does it (ClientWorldSession). Opt-in and behavior-neutral when false: SP/loopback keep the direct
+        // path byte-for-byte. This is the first subsystem to prove the "consume a replica, don't own a node"
+        // seam inside the loopback; later phases copy this shape for the other subsystems.
+        public bool ConsumeDeployables;
+
         public MemNetwork Net { get; private set; }
         public NetWorldServer Server { get; private set; }
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
+        public DeployableReplicaView Deploys { get; private set; }   // P1 --spconsume: server deployable/wire entities -> local nodes (null unless ConsumeDeployables)
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
@@ -47,6 +55,35 @@ namespace UnturnedGodot
 
             Remotes = new RemotePlayers { Client = Client };
             AddChild(Remotes);
+
+            // SP/MP-unify P1 (--spconsume): route the LOCAL player's deployable/power actions through the
+            // loopback server and consume the results as replicas, instead of the direct SP path. The schema
+            // is already registered on both ends above (@44-45) and Blueprints are set (@46), so the server
+            // validates + spends + broadcasts and the client mirrors the entity graph -- no new plumbing.
+            if (ConsumeDeployables)
+            {
+                // (a) the SAME diff-materializer the MP client uses (ClientWorldSession:111-112): it walks
+                //     Client.Deployables.All/.AllWires into real Deployable.Spawn nodes + Wires, stamps NetId,
+                //     and lets the local PowerNet run on top -- lamps light from replicated INPUTS, as in SP.
+                Deploys = new DeployableReplicaView { Client = Client };
+                AddChild(Deploys);
+                // (b) set the local player's deployable seams to route over the wire (verbatim from
+                //     ClientWorldSession.SpawnShell:446-452). Each seam is null in default SP/loopback, so
+                //     the direct mutation below it stays byte-identical; SETTING it makes PlayerController's
+                //     "if (NetX != null) request-over-wire; else direct" take the wire branch.
+                //     INVARIANT (no double-materialization): with these seams set, PlayerController's direct
+                //     Deployable.Spawn else-branch (PlayerController.cs:1177) NEVER fires -- the
+                //     DeployableReplicaView is the SOLE spawner of local deployable nodes. That is the whole
+                //     point of the pattern: one owner of the node graph, and it's the replica view.
+                Player.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);
+                Player.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
+                Player.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
+                Player.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
+                Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
+                Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
+                Player.NetCloseStorage = () => Client.SendCloseStorage();
+                GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables as replicas (direct path disabled for this subsystem)");
+            }
 
             Driver.Sim.Add(new DelegateSimStep((t, dt) => TickLocal((float)dt), "mp.loopback.local"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickSimulation(), "net.server.sim"));
@@ -77,6 +114,8 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);   // Godot -> Unity vector for the Send* signatures (mirrors ClientWorldSession:76)
 
         bool GodotWorldRay(UnityEngine.Vector3 from, UnityEngine.Vector3 to, out UnityEngine.Vector3 point)
         {
