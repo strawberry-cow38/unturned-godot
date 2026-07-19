@@ -2100,10 +2100,11 @@ namespace UnturnedGodot
                 }
                 string mesh = System.Environment.GetEnvironmentVariable("UG_SHELFMESH") ?? "Shelf_1";
                 var shelf = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 0f, true, mesh);
-                shelf.DebugDisplay(new System.Collections.Generic.List<int> {   // stand/lie + tight spacing + MULTI-SLOT items (gun 363, backpack 1185) that should SPAN their footprint
-                    363, 465, 340, 1159, 463,                  // Maplestrike (wide gun), soda, tomato, maple, OJ
-                    1185, 15, 81, 472, 342, 335,               // dufflebag (wide), medkit, MRE, cola, potato, corn
-                    462, 95, 13, 344, 329, 338, 470, 460, 14 });// milk, bandage, beans, wheat, carrot, lettuce, eggs, bread, water
+                shelf.DebugDisplay(new System.Collections.Generic.List<int> {   // master's latest per-item pass: flat foods/mags LIE, cans/juice/gas-can STAND
+                    83, 84, 464, 88, 469, 468,                 // chocolate, candy, cheese, canned bacon, canned ham, ham sandwich -> LIE
+                    6, 20, 79, 90, 13, 28,                     // military mag (now 2x1), timberwolf mag -> LIE; tuna, sardines, beans, gas can -> STAND
+                    91, 92, 463, 465, 76, 340,                 // apple juice, grape juice, OJ (stand+face out), soda, blowtorch, tomato -> STAND
+                    14, 15, 81, 460, 1159, 462 });             // water(stand), medkit/MRE/bread(lie), maple(stand), milk(stand)
                 var back = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 180f, true, mesh, false);   // BACK side: shares the mesh, stocks the far tiers, faces the other aisle
                 back.DebugDisplay(new System.Collections.Generic.List<int> { 472, 465, 13, 14, 462, 340, 15, 81 });   // a few items so we can see the back is stocked
                 AddChild(new OmniLight3D { GlobalPosition = new Vector3(2f, 3f, -1.5f), OmniRange = 24f, LightEnergy = 3f });

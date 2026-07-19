@@ -72,8 +72,10 @@ namespace UnturnedGodot
             return a;
         }
 
-        // items master pinned to LIE flat even though their icon stands them -- produce that reads better lying in a bin.
-        static readonly HashSet<int> _forceLie = new() { 329, 344, 335, 342 };   // carrot, wheat, corn, potato
+        // items master pinned to LIE flat even though their icon stands them (flat foods the 1x1 shape-check misses):
+        // carrot/wheat/corn/potato (produce), chocolate/candy/cheese, canned bacon/ham (flat tins). Gun magazines + any
+        // sandwich lie via the type/name rules in PlaceItem instead of listing every id.
+        static readonly HashSet<int> _forceLie = new() { 329, 344, 335, 342, 83, 84, 464, 88, 469 };
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
@@ -245,8 +247,11 @@ namespace UnturnedGodot
             int[] ax = { 0, 1, 2 };
             System.Array.Sort(ax, (a, b) => d[a].CompareTo(d[b]));   // ax[0]=shortest .. ax[2]=longest
             Pose pose = PoseOf(id);
-            bool flatSlab = d[ax[0]] < d[ax[1]] * 0.45f;   // one clearly-thin dim => a flat package/slab -> lie flat (don't stand it on edge)
-            bool lieFlat = flatSlab || _forceLie.Contains(id);   // a slab, or an item master pinned to lie (produce)
+            bool round = d[ax[1]] >= d[ax[2]] * 0.85f;   // two largest dims ~equal => a round/square upright (tin can, jerry can) that sits on its base -- NOT a flat slab
+            bool flatSlab = d[ax[0]] < d[ax[1]] * 0.45f && !round;   // one clearly-thin dim (and not a round tin) => a flat package/slab -> lie flat
+            bool isDrink = asset != null && asset.type == EItemType.WATER;   // juice/soda/water always STAND (even flat juice boxes) -- they're containers
+            bool lieFlat = !isDrink && (flatSlab || _forceLie.Contains(id)   // a flat slab, a pinned flat food, a gun magazine, or a sandwich -> lie flat
+                || (asset != null && (asset.type == EItemType.MAGAZINE || (asset.itemName != null && asset.itemName.Contains("Sandwich")))));
 
             Basis oriented;
             if (pose.Ok && !lieFlat)
