@@ -43,7 +43,7 @@ SLOTS = {
     "vest":     ("Vests", "vest", "Spine"),
     "backpack": ("Backpacks", "backpack", "Spine"),
 }
-TSV_HEADER = "id\tslot\tguid\talbedo\temission\tmetallic\tmesh"
+TSV_HEADER = "id\tslot\tguid\talbedo\temission\tmetallic\tmesh\tattach_off"
 # material texture-slot -> our column
 TEX_SLOTS = {"_MainTex": "albedo", "_EmissionMap": "emission", "_MetallicGlossMap": "metallic", "_SpecGlossMap": "metallic"}
 
@@ -102,7 +102,7 @@ def save_tsv(path, rows):
     with open(path, "w", encoding="utf-8") as f:
         f.write(TSV_HEADER + "\n")
         for iid in sorted(rows):
-            f.write("\t".join((rows[iid] + [""] * 7)[:7]) + "\n")
+            f.write("\t".join((rows[iid] + [""] * 8)[:8]) + "\n")
 
 
 def to_hex(col):
@@ -293,6 +293,12 @@ def main():
             except Exception as e:
                 print(f"   WARN {col} tex on {folder}: {e}")
 
+        # attach_off = Model_0's baked LOCAL pos, converted to the Godot bone-local frame the SAME way the mesh is
+        # (negate Z, keep X/Y -- matches mesh_to_obj + rig_extract). P3b rides the gear mesh at this offset on its bone.
+        lp = (tr_tt or {}).get("m_LocalPosition", {})
+        pos = (round(lp.get("x", 0), 4), round(lp.get("y", 0), 4), round(lp.get("z", 0), 4))
+        off = "%g,%g,%g" % (pos[0], pos[1], -pos[2])
+
         rel = lambda fn: f"clothing/{fn}"
         rows[iid] = [
             str(iid), slot, guid,
@@ -300,13 +306,12 @@ def main():
             rel(got["emission"][0]) if "emission" in got else "",
             rel(got["metallic"][0]) if "metallic" in got else "",
             rel(obj_fn),
+            off,
         ]
         n_ok += 1
-        lp = (tr_tt or {}).get("m_LocalPosition", {})
-        pos = (round(lp.get("x", 0), 4), round(lp.get("y", 0), 4), round(lp.get("z", 0), 4))
         tint = to_hex(color) if (color and "albedo" not in got) else "-"
         texinfo = " ".join(f"{k}={v[1][0]}x{v[1][1]}" for k, v in got.items()) or "(flat _Color %s)" % tint
-        print(f"OK  id {iid:5} {slot:5} {folder:24} mesh[{model_name}] {nv}v/{nt}t {texinfo}  bone={bone} model0Pos={pos}")
+        print(f"OK  id {iid:5} {slot:5} {folder:24} mesh[{model_name}] {nv}v/{nt}t {texinfo}  bone={bone} model0Pos={pos} attach_off={off}")
         print(f"      bbox x[{bbox[0]:.3f},{bbox[1]:.3f}] y[{bbox[2]:.3f},{bbox[3]:.3f}] z[{bbox[4]:.3f},{bbox[5]:.3f}]")
 
     save_tsv(args.tsv, rows)

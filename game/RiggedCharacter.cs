@@ -76,6 +76,51 @@ namespace UnturnedGodot
             _clothesMat.SetShaderParameter("has_pants_metallic", false);
         }
 
+        // ---- gear attach (P3b): hat/mask/glasses ride the Skull bone, vest/backpack ride the Spine bone -- the port of
+        //      HumanClothes.apply()'s Instantiate(prefab, parent=skull|spine) + name it + destroy colliders/rigidbody
+        //      (a runtime ArrayMesh has neither). Each slot is a BoneAttachment3D (tracks the bone through animation +
+        //      ragdoll -- the exact pattern the Skull face-quad decal uses in BuildFrom) holding a MeshInstance3D of the
+        //      ripped gear .obj + a StandardMaterial3D albedo, placed at the captured bone-local offset. Static/opaque:
+        //      no skinning, it just rides the bone. Re-attach destroys-and-rebuilds the slot; Detach clears it. Left-hand
+        //      scale.y mirror is skipped (SP -- source only mirrors for the 1P left-handed viewmodel).
+        BoneAttachment3D _hatAtt, _maskAtt, _glassesAtt, _vestAtt, _backpackAtt;
+
+        void AttachGear(ref BoneAttachment3D slot, string boneName, Mesh mesh, Texture2D albedo, Vector3 offset, string name)
+        {
+            DetachGear(ref slot);                        // source Destroy(model.gameObject) before re-instantiate
+            if (Skeleton == null || mesh == null) return;
+            var att = new BoneAttachment3D { BoneName = boneName, Name = name + "Attach" };
+            Skeleton.AddChild(att);
+            var mat = new StandardMaterial3D
+            {
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,   // blocky Unturned pixels
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,            // gear .obj is Z-flipped like every ripped static mesh -> double-sided (repo convention: guns/vehicles/character), never inside-out
+            };
+            if (albedo != null) mat.AlbedoTexture = albedo;
+            var mi = new MeshInstance3D { Name = name, Mesh = mesh, MaterialOverride = mat, VisibilityRangeEnd = 95f };
+            att.AddChild(mi);
+            mi.Position = offset;                        // captured Model_0 bone-local offset (clothing_content.tsv attach_off)
+            slot = att;
+        }
+
+        void DetachGear(ref BoneAttachment3D slot)
+        {
+            if (slot != null && GodotObject.IsInstanceValid(slot)) slot.QueueFree();
+            slot = null;
+        }
+
+        public void AttachHat(Mesh mesh, Texture2D albedo, Vector3 offset = default)      => AttachGear(ref _hatAtt, "Skull", mesh, albedo, offset, "Hat");
+        public void AttachMask(Mesh mesh, Texture2D albedo, Vector3 offset = default)     => AttachGear(ref _maskAtt, "Skull", mesh, albedo, offset, "Mask");
+        public void AttachGlasses(Mesh mesh, Texture2D albedo, Vector3 offset = default)  => AttachGear(ref _glassesAtt, "Skull", mesh, albedo, offset, "Glasses");
+        public void AttachVest(Mesh mesh, Texture2D albedo, Vector3 offset = default)     => AttachGear(ref _vestAtt, "Spine", mesh, albedo, offset, "Vest");
+        public void AttachBackpack(Mesh mesh, Texture2D albedo, Vector3 offset = default) => AttachGear(ref _backpackAtt, "Spine", mesh, albedo, offset, "Backpack");
+
+        public void DetachHat()      => DetachGear(ref _hatAtt);
+        public void DetachMask()     => DetachGear(ref _maskAtt);
+        public void DetachGlasses()  => DetachGear(ref _glassesAtt);
+        public void DetachVest()     => DetachGear(ref _vestAtt);
+        public void DetachBackpack() => DetachGear(ref _backpackAtt);
+
         string _loco;
         double _oneShot;   // remaining time a one-shot (attack/startle) clip holds before locomotion resumes
 

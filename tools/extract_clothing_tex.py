@@ -37,7 +37,7 @@ SLOTS = {"shirt": ("Shirts", "shirt"), "pants": ("Pants", "pants")}
 # extra maps present alongside the albedo for some items
 EXTRA_MAPS = ["emission", "metallic"]
 
-TSV_HEADER = "id\tslot\tguid\talbedo\temission\tmetallic\tmesh"
+TSV_HEADER = "id\tslot\tguid\talbedo\temission\tmetallic\tmesh\tattach_off"
 
 
 def read_dat(path):
@@ -101,7 +101,7 @@ def save_tsv(path, rows):
         f.write(TSV_HEADER + "\n")
         for iid in sorted(rows):
             c = rows[iid]
-            c = (c + [""] * 7)[:7]
+            c = (c + [""] * 8)[:8]   # shirt/pants carry no gear mesh/offset -> the mesh + attach_off cols stay blank
             f.write("\t".join(c) + "\n")
 
 
