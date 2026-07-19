@@ -88,6 +88,21 @@ mesh structure (deferred).
 - **Out of SP scope (dropped):** economy `visual*`/mythic cosmetics, left-hand mirroring, the
   first/third/character triplication (collapse to one body + optional arms).
 
+## P3b-tune (deferred follow-up) — gear attach placement
+
+P3b shipped the gear bone-attach mechanism (hat→Skull, vest/backpack→Spine) and it's structurally correct
+(mesh loads via `ContentProvider.ParseObj`, binds to the bone, tracks through animation), BUT the per-item
+**placement is not tuned**: gear renders oversized + mis-oriented (a tophat engulfs the head, a vest floats
+as a slab off the torso). Root cause: `RiggedCharacter.AttachGear` applies only a position offset — no
+rotation, no scale. The tophat `.obj`'s crown axis is Z; the Skull bone's rest basis maps mesh-Z → world-Z,
+so the crown points backward/horizontal instead of up. **Fix:** give each gear item an explicit orientation
+`Basis` (mirror the face-quad decal's `fq.Basis` in `BuildFrom`) — roughly a +90° rotation carrying the
+crown axis to world-up — plus per-slot scale + offset tuning; recommend an `attach_rot` column in
+`clothing_content.tsv` + a `Basis` param on the `Attach*` methods. Iterate via the `--wearcloth` render gate
+(render → adjust → re-render) per gear item. Until tuned, the default outfit ships **shirt + pants only**
+(both render-verified); `wear <hat/vest>` in the dev console shows the untuned placement. Tracked as its own
+task; NOT blocking the shirt/pants v1.
+
 ## Scope calls for the repo owner (strawberry)
 
 1. All 7 slots at once, or shirt+pants first then the rest?
