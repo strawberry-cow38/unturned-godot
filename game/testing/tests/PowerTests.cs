@@ -84,6 +84,38 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Splitter fan-out (master's own system): gen -> 2-way splitter -> two spotlights. The splitter's input is a
+    // 0-watt relay; each of its two passthroughs re-exports the FULL input, so BOTH spotlights receive 4000w and
+    // light -- the wattage is NOT divided. The generator's load traces both branches = 2 * 250 = 500w.
+    public class PowerSplitterFansOut : GameTest
+    {
+        public override string Name => "power.splitter_fans_out";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-4f, 0f, 0f), 0f);
+            var split = Deployable.Spawn(World, DeployableDef.Splitter2, new Vector3(0f, 0f, 0f), 0f);
+            var spotA = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(4f, 0f, -2f), 0f);
+            var spotB = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(4f, 0f, 2f), 0f);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var sIn = split.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var sOuts = split.Ports.FindAll(p => p.Kind == DeployableDef.PortKind.Passthrough);
+            var consA = spotA.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var consB = spotB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            T.Check($"2-way splitter has 1 input + 2 outputs (got {sOuts.Count} outputs)", sIn != null && sOuts.Count == 2);
+            PowerRig.Connect(World, genOut, sIn);
+            PowerRig.Connect(World, sOuts[0], consA);
+            PowerRig.Connect(World, sOuts[1], consB);
+            yield return Ticks(1);
+            gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("splitter input relays power (0w consumer, powered)", sIn.Powered);
+            T.Check($"output 0 carries the FULL 4000w (got {sOuts[0].Live:0})", PowerRig.Approx(sOuts[0].Live, 4000f));
+            T.Check($"output 1 carries the FULL 4000w (got {sOuts[1].Live:0})", PowerRig.Approx(sOuts[1].Live, 4000f));
+            T.Check("spotlight A powered through the splitter", consA.Powered);
+            T.Check("spotlight B powered through the splitter", consB.Powered);
+            T.Check($"generator load traces BOTH branches = 500w (got {genOut.Draw:0})", PowerRig.Approx(genOut.Draw, 500f));
+        }
+    }
+
     // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
     // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
     public class PowerWreckDropsWires : GameTest

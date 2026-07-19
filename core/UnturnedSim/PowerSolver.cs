@@ -5,9 +5,12 @@ namespace SDG.Unturned
     // The wire-power propagation algorithm, extracted engine-free from the game's PowerNet (proposal phase 3):
     // a producing generator OUTPUT pushes its watts down a wire to a CONSUMER; the consumer is powered if it
     // receives at least its usage, and its PASSTHROUGH re-exports the leftover (received - usage) down the next
-    // wire. Iterated so chains (genny -> spot -> spot -> ...) settle in one Solve. The game's PowerNet.Recompute
-    // is a thin adapter: it walks the "deployables"/"wires" groups into these plain records, calls Solve, and
-    // writes Live/Powered/Draw back to the ConnectionPort nodes.
+    // wire. Iterated so chains (genny -> spot -> spot -> ...) settle in one Solve. A SPLITTER is just a device
+    // whose input is a 0-watt consumer (a relay -- takes nothing for itself) with SEVERAL passthroughs: each
+    // re-exports the full input (leftover = input - 0), so one wire fans out to 2/3/4 wires without dividing the
+    // wattage (each downstream device draws what it needs). The game's PowerNet.Recompute is a thin adapter: it
+    // walks the "deployables"/"wires" groups into these plain records, calls Solve, and writes Live/Powered/Draw
+    // back to the ConnectionPort nodes.
     public enum PowerPortKind { Output, Consumer, Passthrough }
 
     public sealed class PowerPort
@@ -61,22 +64,25 @@ namespace SDG.Unturned
                         w.Consumer.Live = w.Source.Live;   // the consumer receives whatever the source is exporting
                 foreach (var d in devices)
                 {
-                    PowerPort cons = null, pass = null;
+                    PowerPort cons = null;
                     foreach (var p in d.Ports)
-                    {
-                        if (p.Kind == PowerPortKind.Consumer) cons = p;
-                        else if (p.Kind == PowerPortKind.Passthrough) pass = p;
-                    }
+                        if (p.Kind == PowerPortKind.Consumer) { cons = p; break; }
                     if (cons != null)
                     {
-                        cons.Powered = !d.OnFire && cons.Watts > 0f && cons.Live >= cons.Watts;   // a burning consumer stops conducting
-                        if (pass != null) pass.Live = cons.Powered ? cons.Live - cons.Watts : 0f;  // re-export the leftover
+                        // a normal consumer (Watts>0) needs at least its usage; a 0-watt RELAY (a splitter's input)
+                        // just needs any live input, since it takes nothing for itself.
+                        bool hasInput = cons.Watts > 0f ? cons.Live >= cons.Watts : cons.Live > 0f;
+                        cons.Powered = !d.OnFire && hasInput;   // a burning consumer stops conducting
+                        float exported = cons.Powered ? cons.Live - cons.Watts : 0f;   // leftover (spotlight) or the FULL input (splitter, Watts=0)
+                        foreach (var p in d.Ports)   // re-export to EVERY passthrough -> a splitter fans one input out to N outputs, each carrying the full power
+                            if (p.Kind == PowerPortKind.Passthrough) p.Live = exported;
                     }
                 }
             }
 
-            // per-output LOAD: trace each output's chain (output -> wire -> consumer -> that consumer's passthrough
-            // -> ...) and sum the usage of every powered consumer it feeds (the generator's usage bar + vibration).
+            // per-output LOAD: trace each output's chain/tree (output -> wire -> consumer -> that consumer's
+            // passthrough(s) -> ...) and sum the usage of every powered consumer it feeds (the generator's usage
+            // bar + vibration). A splitter forks the trace, so this is a tree walk, not a single chain.
             foreach (var d in devices)
                 foreach (var p in d.Ports)
                     if (p.Kind == PowerPortKind.Output)
@@ -86,19 +92,21 @@ namespace SDG.Unturned
         static float TraceLoad(PowerPort output, IReadOnlyList<PowerWire> wires)
         {
             float draw = 0f;
-            var seen = new HashSet<PowerPort>();
-            PowerPort src = output;
-            while (src != null && seen.Add(src))
+            var seen = new HashSet<PowerPort>();   // guard against a wiring cycle
+            var stack = new Stack<PowerPort>();
+            stack.Push(output);
+            while (stack.Count > 0)
             {
+                var src = stack.Pop();
+                if (!seen.Add(src)) continue;
                 PowerPort consumer = null;
-                foreach (var w in wires)   // the wire fed by this source
+                foreach (var w in wires)   // the one wire fed by this source port (1 wire/port)
                     if (w.Source == src && w.Consumer != null) { consumer = w.Consumer; break; }
-                if (consumer == null) break;
-                if (consumer.Powered) draw += consumer.Watts;
-                src = null;   // next hop = this consumer's owner's passthrough (re-exports downstream)
+                if (consumer == null) continue;
+                if (consumer.Powered) draw += consumer.Watts;   // a splitter's own input is 0w -> adds nothing itself
                 if (consumer.Owner != null)
-                    foreach (var pp in consumer.Owner.Ports)
-                        if (pp.Kind == PowerPortKind.Passthrough) { src = pp; break; }
+                    foreach (var pp in consumer.Owner.Ports)   // fork into ALL the owner's passthroughs (a splitter re-exports several)
+                        if (pp.Kind == PowerPortKind.Passthrough) stack.Push(pp);
             }
             return draw;
         }

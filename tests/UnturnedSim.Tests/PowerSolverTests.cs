@@ -143,15 +143,46 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
-        public void Zero_Watts_Consumer_Is_Never_Powered()
+        public void Zero_Watts_Consumer_Relays_All_Of_Its_Input()
         {
+            // NEW semantics (master's splitter, 2026-07-19): a 0-watt consumer is a RELAY -- it takes nothing for
+            // itself, so it's "powered" whenever it has any live input and its passthrough re-exports the FULL input.
+            // (Previously a 0-watt consumer was never powered; the splitter needs this relay, so it's a conscious change.)
             var gen = Generator();
-            var free = new PowerDevice();
-            var cons = free.AddPort(PowerPortKind.Consumer, 0f);   // usage 0 -> the "powered" concept doesn't apply
-            PowerSolver.Solve(new[] { gen.Dev, free }, new[] { Wire(gen.Out, cons) });
+            var relay = new PowerDevice();
+            var cons = relay.AddPort(PowerPortKind.Consumer, 0f);
+            var pass = relay.AddPort(PowerPortKind.Passthrough, 0f);
+            PowerSolver.Solve(new[] { gen.Dev, relay }, new[] { Wire(gen.Out, cons) });
 
             Assert.That(cons.Live, Is.EqualTo(4000f).Within(0.01f));
-            Assert.That(cons.Powered, Is.False);
+            Assert.That(cons.Powered, Is.True);                        // has input -> conducting (takes 0 for itself)
+            Assert.That(pass.Live, Is.EqualTo(4000f).Within(0.01f));   // re-exports the full input (leftover of 0 usage)
+        }
+
+        [Test]
+        public void Splitter_Fans_One_Input_Out_To_Many_Outputs_Undivided()
+        {
+            // A splitter = a 0-watt relay input + N passthroughs; each output carries the FULL input (not input/N), so
+            // every downstream device draws only what it needs and the generator's load traces every branch.
+            var gen = Generator();
+            var split = new PowerDevice();
+            var sIn = split.AddPort(PowerPortKind.Consumer, 0f);
+            var out1 = split.AddPort(PowerPortKind.Passthrough, 0f);
+            var out2 = split.AddPort(PowerPortKind.Passthrough, 0f);
+            var out3 = split.AddPort(PowerPortKind.Passthrough, 0f);
+            var spotA = Spotlight();
+            var spotB = Spotlight();
+            var spotC = Spotlight();
+            PowerSolver.Solve(
+                new[] { gen.Dev, split, spotA.Dev, spotB.Dev, spotC.Dev },
+                new[] { Wire(gen.Out, sIn), Wire(out1, spotA.In), Wire(out2, spotB.In), Wire(out3, spotC.In) });
+
+            Assert.That(sIn.Powered, Is.True, "the splitter relays its input");
+            Assert.That(out1.Live, Is.EqualTo(4000f).Within(0.01f));   // each output = the FULL input, NOT 4000/3
+            Assert.That(out2.Live, Is.EqualTo(4000f).Within(0.01f));
+            Assert.That(out3.Live, Is.EqualTo(4000f).Within(0.01f));
+            Assert.That(spotA.In.Powered && spotB.In.Powered && spotC.In.Powered, Is.True, "all three branches light");
+            Assert.That(gen.Out.Draw, Is.EqualTo(750f).Within(0.01f));  // load traces all three branches = 3 * 250
         }
 
         [Test]

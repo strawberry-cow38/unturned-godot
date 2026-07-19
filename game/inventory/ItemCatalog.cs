@@ -26,6 +26,11 @@ namespace SDG.Unturned
             Add(13,  "Canned Beans",  1, 1, EItemType.FOOD,     EItemRarity.COMMON,    0, 0, "Very tactically packed for maximum taste.", uh: 10, uf: 55);
             // deployables: shorten the tile name so it reads cleanly + `give generator` matches by name (strawberry)
             { var g = Assets.find(458); if (g != null) g.itemName = "Generator"; }
+            // custom electrical splitters (our own system, not retail): fan one power input out to 2/3/4 outputs. GENERIC
+            // type -- placement is keyed on DeployableDef.ById, not the item type. IDs 9101-9103 sit above the retail range.
+            Add(9101, "2-Way Splitter", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that splits one power wire into two. Each output carries the full wattage -- devices draw only what they need.");
+            Add(9102, "3-Way Splitter", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that splits one power wire into three. Each output carries the full wattage -- devices draw only what they need.");
+            Add(9103, "4-Way Splitter", 3, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that splits one power wire into four. Each output carries the full wattage -- devices draw only what they need.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

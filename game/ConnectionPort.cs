@@ -103,7 +103,9 @@ namespace UnturnedGodot
         public string InfoLine() => Kind switch
         {
             DeployableDef.PortKind.Output => $"{ProviderName} — {Watts:0}w output · {Draw:0}w drawn",
-            DeployableDef.PortKind.Consumer => $"{ProviderName} — {Watts:0}w consumer ({(Powered ? $"powered, {Live:0}w in" : "unpowered")})",
+            DeployableDef.PortKind.Consumer => Watts > 0f
+                ? $"{ProviderName} — {Watts:0}w consumer ({(Powered ? $"powered, {Live:0}w in" : "unpowered")})"
+                : $"{ProviderName} — input ({(Powered ? $"{Live:0}w in" : "no power")})",   // a 0-watt consumer = a splitter's relay input
             DeployableDef.PortKind.Passthrough => $"{ProviderName} — {Live:0}w passthrough",
             _ => ProviderName,
         };

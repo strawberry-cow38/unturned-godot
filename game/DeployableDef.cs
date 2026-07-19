@@ -21,6 +21,7 @@ namespace UnturnedGodot
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
+        public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
@@ -64,8 +65,39 @@ namespace UnturnedGodot
             },
         };
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight };
-        public static DeployableDef ById(ushort id) => id == 458 ? Generator : id == 459 ? Spotlight : null;
+        // --- Splitters (custom -- our own system, not from src): a gray junction box that fans ONE power input out to
+        //     N outputs. The input is a 0-watt CONSUMER (a relay -- draws nothing for itself); each output is a
+        //     PASSTHROUGH that re-exports the FULL input, so the wattage isn't divided -- downstream devices each pull
+        //     what they need. Ports sit on opposite faces: the orange input on the back, cyan outputs fanned across the
+        //     front. ProcBox -> a plain gray BoxMesh (no .obj), per master's "a basic gray box will do". ---
+        static DeployableDef MakeSplitter(ushort id, string name, float width, float[] outX)
+        {
+            var ports = new Port[outX.Length + 1];
+            ports[0] = new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, -0.18f, 0f), Watts = 0f };   // input relay (back face)
+            for (int i = 0; i < outX.Length; i++)
+                ports[i + 1] = new Port { Kind = PortKind.Passthrough, Pos = new Vector3(outX[i], 0.18f, 0f), Watts = 0f };   // outputs, fanned across the front face
+            return new DeployableDef
+            {
+                Id = id, Name = name, ProcBox = true, PlaceSound = "metalplacement",
+                Size = new Vector3(width, 0.36f, 0.5f),   // flat frame: X = width, Y = depth (front/back port faces), Z = height (stands up)
+                Offset = 0.35f, Radius = 0.4f, Range = 4f, Health = 200f, Fuel = 0f,   // passive: no fuel gauge, no engine
+                Ports = ports,
+            };
+        }
+        public static readonly DeployableDef Splitter2 = MakeSplitter(9101, "2-Way Splitter", 0.55f, new[] { -0.14f, 0.14f });
+        public static readonly DeployableDef Splitter3 = MakeSplitter(9102, "3-Way Splitter", 0.80f, new[] { -0.26f, 0f, 0.26f });
+        public static readonly DeployableDef Splitter4 = MakeSplitter(9103, "4-Way Splitter", 1.05f, new[] { -0.36f, -0.12f, 0.12f, 0.36f });
+
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4 };
+        public static DeployableDef ById(ushort id) => id switch
+        {
+            458 => Generator,
+            459 => Spotlight,
+            9101 => Splitter2,
+            9102 => Splitter3,
+            9103 => Splitter4,
+            _ => null,
+        };
 
         // The mesh + a nearest-filtered palette material (the src uses tiny 2x2 palette textures sampled by UV,
         // like the vehicles/barn). Shared by the ghost, the held viewmodel, and the placed object.
@@ -78,6 +110,7 @@ namespace UnturnedGodot
         public StandardMaterial3D MakeMaterial()
         {
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            if (ProcBox) { mat.AlbedoColor = new Color(0.42f, 0.43f, 0.45f); mat.Metallic = 0.15f; mat.Roughness = 0.7f; return mat; }   // plain gray junction box
             string tp = ProjectSettings.GlobalizePath($"res://content/objects/{Model}_tex.png");
             if (System.IO.File.Exists(tp))
             {

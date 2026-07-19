@@ -57,7 +57,7 @@ namespace UnturnedGodot
         // authored frame, before the -90 X stand-up). Shared by the placed object and the placement ghost.
         public static MeshInstance3D BuildMesh(DeployableDef def, out Aabb localAabb)
         {
-            var mesh = def.LoadMesh();
+            Mesh mesh = def.ProcBox ? new BoxMesh { Size = def.Size } : def.LoadMesh();   // splitter = a plain gray box, no .obj
             var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = def.MakeMaterial() };
             localAabb = mesh != null ? mesh.GetAabb() : new Aabb();
             return mi;

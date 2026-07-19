@@ -1193,38 +1193,61 @@ namespace UnturnedGodot
 
             var gen = DeployableDef.Generator; var spot = DeployableDef.Spotlight;
             // back row: PLACED objects (surface = ground; the base is sat on it)
-            var placedGen = Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
-            var placedSpot = Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
-            if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")   // force the in/out port arrows on to verify their geometry/colour
-                foreach (var dep in new[] { placedGen, placedSpot })
-                    foreach (var pt in dep.Ports) pt.SetArrowState(true, true);
-            if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1" && placedGen.Ports.Count > 0 && placedSpot.Ports.Count > 0)
-            {   // wire generator-output -> mid node -> spotlight-consumer, power the generator, verify rendering + power flow
-                var outp = placedGen.Ports[0];
-                var cons = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
-                var pass = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
-                var w = new Wire(); AddChild(w);
-                w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
-                w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
-                _spotDbg = placedSpot;   // lamp-lit probe at the shot frame
-                if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
-                PowerNet.Recompute(GetTree());
-                GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w draw={outp.Draw:0}w load={placedGen.LoadFraction:0.00}");
-                if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1")   // destroy the spotlight -> its wire + port cubes must vanish (strawberry)
-                {
-                    placedSpot.DebugStage("wreck"); PowerNet.Recompute(GetTree());
-                    GD.Print($"[WRECKTEST] wired spotlight wrecked -> wires+cubes should be gone (visual)");
+            bool showSplit = System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1";   // splitter showcase skips the gen/spot/ghost clutter
+            Deployable placedGen = null, placedSpot = null;
+            if (!showSplit)
+            {
+                // back row: PLACED objects (surface = ground; the base is sat on it)
+                placedGen = Deployable.Spawn(this, gen, new Vector3(-2.6f, 0f, 0f), 0f);
+                placedSpot = Deployable.Spawn(this, spot, new Vector3(2.6f, 0f, 0f), 0f);
+                if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")   // force the in/out port arrows on to verify their geometry/colour
+                    foreach (var dep in new[] { placedGen, placedSpot })
+                        foreach (var pt in dep.Ports) pt.SetArrowState(true, true);
+                if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1" && placedGen.Ports.Count > 0 && placedSpot.Ports.Count > 0)
+                {   // wire generator-output -> mid node -> spotlight-consumer, power the generator, verify rendering + power flow
+                    var outp = placedGen.Ports[0];
+                    var cons = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+                    var pass = placedSpot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+                    var w = new Wire(); AddChild(w);
+                    w.Source = outp; w.Consumer = cons; w.AddToGroup("wires");
+                    w.SetPoints(new System.Collections.Generic.List<Vector3> { outp.GlobalPosition, new Vector3(0f, 1.6f, -1.2f), cons.GlobalPosition }, valid: true);
+                    _spotDbg = placedSpot;   // lamp-lit probe at the shot frame
+                    if (System.Environment.GetEnvironmentVariable("UG_WIREOFF") != "1") placedGen.TogglePower();   // turn the generator ON (UG_WIREOFF=1 leaves it off -> lamps must stay dark)
+                    PowerNet.Recompute(GetTree());
+                    GD.Print($"[POWERTEST] gen.IsPowered={placedGen.IsPowered} output={outp.Live:0}w consumer.recv={cons.Live:0}w powered={cons.Powered} passthrough={pass?.Live:0}w draw={outp.Draw:0}w load={placedGen.LoadFraction:0.00}");
+                    if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1")   // destroy the spotlight -> its wire + port cubes must vanish (strawberry)
+                    {
+                        placedSpot.DebugStage("wreck"); PowerNet.Recompute(GetTree());
+                        GD.Print($"[WRECKTEST] wired spotlight wrecked -> wires+cubes should be gone (visual)");
+                    }
                 }
+                // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
+                Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
+                Ghost(spot, false, new Vector3(2.6f, 0f, 4.2f), 0f);
             }
-            // front row: placement GHOSTS -- generator VALID (blue), spotlight INVALID (red)
-            Ghost(gen, true, new Vector3(-2.6f, 0f, 4.2f), 0f);
-            Ghost(spot, false, new Vector3(2.6f, 0f, 4.2f), 0f);
 
             var cam = new Camera3D { Current = true, Fov = 52f, Far = 10000f };
             AddChild(cam);
             var look = new Vector3(0f, 0.7f, 2f);                 // tracked look-at target so UG_CAMYAW can orbit around it
             cam.Position = new Vector3(0f, 3.2f, 11f);
             cam.LookAt(look, Vector3.Up);
+
+            // UG_SPLITTERS=1: showcase the three power splitters (2/3/4-way) in a row with all port arrows on -- verify
+            // the gray box stands up, the orange input (back) + fanned cyan outputs (front) read. UG_SPLITBACK=1 = the
+            // rear view onto the input face.
+            if (showSplit)
+            {
+                var sp2 = Deployable.Spawn(this, DeployableDef.Splitter2, new Vector3(-2.3f, 0f, 0f), 0f);
+                var sp3 = Deployable.Spawn(this, DeployableDef.Splitter3, new Vector3(0.1f, 0f, 0f), 0f);
+                var sp4 = Deployable.Spawn(this, DeployableDef.Splitter4, new Vector3(2.8f, 0f, 0f), 0f);
+                foreach (var dep in new[] { sp2, sp3, sp4 })
+                    foreach (var pt in dep.Ports) pt.SetArrowState(true, true);
+                look = new Vector3(0.2f, 0.35f, 0f);
+                bool back = System.Environment.GetEnvironmentVariable("UG_SPLITBACK") == "1";
+                cam.Position = back ? new Vector3(0.2f, 1.5f, -4.6f) : new Vector3(1.7f, 1.5f, 5.4f);
+                cam.Fov = 44f;
+                cam.LookAt(look, Vector3.Up);
+            }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read
                 env.AmbientLightEnergy = 0.05f; env.BackgroundColor = new Color(0.02f, 0.02f, 0.04f);
