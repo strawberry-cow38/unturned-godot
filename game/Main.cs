@@ -1262,7 +1262,8 @@ namespace UnturnedGodot
             var gen = DeployableDef.Generator; var spot = DeployableDef.Spotlight;
             // back row: PLACED objects (surface = ground; the base is sat on it)
             bool showSplit = System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1330,6 +1331,19 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 1.2f, 0f);
                 cam.Position = new Vector3(2.8f, 1.5f, 3.6f);
                 cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_BATTERY=1: the placeable Vehicle Battery (item 1450 real mesh) with its IN (charge) + OUT (discharge)
+            // port arrows on -- verify the model stands up right + the terminals sit on opposite ends.
+            if (System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1")
+            {
+                var batMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Battery_0.obj"));
+                if (batMesh != null) { var bb = batMesh.GetAabb(); GD.Print($"[BATTERY] mesh AABB size={bb.Size} center={bb.GetCenter()}"); }
+                var bat = Deployable.Spawn(this, DeployableDef.Battery, Vector3.Zero, 0f);
+                if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")
+                    foreach (var pt in bat.Ports) pt.SetArrowState(true, true);   // arrows only for port-debug; default = clean product shot
+                look = new Vector3(0f, 0.15f, 0f);
+                cam.Position = new Vector3(0.9f, 0.7f, 1.3f);
+                cam.Fov = 45f; cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read

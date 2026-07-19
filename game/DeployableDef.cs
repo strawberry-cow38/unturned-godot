@@ -114,14 +114,14 @@ namespace UnturnedGodot
 
         // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
         //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
-        //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). ProcBox for now. ---
+        //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
         public static readonly DeployableDef Battery = new()
         {
-            Id = 1450, Name = "Vehicle Battery", ProcBox = true, PlaceSound = "metalplacement",
+            Id = 1450, Name = "Vehicle Battery", Model = "Battery_0", PlaceSound = "metalplacement",   // item 1450 world mesh (tools/extract_battery.py)
             Size = new Vector3(0.5f, 0.3f, 0.28f), Offset = 0.5f, Radius = 0.24f, Range = 4f, Health = 200f, Fuel = 0f,
             IsBattery = true, EnergyMax = 600f * 3600f, ChargeWatts = 4000f,   // 600 Wh (12V*50Ah car battery) in watt-SECONDS; charges/discharges at up to 4kW
             Ports = new[] {
-                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.2f, 0f, 0.05f), Watts = 4000f },   // IN terminal (charge), one end
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.2f, 0f, 0.05f), Watts = 4000f },   // IN terminal (charge), one end (Pos is stood-up local: X=along, Y=height, Z=depth)
                 new Port { Kind = PortKind.Output,   Pos = new Vector3( 0.2f, 0f, 0.05f), Watts = 4000f },   // OUT terminal (discharge), opposite end
             },
         };
