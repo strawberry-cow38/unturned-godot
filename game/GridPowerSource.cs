@@ -17,9 +17,9 @@ namespace UnturnedGodot
     {
         public const float Watts = 10000f;   // 10kW mains feed (strawberry)
         // where the green OUTPUT cube sits in the box's LOCAL (as-loaded) frame. Circuit_0 AABB (CONV=1 raw obj):
-        // X -0.73..0.27 (width 1.0), Y -0.10..0.48 (depth 0.58), Z 0.00..1.87 (height). The broad front panel faces
-        // +Y, so the port sits centered in X (-0.226), mid-height (Z 0.933), pushed out just past the +Y face.
-        public static readonly Vector3 PortLocal = new Vector3(-0.226f, 0.60f, 0.933f);
+        // X -0.73..0.27 (width 1.0), Y -0.10..0.48 (depth 0.58), Z 0.00..1.87 (height). Port hangs off the +X (right)
+        // face, mid-height (Z 0.933) -- render-verified sitting ON the box face, not floating (Y=0.60 floated above it).
+        public static readonly Vector3 PortLocal = new Vector3(0.32f, 0.18f, 0.933f);
 
         readonly List<ConnectionPort> _ports = new();
         ConnectionPort _output;
