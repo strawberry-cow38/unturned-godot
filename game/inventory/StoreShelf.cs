@@ -16,6 +16,7 @@ namespace UnturnedGodot
         public int MinItems = 8, MaxItems = 16;
         public string MeshName = "Shelf_1";
         public bool ShowItems = true;        // open shelves show their loot on the tiers; solid props (fridge/wardrobe) don't
+        public bool RenderMesh = true;       // FRONT instance draws the shared gondola mesh+label; the BACK instance (a 180deg twin) draws only its display
         public string LabelText = "Store Shelf";
         readonly Dictionary<int, Node3D> _display = new();   // grid cell (gx<<8|gy) -> its item model; a STABLE slot per cell so taking items doesn't re-organize the shelf
         float _syncT;
@@ -76,14 +77,23 @@ namespace UnturnedGodot
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
-        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf")
+        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf", bool renderMesh = true)
         {
             var pr = Prof(meshName);
-            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label,
+            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label, RenderMesh = renderMesh,
                                      Width = (byte)pr.PerTier, Height = (byte)pr.TierY.Length };   // grid mirrors the shelf 1:1 (PerTier cols x tier rows) so a UI position == a shelf position
             parent.AddChild(s);
             s.GlobalTransform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
             return s;
+        }
+
+        // a double-sided gondola: two independent containers sharing one mesh -- FRONT (draws the mesh, faces yawDeg) and
+        // BACK (a 180deg twin, no mesh, stocks + faces the far aisle). Each rolls its own loot + opens separately.
+        public static (StoreShelf front, StoreShelf back) SpawnDouble(Node parent, Vector3 pos, string meshName, int frontTable, int backTable, float yawDeg = 0f, string label = "Store Shelf")
+        {
+            var front = Spawn(parent, pos, meshName, frontTable, yawDeg, true, label, true);
+            var back = Spawn(parent, pos, meshName, backTable, yawDeg + 180f, true, label, false);
+            return (front, back);
         }
 
         ArrayMesh ShelfMesh()
@@ -123,6 +133,7 @@ namespace UnturnedGodot
         protected override void BuildVisual()
         {
             var mesh = ShelfMesh();
+            if (!RenderMesh) return;   // BACK side of a double-sided shelf: shares the FRONT twin's mesh+label, just manages its own display (ShelfMesh() still cached for tier maths)
             float top = 2.8f;
             if (mesh != null)
             {

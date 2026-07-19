@@ -2101,16 +2101,17 @@ namespace UnturnedGodot
                     363, 465, 340, 1159, 463,                  // Maplestrike (wide gun), soda, tomato, maple, OJ
                     1185, 15, 81, 472, 342, 335,               // dufflebag (wide), medkit, MRE, cola, potato, corn
                     462, 95, 13, 344, 329, 338, 470, 460, 14 });// milk, bandage, beans, wheat, carrot, lettuce, eggs, bread, water
+                var back = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 180f, true, mesh, false);   // BACK side: shares the mesh, stocks the far tiers, faces the other aisle
+                back.DebugDisplay(new System.Collections.Generic.List<int> { 472, 465, 13, 14, 462, 340, 15, 81 });   // a few items so we can see the back is stocked
                 AddChild(new OmniLight3D { GlobalPosition = new Vector3(2f, 3f, -1.5f), OmniRange = 24f, LightEnergy = 3f });
                 var scam = new Camera3D { Fov = 55f };
                 AddChild(scam);
                 scam.GlobalPosition = new Vector3(3.4f, 2.0f, 1.2f);
                 scam.LookAt(new Vector3(0f, 1.2f, -4.5f), Vector3.Up);
-                if (System.Environment.GetEnvironmentVariable("UG_SHELFCAM") == "top")   // high angle: verify lying items are detail-side UP
-                {
-                    scam.GlobalPosition = new Vector3(0.2f, 3.9f, -2.4f);
-                    scam.LookAt(new Vector3(0f, 1.3f, -4.6f), Vector3.Up);
-                }
+                string _scamMode = System.Environment.GetEnvironmentVariable("UG_SHELFCAM");
+                if (_scamMode == "top")        { scam.GlobalPosition = new Vector3(0.2f, 3.9f, -2.4f);  scam.LookAt(new Vector3(0f, 1.3f, -4.6f), Vector3.Up); }   // high angle: lying items detail-side UP
+                else if (_scamMode == "side")  { scam.GlobalPosition = new Vector3(6.6f, 1.5f, -4.5f);  scam.LookAt(new Vector3(0f, 1.2f, -4.5f), Vector3.Up); }   // profile: tier structure front-to-back (single vs double sided)
+                else if (_scamMode == "back")  { scam.GlobalPosition = new Vector3(-3.2f, 2.0f, -10.4f); scam.LookAt(new Vector3(0f, 1.2f, -4.5f), Vector3.Up); }   // from behind the shelf
                 scam.Current = true;
                 return;
             }
