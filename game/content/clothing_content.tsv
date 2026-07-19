@@ -1,0 +1,9 @@
+id	slot	guid	albedo	emission	metallic	mesh
+2	pants	67a6ec52e4b24ffd89f75ceee0eb5179	clothing/jeans_work_pants.png			
+3	shirt	67c76cdf16024bf68b6e5d14d4c617ab	clothing/hoodie_orange_shirt.png			
+10	vest	fe9c024b96504144952c055aea57c5fc	clothing/vest_police_vest_albedo.png			clothing/vest_police_vest.obj
+27	hat	ada195ec008f43ae90ebd34086412e8f	clothing/tophat_hat_albedo.png			clothing/tophat_hat.obj
+154	shirt	0ffc118ca71c4e978d18cff3d974da2a	clothing/shirt_orange_shirt.png			
+209	pants	e18bbb5ccae347aab40d8d4b9fa4dc0a	clothing/cargo_pants_pants.png			
+212	pants	f5fe5dca2491449987cd23a1e797d605	clothing/khaki_pants_pants.png			
+232	shirt	233f86ae53de4a76bc96c266d3adb537	clothing/construction_top_shirt.png		clothing/construction_top_metallic.png	
