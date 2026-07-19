@@ -210,6 +210,52 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Grid power source (SP grid-power feature): a Circuit_0 breaker box is a GridPowerSource -- a 10kW OUTPUT that
+    // produces while the global mains flag (PowerNet.GlobalPower) is ON. Wire it to a spotlight consumer and prove the
+    // FLAG is the gate: OFF -> unpowered; toggleGlobalPower -> ON -> powered (consumer receives the 10kW export, draws
+    // its 250w usage as the source's load); toggle OFF -> dark again. The SAME `cons.Powered` assert is checked BOTH
+    // false and true in one run, gated only by the flag => teeth: it flips WITH the flag, not by luck. Also proves the
+    // ownerless-usable path -- the grid source (NOT a Deployable) owns a Usable, wire-able output via IPowerDevice.
+    public class PowerGridSourcePowers : GameTest
+    {
+        public override string Name => "power.grid_source_powers";
+        public override IEnumerable<Step> Run()
+        {
+            PowerNet.SetGlobalPower(false);   // defensive: the grid starts OFF (default), independent of test order
+            var grid = GridPowerSource.Attach(World, new Vector3(-3f, 0f, 0f), Basis.Identity, GridPowerSource.PortLocal);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(3f, 0f, 0f), 0f);
+            var gridOut = grid.PowerPorts[0];
+            var cons = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var pass = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+            PowerRig.Connect(World, gridOut, cons);
+            yield return Ticks(1);
+
+            T.Check("grid source owns a 10kW output port", gridOut != null && gridOut.Kind == DeployableDef.PortKind.Output && PowerRig.Approx(gridOut.Watts, 10000f));
+            T.Check("grid output is wire-able (Usable) though the owner is NOT a Deployable", gridOut.Usable);
+
+            // globalPower OFF (default) -> the mains are dead -> the consumer stays UNPOWERED
+            PowerNet.Recompute(Tree);
+            T.Check($"OFF: grid output produces 0w (got {gridOut.Live:0})", PowerRig.Approx(gridOut.Live, 0f));
+            T.Check("OFF: consumer unpowered", !cons.Powered);
+            T.Check($"OFF: consumer receives 0w (got {cons.Live:0})", PowerRig.Approx(cons.Live, 0f));
+
+            // toggleGlobalPower -> ON -> the 10kW mains energize the wire -> the consumer runs off the budget
+            bool nowOn = PowerNet.ToggleGlobalPower(); PowerNet.Recompute(Tree);
+            T.Check("toggle flips the grid ON", nowOn && PowerNet.GlobalPower);
+            T.Check($"ON: grid output produces its 10000w (got {gridOut.Live:0})", PowerRig.Approx(gridOut.Live, 10000f));
+            T.Check("ON: consumer powered", cons.Powered);
+            T.Check($"ON: consumer receives the 10kW export (got {cons.Live:0})", PowerRig.Approx(cons.Live, 10000f));
+            T.Check($"ON: consumer's 250w usage is drawn from the budget -> grid load 250w (got {gridOut.Draw:0})", PowerRig.Approx(gridOut.Draw, 250f));
+            T.Check($"ON: passthrough re-exports the 9750w leftover (got {pass.Live:0})", PowerRig.Approx(pass.Live, 9750f));
+
+            // toggle back OFF -> dark again: the SAME consumer assert, now false, proving the flag is the gate
+            bool nowOff = PowerNet.ToggleGlobalPower(); PowerNet.Recompute(Tree);
+            T.Check("toggle flips the grid OFF", !nowOff && !PowerNet.GlobalPower);
+            T.Check($"OFF again: grid output back to 0w (got {gridOut.Live:0})", PowerRig.Approx(gridOut.Live, 0f));
+            T.Check("OFF again: consumer unpowered once the grid is toggled off", !cons.Powered);
+        }
+    }
+
     // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
     // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
     public class PowerWreckDropsWires : GameTest
