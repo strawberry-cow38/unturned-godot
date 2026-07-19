@@ -17,8 +17,8 @@ namespace UnturnedGodot
         public string MeshName = "Shelf_1";
         public bool ShowItems = true;        // open shelves show their loot on the tiers; solid props (fridge/wardrobe) don't
         public string LabelText = "Store Shelf";
-        readonly List<Node3D> _displayNodes = new();   // the item models currently on the tiers -> rebuilt when the grid changes (items taken via F)
-        float _syncT; int _syncHash = int.MinValue;
+        readonly Dictionary<int, Node3D> _display = new();   // grid cell (gx<<8|gy) -> its item model; a STABLE slot per cell so taking items doesn't re-organize the shelf
+        float _syncT;
 
         // per-shelf-type tier layout: TierY = shelf-surface heights as fractions of the STANDING AABB; PerTier = item
         // slots across the width; WidthUse = fraction of width used (end margins); FrontZ = how far toward the front face.
@@ -109,79 +109,99 @@ namespace UnturnedGodot
                 var item = Assets.makeLoot((ushort)id);
                 if (item != null) Add(item);
             }
-            if (ShowItems) RefreshDisplay();   // open shelves show loot on tiers; solid props hold it hidden (F to see)
+            if (ShowItems) SyncDisplay();   // open shelves show loot on tiers; solid props hold it hidden (F to see)
             GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {Storage.getItemCount()} items{(ShowItems ? " on tiers" : " (F-open)")}");
         }
 
-        // place each stored item's real model on a tier slot (static, no physics -- the "neatly placed" display).
-        void DisplayItems(List<int> ids)
+        // STABLE display: each grid cell maps to a FIXED shelf slot, so taking items never re-organizes the rest (master).
+        // Diffs Storage vs what's shown -- despawns taken items, spawns added ones, leaves the rest put. Called on spawn +
+        // polled ~2x/s (the crate close-out writes the edited grid back).
+        void SyncDisplay()
+        {
+            var current = new Dictionary<int, (ushort id, ItemAsset a)>();
+            for (byte i = 0; i < Storage.getItemCount(); i++)
+            {
+                var j = Storage.getItem(i);
+                if (j?.item == null) continue;
+                current[(j.x << 8) | j.y] = (j.item.id, Assets.find(j.item.id) as ItemAsset);
+            }
+            foreach (var key in new List<int>(_display.Keys))   // taken -> despawn its model, leave the rest in place
+                if (!current.ContainsKey(key)) { if (IsInstanceValid(_display[key])) _display[key].QueueFree(); _display.Remove(key); }
+            foreach (var kv in current)                         // added -> place at its fixed slot
+                if (!_display.ContainsKey(kv.Key)) PlaceItem(kv.Key, kv.Value.id, kv.Value.a);
+        }
+
+        // place one item's real model at the STABLE slot derived from its grid cell -- oriented + scaled to sit neatly.
+        void PlaceItem(int cellKey, ushort id, ItemAsset asset)
         {
             var mesh = ShelfMesh();
-            if (mesh == null || ids.Count == 0) return;
+            if (mesh == null) return;
             var pr = Prof(MeshName);
             var box = StoodAabb(mesh);
+            int slots = pr.TierY.Length * pr.PerTier;
+            int gx = cellKey >> 8, gy = cellKey & 0xFF;
+            int slot = (gx + gy * Width) % slots;                 // stable grid cell -> slot
+            int tier = slot / pr.PerTier, col = slot % pr.PerTier;
+            float fx = pr.PerTier > 1 ? col / (float)(pr.PerTier - 1) : 0.5f;
             float x0 = box.Position.X + box.Size.X * (1f - pr.WidthUse) * 0.5f;
             float xspan = box.Size.X * pr.WidthUse;
-            int slots = pr.TierY.Length * pr.PerTier;
-            for (int i = 0; i < ids.Count && i < slots; i++)
-            {
-                int tier = i / pr.PerTier, col = i % pr.PerTier;
-                float fx = pr.PerTier > 1 ? col / (float)(pr.PerTier - 1) : 0.5f;
-                var asset = Assets.find((ushort)ids[i]) as ItemAsset;
-                Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
-                var vis = WorldItem.BuildReplicaVisual((ushort)ids[i], rar);
-                // orient by SHAPE (master): tall/round items (cans, water bottles) STAND upright; flat/thin items (candy
-                // bars, papers) LIE FLAT (+90 X = the game's dropped-item pose). "Flat" = one mesh dimension much thinner
-                // than the next -> a slab, not a can. Slight yaw variety on top.
-                var sz = (vis.Mesh?.GetAabb() ?? new Aabb()).Size;
-                float[] dims = { sz.X, sz.Y, sz.Z };
-                System.Array.Sort(dims);   // dims[0]=thinnest .. dims[2]=longest
-                bool flat = dims[1] > 0.0001f && dims[0] < dims[1] * 0.55f;
-                vis.RotationDegrees = new Vector3(flat ? 90f : 0f, col * 11f, 0f);
-                // position by the item's ROTATED MESH bounds (origins vary per model, so use bounds not origin): base flush
-                // on the tier (Y), footprint centered in the shelf DEPTH (front-biased) so nothing pokes the back wall (Z),
-                // centered on the slot (X). This fixes both the sinking AND the rotate-into-the-back-wall.
-                var rb = new Transform3D(vis.Basis, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
-                float tierSurfaceY = box.Position.Y + box.Size.Y * pr.TierY[tier];
-                vis.Position = new Vector3(
-                    (x0 + xspan * fx) - (rb.Position.X + rb.Size.X * 0.5f),
-                    tierSurfaceY - rb.Position.Y,
-                    (box.Position.Z + box.Size.Z * (0.5f + 0.5f * pr.FrontZ)) - (rb.Position.Z + rb.Size.Z * 0.5f));
-                AddChild(vis);
-                _displayNodes.Add(vis);
-            }
+
+            Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
+            var vis = WorldItem.BuildReplicaVisual(id, rar);
+
+            // ORIENT by shape + type: tools/guns/melee/fishing (long, awkward) + flat/thin slabs (candy bars) LIE FLAT
+            // (thinnest axis up); tall/round items (cans, bottles, chemicals) STAND (longest axis up). Robust to authoring.
+            var s = (vis.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One * 0.1f)).Size;
+            float[] d = { s.X, s.Y, s.Z };
+            int mn = 0, mx = 0;
+            for (int k = 1; k < 3; k++) { if (d[k] < d[mn]) mn = k; if (d[k] > d[mx]) mx = k; }
+            float mid = s.X + s.Y + s.Z - d[mn] - d[mx];
+            // only consumables/drinks/chemicals STAND (when tall); everything else (guns, melee, tools like the flashlight,
+            // clothing, misc) LIES FLAT -- a can/bottle/chemical and a flashlight are the SAME shape, so type decides.
+            bool standable = asset != null && (asset.type == EItemType.FOOD || asset.type == EItemType.WATER || asset.type == EItemType.MEDICAL || asset.type == EItemType.SUPPLY);
+            bool layFlat = !standable || d[mn] < mid * 0.55f;
+            int up = layFlat ? mn : mx;
+            Basis stand = up == 0 ? new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(90f))
+                        : up == 2 ? new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(-90f))
+                        : Basis.Identity;
+            Basis oriented = new Basis(Vector3.Up, Mathf.DegToRad(col * 11f)) * stand;
+
+            // SCALE oversized items down to fit the slot (master's "cheat"): cap the footprint to the slot width + the
+            // height to the tier gap.
+            var ob = new Transform3D(oriented, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
+            float slotW = (xspan / Mathf.Max(1, pr.PerTier)) * 0.92f;
+            float tierGap = box.Size.Y * 0.26f;
+            float sc = 1f, foot = Mathf.Max(ob.Size.X, ob.Size.Z);
+            if (foot > slotW && foot > 0.0001f) sc = Mathf.Min(sc, slotW / foot);
+            if (ob.Size.Y > tierGap && ob.Size.Y > 0.0001f) sc = Mathf.Min(sc, tierGap / ob.Size.Y);
+            vis.Basis = oriented.Scaled(new Vector3(sc, sc, sc));
+
+            // POSITION by the final (rotated+scaled) bounds: base flush on the tier (Y), footprint centered in the shelf
+            // DEPTH (front-biased) so nothing pokes the back wall (Z), centered on the slot (X).
+            var rb = new Transform3D(vis.Basis, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
+            float tierSurfaceY = box.Position.Y + box.Size.Y * pr.TierY[tier];
+            vis.Position = new Vector3(
+                (x0 + xspan * fx) - (rb.Position.X + rb.Size.X * 0.5f),
+                tierSurfaceY - rb.Position.Y,
+                (box.Position.Z + box.Size.Z * (0.5f + 0.5f * pr.FrontZ)) - (rb.Position.Z + rb.Size.Z * 0.5f));
+            AddChild(vis);
+            _display[cellKey] = vis;
         }
 
-        // display a fixed id list on the tiers WITHOUT the asset DB (BuildReplicaVisual reads content/items directly) --
-        // the UG_SHELFDEMO tier-layout harness uses this to eyeball item placement in an isolated scene.
-        public void DebugDisplay(List<int> ids) => DisplayItems(ids);
-
-        // rebuild the tier display from the CURRENT grid contents (source refreshDisplay: the shown models track the
-        // items as they're taken/added via F). Cheap + only fires when the grid actually changes (contents hash).
-        void RefreshDisplay()
+        // test hook: drop fixed ids into sequential grid cells + display them (no asset DB / no roll) -- UG_SHELFDEMO harness.
+        public void DebugDisplay(List<int> ids)
         {
-            foreach (var nd in _displayNodes) if (IsInstanceValid(nd)) nd.QueueFree();
-            _displayNodes.Clear();
-            var ids = new List<int>();
-            for (byte i = 0; i < Storage.getItemCount(); i++) { var j = Storage.getItem(i); if (j?.item != null) ids.Add(j.item.id); }
-            DisplayItems(ids);
-            _syncHash = ContentsHash();
+            for (int i = 0; i < ids.Count; i++)
+                PlaceItem(((i % Width) << 8) | (i / Width), (ushort)ids[i], Assets.find((ushort)ids[i]) as ItemAsset);
         }
 
-        int ContentsHash()
-        {
-            int h = 17;
-            for (byte i = 0; i < Storage.getItemCount(); i++) { var j = Storage.getItem(i); h = h * 31 + (j?.item?.id ?? 0); }
-            return h * 31 + Storage.getItemCount();
-        }
-
-        public override void _Process(double delta)   // poll the grid ~2-3x/sec; on change (item taken/added via F), refresh the tier models
+        public override void _Process(double delta)   // poll the grid ~2x/s; SyncDisplay only touches CHANGED cells (stable)
         {
             if (!ShowItems) return;
             _syncT += (float)delta;
             if (_syncT < 0.4f) return;
             _syncT = 0f;
-            if (ContentsHash() != _syncHash) RefreshDisplay();
+            SyncDisplay();
         }
     }
 }

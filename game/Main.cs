@@ -2077,6 +2077,7 @@ namespace UnturnedGodot
 
             if (System.Environment.GetEnvironmentVariable("UG_SHELFDEMO") == "1")   // StoreShelf tier-layout harness: isolate a display shelf + fixed items (UG_SHELFMESH=Shelf_0/1)
             {
+                SDG.Unturned.ItemCatalog.RegisterAll();   // so Assets.find(id).type resolves -> the stand/lie orientation rule works in the harness
                 string mesh = System.Environment.GetEnvironmentVariable("UG_SHELFMESH") ?? "Shelf_1";
                 var shelf = StoreShelf.Spawn(this, new Vector3(0f, 0f, -4.5f), mesh, 6, 0f, true, mesh);
                 shelf.DebugDisplay(new System.Collections.Generic.List<int> { 4, 13, 15, 95, 81, 14, 4, 13, 15, 95, 81, 14, 4, 13, 15, 95, 81, 14 });
