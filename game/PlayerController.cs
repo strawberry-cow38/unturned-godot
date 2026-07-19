@@ -154,7 +154,7 @@ namespace UnturnedGodot
                 // 1) ray forward -> the sphere sits where the ray STOPS (on world/props/items/vehicles, or max reach).
                 // Query objects are REUSED across frames (they were alloc'd fresh every frame -> GC pressure = the "dips") -- master.
                 _lookExclude ??= new Godot.Collections.Array<Rid> { GetRid() };
-                _lookRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 5) | (1u << 6) | (1u << 7), Exclude = _lookExclude };
+                _lookRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 5) | (1u << 6) | (1u << 7) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
                 _lookRayQ.From = from; _lookRayQ.To = from + fwd * LookReach;
                 var rhit = space.IntersectRay(_lookRayQ);
                 _lookEnd = rhit.Count > 0 ? (Vector3)rhit["position"] : from + fwd * LookReach;
@@ -164,6 +164,7 @@ namespace UnturnedGodot
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
+                    else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
                 }
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable

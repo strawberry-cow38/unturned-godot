@@ -375,11 +375,12 @@ namespace UnturnedGodot
             {
                 Text = asset?.itemName ?? "?",
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Modulate = rar.Lerp(Colors.White, 0.35f),
-                PixelSize = 0.006f, NoDepthTest = true, FontSize = 64, OutlineSize = 10, Visible = false, TopLevel = true,
+                PixelSize = 0.006f, NoDepthTest = true, FontSize = 64, OutlineSize = 10, TopLevel = true,
+                Visible = System.Environment.GetEnvironmentVariable("UG_SHELFLABELS") == "1",   // hidden until focused; UG_SHELFLABELS=1 forces them on to verify positioning
             };
             vis.AddChild(label);
-            var ob = vis.GlobalTransform * a;   // world AABB -> float the tag just above the item
-            label.Position = new Vector3(ob.Position.X + ob.Size.X * 0.5f, ob.Position.Y + ob.Size.Y + 0.12f, ob.Position.Z + ob.Size.Z * 0.5f);
+            var la = new Transform3D(vis.Basis, vis.Position) * a;   // item AABB in the SHELF's LOCAL frame (vis's basis/position are valid immediately; its GlobalTransform may not be yet)
+            label.Position = ToGlobal(new Vector3(la.Position.X + la.Size.X * 0.5f, la.Position.Y + la.Size.Y + 0.12f, la.Position.Z + la.Size.Z * 0.5f));
             body.Label = label;
         }
 
