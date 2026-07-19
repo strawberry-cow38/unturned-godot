@@ -266,6 +266,8 @@ namespace UnturnedGodot
                         root.AddChild(body);
                     }
                 }
+                if (mode == WorldMode.Playable && name == "Gas_Pump_0")   // give each gas-station pump a 750w power input (master); no behaviour hangs off it yet
+                    GasPump.Attach(root, gpos, basis, GasPump.PortLocal);
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
                 cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;

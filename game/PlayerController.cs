@@ -1574,11 +1574,16 @@ namespace UnturnedGodot
         {
             if (NetConnectWire == null || src == null || dst == null) return false;
             var so = src.Owner; var co = dst.Owner;
-            if (so == null || co == null || so.NetId == 0 || co.NetId == 0) return false;
-            int si = so.Ports.IndexOf(src), di = co.Ports.IndexOf(dst);
+            if (so == null || co == null || so.PowerNetId == 0 || co.PowerNetId == 0) return false;   // a world fixture (gas pump) has NetId 0 -> SP local wire, no server request
+            int si = PortIndexOf(so.PowerPorts, src), di = PortIndexOf(co.PowerPorts, dst);
             if (si < 0 || di < 0) return false;
-            NetConnectWire(so.NetId, (byte)si, co.NetId, (byte)di);
+            NetConnectWire(so.PowerNetId, (byte)si, co.PowerNetId, (byte)di);
             return true;
+        }
+        static int PortIndexOf(System.Collections.Generic.IReadOnlyList<ConnectionPort> ports, ConnectionPort p)
+        {
+            for (int i = 0; i < ports.Count; i++) if (ports[i] == p) return i;
+            return -1;
         }
 
         /// <summary>MP wire removal (the RMB clear/unplug manage actions): the wire node vanishes when

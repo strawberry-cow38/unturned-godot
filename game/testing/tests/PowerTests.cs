@@ -165,6 +165,28 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Gas pump power input (master): a Gas_Pump_0 world FIXTURE (not a Deployable -- an IPowerDevice) joins the power
+    // net with a 750w consumer port. Wire a running generator to it and its On/Off flag (IsPowered) flips true; the
+    // generator's load reflects the 750w. Proves the power net keys on the interface, not the concrete Deployable.
+    public class PowerGasPumpPowers : GameTest
+    {
+        public override string Name => "power.gas_pump_powers";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);
+            var pump = GasPump.Attach(World, new Vector3(3f, 0f, 0f), Basis.Identity, GasPump.PortLocal);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var pumpIn = pump.PowerPorts[0];
+            yield return Ticks(1);
+            T.Check("gas pump has a 750w consumer input", pumpIn != null && pumpIn.Kind == DeployableDef.PortKind.Consumer && PowerRig.Approx(pumpIn.Watts, 750f));
+            T.Check("gas pump OFF before wiring", !pump.IsPowered);
+            PowerRig.Connect(World, genOut, pumpIn);
+            gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("gas pump ON once wired to a running generator", pump.IsPowered);
+            T.Check($"generator load = the pump's 750w (got {genOut.Draw:0})", PowerRig.Approx(genOut.Draw, 750f));
+        }
+    }
+
     // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
     // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
     public class PowerWreckDropsWires : GameTest

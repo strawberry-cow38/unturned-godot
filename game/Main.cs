@@ -1258,7 +1258,8 @@ namespace UnturnedGodot
 
             var gen = DeployableDef.Generator; var spot = DeployableDef.Spotlight;
             // back row: PLACED objects (surface = ground; the base is sat on it)
-            bool showSplit = System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1";   // splitter showcase skips the gen/spot/ghost clutter
+            bool showSplit = System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1300,7 +1301,7 @@ namespace UnturnedGodot
             // UG_SPLITTERS=1: showcase the three power splitters (2/3/4-way) in a row with all port arrows on -- verify
             // the gray box stands up, the orange input (back) + fanned cyan outputs (front) read. UG_SPLITBACK=1 = the
             // rear view onto the input face.
-            if (showSplit)
+            if (System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1")
             {
                 var sp2 = Deployable.Spawn(this, DeployableDef.Splitter2, new Vector3(-3.0f, 0f, 0f), 0f);
                 var sp3 = Deployable.Spawn(this, DeployableDef.Splitter3, new Vector3(-0.6f, 0f, 0f), 0f);
@@ -1313,6 +1314,19 @@ namespace UnturnedGodot
                 cam.Position = back ? new Vector3(0.9f, 1.7f, -5.4f) : new Vector3(2.2f, 1.8f, 6.6f);
                 cam.Fov = 50f;
                 cam.LookAt(look, Vector3.Up);
+            }
+            // UG_GASPUMP=1: a gas pump + its 750w power input port -- verify the orange input cube sits ON the pump.
+            if (System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1")
+            {
+                var pumpMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Gas_Pump_0.obj"));
+                var standUp = new Basis(Vector3.Right, Mathf.DegToRad(-90f));   // the map stands the flat-authored pump up (raw Z -> world height)
+                if (pumpMesh != null)
+                    AddChild(new MeshInstance3D { Mesh = pumpMesh, Basis = standUp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.67f, 0.7f), Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });
+                var gp = GasPump.Attach(this, Vector3.Zero, standUp, GasPump.PortLocal);
+                foreach (var pt in gp.PowerPorts) pt.SetArrowState(true, true);
+                look = new Vector3(0f, 1.2f, 0f);
+                cam.Position = new Vector3(2.8f, 1.5f, 3.6f);
+                cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read

@@ -6,11 +6,16 @@ namespace UnturnedGodot
     // in group "deployables". Look-at gets the same screen-space outline + info billboard (name / HP / fuel) as
     // vehicles, and the same damage lifecycle: smoke at low HP, fire + explosion at 0 HP, a burning wreck that cools
     // into a blowtorch-salvageable husk (src runtime InteractableGenerator + the shared vehicle explode/salvage path).
-    public partial class Deployable : StaticBody3D
+    public partial class Deployable : StaticBody3D, IPowerDevice
     {
         public DeployableDef Def;
         public uint NetId;   // MP: the replicated entity this node mirrors (set by DeployableReplicaView); 0 = SP/local
         public readonly System.Collections.Generic.List<ConnectionPort> Ports = new();   // power connection cubes (output/consumer/passthrough)
+        // IPowerDevice: how the power net sees this deployable (a gas pump implements the same interface w/o being a Deployable)
+        public bool PowerProducing => IsPowered;
+        public bool PowerOnFire => OnFire;
+        public uint PowerNetId => NetId;
+        public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => Ports;
         public float Health, HealthMax;
         public float Fuel, FuelMax;   // src InteractableGenerator: fuel drawn from Capacity; a fresh build starts FULL (matches vehicle spawn) until the refuel/power pass
 

@@ -2,6 +2,16 @@ using Godot;
 
 namespace UnturnedGodot
 {
+    // A device the power net wires together: a placed Deployable (generator/spotlight/splitter/combiner) OR a powered
+    // world fixture (gas pump). PowerNet reads these off the "deployables" group; a ConnectionPort's Owner is one.
+    public interface IPowerDevice
+    {
+        bool PowerProducing { get; }   // a running generator; false for a pure consumer (spotlight/gas pump)
+        bool PowerOnFire { get; }      // a burning/wrecked device stops conducting
+        uint PowerNetId { get; }       // MP replica id (0 = SP / local / world fixture)
+        System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts { get; }
+    }
+
     // A power connection point on a placed deployable: a small cube the wire tool can look at + wire to.
     // Output (produces watts while the source is on), Consumer (draws watts), or Passthrough (re-exports the
     // leftover). Lives on its own collision layer so the wire look-ray finds it without hitting anything else.
@@ -10,14 +20,14 @@ namespace UnturnedGodot
         public const uint PortLayer = 1u << 8;   // wire look-ray raycasts this layer only
         const float CubeSize = 0.13f;
 
-        public Deployable Owner;
+        public IPowerDevice Owner;   // the deployable or fixture this port sits on (was Deployable; now any IPowerDevice, e.g. a gas pump)
         public DeployableDef.PortKind Kind;
         public float Watts;         // output: produced; consumer: drawn; passthrough: unused
         public string ProviderName;
         public float Live;          // live power (recomputed by PowerNet): output = produced now, consumer = received, passthrough = exported now
         public bool Powered;        // consumer: is it getting at least its usage?
         public float Draw;          // output only: total wattage actually drawn by the powered consumers down its chain (the load)
-        public bool Usable => Owner != null && GodotObject.IsInstanceValid(Owner) && !Owner.OnFire;   // a burning/wrecked deployable's ports can't start or accept a wire
+        public bool Usable => Owner is GodotObject go && GodotObject.IsInstanceValid(go) && !Owner.PowerOnFire;   // a burning/wrecked owner's ports can't start or accept a wire
 
         MeshInstance3D _cube, _arrow;
         StandardMaterial3D _mat, _arrowMat;
@@ -32,7 +42,7 @@ namespace UnturnedGodot
             _ => Colors.White,
         };
 
-        public static ConnectionPort Create(Deployable owner, DeployableDef.Port p, string providerName)
+        public static ConnectionPort Create(IPowerDevice owner, DeployableDef.Port p, string providerName)
         {
             var cp = new ConnectionPort
             {

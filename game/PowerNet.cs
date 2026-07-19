@@ -29,10 +29,10 @@ namespace UnturnedGodot
             var devices = new System.Collections.Generic.List<PowerDevice>();
             var portMap = new System.Collections.Generic.Dictionary<ConnectionPort, PowerPort>();
             foreach (var n in tree.GetNodesInGroup("deployables"))
-                if (n is Deployable d)
+                if (n is IPowerDevice d)   // a Deployable OR a powered world fixture (gas pump)
                 {
-                    var dev = new PowerDevice { Producing = d.IsPowered, OnFire = d.OnFire };
-                    foreach (var p in d.Ports)
+                    var dev = new PowerDevice { Producing = d.PowerProducing, OnFire = d.PowerOnFire };
+                    foreach (var p in d.PowerPorts)
                     {
                         if (p == null || !GodotObject.IsInstanceValid(p)) continue;
                         portMap[p] = dev.AddPort(Kind(p.Kind), p.Watts);
