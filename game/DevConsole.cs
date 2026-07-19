@@ -24,7 +24,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "wear", "unwear" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -81,6 +81,21 @@ namespace UnturnedGodot
             var parts = cmd.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
+
+            // toggleGlobalPower [on|off]  -- SP grid mains switch (OFF by default); bare form FLIPS it. Mirrors
+            // `survival`, but handled ABOVE the arg-length guard so the natural no-arg toggle works (the guard below
+            // would otherwise short-circuit any no-arg command to a usage line). Not server-gated -- SP-only feature.
+            if (verb == "toggleglobalpower" || verb == "globalpower" || verb == "grid")
+            {
+                string g = arg.ToLowerInvariant();
+                bool on = g == "on" || g == "1" || g == "true" ? true
+                        : g == "off" || g == "0" || g == "false" ? false
+                        : !PowerNet.GlobalPower;
+                PowerNet.SetGlobalPower(on);   // flips the flag + MarkDirty()s so the graph recomputes (Circuit_0 sources turn on/off)
+                Log($"grid power {(PowerNet.GlobalPower ? "ON" : "OFF")}");
+                return;
+            }
+
             if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
 
             if (RemoteClient != null && System.Array.IndexOf(ServerGatedVerbs, verb) >= 0)
@@ -214,7 +229,7 @@ namespace UnturnedGodot
                 Player?.UnwearClothing(slot);
                 Log($"removed {slot.ToString().ToLowerInvariant()}");
             }
-            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival / wear / unwear");
+            else Log($"unknown command '{verb}' -- give / vehicle / teleport / plant / skill / xp / hold / deploy / unarmed / survival / toggleGlobalPower / wear / unwear");
         }
 
         /// <summary>MP teleport (#27): location name -> the numeric `teleport <x> <y> <z>` wire form
