@@ -48,6 +48,43 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Battery (master): the IN terminal charges the stored energy, the OUT terminal discharges it. Wire a generator ->
+    // battery IN to charge it, then run a spotlight off the battery OUT with the generator off -> it discharges.
+    public class PowerBatteryChargeDischarge : GameTest
+    {
+        public override string Name => "power.battery_charge_discharge";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);
+            var bat = Deployable.Spawn(World, DeployableDef.Battery, new Vector3(0f, 0f, 0f), 0f);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(3f, 0f, 0f), 0f);
+            yield return Ticks(1);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var batIn = bat.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var batOut = bat.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            T.Check("battery has an IN (consumer) + an OUT (output) terminal", batIn != null && batOut != null);
+            T.Check("fresh battery is empty -> not producing", !bat.IsPowered && bat.Energy <= 0f);
+
+            PowerRig.Connect(World, genOut, batIn);            // gen OUT -> battery IN
+            gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("battery IN is fed by the generator", batIn.Powered);
+            float e0 = bat.Energy;
+            yield return Ticks(60);                            // ~1s charging
+            PowerNet.Recompute(Tree);
+            T.Check($"battery charged up (energy {bat.Energy:0} > {e0:0})", bat.Energy > e0 + 1f);
+            T.Check("a charged battery produces on its OUT", bat.IsPowered);
+
+            PowerRig.Connect(World, batOut, spotIn);           // battery OUT -> spotlight
+            gen.NetSetPowered(false); PowerNet.Recompute(Tree);   // generator OFF (force, bypassing the ramp-settle toggle gate) -> the battery is the only source
+            yield return Ticks(1); PowerNet.Recompute(Tree);
+            T.Check("spotlight runs off the battery with the gen off", spotIn.Powered);
+            float e1 = bat.Energy;
+            yield return Ticks(60);                            // ~1s discharging
+            T.Check($"battery discharges powering the load (energy {bat.Energy:0} < {e1:0})", bat.Energy < e1 - 1f);
+        }
+    }
+
     public class PowerWireClearUnpowers : GameTest
     {
         public override string Name => "power.wire_clear_unpowers";

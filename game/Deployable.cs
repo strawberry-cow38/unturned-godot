@@ -41,7 +41,8 @@ namespace UnturnedGodot
         float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
         bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
         public bool CanTogglePower => !OnFire && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled, NOT-on-fire generator toggles, and only once the ramp has settled (buffer)
-        public bool IsPowered => RunTarget > 0.5f;   // the OUTPUT produces only while the engine is effectively running (not just the F toggle) -- PowerNet reads this
+        public bool IsPowered => Def != null && Def.IsBattery ? (Energy > 0f && !OnFire) : RunTarget > 0.5f;   // a battery's OUT produces while it has charge; a generator's while the engine runs -- PowerNet reads this
+        public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
         readonly System.Collections.Generic.List<Light3D> _lamps = new();
@@ -356,6 +357,15 @@ namespace UnturnedGodot
                 Fuel = Mathf.Max(0f, Fuel - DeployableDef.GenFuelBurnPerSec * (0.2f + 0.8f * LoadFraction) * (float)delta);
                 if (Fuel <= 0f && _powered) { _powered = false; PowerNet.MarkDirty(); }   // ran DRY -> flip the toggle OFF (RunTarget was already 0 from the Fuel gate, so the cooldown ramp plays); needs a refuel + a manual [F] restart, NOT an auto-resume (master)
             }
+            if (Def != null && Def.IsBattery)   // battery: the OUT discharges the stored Energy, the IN charges it (no engine/ramp/audio -- FuelMax 0 keeps RunTarget 0)
+            {
+                bool wasProducing = Energy > 0f;
+                float outDraw = (_outputPort != null && IsInstanceValid(_outputPort)) ? _outputPort.Draw : 0f;
+                if (outDraw > 0f) Energy = Mathf.Max(0f, Energy - outDraw * (float)delta);   // discharge to whatever's wired to the OUT
+                if (_consumerPort != null && IsInstanceValid(_consumerPort) && _consumerPort.Powered && Energy < Def.EnergyMax)
+                    Energy = Mathf.Min(Def.EnergyMax, Energy + Def.ChargeWatts * (float)delta);   // charge while the IN is fed by a source
+                if ((Energy > 0f) != wasProducing) PowerNet.MarkDirty();   // crossed empty <-> charged -> the OUT starts/stops producing
+            }
             if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)
@@ -413,7 +423,7 @@ namespace UnturnedGodot
             {
                 _info.SetName(Def?.Name, OutlineColor);
                 _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
-                _info.SetBar(1, FuelMax > 0f ? Fuel / FuelMax : 0f, InfoBillboard.FuelColor, FuelMax > 0f);   // fuel bar (yellow); hidden if no tank
+                _info.SetBar(1, Def != null && Def.IsBattery ? (Def.EnergyMax > 0f ? Energy / Def.EnergyMax : 0f) : (FuelMax > 0f ? Fuel / FuelMax : 0f), InfoBillboard.FuelColor, (FuelMax > 0f) || (Def != null && Def.IsBattery));   // fuel / battery-CHARGE bar (yellow); hidden if neither
                 _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null);   // usage bar (cyan): load / capacity -- generators only
                 // While the player HOLDS F to pick it up, show the progress; otherwise the interact hint. src checkHint:
                 // GENERATOR_OFF when on, GENERATOR_ON when off (_powered is the target -> reads as the next action even
