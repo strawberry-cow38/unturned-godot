@@ -93,7 +93,18 @@ namespace UnturnedGodot
         {
             var front = Spawn(parent, pos, meshName, frontTable, yawDeg, true, label, true);
             var back = Spawn(parent, pos, meshName, backTable, yawDeg + 180f, true, label, false);
+            front._twin = back; back._twin = front;   // so an interact on either resolves to the side the player is standing on
             return (front, back);
+        }
+
+        StoreShelf _twin;   // the other side of a double-sided gondola (null for single shelves)
+
+        // For a double-sided shelf, pick the side whose aisle the player is on (its local +Z faces its aisle). The crate
+        // interaction calls this so F opens the FRONT from the front aisle and the BACK from the back. Single -> itself.
+        public StoreShelf ResolveSide(Vector3 playerPos)
+        {
+            if (_twin == null) return this;
+            return (playerPos - GlobalPosition).Dot(GlobalTransform.Basis.Z) >= 0f ? this : _twin;
         }
 
         ArrayMesh ShelfMesh()

@@ -1127,6 +1127,7 @@ namespace UnturnedGodot
                     if (d < best) { best = d; near = c; }
                 }
             if (near == null) return false;
+            if (near is StoreShelf shelf) near = shelf.ResolveSide(GlobalPosition);   // double-sided gondola: open the side the player is standing on
             _openCrate = near;
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
             GD.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
