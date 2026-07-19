@@ -168,7 +168,9 @@ namespace UnturnedGodot
             float top = 2.8f;
             if (mesh != null)
             {
-                AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = ShelfMat(), Basis = _upright });
+                var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = ShelfMat(), Basis = _upright };
+                AddChild(mi);
+                mi.CreateTrimeshCollision();   // solid shelf on the world layer: the player collides with the actual geometry (spine/tiers); the look-ray still passes through the open gaps to reach items
                 var box = StoodAabb(mesh); top = box.Position.Y + box.Size.Y + 0.3f;   // float the label just above the standing prop (fridge/counter are shorter)
             }
             AddChild(new Label3D
