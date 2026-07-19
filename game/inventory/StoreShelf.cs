@@ -73,9 +73,9 @@ namespace UnturnedGodot
         }
 
         // items master pinned to LIE flat even though their icon stands them (flat foods the 1x1 shape-check misses):
-        // carrot/wheat/corn/potato (produce), chocolate/candy/cheese, canned bacon/ham (flat tins). Gun magazines + any
-        // sandwich lie via the type/name rules in PlaceItem instead of listing every id.
-        static readonly HashSet<int> _forceLie = new() { 329, 344, 335, 342, 83, 84, 464, 88, 469 };
+        // carrot/wheat/corn/potato (produce), chocolate/candy/cheese. Gun magazines + any sandwich lie via the type/name
+        // rules in PlaceItem. (Canned bacon/ham are round TINS -> they stand on their base like tuna/sardines, NOT here.)
+        static readonly HashSet<int> _forceLie = new() { 329, 344, 335, 342, 83, 84, 464 };
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
