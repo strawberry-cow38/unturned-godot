@@ -187,6 +187,29 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Gas pump fuel extraction (master's fluids): you can only pull fuel from a POWERED pump. Unpowered -> nothing;
+    // wire a running generator to it -> Extract(space) drains the shared station tank by that much (min of space/remaining).
+    public class PowerGasPumpExtract : GameTest
+    {
+        public override string Name => "power.gas_pump_extract";
+        public override IEnumerable<Step> Run()
+        {
+            StationFuel.Reset();   // fresh shared station tanks for isolation
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);
+            var pump = GasPump.Attach(World, new Vector3(3f, 0f, 0f), Basis.Identity, GasPump.PortLocal);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var pumpIn = pump.PowerPorts[0];
+            yield return Ticks(1);
+            float full = pump.Fluid.Amount;
+            T.Check("unpowered pump gives no fuel", pump.Extract(8f) == 0f);
+            PowerRig.Connect(World, genOut, pumpIn);
+            gen.TogglePower(); PowerNet.Recompute(Tree);
+            float pulled = pump.Extract(8f);   // fill an 8-unit can from the powered pump
+            T.Check($"powered pump extracts 8 (got {pulled:0})", PowerRig.Approx(pulled, 8f));
+            T.Check($"station tank drained by 8 (got {full - pump.Fluid.Amount:0})", PowerRig.Approx(full - pump.Fluid.Amount, 8f));
+        }
+    }
+
     // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
     // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
     public class PowerWreckDropsWires : GameTest

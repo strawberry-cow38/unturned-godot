@@ -1322,7 +1322,7 @@ namespace UnturnedGodot
                 var standUp = new Basis(Vector3.Right, Mathf.DegToRad(-90f));   // the map stands the flat-authored pump up (raw Z -> world height)
                 if (pumpMesh != null)
                     AddChild(new MeshInstance3D { Mesh = pumpMesh, Basis = standUp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.67f, 0.7f), Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });
-                var gp = GasPump.Attach(this, Vector3.Zero, standUp, GasPump.PortLocal);
+                var gp = GasPump.Attach(this, Vector3.Zero, standUp, GasPump.PortLocal, pumpMesh);
                 foreach (var pt in gp.PowerPorts) pt.SetArrowState(true, true);
                 look = new Vector3(0f, 1.2f, 0f);
                 cam.Position = new Vector3(2.8f, 1.5f, 3.6f);

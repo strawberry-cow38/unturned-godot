@@ -35,6 +35,7 @@ namespace UnturnedGodot
         public int Gear => _gear;
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
+        public float FuelBurn;   // fuel drained per second while driving (PZ-scale, per vehicle CLASS -- master); set from FuelClassOf at build
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
         public string SpecKey = "jeep"; public int SpawnVariant;   // MP §3.6: which Spec built this + its paint variant -- VehicleNetSync replicates them so client puppets rebuild the same look
         public ushort NetDriverId;   // MP §3.6: remote player holding the driver seat (set by VehicleNetSync); 0 = none. Gates the local direct-path enter; never set in pure SP.
@@ -119,7 +120,7 @@ namespace UnturnedGodot
         float _ripTimer;                                 // cab: how long the trailer's velocity has diverged hard from ours (clipped something -> yank it off)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
-        const float FuelBurnRate = 2.05f, BatteryMax = 10000f;   // EEngine.CAR default fuelBurnRate/sec; battery full = 10000
+        const float BatteryMax = 10000f;   // battery full = 10000 (fuel burn is now per-class -> Vehicle.FuelBurn, set by FuelClassOf)
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
@@ -407,6 +408,20 @@ namespace UnturnedGodot
 
         // Driver seat position per vehicle (prefab Seats/Seat_0, Godot space Z-negated) + a small body rise so the 3rd-person
         // driver sits in the right spot -- cars sit LEFT, the quad is CENTRED, the bus is far-left + way back (master).
+        // PZ-scale fuel per vehicle CLASS (master): (tank capacity, burn/sec while driving). Rough + tweakable. Keyword-
+        // matched so it covers every build variant. A trailer is never driven -> 0 burn. (A PZ car tank is ~20-40 units.)
+        static (float tank, float burn) FuelClassOf(string name)
+        {
+            string n = name ?? "";
+            if (n.Contains("Trailer")) return (1f, 0f);                                                                  // never driven (>0 avoids div-by-zero)
+            if (n.Contains("Semi")) return (150f, 3.2f);                                                                 // semi: huge tank, guzzles
+            if (n.Contains("Truck") || n.Contains("Bus") || n.Contains("Firetruck") || n.Contains("Ural")) return (100f, 2.6f);   // big trucks / bus
+            if (n.Contains("Van") || n.Contains("Ambulance")) return (65f, 1.8f);                                        // vans
+            if (n.Contains("Quad")) return (20f, 0.6f);                                                                  // small ATV: little tank, sips
+            if (n.Contains("Roadster") || n.Contains("Golf") || n.Contains("Hatchback")) return (35f, 1.0f);            // small cars
+            return (50f, 1.4f);                                                                                          // Sedan / Police / Jeep / Humvee / Tractor / Off-Roader / default (normal)
+        }
+
         static Vector3 SeatOf(string name) => name switch
         {
             "Sedan" => new Vector3(-0.50f, -0.04f, -0.566f),
@@ -1023,7 +1038,8 @@ namespace UnturnedGodot
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
-            v.FuelMax = v.Fuel = s.Fuel; v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
+            var (tank, burn) = FuelClassOf(s.Name); v.FuelMax = v.Fuel = tank; v.FuelBurn = burn;   // PZ-scale tank + per-class burn (master); overrides the spec's old-scale Fuel
+            v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
             if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
             v._outlineColor = ItemTool.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)
             v._info = new InfoBillboard { TopLevel = true };   // look-at info billboard: name + HP/fuel/battery BARS, world-space at the cabin
@@ -1691,7 +1707,7 @@ namespace UnturnedGodot
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
             if (NetHeld)   // MP Part A: a driver's client owns this body's physics -- the frozen node only burns fuel + counts down its explosion (retail simulateBurnFuel / explode run server-side for driven cars too); settle/damage/gear sim all skip
             {
-                if (EngineOn && Fuel > 0f) Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);
+                if (EngineOn && Fuel > 0f) Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
             }
@@ -1770,7 +1786,7 @@ namespace UnturnedGodot
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
             if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
-                Fuel = Mathf.Max(0f, Fuel - FuelBurnRate * (float)delta);
+                Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
             if (_headlightsOn)   // source: headlights burn the battery (EBatteryMode.Burn); die when it's empty
             {
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);

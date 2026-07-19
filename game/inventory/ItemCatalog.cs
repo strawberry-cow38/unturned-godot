@@ -37,6 +37,18 @@ namespace SDG.Unturned
             WireClothingArmor();
             WireConsumableStats();
             WireShotgunShells();
+            WireFuelCans();
+        }
+
+        // Fuel containers (gas cans/jerrycans) carry a fuelCapacity from the retail .dat "Fuel" field, so a right-click on
+        // a pump can fill them (master's fluids system). Portable Gas Can (28) = 500, Industrial (1440) = 2500; jerrycans
+        // (Maple/Birch/Pine 1114-1116) default to 500 (2x2, like the portable).
+        static void WireFuelCans()
+        {
+            // PZ-scale fuel economy (master): a PZ gas can = 8 units. Portable/jerrycans = 8, Industrial = 20 (bigger).
+            void Cap(ushort id, float cap) { var a = Assets.find(id); if (a != null) a.fuelCapacity = cap; }
+            Cap(28, 8f); Cap(1440, 20f);
+            Cap(1114, 8f); Cap(1115, 8f); Cap(1116, 8f);
         }
 
         // Real Unturned shotgun shells as stackable loose ammo (master: new ammo types, stack to 32 per slot). These items

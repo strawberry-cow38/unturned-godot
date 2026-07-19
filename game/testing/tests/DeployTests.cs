@@ -136,7 +136,7 @@ namespace UnturnedGodot.Testing
             gen.Fuel = gen.FuelMax * 0.3f;       // burn down to 30% fuel
             var item = SDG.Unturned.Assets.makeLoot(DeployableDef.Generator.Id);   // mimic PickupDeployable stamping the item
             item.quality = (byte)Mathf.RoundToInt(gen.Health / gen.HealthMax * 100f);
-            item.deployFuel = gen.Fuel;
+            item.fuelLevel = gen.Fuel;
             var gen2 = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(5f, 0f, 0f), 0f, item);   // re-place from that item
             yield return Ticks(1);
             T.Check($"HP restored to ~50% (got {gen2.Health / gen2.HealthMax:0.00})", Mathf.Abs(gen2.Health / gen2.HealthMax - 0.5f) < 0.02f);

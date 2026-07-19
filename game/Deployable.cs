@@ -71,12 +71,12 @@ namespace UnturnedGodot
 
         // `surface` = the ground contact point (the raycast hit); the model is lifted so its base sits there.
         // `backing` = the inventory item being planted (null = fresh/console spawn); a picked-up deployable carries its
-        // HP (item.quality %) + fuel (item.deployFuel) so re-placing it restores them instead of resetting to full.
+        // HP (item.quality %) + fuel (item.fuelLevel) so re-placing it restores them instead of resetting to full.
         public static Deployable Spawn(Node parent, DeployableDef def, Vector3 surface, float yawDeg, SDG.Unturned.Item backing = null)
         {
             var d = new Deployable { Def = def, HealthMax = def.Health, FuelMax = def.Fuel };
             d.Health = backing != null ? Mathf.Clamp(def.Health * backing.quality / 100f, 1f, def.Health) : def.Health;
-            d.Fuel = (backing != null && backing.deployFuel >= 0f) ? Mathf.Min(backing.deployFuel, def.Fuel) : def.Fuel;
+            d.Fuel = (backing != null && backing.fuelLevel >= 0f) ? Mathf.Min(backing.fuelLevel, def.Fuel) : def.Fuel;
             var mi = BuildMesh(def, out Aabb ab);
             d._mesh = mi;
             d.AddChild(mi);
@@ -351,6 +351,8 @@ namespace UnturnedGodot
             // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
             // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
             float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
+            if (FuelMax > 0f && pTarget > 0.5f && Fuel > 0f)   // a RUNNING generator burns fuel, scaled by LOAD (master): idle sips ~20%, a fully-loaded base guzzles. At 0 the RunTarget Fuel>0 gate cuts it out next frame.
+                Fuel = Mathf.Max(0f, Fuel - DeployableDef.GenFuelBurnPerSec * (0.2f + 0.8f * LoadFraction) * (float)delta);
             if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)

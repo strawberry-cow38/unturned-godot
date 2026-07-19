@@ -250,6 +250,9 @@ namespace UnturnedGodot
                 }
                 if (fmesh != null) root.AddChild(new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = 240f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });   // leaves cull closer
+                // gas pumps (master): a powered FLUID TANK -- the GasPump hosts the 750w port + 100L... err, fuel; the world
+                // still draws the mesh below. Created before the collider so we can tag it (look-ray -> collider -> GasPump).
+                GasPump gasPump = (mode == WorldMode.Playable && name == "Gas_Pump_0") ? GasPump.Attach(root, gpos, basis, GasPump.PortLocal, mesh) : null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
                     if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
@@ -262,12 +265,11 @@ namespace UnturnedGodot
                         bool losBlocker = maxDim >= 5f && MatFor(name).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
+                        if (gasPump != null) body.SetMeta("gaspump", gasPump);   // look-ray hits this collider -> resolve the GasPump (outline / tooltip / rmb-extract)
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
                     }
                 }
-                if (mode == WorldMode.Playable && name == "Gas_Pump_0")   // give each gas-station pump a 750w power input (master); no behaviour hangs off it yet
-                    GasPump.Attach(root, gpos, basis, GasPump.PortLocal);
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
                 cellCount.TryGetValue(cell, out int cc); cellCount[cell] = cc + 1;
@@ -285,6 +287,7 @@ namespace UnturnedGodot
                 converted++;
                 return true;
             }
+            StationFuel.Reset();   // fresh shared station tanks for this world build (before any gas pumps attach)
             foreach (var line in System.IO.File.ReadLines(dir + mapPlace))
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);

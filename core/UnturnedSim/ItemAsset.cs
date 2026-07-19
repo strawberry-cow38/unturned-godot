@@ -66,6 +66,8 @@ namespace SDG.Unturned
         public int magCapacity;
         public int magCaliber;
         public bool IsMagazine => magCapacity > 0;
+        public float fuelCapacity;              // Fuel-type container (gas can): max fuel it holds (retail .dat "Fuel", e.g. Portable 500). 0 = not a fuel can.
+        public bool IsFuelContainer => fuelCapacity > 0f;
         // Loose per-round ammo (shotgun shells): stacks in a slot up to stackSize, matched to a gun by magCaliber (magCapacity 0).
         // A reload consumes shells from the stack rather than swapping a whole magazine. (12/20 Gauge Shells, stack 32.)
         public bool isAmmo;
@@ -94,9 +96,10 @@ namespace SDG.Unturned
         public int gunFiremode = -1;   // fire-mode index (Safety/Semi/Burst/Auto)
         public int gunMagId = -1;      // the magazine item id currently loaded
         public int gunAttach = -1;     // attachment bitmask (which slots are attached; -1 = unset -> gun's defaults)
-        // Deployable state carried on the item so a generator REMEMBERS its fuel + HP through pickup <-> inventory <-> drop
-        // <-> re-place (strawberry). HP rides on `quality` (0-100 %); fuel needs its own float. -1 = fresh (full tank).
-        public float deployFuel = -1f;
+        // Fuel carried on the item (strawberry): a generator REMEMBERS its tank through pickup <-> inventory <-> drop
+        // <-> re-place, and a gas can holds the fuel pumped into it. HP rides on `quality` (0-100 %); fuel is its own
+        // float. -1 = fresh -> full (a picked-up gen = its tank; a fresh can = its fuelCapacity).
+        public float fuelLevel = -1f;
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {
@@ -117,7 +120,7 @@ namespace SDG.Unturned
 
         public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; } }
         // World loot factory: a magazine spawns FULL (Military Magazine = 30 rounds) rather than empty (master). Other items = 1.
-        public static Item makeLoot(ushort id) { var a = find(id); return new Item(id, a != null && a.IsMagazine ? (byte)System.Math.Max(1, a.magCapacity) : (byte)1); }
+        public static Item makeLoot(ushort id) { var a = find(id); var it = new Item(id, a != null && a.IsMagazine ? (byte)System.Math.Max(1, a.magCapacity) : (byte)1); if (a != null && a.IsFuelContainer) it.fuelLevel = 0f; return it; }   // a fresh gas can starts EMPTY -> fill it at a pump
         public static ItemAsset find(ushort id) => _byId.TryGetValue(id, out var a) ? a : null;
         public static ItemAsset findByGuid(string guid) => !string.IsNullOrEmpty(guid) && _byGuid.TryGetValue(guid, out var a) ? a : null;
         public static IEnumerable<ItemAsset> all() => _byId.Values;

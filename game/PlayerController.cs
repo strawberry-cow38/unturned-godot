@@ -128,6 +128,8 @@ namespace UnturnedGodot
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
+        GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
+        SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
         const float DeployPickupTime = 1.0f;    // hold F this long over a deployable to pick it back up (wires disconnect)
@@ -148,7 +150,7 @@ namespace UnturnedGodot
 
         void UpdateLookFocus()
         {
-            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null;
+            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -169,6 +171,7 @@ namespace UnturnedGodot
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
+                    else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
                 }
@@ -233,6 +236,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusDeployable)) _focusDeployable.SetLookFocused(false);
                 _focusDeployable = hitDeploy;
                 _focusDeployable?.SetLookFocused(true);
+            }
+            if (hitGasPump != _focusGasPump)   // looked-at gas pump: outline + fuel tooltip
+            {
+                if (IsInstanceValid(_focusGasPump)) _focusGasPump.SetLookFocused(false);
+                _focusGasPump = hitGasPump;
+                _focusGasPump?.SetLookFocused(true);
             }
             if (hitShelfItem != _focusShelfItem)   // looked-at shelf item glows (F grabs it)
             {
@@ -562,7 +571,7 @@ namespace UnturnedGodot
             if (item != null)   // stamp the current HP (quality %) + fuel onto the item so re-placing restores them
             {
                 if (d.HealthMax > 0f) item.quality = (byte)Mathf.Clamp(Mathf.RoundToInt(d.Health / d.HealthMax * 100f), 1, 100);
-                if (d.FuelMax > 0f) item.deployFuel = d.Fuel;
+                if (d.FuelMax > 0f) item.fuelLevel = d.Fuel;
             }
             d.Pickup();   // frees any wires plugged into it + despawns
             if (item != null)
@@ -676,7 +685,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null; _heldConsumable = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
+            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -698,7 +707,7 @@ namespace UnturnedGodot
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _torchAnimOn = false; _pendingMeleeHit = -1f;
@@ -739,7 +748,45 @@ namespace UnturnedGodot
             var deploy = DeployableDef.ById(asset.id);
             if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
             if (asset.id == 65) { EquipWireTool(backing); return true; }   // Wire (item 65) = the wiring tool
+            if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
             return false;
+        }
+
+        // Equip a gas can into the hand (master's fluids): hold it, then RMB a powered gas pump to fill it. No extracted
+        // carry model yet -> EmptyHands (invisible in-hand); the mechanic is what matters. HoldingWireTool clears itself
+        // (it's derived from the viewmodel), and this replaces any gun/melee/consumable/deployable in hand.
+        public void EquipHeldFuelCan(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState(); ClearDeployable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldFuelItem = backing;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { EmptyHands = true };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[fuel] holding {asset?.itemName} -- {(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f):0}/{asset?.fuelCapacity:0} fuel (RMB a powered pump to fill)");
+        }
+
+        // RMB with a gas can in hand + looking at a POWERED pump: fill the can as much as possible = min(its free space,
+        // the pump's remaining fuel). One click (master). Nothing happens if the pump's unpowered/empty or the can's full.
+        void TryExtractFuel()
+        {
+            if (_heldFuelItem == null || !IsInstanceValid(_focusGasPump)) return;
+            var asset = _heldFuelItem.GetAsset();
+            if (asset == null || !asset.IsFuelContainer) return;
+            if (!_focusGasPump.IsPowered) { GD.Print("[fuel] that pump has no power"); return; }
+            float canFuel = Mathf.Max(0f, _heldFuelItem.fuelLevel);
+            float space = asset.fuelCapacity - canFuel;
+            if (space <= 0.01f) { GD.Print("[fuel] can is full"); return; }
+            float pulled = _focusGasPump.Extract(space);   // drains the pump's tank, capped at what's left
+            if (pulled > 0f)
+            {
+                _heldFuelItem.fuelLevel = canFuel + pulled;
+                _invUI?.Refresh();
+                GD.Print($"[fuel] +{pulled:0} -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}; pump {_focusGasPump.Fluid.Amount:0} left");
+            }
         }
 
         // A closure that re-equips whatever is held RIGHT NOW (used to revert after a consumable stack empties);
@@ -757,7 +804,7 @@ namespace UnturnedGodot
         }
 
         // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
-        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && (_melee == null || _melee.Name == "fists");
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && _heldFuelItem == null && (_melee == null || _melee.Name == "fists");
 
         // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
         public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
@@ -834,7 +881,7 @@ namespace UnturnedGodot
                 ushort id = _heldConsumable.id;
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
-                _heldConsumable = null;             // one use per item: this one leaves the hand + is deleted (master)
+                _heldConsumable = null; _heldFuelItem = null;             // one use per item: this one leaves the hand + is deleted (master)
                 int left;
                 if (NetConsume != null)
                 {
@@ -884,7 +931,7 @@ namespace UnturnedGodot
             if (def == null) return;
             SaveGunState();
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false;
             _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
@@ -906,7 +953,7 @@ namespace UnturnedGodot
         {
             SaveGunState();
             if (!HoldingWireTool) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f) };   // wire's flat _Color 0.647 grey
@@ -2019,7 +2066,7 @@ namespace UnturnedGodot
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
-            _melee = null; _heldConsumable = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
+            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -2160,6 +2207,7 @@ namespace UnturnedGodot
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
+                else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered pump to fill it (master's fluids)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
             }
