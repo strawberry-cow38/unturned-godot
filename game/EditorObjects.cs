@@ -92,6 +92,7 @@ namespace UnturnedGodot
             _catalog.Sort();
             _catalog.Insert(0, LootCrateName);   // loot crate pinned to the top of the palette
             _catalog.Insert(1, StoreShelfName);  // store shelf right below it
+            _catalog.Insert(2, GridPowerName);   // grid power box below that
         }
 
         ArrayMesh MeshFor(string name)
@@ -142,11 +143,13 @@ namespace UnturnedGodot
         // it freely; Save decomposes the live basis back to PEI euler so any orientation round-trips.
         public const string LootCrateName = "★ Loot Crate";   // a placeable loot CONTAINER (not a mesh prop) -- rolls a PEI table in SP
         public const string StoreShelfName = "🛒 Store Shelf";   // the real Shelf_1 gondola AS a loot container -- rolls a PEI table + shows items on its tiers in SP
+        public const string GridPowerName = "⚡ Grid Power";   // the Circuit_0 breaker box AS a configurable mains SOURCE -- name + wattage (custom or preset) set in the editor, spawns a GridPowerSource in SP
 
         public Node3D Place(string name, Vector3 pos, Basis rot)
         {
             if (name == LootCrateName) return PlaceLootCrate(pos, rot);
             if (name == StoreShelfName) return PlaceStoreShelf(pos, rot);
+            if (name == GridPowerName) return PlaceGridPower(pos, rot);
             var mesh = MeshFor(name);
             if (mesh == null) return null;
             var root = new Node3D { Transform = new Transform3D(rot, pos) };
@@ -226,6 +229,56 @@ namespace UnturnedGodot
             if (!CrateSelected) return;
             Primary.SetMeta("loot_table", Mathf.Clamp(t, 0, System.Math.Max(0, LootTables.TableCount - 1)));
             UpdateCrateLabel(Primary);
+        }
+
+        // the Circuit_0 breaker box placed AS a mains SOURCE: the real mesh, tagged with a wattage + name; the SP loader
+        // spawns a real GridPowerSource (wire-able output + generator UI) here. Config (name/wattage/preset) via the browser.
+        Node3D PlaceGridPower(Vector3 pos, Basis rot)
+        {
+            var mesh = MeshFor("Circuit_0");
+            if (mesh == null) return null;
+            float yaw = Mathf.Atan2(-rot.X.Z, rot.X.X);
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(270f));   // flat-authored (Z=height) -> stand it up, same as the shelf
+            var root = new Node3D { Transform = new Transform3D(new Basis(Vector3.Up, yaw), pos) };
+            root.SetMeta("grid_power", true);
+            root.SetMeta("grid_watts", GridPowerSource.DefaultWatts);
+            root.SetMeta("grid_name", "");
+            root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor("Circuit_0"), Basis = stand });
+            root.AddChild(new Label3D { Text = GridLabelText("", GridPowerSource.DefaultWatts), Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, PixelSize = 0.007f, Position = new Vector3(0f, 2.4f, 0f), Modulate = new Color(0.5f, 0.85f, 1f), NoDepthTest = true, FontSize = 40, OutlineSize = 8 });
+            var shp = mesh.CreateTrimeshShape();
+            if (shp != null)
+            {
+                var body = new StaticBody3D { CollisionLayer = EditorPickLayer, CollisionMask = 0, Basis = stand };
+                body.AddChild(new CollisionShape3D { Shape = shp });
+                root.AddChild(body);
+                _pickToObj[body.GetRid()] = root;
+            }
+            _world.AddChild(root);
+            _placed.Add(root);
+            return root;
+        }
+
+        static string GridLabelText(string name, float watts) => $"⚡ Grid Power\n{(string.IsNullOrEmpty(name) ? "Unnamed" : name)}: {watts:0}W";
+        void UpdateGridLabel(Node3D box)
+        {
+            string nm = box.HasMeta("grid_name") ? (string)box.GetMeta("grid_name") : "";
+            float w = box.HasMeta("grid_watts") ? (float)box.GetMeta("grid_watts") : GridPowerSource.DefaultWatts;
+            foreach (var c in box.GetChildren()) if (c is Label3D lbl) lbl.Text = GridLabelText(nm, w);
+        }
+        public bool GridSelected => Primary != null && Primary.HasMeta("grid_power");
+        public float SelectedGridWatts => GridSelected && Primary.HasMeta("grid_watts") ? (float)Primary.GetMeta("grid_watts") : GridPowerSource.DefaultWatts;
+        public string SelectedGridName => GridSelected && Primary.HasMeta("grid_name") ? (string)Primary.GetMeta("grid_name") : "";
+        public void SetSelectedGridWatts(float w)
+        {
+            if (!GridSelected) return;
+            Primary.SetMeta("grid_watts", Mathf.Clamp(w, 1f, 100000000f));
+            UpdateGridLabel(Primary);
+        }
+        public void SetSelectedGridName(string n)
+        {
+            if (!GridSelected) return;
+            Primary.SetMeta("grid_name", n ?? "");
+            UpdateGridLabel(Primary);
         }
 
         bool Raycast(Vector2 screen, uint mask, out Vector3 point, out Rid collider)
@@ -457,6 +510,7 @@ namespace UnturnedGodot
             }
             SaveLootCrates();
             SaveStoreShelves();
+            SaveGridPower();
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
         }
@@ -486,6 +540,7 @@ namespace UnturnedGodot
         {
             LoadLootCrates();
             LoadStoreShelves();
+            LoadGridPower();
             if (!System.IO.File.Exists(SavePath)) return;
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(SavePath))
@@ -549,6 +604,39 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} store shelves");
+        }
+
+        string GridPath => Dir + $"editor_{_editor.MapName}_gridpower.txt";   // per-map grid-power boxes (watts + world pos + yaw + name)
+        void SaveGridPower()
+        {
+            var boxes = _placed.FindAll(p => IsInstanceValid(p) && p.HasMeta("grid_power"));
+            using var w = new System.IO.StreamWriter(GridPath, false);
+            foreach (var b in boxes)
+            {
+                float watts = b.HasMeta("grid_watts") ? (float)b.GetMeta("grid_watts") : GridPowerSource.DefaultWatts;
+                string nm = b.HasMeta("grid_name") ? (string)b.GetMeta("grid_name") : "";
+                var gp = b.GlobalPosition;
+                float yawDeg = Mathf.RadToDeg(b.GlobalTransform.Basis.GetEuler().Y);
+                w.WriteLine($"{watts:0.###} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {yawDeg:0.###} {nm}");   // name LAST (may contain spaces)
+            }
+            if (boxes.Count > 0) GD.Print($"[editor] saved {boxes.Count} grid-power boxes -> {GridPath}");
+        }
+        void LoadGridPower()
+        {
+            if (!System.IO.File.Exists(GridPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(GridPath))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 5 || !float.TryParse(p[0], out var watts)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                float yawDeg = 0f; float.TryParse(p[4], out yawDeg);
+                string nm = p.Length >= 6 ? string.Join(" ", p, 5, p.Length - 5) : "";
+                var root = PlaceGridPower(new Vector3(px, py, -pz), Upright(yawDeg));
+                if (root != null) { root.SetMeta("grid_watts", watts); root.SetMeta("grid_name", nm); UpdateGridLabel(root); }
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor] loaded {n} grid-power boxes");
         }
 
         // source Ctrl+B / Ctrl+N: copy the selection pivot's TRANSFORM, then stamp it onto another selection (align props)

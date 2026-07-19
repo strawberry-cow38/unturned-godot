@@ -13,6 +13,9 @@ namespace UnturnedGodot
         LineEdit _search;
         OptionButton _tableDrop;   // loot-crate table picker (shown only when a loot crate is selected)
         Control _crateBox;
+        OptionButton _presetDrop;  // grid-power preset picker (shown only when a grid box is selected)
+        LineEdit _gridNameEdit, _gridWattEdit;
+        Control _gridBox;
 
         public EditorObjectBrowser(EditorObjects objects) { _objects = objects; }
 
@@ -46,7 +49,29 @@ namespace UnturnedGodot
             _tableDrop.ItemSelected += idx => _objects.SetSelectedCrateTable((int)idx);
             cbox.AddChild(_tableDrop);
             box.AddChild(cbox);
+
+            // grid-power config -- appears when a placed ⚡ Grid Power box is selected
+            var gbox = new VBoxContainer { Visible = false };
+            _gridBox = gbox;
+            var gl = new Label { Text = "▼ GRID POWER — preset / name / wattage:" };
+            gl.AddThemeFontSizeOverride("font_size", 13);
+            gl.AddThemeColorOverride("font_color", new Color(0.5f, 0.85f, 1f));
+            gbox.AddChild(gl);
+            _presetDrop = new OptionButton { CustomMinimumSize = new Vector2(240, 0) };
+            for (int i = 0; i < GridPowerSource.Presets.Length; i++) { var pr = GridPowerSource.Presets[i]; _presetDrop.AddItem($"{pr.name} ({pr.watts:0}W)"); }
+            _presetDrop.AddItem("Custom");   // last item -> keep the current custom value
+            _presetDrop.ItemSelected += id => { if ((int)id >= 0 && (int)id < GridPowerSource.Presets.Length) { var pr = GridPowerSource.Presets[(int)id]; _objects.SetSelectedGridName(pr.name); _objects.SetSelectedGridWatts(pr.watts); SyncGridPicker(); } };
+            gbox.AddChild(_presetDrop);
+            _gridNameEdit = new LineEdit { PlaceholderText = "name (e.g. Main Substation)", CustomMinimumSize = new Vector2(240, 0) };
+            _gridNameEdit.TextChanged += t => _objects.SetSelectedGridName(t);
+            gbox.AddChild(_gridNameEdit);
+            _gridWattEdit = new LineEdit { PlaceholderText = "watts (Enter to set)", CustomMinimumSize = new Vector2(240, 0) };
+            _gridWattEdit.TextSubmitted += t => { if (float.TryParse(t, out var w)) { _objects.SetSelectedGridWatts(w); SyncGridPicker(); } };
+            gbox.AddChild(_gridWattEdit);
+            box.AddChild(gbox);
+
             _objects.SelectionChanged += SyncCratePicker;
+            _objects.SelectionChanged += SyncGridPicker;
 
             var sel = new Button { Text = "Select-only (clear place type)" };
             sel.Pressed += () => { _objects.ClearPlaceType(); _list.DeselectAll(); };
@@ -77,6 +102,21 @@ namespace UnturnedGodot
             _crateBox.Visible = _objects.CrateSelected;
             if (_objects.CrateSelected && _tableDrop != null && _tableDrop.ItemCount > 0)
                 _tableDrop.Selected = Mathf.Clamp(_objects.SelectedCrateTable, 0, _tableDrop.ItemCount - 1);
+        }
+
+        void SyncGridPicker()   // selection changed: show the grid-power config for a selected box + reflect its name/wattage/preset
+        {
+            if (_gridBox == null) return;
+            _gridBox.Visible = _objects.GridSelected;
+            if (!_objects.GridSelected) return;
+            if (_gridNameEdit != null && !_gridNameEdit.HasFocus()) _gridNameEdit.Text = _objects.SelectedGridName;
+            if (_gridWattEdit != null && !_gridWattEdit.HasFocus()) _gridWattEdit.Text = _objects.SelectedGridWatts.ToString("0");
+            if (_presetDrop != null)
+            {
+                int match = GridPowerSource.Presets.Length;   // no preset matches -> "Custom" (the last item)
+                for (int i = 0; i < GridPowerSource.Presets.Length; i++) if (Mathf.Abs(GridPowerSource.Presets[i].watts - _objects.SelectedGridWatts) < 0.5f) { match = i; break; }
+                _presetDrop.Selected = match;
+            }
         }
     }
 }

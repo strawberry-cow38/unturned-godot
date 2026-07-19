@@ -1673,7 +1673,7 @@ namespace UnturnedGodot
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             AttachMpLoopback(res);    // --mploopback only; default SP is untouched
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
-            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnMapContainers(res); }   // stock the map with loot containers
+            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnMapContainers(res); }   // stock the map with loot containers + configurable grid-power boxes
         }
 
         // Spawn the convert-on-load containers WorldBuilder flagged (map props -> lootable containers). Deferred to HERE,
@@ -1727,6 +1727,43 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[store-shelf] spawned {n} editor store shelves in SP");
+        }
+
+        // Spawn the grid-power boxes the editor saved for PEI (editor_PEI_gridpower.txt): the Circuit_0 mesh + a
+        // GridPowerSource wired to the mains at the configured wattage + name (mouseover shows it). Same flow as shelves.
+        void SpawnEditorGridPower()
+        {
+            string file = ProjectSettings.GlobalizePath("res://content/objects/") + "editor_PEI_gridpower.txt";
+            if (!System.IO.File.Exists(file)) return;
+            var mesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Circuit_0.obj"));
+            var stand = new Basis(Vector3.Right, Mathf.DegToRad(-90f));   // flat-authored -> stand it up (raw Z -> world height), same as the pump
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(file))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 5 || !float.TryParse(p[0], out var watts)
+                    || !float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)) continue;
+                float yaw = 0f; float.TryParse(p[4], out yaw);
+                string nm = p.Length >= 6 ? string.Join(" ", p, 5, p.Length - 5) : "";
+                var basis = new Basis(Vector3.Up, Mathf.DegToRad(yaw)) * stand;
+                var pos = new Vector3(px, py, -pz);
+                if (mesh != null)
+                    AddChild(new MeshInstance3D { Mesh = mesh, Transform = new Transform3D(basis, pos), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.55f, 0.58f), Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });
+                var gp = GridPowerSource.Attach(this, pos, basis, GridPowerSource.PortLocal, watts, nm, mesh);
+                if (mesh != null)   // look-focus collider: crosshair -> resolve the GridPowerSource (outline + mouseover tooltip)
+                {
+                    var shp = mesh.CreateTrimeshShape();
+                    if (shp != null)
+                    {
+                        var body = new StaticBody3D { Transform = new Transform3D(basis, pos) };
+                        body.AddChild(new CollisionShape3D { Shape = shp });
+                        body.SetMeta("gridpower", gp);
+                        AddChild(body);
+                    }
+                }
+                n++;
+            }
+            if (n > 0) GD.Print($"[grid-power] spawned {n} editor grid boxes in SP");
         }
 
         // Workshop -> "New Map": boot the editor with a fresh FLAT all-grass map (no props/spawns/roads) to build from

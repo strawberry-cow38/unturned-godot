@@ -129,6 +129,7 @@ namespace UnturnedGodot
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
+        GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
@@ -150,7 +151,7 @@ namespace UnturnedGodot
 
         void UpdateLookFocus()
         {
-            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null;
+            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -172,6 +173,7 @@ namespace UnturnedGodot
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
+                    else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
                 }
@@ -242,6 +244,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusGasPump)) _focusGasPump.SetLookFocused(false);
                 _focusGasPump = hitGasPump;
                 _focusGasPump?.SetLookFocused(true);
+            }
+            if (hitGrid != _focusGrid)   // looked-at grid-power box: outline + "Grid Power - <name>: <watts>" tooltip
+            {
+                if (IsInstanceValid(_focusGrid)) _focusGrid.SetLookFocused(false);
+                _focusGrid = hitGrid;
+                _focusGrid?.SetLookFocused(true);
             }
             if (hitShelfItem != _focusShelfItem)   // looked-at shelf item glows (F grabs it)
             {
