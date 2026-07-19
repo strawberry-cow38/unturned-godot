@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""extract_item_fronts.py -- pull each item's "front" (detail-face normal) from its prefab's "Icon" child.
+"""extract_item_fronts.py -- pull each item's icon POSE (front + up axes) from its prefab's "Icon" child.
 
 Unturned renders every item's inventory icon by parenting an "Icon" empty transform in the item prefab and
-photographing the item from it (ItemTool.captureIcon: camera pose = Icon.transform; camera views the item along
-Icon's +Z / Unity forward -- see IconUtils.getItemDefIcon -> ItemTool.getIcon -> `icon = item.Find("Icon")`).
-So the face the icon shows -- the item's "front"/detail side (medkit cross, MRE text) -- has its normal pointing
-BACK at the camera = -Icon.forward. That's the per-item "front" the store shelf needs to keep detail-side-up when
-laying items flat, straight from the game data instead of hand-defining hundreds of items.
+photographing the item from it (ItemTool.captureIcon: camera pose = Icon.transform; camera views along Icon +Z /
+Unity forward, with Icon +Y as screen-up -- see IconUtils.getItemDefIcon -> ItemTool.getIcon `item.Find("Icon")`).
+So:
+  - the FRONT/detail face (medkit cross, MRE text, OJ label) has normal = -Icon.forward (faces the camera)
+  - the item's UP (what's at the top of the icon: tomato stem, bottle cap) = +Icon.up (camera up)
+Reproducing that pose on a shelf gives right-side-up, aisle-facing items straight from the game data -- no
+hand-defining stand/lie/yaw for hundreds of items. Convention matches extract_items.py (Unturned->Godot: negate Z).
 
-Convention matches extract_items.py's mesh rip (Unturned->Godot: negate Z), so the normal drops straight into the
-port's item-mesh frame. Output: item_fronts.json { "<id>": [nx,ny,nz] } (Godot frame, unit). No mesh re-bake.
+Output: item_poses.json { "<id>": {"f":[fx,fy,fz], "u":[ux,uy,uz]} } (Godot frame, unit). No mesh re-bake.
 """
 import UnityPy, numpy as np, os, json
 
@@ -18,7 +19,10 @@ CORE = os.path.join(U, r"Bundles\core.masterbundle")
 OUT = r"C:\claude-workspace\item_out"
 os.makedirs(OUT, exist_ok=True)
 loot = json.load(open(r"C:\claude-workspace\pei_loot_items.json"))["resolved"]
-DEMO = {4, 13, 15, 95, 81, 14}   # store-shelf demo ids -> print for eyeball validation
+# master's art-direction callouts -> print for eyeball validation
+KEYS = ("tomato", "orange", "juice", "maple", "syrup", "blowtorch", "tuna", "sardine", "bacon", "carrot",
+        "potato", "wheat", "egg", "lettuce", "corn", "bread", "candy", "chips", "mre", "medkit", "bandage",
+        "water", "bean", "soda", "cola", "milk")
 
 print("loading core.masterbundle ...", flush=True)
 env = UnityPy.load(CORE)
@@ -51,8 +55,13 @@ def prefix_of(folder):
     p = folder.replace("\\", "/").lower().split("/bundles/items/")
     return "items/" + p[1] + "/item.prefab" if len(p) > 1 else None
 
-def icon_front(prefab):
-    """front normal (Godot frame) from the 'Icon' child camera pose, or None if no Icon child."""
+def unit_godot(v):
+    n = np.linalg.norm(v)
+    if n > 1e-6: v = v / n
+    return [round(float(v[0]), 4), round(float(v[1]), 4), round(float(-v[2]), 4)]   # Unity dir -> Godot (negate Z)
+
+def icon_pose(prefab):
+    """(front, up) Godot-frame unit vectors from the 'Icon' child camera pose, or None if no Icon child."""
     ptt = prefab.read_typetree()
     root_tr = comp_of(ptt, ("Transform", "RectTransform"))
     root_trt = root_tr.read_typetree()
@@ -69,11 +78,10 @@ def icon_front(prefab):
         trt = tr.read_typetree()
         M = parentM @ trs(trt["m_LocalPosition"], trt["m_LocalRotation"], trt["m_LocalScale"])
         if tt.get("m_Name") == "Icon":
-            viewdir = M[:3, :3] @ np.array([0.0, 0.0, 1.0])   # Unity camera looks +Z
-            n = np.linalg.norm(viewdir)
-            if n > 1e-6: viewdir = viewdir / n
-            detail = -viewdir                                  # face toward camera = the shown/front side (Unity frame)
-            found[0] = [round(float(detail[0]), 4), round(float(detail[1]), 4), round(float(-detail[2]), 4)]  # ->Godot (negate Z)
+            R = M[:3, :3]
+            front = unit_godot(-(R @ np.array([0.0, 0.0, 1.0])))   # -camera-forward = shown/front face
+            up = unit_godot(R @ np.array([0.0, 1.0, 0.0]))          # camera-up = icon's up (top of the thumbnail)
+            found[0] = {"f": front, "u": up}
             return
         for ch in trt.get("m_Children", []):
             ct = by_id.get(ch.get("m_PathID"))
@@ -81,27 +89,28 @@ def icon_front(prefab):
     walk(prefab.path_id, inv_root)
     return found[0]
 
-fronts = {}
+poses = {}
 n_ok = n_none = n_fail = 0
 for iid_s, meta in loot.items():
-    iid = int(iid_s)
+    iid = int(iid_s); nm = meta["name"]
     pref = prefix_of(meta["folder"])
     prefab = go_by_path.get(pref) if pref else None
     if prefab is None:
         n_fail += 1; continue
     try:
-        f = icon_front(prefab)
+        p = icon_pose(prefab)
     except Exception as e:
         n_fail += 1
-        if iid in DEMO: print(f"  id={iid} {meta['name']} ERR {e}")
+        if any(k in nm.lower() for k in KEYS): print(f"  id={iid} {nm} ERR {e}")
         continue
-    if f is None:
+    if p is None:
         n_none += 1
-        if iid in DEMO: print(f"  id={iid} {meta['name']:22} NO_ICON_CHILD")
+        if any(k in nm.lower() for k in KEYS): print(f"  id={iid} {nm:24} NO_ICON_CHILD")
         continue
-    fronts[iid_s] = f
+    poses[iid_s] = p
     n_ok += 1
-    if iid in DEMO: print(f"  id={iid:5} {meta['name'][:22]:22} front={f}")
+    if any(k in nm.lower() for k in KEYS):
+        print(f"  id={iid:5} {nm[:24]:24} f={p['f']} u={p['u']}")
 
-json.dump(fronts, open(os.path.join(OUT, "item_fronts.json"), "w"), indent=0)
-print(f"\n=== DONE: fronts={n_ok} no_icon={n_none} fail={n_fail} / {len(loot)} -> {OUT}\\item_fronts.json ===")
+json.dump(poses, open(os.path.join(OUT, "item_poses.json"), "w"), indent=0)
+print(f"\n=== DONE: poses={n_ok} no_icon={n_none} fail={n_fail} / {len(loot)} -> {OUT}\\item_poses.json ===")

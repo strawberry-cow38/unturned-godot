@@ -33,29 +33,42 @@ namespace UnturnedGodot
         static readonly Dictionary<string, ArrayMesh> _meshes = new();
         static readonly Dictionary<string, Material> _mats = new();
 
-        // per-item "front": the detail-face normal (medkit cross, MRE text) in the Godot mesh frame, ripped from each
-        // prefab's "Icon" transform (the pose the game photographs its inventory icon from -- tools/extract_item_fronts.py).
-        // Lets us lay flat items DETAIL-SIDE-UP instead of guessing (master: "the ones laying flat are upside down").
-        static Dictionary<int, Vector3> _fronts;
-        static Vector3 FrontOf(int id)
+        // per-item icon POSE: FRONT (detail face -- medkit cross, MRE text, OJ label) + UP (top of the icon -- bottle
+        // cap, tomato stem) axes in the Godot mesh frame, ripped from each prefab's "Icon" transform (the pose the game
+        // photographs its inventory icon from -- tools/extract_item_fronts.py). Reproducing it stands items right-side-up
+        // + aisle-facing and lays flat items detail-side up, straight from the game data (no hand-defining hundreds).
+        struct Pose { public Vector3 Front, Up; public bool Ok; }
+        static Dictionary<int, Pose> _poses;
+        static Pose PoseOf(int id)
         {
-            if (_fronts == null)
+            if (_poses == null)
             {
-                _fronts = new Dictionary<int, Vector3>();
-                string p = ProjectSettings.GlobalizePath("res://content/items/item_fronts.json");
+                _poses = new Dictionary<int, Pose>();
+                string p = ProjectSettings.GlobalizePath("res://content/items/item_poses.json");
                 try
                 {
                     if (System.IO.File.Exists(p))
                         foreach (var kv in Json.ParseString(System.IO.File.ReadAllText(p)).AsGodotDictionary())
                         {
-                            var a = kv.Value.AsGodotArray();
-                            if (a.Count == 3 && int.TryParse(kv.Key.ToString(), out int fid))
-                                _fronts[fid] = new Vector3(a[0].AsSingle(), a[1].AsSingle(), a[2].AsSingle());
+                            var o = kv.Value.AsGodotDictionary();
+                            var f = o["f"].AsGodotArray(); var u = o["u"].AsGodotArray();
+                            if (f.Count == 3 && u.Count == 3 && int.TryParse(kv.Key.ToString(), out int fid))
+                                _poses[fid] = new Pose {
+                                    Front = new Vector3(f[0].AsSingle(), f[1].AsSingle(), f[2].AsSingle()),
+                                    Up = new Vector3(u[0].AsSingle(), u[1].AsSingle(), u[2].AsSingle()), Ok = true };
                         }
                 }
-                catch (System.Exception e) { GD.PrintErr($"[store-shelf] item_fronts load failed: {e.Message}"); }
+                catch (System.Exception e) { GD.PrintErr($"[store-shelf] item_poses load failed: {e.Message}"); }
             }
-            return _fronts.TryGetValue(id, out var v) ? v : Vector3.Zero;
+            return _poses.TryGetValue(id, out var v) ? v : default;
+        }
+
+        static int NearestAxis(Vector3 v, out float sign)   // dominant local axis of a direction + its sign
+        {
+            float ax = Mathf.Abs(v.X), ay = Mathf.Abs(v.Y), az = Mathf.Abs(v.Z);
+            int a = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+            sign = v[a] >= 0f ? 1f : -1f;
+            return a;
         }
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
@@ -174,34 +187,50 @@ namespace UnturnedGodot
             Color rar = asset != null ? ItemTool.RarityColorUI(asset.rarity) : Colors.White;
             var vis = WorldItem.BuildReplicaVisual(id, rar);
 
-            // ORIENT by SHAPE, not a fixed rotation -- item meshes share no "up" (a can is authored lying on its side, a
-            // medkit standing on its edge), so a single Euler can't pose them all. Decide from the AABB proportions +
-            // type, and no random yaw (master: face them consistently, not scattered):
-            //  - a CONSUMABLE that's tall with a ~square/round base (cans, bottles, chemicals) -> STAND upright (+90 X,
-            //    the game's drop pose; the label wraps so facing reads fine either way).
-            //  - EVERYTHING ELSE (tools, guns, flat slabs, boxy food like MREs, medkit cases) -> LIE FLAT, DETAIL-side up
-            //    via the game's per-item icon "front" (item_fronts.json), LONGEST axis along the shelf WIDTH (keeps long
-            //    items off the back wall), middle = depth.
+            // ORIENT from the game's own inventory-icon POSE (item_poses.json, ripped from each prefab's "Icon" child).
+            // The icon shows each item the "right" way -- upright, label out -- so reproducing it (local UP -> world +Y,
+            // local FRONT -> the aisle) stands cans/bottles/veggies/cartons right-side-up + aisle-facing with no per-item
+            // rules (tomato stem up, OJ label out, maple syrup standing). EXCEPTION: a flat SLAB (candy/chips/MRE/bandage/
+            // gun) is shown face-on, so reproducing its icon would stand it on edge -- instead lay it flat, detail face UP.
             var s = (vis.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One * 0.1f)).Size;
             float[] d = { s.X, s.Y, s.Z };
             int[] ax = { 0, 1, 2 };
             System.Array.Sort(ax, (a, b) => d[a].CompareTo(d[b]));   // ax[0]=shortest .. ax[2]=longest
-            bool standable = asset != null && (asset.type == EItemType.FOOD || asset.type == EItemType.WATER || asset.type == EItemType.MEDICAL || asset.type == EItemType.SUPPLY);
-            bool squareBase = d[ax[0]] >= d[ax[1]] * 0.7f;   // two smaller dims ~equal => round/square cross-section (bottle/can, not box/slab)
-            bool tall = d[ax[2]] >= d[ax[1]] * 1.15f;         // clearly taller than it is wide
-            bool standUp = standable && squareBase && tall;
+            Pose pose = PoseOf(id);
+            bool flatSlab = d[ax[0]] < d[ax[1]] * 0.45f;   // one clearly-thin dim => a flat package/slab -> lie flat (don't stand it on edge)
 
             Basis oriented;
-            if (standUp)
-                oriented = new Basis(Vector3.Right, Mathf.DegToRad(90f));   // drop-pose upright
+            if (pose.Ok && !flatSlab)
+            {
+                // STAND UPRIGHT as the icon poses it, but SNAP up/front to the nearest local axes so items stand clean-
+                // vertical (not tilted like a 3/4 icon view): local UP-axis -> world +Y, local FRONT-axis -> +Z (aisle).
+                int upA = NearestAxis(pose.Up, out float upSign);
+                var absU = pose.Up.Abs();                                // diagonal/ambiguous icon-up (e.g. carrot @45deg) ->
+                float top = Mathf.Max(absU.X, Mathf.Max(absU.Y, absU.Z));// stand on the LONGEST axis so it doesn't tip over
+                float sum = absU.X + absU.Y + absU.Z;
+                if (sum - top - Mathf.Min(absU.X, Mathf.Min(absU.Y, absU.Z)) > top * 0.7f)
+                    { upA = ax[2]; upSign = pose.Up[ax[2]] >= 0f ? 1f : -1f; }
+                int frA = NearestAxis(pose.Front, out float frSign);
+                if (frA == upA) { frA = (upA + 1) % 3; frSign = 1f; }   // front must be a different axis than up
+                int thA = 3 - upA - frA;                                 // the leftover axis
+                var c = new Vector3[3];
+                c[upA] = new Vector3(0, upSign, 0);    // up-axis    -> +Y
+                c[frA] = new Vector3(0, 0, frSign);    // front-axis -> +Z (aisle)
+                c[thA] = new Vector3(1, 0, 0);
+                oriented = Basis.Identity;
+                oriented.X = c[0]; oriented.Y = c[1]; oriented.Z = c[2];
+                if (oriented.Determinant() < 0f)       // flip the leftover axis for a proper rotation (keeps up + front)
+                {
+                    var neg = -c[thA];
+                    if (thA == 0) oriented.X = neg; else if (thA == 1) oriented.Y = neg; else oriented.Z = neg;
+                }
+            }
             else
             {
-                // LIE FLAT, DETAIL-SIDE UP. The game's per-item "front" (item_fronts.json, from the prefab's Icon pose)
-                // says which face is the labelled one; use it as the up axis (snapped to the nearest local axis so the
-                // item rests flat) -- for flat/elongated items that's the broad/side face, so it reads as "lying flat"
-                // with the label up. No icon data -> fall back to the shortest axis (arbitrary side). Longer of the two
-                // remaining axes -> shelf WIDTH (keeps long items off the back wall), the other -> depth.
-                Vector3 front = FrontOf(id);
+                // LIE FLAT, DETAIL-SIDE UP: use the icon FRONT (or shortest axis if no data) as the up direction, snapped
+                // to the nearest local axis so it rests flat; longer remaining axis -> shelf WIDTH (keeps long items off
+                // the back wall), the other -> depth.
+                Vector3 front = pose.Ok ? pose.Front : Vector3.Zero;
                 int upA; float upSign;
                 if (front.LengthSquared() > 0.01f)
                 {
@@ -226,6 +255,9 @@ namespace UnturnedGodot
                 }
             }
 
+            if (System.Environment.GetEnvironmentVariable("UG_SHELFDBG") == "1")
+                GD.Print($"[shelf-item] id={id} dims=({s.X:0.00},{s.Y:0.00},{s.Z:0.00}) flat={flatSlab} poseOk={pose.Ok} up={pose.Up} front={pose.Front} -> {(pose.Ok && !flatSlab ? "STAND" : "LIE")}");
+
             // SCALE oversized items down to fit the slot (master's "cheat"): cap the footprint to the slot width + the
             // height to the tier gap.
             var ob = new Transform3D(oriented, Vector3.Zero) * (vis.Mesh?.GetAabb() ?? new Aabb());
@@ -248,7 +280,7 @@ namespace UnturnedGodot
             if (zPos + rb.Position.Z + rb.Size.Z > frontLip) zPos = frontLip - (rb.Position.Z + rb.Size.Z);
             vis.Position = new Vector3(
                 (x0 + xspan * fx) - (rb.Position.X + rb.Size.X * 0.5f),
-                tierSurfaceY - rb.Position.Y + rb.Size.Y * 0.03f + 0.02f,   // small lift so items sit ON the tier, not sunk in (master)
+                tierSurfaceY - rb.Position.Y + rb.Size.Y * 0.03f + 0.05f,   // lift so items sit ON the tier, not sunk in (master: "everything needs raising")
                 zPos);
             AddChild(vis);
             _display[cellKey] = vis;
