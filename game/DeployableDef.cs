@@ -21,6 +21,8 @@ namespace UnturnedGodot
         public bool IsBattery;     // a battery: its IN terminal charges the stored Energy, its OUT terminal discharges it (produces while Energy > 0)
         public bool IsSwitch;      // a power switch: an F-toggle gates its Passthrough (PowerConducting). Remembers state; a light shows on/off
         public float EnergyMax, ChargeWatts;   // battery: stored-energy capacity (watt-SECONDS) + the IN charge rate (W)
+        public bool IsWindTurbine;    // a wind turbine: output ramps with WindField wind x a height-above-sea multiplier; blades spin ~ wind
+        public bool Upright;          // build the mesh already-vertical (skip the flat->stand-up rotation) -- for procedural models like the turbine
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
@@ -149,7 +151,17 @@ namespace UnturnedGodot
             },
         };
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch };
+        // A wind turbine (custom): a procedural tower + nacelle + 3-blade hub. A SOURCE whose output ramps with the local
+        // WIND (WindField noise sampled at its X/Z) x a height-above-sea multiplier; the blades spin ~ the wind. No fuel
+        // or toggle -- always harvesting whatever wind is present.
+        public static readonly DeployableDef WindTurbine = new()
+        {
+            Id = 9106, Name = "Wind Turbine", IsWindTurbine = true, Upright = true, PlaceSound = "metalplacement",
+            Size = new Vector3(0.6f, 3.8f, 0.6f), Offset = 0.5f, Radius = 0.5f, Range = 5f, Health = 300f,
+            Ports = new[] { new Port { Kind = PortKind.Output, Pos = new Vector3(0.16f, 0.12f, 0f), Watts = 2500f } },   // rated 2.5kW at full wind; the output CAP ramps 0..2x with wind x height (PowerScale)
+        };
+
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -160,6 +172,7 @@ namespace UnturnedGodot
             9104 => Combiner2,
             9105 => Switch,
             1450 => Battery,
+            9106 => WindTurbine,
             _ => null,
         };
 

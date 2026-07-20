@@ -1268,7 +1268,8 @@ namespace UnturnedGodot
                           || System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1360,6 +1361,16 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.2f, 0f);
                 cam.Position = new Vector3(0.7f, 0.9f, 1.7f);
                 cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_WINDTURBINE=1: the wind turbine -- tower + nacelle + 3-blade hub + the output port. (Blades spin in-game
+            // ~ the local wind; a still shot just shows the model at a frozen blade angle.)
+            if (System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1")
+            {
+                var wt = Deployable.Spawn(this, DeployableDef.WindTurbine, Vector3.Zero, 35f);
+                foreach (var pt in wt.Ports) pt.SetArrowState(true, true);
+                look = new Vector3(0f, 1.5f, 0f);
+                cam.Position = new Vector3(2.8f, 2.1f, 4.4f);
+                cam.Fov = 52f; cam.LookAt(look, Vector3.Up);
             }
             // UG_SWITCHCKT=1: a working circuit -- generator -> switch -> spotlight, + sources on the switch's turn-on
             // (green) / turn-off (red) trigger inputs. Default: TurnOn source fed -> switch ON -> spotlight LIT.

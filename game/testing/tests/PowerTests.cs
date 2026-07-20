@@ -197,6 +197,34 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Wind turbine (master): output ramps with a drifting WindField sample x a height-above-sea multiplier; blades spin
+    // ~ the wind. TestWind forces a fixed wind so the noise doesn't flake the checks.
+    public class PowerWindTurbine : GameTest
+    {
+        public override string Name => "power.wind_turbine";
+        public override IEnumerable<Step> Run()
+        {
+            PowerNet.ResetForTests();
+            var sea = Deployable.Spawn(World, DeployableDef.WindTurbine, Vector3.Zero, 0f);               // at sea level
+            var high = Deployable.Spawn(World, DeployableDef.WindTurbine, new Vector3(5f, 40f, 0f), 0f);  // +40 m -> ~2x height mult
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(0f, 0f, 3f), 0f);
+            var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            PowerRig.Connect(World, sea.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output), spotIn);
+
+            WindField.TestWind = 0f;
+            yield return Ticks(2); PowerNet.Recompute(Tree);
+            T.Check("dead calm -> turbine not producing -> spotlight dead", !sea.IsPowered && !spotIn.Powered);
+
+            WindField.TestWind = 0.6f;
+            yield return Ticks(2); PowerNet.Recompute(Tree);
+            T.Check("wind 0.6 at sea level -> ~0.6 factor, producing", sea.IsPowered && PowerRig.Approx(sea.WindFactorForTest, 0.6f));
+            T.Check("windy turbine powers a wired spotlight", spotIn.Powered);
+            T.Check("same wind at +40 m -> ~2x factor (higher = better, master)", PowerRig.Approx(high.WindFactorForTest, 1.2f));
+
+            WindField.TestWind = null;   // restore live wind for other tests
+        }
+    }
+
     public class PowerWireClearUnpowers : GameTest
     {
         public override string Name => "power.wire_clear_unpowers";

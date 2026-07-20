@@ -33,6 +33,7 @@ namespace SDG.Unturned
             Add(9103, "4-Way Splitter", 3, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that splits one power wire into four. Each output carries the full wattage -- devices draw only what they need.");
             Add(9104, "2-Way Combiner", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A junction box that combines two power sources into one output -- their wattages add together, and the load splits back across the sources.");
             Add(9105, "Power Switch", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A wired power switch. Toggle it with [F] to pass power to its output or cut it off; it remembers its state, and a light shows on (green) or off (red).");
+            Add(9106, "Wind Turbine", 3, 4, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A wind turbine. Place it out in the open -- higher ground gets stronger wind. Wire its output into your grid; the blades spin and its power rises and falls with the local wind.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

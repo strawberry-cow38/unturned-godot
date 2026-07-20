@@ -15,7 +15,7 @@ namespace UnturnedGodot
         public bool PowerProducing => IsPowered;
         public bool PowerOnFire => OnFire;
         public bool PowerConducting => Def == null || !Def.IsSwitch || _switchOn;   // a switch OFF stops conducting -> its passthrough dies
-        public float PowerScale => (Def != null && Def.Fuel > 0f && !Def.IsBattery) ? _powerLevel : 1f;   // generator OUTPUT ramps 0..1 with the engine spin-up/cooldown (master); battery + everything else = full
+        public float PowerScale => Def == null ? 1f : Def.IsWindTurbine ? _windFactor : (Def.Fuel > 0f && !Def.IsBattery) ? _powerLevel : 1f;   // generator ramps 0..1 with the engine spin-up; wind turbine = live wind x height (0..2); battery + others = full
         public uint PowerNetId => NetId;
         public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => Ports;
         public float Health, HealthMax;
@@ -39,6 +39,10 @@ namespace UnturnedGodot
         bool _switchOn = true;     // a Power Switch's remembered on/off state (F toggles it); defaults ON = passes power
         public bool SwitchOn => _switchOn;   // for the state light + the [F] prompt
         float _powerLevel;         // 0 = off .. 1 = running; ramps up over WarmupTime / down over CooldownTime -- the shake + engine spin-up follow it
+        float _windFactor;         // wind turbine: 0..2 current wind strength x height bonus (drives the output cap + blade spin)
+        float _lastWindDirty;      // wind level at the last MarkDirty -- re-solve the net only when the wind moves enough
+        Node3D _bladeHub;          // wind turbine: the spinning 3-blade hub
+        const float WindSeaLevel = 0f;   // reference sea level for the turbine height bonus (flat test ground = 0; TODO wire to the real world sea level)
         AudioStreamPlayer3D _engineAudio;
         float _vibePhase;
         const float WarmupTime = 1.3f, CooldownTime = 1.1f;   // spin-up / wind-down; doubles as the anti-spam buffer (can't re-toggle mid-ramp)
@@ -46,7 +50,7 @@ namespace UnturnedGodot
         float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
         bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
         public bool CanTogglePower => !OnFire && Def != null && (Def.IsSwitch || (Def.Fuel > 0f && PowerSettled));   // a switch always toggles; a generator only when fuelled + ramp-settled (buffer)
-        public bool IsPowered => Def != null && Def.IsBattery ? (Energy > 0f && !OnFire) : (!OnFire && _powerLevel > 0.02f);   // battery OUT produces while charged; a generator produces while the engine is spun up (_powerLevel ramps 0..1 -> gradual power, master); a FIRE kills output instantly (not a graceful cooldown) -- PowerNet reads this
+        public bool IsPowered => Def == null ? (!OnFire && _powerLevel > 0.02f) : Def.IsBattery ? (Energy > 0f && !OnFire) : Def.IsWindTurbine ? (!OnFire && _windFactor > 0.03f) : (!OnFire && _powerLevel > 0.02f);   // battery: charged; wind turbine: wind present; generator: engine spun up (_powerLevel); a FIRE kills output instantly -- PowerNet reads this
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
@@ -95,6 +99,7 @@ namespace UnturnedGodot
         // authored frame, before the -90 X stand-up). Shared by the placed object and the placement ghost.
         public static MeshInstance3D BuildMesh(DeployableDef def, out Aabb localAabb)
         {
+            if (def.IsWindTurbine) return BuildTurbine(def, out localAabb);   // procedural tower + nacelle + spinning blade hub
             Mesh mesh = def.ProcBox ? new BoxMesh { Size = def.Size } : def.LoadMesh();   // splitter = a plain gray box, no .obj
             var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = def.MakeMaterial() };
             Basis mrot = def.MeshBasis();   // per-def model orientation fixup (battery's ripped mesh stands up upside-down + 180 off); identity for the rest
@@ -113,6 +118,28 @@ namespace UnturnedGodot
                 mi.AddChild(lbl);   // child of the mesh -> rides MeshBasis + the stand-up, stays on the face
             }
             return mi;
+        }
+
+        // A simple procedural wind turbine: a tapered tower (the body/_mesh) + a nacelle box + a "BladeHub" node holding a
+        // hub cap and 3 flat blades 120 apart. Built UPRIGHT (def.Upright skips the flat->stand-up); _Process spins the hub.
+        static MeshInstance3D BuildTurbine(DeployableDef def, out Aabb localAabb)
+        {
+            const float H = 2.6f;
+            var gray = new StandardMaterial3D { AlbedoColor = new Color(0.80f, 0.81f, 0.83f), Metallic = 0.1f, Roughness = 0.55f };
+            var white = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.94f, 0.96f), Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var tower = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.06f, BottomRadius = 0.10f, Height = H, RadialSegments = 10 }, Position = new Vector3(0f, H * 0.5f, 0f), MaterialOverride = gray };
+            tower.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.20f, 0.18f, 0.40f) }, Position = new Vector3(0f, H * 0.5f, 0.05f), MaterialOverride = gray });   // nacelle at the top, slightly forward
+            var hub = new Node3D { Name = "BladeHub", Position = new Vector3(0f, H * 0.5f, 0.28f) };   // in front of the nacelle; spins around +Z
+            hub.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.08f, Height = 0.16f, RadialSegments = 8, Rings = 4 }, MaterialOverride = gray });   // hub cap
+            for (int i = 0; i < 3; i++)
+            {
+                var arm = new Node3D { RotationDegrees = new Vector3(0f, 0f, i * 120f) };
+                arm.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.07f, 1.05f, 0.02f) }, Position = new Vector3(0f, 0.58f, 0f), MaterialOverride = white });
+                hub.AddChild(arm);
+            }
+            tower.AddChild(hub);
+            localAabb = new Aabb(new Vector3(-1.15f, 0f, -0.15f), new Vector3(2.3f, H + 1.15f, 1.2f));
+            return tower;
         }
 
         // Parse a "x,y,z" env var (runtime tuning for the battery label) or return the default.
@@ -140,8 +167,9 @@ namespace UnturnedGodot
                 Shape = new BoxShape3D { Size = ab.Size == Vector3.Zero ? def.Size : ab.Size },
                 Position = ab.GetCenter(),
             });
-            d.Position = surface + Vector3.Up * DeployableDef.GroundLift(ab);   // base sits on the surface
-            d.Basis = DeployableDef.StandBasis(yawDeg);   // yaw + the stand-up
+            d.Position = surface + Vector3.Up * (def.Upright ? -ab.Position.Y : DeployableDef.GroundLift(ab));   // base sits on the surface (upright models skip the stand-up lift)
+            d.Basis = def.Upright ? new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) : DeployableDef.StandBasis(yawDeg);   // yaw (+ the stand-up for flat-authored ripped models)
+            if (def.IsWindTurbine) d._bladeHub = mi.FindChild("BladeHub", true, false) as Node3D;   // the spinning blade hub
             d.AddToGroup("deployables");
             foreach (var pdef in def.Ports)   // power connection cubes (children -> stand up with the model)
             {
@@ -268,6 +296,7 @@ namespace UnturnedGodot
         public void NetSetPowered(bool on) { if (_powered != on) { _powered = on; PowerNet.MarkDirty(); } }
         public bool PoweredTarget => _powered;   // the F-toggle TARGET state (IsPowered adds fuel/fire gating) -- what an MP toggle request inverts
         internal static bool InstantRampForTests;   // L1 (set by TestHost): skip the spin-up/cooldown ramp so a gen produces/stops instantly for power-flow checks; the gradual ramp is gameplay-verified in-render
+        public float WindFactorForTest => _windFactor;   // L1 probe for power.wind_turbine
 
         void Explode()   // src explode: blast nearby, then either shatter into pieces (spotlight) or become a burning salvageable wreck (generator)
         {
@@ -452,6 +481,13 @@ namespace UnturnedGodot
                     Energy = Mathf.Min(Def.EnergyMax, Energy + Def.ChargeWatts * (float)delta);   // charge while the IN is fed by a source
                 if ((Energy > 0f) != wasProducing) PowerNet.MarkDirty();   // crossed empty <-> charged -> the OUT starts/stops producing
             }
+            if (Def != null && Def.IsWindTurbine)   // wind turbine: output CAP + blade spin follow the local wind x a height-above-sea multiplier (master)
+            {
+                float heightMult = 1f + Mathf.Clamp((GlobalPosition.Y - WindSeaLevel) / 40f, 0f, 1f);   // higher above sea = more wind (up to ~2x)
+                _windFactor = Mathf.Min(2f, WindField.SampleWind(GlobalPosition) * heightMult);
+                if (_bladeHub != null && IsInstanceValid(_bladeHub)) _bladeHub.RotateZ((float)delta * (0.25f + 5.5f * _windFactor));   // spin ~ wind (+ a slow idle turn)
+                if (Mathf.Abs(_windFactor - _lastWindDirty) > 0.04f) { _lastWindDirty = _windFactor; PowerNet.MarkDirty(); }   // wind moved enough -> re-solve the net
+            }
             if (InstantRampForTests) _powerLevel = pTarget;   // L1: no ramp -> instant settle for power-flow tests
             else if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
@@ -466,7 +502,7 @@ namespace UnturnedGodot
                 }
                 else if (_engineAudio.Playing) _engineAudio.Stop();
             }
-            if (_mesh != null)   // NON-source shake (src Engine node has no anim) -- ~6mm at idle, up to ~3.5x harder + faster under full load
+            if (_mesh != null && (Def == null || !Def.IsWindTurbine))   // NON-source shake (src Engine node has no anim); skip the turbine -- its _mesh carries a fixed tower offset
             {
                 if (_powerLevel > 0.01f && !_exploded)
                 {
