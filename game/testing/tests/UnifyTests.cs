@@ -1046,4 +1046,55 @@ namespace UnturnedGodot.Testing
             T.Check("still no local death after adoption (server owns HP)", !pending.IsDead);
         }
     }
+
+    // SP/MP-unify P6a phase gate (the staged flip): the SP GAME Playable entries boot the CONSUMING listen-server
+    // BY DEFAULT, while the TEST HARNESSES stay on the direct path. This locks the decision logic
+    // (Main.ResolveLoopbackMode) that the two AttachMpLoopback call sites drive: the game "Drive PEI"/--peidrive +
+    // --peiplay pass gameDefault=true; the nav-bake/navpath/zombietest harnesses (and Aerial --objects, which
+    // early-returns on a null player) pass gameDefault=false. The consume machinery itself is unchanged from the
+    // --spconsume path (P1-P5, already gated green); P6a only flips WHICH entries turn it on.
+    //
+    // TEETH: the whole flip is "a game boot with NO flags now CONSUMES" -- (attach, consume) == (true, true). On the
+    // pre-P6a gate ("attach iff --mploopback") that same no-flag game boot was (false, false) = pure direct, so this
+    // assertion FAILS on pre-flip logic. The opt-out (--direct) restores (false, false), and the harness stays direct
+    // unless it explicitly opts in with --mploopback -- all asserted, so a regression in either direction trips a check.
+    public class UnifyDefaultFlip : GameTest
+    {
+        public override string Name => "unify.default_flip";
+        public override double TimeoutSimSeconds => 5;
+
+        public override IEnumerable<Step> Run()
+        {
+            // signature: Main.ResolveLoopbackMode(gameDefault, mpLoopback, spConsume, direct) -> (attach, consume)
+
+            // --- the GAME path (menu "Drive PEI"/--peidrive, --peiplay): CONSUME by DEFAULT, no flags needed ---
+            var g = Main.ResolveLoopbackMode(gameDefault: true, mpLoopback: false, spConsume: false, direct: false);
+            T.Check($"(FLIP) game default, no flags -> loopback ATTACHES + CONSUMES ({g})", g.attach && g.consume);
+
+            var gd = Main.ResolveLoopbackMode(gameDefault: true, mpLoopback: false, spConsume: false, direct: true);
+            T.Check($"(opt-out) game + --direct -> NO loopback, pure direct SP fallback ({gd})", !gd.attach && !gd.consume);
+
+            // legacy explicit flags on the game path are subsumed by the default (still consuming, never publish-only)
+            var gm = Main.ResolveLoopbackMode(gameDefault: true, mpLoopback: true, spConsume: false, direct: false);
+            T.Check($"(game) legacy --mploopback alone still CONSUMES on the game path ({gm})", gm.attach && gm.consume);
+            var gmd = Main.ResolveLoopbackMode(gameDefault: true, mpLoopback: true, spConsume: true, direct: true);
+            T.Check($"(game) --direct WINS over --mploopback/--spconsume -> pure direct ({gmd})", !gmd.attach && !gmd.consume);
+
+            // --- the TEST HARNESS path (nav bake / navpath / zombietest reaching a Playable world): stays DIRECT ---
+            var h = Main.ResolveLoopbackMode(gameDefault: false, mpLoopback: false, spConsume: false, direct: false);
+            T.Check($"(harness) no flags -> stays DIRECT, no loopback ({h})", !h.attach && !h.consume);
+
+            var hm = Main.ResolveLoopbackMode(gameDefault: false, mpLoopback: true, spConsume: false, direct: false);
+            T.Check($"(harness) legacy --mploopback -> publish-only loopback, NO consume ({hm})", hm.attach && !hm.consume);
+
+            var hmc = Main.ResolveLoopbackMode(gameDefault: false, mpLoopback: true, spConsume: true, direct: false);
+            T.Check($"(harness) --mploopback --spconsume -> consuming loopback (legacy path intact) ({hmc})", hmc.attach && hmc.consume);
+
+            // --direct never turns a harness ON -- it's an opt-OUT knob for the game default only
+            var hd = Main.ResolveLoopbackMode(gameDefault: false, mpLoopback: false, spConsume: false, direct: true);
+            T.Check($"(harness) --direct alone is a no-op on a harness (already direct) ({hd})", !hd.attach && !hd.consume);
+
+            yield break;
+        }
+    }
 }

@@ -168,6 +168,29 @@ in the P0 inventory:
    loot) matches the old direct-SP, on the non-live rig; then a live-PEI smoke; then merge to `main`
    (rebased onto catboy's Vehicle Battery f685227) on VoX signoff.
 
+### P6a — flip the SP-GAME default to the consuming listen-server (DONE, reversible; direct path RETAINED)
+
+Step 1 of the flip, done SAFELY (flip + verify, no deletion). The real SP GAME Playable entries now boot the
+consuming listen-server BY DEFAULT; the direct path is kept intact as a reversible fallback + the harness substrate.
+- **The flip (`Main.cs`).** `AttachMpLoopback(res, gameDefault)` + the pure `Main.ResolveLoopbackMode(gameDefault,
+  mpLoopback, spConsume, direct)`. GAME entries pass `gameDefault=true` → attach + `ConsumeDeployables=true` with NO
+  `--mploopback --spconsume`: menu "Drive PEI"/`--peidrive` (BuildObjectsTest, gated `_peiPlayable && !_bakeNav`) and
+  `--peiplay` (BuildPeiPlay). TEST HARNESSES pass `gameDefault=false` → unchanged legacy: direct unless explicit
+  `--mploopback` (nav-bake/navpath/zombietest set `_bakeNav`; `--objects` is Aerial → null player → early return).
+- **Opt out = `--direct` (or `UG_DIRECT=1`)** → `ResolveLoopbackMode` returns `(attach=false)` on the game path =
+  the pure direct SP path, byte-for-byte the pre-flip boot. The A/B knob + the reversible fallback. `menu "Play"`/
+  `--play` (bespoke flat arena, no SimDriver/WorldBuildResult) is NOT wired for the loopback and is left direct —
+  it never called AttachMpLoopback; wiring it needs new sim-spine plumbing, out of scope for a flip.
+- **Fixture edge (Catalog A), unchanged by the flip:** grid-power (`GridPowerSource.PowerNetId => 0`) + gas-pump
+  (`GasPump.PowerNetId => 0`) stay host-direct. Wiring a fixture (NetId 0) to a player-placed replicated deployable
+  (NetId != 0): `RequestConnectWire` refuses (an end is 0, `PlayerController.cs:1860`) → `CompleteWire` falls to the
+  direct local SP wire (`:524-531`) → the local PowerNet solves it, so the fixture powers the deployable host-locally.
+  Not replicated to remote joiners (grid-power MP is a later task). Rope-tow (`Vehicle.AttachTow`, no Net/Send) is
+  host-only; vehicles stay host-direct under the flip, so it is untouched. Both identical to the `--spconsume` path.
+- **Gate:** builds clean; `unify.default_flip` L1 test locks the truth table (teeth: game-default-no-flags now
+  `(attach,consume)==(true,true)`, `(false,false)` on the pre-flip gate); full `./test.sh` green. Direct path,
+  the `NetId==0`/`Net*` forks, and the harness direct-construct all UNTOUCHED — deletion is a LATER P6 step.
+
 **Deferred (post-flip fast-follows, non-blocking):** fall-damage wire-cap fidelity (hard falls cap at
 32 dmg — safe direction); remote-puppet death/respawn rendering (cosmetic, MP-only); animal replication
 (SP animals stay host-owned; invisible to remote MP joiners until an AnimalNetSync); clothing on remote

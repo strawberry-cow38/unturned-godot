@@ -113,6 +113,7 @@ namespace UnturnedGodot
                 else if (arg == "--netlog") UnturnedGodot.Net.NetLog.Enabled = true;   // net-diagnostics logging (equivalent: UG_NETLOG=1); sinks wired in DedicatedServer/ClientNode
                 else if (arg == "--mploopback") _mpLoopback = true;   // OPT-IN (MP_PLAN §4 Phase 4): SP runs as an in-process listen-server + local client over MemTransport; without the flag SP keeps the direct path
                 else if (arg == "--spconsume") _spConsume = true;      // SP/MP-unify P1: with --mploopback, the local player CONSUMES deployables as server replicas instead of the direct SP path (opt-in; equivalent env UG_SPCONSUME=1)
+                else if (arg == "--direct") _direct = true;            // SP/MP-unify P6a: opt OUT of the consuming-loopback DEFAULT on the SP GAME entries -> pure direct SP path (reversible fallback + A/B; equivalent env UG_DIRECT=1)
                 else if (arg == "--client") client = true;   // bare demo/test client: real world + the C1 overhead cam + ClientNode capsules (no player shell)
                 else if (arg.StartsWith("--connect=")) { client = true; _playableClient = true; _connectHost = arg["--connect=".Length..]; }   // join a dedicated server by IP -- C3: the PLAYABLE client (ClientWorldSession: predicted first-person shell)
                 else if (arg == "--smoke") smoke = true;
@@ -1672,7 +1673,10 @@ namespace UnturnedGodot
             _pdPlayer = res.Player;   // UG_AUTOFIRE terrain-impact verification
             _ztField = res.Zombies;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
-            AttachMpLoopback(res);    // --mploopback only; default SP is untouched
+            // P6a: the GAME "Drive PEI"/--peidrive path (Playable + a real player, NOT the nav-bake/navpath/zombie
+            // offline harnesses, which set _bakeNav) boots the consuming listen-server by default. --objects is Aerial
+            // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
+            AttachMpLoopback(res, gameDefault: _peiPlayable && !_bakeNav);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnEditorGasPump(); SpawnMapContainers(res); }   // stock the map with loot containers + configurable grid-power boxes + gas pumps
         }
@@ -2010,15 +2014,40 @@ namespace UnturnedGodot
             GetTree().ReloadCurrentScene();
         }
 
-        bool _mpLoopback;   // --mploopback: opt-in SP listen-server over MemTransport (MP_PLAN §4 Phase 4)
-        bool _spConsume;    // --spconsume (or UG_SPCONSUME=1): SP/MP-unify P1 -- only meaningful with --mploopback
-        void AttachMpLoopback(WorldBuildResult res)
+        bool _mpLoopback;   // --mploopback: legacy opt-in loopback for TEST HARNESSES (MP_PLAN §4 Phase 4); the GAME path defaults to it now (P6a)
+        bool _spConsume;    // --spconsume (or UG_SPCONSUME=1): SP/MP-unify P1 legacy consume toggle -- only meaningful on a harness caller now (the GAME path consumes by default, P6a)
+        bool _direct;       // --direct (or UG_DIRECT=1): SP/MP-unify P6a -- opt OUT of the consuming-loopback DEFAULT on the SP GAME entries -> pure direct SP path (reversible fallback + A/B)
+
+        // SP/MP-unify P6a (the staged flip): resolve whether a Playable world attaches the in-process consuming
+        // listen-server, and whether the local player CONSUMES replicas. PURE + static so the truth table is
+        // L1-coverable (unify.default_flip) without booting Main.
+        //   - gameDefault=true  (the real SP GAME entries: menu "Drive PEI"/--peidrive, --peiplay): CONSUME by
+        //     DEFAULT -- no --mploopback/--spconsume needed. --direct (UG_DIRECT=1) opts back out to the pure
+        //     direct SP path (attach=false), the reversible fallback + A/B knob. This is the P6a flip.
+        //   - gameDefault=false (TEST HARNESSES reaching a Playable world: nav bake / navpath / zombietest, and
+        //     --objects which is Aerial anyway): UNCHANGED legacy behavior -- stay direct unless the caller
+        //     explicitly passed --mploopback, and only consume under --spconsume. The harness fleet stays direct.
+        public static (bool attach, bool consume) ResolveLoopbackMode(bool gameDefault, bool mpLoopback, bool spConsume, bool direct)
         {
-            if (!_mpLoopback || res.Player == null || res.Sim == null) return;
-            bool consume = _spConsume || System.Environment.GetEnvironmentVariable("UG_SPCONSUME") == "1";   // P1: route local deployables through the loopback + consume replicas
+            if (gameDefault)
+                return direct ? (false, false)   // --direct: pure direct SP, no loopback -- the reversible fallback
+                              : (true, true);     // P6a DEFAULT: the SP game boots the consuming listen-server
+            return mpLoopback ? (true, spConsume) : (false, false);   // harness: legacy opt-in, consume only under --spconsume
+        }
+
+        // gameDefault = this call site is a real SP GAME Playable entry (see ResolveLoopbackMode). The consume
+        // machinery itself is unchanged from the --spconsume path (P1-P5, already gated green); P6a only flips
+        // WHICH entries turn it on by default. The direct path is NOT deleted -- --direct restores it wholesale.
+        void AttachMpLoopback(WorldBuildResult res, bool gameDefault)
+        {
+            if (res.Player == null || res.Sim == null) return;
+            bool direct = _direct || System.Environment.GetEnvironmentVariable("UG_DIRECT") == "1";
+            bool spConsume = _spConsume || System.Environment.GetEnvironmentVariable("UG_SPCONSUME") == "1";
+            var (attach, consume) = ResolveLoopbackMode(gameDefault, _mpLoopback, spConsume, direct);
+            if (!attach) return;
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
                                       DayNight = res.DayNight, Resources = res.Resources,   // Phase 8 world-state syncs (§3.7)
-                                      ConsumeDeployables = consume });                      // P1 --spconsume (no-op unless set)
+                                      ConsumeDeployables = consume });                      // P6a: true by default on the GAME path
         }
 
         // --navshot=OUT: a VERIFY screenshot for the zombie nav rework -- synchronous world (loads reliably offline),
@@ -2082,7 +2111,7 @@ namespace UnturnedGodot
         {
             var res = WorldBuilder.BuildPeiPlayWorld(this, MapDir("PEI"), _peiHorde);
             _peiPlayer = res.Player;
-            AttachMpLoopback(res);   // --mploopback only; default SP is untouched
+            AttachMpLoopback(res, gameDefault: true);   // P6a: --peiplay is a real SP GAME entry -> consuming listen-server by default (--direct opts out)
         }
 
 
