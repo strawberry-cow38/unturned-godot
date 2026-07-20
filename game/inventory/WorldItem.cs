@@ -20,6 +20,14 @@ namespace UnturnedGodot
         public static bool ShowLabels; // P force-shows ALL item name tags (else a tag shows only while looked-at)
         public static bool ShowLookSphere; // O toggles the player's look-END sphere visualizer (master's LookAtRadius)
         public static bool NoDropRotation; // --itemtest UG_NOROT diagnostic: spawn at identity to read the raw model orientation
+        // P2b (SP/MP-unify, --spconsume): when true, the host does NOT render or focus its OWN world-item NODES
+        // (LootField-streamed loot, salvage scrap) -- the WorldItemReplicaView PUPPET (built from the same server
+        // entity, over the wire) is the sole visible + focusable copy on the host. Kills the passive-loot
+        // double-materialization under --spconsume (the real SP node AND the view's puppet showing the same item
+        // twice). The node stays a live physics body IN the "worlditems" group, so WorldItemNetSync still settles +
+        // publishes it for remote joiners -- only the LOCAL visual/interaction is suppressed. Default false, so the
+        // direct SP path and the live MP-client path (ClientWorldSession) are byte-identical.
+        public static bool SuppressLocalVisual;
         public static Color FocusColor = Colors.White;   // the currently-focused item's rarity colour -- OutlineOverlay tints the rim with it
 
         public const uint ItemHitLayer = 1u << 7;     // the item's box collider layer -- the player's look-sphere tests against this
@@ -31,11 +39,13 @@ namespace UnturnedGodot
         Label3D _label;
         Color _rar;
         bool _focused;
+        bool _suppressed;   // P2b: latched from SuppressLocalVisual at _Ready -> this node is a hidden, non-focusable physics-only body (the WorldItemReplicaView puppet is the visible copy on the host)
 
         Vector3 _velAvg, _angAvg;   // low-pass velocity/spin for settle detection (jitter cancels in the running average)
         float _settleT, _age;
         bool _settled;
         public bool Settled => _settled;   // L1 tests: has the dropped item come to rest?
+        public bool LocalVisualSuppressed => _suppressed;   // P2b: true -> hidden + off the look-hit layer under --spconsume (the WorldItemReplicaView puppet is the visible/focusable copy)
         Vector3[] _hitPts;          // hitbox sample points (centre + 8 corners, local) for the full-hitbox LOS cull (master)
         Vector3 _boxCtr;
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
@@ -268,11 +278,27 @@ namespace UnturnedGodot
             AddChild(_label);
             _label.AddToGroup("esp_labels");
             _label.GlobalPosition = GlobalPosition + Vector3.Up * LabelH;
+
+            // P2b (SP/MP-unify, --spconsume): the host consumes world items as WorldItemReplicaView puppets, so its
+            // OWN direct nodes (LootField loot, salvage scrap) must NOT also render + focus locally, or every passive
+            // item appears TWICE (its real SP node AND the view's puppet). Hide the node and drop it OFF the look-hit
+            // layer (bit 7) so the player's look-ray finds only the puppet. The node stays a live physics body still
+            // IN the "worlditems" group (AddToGroup above), so WorldItemNetSync keeps settling + publishing it for
+            // remote joiners -- only the LOCAL visual/interaction is suppressed. Removing bit 7 does not affect
+            // resting: the item keeps its bit0|bit6 MASK, and it detects the world through that (Godot collides on
+            // either direction of layer/mask). No-op when the flag is off (default SP + live MP client), byte-identical.
+            _suppressed = SuppressLocalVisual;
+            if (_suppressed)
+            {
+                Visible = false;
+                CollisionLayer &= ~ItemHitLayer;
+            }
         }
 
         // look-at focus (PlayerController drives this): rarity glow outline + name billboard on the item you're aiming at
         public void SetFocused(bool on)
         {
+            if (_suppressed) return;   // P2b: a suppressed node is never the host's focus target -- the puppet is (defensive; it's also off the look-hit layer so the ray never reaches here)
             if (_focused == on) return;
             _focused = on;
             if (on) FocusColor = _rar;                            // OutlineOverlay tints the rim with the focused item's rarity
@@ -318,6 +344,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_suppressed) return;   // P2b: hidden physics-only body under --spconsume -> no LOS/visibility work, stays Visible=false (the puppet is rendered instead)
             if (_label != null && _label.Visible)   // TopLevel label -> keep it floating above the item in world space (billboards to the cam)
                 _label.GlobalPosition = GlobalPosition + Vector3.Up * LabelH;
             _losTimer -= (float)delta;

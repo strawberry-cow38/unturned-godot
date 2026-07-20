@@ -163,6 +163,12 @@ namespace UnturnedGodot
                 //     OnDropItem SpawnWorldItem -- a server world-item ENTITY with NO local SP node -- which
                 //     THIS view then materializes. So a drop leaves the bag, appears in the world as a puppet,
                 //     and is pickup-able again, entirely over the wire (the whole point of the phase).
+                // P2b (SAME --spconsume flag): flip WorldItem.SuppressLocalVisual so the host's OWN direct world-item
+                // nodes (LootField loot, salvage scrap) stop rendering + focusing -- else passive loot shows TWICE
+                // (its real SP node AND this view's puppet). Set here: AttachMpLoopback runs right after the world
+                // build and BEFORE LootField's first _Process, so every loot node latches it at _Ready. Cleared in
+                // _ExitTree (process-global flag). See the KNOWN-NOW-CLOSED note below + UnifyTests.passive_loot_single.
+                WorldItem.SuppressLocalVisual = true;
                 Items = new WorldItemReplicaView { Client = Client };
                 AddChild(Items);
                 // set the pickup seam to route over the wire (verbatim from ClientWorldSession.SpawnShell:436).
@@ -177,13 +183,17 @@ namespace UnturnedGodot
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and
                 // a pickup targets the PUPPET (_focusPuppet -> RequestPickupFocusedPuppet), never the SP-node
                 // TryPickup (_focusItem). The view is the SOLE materializer of these entities' local visuals.
-                // KNOWN FOLLOW-UP (P2b, mirrors how P1 surfaced P1b): passive LOOT is different. LootField still
-                // spawns real SP WorldItem nodes locally (WorldBuilder Loot phase) and WorldItemNetSync (@143-144,
-                // unconditional) mints entities from them -- so a node-backed loot/salvage entity would be
-                // materialized TWICE under --spconsume (its real SP node AND this view's puppet). Making the view
-                // the SOLE owner for THOSE too -- suppressing the local SP world-item spawn / the sync's node
-                // minting under the flag, the analogue of P1's "one owner, and it's the replica view" -- is the
-                // next phase; it touches the MP-shared view + the sync, so it is left for review, not bundled here.
+                // INVARIANT (no double, PASSIVE path -- P2b, now closed): passive LOOT is the mirror case. LootField
+                // still streams real SP WorldItem nodes locally (WorldBuilder Loot phase) and WorldItemNetSync
+                // (@199-200, unconditional) mints entities from them, which THIS view also materializes -- so a
+                // node-backed loot/salvage item WOULD show TWICE (its real SP node AND the puppet). The
+                // WorldItem.SuppressLocalVisual flag set above closes it WITHOUT touching LootField/salvage or the
+                // sync: the host's own world-item nodes hide + drop off the look-hit layer, so the view's puppet is
+                // the SOLE visible + focusable copy on the host, while the node stays a live physics body in the
+                // "worlditems" group -- the sync keeps settling + publishing it so remote joiners still see it. This
+                // is fix (b) (bounded visual/interaction suppression) vs (a) (make LootField/salvage entity-primary);
+                // (a) was rejected as it would rewrite MP-shared node-streaming + lose the physics-settle transform
+                // the server has no world-item body to reproduce. Proven by UnifyTests.unify.passive_loot_single.
                 GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables + world-items as replicas + SERVER-AUTHORITATIVE inventory (direct player drop/pickup/deploy paths disabled)");
             }
 
@@ -277,6 +287,7 @@ namespace UnturnedGodot
 
         public override void _ExitTree()
         {
+            if (ConsumeDeployables) WorldItem.SuppressLocalVisual = false;   // P2b: clear the process-global suppress flag so a later non-consume world isn't affected
             Client?.Disconnect();
             Server?.TearDown();
         }

@@ -116,6 +116,7 @@ namespace UnturnedGodot.Testing
             PowerNet.ResetForTests();
             PlayerRegistry.ResetForTests();   // _ExitTree self-cleans, this is belt-and-braces vs a leaked node
             WorldItem.NoDropRotation = false;
+            WorldItem.SuppressLocalVisual = false;   // P2b: leaked global under --spconsume tests -> reset between tests
             Engine.TimeScale = 1.0;
         }
 

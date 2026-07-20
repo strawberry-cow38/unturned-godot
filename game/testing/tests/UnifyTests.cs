@@ -405,6 +405,123 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // SP/MP-unify P2b phase gate. Proves that under --spconsume a PASSIVE (world-streamed / salvage-spawned) loot
+    // item is materialized on the host EXACTLY ONCE -- the WorldItemReplicaView puppet -- not twice. Under
+    // --spconsume the host still owns real SP WorldItem NODES (LootField streaming, salvage scrap), AND
+    // WorldItemNetSync mints server entities FROM those nodes, AND the P2 WorldItemReplicaView materializes those
+    // same entities into puppets -- so WITHOUT P2b a passive item shows TWICE (its real SP node AND the puppet).
+    // The fix (WorldItem.SuppressLocalVisual, which MpLoopback flips under --spconsume) hides the host's own node
+    // and drops it off the look-hit layer while keeping it a live physics body in the "worlditems" group, so the
+    // sync still publishes it for remote joiners; the puppet is the sole visible + focusable copy on the host.
+    //
+    // The passive pipeline is driven for real: a WorldItem NODE (exactly what LootField streams / salvage spawns)
+    // is put in the world, and the DedicatedServer's own WorldItemNetSync (DedicatedServer:137-138) mints the
+    // entity FROM it -- unlike unify.worlditem_consume, which spawns the entity directly (the player-DRIVEN path).
+    //
+    // TEETH: with the flag OFF (default SP + live MP-client path) a loot node IS a visible + focusable local
+    // materialization -- asserted first, pinning the pre-fix doubling source. With the flag ON, the SAME node is
+    // hidden + non-focusable, so among {the SP loot node, the view puppet} EXACTLY ONE is visible+focusable (the
+    // puppet). On pre-P2b code the node stays visible+focusable -> the count is 2 -> the "== 1" gate FAILS.
+    public class UnifyPassiveLootSingle : GameTest
+    {
+        public override string Name => "unify.passive_loot_single";
+        public override double TimeoutSimSeconds => 30;
+
+        // a world-item is LOCALLY materialized (visible + focusable) iff it renders AND carries a collider on the
+        // item look-hit layer (bit 7 = WorldItem.ItemHitLayer, what the player's look-ray focuses). Works for both
+        // the SP WorldItem RigidBody (itself a CollisionObject3D on bit 7) and the WorldItemPuppet (a Node3D whose
+        // bit-7 StaticBody child is the look-detection body).
+        static bool VisibleFocusable(Node3D n)
+        {
+            if (n == null || !GodotObject.IsInstanceValid(n) || !n.Visible) return false;
+            if (n is CollisionObject3D self && (self.CollisionLayer & WorldItem.ItemHitLayer) != 0) return true;
+            foreach (var ch in n.GetChildren())
+                if (ch is CollisionObject3D co && (co.CollisionLayer & WorldItem.ItemHitLayer) != 0) return true;
+            return false;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // the item mesh/collider + the join demo-kit seeding resolve against the catalog
+
+            // (teeth / control) flag OFF = default SP + live MP-client path: a streamed loot node materializes as a
+            // VISIBLE + FOCUSABLE local node -- the very thing that, alongside the view's puppet, doubles passive loot
+            // under --spconsume. Spawn one, assert it, then free it BEFORE the net stack so it never mints a puppet.
+            WorldItem.SuppressLocalVisual = false;
+            var control = WorldItem.Spawn(World, new Item(458), new Vector3(6f, 1f, 6f));
+            T.Check("(teeth) flag OFF: a loot node is a VISIBLE + FOCUSABLE local materialization (the pre-fix doubling source)",
+                    VisibleFocusable(control) && !control.LocalVisualSuppressed);
+            control.QueueFree();
+            yield return Ticks(1);
+
+            // now the --spconsume posture: the host suppresses its OWN world-item nodes (what MpLoopback flips)
+            WorldItem.SuppressLocalVisual = true;
+
+            // net stack over MemTransport, modeled on unify.worlditem_consume. The DedicatedServer runs its own
+            // WorldItemNetSync that mints entities FROM the "worlditems" group NODES -- the exact passive path
+            // (LootField/salvage node -> sync -> entity), the mirror of that test's direct-SpawnWorldItem drop path.
+            var net = new MemNetwork(20260724);
+            var client = new NetWorldClient(new MemClientTransport(net), "local", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+
+            // the P2 view -- the SOLE local materializer of world-item entities under --spconsume
+            var view = new WorldItemReplicaView { Client = client };
+            World.AddChild(view);
+
+            client.Connect();
+            yield return Until(() => client.State == NetSessionState.Connected, 5);
+            T.Check("local client joined the loopback server", client.State == NetSessionState.Connected);
+
+            // spawn a PASSIVE loot NODE -- a real SP WorldItem in the "worlditems" group, exactly what LootField
+            // streams (and Deployable/Vehicle.Salvage spawn). Under the flag it is born suppressed.
+            var lootNode = WorldItem.Spawn(World, new Item(458), new Vector3(-3f, 1f, -3f));
+            T.Check("the passive loot NODE spawned into the worlditems group", lootNode.IsInGroup("worlditems"));
+            T.Check("(fix) under --spconsume the host's own loot node is SUPPRESSED (hidden + off the look-hit layer)",
+                    lootNode.LocalVisualSuppressed && !VisibleFocusable(lootNode));
+
+            // the sync mints a server entity FROM the node (5 Hz), broadcasts it, and the view materializes a puppet
+            yield return Until(() => ded.Server.WorldItems.Count == 1, 8);
+            T.Check("WorldItemNetSync minted ONE server entity from the loot node (still published for remote joiners)",
+                    ded.Server.WorldItems.Count == 1);
+            uint netId = 0;
+            foreach (var en in ded.Server.WorldItems.All) { netId = en.NetIdValue; break; }
+            T.Check($"the minted entity carries a real server NetId ({netId})", netId != 0);
+
+            yield return Until(() => view.TryGetNode(netId, out _), 8);
+            bool havePuppet = view.TryGetNode(netId, out var puppetNode);
+            T.Check("the WorldItemReplicaView materialized a puppet for the entity", havePuppet);
+            var puppet = puppetNode as WorldItemPuppet;
+            T.Check($"the puppet carries the server entity NetId ({(puppet != null ? puppet.NetId : 0)})",
+                    puppet != null && puppet.NetId == netId && puppet.NetId != 0);
+            T.Check("the puppet is the visible + focusable copy on the host", VisibleFocusable(puppet));
+
+            // THE GATE: among the host's two representations of this ONE passive item -- the real SP loot node and
+            // the view puppet -- EXACTLY ONE is visible + focusable. Pre-P2b the node is ALSO visible+focusable -> 2,
+            // and this fails.
+            int materializations = (VisibleFocusable(lootNode) ? 1 : 0) + (VisibleFocusable(puppet) ? 1 : 0);
+            T.Check($"(gate) EXACTLY ONE visible+focusable materialization of the passive loot item (got {materializations}, the puppet)",
+                    materializations == 1 && VisibleFocusable(puppet) && !VisibleFocusable(lootNode));
+
+            // the suppression is host-local render/interaction ONLY: the node stayed a live physics body still in the
+            // "worlditems" group, so WorldItemNetSync kept publishing it -- a remote joiner still gets the entity.
+            T.Check("the suppressed node is still a live worlditems-group physics body (publishes for remote joiners)",
+                    GodotObject.IsInstanceValid(lootNode) && lootNode.IsInGroup("worlditems") && ded.Server.WorldItems.Count == 1);
+
+            // teardown: clear the process-global flag (belt-and-braces vs ResetGlobals) + unhook the pump
+            WorldItem.SuppressLocalVisual = false;
+            world.Sim.Sim.Remove(pump);
+            client.Disconnect();
+        }
+    }
+
     // SP/MP-unify P3a phase gate (part 1 of 3): server-authoritative HP ADOPTION on the owner shell. A real
     // first-person shell (ClientWorldSession) joins a DedicatedServer (PvP now ON) over MemTransport; the shell
     // mirrors the owner's replicated CombatEntity coarse Health into its own vitals each tick (the
