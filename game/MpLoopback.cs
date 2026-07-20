@@ -50,6 +50,7 @@ namespace UnturnedGodot
         public DeployableReplicaView Deploys { get; private set; }   // P1 --spconsume: server deployable/wire entities -> local nodes (null unless ConsumeDeployables)
         public GasStationServer GasStation { get; private set; }     // A2 --spconsume: authoritative per-station fuel tanks (the ExtractFuel choke drains them)
         public WorldItemReplicaView Items { get; private set; }      // P2 --spconsume: server world-item (drop/loot) entities -> local puppets (null unless ConsumeDeployables)
+        public StorageReplicaView Storage { get; private set; }      // A1 --spconsume: server container fixtures -> local StoreShelf nodes (null unless ConsumeDeployables; the SP-local SpawnMapContainers is gated off)
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
@@ -205,6 +206,12 @@ namespace UnturnedGodot
                 WorldItem.SuppressLocalVisual = true;
                 Items = new WorldItemReplicaView { Client = Client };
                 AddChild(Items);
+                // A1 (SAME --spconsume flag): the world-build containers are published by ContainerNetSync as
+                // server-owned fixtures; under consume the SP-local SpawnMapContainers is gated OFF (Main), so THIS
+                // view is the sole local materializer -- no double (SP StoreShelf node + puppet). It walks
+                // Client.Containers.All into ServerOwned StoreShelf nodes + drives their tier display off the digest.
+                Storage = new StorageReplicaView { Client = Client };
+                AddChild(Storage);
                 // set the pickup seam to route over the wire (verbatim from ClientWorldSession.SpawnShell:436).
                 // Null in default SP/loopback, so the direct SP path stays byte-identical; SETTING it makes F
                 // on a focused item PUPPET send PickupItemCommand (PlayerController.RequestPickupFocusedPuppet

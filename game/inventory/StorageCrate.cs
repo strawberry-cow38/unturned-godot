@@ -11,6 +11,7 @@ namespace UnturnedGodot
     {
         public Items Storage;   // this crate's own grid (independent of the player)
         public byte Width = 5, Height = 4;
+        public uint NetId = 0;   // A1 (MP): the server ContainerReplication entity this materialized crate mirrors (0 = SP-local); the F-open request addresses the server by this (B9)
 
         public static StorageCrate Spawn(Node parent, Vector3 pos, byte w = 5, byte h = 4)
         {

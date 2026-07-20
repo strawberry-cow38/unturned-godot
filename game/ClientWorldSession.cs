@@ -45,6 +45,7 @@ namespace UnturnedGodot
         public ZombiePuppets Puppets { get; private set; }        // C5: server zombies as interpolated puppets
         public WorldItemReplicaView Items { get; private set; }   // C5: replicated world items as static visuals
         public CropReplicaView Crops { get; private set; }        // A4: replicated crops as real CropNodes (the SOLE crop materializer on a joined client -- no client CropManager)
+        public StorageReplicaView Storage { get; private set; }   // A1: replicated world containers as ServerOwned StoreShelf nodes (the SOLE container materializer on a joined client -- no SP SpawnMapContainers)
         public DeployableReplicaView Deploys { get; private set; }   // Phase 6/8: replicated deployables/wires as real nodes (L1 tests reach the netId-stamped nodes through this)
         public VehicleReplicaView VehicleView { get; private set; }   // C6: the puppet registry -- ride mode chases these
         public PlayerController Shell { get; private set; }   // null until the first authoritative own-entity sample
@@ -153,6 +154,11 @@ namespace UnturnedGodot
             // growth), so this view is the only thing that renders crops. NEVER on MpLoopback (double-render).
             Crops = new CropReplicaView { Client = Client };
             AddChild(Crops);
+            // A1: the SOLE container materializer on a joined client -- the shell runs no SP SpawnMapContainers, so
+            // this view is the only thing that renders world containers (server owns the fixtures + loot). NEVER on a
+            // non-consuming loopback (double-render), mirroring Crops.
+            Storage = new StorageReplicaView { Client = Client };
+            AddChild(Storage);
             AddChild(new WorldClockView { Client = Client, DayNight = DayNight });
             _resourceView = new ResourceAliveView { Client = Client, Field = Resources };
             AddChild(_resourceView);

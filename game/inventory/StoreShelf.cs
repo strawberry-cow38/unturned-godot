@@ -18,6 +18,7 @@ namespace UnturnedGodot
         public bool ShowItems = true;        // open shelves show their loot on the tiers; solid props (fridge/wardrobe) don't
         public bool RenderMesh = true;       // FRONT instance draws the shared gondola mesh+label; the BACK instance (a 180deg twin) draws only its display
         public string LabelText = "Store Shelf";
+        public bool ServerOwned = false;    // A1 (MP): a REPLICATED shelf -- skip the local loot roll; its tier display rides the server's digest via ApplyDisplay
         readonly Dictionary<int, Node3D> _display = new();   // grid cell (gx<<8|gy) -> its item model; a STABLE slot per cell so taking items doesn't re-organize the shelf
         float _syncT;
         public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
@@ -103,13 +104,13 @@ namespace UnturnedGodot
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
-        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf", bool renderMesh = true)
+        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf", bool renderMesh = true, bool serverOwned = false)
         {
             var pr = Prof(meshName);
-            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label, RenderMesh = renderMesh,
+            var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label, RenderMesh = renderMesh, ServerOwned = serverOwned,
                                      // a DISPLAY shelf's grid mirrors its tiers 1:1 (UI pos == shelf pos); a SOLID container (fridge/counter/crate) has no visual mirror -> keep normal 8x6 storage
                                      Width = showItems ? (byte)pr.PerTier : (byte)8, Height = showItems ? (byte)pr.TierY.Length : (byte)6 };
-            parent.AddChild(s);
+            parent.AddChild(s);   // _Ready fires here (skips the local roll when serverOwned)
             s.GlobalTransform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
             return s;
         }
@@ -217,9 +218,27 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             base._Ready();   // Storage grid + BuildVisual (shelf mesh + label) + "crates" group
-            RollInto(Storage, MinItems, MaxItems, TableIndex);
-            if (ShowItems) SyncDisplay();   // open shelves show loot on tiers; solid props hold it hidden (F to see)
+            if (!ServerOwned) RollInto(Storage, MinItems, MaxItems, TableIndex);   // A1: a replicated shelf is stocked by the server -> its display arrives via ApplyDisplay(digest), not a local roll
+            if (ShowItems && !ServerOwned) SyncDisplay();   // open shelves show loot on tiers; solid props hold it hidden (F to see)
             GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {Storage.getItemCount()} items{(ShowItems ? " on tiers" : " (F-open)")}");
+        }
+
+        // A1 (MP): a REPLICATED shelf's tier display, driven by the server's display digest (each cell's index is the
+        // linear y*Width+x the server packed). Rebuild this shelf's own grid from the digest, then let SyncDisplay place
+        // the item models on the tiers -- reuses the whole SP display path. Only OPEN-tier (ShowItems) shelves show
+        // anything; a solid prop keeps an empty display (its real grid is fetched from the server on F-open -- B9).
+        public void ApplyDisplay(UnturnedGodot.Net.ContainerDisplayCell[] digest)
+        {
+            if (Storage == null) return;
+            Storage.loadSize(Width, Height);   // clear + resize to the fixture dims (quiet -- no onItemsResized)
+            if (digest != null && Width > 0)
+                foreach (var d in digest)
+                {
+                    byte x = (byte)(d.Cell % Width), y = (byte)(d.Cell / Width);
+                    var item = Assets.makeLoot(d.ItemId);
+                    if (item != null) Storage.addItem(x, y, d.Rot, item);
+                }
+            if (ShowItems) SyncDisplay();
         }
 
         // STABLE display: each grid cell maps to a FIXED shelf slot, so taking items never re-organizes the rest (master).

@@ -72,7 +72,9 @@ namespace UnturnedGodot.Net
             var e = new ContainerEntity
             {
                 NetIdValue = id.Value, KindId = kindId, Pos = PlayerReplication.Quantize(pos),
-                YawDegrees = yawDegrees, Width = width, Height = height, LastChangedTick = Stamp(tick),
+                // quantize yaw at store time (like Pos) so the server's StateHash matches the wire-quantized value
+                // the client reads back -- else relevancy/desync parity fails on the sub-degree rounding (WriteDegrees).
+                YawDegrees = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits), Width = width, Height = height, LastChangedTick = Stamp(tick),
             };
             _containers.Add(id, e);
             _removedAtTick.Remove(id.Value);

@@ -1678,7 +1678,7 @@ namespace UnturnedGodot
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
             AttachMpLoopback(res, gameDefault: _peiPlayable && !_bakeNav);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
-            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnEditorGasPump(); SpawnMapContainers(res); }   // stock the map with loot containers + configurable grid-power boxes + gas pumps
+            if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnEditorGasPump(); if (!_loopbackConsuming) SpawnMapContainers(res); }   // stock the map with loot containers (A1: the StorageReplicaView materializes them under a consuming loopback) + grid-power boxes + gas pumps
         }
 
         // Spawn the convert-on-load containers WorldBuilder flagged (map props -> lootable containers). Deferred to HERE,
@@ -2015,6 +2015,7 @@ namespace UnturnedGodot
         }
 
         bool _mpLoopback;   // --mploopback: legacy opt-in loopback for TEST HARNESSES (MP_PLAN §4 Phase 4); the GAME path defaults to it now (P6a)
+        bool _loopbackConsuming;   // A1: set by AttachMpLoopback when the loopback consumes -> the StorageReplicaView owns containers, so SpawnMapContainers (SP nodes) is gated off
         bool _spConsume;    // --spconsume (or UG_SPCONSUME=1): SP/MP-unify P1 legacy consume toggle -- only meaningful on a harness caller now (the GAME path consumes by default, P6a)
         bool _direct;       // --direct (or UG_DIRECT=1): SP/MP-unify P6a -- opt OUT of the consuming-loopback DEFAULT on the SP GAME entries -> pure direct SP path (reversible fallback + A/B)
 
@@ -2052,6 +2053,7 @@ namespace UnturnedGodot
                 WorldBuilder.SpawnFixturesDirect(this, res.Fixtures);
                 return;
             }
+            _loopbackConsuming = consume;   // A1: under consume the StorageReplicaView materializes containers -> gate the SP-local SpawnMapContainers off (no double)
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
                                       DayNight = res.DayNight, Resources = res.Resources,   // Phase 8 world-state syncs (§3.7)
                                       Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
