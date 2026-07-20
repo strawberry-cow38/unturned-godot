@@ -117,7 +117,7 @@ namespace UnturnedGodot
         //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
         public static readonly DeployableDef Battery = new()
         {
-            Id = 1450, Name = "Vehicle Battery", Model = "Battery_0", PlaceSound = "metalplacement",   // item 1450 world mesh (tools/extract_battery.py)
+            Id = 1450, Name = "Vehicle Battery", Model = "Battery_0", MeshEuler = new Vector3(180f, 0f, 180f), PlaceSound = "metalplacement",   // item 1450 world mesh (extract_battery.py); MeshEuler flips it upright + 180 yaw (master)
             Size = new Vector3(0.5f, 0.3f, 0.28f), Offset = 0.5f, Radius = 0.24f, Range = 4f, Health = 200f, Fuel = 0f,
             IsBattery = true, EnergyMax = 600f * 3600f, ChargeWatts = 4000f,   // 600 Wh (12V*50Ah car battery) in watt-SECONDS; charges/discharges at up to 4kW
             Ports = new[] {
@@ -168,6 +168,24 @@ namespace UnturnedGodot
         // (BarricadeManager.getRotation: Quaternion.Euler(0,yaw,0) * Quaternion.Euler(-90,0,0)).
         public static Basis StandBasis(float yawDeg) =>
             new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(StandRotX));
+
+        // Per-def model orientation fixup applied to the MESH itself (Vector3.Zero = none, the common case). The
+        // battery's ripped world mesh stands up UPSIDE-DOWN + 180 off (master), so it carries a correction here.
+        // UG_BATROT="x,y,z" (deg) overrides at runtime for tuning the battery; otherwise the def's MeshEuler.
+        public Vector3 MeshEuler;
+        public Basis MeshBasis()
+        {
+            Vector3 e = MeshEuler;
+            string env = System.Environment.GetEnvironmentVariable("UG_BATROT");
+            if (Id == 1450 && env != null)
+            {
+                var p = env.Split(',');
+                if (p.Length == 3 && float.TryParse(p[0], out float x) && float.TryParse(p[1], out float y) && float.TryParse(p[2], out float z))
+                    e = new Vector3(x, y, z);
+            }
+            return e == Vector3.Zero ? Basis.Identity
+                : Basis.FromEuler(new Vector3(Mathf.DegToRad(e.X), Mathf.DegToRad(e.Y), Mathf.DegToRad(e.Z)));
+        }
 
         // How far to lift the model origin so the STANDING mesh's base sits exactly on the surface point.
         // (Yaw about world-up doesn't change the vertical extent, so only the fixed X stand-up matters.) This

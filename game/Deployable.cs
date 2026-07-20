@@ -66,8 +66,30 @@ namespace UnturnedGodot
         {
             Mesh mesh = def.ProcBox ? new BoxMesh { Size = def.Size } : def.LoadMesh();   // splitter = a plain gray box, no .obj
             var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = def.MakeMaterial() };
-            localAabb = mesh != null ? mesh.GetAabb() : new Aabb();
+            Basis mrot = def.MeshBasis();   // per-def model orientation fixup (battery's ripped mesh stands up upside-down + 180 off); identity for the rest
+            if (mrot != Basis.Identity) mi.Basis = mrot;
+            localAabb = mesh != null ? new Transform3D(mrot, Vector3.Zero) * mesh.GetAabb() : new Aabb();   // rotated aabb -> ground-lift + collider stay correct
+            if (def.Id == 1450 && mesh != null)   // battery: a white rectangle label on the front face (master)
+            {
+                var lbl = new MeshInstance3D
+                {
+                    Mesh = new QuadMesh { Size = new Vector2(0.35f, 0.135f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = Colors.White, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                };
+                lbl.Position = EnvVec3("UG_LBLP", new Vector3(0f, 0.179f, 0.0375f));   // on the +Y face of the raw mesh, slightly proud
+                Vector3 eul = EnvVec3("UG_LBLR", new Vector3(-90f, 0f, 0f));           // face outward (+Z quad -> +Y)
+                lbl.Basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(eul.X), Mathf.DegToRad(eul.Y), Mathf.DegToRad(eul.Z)));
+                mi.AddChild(lbl);   // child of the mesh -> rides MeshBasis + the stand-up, stays on the face
+            }
             return mi;
+        }
+
+        // Parse a "x,y,z" env var (runtime tuning for the battery label) or return the default.
+        static Vector3 EnvVec3(string name, Vector3 dflt)
+        {
+            var e = System.Environment.GetEnvironmentVariable(name);
+            if (e != null) { var p = e.Split(','); if (p.Length == 3 && float.TryParse(p[0], out var x) && float.TryParse(p[1], out var y) && float.TryParse(p[2], out var z)) return new Vector3(x, y, z); }
+            return dflt;
         }
 
         // `surface` = the ground contact point (the raycast hit); the model is lifted so its base sits there.
