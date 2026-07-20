@@ -31,6 +31,7 @@ namespace UnturnedGodot
         {
             public PlayerController Body;
             public UnityEngine.Vector3 LastPos;   // last entity pos the body was placed at (moving = it changed)
+            public int FootNoiseTicks;            // MP hearing: per-avatar throttle for the server-side footstep-noise emit (20 ticks = the SP 0.4 s cadence)
         }
         readonly Dictionary<ushort, Tracked> _tracked = new();
         readonly List<ushort> _stale = new();
@@ -81,10 +82,24 @@ namespace UnturnedGodot
 
                 // dressing from the adopted claim: the hitbox capsule must match the CLAIMED stance (a
                 // crouched player is hit as crouched) and the zombie stealth radius reads stance+moving
-                if (_server.PlayerHost.TryGetDrivenState(e.OwnerPlayerId, out var st))
-                    t.Body.NetHoldPose(st.Stance, moved);
-                else
-                    t.Body.NetHoldPose(EPlayerStance.STAND, moved);
+                EPlayerStance stance = _server.PlayerHost.TryGetDrivenState(e.OwnerPlayerId, out var st) ? st.Stance : EPlayerStance.STAND;
+                t.Body.NetHoldPose(stance, moved);
+
+                // MP hearing (VoX 2026-07-20): a moving remote player must make FOOTSTEP noise the SERVER's zombie
+                // AI can hear. The SP emit (PlayerController Phase-3 hearing) lives in the movement tail that never
+                // runs on this NetHold avatar, so re-derive it here from the adopted stance + moved flag, throttled
+                // per-avatar to the SP 0.4 s cadence (20 ticks @ 50 Hz). Skip a DRIVER (a seat teleport moves the
+                // entity; the car isn't making footsteps), and the loudness follows the same stance/sneaky curve as
+                // SP (sprint loud .. prone near-silent, quieted by SNEAKYBEAKY). Pre-fix, footsteps were emitted
+                // only on the client's local tree, so a dedicated server's zombies only ever aggro'd on SIGHT.
+                if (t.FootNoiseTicks > 0) t.FootNoiseTicks--;
+                if (moved && t.FootNoiseTicks <= 0 && !_server.VehicleHost.IsDriver(e.OwnerPlayerId))
+                {
+                    t.FootNoiseTicks = 20;
+                    float sneaky = _server.Skills.TryGet(e.OwnerPlayerId, out var se) ? se.Skills.SneakyBeakyNoiseMultiplier() : 1f;
+                    float loud = StealthDetection.Radius(stance, true) * sneaky;
+                    if (loud > 2f) SoundBus.Emit(t.Body.GetTree(), t.Body.GlobalPosition, loud);
+                }
             }
 
             // entities gone (peer disconnected) or bodies freed externally -> retire the follower
