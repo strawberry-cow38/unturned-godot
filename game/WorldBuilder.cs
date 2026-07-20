@@ -36,6 +36,7 @@ namespace UnturnedGodot
         public ZombieField Zombies;        // Playable/Dedicated (and only when zombies are enabled; C4 populated the server)
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
+        public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
         public DirectionalLight3D Sun;     // world sun + env (C3: the client session LinkWorldLightings its late-spawned shell)
         public Godot.Environment Env;
         public Vector3 VehicleAim;         // first static service vehicle, for the legacy demo cam
@@ -254,8 +255,15 @@ namespace UnturnedGodot
             // P3 (Client mode): holiday-tagged placements are NOT decided by this machine's clock -- they
             // defer, and result.ApplyHoliday places the ones matching the SERVER's holiday at join time
             // (the same PlaceObject body, so parity with an inline build is by construction).
-            var deferredHoliday = mode == WorldMode.Client ? new System.Collections.Generic.List<(string[] p, string name, string holiday)>() : null;
-            void PlaceObject(string[] p, string name)
+            var deferredHoliday = mode == WorldMode.Client ? new System.Collections.Generic.List<(string[] p, string name, string holiday, int destIndex)>() : null;
+            // DESTRUCTIBLE PROPS (rubble): a placed object whose GUID is in the rubble catalog gets a
+            // deterministic index in placements.txt SCAN order (assigned below, before the holiday/container
+            // branch, so server + client agree even though the client defers holiday props). The DestructibleField
+            // binds each built one's nodes; the reserved index space (destN) is content-hash-matched across peers.
+            var rubbleCat = DestructibleField.LoadCatalog();
+            var destField = new DestructibleField();
+            int destN = 0;
+            void PlaceObject(string[] p, string name, int destIndex)
             {
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
                 if (mesh == null) return;
@@ -270,8 +278,9 @@ namespace UnturnedGodot
                 // term is identity), so the whole map except the handful of rolled props is byte-identical -- no regression.
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
-                root.AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos),
-                    VisibilityRangeEnd = 320f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });   // individual props already frustum-cull behind the player; add a distance cutoff (master)
+                var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos),
+                    VisibilityRangeEnd = 320f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
+                root.AddChild(mainMi);
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
                 if (!folCache.TryGetValue(name, out var fmesh))
                 {
@@ -279,8 +288,10 @@ namespace UnturnedGodot
                     fmesh = System.IO.File.Exists(fp) ? ObjMesh.Load(fp) : null;
                     folCache[name] = fmesh;
                 }
-                if (fmesh != null) root.AddChild(new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
-                    VisibilityRangeEnd = 240f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });   // leaves cull closer
+                MeshInstance3D folMi = null;
+                if (fmesh != null) { folMi = new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
+                    VisibilityRangeEnd = 240f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // leaves cull closer
+                    root.AddChild(folMi); }
                 // gas pumps (A2): every Gas_Pump_0 is a 750W-consumer fuel PUMP over a shared station tank. RECORD
                 // it in EVERY mode (the mesh + collider below stay byte-identical); the caller realizes it -- the
                 // dedicated / consuming-loopback server ServerPlaces it into the deployable graph (so it rides
@@ -296,6 +307,7 @@ namespace UnturnedGodot
                 // a local node (WorldBuilder.SpawnFixturesDirect). yaw = 180-ey, the object's placement yaw.
                 if (name == "Circuit_0")
                     result.Fixtures.Add(new FixtureRecord { DefId = DeployableDef.GridSource.Id, Pos = gpos, YawDegrees = 180f - ey, Basis = basis });
+                StaticBody3D destBody = null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
                     if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
@@ -312,7 +324,17 @@ namespace UnturnedGodot
                         // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
+                        destBody = body;   // the collider a server bullet/melee ray tags for destructible damage
                     }
+                }
+                // destructible prop: bind this placement's live nodes to its deterministic index + tag the
+                // collider so the server hit resolution (GodotWorldRay) can route damage to it. Needs a collider
+                // (nothing to shoot otherwise); a no-collider mode just leaves the slot reserved+indestructible.
+                if (destIndex >= 0 && destBody != null && rubbleCat.TryGetValue(p[0].ToLowerInvariant(), out var rub))
+                {
+                    destBody.SetMeta(DestructibleField.MetaKey, destIndex);
+                    var mis = folMi != null ? new[] { mainMi, folMi } : new[] { mainMi };
+                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks);
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
@@ -336,14 +358,20 @@ namespace UnturnedGodot
             {
                 var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 10 || !g2m.TryGetValue(p[0], out var name)) continue;
+                // reserve the destructible index HERE (before the holiday/container branch) so every peer assigns
+                // the same index to the same placement regardless of holiday deferral -- the wire id must agree.
+                int destIdx = rubbleCat.ContainsKey(p[0].ToLowerInvariant()) ? destN++ : -1;
                 if (holidayOf.TryGetValue(p[0], out var ph))
                 {
-                    if (deferredHoliday != null) { deferredHoliday.Add((p, name, ph)); continue; }   // P3: the SERVER's holiday decides, at join (ApplyHoliday)
-                    if (ph != activeHoliday) { holidaySkipped++; continue; }                          // out-of-season holiday prop
+                    if (deferredHoliday != null) { deferredHoliday.Add((p, name, ph, destIdx)); continue; }   // P3: the SERVER's holiday decides, at join (ApplyHoliday)
+                    if (ph != activeHoliday) { holidaySkipped++; continue; }                          // out-of-season holiday prop (index stays reserved+unbuilt)
                 }
-                if (TryContainer(p)) continue;   // registered map prop -> lootable container (SP), skip the decoration mesh
-                PlaceObject(p, name);
+                if (TryContainer(p)) continue;   // registered map prop -> lootable container (SP), skip the decoration mesh (no destructible overlap)
+                PlaceObject(p, name, destIdx);
             }
+            destField.SetCount(destN);   // reserve the whole deterministic index space (built + unbuilt holiday slots)
+            result.Destructibles = destField;
+            if (destN > 0) GD.Print($"[rubble] {destN} destructible placements reserved ({destField.InstanceCount} slots)");
             if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
@@ -650,8 +678,8 @@ namespace UnturnedGodot
                     holidayApplied = true;
                     int before = placed;
                     if (deferredHoliday != null)
-                        foreach (var (p, name, ph) in deferredHoliday)
-                            if (ph == holiday) PlaceObject(p, name);
+                        foreach (var (p, name, ph, destIdx) in deferredHoliday)
+                            if (ph == holiday) PlaceObject(p, name, destIdx);
                     if (rsfDeferred != null && GodotObject.IsInstanceValid(rsfDeferred)) rsfDeferred.LoadResources(holiday);
                     GD.Print($"[WORLD] client holiday content applied: {holiday} ({placed - before} props of {deferredHoliday?.Count ?? 0} deferred, + resources)");
                 };

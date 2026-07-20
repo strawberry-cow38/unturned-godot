@@ -31,6 +31,7 @@ namespace UnturnedGodot.Net
         public const byte SystemVitals = 13;        // owner-only fine vitals (food/water/stamina/infection); resolves the long-reserved SystemId 13 (B5). PlayerVitalsReplication.cs
         public const byte SystemContainers = 14;    // world containers/store-shelves as replicated fixtures (A1). ContainerReplication.cs
         public const byte SystemAnimals = 15;       // wildlife (deer/pig/cow) puppets (A5). AnimalReplication.cs
+        public const byte SystemDestructibles = 16; // destructible props (rubble) alive-bitmap keyed by deterministic placement index -- the ResourceReplication(12) shape for objects (DestructibleReplication.cs). IN EnableSyncCheck (authored, cross-checkable).
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -101,6 +102,8 @@ namespace UnturnedGodot.Net
         public const byte EventVehicleRecov = 29;      // Part A: server rollback of an out-of-envelope predicted driver (retail tellRecov, U3 InteractableVehicle.cs:2095-2109) -- ReliableOrdered, driver-unicast
         public const byte EventMisprediction = 30;     // C3 rewind+replay correction fact -- RETIRED by mp-clientauth-foot (wire v9): with client-authoritative on-foot movement there is no server sim of the owner to mispredict against. Id never reused (append-only registry).
         public const byte EventPlayerRecov = 31;       // mp-clientauth-foot (wire v9): server rollback of an out-of-envelope on-foot claim (the VehicleRecov 29 shape for walkers) -- ReliableOrdered, owner-unicast; client teleports to the last-good pos, echoes the counter in its state stream
+        public const byte EventObjectDestroyed = 32;   // destructible props (rubble): a placed object's alive-bit flipped off by index -- immediacy for the break fx (the EventResourceHarvested 27 shape for objects)
+        public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
     }
 
     /// <summary>

@@ -20,6 +20,7 @@ namespace UnturnedGodot
         public SimDriver Driver;          // the world's sim spine
         public DayNightCycle DayNight;    // Phase 8 (§3.7): the world clock this session publishes
         public ResourceField Resources;   // Phase 8 (§3.7): the resource alive-bitmap index space
+        public DestructibleField Destructibles;   // rubble alive-bitmap index space (destructible props)
 
         // SP/MP-unify P1 (pattern-setter, --spconsume): when set, the LOCAL player stops OWNING deployables
         // via the direct SP path and instead CONSUMES them as server replicas -- exactly how the MP client
@@ -60,6 +61,7 @@ namespace UnturnedGodot
         public CropNetSync CropSync { get; private set; }
         public ContainerNetSync ContainerSync { get; private set; }   // A1: publishes world-build containers as server-owned fixtures + display digests
         public ResourceNetSync ResourceSync { get; private set; }
+        public DestructibleNetSync DestructibleSync { get; private set; }
 
         public override void _Ready()
         {
@@ -313,15 +315,18 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ContainerSync.Tick(), "net.containers.publish"));
             ResourceSync = new ResourceNetSync(Server, Resources);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ResourceSync.Tick(), "net.resources.sync"));
+            DestructibleSync = new DestructibleNetSync(Server, Destructibles);   // seed health/respawn + mirror rubble alive-bits
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => DestructibleSync.Tick(), "net.destructibles.sync"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }
 
         static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);   // Godot -> Unity vector for the Send* signatures (mirrors ClientWorldSession:76)
 
-        bool GodotWorldRay(UnityEngine.Vector3 from, UnityEngine.Vector3 to, out UnityEngine.Vector3 point)
+        bool GodotWorldRay(UnityEngine.Vector3 from, UnityEngine.Vector3 to, out UnityEngine.Vector3 point, out int destructibleIndex)
         {
             point = default;
+            destructibleIndex = -1;
             var world = GetViewport()?.World3D;
             if (world == null) return false;
             var q = PhysicsRayQueryParameters3D.Create(new Vector3(from.x, from.y, from.z), new Vector3(to.x, to.y, to.z), (1u << 0) | (1u << 6));
@@ -329,6 +334,8 @@ namespace UnturnedGodot
             if (hit.Count == 0) return false;
             var p = (Vector3)hit["position"];
             point = new UnityEngine.Vector3(p.X, p.Y, p.Z);
+            if (hit["collider"].As<GodotObject>() is StaticBody3D body && body.HasMeta(DestructibleField.MetaKey))
+                destructibleIndex = (int)body.GetMeta(DestructibleField.MetaKey);
             return true;
         }
 

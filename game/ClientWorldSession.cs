@@ -30,6 +30,7 @@ namespace UnturnedGodot
         public Godot.Environment Env;
         public DayNightCycle DayNight;              // the client world's clock (WorldBuildResult.DayNight) -- C5: WorldClockView anchors it on the replicated clock
         public ResourceField Resources;             // the client world's trees/rocks (WorldBuildResult.Resources) -- C5: ResourceAliveView mirrors the alive-bitmap
+        public DestructibleField Destructibles;     // the client world's destructible props (WorldBuildResult.Destructibles) -- DestructibleAliveView mirrors the rubble alive-bitmap
         public Terrain Terr;                        // the client world's terrain (WorldBuildResult.Terr) -- C6: terrain-snaps a slope vehicle-exit (§7 risk 6)
         public IClientTransport TransportOverride;  // tests inject MemClientTransport; null = real UDP to Host:Port
         // P3 holiday parity (wire v6): wired by Main.BuildClient to WorldBuildResult.ApplyHoliday --
@@ -39,6 +40,7 @@ namespace UnturnedGodot
         public System.Action<string> ApplyServerHoliday;
         bool _holidayApplied;
         ResourceAliveView _resourceView;
+        DestructibleAliveView _destructibleView;
 
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
@@ -167,6 +169,8 @@ namespace UnturnedGodot
             AddChild(new WorldClockView { Client = Client, DayNight = DayNight });
             _resourceView = new ResourceAliveView { Client = Client, Field = Resources };
             AddChild(_resourceView);
+            _destructibleView = new DestructibleAliveView { Client = Client, Field = Destructibles };
+            AddChild(_destructibleView);
             AddChild(new ProjectileReplicaView { Client = Client });   // D1: server-flown grenades render while fused
 
             // D1 combat facts -> render consumers (PEI_COMBAT_PLAN §3 D1). All read-only fx/HUD -- nothing
@@ -262,6 +266,7 @@ namespace UnturnedGodot
                 _holidayApplied = true;
                 ApplyServerHoliday?.Invoke(Client.ServerHoliday ?? "");
                 _resourceView?.Refresh();
+                _destructibleView?.Refresh();   // holiday destructibles just built -> re-apply any pre-join breaks
             }
             if (Shell == null || !IsInstanceValid(Shell))
             {

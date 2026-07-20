@@ -7,7 +7,10 @@ namespace UnturnedGodot.Net
 {
     /// <summary>Static-geometry raycast the host world supplies (the dedicated/loopback Godot world wires
     /// its DirectSpaceState here so server bullets stop at buildings). Null = open field (the L0 default).</summary>
-    public delegate bool CombatWorldRay(Vector3 from, Vector3 to, out Vector3 hitPoint);
+    // destructibleIndex: if the world hit is a destructible prop's collider, its deterministic placement
+    // index (the DestructibleReplication wire id); -1 for plain terrain/buildings. Lets a server bullet route
+    // damage into ServerDestructibles at the same hit that stops it.
+    public delegate bool CombatWorldRay(Vector3 from, Vector3 to, out Vector3 hitPoint, out int destructibleIndex);
 
     /// <summary>
     /// The server-side owner of zombie BRAINS (game: ZombieNetSync routing to the real ZombieController;
@@ -27,6 +30,7 @@ namespace UnturnedGodot.Net
     {
         public float PlayerDamage = 40f;        // Eaglefire Player_Damage
         public float ZombieDamage = 99f;        // Eaglefire Zombie_Damage (flat vs zombies, like the SP StepBullets path)
+        public float ObjectDamage = 25f;        // Eaglefire Object_Damage -- vs destructible props (rubble)
         public float HeadMult = 3.0f;           // the NetServer.Hitscan zone table (head/torso/leg)
         public float TorsoMult = 1.0f;
         public float LegMult = 0.6f;
@@ -44,6 +48,7 @@ namespace UnturnedGodot.Net
     {
         public float PlayerDamage = 40f;
         public float ZombieDamage = 50f;        // Military Knife Zombie_Damage
+        public float ObjectDamage = 40f;        // vs destructible props (rubble) -- an axe/knife breaks small props in a few swings
         public float Range = 1.75f;
         public float StrongMult = 1.5f;         // .dat Strength on a strong swing
         public int CooldownTicks = 23;          // ~0.45 s weak-swing cadence
@@ -105,6 +110,9 @@ namespace UnturnedGodot.Net
 
         public IZombieHost ZombieHost;
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
+        // destructible props (rubble): (index, amount, tick) -> destroyed? Set by the host to ServerDestructibles.DamageObject.
+        // Null on the L0 default (no world = nothing destructible to hit).
+        public Func<int, float, long, bool> DamageObject;
         public Func<float, float, float> GroundHeight;        // (x,z) -> ground y for grenade bounces; null = y 0
 
         /// <summary>P3a (SP/MP-unify) respawn-reposition seam: a client-authoritative owner's entity is
@@ -323,6 +331,7 @@ namespace UnturnedGodot.Net
                 ZombieReplication.ZombieEntity hitZombie = null;
                 float hitRelY = 0f, hitTop = 0f;
                 Vector3 worldPoint = default;
+                int hitDestructible = -1;
 
                 if (PvPEnabled)
                     foreach (var pe in _players.All)
@@ -340,11 +349,11 @@ namespace UnturnedGodot.Net
                         if (SegmentHitsCylinder(b.Pos, next, ze.Pos, ZombieZoneRadius, top, out float t, out float relY) && t < bestT)
                         { bestT = t; hitKind = 2; hitZombie = ze; hitRelY = relY; hitTop = top; }
                     }
-                if (WorldRay != null && WorldRay(b.Pos, next, out var wp))
+                if (WorldRay != null && WorldRay(b.Pos, next, out var wp, out int wDest))
                 {
                     float segLen = (next - b.Pos).magnitude;
                     float t = segLen > 1e-4f ? (wp - b.Pos).magnitude / segLen : 0f;
-                    if (t < bestT) { bestT = t; hitKind = 3; worldPoint = wp; }
+                    if (t < bestT) { bestT = t; hitKind = 3; worldPoint = wp; hitDestructible = wDest; }
                 }
 
                 if (hitKind != 0)
@@ -383,6 +392,9 @@ namespace UnturnedGodot.Net
                             break;
                         }
                         case 3:
+                            // a destructible prop's collider: whittle its health; the break fx rides the
+                            // replicated ObjectDestroyed event (not this local impact), so no double-fx.
+                            if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage, tick);
                             BroadcastImpact(point, ImpactSurface.World);
                             Diag.BulletHitsWorld++;
                             break;
@@ -461,6 +473,14 @@ namespace UnturnedGodot.Net
                     ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed);
                     SendHitConfirm(pm.Attacker, pm.Seq, HitTargetKind.Player, bestPlayer, dmg, killed, false);
                 }
+                else if (WorldRay != null && DamageObject != null)
+                {
+                    // no fighter in the cone -> a short forward ray can still land on a destructible prop's
+                    // collider (fence/sign/billboard). The break fx rides the replicated ObjectDestroyed event.
+                    var to = origin + fwd * reach;
+                    if (WorldRay(origin, to, out _, out int mDest) && mDest >= 0)
+                        DamageObject(mDest, DefaultMelee.ObjectDamage * mult, tick);
+                }
             }
         }
 
@@ -526,7 +546,7 @@ namespace UnturnedGodot.Net
         {
             if (WorldRay == null) return false;
             var up = new Vector3(0f, 0.8f, 0f);   // chest height, like the SP ExplosionBlocked LoS ray
-            return WorldRay(a + up, b + up, out _);
+            return WorldRay(a + up, b + up, out _, out _);
         }
 
         void ApplyPlayerDamage(ushort victim, float damage, ushort attacker, long tick, out bool killed)

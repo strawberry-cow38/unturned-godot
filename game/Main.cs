@@ -2218,7 +2218,7 @@ namespace UnturnedGodot
             }
             _loopbackConsuming = consume;   // A1: under consume the StorageReplicaView materializes containers -> gate the SP-local SpawnMapContainers off (no double)
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
-                                      DayNight = res.DayNight, Resources = res.Resources,   // Phase 8 world-state syncs (§3.7)
+                                      DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // Phase 8 world-state syncs (§3.7) + rubble
                                       Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
                                       Containers = res.Containers,                          // A1: container manifest -> ContainerNetSync publishes server-owned fixtures
                                       ConsumeDeployables = consume });                      // P6a: true by default on the GAME path
@@ -2709,7 +2709,7 @@ namespace UnturnedGodot
                     noZombies: _noZombies || System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOZOMBIES") == "1",
                     syncLoad: true, bakeNav: false, activeHoliday: holiday);
                 AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
-                    DayNight = res.DayNight, Resources = res.Resources, MapRoot = _mapRoot,          // Phase 8: tick-derived clock + resource bitmap + nav-pocket relevancy cells (§3.7/§2.6)
+                    DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles, MapRoot = _mapRoot,   // Phase 8: tick-derived clock + resource bitmap + rubble + nav-pocket relevancy cells (§3.7/§2.6)
                     Fixtures = res.Fixtures,                                                         // A3: server-place the Circuit_0 grid-power sources into the deployable graph (mains OFF)
                     Containers = res.Containers,                                                     // A1: container manifest -> ContainerNetSync publishes server-owned fixtures
                     RemoteAvatars = true,                                                            // C2: remote peers get real avatar bodies (real spawns/collision/jump) on this world
@@ -2774,7 +2774,7 @@ namespace UnturnedGodot
                 if (_playableClient)   // --connect= (C3): the predicted first-person shell -- its camera is the view once the join snapshot seeds the spawn
                 {
                     AddChild(new ClientWorldSession { Host = _connectHost, Port = PortEnv(), Driver = res.Sim, Sun = res.Sun, Env = res.Env,
-                                                      DayNight = res.DayNight, Resources = res.Resources,   // C5: the world-state views drive these
+                                                      DayNight = res.DayNight, Resources = res.Resources, Destructibles = res.Destructibles,   // C5: the world-state views drive these + rubble
                                                       Terr = res.Terr,                                       // C6: terrain-snaps the vehicle-exit spot (§7 risk 6)
                                                       ApplyServerHoliday = res.ApplyHoliday });              // P3: the deferred holiday content builds with the SERVER's holiday at Accept
                     GD.Print($"[CLIENT] real world up ({System.IO.Path.GetFileName(_mapRoot)}); connecting to {_connectHost}:{PortEnv()} -- the local shell spawns at the server-adopted spawn, predicted + reconciled");

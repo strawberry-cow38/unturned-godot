@@ -43,6 +43,9 @@ namespace UnturnedGodot.Net
         public readonly PlayerVitalsReplication Vitals = new PlayerVitalsReplication();
         public readonly ContainerReplication Containers = new ContainerReplication();
         public readonly AnimalReplication Animals = new AnimalReplication();
+        // destructible props (rubble): the alive-bitmap + the server-only health/respawn authority
+        public readonly DestructibleReplication Destructibles = new DestructibleReplication();
+        public readonly ServerDestructibles DestructibleHost;
         public readonly ServerVehicles VehicleHost;
         public readonly ServerPlayerAuthority PlayerHost;   // mp-clientauth-foot (v9): on-foot claims -> envelope -> ServerDrive adopt
         public readonly ServerCombat Combat;
@@ -72,10 +75,13 @@ namespace UnturnedGodot.Net
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
-                                                                      Vitals, Containers, Animals });   // wave 2 (v11): SystemId 13/14/15 ascending; EXCLUDED from EnableSyncCheck
+                                                                      Vitals, Containers, Animals, Destructibles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16) last, ascending
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
+            // destructible props (rubble): health/respawn authority; combat routes an object hit into it
+            DestructibleHost = new ServerDestructibles(Destructibles, BroadcastEvent);
+            Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
                                                   Crops, Resources, Vitals);
@@ -215,7 +221,7 @@ namespace UnturnedGodot.Net
             Composer.EnableSyncCheck(intervalTicks,
                 ReplicationIds.SystemPlayers, ReplicationIds.SystemPlayerCombat, ReplicationIds.SystemProjectiles,
                 ReplicationIds.SystemDeployables, ReplicationIds.SystemVehicles, ReplicationIds.SystemWorldClock,
-                ReplicationIds.SystemCrops, ReplicationIds.SystemResources);
+                ReplicationIds.SystemCrops, ReplicationIds.SystemResources, ReplicationIds.SystemDestructibles);
         }
 
         /// <summary>Reliable event to every connected peer (the event plane, §2.3).</summary>
@@ -398,6 +404,8 @@ namespace UnturnedGodot.Net
         public readonly PlayerVitalsReplication Vitals = new PlayerVitalsReplication();
         public readonly ContainerReplication Containers = new ContainerReplication();
         public readonly AnimalReplication Animals = new AnimalReplication();
+        // destructible props (rubble): client mirrors the alive-bitmap; DestructibleAliveView hides/restores nodes
+        public readonly DestructibleReplication Destructibles = new DestructibleReplication();
         public readonly SnapshotApplier Applier;
         public readonly EventRegistry Events = new EventRegistry();
         public readonly ClientPrediction Prediction = new ClientPrediction();
@@ -446,6 +454,9 @@ namespace UnturnedGodot.Net
         public event System.Action<CropHarvestedEvent> CropHarvested;
         public event System.Action<ResourceHarvestedEvent> ResourceHarvested;
         public event System.Action<ResourceRespawnedEvent> ResourceRespawned;
+        // destructible props (rubble): a placed object broke / respawned (already applied to the bitmap when these fire)
+        public event System.Action<ObjectDestroyedEvent> ObjectDestroyed;
+        public event System.Action<ObjectRestoredEvent> ObjectRestored;
 
         /// <summary>Hardening Part C: a confirmed replica-vs-server StateHash mismatch (the server must
         /// have EnableSyncCheck on; silent otherwise). The game shell surfaces this to the player.</summary>
@@ -460,7 +471,7 @@ namespace UnturnedGodot.Net
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                     Skills, Deployables, Inventories, WorldItems,
                                                                     Vehicles, Clock, Crops, Resources,
-                                                                    Vitals, Containers, Animals });   // wave 2 (v11): SystemId 13/14/15 ascending, symmetric with the server Composer
+                                                                    Vitals, Containers, Animals, Destructibles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16), symmetric with the server Composer
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
@@ -524,6 +535,11 @@ namespace UnturnedGodot.Net
                 e => { Resources.ApplyHarvested(e, Applier.LastAppliedServerTick); ResourceHarvested?.Invoke(e); });
             Events.Register<ResourceRespawnedEvent>(ReplicationIds.EventResourceRespawned, ResourceRespawnedEvent.TryRead,
                 e => { Resources.ApplyRespawned(e, Applier.LastAppliedServerTick); ResourceRespawned?.Invoke(e); });
+            // destructible props (rubble): apply the alive-bit flip straight onto the bitmap, then surface for the break/respawn fx + node hide
+            Events.Register<ObjectDestroyedEvent>(ReplicationIds.EventObjectDestroyed, ObjectDestroyedEvent.TryRead,
+                e => { Destructibles.ApplyDestroyed(e, Applier.LastAppliedServerTick); ObjectDestroyed?.Invoke(e); });
+            Events.Register<ObjectRestoredEvent>(ReplicationIds.EventObjectRestored, ObjectRestoredEvent.TryRead,
+                e => { Destructibles.ApplyRestored(e, Applier.LastAppliedServerTick); ObjectRestored?.Invoke(e); });
         }
 
         public NetSessionState State => Session.State;

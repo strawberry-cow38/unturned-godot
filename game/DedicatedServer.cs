@@ -21,6 +21,7 @@ namespace UnturnedGodot
         public Terrain Terr;                         // optional (WorldBuildResult.Terr): grounds server grenade bounces on real terrain
         public DayNightCycle DayNight;               // optional (WorldBuildResult.DayNight): tick-derived day-night (§3.7)
         public ResourceField Resources;              // optional (WorldBuildResult.Resources): the §3.7 alive-bitmap index space
+        public DestructibleField Destructibles;      // optional (WorldBuildResult.Destructibles): the rubble alive-bitmap index space
         public string MapRoot;                       // optional: loads the 19 nav pockets as relevancy cells (§2.6)
         public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
         public bool SurvivalDrain = false;           // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. OFF by default = SP byte-identical coarse-HP path (strawberry runs survival off); flip on for a survival server.
@@ -39,6 +40,7 @@ namespace UnturnedGodot
         public CropNetSync CropSync { get; private set; }
         public ContainerNetSync ContainerSync { get; private set; }   // A1: publishes world-build containers as server-owned fixtures + display digests
         public ResourceNetSync ResourceSync { get; private set; }
+        public DestructibleNetSync DestructibleSync { get; private set; }
 
         long _lastStatusTick;
 
@@ -177,14 +179,17 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ContainerSync.Tick(), "net.containers.publish"));
             ResourceSync = new ResourceNetSync(Server, Resources);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ResourceSync.Tick(), "net.resources.sync"));
+            DestructibleSync = new DestructibleNetSync(Server, Destructibles);   // seed health/respawn + mirror rubble alive-bits
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => DestructibleSync.Tick(), "net.destructibles.sync"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }
 
         // Server-side bullet/LoS raycast against static world geometry (terrain/buildings on layer 0,
         // see-through props on 6) -- runs inside the SimRoot's _PhysicsProcess, where space access is safe.
-        bool GodotWorldRay(UnityEngine.Vector3 from, UnityEngine.Vector3 to, out UnityEngine.Vector3 point)
+        bool GodotWorldRay(UnityEngine.Vector3 from, UnityEngine.Vector3 to, out UnityEngine.Vector3 point, out int destructibleIndex)
         {
             point = default;
+            destructibleIndex = -1;
             var world = GetViewport()?.World3D;
             if (world == null) return false;
             var q = PhysicsRayQueryParameters3D.Create(new Vector3(from.x, from.y, from.z), new Vector3(to.x, to.y, to.z), (1u << 0) | (1u << 6));
@@ -192,6 +197,8 @@ namespace UnturnedGodot
             if (hit.Count == 0) return false;
             var p = (Vector3)hit["position"];
             point = new UnityEngine.Vector3(p.X, p.Y, p.Z);
+            if (hit["collider"].As<GodotObject>() is StaticBody3D body && body.HasMeta(DestructibleField.MetaKey))
+                destructibleIndex = (int)body.GetMeta(DestructibleField.MetaKey);
             return true;
         }
 

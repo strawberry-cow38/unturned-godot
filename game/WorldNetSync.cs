@@ -232,4 +232,43 @@ namespace UnturnedGodot
                     _field.SetAlive(i, _server.Resources.IsAlive(i));
         }
     }
+
+    /// <summary>
+    /// Destructible props (rubble), server side: seeds the DestructibleReplication bitmap + the
+    /// ServerDestructibles health/respawn authority from the world's deterministic index space at boot
+    /// (each built slot's Rubble_Health + Rubble_Reset), ticks the respawn clock, and mirrors authoritative
+    /// alive-bit flips back onto the DestructibleField (mesh hide + collider off). Combat routes an object
+    /// hit into DestructibleHost.DamageObject (wired in NetWorldServer's ctor), which flips the bit here.
+    /// </summary>
+    public sealed class DestructibleNetSync
+    {
+        readonly NetWorldServer _server;
+        readonly DestructibleField _field;
+        long _appliedVersion;
+
+        public DestructibleNetSync(NetWorldServer server, DestructibleField field)
+        {
+            _server = server;
+            _field = field;
+            if (field != null)
+            {
+                _server.DestructibleHost.ServerInit(field.InstanceCount, server.Session.CurrentTick);
+                for (int i = 0; i < field.InstanceCount; i++)
+                    if (field.MaxHealth(i) > 0f)
+                        _server.DestructibleHost.SetMeta(i, field.MaxHealth(i), field.ResetTicks(i));
+                _appliedVersion = _server.Destructibles.Version;
+            }
+        }
+
+        public void Tick()
+        {
+            _server.DestructibleHost.Tick(_server.Session.CurrentTick);   // respawn any prop whose Rubble_Reset elapsed
+            if (_field == null || _server.Destructibles.Version == _appliedVersion) return;
+            _appliedVersion = _server.Destructibles.Version;
+            int n = Mathf.Min(_server.Destructibles.Count, _field.InstanceCount);
+            for (int i = 0; i < n; i++)
+                if (_field.IsAlive(i) != _server.Destructibles.IsAlive(i))
+                    _field.SetAlive(i, _server.Destructibles.IsAlive(i));
+        }
+    }
 }

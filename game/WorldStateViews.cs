@@ -69,4 +69,33 @@ namespace UnturnedGodot
                     Field.SetAlive(i, Client.Resources.IsAlive(i));
         }
     }
+
+    /// <summary>
+    /// Mirrors the replicated destructible-props alive-bitmap (DestructibleReplication 16) onto the client
+    /// world's DestructibleField: a server-broken prop loses its mesh(es) AND its collider locally; a
+    /// respawn restores both. Same Version-poll pattern as ResourceAliveView -- snapshots and the
+    /// Destroyed/Restored events both bump Destructibles.Version, so one poll covers join/delta/event alike.
+    /// </summary>
+    public partial class DestructibleAliveView : Node
+    {
+        public NetWorldClient Client;
+        public DestructibleField Field;
+
+        long _appliedVersion;
+
+        /// <summary>The client's DestructibleField loads LATE for holiday props (with the server's holiday, at
+        /// Accept) -- re-apply the whole bitmap so props broken before the join don't stay visually intact.</summary>
+        public void Refresh() => _appliedVersion = -1;
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (Client == null || Field == null) return;
+            if (Client.Destructibles.Version == _appliedVersion) return;
+            _appliedVersion = Client.Destructibles.Version;
+            int n = Mathf.Min(Client.Destructibles.Count, Field.InstanceCount);
+            for (int i = 0; i < n; i++)
+                if (Field.IsAlive(i) != Client.Destructibles.IsAlive(i))
+                    Field.SetAlive(i, Client.Destructibles.IsAlive(i));
+        }
+    }
 }
