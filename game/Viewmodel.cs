@@ -689,8 +689,8 @@ namespace UnturnedGodot
             // blendedViewmodelSwayMultiplier eases toward the sway target (1 hip -> 0.1 aiming) at 16/s.
             _blendedSway = Mathf.Lerp(_blendedSway, Mathf.Lerp(1f, 0.1f, _aimAlpha), 16f * (float)delta);
             // stance-driven bob frequency (SPEED_*) + amplitude (BOB_*), scaled by the sway multiplier.
-            float bobSpeed = _stance switch { EPlayerStance.SPRINT => 10f, EPlayerStance.CROUCH => 6f, EPlayerStance.PRONE => 4f, _ => 8f };
-            float bobAmp = (_stance switch { EPlayerStance.SPRINT => 0.075f, EPlayerStance.CROUCH => 0.025f, EPlayerStance.PRONE => 0.0125f, _ => 0.05f }) * _blendedSway;
+            float bobSpeed = _stance switch { EPlayerStance.SPRINT => 10f, EPlayerStance.CROUCH => 6f, EPlayerStance.PRONE => 4f, EPlayerStance.SWIM => 6f, _ => 8f };   // SWIM = viewmodel SPEED_SWIM (PlayerAnimator.cs:34)
+            float bobAmp = (_stance switch { EPlayerStance.SPRINT => 0.075f, EPlayerStance.CROUCH => 0.025f, EPlayerStance.PRONE => 0.0125f, EPlayerStance.SWIM => 0.025f, _ => 0.05f }) * _blendedSway;   // SWIM = BOB_SWIM (PlayerAnimator.cs:22)
             if (_moving)
             {
                 float s = Mathf.Sin(bobSpeed * (float)_t) * bobAmp;   // horizontal sine; vertical = |horizontal| (double-freq dip)

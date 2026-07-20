@@ -179,6 +179,7 @@ namespace UnturnedGodot
             string idle = IdleClip, walk = WalkClip, run = RunClip;
             if (stance == SDG.Unturned.EPlayerStance.CROUCH) { idle = "Idle_Crouch"; walk = run = "Move_Crouch"; }
             else if (stance == SDG.Unturned.EPlayerStance.PRONE) { idle = "Idle_Prone"; walk = run = "Move_Prone"; }
+            else if (stance == SDG.Unturned.EPlayerStance.SWIM) { idle = "Idle_Swim"; walk = run = "Move_Swim"; }   // moving=Move_Swim / still=Idle_Swim (PlayerAnimator.cs:940/998)
             if (_ap == null || _oneShot > 0) return;
             string want = speed < 0.2f ? idle : (speed < 4.5f ? walk : run);
             if (!_ap.HasAnimation(want)) return;

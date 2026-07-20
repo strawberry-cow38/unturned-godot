@@ -43,4 +43,31 @@ namespace UnturnedGodot.Testing
             Terrain.SeaLevelY = oldSea;
         }
     }
+
+    // Wading: feet wet but not deep enough to swim (body probe dry) forces STAND/SPRINT and BLOCKS crouch/prone
+    // (PlayerStance.cs:340-346, 865-869 -- _inShallows early-returns crouch/prone intent).
+    public class PlayerWadingBlocksCrouch : GameTest
+    {
+        public override string Name => "player.wading_blocks_crouch";
+        public override IEnumerable<Step> Run()
+        {
+            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            Rigs.Ground(World);                 // floor at ~Y0; the player settles to feetY 0
+            Terrain.HasWater = true;
+            Terrain.SeaLevelY = 1f;             // shin-deep: feet(0)<1 wet, body(0+1.25=1.25)>1 dry -> shallows, not swim
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(6);              // settle onto the floor
+
+            T.Check($"shin-deep water is NOT swimming (stance={p.Stance})", p.Stance != EPlayerStance.SWIM);
+            p.ScriptedStance = EPlayerStance.CROUCH;   // try to crouch while wading
+            yield return Ticks(6);
+            T.Check($"wading blocks crouch -> forced upright (stance={p.Stance})", p.Stance != EPlayerStance.CROUCH);
+            p.ScriptedStance = EPlayerStance.PRONE;    // try to crawl while wading
+            yield return Ticks(6);
+            T.Check($"wading blocks prone/crawl (stance={p.Stance})", p.Stance != EPlayerStance.PRONE);
+
+            p.ScriptedStance = null;
+            Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea;
+        }
+    }
 }

@@ -3740,6 +3740,8 @@ namespace UnturnedGodot
         bool BodyUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.25f < Terrain.SeaLevelY;
         /// <summary>The eye probe (feet+1.75) is under -> submerged: free-swim in look dir + oxygen drains (areEyesUnderwater).</summary>
         public bool EyesUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.75f < Terrain.SeaLevelY;
+        /// <summary>The feet probe is under -> in the shallows: wading blocks crouch/prone (PlayerStance _inShallows).</summary>
+        bool FeetUnderwater => Terrain.IsPointUnderwater(GlobalPosition.Y);
         /// <summary>Currently in the SWIM stance (deep enough that the body probe is submerged).</summary>
         public bool IsSwimming => _move.Stance == EPlayerStance.SWIM;
 
@@ -3747,10 +3749,12 @@ namespace UnturnedGodot
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
         {
             _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor);
-            // SWIM overrides the key-driven stance the instant the feet+1.25 body probe is underwater
-            // (PlayerStance.cs:636-673) -- deep water; exits back the tick it clears. NetAvatars hold the
-            // replicated stance (NetHoldPose), so only a locally-simulated shell decides SWIM here.
-            if (!NetAvatar && BodyUnderwater) _move.Stance = EPlayerStance.SWIM;
+            // Water overrides the key-driven stance. NetAvatars hold the replicated stance (NetHoldPose), so
+            // only a locally-simulated shell decides here.
+            if (!NetAvatar && BodyUnderwater)
+                _move.Stance = EPlayerStance.SWIM;   // feet+1.25 body probe submerged -> swim (PlayerStance.cs:636-673)
+            else if (!NetAvatar && FeetUnderwater && (_move.Stance == EPlayerStance.CROUCH || _move.Stance == EPlayerStance.PRONE))
+                _move.Stance = EPlayerStance.STAND;  // wading (feet wet, not deep enough to swim) blocks crouch/crawl (PlayerStance.cs:340-346, 865-869)
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
         }
 
