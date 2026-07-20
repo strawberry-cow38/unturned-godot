@@ -96,11 +96,92 @@ editor_PEI_gridpower/gaspump/shelves/crates via SpawnEditor* are all `_peiPlayab
 (Main.cs:1678) — same SP-only class; unifying fixtures 1-3 fixes these automatically (same
 Attach/Spawn methods).
 
-## Implementation ordering (cheapest→hardest, for the workflow)
+---
+
+# CATEGORY B — DEFAULT-SP REGRESSIONS FROM THE P6a FLIP (player-systems audit)
+
+The P6a flip made CONSUME the DEFAULT SP path: `Main.ResolveLoopbackMode` (Main.cs:2030-2036)
+returns `(true,true)` for every real SP game entry (Drive PEI / --peidrive / --peiplay);
+`--direct`/`UG_DIRECT=1` is the opt-OUT. VERIFIED. So every "loopback" gap below is what a solo
+player gets BY DEFAULT today. Several `Net*` seams were wired only on the MP-CLIENT path
+(ClientWorldSession) and NOT on the loopback path (MpLoopback) → the default SP game half-routes
+through consume with the wrong fallback. These are REGRESSIONS the flip introduced, and rank ABOVE
+the Category-A content gaps because they break the shipped solo experience.
+
+Seam matrix ground truth: MpLoopback.cs:92-180 (loopback) vs ClientWorldSession.cs:440-468 (client).
+
+## P0 — shipped SP BUGS in the default (consume) path — fix FIRST
+B1. **STORAGE item-loss** (VERIFIED PlayerController.cs:1484-1490). F-interact opens a crate via the
+   SP-direct OpenCrate (never RequestOpenStorage), so `_openCrateNetId==0`; but `NetCloseStorage` IS
+   wired, so CloseCrate takes the net branch, sees `_openCrateNetId==0`, and returns WITHOUT the local
+   copy-back → items placed in a world StoreShelf are LOST on close. FIX: gate the net branch on
+   `_openCrateNetId!=0` else fall through to local copy-back; route open through RequestOpenStorage for
+   NetId!=0 crates. (Server storage path exists+tested: ServerTransactions.cs:189-207.)
+B2. **DEPLOYABLE pickup no-op** (VERIFIED PlayerController.cs:677). `PickupDeployable` early-returns on
+   `d.NetId != 0`; consume deployables are replica nodes (NetId!=0) → F-hold to retrieve a placed
+   generator does nothing. FIX: when NetId!=0 + NetSalvageDeployable!=null, send a pickup/salvage intent
+   and let the item return via the owner-inventory echo; or add a distinct NetPickupDeployable command.
+B3. **CROP harvest invisible** (PlayerController.cs:2501, MpLoopback.cs:171). F-interact calls local
+   CropManager.Harvest; the dropped yield is a local SP WorldItem which SuppressLocalVisual=true HIDES
+   and de-focuses → harvested item invisible + un-pickup-able; XP local (not adopted). FIX: add a
+   NetHarvest(cropNetId) command → server validates ripeness/reach, spawns the world-item entity
+   (WorldItemReplicaView materializes it, visible), awards XP server-side. (Pairs with A4 crops-view.)
+B4. **CONSUME "Use" button resurrect** (InventoryUI.cs:574-587). The inventory-dashboard Use decrements
+   the stack LOCALLY and never calls NetConsume → server doesn't see it, next owner echo resurrects the
+   item. FIX: route UseSelected through NetConsume(page,x,y) + skip local decrement when the seam is set
+   (mirror TickConsume PlayerController.cs:1038-1043).
+
+## P1 — gameplay regression
+B5. **VITALS toothless** (PlayerController.cs:2262-2274). HP is server-adopted, but food/water/stamina/
+   infection still run the LOCAL sim and the `died` result is DISCARDED under NetVitalsAdopted → drain
+   to Food=0 and never die; the server runs no hunger sim. FIX: move fine vitals server-side (owner-only
+   block), route starvation/dehydration damage through ServerCombat.DamagePlayerExternal (the sink the
+   loopback host already uses, MpLoopback.cs:156), adopt the fine block like HP.
+
+## P2 — loopback doesn't exercise MP authority (correct for solo, but breaks host-vs-remote + is half-migrated)
+B6. **COMBAT** NetFire/Melee/Grenade/Reload NOT wired in MpLoopback (wired on client CWS:444-447) → the
+   host's shots aren't server-resolved; a remote joiner on a listen-server can't be shot by the host.
+   FIX: wire the four in MpLoopback under ConsumeDeployables (host shots become server-resolved via the
+   in-process Server.Combat; Cosmetic flips identically). Also wire NetReload (B/minor).
+B7. **SKILLS** NetUpgradeSkill not wired + AdoptReplicatedSkills never called in loopback (both on client
+   CWS:260,468) → skills fully local, unreconciled; on a client any local AwardExperience is overwritten
+   next tick. FIX: wire NetUpgradeSkill + AdoptReplicatedSkills in MpLoopback; route all XP awards server-side.
+B8. **VEHICLE enter/exit** NetEnterVehicle/NetExitVehicle not wired in loopback (host drives a real owned
+   node) → a remote joiner could seat into the host's occupied car. FIX (interim): wire the two in
+   loopback so seat arbitration is respected; long-term run host driving through the replicated-vehicle path.
+
+## P2 — MP-client-facing (feature works in SP, broken/absent on a JOINED client) — overlaps Category A
+B9. **STORAGE unreachable on client** — WorldMode.Client builds no containers + DeployableReplicaView
+   never materializes StorageCrate → OpenNearestCrate finds nothing. (Same fix as A1 containers.)
+B10. **CLOTHING/held-weapon/stance/anim not broadcast** — RemotePlayers renders each remote as a flat
+   orange CharacterModel, pos+yaw only (RemotePlayers.cs:38-44); worn slots live in owner-scoped
+   InventoryReplication, never broadcast. FIX: add a small per-player appearance broadcast block (worn
+   slot ids + held item + stance byte) and have RemotePlayers apply a PlayerClothingController + stance
+   + basic move anim. (Pairs with the SP clothing port, task #54.)
+B11. **ROPE-TOW/hitch broken on client** — scans the "vehicles" group of real nodes; the client's Part A
+   local vehicle RemoveFromGroup("vehicles") (CWS:344) → scan finds nothing. (Same fix as A6 tow: replicate
+   the tow relationship over vehicle NetIds; scan "vehicle_puppets" on the client path.)
+
+## Intentional asymmetries — NOT bugs (leave as-is)
+- NetDamageSink wired in loopback (host IS authority, forwards fall/OOB to ServerCombat) but null on the
+  client (client fall/OOB is server-derived; local TakeDamage no-ops via NetVitalsAdopted). By design.
+- NetRespawn(reposition:) true for the loopback host (its node is authority) vs false for the client
+  (reposition rides PlayerRecovEvent). By design.
+
+---
+
+## Implementation ordering (the workflow — severity + coupling)
+Do Category B P0/P1 FIRST (they break the shipped default solo game and are mostly seam-wiring in
+MpLoopback + guard fixes — low risk, NO protocol change), then Category A content:
+0. B6/B7/B8 seam-wiring + B1 CloseCrate guard + B4 UseSelected route + B2 PickupDeployable route +
+   B5 server vitals — mostly wiring seams already wired on the client into the loopback. No protocol bump.
 A. GridPowerSource (reuse deployable graph) + GasPump (un-gate + entity) — share the deployable/
    power replication that already exists.
-B. Crops client-view (CropReplicaView + input binding) — server already done.
-C. TowRope relationship (extend VehicleReplication).
-D. Containers (new SystemContainers + ReplicaView) — new system, highest impact.
-E. Animals (new SystemId + puppet pattern) — new system.
-F. (defer) Building real StructureManager; weather synced flag.
+B. Crops client-view (A4 CropReplicaView + input binding) + B3 NetHarvest — server already done.
+C. TowRope relationship (A6/B11 extend VehicleReplication).
+D. Containers (A1/B9 new SystemContainers + ReplicaView + StorageReplicaView) — new system, highest impact.
+E. Animals (A5 new SystemId + puppet pattern) — new system.
+F. Clothing broadcast (B10) — pairs with the SP clothing port.
+G. (defer) Building real StructureManager; weather synced flag.
+One coordinated NetProtocol.Version bump covers the new SystemIds (containers, animals) + new fields
+(tow, appearance) + new commands (harvest, pickup-deployable). Allocate together to avoid version collisions.
