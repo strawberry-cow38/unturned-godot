@@ -197,6 +197,8 @@ namespace UnturnedGodot.Net
                 // Phase 8 rejoin hardening: per-client relevancy sets must not leak to a recycled playerId
                 Zombies.ForgetClient(peer.PlayerId);
                 WorldItems.ForgetClient(peer.PlayerId);
+                Containers.ForgetClient(peer.PlayerId);   // review #8: the two NEW relevancy-filtered systems must clear per-client state on disconnect too, like Zombies/WorldItems
+                Animals.ForgetClient(peer.PlayerId);
             };
         }
 

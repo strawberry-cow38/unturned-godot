@@ -519,7 +519,11 @@ namespace UnturnedGodot
                 // TowedNetId echoes back (never mutate tow state client-side). The SP/loopback host attaches
                 // its own real Vehicle nodes directly (the seam is null, so no double-attach).
                 if (NetAttachTow != null) NetAttachTow(_ropeSrc.TowNetId, _ropeLookVeh.TowNetId);
-                else if (_ropeSrc is Vehicle towerV && _ropeLookVeh is Vehicle towedV && towerV.AttachTow(towedV)) GD.Print("[rope] towing");
+                // review #5: mirror the server OnAttachTow not-remote-driven guard (VehicleNetSync:91) on the direct
+                // loopback-host path too -- never rope a vehicle a REMOTE client is actively driving (NetDriverId != 0
+                // = a remote holds the seat; a held/client-auth body must not become a rope end).
+                else if (_ropeSrc is Vehicle towerV && _ropeLookVeh is Vehicle towedV
+                         && towerV.NetDriverId == 0 && towedV.NetDriverId == 0 && towerV.AttachTow(towedV)) GD.Print("[rope] towing");
                 CancelRope();
             }
         }
@@ -2292,6 +2296,11 @@ namespace UnturnedGodot
             // blast on a NetAvatar follower body; also fall/OOB on the loopback host shell) instead of moving
             // local HP. Must precede the guards below, which would otherwise swallow the hit. The server sink
             // owns HP/death; the local cosmetics (flash/flinch) are skipped -- the death fact renders via NetDie().
+            // review #12: Bleeding is a purely COSMETIC HUD status (no HP drain -- the timer just clears it), and
+            // AdoptReplicatedFineVitals deliberately doesn't adopt it, so surface it locally on a real hit BEFORE the
+            // server-owned-body early-returns below -- else a hit on the loopback host / MP shell never shows the
+            // bleeding icon. NOT on NetAvatar (a remote puppet must not sprout our bleeding state).
+            if (amount > 1f && (NetDamageSink != null || NetVitalsAdopted || _pendServerVitals) && !NetAvatar) { Bleeding = true; _bleedTimer = 5.0; }
             if (NetDamageSink != null) { NetDamageSink(amount); return; }
             if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
             if (NetVitalsAdopted || _pendServerVitals) return;   // P3a: HP is server-owned; P3b: also suppress in the pre-adoption spawn window (review finding 5). A local death here would fight the server clock and rubber-band. Server-owned bodies route via NetDamageSink above; a true MP client's fall/OOB are server-derived from its claims.
@@ -2328,6 +2337,7 @@ namespace UnturnedGodot
             _deathTimer = 3.5;
             _burstLeft = 0;   // death cancels any in-progress burst (no resume after respawn)
             if (_wiring) CancelWire();   // death drops any in-progress wire (no stale preview / death-cam nodes)
+            EjectFromVehicleOnDeath();   // review #3: detach before the corpse/respawn setup, else the dead driver wedges
             Velocity = Vector3.Zero;
 
             _corpse = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));
@@ -2348,6 +2358,23 @@ namespace UnturnedGodot
                 _cam.TopLevel = true;   // hold the death-cam still in world space while the body flops
                 _cam.LookAtFromPosition(GlobalPosition + new Vector3(2.2f, 2.2f, 2.8f), GlobalPosition - new Vector3(0f, 0.6f, 0f), Vector3.Up);
             }
+        }
+
+        // Review #3: a player who dies while driving/riding must detach from the vehicle at the moment of death.
+        // Otherwise _PhysicsProcess's _driving/_riding branch (3541-3542) returns BEFORE the _dead respawn block,
+        // so the dead body keeps calling DriveVehicle forever and the P3a server-clocked respawn never fires
+        // (wedged). We restore the body state EnterVehicle disabled -- collision, Visible, HUD, and Park the car --
+        // because Respawn() does NOT re-enable those, so the post-respawn shell would otherwise be invisible +
+        // non-colliding. Cam + viewmodel are left to Die() (death-cam). Idempotent: no-op when on foot.
+        void EjectFromVehicleOnDeath()
+        {
+            if (_driving == null && _riding == null) return;
+            var v = _driving; _driving = null; _riding = null;
+            if (v != null) { v.EngineOn = false; v.Park(); GlobalPosition = v.GlobalPosition + v.GlobalTransform.Basis.X * 2.4f + Vector3.Up * 1.0f; }
+            if (Hud != null) Hud.Vehicle = null;
+            foreach (var c in FindChildren("*", "CollisionShape3D", true, false))
+                if (c is CollisionShape3D cs) cs.Disabled = false;
+            Visible = true;
         }
 
         void Respawn(bool reposition = true)

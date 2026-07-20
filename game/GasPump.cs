@@ -33,7 +33,7 @@ namespace UnturnedGodot
         // IPowerDevice
         public bool PowerProducing => false;   // a pure consumer, never a source
         public bool PowerOnFire => false;      // a map fixture doesn't burn
-        public uint PowerNetId => 0;           // not replicated -> SP/local wiring only
+        public uint PowerNetId => NetId;       // review H1: 0 for a direct SP/local pump (Attach), the server NetId for a replica (Materialize) so an interactive wire routes over the wire -- mirrors GridPowerSource; was hardcoded 0 => replica pumps could never be powered server-side (extract dead)
         public IReadOnlyList<ConnectionPort> PowerPorts => _ports;
         public bool IsPowered => _input != null && GodotObject.IsInstanceValid(_input) && _input.Powered;   // on/off flag: getting its 750w
 

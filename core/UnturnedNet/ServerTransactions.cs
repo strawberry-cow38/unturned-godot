@@ -143,7 +143,11 @@ namespace UnturnedGodot.Net
             commands.Register<PickupDeployableCommand>(ReplicationIds.CommandPickupDeployable, PickupDeployableCommand.TryRead,
                 OnPickupDeployable,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _)
-                                        && _deployables.TryGet(cmd.NetId, out _));
+                                        && TryGetSenderPos(sender, out var pos)
+                                        && _deployables.TryGet(cmd.NetId, out var e)
+                                        && (e.Pos - pos).magnitude <= DeployableReplication.WireReach   // review H2: reach-gate like salvage (ownership stays the deferred TODO above)
+                                        && _deployables.Schema.TryGet(e.DefId, out var def)
+                                        && def.FixtureKind == FixtureKind.None);   // review M4: world fixtures (gas pump / grid source) are NOT pickup-able -- they'd be unreplaceable
 
             // A2: pull fuel from a gas-station pump into a held gas can. The validate is the cheap deref guard
             // (sender exists + the target is a registered gas-pump FIXTURE within reach + a station tank owns
@@ -490,7 +494,7 @@ namespace UnturnedGodot.Net
             if (asset.useHealth > 0 && _combat.TryGet(sender, out var ce) && ce.Alive)
             {
                 ce.HealthExact = Mathf.Min(100f, ce.HealthExact + asset.useHealth);
-                ce.Health = (byte)Mathf.RoundToInt(ce.HealthExact);
+                ce.Health = (byte)System.Math.Clamp((int)System.Math.Ceiling(ce.HealthExact), 0, 100);   // review L11: Ceiling, matching ApplyPlayerDamage/RegenSink (NetWorldHost:144, ServerCombat:537) -- was RoundToInt (a 2nd quantization of the same field)
                 _combat.MarkDirty(ce, _tick());
             }
             // B5 (SP/MP-unify): the previously-stubbed fine-vitals effects now land on the server sim -- the
@@ -584,14 +588,19 @@ namespace UnturnedGodot.Net
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
 
-            // A3 (SP/MP-unify): the grid mains toggle (F1 `toggleGlobalPower`) is a legit MECHANIC, not a
-            // cheat -- so it runs BEFORE the AllowCheats gate. Flip every GridSource fixture's replicated
-            // ToggledOn bit (the mains-on state, produce-while-on) and broadcast the toggled fact on the
-            // EXISTING deployable-toggled wire; the client's DeployableReplicaView derives the source node's
+            // A3 (SP/MP-unify): the grid mains toggle (F1 `toggleGlobalPower`) flips every GridSource fixture's
+            // replicated ToggledOn bit (the mains-on state, produce-while-on) and broadcasts the toggled fact on
+            // the EXISTING deployable-toggled wire; the client's DeployableReplicaView derives the source node's
             // producing from ToggledOn (never the local PowerNet.GlobalPower), and both sides' Solve() then
             // energize the wired consumers. Bare form flips the current mains state.
+            // review M7: this is a SERVER-WIDE state mutation (it flips power for everyone), so it must respect the
+            // AllowCheats gate exactly like give/xp/skill -- otherwise any client could grief a cheats-locked
+            // server's grid. SP + friendly co-op run cheats-ON (Main.cs:2717 defaults --dedicated cheats-on too),
+            // so strawberry's F1 mechanic still works everywhere it does today; only a UG_DEDICATED_NOCHEATS lockdown
+            // now (correctly) blocks it.
             if (verb == "toggleglobalpower" || verb == "globalpower" || verb == "grid")
             {
+                if (!AllowCheats) { Diag.ConsoleRejected++; return "console commands are disabled on this server"; }
                 string g = arg.ToLowerInvariant();
                 bool? want = g == "on" || g == "1" || g == "true" ? true
                            : g == "off" || g == "0" || g == "false" ? false

@@ -382,6 +382,35 @@ namespace UnturnedNet.Tests
             Assert.That(read.RecovCounter, Is.EqualTo(7));
         }
 
+        // review #6: server-derived fall damage must come off the POSITION stream (wire range +-256), not the
+        // cmd.LinVel.y field (clamped to +-32 -> a hard fall read as 32, capped at 32 dmg, never lethal). Drive a
+        // 50 m/s fall by MOVING the claimed position 1.0 m/tick while reporting a velocity BEYOND the clamp
+        // (-60 -> the wire reads -32); the derived speed (50) must beat the clamped one (32). The pre-existing
+        // unify.damage_fall only exercises the velocity path (static position), so this covers the new derivation.
+        [Test]
+        public void FallDamage_DerivesFromPositionStream_NotClampedVelocity()
+        {
+            var h = new Harness(4204).Connected("faller");
+            var a = h.Clients[0];
+            float dmg = 0f;
+            h.Server.PlayerHost.DamageOwner = (v, d) => { if (v == a.PlayerId) dmg += d; };   // capture instead of routing to Combat
+            var pos = h.Entity(a).Pos;
+
+            void Claim(bool grounded) => a.SendPlayerState(pos, 90f, -5f,
+                new Vector3(0f, grounded ? 0f : -60f, 0f), MoveInput.PackStance(EPlayerStance.STAND), grounded, 0);
+
+            h.Step(6, () => Claim(true));
+            Assert.That(dmg, Is.EqualTo(0f), "no damage while grounded");
+
+            const float trueSpeed = 50f;   // 1.0 m per 0.02 s tick -- comfortably inside the descent envelope
+            for (int i = 0; i < 12; i++) { pos.y -= trueSpeed * 0.02f; h.Step(() => Claim(false)); }
+            h.Step(6, () => Claim(true));   // land -> the airborne->grounded edge FallMaths the peak
+
+            Assert.That(dmg, Is.GreaterThan((float)FallMath.Damage(-32f)),
+                $"fall damage beat the +-32 wire-velocity clamp (got {dmg} for a {trueSpeed} m/s fall; pre-fix the clamp caps it at {FallMath.Damage(-32f)})");
+            Assert.That(dmg, Is.LessThanOrEqualTo((float)FallMath.Damage(-trueSpeed) + 2f), "and it tracks the true fall speed, not wildly over");
+        }
+
         // goldened on first landing (v9); v10 (mp-event-coalesce) appends the EventCount=0 byte
         const string GoldenStateHex = "1B0201030C040C08103E6000A91E043AF004060200";
         const string GoldenRecovHex = "1F6404640844328011F840163800";

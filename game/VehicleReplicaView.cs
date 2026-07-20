@@ -81,6 +81,8 @@ namespace UnturnedGodot
                 if (e.Pos != t.LastSnapPos) { t.LastSnapPos = e.Pos; t.SinceSnap = 0f; }
                 else t.SinceSnap += dt;
 
+                t.Node.Exploded = e.Exploded;   // review #10: mirror the wreck state so TowScannable excludes wrecks (SP parity)
+
                 var vel = new Vector3(e.LinVel.x, e.LinVel.y, e.LinVel.z);
                 var target = new Vector3(e.Pos.x, e.Pos.y, e.Pos.z) + vel * Mathf.Min(t.SinceSnap, MaxExtrapolationSeconds);   // dead-reckoned between snapshots, bounded horizon
                 var pos = t.Node.GlobalPosition;

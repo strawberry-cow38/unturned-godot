@@ -342,6 +342,10 @@ namespace UnturnedGodot.Net
             // bursting in one tick and must spend the silence they represent, not be pinned apart by
             // their first sibling. Then measure the claim's delta against the entity's last PUBLISHED
             // position (quantized, like the claim). ----
+            // review #6: capture the elapsed sim-time since the last claim BEFORE the accrue block advances
+            // LastAccrueTick -- the fall block below derives the true descent speed from the position delta
+            // (dy) / claimDt, since both span the same interval a coalesced/dropped-packet gap scales together.
+            float claimDt = tick > st.LastAccrueTick ? (tick - st.LastAccrueTick) * (float)SimClock.FixedDelta : (float)SimClock.FixedDelta;
             if (tick > st.LastAccrueTick)
             {
                 float accrue = (tick - st.LastAccrueTick) * (float)SimClock.FixedDelta;
@@ -393,7 +397,16 @@ namespace UnturnedGodot.Net
             {
                 if (!cmd.Grounded)
                 {
-                    float down = -cmd.LinVel.y;                       // downward speed this airborne tick (m/s)
+                    // review #6: the wire LinVel clamps to +-32 m/s, so cmd.LinVel.y alone caps a hard fall at 32
+                    // dmg (never lethal). Also derive the descent from the POSITION delta (dy, wire range +-256):
+                    // dy is measured against the last ADOPTED pos and claimDt spans the same interval, so a
+                    // dropped/coalesced packet scales both together (no over-report); cap it at the envelope's own
+                    // descent-rate ceiling (DownRate) to bound any single-tick artifact (FallMath saturates at 100
+                    // dmg / -100 m/s regardless). Take the MAX of the two: a real falling client's position moves,
+                    // so the position term recovers the true >32 m/s speed, while a velocity-only claim stream (e.g.
+                    // the unify.damage_fall harness, static position) still reads its reported speed off LinVel.
+                    float posDown = claimDt > 0f ? System.Math.Min(-dy / claimDt, DownRate) : 0f;
+                    float down = System.Math.Max(-cmd.LinVel.y, posDown);   // m/s down
                     if (down > st.PeakFallSpeed) st.PeakFallSpeed = down;
                 }
                 else if (st.WasAirborne)

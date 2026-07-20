@@ -34,7 +34,8 @@ namespace UnturnedGodot
         // the choke point). Nub visuals mirror the real Vehicle's (built lazily on first show, same 0.16m cubes).
         public uint TowNetId => NetId;
         public bool TowRoped => false;
-        public bool TowScannable => true;
+        public bool Exploded;   // review #10: mirrored from the replicated entity by VehicleReplicaView each tick
+        public bool TowScannable => !Exploded;   // exclude WRECKS, matching SP Vehicle.TowScannable = !Exploded (server re-validates, but the client must not highlight/attempt-tie a wreck)
 
         MeshInstance3D _towFrontNub, _towRearNub;
         static MeshInstance3D MakeTowNub(Color c, Vector3 pos)
