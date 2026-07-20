@@ -1828,6 +1828,11 @@ namespace UnturnedGodot
             _worldBuild = true;   // --shot waits for _worldReady (below) so the async world (incl. Trees) is fully loaded before the screenshot
             var res = await WorldBuilder.BuildFullWorld(this, _peiPlayable ? WorldMode.Playable : WorldMode.Aerial,
                 _mapRoot, _mapPlace, _noZombies, syncLoad: _bakeNav, bakeNav: _bakeNav, ActiveHoliday());
+            // A1 FIX (master 2026-07-20: PEI shelves spawned empty in SP): load the loot tables BEFORE AttachMpLoopback.
+            // Under a consuming loopback ContainerNetSync rolls the map containers' loot INSIDE AttachMpLoopback (below),
+            // so the tables must be loaded by then -- but the only load site was SpawnMapContainers (@1848), which is
+            // gated OFF under consume, so it never ran and every shelf's display digest came back empty.
+            if (_peiPlayable) LootTables.Load(_mapRoot + "/Spawns/Items.dat");
             _pdPlayer = res.Player;   // UG_AUTOFIRE terrain-impact verification
             _ztField = res.Zombies;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
