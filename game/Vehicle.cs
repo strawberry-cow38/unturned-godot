@@ -623,7 +623,7 @@ namespace UnturnedGodot
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
-            Mass = 1500f, Torque = 1000f, DriveGears = new[] { 2.0f, 1.5f, 1.2f, 1f },   // vehiclerework BASELINE: mid weight, mid torque, mid top speed (the reference car)
+            Mass = 1500f, Torque = 1000f, DriveGears = new[] { 2.2f, 1.7f, 1.4f, 1.2f, 1.05f, 1f },   // vehiclerework BASELINE: mid weight/torque/top-speed, 6-speed (the reference car)
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -746,7 +746,7 @@ namespace UnturnedGodot
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 11f, SpeedMin = -5f, Brake = 32f,
-            Mass = 9000f, Torque = 4200f, DriveGears = new[] { 2.6f, 1.9f, 1.4f, 1f },   // vehiclerework HEAVY HAULER: big weight + big torque, LOW top speed (grunts off the line, tows well, tops out early)
+            Mass = 9000f, Torque = 4200f, DriveGears = new[] { 3.2f, 2.6f, 2.1f, 1.7f, 1.35f, 1.1f, 1f },   // vehiclerework HEAVY HAULER: big weight + big torque, LOW top speed, 7-speed (lots of low grunt to haul + climb)
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -828,7 +828,7 @@ namespace UnturnedGodot
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 18.5f, SpeedMin = -6f, Brake = 32f,
-            Mass = 1750f, Torque = 1250f, DriveGears = new[] { 2.1f, 1.55f, 1.2f, 1f },   // vehiclerework BUFFED SEDAN (crown vic): a bit heavier than the sedan but more torque + a higher top speed
+            Mass = 1750f, Torque = 1250f, DriveGears = new[] { 2.3f, 1.8f, 1.45f, 1.2f, 1.05f, 1f },   // vehiclerework BUFFED SEDAN (crown vic): a bit heavier than the sedan but more torque + higher top speed, 6-speed
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -1078,7 +1078,7 @@ namespace UnturnedGodot
             // vehiclerework drivetrain: real weight + geared torque; un-tuned vehicles DERIVE from the old stats so all still drive.
             v.Mass = s.Mass > 0f ? s.Mass : GlobalMass;                         // real per-vehicle weight (kg); un-set -> the old shared 900
             v._torque = s.Torque > 0f ? s.Torque : s.Engine;                    // base drive force; un-set -> the old Engine value (same cruise grunt)
-            v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.7f, 1.35f, 1.1f, 1f };   // un-set -> a sane 4-band spread (launch grunt -> cruise)
+            v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.9f, 1.55f, 1.3f, 1.15f, 1.05f, 1f };   // un-set -> a sane 6-speed spread (launch grunt -> cruise)
             v._dragK = s.SpeedMax > 0f ? v._torque * v._driveGears[v._driveGears.Length - 1] / (s.SpeedMax * s.SpeedMax) : 0f;   // drag so top-gear force = drag at SpeedMax -> flat-ground top lands there
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
@@ -1195,6 +1195,11 @@ namespace UnturnedGodot
             int nw = s.Wheels.Length;
             v._wheelMeshRef = wheelMesh; v._wheelMatRef = wheelMat; v._wheelR = s.WheelRadius;   // for explosion debris
             v._wNodes = new VehicleWheel3D[nw]; v._wMeshes = new MeshInstance3D[nw];
+            // vehiclerework: scale the suspension to the vehicle's REAL mass so a heavy truck doesn't squat onto its belly
+            // (the fixed 55/12000 was tuned for the shared 900kg). Spring rate ~ mass (constant ride frequency), max force
+            // ~ mass (holds the weight + bump headroom), damping ~ sqrt(mass) (constant damping ratio).
+            float massScale = GlobalMass > 0f ? v.Mass / GlobalMass : 1f;
+            float suspStiff = 55f * massScale, suspMaxF = 12000f * massScale, dampComp = 3.5f * Mathf.Sqrt(massScale), dampRelax = 4.2f * Mathf.Sqrt(massScale);
             for (int i = 0; i < nw; i++)
             {
                 var (x, y, z, steer) = s.Wheels[i];
@@ -1207,7 +1212,7 @@ namespace UnturnedGodot
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
                     // Trailer = low friction so the wheels free-roll behind the cab instead of gripping/dragging.
-                    SuspensionStiffness = 55f, SuspensionMaxForce = 12000f, DampingCompression = 3.5f, DampingRelaxation = 4.2f, WheelFrictionSlip = s.Kingpin != Vector3.Zero ? 1.5f : 6.0f,
+                    SuspensionStiffness = suspStiff, SuspensionMaxForce = suspMaxF, DampingCompression = dampComp, DampingRelaxation = dampRelax, WheelFrictionSlip = s.Kingpin != Vector3.Zero ? 1.5f : 6.0f,
                 };
                 // left wheels: flip the mesh so the tread faces outward
                 var mi = new MeshInstance3D { Mesh = wheelMesh, MaterialOverride = wheelMat, Scale = new Vector3((x < 0 ? -1f : 1f) * wscale, wscale, wscale) };
@@ -1941,25 +1946,23 @@ namespace UnturnedGodot
             // wheels looked frozen (the local rotation changed, but the world basis was pinned). Verified: node world-Y
             // rolls full circle, and once the manual spin is gone the mesh world-Y rolls with it. (fable diagnosis)
             // engine RPM + gears (source InteractableVehicle): rpm = |avg wheel rpm| * gear ratio, idle-floored, then auto-shift
-            float sum = 0f; foreach (var w in _wNodes) sum += Mathf.Abs(w.GetRpm());
-            float avgWheelRpm = _wNodes.Length > 0 ? sum / _wNodes.Length : 0f;
-            float ratio = (_gears != null && _gear >= 1 && _gear <= _gears.Length) ? _gears[_gear - 1] : 20f;
-            float target = Mathf.Clamp(avgWheelRpm * ratio, IdleRpm, MaxRpm);
-            _engineRpm = Mathf.Lerp(_engineRpm, target, Mathf.Min(1f, 8f * (float)delta));
-            if (_gears != null && _gears.Length > 0)   // gear from SPEED band -> guaranteed clean shifts (master: never left 1st; src RPM model never redlines in gear 1 so it never shifted). RPM still sawtooths per gear via the ratio.
+            // vehiclerework GEARBOX: _driveGears is the single source of truth for the gear COUNT now (force + sound + HUD
+            // all agree). Engine RPM SAWTOOTHS idle->redline within each gear band, resetting on the shift -> the classic
+            // "rev up, shift, drop" sound across every gear. Gear from the speed band = guaranteed clean shifts (no redline
+            // loop). The shift is a brief clutch JOLT: a vertical hitch + pitch nod that DOESN'T touch the gear-selecting
+            // fore-aft speed (master's anti-shift-loop note). Impulse/Mass = a mass-independent 0.16 m/s hitch.
+            int ngear = (_driveGears != null && _driveGears.Length > 0) ? _driveGears.Length : 1;
+            float fwdSpd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
+            float band = _speedMax > 0f ? Mathf.Clamp(fwdSpd / _speedMax, 0f, 0.999f) * ngear : 0f;
+            int newGear = Mathf.Clamp(1 + (int)band, 1, ngear);
+            float within = band - (int)band;
+            _engineRpm = Mathf.Lerp(_engineRpm, EngineOn ? Mathf.Lerp(IdleRpm, MaxRpm, within) : IdleRpm, Mathf.Min(1f, 10f * (float)delta));
+            if (newGear != _gear && !_exploded && !_husk && fwdSpd > 1.5f)
             {
-                float fwd = Mathf.Abs(LinearVelocity.Dot(-GlobalTransform.Basis.Z));
-                int newGear = Mathf.Clamp(1 + (int)(Mathf.Clamp(fwd / _speedMax, 0f, 0.999f) * _gears.Length), 1, _gears.Length);
-                if (newGear != _gear && !_exploded && !_husk && fwd > 1.5f)   // gear change while moving -> a brief CLUTCH JOLT.
-                {
-                    // A fore-aft impulse dipped the speed under the shift point -> instant re-downshift -> STUCK shifting
-                    // (master caught the loop). So the jolt is a VERTICAL hitch + pitch nod you FEEL but that doesn't
-                    // touch the gear-selecting fore-aft speed.
-                    ApplyCentralImpulse(Vector3.Up * Mass * 0.22f);
-                    ApplyTorqueImpulse(GlobalTransform.Basis.X * Mass * 0.5f);
-                }
-                _gear = newGear;
+                ApplyCentralImpulse(Vector3.Up * Mass * 0.16f);
+                ApplyTorqueImpulse(GlobalTransform.Basis.X * Mass * 0.35f);
             }
+            _gear = newGear;
             if (_engineAudio != null)   // EngineRPMSimple: pitch + volume by RPM while running; silent when off (exited)
             {
                 if (EngineOn)
