@@ -39,18 +39,37 @@ namespace UnturnedGodot
         readonly List<ConnectionPort> _ports = new();
         ConnectionPort _output;
 
+        // A3 (SP/MP-unify): the replicated entity this node mirrors (0 = a direct SP/local source from Attach).
+        // A joined client / consuming loopback materializes the source via Materialize and stamps the server
+        // NetId, so an interactive wire request addresses it over the wire (PlayerController.RequestWire).
+        public uint NetId;
+
+        // A3: on a client replica (Materialize) producing derives from the replicated entity.ToggledOn -- set
+        // each tick by DeployableReplicaView -- NEVER the process-global PowerNet.GlobalPower (a local flip
+        // would diverge the mains bit -> StateHash desync). Null on a direct SP source: it falls back to the
+        // global flag exactly as before. A CHANGE marks the net dirty so the count-backstop recompute fires
+        // (a mains flip is not a structural change; mirrors Deployable.NetSetPowered).
+        bool? _netProducing;
+        public bool? NetProducingOverride
+        {
+            get => _netProducing;
+            set { if (_netProducing != value) { _netProducing = value; PowerNet.MarkDirty(); } }
+        }
+        bool Producing => _netProducing ?? PowerNet.GlobalPower;   // replica: the replicated mains bit; direct SP: the global flag
+
         // look-at outline (glow duplicate on the overlay layer) + the generator-style info billboard
         MeshInstance3D _glow;
         InfoBillboard _info;
         bool _focused;
         static readonly Color GridColor = new Color(0.40f, 0.85f, 1f);   // electric blue for the grid outline / name
 
-        // IPowerDevice: a mains SOURCE -- it produces while the global grid flag is on, and a map fixture never burns.
-        public bool PowerProducing => PowerNet.GlobalPower;
+        // IPowerDevice: a mains SOURCE -- it produces while the mains are on (replica: the replicated
+        // entity.ToggledOn via NetProducingOverride; direct SP: PowerNet.GlobalPower), and a map fixture never burns.
+        public bool PowerProducing => Producing;
         public bool PowerOnFire => false;
-        public uint PowerNetId => 0;   // SP/local wiring only -- not replicated (MP is a later task)
+        public uint PowerNetId => NetId;   // 0 = direct SP/local wire; a replica's server NetId routes wire requests over the wire (A3)
         public IReadOnlyList<ConnectionPort> PowerPorts => _ports;
-        public bool IsPowered => PowerNet.GlobalPower;   // convenience: the source is live only while the grid is on
+        public bool IsPowered => Producing;   // convenience: the source is live only while the mains are on
 
         // Attach a grid source at a placed Circuit_0's transform (pos + basis from WorldBuilder.PlaceObject), owning
         // one wire-able Output port. Mirrors GasPump.Attach: adds to the "deployables" group PowerNet reads, and lazily
@@ -77,6 +96,29 @@ namespace UnturnedGodot
             return g;
         }
 
+        // A3 (SP/MP-unify): materialize a grid source from its REPLICATED entity (DeployableReplicaView) --
+        // a self-contained node stamped with the server NetId, its one Output port hung off PortLocal, in the
+        // "deployables" group the local PowerNet reads. NetProducingOverride is seeded OFF (mains default off)
+        // and re-derived from entity.ToggledOn each tick by the view. Positioned at the quantized entity pos
+        // with a plain yaw basis (the Circuit_0 mesh is drawn separately by WorldBuilder, byte-identical); no
+        // stand-up rotation -- PortLocal is authored in the box's as-loaded frame, not a flat-barricade frame.
+        public static GridPowerSource Materialize(Node parent, Vector3 pos, float yawDegrees, float watts, uint netId)
+        {
+            var basis = new Basis(Vector3.Up, Mathf.DegToRad(yawDegrees));
+            var g = new GridPowerSource { Transform = new Transform3D(basis, pos), Watts = watts, NetId = netId, NetProducingOverride = false };
+            parent.AddChild(g);
+            var port = ConnectionPort.Create(g, new DeployableDef.Port { Kind = DeployableDef.PortKind.Output, Pos = PortLocal, Watts = watts }, "Grid Power");
+            g.AddChild(port);
+            g._ports.Add(port);
+            g._output = port;
+            g.AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice, not Deployable)
+            g.AddChild(g._info = new InfoBillboard { TopLevel = true });
+            if (g.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole net
+            { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
+            PowerNet.MarkDirty();
+            return g;
+        }
+
         // Look-at outline + the generator-style info billboard (name + output/load bar). Mirrors GasPump.
         public void SetLookFocused(bool on)
         {
@@ -94,7 +136,7 @@ namespace UnturnedGodot
             _info.SetName(string.IsNullOrEmpty(GridName) ? "Grid Power" : $"Grid Power - {GridName}", GridColor);
             float draw = (_output != null && GodotObject.IsInstanceValid(_output)) ? _output.Draw : 0f;
             _info.SetBar(0, Watts > 0f ? Mathf.Clamp(draw / Watts, 0f, 1f) : 0f, GridColor);   // load / capacity (generator's usage bar)
-            _info.SetPrompt(PowerNet.GlobalPower ? $"{draw:0} / {Watts:0}W" : "mains OFF", GridColor);
+            _info.SetPrompt(Producing ? $"{draw:0} / {Watts:0}W" : "mains OFF", GridColor);
         }
     }
 }

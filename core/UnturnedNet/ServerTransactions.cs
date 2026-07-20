@@ -488,6 +488,38 @@ namespace UnturnedGodot.Net
             if (parts.Length == 0) { Diag.ConsoleRejected++; return "usage: give <item> | xp <n> | skill <name> [level] | teleport <x> <y> <z>"; }
             string verb = parts[0].ToLowerInvariant();
             string arg = parts.Length > 1 ? parts[1].Trim() : "";
+
+            // A3 (SP/MP-unify): the grid mains toggle (F1 `toggleGlobalPower`) is a legit MECHANIC, not a
+            // cheat -- so it runs BEFORE the AllowCheats gate. Flip every GridSource fixture's replicated
+            // ToggledOn bit (the mains-on state, produce-while-on) and broadcast the toggled fact on the
+            // EXISTING deployable-toggled wire; the client's DeployableReplicaView derives the source node's
+            // producing from ToggledOn (never the local PowerNet.GlobalPower), and both sides' Solve() then
+            // energize the wired consumers. Bare form flips the current mains state.
+            if (verb == "toggleglobalpower" || verb == "globalpower" || verb == "grid")
+            {
+                string g = arg.ToLowerInvariant();
+                bool? want = g == "on" || g == "1" || g == "true" ? true
+                           : g == "off" || g == "0" || g == "false" ? false
+                           : (bool?)null;
+                bool anyOn = false;
+                foreach (var e in _deployables.All)
+                    if (_deployables.Schema.TryGet(e.DefId, out var d) && d.FixtureKind == FixtureKind.GridSource && e.ToggledOn) { anyOn = true; break; }
+                bool on = want ?? !anyOn;
+                int n = 0;
+                foreach (var e in _deployables.All)
+                {
+                    if (!_deployables.Schema.TryGet(e.DefId, out var d) || d.FixtureKind != FixtureKind.GridSource) continue;
+                    n++;
+                    if (_deployables.ServerToggle(e.NetIdValue, on, _tick()))
+                    {
+                        var evt = new DeployableToggledEvent { NetId = e.NetIdValue, On = on };
+                        _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableToggled, evt.Write));
+                    }
+                }
+                Diag.ConsoleApplied++;
+                return $"grid power {(on ? "ON" : "OFF")} ({n} source{(n == 1 ? "" : "s")})";
+            }
+
             if (!AllowCheats) { Diag.ConsoleRejected++; return "console commands are disabled on this server"; }
 
             if (verb == "give" && arg.Length > 0)

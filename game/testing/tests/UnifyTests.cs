@@ -2106,4 +2106,112 @@ namespace UnturnedGodot.Testing
             PlayerController.SurvivalDrain = prevDrain;   // restore the process-global toggle
         }
     }
+
+    // A3 (SP/MP-unify): the grid-power mains SOURCE promoted from an SP-local IPowerDevice into a server-placed
+    // deployable-graph FIXTURE. The WorldBuilder records Circuit_0 sources; the dedicated / consuming-loopback
+    // server ServerPlaces them (mains OFF), they ride SystemDeployables, and the client's DeployableReplicaView
+    // materializes a GridPowerSource NODE deriving producing from the replicated entity.ToggledOn (never local
+    // GlobalPower). The F1/toggleGlobalPower switch is a server-gated MECHANIC over the wire.
+    //
+    // This drives the REAL DedicatedServer.Fixtures -> ServerPlace plumbing (a synthetic fixture list), then the
+    // wire toggle. TEETH: (1) the grid source materializes ONLY if DeployableDef.GridSource is registered (remove
+    // it from DeployableDef.All -> ServerPlace(9200) returns null -> no fixture entity -> gridId stays 0). (2) the
+    // consumer NODE energizes ONLY when the mains toggle over the wire flips ToggledOn (RunConsole verb absent ->
+    // never toggles -> the node stays dark). The same node-power assert is checked BOTH dark and lit, gated only by
+    // the mains bit, so it flips WITH the toggle, not by luck.
+    public class UnifyGridPowerFixture : GameTest
+    {
+        public override string Name => "unify.grid_power_fixture";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            PowerNet.SetGlobalPower(false);   // defensive: mains OFF is the default; a replica derives producing from ToggledOn, NOT this flag
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // `give 459` resolves the spotlight (2x2) against the real catalog
+
+            var net = new MemNetwork(20260720);
+            var client = new NetWorldClient(new MemClientTransport(net), "local", contentHash: NetContent.Hash);
+            DeployableNetSchema.RegisterAll(client.Deployables.Schema);   // server side registered by DedicatedServer
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+
+            // hand the dedicated server a recorded grid-power fixture: DedicatedServer._Ready ServerPlaces it into
+            // the deployable graph (mains OFF) -- the exact WorldBuilder.Fixtures -> ServerPlace plumbing A3 adds.
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), AllowCheats = true,
+                Fixtures = new List<FixtureRecord> { new FixtureRecord { DefId = DeployableDef.GridSource.Id, Pos = new Vector3(-2f, 0f, 0f), YawDegrees = 0f, Basis = Basis.Identity } } };
+            World.AddChild(ded);
+
+            var view = new DeployableReplicaView { Client = client };
+            World.AddChild(view);
+
+            client.Connect();
+            yield return Until(() => client.State == NetSessionState.Connected, 5);
+            T.Check("local client joined the loopback server", client.State == NetSessionState.Connected);
+
+            // the world-built grid source rode the join snapshot -> a fixture entity + a materialized GridPowerSource
+            // node (NOT a Deployable body), stamped with the server NetId. TEETH (1): no def -> ServerPlace null -> 0.
+            uint gridId = 0;
+            yield return Until(() => { gridId = 0; foreach (var e in client.Deployables.All) if (e.DefId == DeployableDef.GridSource.Id) gridId = e.NetIdValue; return gridId != 0; }, 5);
+            T.Check($"the world-built grid source replicated as a fixture entity (netId {gridId})", gridId != 0);
+            yield return Until(() => view.TryGetGrid(gridId, out _), 5);
+            T.Check($"the view materialized a GridPowerSource node stamped with the server NetId ({view.GridCount})",
+                    view.TryGetGrid(gridId, out var gnode) && gnode.NetId == gridId && gnode.NetId != 0);
+
+            // stock + place a spotlight consumer over the wire, then wire the grid Output(0) -> its Consumer(0)
+            client.SendConsole("give 459");
+            yield return Until(() => ded.Server.Inventories.TryGet(client.PlayerId, out var inv) && inv.Inventory.getItemCount(459) == 1, 5);
+            client.SendPlaceDeployable(459, new UnityEngine.Vector3(2f, 0f, 0f), 0f);
+            uint spotId = 0;
+            yield return Until(() => { spotId = 0; foreach (var e in client.Deployables.All) if (e.DefId == 459) spotId = e.NetIdValue; return spotId != 0; }, 5);
+            T.Check($"spotlight placed over the wire (netId {spotId})", spotId != 0);
+            client.SendConnectWire(gridId, 0, spotId, 0);
+            yield return Until(() => client.Deployables.WireCount == 1, 5);
+            T.Check("grid source Output wired to the spotlight Consumer", client.Deployables.WireCount == 1);
+
+            // mains OFF (default) -> the consumer is dark on BOTH the replicated-entity solve and the materialized node graph
+            ded.Server.Deployables.Solve();
+            client.Deployables.Solve();
+            ded.Server.Deployables.TryGet(spotId, out var sOff);
+            client.Deployables.TryGet(spotId, out var cOff);
+            T.Check("OFF: server consumer dark", !sOff.Solved[0].Powered);
+            T.Check("OFF: client consumer dark", !cOff.Solved[0].Powered);
+            yield return Until(() => view.TryGetNode(spotId, out var d) && !d.DebugConsumerPowered, 5);
+            T.Check("OFF: the consumed spotlight NODE is unpowered (mains never toggled)",
+                    view.TryGetNode(spotId, out var dOff) && !dOff.DebugConsumerPowered);
+
+            // toggle the MAINS ON over the wire (the F1/toggleGlobalPower plane): the server flips every GridSource's
+            // ToggledOn + broadcasts; the replica node derives producing from it. TEETH (2): no verb -> never toggles.
+            client.SendConsole("toggleglobalpower on");
+            yield return Until(() => client.Deployables.TryGet(gridId, out var g) && g.ToggledOn, 5);
+            T.Check("mains toggled ON + replicated the ToggledOn bit", client.Deployables.TryGet(gridId, out var gOn) && gOn.ToggledOn);
+
+            // ON -> the replicated-entity solve AND the local node graph both energize the wired consumer
+            ded.Server.Deployables.Solve();
+            client.Deployables.Solve();
+            ded.Server.Deployables.TryGet(spotId, out var sOn);
+            client.Deployables.TryGet(spotId, out var cOn);
+            T.Check("ON: server consumer powered off the mains", sOn.Solved[0].Powered);
+            T.Check("ON: client replica consumer powered (same solver, replicated ToggledOn)", cOn.Solved[0].Powered);
+            T.Check("ON: the materialized grid source PRODUCES (NetProducingOverride follows ToggledOn)",
+                    view.TryGetGrid(gridId, out var gp) && gp.PowerProducing);
+            yield return Until(() => view.TryGetNode(spotId, out var d) && d.DebugConsumerPowered, 5);
+            T.Check("ON: the consumed spotlight NODE is POWERED through the local PowerNet grid-source node",
+                    view.TryGetNode(spotId, out var pn) && pn.DebugConsumerPowered);
+
+            // toggle OFF over the wire -> dark again: the SAME node-power assert flips with the mains bit (teeth)
+            client.SendConsole("toggleglobalpower off");
+            yield return Until(() => client.Deployables.TryGet(gridId, out var g) && !g.ToggledOn, 5);
+            yield return Until(() => view.TryGetNode(spotId, out var d) && !d.DebugConsumerPowered, 5);
+            T.Check("OFF again: the consumed spotlight node goes dark once the mains toggle off",
+                    view.TryGetNode(spotId, out var dn) && !dn.DebugConsumerPowered);
+
+            world.Sim.Sim.Remove(pump);
+            client.Disconnect();
+        }
+    }
 }

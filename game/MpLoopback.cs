@@ -39,6 +39,7 @@ namespace UnturnedGodot
         // The one flag drives ALL of these consume subsystems (deployables + inventory + world-items); the
         // name is kept for continuity. Opt-in and behavior-neutral when false: SP/loopback keep the direct path.
         public bool ConsumeDeployables;   // "--spconsume": the local player consumes the replica subsystems instead of owning direct nodes
+        public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -- ServerPlaced under consume, direct-Attached otherwise
         bool _localInventoryAdopted;   // P1b: latches the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457)
 
         public MemNetwork Net { get; private set; }
@@ -81,6 +82,18 @@ namespace UnturnedGodot
                 //     and lets the local PowerNet run on top -- lamps light from replicated INPUTS, as in SP.
                 Deploys = new DeployableReplicaView { Client = Client };
                 AddChild(Deploys);
+                // A3 (SP/MP-unify): server-place the recorded grid-power fixtures into the loopback server's
+                // deployable graph (mains default OFF), so they ride SystemDeployables and the Deploys view
+                // materializes them as GridPowerSource nodes -- the SOLE local source of these nodes under
+                // consume (WorldBuilder no longer inline-Attaches them; no double-spawn). And route the F1/
+                // toggleGlobalPower mains toggle over the wire: DevConsole.RemoteClient makes the console send
+                // the toggle as a ConsoleCommand (server flips every GridSource's ToggledOn + broadcasts),
+                // never a local process-global PowerNet.GlobalPower flip.
+                DevConsole.RemoteClient = Client;
+                if (Fixtures != null)
+                    foreach (var f in Fixtures)
+                        Server.Deployables.ServerPlace(Server.Ids.Mint(), f.DefId, 0,
+                            new UnityEngine.Vector3(f.Pos.X, f.Pos.Y, f.Pos.Z), f.YawDegrees, Server.Session.CurrentTick);
                 // (b) set the local player's deployable seams to route over the wire (verbatim from
                 //     ClientWorldSession.SpawnShell:446-452). Each seam is null in default SP/loopback, so
                 //     the direct mutation below it stays byte-identical; SETTING it makes PlayerController's
@@ -214,6 +227,13 @@ namespace UnturnedGodot
                 // the server has no world-item body to reproduce. Proven by UnifyTests.unify.passive_loot_single.
                 GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables + world-items as replicas + SERVER-AUTHORITATIVE inventory (direct player drop/pickup/deploy paths disabled)");
             }
+            else
+            {
+                // A3: a NON-consuming loopback keeps the DIRECT SP path -- Attach the recorded grid-power
+                // fixtures as local nodes (NetId 0; F1 flips PowerNet.GlobalPower locally), byte-identical to
+                // old SP. Parented to the world root (this loopback's parent), where the Circuit_0 mesh lives.
+                WorldBuilder.SpawnFixturesDirect(GetParent() ?? this, Fixtures);
+            }
 
             Driver.Sim.Add(new DelegateSimStep((t, dt) => TickLocal((float)dt), "mp.loopback.local"));
             // Phase 7 / B8 (SP/MP-unify): construct the vehicle sync here so its local-occupancy reconcile can
@@ -337,6 +357,7 @@ namespace UnturnedGodot
         public override void _ExitTree()
         {
             if (ConsumeDeployables) WorldItem.SuppressLocalVisual = false;   // P2b: clear the process-global suppress flag so a later non-consume world isn't affected
+            if (DevConsole.RemoteClient == Client) DevConsole.RemoteClient = null;   // A3: release the static console route (mirrors ClientWorldSession) so a later world isn't left pointing at a dead client
             Client?.Disconnect();
             Server?.TearDown();
         }

@@ -24,6 +24,7 @@ namespace UnturnedGodot
         public string MapRoot;                       // optional: loads the 19 nav pockets as relevancy cells (§2.6)
         public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
         public bool SurvivalDrain = false;           // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. OFF by default = SP byte-identical coarse-HP path (strawberry runs survival off); flip on for a survival server.
+        public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -> ServerPlaced into the deployable graph at boot (mains OFF)
 
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
@@ -76,6 +77,14 @@ namespace UnturnedGodot
             DeployableNetSchema.RegisterAll(Server.Deployables.Schema);
             Server.Transactions.Blueprints = BlueprintRegistry.All;
             Server.Transactions.AllowCheats = AllowCheats;   // SECURITY (review C1): default OFF on the public dedicated server -- no client may run the give/xp/skill console cheats. Tests/admins opt in via the AllowCheats field; a real per-connection admin gate is future work.
+            // A3 (SP/MP-unify): server-place the recorded grid-power fixtures into the deployable graph, in
+            // deterministic map-file order, mains default OFF (ToggledOn = false). They ride SystemDeployables
+            // to every joiner, whose DeployableReplicaView materializes a GridPowerSource node. NetIds minted
+            // server-side only (§2.6). Registered AFTER the schema above so ServerPlace resolves DefId 9200.
+            if (Fixtures != null)
+                foreach (var f in Fixtures)
+                    Server.Deployables.ServerPlace(Server.Ids.Mint(), f.DefId, 0,
+                        new UnityEngine.Vector3(f.Pos.X, f.Pos.Y, f.Pos.Z), f.YawDegrees, Server.Session.CurrentTick);
             // Phase 5 combat hooks: server bullets/blasts stop at the world's real geometry, grenades
             // bounce on real ground height. Both are optional seams on the engine-free ServerCombat.
             Server.Combat.WorldRay = GodotWorldRay;

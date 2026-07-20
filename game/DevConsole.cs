@@ -19,7 +19,11 @@ namespace UnturnedGodot
         // ConsoleResult event echoes the verdict back into this log. SP and the listen-server host leave it
         // null -- the local process IS the authority there, so the direct paths below stay byte-identical.
         public static UnturnedGodot.Net.NetWorldClient RemoteClient;
-        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp" };
+        // A3: the grid mains toggle is server-authoritative when a RemoteClient is set (joined client / consuming
+        // loopback) -- it routes over the console plane like the cheats, but it's a legit mechanic the server runs
+        // BEFORE its AllowCheats gate. The early toggleGlobalPower branch below does the routing; membership here
+        // documents that the local process-global flip only happens on the pure-direct SP path (RemoteClient == null).
+        static readonly string[] ServerGatedVerbs = { "give", "xp", "skill", "teleport", "tp", "toggleglobalpower", "globalpower", "grid" };
         bool _resultHooked;
 
         LineEdit _input;
@@ -87,6 +91,20 @@ namespace UnturnedGodot
             // would otherwise short-circuit any no-arg command to a usage line). Not server-gated -- SP-only feature.
             if (verb == "toggleglobalpower" || verb == "globalpower" || verb == "grid")
             {
+                // A3 (SP/MP-unify): on a joined client / consuming loopback (RemoteClient set) the mains toggle
+                // is server-authoritative -- send it over the console plane so the server flips every GridSource
+                // fixture's replicated ToggledOn + broadcasts, and each source node derives producing from that.
+                // Pure-direct SP (RemoteClient == null) flips the process-global PowerNet flag locally, as before.
+                if (RemoteClient != null)
+                {
+                    if (!_resultHooked)
+                    {
+                        _resultHooked = true;
+                        RemoteClient.ConsoleResult += e => { if (IsInstanceValid(this)) Log(e.Text); };
+                    }
+                    Log(RemoteClient.SendConsole(cmd) ? "-> sent to server" : "not connected");
+                    return;
+                }
                 string g = arg.ToLowerInvariant();
                 bool on = g == "on" || g == "1" || g == "true" ? true
                         : g == "off" || g == "0" || g == "false" ? false

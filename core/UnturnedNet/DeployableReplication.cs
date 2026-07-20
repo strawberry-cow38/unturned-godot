@@ -23,6 +23,16 @@ namespace UnturnedGodot.Net
         public float Watts;
     }
 
+    /// <summary>A3/A2: a server-placed WORLD FIXTURE kind carried on the DEF table. None = an ordinary
+    /// player-placeable deployable (generator/spotlight/splitter...); nonzero = a fixed world fixture the
+    /// server places at world-build and streams over the EXISTING SystemDeployables graph -- GridSource is
+    /// the mains breaker box (A3), GasPump the fuel pump (A2). Def-table ONLY: it is NEVER serialized (DefId
+    /// is the wire key both sides rebuild the def from), so it costs zero wire-shape change. The game's
+    /// DeployableDef.Fixture mirrors these values 1:1 (bridged in DeployableNetSchema); the enum lives here
+    /// because the server choke point (ServerTransactions.RunConsole's grid mains toggle) filters fixtures by
+    /// kind and core cannot see the game assembly.</summary>
+    public enum FixtureKind : byte { None = 0, GridSource = 1, GasPump = 2 }
+
     /// <summary>The def-derived half of the solver's inputs. Both sides register the SAME defs (game code
     /// registers DeployableDef.All on server and client; L0 tests register fixtures) -- the content hash
     /// handshake is what guarantees they match, so only the defId crosses the wire.</summary>
@@ -32,6 +42,7 @@ namespace UnturnedGodot.Net
         public float Health;
         public float FuelCapacity;   // 0 = no tank (not a generator; toggle commands are rejected)
         public float Range;          // placement reach (ItemBarricadeAsset Range) -- the server's range check
+        public FixtureKind FixtureKind;   // A3/A2: a server-placed world fixture kind (None = a normal player-placeable deployable). Def-table only, never on the wire.
         public DeployablePortSpec[] Ports = System.Array.Empty<DeployablePortSpec>();
         public ushort SalvageItemId; // what a blowtorched wreck breaks into (Deployable.Salvage; 0 = nothing)
         public byte SalvageCount;

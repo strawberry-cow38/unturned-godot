@@ -20,10 +20,13 @@ namespace UnturnedGodot
         public NetWorldClient Client;
 
         readonly Dictionary<uint, Deployable> _nodes = new();
+        readonly Dictionary<uint, GridPowerSource> _grids = new();   // A3: server-placed grid-power SOURCE fixtures (a GridPowerSource node, not a Deployable body)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
         public bool TryGetNode(uint netId, out Deployable node) => _nodes.TryGetValue(netId, out node) && IsInstanceValid(node);
+        public int GridCount => _grids.Count;   // A3: how many grid-source fixtures have materialized
+        public bool TryGetGrid(uint netId, out GridPowerSource grid) => _grids.TryGetValue(netId, out grid) && IsInstanceValid(grid);
 
         public override void _PhysicsProcess(double delta)
         {
@@ -36,10 +39,23 @@ namespace UnturnedGodot
             foreach (var e in Client.Deployables.All)
             {
                 seen.Add(e.NetIdValue);
+                var def = DeployableDef.ById(e.DefId);
+                if (def == null) continue;   // FAIL-CLOSED: an unregistered def (content-hash drift) never materializes -- a missing render, never a desync
+                if (def.Fixture == FixtureKind.GridSource)
+                {
+                    // A3: a server-placed grid-power mains SOURCE -- a GridPowerSource node (NOT a Deployable body).
+                    // Its producing derives from the replicated entity.ToggledOn (mains bit), never local GlobalPower.
+                    if (!_grids.TryGetValue(e.NetIdValue, out var grid) || !IsInstanceValid(grid))
+                    {
+                        float watts = def.Ports.Length > 0 ? def.Ports[0].Watts : GridPowerSource.DefaultWatts;
+                        grid = GridPowerSource.Materialize(parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees, watts, e.NetIdValue);
+                        _grids[e.NetIdValue] = grid;
+                    }
+                    grid.NetProducingOverride = e.ToggledOn;
+                    continue;
+                }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
-                    var def = DeployableDef.ById(e.DefId);
-                    if (def == null) continue;
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
                     node.NetId = e.NetIdValue;   // the shell's salvage/toggle/wire requests address the entity by this
                     _nodes[e.NetIdValue] = node;
@@ -49,25 +65,46 @@ namespace UnturnedGodot
                 node.NetSetPowered(e.ToggledOn);
             }
             RetireMissing(_nodes, seen, node => { if (IsInstanceValid(node)) node.QueueFree(); });
+            RetireMissing(_grids, seen, grid => { if (IsInstanceValid(grid)) grid.QueueFree(); PowerNet.MarkDirty(); });
 
-            // wires: create between the mapped ports (port index = def port order, the §2.6 sub-address)
+            // wires: create between the mapped ports (port index = def port order, the §2.6 sub-address).
+            // Endpoints may be a Deployable body OR a GridPowerSource fixture (A3), so resolve ports from both.
             var seenWires = new HashSet<uint>();
             foreach (var w in Client.Deployables.AllWires)
             {
                 seenWires.Add(w.NetIdValue);
                 if (_wires.TryGetValue(w.NetIdValue, out var wire) && IsInstanceValid(wire)) continue;
-                if (!TryGetNode(w.SrcId, out var src) || !TryGetNode(w.DstId, out var dst)) continue;
-                if (w.SrcPort >= src.Ports.Count || w.DstPort >= dst.Ports.Count) continue;
+                if (!TryGetPort(w.SrcId, w.SrcPort, out var srcPort) || !TryGetPort(w.DstId, w.DstPort, out var dstPort)) continue;
                 wire = new Wire { NetId = w.NetIdValue };   // the shell's remove-wire requests address it by this
                 parent.AddChild(wire);
-                wire.Source = src.Ports[w.SrcPort];
-                wire.Consumer = dst.Ports[w.DstPort];
+                wire.Source = srcPort;
+                wire.Consumer = dstPort;
                 wire.AddToGroup("wires");
-                wire.SetPoints(new List<Vector3> { wire.Source.GlobalPosition, wire.Consumer.GlobalPosition }, true);
+                wire.SetPoints(new List<Vector3> { srcPort.GlobalPosition, dstPort.GlobalPosition }, true);
                 _wires[w.NetIdValue] = wire;
                 PowerNet.MarkDirty();
             }
             RetireMissing(_wires, seenWires, wire => { if (IsInstanceValid(wire)) wire.QueueFree(); PowerNet.MarkDirty(); });
+        }
+
+        // Resolve a wire endpoint's ConnectionPort by (netId, portIndex), from either a materialized Deployable
+        // body or a GridPowerSource fixture (A3). Both expose their ports in def-authored order (the §2.6 sub-address).
+        bool TryGetPort(uint netId, byte portIndex, out ConnectionPort port)
+        {
+            port = null;
+            if (_nodes.TryGetValue(netId, out var d) && IsInstanceValid(d))
+            {
+                if (portIndex >= d.Ports.Count) return false;
+                port = d.Ports[portIndex];
+                return true;
+            }
+            if (_grids.TryGetValue(netId, out var g) && IsInstanceValid(g))
+            {
+                if (portIndex >= g.PowerPorts.Count) return false;
+                port = g.PowerPorts[portIndex];
+                return true;
+            }
+            return false;
         }
 
         static void RetireMissing<T>(Dictionary<uint, T> nodes, HashSet<uint> seen, System.Action<T> retire)

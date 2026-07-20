@@ -1,4 +1,5 @@
 using Godot;
+using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
@@ -24,6 +25,7 @@ namespace UnturnedGodot
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
+        public FixtureKind Fixture = FixtureKind.None;   // A3/A2: a server-placed WORLD fixture (GridSource mains / GasPump) vs a normal player-placeable deployable. Bridged to DeployableNetDef.FixtureKind in DeployableNetSchema.
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
@@ -126,7 +128,20 @@ namespace UnturnedGodot
             },
         };
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery };
+        // A3 (SP/MP-unify): the grid-power mains SOURCE bolted onto every Circuit_0 breaker box, promoted from
+        // an SP-local IPowerDevice into a server-placed DEPLOYABLE-GRAPH fixture so it rides the existing
+        // SystemDeployables replication (the mesh + collider are still drawn by WorldBuilder). A single 10kW
+        // Output port, no HP/pickup/fuel, NOT player-placeable (no item id 9200 is ever grantable). The mains
+        // toggle rides entity.ToggledOn (produce-while-on); the F1 toggleGlobalPower routes over the wire.
+        public static readonly DeployableDef GridSource = new()
+        {
+            Id = 9200, Name = "Grid Power", Fixture = FixtureKind.GridSource,
+            Size = new Vector3(1f, 0.58f, 1.87f),   // Circuit_0 AABB (cosmetic here -- the fixture node is a GridPowerSource, never a Deployable body)
+            Offset = 0f, Radius = 0f, Range = 4f, Health = 0f, Fuel = 0f,   // a world fixture: no HP bar, no salvage/pickup, no fuel gauge
+            Ports = new[] { new Port { Kind = PortKind.Output, Pos = GridPowerSource.PortLocal, Watts = GridPowerSource.DefaultWatts } },
+        };
+
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, GridSource };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -136,6 +151,7 @@ namespace UnturnedGodot
             9103 => Splitter4,
             9104 => Combiner2,
             1450 => Battery,
+            9200 => GridSource,
             _ => null,
         };
 

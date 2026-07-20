@@ -15,6 +15,18 @@ namespace UnturnedGodot
     //               (puppets don't path); authoritative state arrives as replicas rendered by client views.
     public enum WorldMode { Aerial, Playable, Dedicated, Client, Editor }   // Editor = colliders (mode != Aerial) for object picking, but NO player (mode != Playable) -- the map editor's free-fly world
 
+    // A3 (SP/MP-unify): a world FIXTURE recorded by the object placement loop (a Circuit_0 grid-power source;
+    // A2 will record Gas_Pump_0 here too). NOT spawned inline -- recording keeps worldgen byte-identical; the
+    // caller decides how to realize it: the dedicated/consuming-loopback SERVER ServerPlaces it into the
+    // deployable graph (replicated + client-materialized), while pure-direct SP Attaches it as a local node.
+    public struct FixtureRecord
+    {
+        public ushort DefId;        // the DeployableDef.Id (GridSource = 9200)
+        public Vector3 Pos;         // world position of the drawn mesh (the ServerPlace / Attach point)
+        public float YawDegrees;    // object yaw (ServerPlace/Materialize rebuild a plain-yaw basis from this)
+        public Basis Basis;         // the FULL placement basis (yaw*pitch*roll*scale) -- the direct Attach path uses it for a byte-identical node transform
+    }
+
     public sealed class WorldBuildResult
     {
         public SimDriver Sim;              // the 50 Hz sim spine (SimRoot host), present in every world
@@ -34,6 +46,9 @@ namespace UnturnedGodot
         // spawns the real StoreShelves AFTER the build, once the asset DB is loaded -- else the roll's tryAddItem
         // can't size the items + the containers come out EMPTY (looked stocked, weren't). (mesh,table,display,label,pos,yaw)
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> Containers = new();
+        // A3: world power fixtures (Circuit_0 grid sources) recorded in EVERY mode, spawned by the caller (see
+        // FixtureRecord). Recorded, never inline-spawned, so the mesh/collider draw stays byte-identical to worldgen.
+        public System.Collections.Generic.List<FixtureRecord> Fixtures = new();
         /// <summary>P3 holiday parity (Client mode only, else null): the holiday-gated world content --
         /// the ~285 tagged props WITH their colliders, and the whole resource field -- is DEFERRED at
         /// build time and placed by this callback with the SERVER's activeHoliday (from the wire-v6
@@ -253,11 +268,13 @@ namespace UnturnedGodot
                 // gas pumps (master): a powered FLUID TANK -- the GasPump hosts the 750w port + 100L... err, fuel; the world
                 // still draws the mesh below. Created before the collider so we can tag it (look-ray -> collider -> GasPump).
                 GasPump gasPump = (mode == WorldMode.Playable && name == "Gas_Pump_0") ? GasPump.Attach(root, gpos, basis, GasPump.PortLocal, mesh) : null;
-                // grid power (SP/stable only): every Circuit_0 breaker box becomes a 10kW mains SOURCE -- a wire-able
-                // green output like a generator's, live while PowerNet.GlobalPower is on (F1 `toggleGlobalPower`). Gated
-                // to Playable (the SP world path): the source wires SP-local (NetId 0), so it needs no MP replication --
-                // the dedicated/client object builds skip it until that's ported (a later task).
-                if (mode == WorldMode.Playable && name == "Circuit_0") GridPowerSource.Attach(root, gpos, basis, GridPowerSource.PortLocal);
+                // grid power (A3): every Circuit_0 breaker box is a 10kW mains SOURCE. RECORD it in EVERY mode
+                // (the mesh + collider above stay byte-identical); the caller realizes it -- the dedicated /
+                // consuming-loopback server ServerPlaces it into the deployable graph so it rides SystemDeployables
+                // replication and the client's DeployableReplicaView materializes it, while pure-direct SP Attaches
+                // a local node (WorldBuilder.SpawnFixturesDirect). yaw = 180-ey, the object's placement yaw.
+                if (name == "Circuit_0")
+                    result.Fixtures.Add(new FixtureRecord { DefId = DeployableDef.GridSource.Id, Pos = gpos, YawDegrees = 180f - ey, Basis = basis });
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {
                     if (!shapeCache.TryGetValue(name, out var shp)) { shp = mesh.CreateTrimeshShape(); shapeCache[name] = shp; }
@@ -646,6 +663,22 @@ namespace UnturnedGodot
             { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
             root.AddChild(new Profiler());   // F3 perf overlay (parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
+        }
+
+        // A3 (SP/MP-unify): realize the recorded world fixtures as DIRECT local nodes -- the pure-direct SP path
+        // (Main.AttachMpLoopback when no loopback attaches, and MpLoopback when NOT consuming). Byte-identical to
+        // the old inline Circuit_0 Attach: same pos + full basis + PortLocal, NetId 0 (SP-local wiring). Under the
+        // consuming loopback / dedicated server the fixtures are ServerPlaced instead, so this is NEVER called there
+        // (the DeployableReplicaView is the sole node source -- no double-spawn).
+        public static void SpawnFixturesDirect(Node root, System.Collections.Generic.IEnumerable<FixtureRecord> fixtures)
+        {
+            if (fixtures == null) return;
+            foreach (var f in fixtures)
+            {
+                var def = DeployableDef.ById(f.DefId);
+                if (def == null || def.Fixture != Net.FixtureKind.GridSource) continue;   // A3 realizes grid sources; A2 will add its GasPump branch
+                GridPowerSource.Attach(root, f.Pos, f.Basis, GridPowerSource.PortLocal);
+            }
         }
 
         // --peiplay: drop the player onto REAL PEI terrain (colliders on), spawned on land via SampleHeight, scripted to walk.

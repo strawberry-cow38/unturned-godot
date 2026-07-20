@@ -2044,9 +2044,17 @@ namespace UnturnedGodot
             bool direct = _direct || System.Environment.GetEnvironmentVariable("UG_DIRECT") == "1";
             bool spConsume = _spConsume || System.Environment.GetEnvironmentVariable("UG_SPCONSUME") == "1";
             var (attach, consume) = ResolveLoopbackMode(gameDefault, _mpLoopback, spConsume, direct);
-            if (!attach) return;
+            if (!attach)
+            {
+                // A3: pure-direct SP (no loopback) -- realize the recorded grid-power fixtures as direct local
+                // nodes (the old inline Circuit_0 Attach, now driven off res.Fixtures). Under a loopback the
+                // MpLoopback node does this instead (ServerPlace under consume, direct otherwise).
+                WorldBuilder.SpawnFixturesDirect(this, res.Fixtures);
+                return;
+            }
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
                                       DayNight = res.DayNight, Resources = res.Resources,   // Phase 8 world-state syncs (§3.7)
+                                      Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
                                       ConsumeDeployables = consume });                      // P6a: true by default on the GAME path
         }
 
@@ -2536,6 +2544,7 @@ namespace UnturnedGodot
                     syncLoad: true, bakeNav: false, activeHoliday: holiday);
                 AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
                     DayNight = res.DayNight, Resources = res.Resources, MapRoot = _mapRoot,          // Phase 8: tick-derived clock + resource bitmap + nav-pocket relevancy cells (§3.7/§2.6)
+                    Fixtures = res.Fixtures,                                                         // A3: server-place the Circuit_0 grid-power sources into the deployable graph (mains OFF)
                     RemoteAvatars = true,                                                            // C2: remote peers get real avatar bodies (real spawns/collision/jump) on this world
                     ActiveHoliday = holiday,                                                         // P3 (wire v6): joiners build THIS holiday's props/colliders
                     AllowCheats = System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1" });   // test server: give/xp/skill console cheats ON (useful for testing); set UG_DEDICATED_NOCHEATS=1 to lock them off, no code change (review C1 toggle)

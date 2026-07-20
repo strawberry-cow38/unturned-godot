@@ -111,6 +111,7 @@ namespace UnturnedNet.Tests
         // 67 metal scrap, 13 canned beans (consumable), 4 eaglefire (4x2), 900/901 craft-fixture items
         public const ushort GeneratorId = 458;
         public const ushort SpotlightId = 459;
+        public const ushort GridSourceId = 9200;   // A3: the grid-power mains SOURCE fixture (a 10kW Output, FixtureKind.GridSource)
         public const ushort ScrapId = 67;
         public const ushort BeansId = 13;
         public const ushort RifleId = 4;
@@ -149,6 +150,14 @@ namespace UnturnedNet.Tests
                     new DeployablePortSpec { Kind = (byte)PowerPortKind.Consumer, Watts = 250f },
                     new DeployablePortSpec { Kind = (byte)PowerPortKind.Passthrough, Watts = 0f },
                 },
+            });
+            // A3: the grid-power mains SOURCE -- a server-placed fixture with one 10kW Output port. FixtureKind.
+            // GridSource marks it for the RunConsole mains toggle; the game registers the same def from
+            // DeployableDef.GridSource (id 9200) via DeployableNetSchema.
+            schema.Register(new DeployableNetDef
+            {
+                DefId = GridSourceId, Health = 0f, FuelCapacity = 0f, Range = 4f, FixtureKind = FixtureKind.GridSource,
+                Ports = new[] { new DeployablePortSpec { Kind = (byte)PowerPortKind.Output, Watts = 10000f } },
             });
         }
 
