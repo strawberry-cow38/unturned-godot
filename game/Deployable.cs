@@ -42,7 +42,7 @@ namespace UnturnedGodot
         float _windFactor;         // wind turbine: 0..2 current wind strength x height bonus (drives the output cap + blade spin)
         float _lastWindDirty;      // wind level at the last MarkDirty -- re-solve the net only when the wind moves enough
         Node3D _bladeHub;          // wind turbine: the spinning 3-blade hub
-        const float WindSeaLevel = 0f;   // reference sea level for the turbine height bonus (flat test ground = 0; TODO wire to the real world sea level)
+        const float WindSeaLevel = 25.6f;   // PEI's real sea level in world-Y (Lighting.dat seaLevel 0.1 x TERRAIN 256, see Terrain.cs water plane); height bonus = above this
         AudioStreamPlayer3D _engineAudio;
         float _vibePhase;
         const float WarmupTime = 1.3f, CooldownTime = 1.1f;   // spin-up / wind-down; doubles as the anti-spam buffer (can't re-toggle mid-ramp)

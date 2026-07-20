@@ -205,8 +205,8 @@ namespace UnturnedGodot.Testing
         public override IEnumerable<Step> Run()
         {
             PowerNet.ResetForTests();
-            var sea = Deployable.Spawn(World, DeployableDef.WindTurbine, Vector3.Zero, 0f);               // at sea level
-            var high = Deployable.Spawn(World, DeployableDef.WindTurbine, new Vector3(5f, 40f, 0f), 0f);  // +40 m -> ~2x height mult
+            var sea = Deployable.Spawn(World, DeployableDef.WindTurbine, new Vector3(0f, 25.6f, 0f), 0f);   // at PEI sea level (world-Y 25.6)
+            var high = Deployable.Spawn(World, DeployableDef.WindTurbine, new Vector3(5f, 65.6f, 0f), 0f);  // +40 m above sea -> ~2x height mult
             var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(0f, 0f, 3f), 0f);
             var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
             PowerRig.Connect(World, sea.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output), spotIn);
