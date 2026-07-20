@@ -138,4 +138,39 @@ preserves the client-auth/inchworm decisions (the driven car stays the real clie
 re-simmed). **Lean: hybrid — listen-server (host keeps real bodies) for physics subsystems, pure-consume
 for entity subsystems.** This decides the shape of vehicles/zombies/combat, so it's a checkpoint.
 
+## P6 — the staged flip (AWAITING VoX REVIEW — do not execute without greenlight)
+
+Everything up to here is done + gated on `sp-mp-unify` (full suite 1459 green, NOT merged): every
+subsystem consumes server replicas under `--spconsume`, and combat/vitals is fully server-authoritative.
+P6 is the irreversible step: make consuming the DEFAULT and delete the direct path. Precise plan, grounded
+in the P0 inventory:
+
+1. **Flip Playable's default.** `WorldMode.Playable` ("Drive PEI" / stable SP) boots the in-process
+   listen-server + client with consume ON (currently behind `--spconsume`). The local player consumes
+   replicas by default. (`Main.cs` AttachMpLoopback + the flag → default.)
+2. **Invert / verify the `NetId==0` branches (P0 Catalog A).** Player-placed things now get real
+   server NetIds → the `if (NetId != 0) wire; else direct` branches take the wire path. Verify each:
+   deployable pickup/salvage/toggle/wire connect+remove, storage. **Edge cases that need a decision:**
+   - **World FIXTURES stay host-direct.** Grid-power + gas-pump (`PowerNetId==0`) are world fixtures the
+     host owns in the listen-server; they stay NetId==0 host-direct (consistent with "host keeps real
+     bodies"). Wiring a fixture (NetId 0) to a player-placed deployable (NetId!=0) — `RequestConnectWire`
+     currently refuses if either end is 0; handle host-fixture ↔ replicated-deployable wiring.
+   - **Rope-tow stays host-direct** (no replication, SP-only by design; host owns the vehicles + the tow
+     force). MP rope-tow is a separate future feature.
+3. **Retain a direct-construct path for the harness fleet (P0 Catalog C).** `--peiplay/--vehicle/
+   --deploytest/--drivetest/--proptest/editor` + the 10 L2 goldens boot the DIRECT Playable path for
+   isolated component testing. Keep a thin `--direct` construct path for them (don't fully delete direct
+   construction) so the test/render fleet keeps working; the GAME uses the consuming default. Re-baseline
+   any golden whose visual shifts.
+4. **Collapse the NetAvatar/Net* forks (P0 Catalog B) + delete the now-dead GAME direct-path branches**
+   (retaining the harness direct-construct path from step 3).
+5. **End-to-end verify:** a full consuming-SP playthrough (place → wire → drive → fight → die → respawn →
+   loot) matches the old direct-SP, on the non-live rig; then a live-PEI smoke; then merge to `main`
+   (rebased onto catboy's Vehicle Battery f685227) on VoX signoff.
+
+**Deferred (post-flip fast-follows, non-blocking):** fall-damage wire-cap fidelity (hard falls cap at
+32 dmg — safe direction); remote-puppet death/respawn rendering (cosmetic, MP-only); animal replication
+(SP animals stay host-owned; invisible to remote MP joiners until an AnimalNetSync); clothing on remote
+puppets.
+
 Subsumes the "port SP features missing in MP" task.
