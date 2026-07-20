@@ -9,9 +9,13 @@ namespace UnturnedGodot
     {
         static FastNoiseLite _noise;
         const float DriftX = 2.5f, DriftZ = 1.2f;   // m/s the gust pattern crawls across the map (a slow weather drift)
-        const float Freq = 0.010f;                  // spatial scale of gusts (~100 m per feature) -> nearby turbines correlate, far ones differ
+        const float Freq = 0.0025f;                 // BIG fat regional blobs (~400 m; master) -> whole neighbourhoods share wind, distant regions differ
 
-        static FastNoiseLite Noise() => _noise ??= new FastNoiseLite { Frequency = Freq, Seed = 1337 };   // default NoiseType (smooth simplex) is ideal for a wind field
+        static FastNoiseLite Noise() => _noise ??= new FastNoiseLite
+        {
+            Frequency = EnvF("UG_WINDFREQ", Freq), Seed = 1337, FractalOctaves = (int)EnvF("UG_WINDOCT", 2f),   // few octaves = big smooth blobs, no fine detail (default smooth-simplex)
+        };
+        static float EnvF(string n, float d) => float.TryParse(System.Environment.GetEnvironmentVariable(n), out var v) ? v : d;
 
         // 0..1 wind strength at a world position, drifting over time. Remapped so there's usually a light breeze with
         // occasional calms + gusts (the raw Perlin is centred on 0.5).

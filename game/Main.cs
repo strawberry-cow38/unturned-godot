@@ -1238,8 +1238,41 @@ namespace UnturnedGodot
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
         // placement GHOST (front row) -> verify the ripped models stand up right (palette, -90 X), the collider,
         // and the ghost materials. The interactive hold->aim->LMB flow needs a live player, tested in-game.
+        // Blend the WindField as a heatmap over PEI's real map image (master: "what does the noisemap look like over PEI").
+        // Per pixel -> world X/Z (inverse of MapUI.WorldToNorm, levelSize 1920) -> sample the live wind -> thermal tint.
+        void RenderWindMap()
+        {
+            string mp = ProjectSettings.GlobalizePath("res://content/pei_map.png");
+            var img = System.IO.File.Exists(mp) ? Image.LoadFromFile(mp) : null;
+            if (img == null) { GD.Print("[windmap] missing pei_map.png"); GetTree().Quit(1); return; }
+            if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+            int W = img.GetWidth(), H = img.GetHeight();
+            const float LevelSize = 1920f;
+            for (int py = 0; py < H; py++)
+                for (int px = 0; px < W; px++)
+                {
+                    float wx = ((float)px / W - 0.5f) * LevelSize;
+                    float wz = ((float)py / H - 0.5f) * LevelSize;
+                    float w = WindField.SampleWind(new Vector3(wx, 0f, wz));   // 0..1
+                    img.SetPixel(px, py, img.GetPixel(px, py).Lerp(WindHeat(w), 0.5f));
+                }
+            img.SavePng("res://windmap.png");
+            GD.Print("[windmap] saved windmap.png");
+            GetTree().Quit(0);
+        }
+
+        static Color WindHeat(float w)   // 0 calm (blue) -> 1 windy (red): a thermal ramp
+        {
+            w = Mathf.Clamp(w, 0f, 1f);
+            if (w < 0.25f) return new Color(0f, w * 4f, 1f);
+            if (w < 0.5f)  return new Color(0f, 1f, 1f - (w - 0.25f) * 4f);
+            if (w < 0.75f) return new Color((w - 0.5f) * 4f, 1f, 0f);
+            return new Color(1f, 1f - (w - 0.75f) * 4f, 0f);
+        }
+
         void BuildDeployTest()
         {
+            if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
