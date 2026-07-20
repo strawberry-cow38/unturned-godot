@@ -1650,4 +1650,176 @@ namespace UnturnedGodot.Testing
             world.Sim.Sim.Remove(pump);
         }
     }
+
+    // GAP B3 (loopback crop-harvest yield): proves the LISTEN-SERVER host's F-interact harvest routes over the
+    // (already-complete v10) crop wire instead of the direct CropManager.Harvest -- so the dropped yield is the
+    // server's REPLICATED (visible + focusable) world item and the harvest XP is server-awarded, NOT a hidden
+    // SuppressLocalVisual SP drop with XP awarded locally then overwritten by adoption. Exercises a REAL MpLoopback
+    // (like unify.loopback_upgrade_skill): the host owns its OWN real CropManager CropNode (there is NO
+    // CropReplicaView in the loopback, per A4's double-authority guard). B3 wires Player.NetHarvestCrop =
+    // SendHarvestCrop AND CropNetSync stamps the server crop id onto that host node, so RequestHarvestNearestCrop
+    // (NetId!=0 scan) finds it and routes over the wire.
+    //
+    // TEETH: reverting EITHER B3 edit breaks it. Revert the CropNetSync NetId stamp -> the host node keeps NetId 0
+    // -> the "(B3) stamped" Until never holds (and the NetId!=0 harvest scan would skip it too). Revert the
+    // MpLoopback seam -> NetHarvestCrop is null -> RequestHarvestNearestCrop returns false -> no wire harvest ->
+    // the crop stays, no server yield world item, server XP stays 0. (Verified by reverting each edit + rerunning.)
+    public class UnifyCropHarvestYield : GameTest
+    {
+        public override string Name => "unify.crop_harvest_yield";
+        public override double TimeoutSimSeconds => 40;
+
+        // a world-item is visible + focusable iff it renders AND carries a collider on the item look-hit layer
+        // (bit 7 -- what the player's look-ray focuses). Same check as UnifyCropClientHarvest / UnifyPassiveLootSingle.
+        static bool VisibleFocusable(Node3D n)
+        {
+            if (n == null || !GodotObject.IsInstanceValid(n) || !n.Visible) return false;
+            if (n is CollisionObject3D self && (self.CollisionLayer & WorldItem.ItemHitLayer) != 0) return true;
+            foreach (var ch in n.GetChildren())
+                if (ch is CollisionObject3D co && (co.CollisionLayer & WorldItem.ItemHitLayer) != 0) return true;
+            return false;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();   // the yield world-item puppet resolves against the real catalog
+
+            // the exact headless rig unify.loopback_upgrade_skill uses, plus a CropManager -- the listen-server host
+            // owns its real crop nodes (Plant is the SP path; CropNetSync mints + stamps them for the wire).
+            Rigs.Ground(World);
+            var driver = new SimDriver(); World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false }; World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false }; World.AddChild(resources);
+            var cropMgr = new CropManager(); World.AddChild(cropMgr);   // _Ready loads crops/farms + sets the singleton
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);   // _Ready: shell + CropManager registries
+
+            var loop = new MpLoopback { Player = player, Driver = driver,
+                                        DayNight = dayNight, Resources = resources,
+                                        ConsumeDeployables = true };
+            World.AddChild(loop);
+
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Skills.TryGet(loop.Client.PlayerId, out _), 15);
+            T.Check("loopback client connected + server skills entity present",
+                    loop.Client.State == NetSessionState.Connected
+                    && loop.Server.Skills.TryGet(loop.Client.PlayerId, out _));
+
+            // the host plants a GROWN carrot ~1 m to the side (well within the 3 m harvest reach) via its real
+            // CropManager -- the exact SP path. CropNetSync mints the server crop entity from the node next 2 Hz tick.
+            var cropNode = CropManager.Plant("carrot", player.GlobalPosition + new Vector3(1f, 0f, 0f), grown: true);
+            T.Check("host planted a GROWN carrot node in the \"crop\" group",
+                    cropNode != null && cropNode.Grown && cropNode.IsInGroup("crop"));
+            if (cropNode == null) yield break;
+
+            // (B3 stamp) CropNetSync mints the entity AND stamps the server crop id onto the host's own node
+            yield return Until(() => cropNode.NetId != 0 && loop.Server.Crops.Count >= 1, 10);
+            T.Check($"(B3) CropNetSync stamped the server crop id ({cropNode.NetId}) onto the host node + minted the entity",
+                    cropNode.NetId != 0 && loop.Server.Crops.Count >= 1);
+
+            // baseline: nothing harvested yet -- server XP 0, no yield world item on either side
+            loop.Server.Skills.TryGet(loop.Client.PlayerId, out var se0);
+            T.Check("(baseline) server harvest XP is 0", se0.Skills.experience == 0);
+            T.Check("(baseline) no yield world item yet", loop.Server.WorldItems.Count == 0 && loop.Items.NodeCount == 0);
+
+            // (B3 seam) F-interact routes RequestHarvestNearestCrop -> NetHarvestCrop -> SendHarvestCrop; public so we
+            // drive the proximity scan without the raycast. The direct CropManager.Harvest else-branch is superseded.
+            bool routed = player.RequestHarvestNearestCrop();
+            T.Check("(B3) RequestHarvestNearestCrop found the stamped grown node + routed the wire harvest", routed);
+
+            // (a) the server validated + removed the crop; CropNetSync retires the now-orphaned host node
+            yield return Until(() => loop.Server.Crops.Count == 0, 10);
+            T.Check("(a) the server removed the crop (OnHarvestCrop sink)", loop.Server.Crops.Count == 0);
+            yield return Until(() => !GodotObject.IsInstanceValid(cropNode), 10);
+            T.Check("(a) the host crop node retired via CropNetSync (server-driven, not a direct QueueFree)",
+                    !GodotObject.IsInstanceValid(cropNode));
+
+            // (b) the yield dropped as a REPLICATED world item, materialized VISIBLE+FOCUSABLE through the loopback's
+            //     WorldItemReplicaView -- even under SuppressLocalVisual=true (the whole point: not a hidden SP drop).
+            yield return Until(() => loop.Server.WorldItems.Count >= 1, 10);
+            uint yieldId = 0;
+            foreach (var wi in loop.Server.WorldItems.All) { yieldId = wi.NetIdValue; break; }
+            T.Check($"(b) the server spawned the harvest yield world item ({yieldId})", yieldId != 0);
+            yield return Until(() => loop.Items.TryGetNode(yieldId, out _), 10);
+            bool haveYield = loop.Items.TryGetNode(yieldId, out var yieldNode);
+            T.Check("(b) the yield materialized VISIBLE+FOCUSABLE on the host's WorldItemReplicaView",
+                    haveYield && VisibleFocusable(yieldNode));
+
+            // (c) the harvest XP is SERVER-awarded (not the SP local award that per-tick adoption overwrites)
+            yield return Until(() => loop.Server.Skills.TryGet(loop.Client.PlayerId, out var se) && se.Skills.experience == 1, 10);
+            loop.Server.Skills.TryGet(loop.Client.PlayerId, out var se1);
+            T.Check($"(c) the server awarded the harvest XP (experience {se1.Skills.experience}, expected 1)", se1.Skills.experience == 1);
+        }
+    }
+
+    // GAP B3 (no double-mutation on the loopback harvest): the invariant B3 leans on -- with the harvest seam wired,
+    // F-interact routes the wire harvest AND the direct CropManager.Harvest else-branch is SUPERSEDED
+    // (PlayerController.cs:2543, the "seam set => direct superseded" rule). Wiring the seam without skipping the
+    // direct path would DOUBLE-mutate: a hidden SP yield drop + a locally-awarded XP + a self-QueueFree'd node
+    // racing CropNetSync's removal. Uses a REAL MpLoopback so CropNetSync really stamps the host node (B3), then
+    // overrides the seam with a CAPTURING lambda (the harvest still ROUTES but mutates no server/world state, so
+    // "did the DIRECT branch also run" reads cleanly off the node + the "worlditems" group), and drives the REAL
+    // F-interact chain (the p._UnhandledInput(Key) pattern from NetTests -- a Key event isn't gated by mouse capture).
+    //
+    // TEETH (against the B3 CropNetSync stamp): revert the stamp -> the host node keeps NetId 0 ->
+    // RequestHarvestNearestCrop returns false inside the F chain -> it falls through to the direct
+    // CropManager.NearestGrown/Harvest branch, which RUNS: the node self-QueueFree's and a local SP yield drops
+    // (WorldItem.Spawn into "worlditems"). Post-fix "lambda fired + node still alive + no local yield" all hold;
+    // reverting the stamp flips them (and the "(B3) stamped" gate times out first). (Verified by revert + rerun.)
+    public class UnifyCropHarvestNoDouble : GameTest
+    {
+        public override string Name => "unify.crop_harvest_no_double";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+
+            Rigs.Ground(World);
+            var driver = new SimDriver(); World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false }; World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false }; World.AddChild(resources);
+            var cropMgr = new CropManager(); World.AddChild(cropMgr);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);
+
+            var loop = new MpLoopback { Player = player, Driver = driver,
+                                        DayNight = dayNight, Resources = resources,
+                                        ConsumeDeployables = true };
+            World.AddChild(loop);
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Skills.TryGet(loop.Client.PlayerId, out _), 15);
+            T.Check("loopback client connected", loop.Client.State == NetSessionState.Connected);
+
+            var cropNode = CropManager.Plant("carrot", player.GlobalPosition + new Vector3(1f, 0f, 0f), grown: true);
+            T.Check("host planted a GROWN carrot node", cropNode != null && cropNode.Grown);
+            if (cropNode == null) yield break;
+
+            // the REAL CropNetSync stamps the server crop id onto the host node (B3) -- the pre-req the no-double
+            // invariant hinges on: only a stamped (NetId!=0) grown node lets RequestHarvestNearestCrop win the chain.
+            yield return Until(() => cropNode.NetId != 0, 10);
+            T.Check($"(B3) CropNetSync stamped the host node (NetId {cropNode.NetId})", cropNode.NetId != 0);
+
+            // override the wire seam with a CAPTURING lambda: the harvest ROUTES (proving the seam path fires) but
+            // mutates no server/world state, so "did the DIRECT branch also run" is read cleanly off the node + world.
+            uint captured = 0; bool fired = false;
+            player.NetHarvestCrop = netId => { captured = netId; fired = true; };
+            int worldItemsBefore = World.GetTree().GetNodesInGroup("worlditems").Count;
+
+            // drive the REAL F-interact chain headlessly (NetTests p._UnhandledInput(Key) pattern). No focusable
+            // item/deployable/vehicle in the rig + the crop is to the SIDE (not in the look ray), so the chain falls
+            // through to the harvest branches -> RequestHarvestNearestCrop wins -> the direct branch is skipped.
+            player._UnhandledInput(new InputEventKey { Pressed = true, Keycode = Key.F });
+
+            // the seam routed with the crop's NetId ...
+            T.Check($"F-interact routed the harvest over the seam (fired={fired}, id={captured}, expected {cropNode.NetId})",
+                    fired && captured == cropNode.NetId);
+            // ... and the DIRECT CropManager.Harvest did NOT also run: the node is intact (not self-QueueFree'd) and
+            //     no local SP yield world item dropped. Pre-fix (NetId 0) the direct branch frees the node + drops a yield.
+            T.Check("no double-mutation: the host crop node is still alive (direct CropManager.Harvest skipped)",
+                    GodotObject.IsInstanceValid(cropNode));
+            T.Check("no double-mutation: no local SP yield world item was dropped",
+                    World.GetTree().GetNodesInGroup("worlditems").Count == worldItemsBefore);
+        }
+    }
 }

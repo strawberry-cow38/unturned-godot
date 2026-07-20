@@ -184,6 +184,17 @@ namespace UnturnedGodot
                 // item to the P1b-authoritative SERVER grid, and broadcasts WorldItemRemoved; the owner echo
                 // re-adopts the add locally and the diff-driven view retires the puppet.
                 Player.NetPickupItem = netId => Client.SendPickupItem(netId);
+                // B3 (SP/MP-unify): route the local player's crop HARVEST over the wire. The harvest command
+                //     (CommandHarvestCrop 25) + OnHarvestCrop are already live under v10 -- OnHarvestCrop is the
+                //     authoritative sink (removes the crop, spawns the REPLICATED yield world-item, rolls
+                //     AGRICULTURE + awards XP server-side). Null in default SP/loopback, so the direct
+                //     CropManager.Harvest stays byte-identical; SETTING it makes F-interact route
+                //     RequestHarvestNearestCrop -> SendHarvestCrop (the direct CropManager.Harvest else-branch is
+                //     superseded, PlayerController.cs:2543) so the yield is the server's visible+focusable world
+                //     item (through the WorldItemReplicaView @178 above) and XP is server-adopted, instead of a
+                //     hidden SuppressLocalVisual SP drop + locally-awarded-then-overwritten XP. The loopback's
+                //     CropNetSync stamps NetId onto the host's real CropManager nodes so the scan finds them.
+                Player.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
                 // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
                 // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
                 // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and

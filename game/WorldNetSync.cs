@@ -128,6 +128,9 @@ namespace UnturnedGodot
                     netId = e.NetIdValue;
                     _netIdByInstance[iid] = netId;
                     _nodes[netId] = (c, iid);
+                    c.NetId = netId;   // B3: stamp the server crop id onto the host's own CropManager node so the
+                                       // F-interact scan (RequestHarvestNearestCrop, NetId!=0) can route its harvest
+                                       // over the wire; idempotent + harmless when no harvest seam is set (SP/dedicated)
                 }
                 else if (grown && _server.Crops.TryGet(netId, out var ent) && !_server.Crops.IsGrown(ent, tick))
                 {
@@ -151,6 +154,8 @@ namespace UnturnedGodot
                         ulong iid = node.GetInstanceId();
                         _netIdByInstance[iid] = e.NetIdValue;
                         _nodes[e.NetIdValue] = (node, iid);
+                        node.NetId = e.NetIdValue;   // B3: stamp the server crop id onto the freshly-materialized
+                                                     // node (remote-planted crop) so the harvest scan finds it too
                     }
             }
 
