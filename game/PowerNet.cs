@@ -45,6 +45,7 @@ namespace UnturnedGodot
                     foreach (var p in d.PowerPorts)
                     {
                         if (p == null || !GodotObject.IsInstanceValid(p)) continue;
+                        p.Occupied = false;   // reset; the wire loop below re-marks the wired ports
                         portMap[p] = dev.AddPort(Kind(p.Kind), p.Watts);
                     }
                     devices.Add(dev);
@@ -52,10 +53,12 @@ namespace UnturnedGodot
 
             var wires = new System.Collections.Generic.List<PowerWire>();
             foreach (var n in tree.GetNodesInGroup("wires"))
-                if (n is Wire w
-                    && GodotObject.IsInstanceValid(w.Source) && GodotObject.IsInstanceValid(w.Consumer)
-                    && portMap.TryGetValue(w.Source, out var src) && portMap.TryGetValue(w.Consumer, out var cons))
-                    wires.Add(new PowerWire(src, cons));
+                if (n is Wire w && GodotObject.IsInstanceValid(w.Source) && GodotObject.IsInstanceValid(w.Consumer))
+                {
+                    w.Source.Occupied = true; w.Consumer.Occupied = true;   // a wired port shades darker
+                    if (portMap.TryGetValue(w.Source, out var src) && portMap.TryGetValue(w.Consumer, out var cons))
+                        wires.Add(new PowerWire(src, cons));
+                }
 
             PowerSolver.Solve(devices, wires);
 
@@ -64,6 +67,7 @@ namespace UnturnedGodot
                 kv.Key.Live = kv.Value.Live;
                 kv.Key.Powered = kv.Value.Powered;
                 kv.Key.Draw = kv.Value.Draw;
+                kv.Key.UpdateCubeColor();   // reflect the new occupancy shade
             }
         }
 

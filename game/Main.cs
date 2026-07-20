@@ -1265,7 +1265,9 @@ namespace UnturnedGodot
                           || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1386,6 +1388,43 @@ namespace UnturnedGodot
                 look = new Vector3(0.4f, 0.5f, -0.4f);
                 cam.Position = new Vector3(0.2f, 3.4f, 7.0f);
                 cam.Fov = 60f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_SPOTPORTS=1: the spotlight alone with its i/o ports + arrows, close up -- verify the ports sit on the
+            // pillar/feet + the arrows point perpendicular straight out of each cube face (master's electricity quirk fix).
+            if (System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1")
+            {
+                var sp = Deployable.Spawn(this, DeployableDef.Spotlight, Vector3.Zero, 0f);
+                // feed a generator into the spotlight's consumer so THAT port reads occupied (dark grey); the passthrough
+                // stays free (light grey) -> the close-up shows both I/O-cube states + the translucency in one shot.
+                var feed = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(0f, 0f, -5.5f), 0f);
+                var spIn = sp.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+                var spOut = sp.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+                var genOut = feed.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+                var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = spIn; wr.AddToGroup("wires");
+                wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, spIn.GlobalPosition }, valid: true);
+                PowerNet.Recompute(GetTree());
+                foreach (var pt in sp.Ports) pt.SetArrowState(true, true);
+                Vector3 mid = (spIn.GlobalPosition + spOut.GlobalPosition) * 0.5f;   // aim precisely at the two I/O cubes
+                look = mid;
+                cam.Position = mid + new Vector3(0.85f, 0.42f, 1.15f);
+                cam.Fov = 38f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_PORTSTATES=1: two spotlights side by side showing every I/O-port state at once -- (left) base grey + brighter
+            // FOCUS (look-at); (right) RED occupied/invalid wire target + GREEN valid target (master's wire-feedback pass).
+            if (System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1")
+            {
+                var a = Deployable.Spawn(this, DeployableDef.Spotlight, new Vector3(-1.1f, 0f, 0f), 0f);
+                var b = Deployable.Spawn(this, DeployableDef.Spotlight, new Vector3(1.1f, 0f, 0f), 0f);
+                foreach (var d in new[] { a, b }) foreach (var pt in d.Ports) pt.SetArrowState(true, true);
+                PowerNet.Recompute(GetTree());   // settle (no wires -> base grey) BEFORE forcing states; ApplyHi keeps them after
+                ConnectionPort PS(Deployable d, DeployableDef.PortKind k) => d.Ports.Find(p => p.Kind == k);
+                PS(a, DeployableDef.PortKind.Consumer).SetHighlight(ConnectionPort.PortHi.None);       // base grey (free)
+                PS(a, DeployableDef.PortKind.Passthrough).SetHighlight(ConnectionPort.PortHi.Focus);   // a little brighter (look-at)
+                PS(b, DeployableDef.PortKind.Consumer).SetHighlight(ConnectionPort.PortHi.WireBad);    // red: occupied / invalid target
+                PS(b, DeployableDef.PortKind.Passthrough).SetHighlight(ConnectionPort.PortHi.WireOk);  // green: valid target
+                look = new Vector3(0f, 0.55f, 0f);
+                cam.Position = new Vector3(0f, 1.05f, 3.1f);
+                cam.Fov = 48f; cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read

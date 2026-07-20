@@ -144,7 +144,9 @@ namespace UnturnedGodot
             d.AddToGroup("deployables");
             foreach (var pdef in def.Ports)   // power connection cubes (children -> stand up with the model)
             {
-                var port = ConnectionPort.Create(d, pdef, def.Name);
+                var pd = pdef;
+                if (def.Id == 459) pd.Pos = EnvVec3(pd.Kind == DeployableDef.PortKind.Consumer ? "UG_SPC" : "UG_SPP", pd.Pos);   // spotlight port tuning (master: touch pillar + feet)
+                var port = ConnectionPort.Create(d, pd, def.Name);
                 d.AddChild(port);
                 d.Ports.Add(port);
                 if (pdef.Kind == DeployableDef.PortKind.Consumer) d._consumerPort = port;   // this consumer's Powered flag lights the lamps

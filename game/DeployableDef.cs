@@ -59,9 +59,10 @@ namespace UnturnedGodot
         {
             Id = 459, Name = "Spotlight", Model = "Spotlight_deploy", PlaceSound = "metalplacement",   // src Spotlight.dat PlacementAudioClip Sounds/MetalPlacement.mp3
             Size = new Vector3(2f, 2f, 0.55f), Offset = 1.12f, Radius = 0.5f, Range = 4f, Health = 300f, ShatterOnDeath = true,   // shatters into pieces, no husk/salvage (strawberry)
-            Ports = new[] {   // consumer on the back of the central pillar, passthrough on the front (flat frame; tuned visually)
-                new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, -0.35f, 0f), Watts = 250f },
-                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f, 0.35f, 0f), Watts = 0f },
+            Ports = new[] {   // I/O on the left/right of the central pillar, dropped to the feet-X (flat frame: authored X = the
+                              // horizontal sides after stand-up, +Z = down toward the base). Master-tuned; UG_SPC/UG_SPP override.
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.13f, 0f, 0.65f), Watts = 250f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0.13f, 0f, 0.65f), Watts = 0f },
             },
             // src barricade.prefab "Spots": two point lamps (bulb glow) + a spot beam. Positions/dir from the prefab,
             // z-negated into our rip frame; the spot's src full angle 60 -> Godot half-angle 30.
