@@ -16,12 +16,14 @@
 // Unassigned shirt/pants read as fully transparent (alpha 0 -> skin shows): every texture is gated by a
 // has_* bool that defaults false, so a bare body renders as plain skin_color without binding any texture.
 //
-// depth_draw_always + a ghost_alpha uniform preserves RiggedCharacter's FLANKER_STALK ghost toggle
-// through the ShaderMaterial (source is Opaque; at ghost_alpha=1.0 the depth write keeps it solid/
-// self-occluding = opaque look, at 0.2 it's the faint stalker shimmer). cull_front replicates the old
-// StandardMaterial3D CullMode.Front (the rig's Z-flip reverses winding).
+// depth_prepass_alpha + a ghost_alpha uniform preserves RiggedCharacter's FLANKER_STALK ghost toggle
+// through the ShaderMaterial (source is Opaque; the prepass writes depth so a solid body (ghost_alpha=1.0)
+// occludes correctly, at 0.2 it's the faint stalker shimmer). depth_draw_always only wrote depth in the
+// transparent pass, so against the OTHER transparent object -- the translucent ocean plane -- the body sorted
+// by distance and drew on top of everything while swimming; the prepass fixes the depth sort. cull_front
+// replicates the old StandardMaterial3D CullMode.Front (the rig's Z-flip reverses winding).
 shader_type spatial;
-render_mode cull_front, depth_draw_always;
+render_mode cull_front, depth_prepass_alpha;
 
 uniform vec4 skin_color : source_color = vec4(0.82, 0.66, 0.52, 1.0);
 uniform bool flip_shirt = false;   // left-handed model mirror (SP single body: false)

@@ -42,7 +42,8 @@ namespace UnturnedGodot
         Rk4Spring3 _shakeSpring = new Rk4Spring3(550f, 40f); // positional kick, settles ~0.2s (slight overshoot)
         Rk4Spring3 _recoilRotSpring = new Rk4Spring3(550f, 40f); // per-shot gun tilt (pitch/yaw/roll deg), springs back
         bool _moving;                       // player has movement input this frame (drives bob on/off)
-        EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE -> bob speed + amplitude
+        EPlayerStance _stance = EPlayerStance.STAND;   // STAND/SPRINT/CROUCH/PRONE/SWIM -> bob speed + amplitude
+        string _holdClip = "Melee_Equip";   // the current equipped-item hold pose; the arms revert to it after a swim
         float _blendedSway = 1f;            // blendedViewmodelSwayMultiplier: 1 hip -> 0.1 aim, eased at 16/s
         bool _reloading;      // true while the reload clip plays (blocks ADS)
         string _reloadClip = "Gun_Reload";   // per-gun reload clip ({Gun}_Reload), set in _Ready; falls back to Gun_Reload
@@ -244,6 +245,7 @@ namespace UnturnedGodot
                                  : ConsumableMesh != null ? (_arms.ClipLength(ConsumableEquipClip) > 0f ? ConsumableEquipClip : _arms.ClipLength("Consume_Equip") > 0f ? "Consume_Equip" : "Melee_Equip")   // consumable: this item's OWN raise-to-hold archetype (CE_n), else generic Consume_Equip, else the melee raise
                                  : MeleeMesh != null ? (_arms.ClipLength(_meleeCap + "_Equip") > 0f ? _meleeCap + "_Equip" : "Melee_Equip") : (_arms.ClipLength(capGun + "_Equip") > 0f ? capGun + "_Equip" : "Gun_Equip");   // melee: its OWN raise anim (fallback generic knife); gun: its OWN per-weapon hold (pistol grip / rifle stance / etc.)
                 _arms.SetClipLoop(equipClip, false);   // equip/ready-hold ALWAYS plays once and holds (src: one-shot wrapMode) -- the looping empty-hand pose was the bug
+                _holdClip = equipClip;                 // remember it so the arms return to this pose after swimming
                 _arms.Play(equipClip);
                 _equipLen = _arms.ClipLength(equipClip);
                 GD.Print($"[vm] equip (pull-out) length = {_equipLen:F3}s — aiming gated until then");
@@ -391,7 +393,21 @@ namespace UnturnedGodot
 
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
-        public void SetLocomotion(bool moving, EPlayerStance stance) { _moving = moving; _stance = stance; }
+        public void SetLocomotion(bool moving, EPlayerStance stance)
+        {
+            bool leftSwim = _stance == EPlayerStance.SWIM && stance != EPlayerStance.SWIM;
+            _moving = moving; _stance = stance;
+            if (_arms == null) return;
+            // 1p arms swim: retail's PlayerAnimator.updateState plays Idle_Swim/Move_Swim on the FIRST-PERSON
+            // animator too (not just 3p), overriding the equipped-item hold -- otherwise the empty-hand melee
+            // ready pose (Melee_Equip) shows while swimming. Revert to the held pose on leaving the water.
+            if (stance == EPlayerStance.SWIM)
+            {
+                string want = moving ? "Move_Swim" : "Idle_Swim";
+                if (_arms.ClipLength(want) > 0f) { _arms.SetClipLoop(want, true); _arms.PlayLoop(want); }
+            }
+            else if (leftSwim) _arms.Play(_holdClip);
+        }
 
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
 
