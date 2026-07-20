@@ -37,6 +37,10 @@ for datp in glob.glob(os.path.join(BUND, "**", "*.dat"), recursive=True):
     if not g: continue
     mode = RUBBLE_MODE.get((kv(txt, "Rubble") or "none").lower(), None)
     if mode is None: continue   # not destructible
+    # retail: rubbleIsVulnerable = !dat.ContainsKey("Rubble_Invulnerable") (ObjectAsset.cs:1113); gun/melee
+    # only damage the rubble when vulnerable (UseableGun/UseableMelee). An invulnerable-flagged prop looks
+    # like rubble but eats bullets forever, so it isn't a weapon-destructible -- exclude it. (0 on PEI today.)
+    if re.search(r"(?im)^\s*Rubble_Invulnerable\b", txt): continue
     health = int(kv(txt, "Rubble_Health") or 0)
     if health <= 0: continue    # rubble with no health = indestructible in practice
     reset = int(float(kv(txt, "Rubble_Reset") or 0))

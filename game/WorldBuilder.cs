@@ -371,7 +371,7 @@ namespace UnturnedGodot
             }
             destField.SetCount(destN);   // reserve the whole deterministic index space (built + unbuilt holiday slots)
             result.Destructibles = destField;
-            if (destN > 0) GD.Print($"[rubble] {destN} destructible placements reserved ({destField.InstanceCount} slots)");
+            if (destN > 0) GD.Print($"[rubble] {destField.BuiltCount} destructible props wired ({destN} reserved, {destField.InstanceCount} slots)");
             if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");

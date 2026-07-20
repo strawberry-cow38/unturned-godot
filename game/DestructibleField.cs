@@ -33,6 +33,11 @@ namespace UnturnedGodot
 
         Rec[] _recs = System.Array.Empty<Rec>();
 
+        /// <summary>How many slots actually bound a built prop with health (Register calls) -- vs InstanceCount,
+        /// which includes reserved-but-unbuilt holiday tail slots. A boot-time sanity number: if this is 0 the
+        /// index space never got wired (the register-before-setcount bug), so nothing is destructible.</summary>
+        public int BuiltCount { get; private set; }
+
         /// <summary>Total destructible-placement slots in the deterministic index space (includes reserved
         /// slots for out-of-season holiday placements that never build a node -- they keep the index aligned
         /// across peers). The bitmap sizes to this.</summary>
@@ -58,6 +63,7 @@ namespace UnturnedGodot
         {
             if (index < 0) return;
             EnsureSize(index + 1);
+            if (_recs[index] == null) BuiltCount++;
             _recs[index] = new Rec { Meshes = meshes, Body = body, BodyLayer = body?.CollisionLayer ?? 0u,
                                      MaxHealth = maxHealth, ResetTicks = resetTicks };
         }
