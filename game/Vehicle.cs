@@ -13,6 +13,7 @@ namespace UnturnedGodot
         // feed torque; _dragK = aero drag coeff (F_drag = _dragK*v^2), derived so top speed lands at _speedMax on flat
         // ground -- so a load/hill drops it BELOW _speedMax (power != speed). Real per-vehicle Mass drives accel = F/m.
         float _torque = 600f, _dragK; float[] _driveGears = { 1f };
+        int _tractionWheels = 4;   // vehiclerework: # of driven wheels (FWD/RWD=2, AWD=4). EngineForce is normalized by this (godot applies it PER traction wheel), so a drivetrain swap changes HANDLING, not total power
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
@@ -1226,6 +1227,11 @@ namespace UnturnedGodot
                 v.AddChild(w);
                 v._wNodes[i] = w; v._wMeshes[i] = mi;
             }
+            // vehiclerework: count driven wheels to normalize EngineForce. Safety: a non-trailer drivetrain that matched
+            // NO wheel (odd wheel config) would strand the car -> fall back to all-traction so it always drives.
+            v._tractionWheels = 0; foreach (var wn in v._wNodes) if (wn.UseAsTraction) v._tractionWheels++;
+            if (v._tractionWheels == 0 && s.Kingpin == Vector3.Zero) { foreach (var wn in v._wNodes) wn.UseAsTraction = true; v._tractionWheels = v._wNodes.Length; }
+            if (v._tractionWheels < 1) v._tractionWheels = 1;   // trailer (no traction) -> guard the force divide
 
             // Drop the centre of mass to just below the axle line so the car stops rolling on turns and pitching onto its
             // nose under braking (master). Godot's auto COM sat at the body-box centre (~0.6m up) -> top-heavy + tippy.
@@ -1384,7 +1390,7 @@ namespace UnturnedGodot
             if (Towing != null) eng *= 0.9f;   // towing a car on a rope: only a touch sluggish -> the tower keeps most of its power to actually haul the load (master 2026-07-20)
             if (throttle > 0f && speed >= _speedMax * 1.05f) eng = 0f;    // soft ceiling just above the top: hand-tuned cars drag-limit BELOW this; DERIVED cars ride it (~= their old SpeedMax)
             if (throttle < 0f && speed >= -_speedMin * 1.05f) eng = 0f;   // same for reverse
-            EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
+            EngineForce = -eng * 4f / _tractionWheels;   // NEGATE (+Z rig) + normalize per driven wheel: godot applies EngineForce PER traction wheel, so /_tractionWheels keeps TOTAL power constant across FWD/RWD/AWD (drivetrain = handling, not power)
             float t = _speedMax > 0f ? Mathf.Clamp(speed / _speedMax, 0f, 1f) : 0f;   // guard div-by-0 for a towed body (_speedMax=0) -> NaN steer target; matches ForwardSpeedPct's _speedMax<=0 guard
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
             _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp -- master confirmed the raw angle is fine
@@ -1962,7 +1968,8 @@ namespace UnturnedGodot
             float band = _speedMax > 0f ? Mathf.Clamp(fwdSpd / _speedMax, 0f, 0.999f) * ngear : 0f;
             int newGear = Mathf.Clamp(1 + (int)band, 1, ngear);
             float within = band - (int)band;
-            _engineRpm = Mathf.Lerp(_engineRpm, EngineOn ? Mathf.Lerp(IdleRpm, MaxRpm, within) : IdleRpm, Mathf.Min(1f, 10f * (float)delta));
+            float revNorm = fwdSpd < 1.0f ? 0f : 0.42f + 0.53f * within;   // idle at a standstill; per-gear sweep ~0.42->0.95 (a shift drops the revs but not to idle) -> RPM climbs ~half as fast as the full idle->redline sweep (master: "gains too fast")
+            _engineRpm = Mathf.Lerp(_engineRpm, EngineOn ? Mathf.Lerp(IdleRpm, MaxRpm, revNorm) : IdleRpm, Mathf.Min(1f, 5f * (float)delta));
             if (newGear != _gear && !_exploded && !_husk && fwdSpd > 1.5f)
             {
                 ApplyCentralImpulse(Vector3.Up * Mass * 0.16f);
