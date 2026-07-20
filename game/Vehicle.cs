@@ -628,7 +628,7 @@ namespace UnturnedGodot
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 32f, SpeedMin = -12f, Brake = 32f,
-            Mass = 1500f, Torque = 1600f, DriveGears = new[] { 2.2f, 1.7f, 1.4f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.FWD,   // vehiclerework BASELINE: mid, ~72mph top, 6-speed, FWD (pulls, mild understeer)
+            Mass = 1500f, Torque = 1300f, DriveGears = new[] { 1.5f, 1.35f, 1.22f, 1.13f, 1.06f, 1f }, Drive = Drivetrain.FWD,   // vehiclerework BASELINE: mid, ~72mph, 6-speed, FWD; flatter low gears -> gentler launch
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -751,7 +751,7 @@ namespace UnturnedGodot
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 22f, SpeedMin = -9f, Brake = 32f,
-            Mass = 9000f, Torque = 6500f, DriveGears = new[] { 3.2f, 2.6f, 2.1f, 1.7f, 1.35f, 1.1f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework HEAVY HAULER: ~49mph top (low), heavy + torquey, 7-speed, RWD
+            Mass = 9000f, Torque = 5500f, DriveGears = new[] { 2.0f, 1.7f, 1.45f, 1.3f, 1.18f, 1.08f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework HEAVY HAULER: ~49mph (low), heavy, 7-speed, RWD; still grunty but tamer launch
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -833,7 +833,7 @@ namespace UnturnedGodot
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 40f, SpeedMin = -13f, Brake = 32f,
-            Mass = 1750f, Torque = 2000f, DriveGears = new[] { 2.3f, 1.8f, 1.45f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework BUFFED SEDAN (crown vic): ~90mph top, more torque, 6-speed, RWD (tail-happy)
+            Mass = 1750f, Torque = 1650f, DriveGears = new[] { 1.6f, 1.4f, 1.26f, 1.15f, 1.06f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework BUFFED SEDAN (crown vic): ~90mph, 6-speed, RWD (tail-happy); flatter low gears
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -1084,8 +1084,8 @@ namespace UnturnedGodot
             bool derivedDrive = s.Torque <= 0f;   // no explicit drivetrain stats -> derive + rescale from the old arcade values so the WHOLE fleet gets realistic speeds
             v.Mass = s.Mass > 0f ? s.Mass : GlobalMass;                         // real per-vehicle weight (kg); un-set -> the old shared 900
             if (derivedDrive) v._speedMax = s.SpeedMax * 2.0f;                  // old arcade tops (~12-19 m/s / 25-40mph) -> realistic (~24-38 m/s / 55-85mph); exemplars keep their explicit SpeedMax
-            v._torque = derivedDrive ? s.Engine * 1.6f : s.Torque;             // un-set -> the old Engine value, bumped to pull up to the higher top
-            v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.9f, 1.55f, 1.3f, 1.15f, 1.05f, 1f };   // un-set -> a sane 6-speed spread (launch grunt -> cruise)
+            v._torque = derivedDrive ? s.Engine * 1.3f : s.Torque;             // un-set -> the old Engine value, bumped to pull up to the higher top
+            v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.5f, 1.35f, 1.22f, 1.13f, 1.06f, 1f };   // un-set -> a FLATTER 6-speed spread (gentle launch -> cruise)
             v._dragK = v._speedMax > 0f ? v._torque * v._driveGears[v._driveGears.Length - 1] / (v._speedMax * v._speedMax) : 0f;   // drag so top-gear force = drag at the (rescaled) top -> flat-ground top lands there
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
@@ -1394,7 +1394,9 @@ namespace UnturnedGodot
             if (throttle > 0f && speed >= _speedMax * 1.05f) eng = 0f;    // soft ceiling just above the top: hand-tuned cars drag-limit BELOW this; DERIVED cars ride it (~= their old SpeedMax)
             if (throttle < 0f && speed >= -_speedMin * 1.05f) eng = 0f;   // same for reverse
             EngineForce = -eng * 4f / _tractionWheels;   // NEGATE (+Z rig) + normalize per driven wheel: godot applies EngineForce PER traction wheel, so /_tractionWheels keeps TOTAL power constant across FWD/RWD/AWD (drivetrain = handling, not power)
-            float t = _speedMax > 0f ? Mathf.Clamp(speed / _speedMax, 0f, 1f) : 0f;   // guard div-by-0 for a towed body (_speedMax=0) -> NaN steer target; matches ForwardSpeedPct's _speedMax<=0 guard
+            // vehiclerework: HEAVILY speed-dependent steering (master) -- a sqrt curve so the lock falls off FAST as you speed
+            // up: near-full lock at a crawl, tight + planted at speed (you can't flick it at 70mph). (guard div-by-0 on a towed body.)
+            float t = _speedMax > 0f ? Mathf.Sqrt(Mathf.Clamp(speed / _speedMax, 0f, 1f)) : 0f;
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
             _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t);   // smoothed toward in _PhysicsProcess (not snapped) via the AnimatedSteeringAngle-style ramp -- master confirmed the raw angle is fine
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
