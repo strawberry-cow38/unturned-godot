@@ -293,19 +293,24 @@ namespace UnturnedGodot.Testing
     // jar and leave the server grid untouched. This drives the REAL UI action via DebugUse over a connected
     // ClientWorldSession shell (the same net stack net.shell_consume uses), through the RequestConsume seam.
     //
-    // TEETH (the resurrect bug, exactly what ClientWorldSession.cs:193-194 warns about -- "consume decrement
-    // is resurrected by the next full-state echo"): PRE-FIX, UseSelected decrements only the LOCAL jar (2->1)
-    // and never calls NetConsume, so (a) the SERVER grid still holds amount 2 (Until times out, assert fails)
-    // and Diag.ConsumesApplied never bumps, and (c) the next Inventories.ReplicaUpdated -> AdoptReplicatedInventory
-    // re-adopts the server's 2, jumping the local bag BACK UP to 2 (the resurrect) -- so "stays 1 after an echo"
-    // fails. POST-FIX the server owns the delete (2->1) and the echo repaints 1 with no resurrect. Mirror of
-    // net.shell_consume, but driven through the UI Use button rather than the held-consume eat timer.
+    // TWO amount-1 jars (Unturned consumables DON'T stack -- each is its own grid item; that's also what makes
+    // the owner echo fire: the inventory dirty flag rides Items.onStateUpdated, which fires on a whole-jar
+    // add/remove but NOT on a bare in-place jar.amount--, so a partial-stack decrement wouldn't replicate --
+    // out of scope for this guard-fix). count 2 -> 1 = one jar deleted server-side, exactly OnConsume's remove.
+    //
+    // TEETH (the resurrect bug, exactly what ClientWorldSession.cs:193-194 warns about -- "consume decrement is
+    // resurrected by the next full-state echo"): PRE-FIX, UseSelected removes only the LOCAL jar and never calls
+    // NetConsume, so (a) the SERVER grid still holds 2 (Until times out, assert fails) and Diag.ConsumesApplied
+    // never bumps, and (c) the next Inventories.ReplicaUpdated -> AdoptReplicatedInventory re-adopts the server's
+    // 2, jumping the local bag BACK UP to 2 (the resurrect) -- so "stays 1 after an echo" fails. POST-FIX the
+    // server owns the delete (2->1) and the echo repaints 1 with no resurrect. Mirror of net.shell_consume, but
+    // driven through the UI Use button rather than the held-consume eat timer.
     public class UnifyUseButtonConsume : GameTest
     {
         public override string Name => "unify.use_button_consume";
         public override double TimeoutSimSeconds => 40;
 
-        // the single grid cell of item `id` on page `p` (cleared to be unique) -> its (x,y)
+        // the first grid cell of item `id` on page `p` -> its (x,y)
         static bool FindCell(PlayerInventory inv, byte p, ushort id, out byte x, out byte y)
         {
             var pg = inv.items[p];
@@ -342,19 +347,20 @@ namespace UnturnedGodot.Testing
             if (!sHave) yield break;
             yield return Ticks(10);
 
-            // Seed a CLEAN consumable STACK (amount 2) in a bag cell: clear the demo Bottled Waters first so
-            // the id is unique (OnConsume's removeItemAmount-by-id + getItemCount are unambiguous), then add
-            // one 1x1 stack of amount 2 into POCKETS (page 2). Let it replicate to the shell.
+            // Seed exactly TWO consumables in the SERVER pockets grid: clear the demo Bottled Waters first so the
+            // id count is unambiguous (getItemCount + OnConsume's remove-by-id), then add two amount-1 jars. Let
+            // it replicate to the shell (a whole-jar add fires Items.onStateUpdated -> dirty -> owner echo).
             sInv.Inventory.removeItemAmount(14, 999);   // drop every demo Bottled Water across the bag
-            bool seeded = sInv.Inventory.items[2].tryAddItem(new Item(14, 2));
-            T.Check("seeded a Bottled Water stack (amount 2) into the SERVER pockets grid",
-                    seeded && sInv.Inventory.getItemCount(14) == 2);
-            T.Check("found the seeded stack's cell", FindCell(sInv.Inventory, 2, 14, out byte cx, out byte cy));
+            bool s1 = sInv.Inventory.items[2].tryAddItem(new Item(14));
+            bool s2 = sInv.Inventory.items[2].tryAddItem(new Item(14));
+            T.Check("seeded two Bottled Waters into the SERVER pockets grid",
+                    s1 && s2 && sInv.Inventory.getItemCount(14) == 2);
+            T.Check("found a seeded Water cell to Use", FindCell(sInv.Inventory, 2, 14, out byte cx, out byte cy));
             FindCell(sInv.Inventory, 2, 14, out cx, out cy);
 
             yield return Until(() => sess.Shell.Inventory.getItemCount(14) == 2
                                   && sess.Shell.Inventory.items[2].getIndex(cx, cy) != byte.MaxValue, 5);
-            T.Check("the shell adopted the seeded stack at (2,cx,cy) with amount 2",
+            T.Check("the shell adopted the two Waters (a Use-able cell at (2,cx,cy))",
                     sess.Shell.Inventory.getItemCount(14) == 2
                  && sess.Shell.Inventory.items[2].getIndex(cx, cy) != byte.MaxValue);
 
@@ -367,12 +373,12 @@ namespace UnturnedGodot.Testing
             ui.DebugUse(2, cx, cy);   // the REAL Use-button path (UseSelected) -- routes RequestConsume, skips local decrement
 
             yield return Until(() => sInv.Inventory.getItemCount(14) == 1, 5);
-            T.Check("(a) the SERVER grid decremented the stack to 1 (Use routed NetConsume)",
+            T.Check("(a) the SERVER grid decremented to 1 (Use routed NetConsume, not a local-only decrement)",
                     sInv.Inventory.getItemCount(14) == 1);
             T.Check("(b) Diag.ConsumesApplied bumped (the server owned the delete)",
                     ded.Server.Transactions.Diag.ConsumesApplied == consumesBefore + 1);
 
-            // let several more owner-block echoes land AFTER the consume -- pre-fix this is where the local jar
+            // let several more owner-block echoes land AFTER the consume -- pre-fix this is where the local grid
             // resurrects (AdoptReplicatedInventory re-adopts the still-2 server grid). Post-fix it holds at 1.
             yield return Until(() => sess.Shell.Inventory.getItemCount(14) == 1, 5);
             yield return Ticks(20);
