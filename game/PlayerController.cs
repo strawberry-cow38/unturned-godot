@@ -898,8 +898,8 @@ namespace UnturnedGodot
             if (asset.IsConsumable) { EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true; }   // EquipHeldConsumable snapshots the revert target itself
             var deploy = DeployableDef.ById(asset.id);
             if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
-            if (asset.id == 65) { EquipWireTool(backing); return true; }   // Wire (item 65) = the wiring tool
-            if (asset.id == 64) { EquipRopeTool(backing); return true; }   // Rope (item 64) = the vehicle tow-rope tool
+            var tool = ToolDef.ById(asset.id);
+            if (tool != null) { EquipTool(tool, backing); return true; }   // Wire (65) / Rope (64) / future tools = data-driven (was hard-coded ids)
             if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
             return false;
         }
@@ -1153,34 +1153,30 @@ namespace UnturnedGodot
 
         // Equip the Wire tool (item 65): the wiring tool held in hand. Wiring interaction (select node / route / place /
         // cancel / undo) lands in later phases; this just puts it in the hand (HoldingWireTool drives the mode).
-        public void EquipWireTool(SDG.Unturned.Item backing = null)
+        // General held-TOOL equip (master's holdable pass 2026-07-20): drive the in-hand tool viewmodel from a ToolDef
+        // -- mesh + flat colour + the rope/wire kind bit. Was two near-identical EquipWireTool/EquipRopeTool bodies;
+        // now ONE path + a data registry (ToolDef), so a new held tool is a data entry, not another hard-coded branch.
+        // Behaviour byte-identical (the per-tool-kind revert guard is preserved).
+        public void EquipTool(ToolDef def, SDG.Unturned.Item backing = null)
         {
             SaveGunState();
-            if (!HoldingWireTool) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
+            bool alreadyThisKind = def.IsRope ? HoldingRopeTool : HoldingWireTool;
+            if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.647f, 0.647f, 0.647f) };   // wire's flat _Color 0.647 grey
+            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print("[wire] holding the Wire tool");
+            GD.Print($"[tool] holding the {def.Name}");
         }
+
+        public void EquipWireTool(SDG.Unturned.Item backing = null) => EquipTool(ToolDef.Wire, backing);   // Wire (item 65) = the power wiring tool
 
         // Equip the Rope tool (item 64): the vehicle tow-rope. Held in hand -> HoldingRopeTool drives tow mode (LMB ties
         // this car's REAR node to another car's FRONT node like a wire; RMB cancels/unties). Reuses the wire hold mesh
         // tinted hemp-brown. SP/integrated-server only (the pull force needs both vehicle bodies in one physics space).
-        public void EquipRopeTool(SDG.Unturned.Item backing = null)
-        {
-            SaveGunState();
-            if (!HoldingRopeTool) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
-            _reloading = false; _torchAnimOn = false; ClearDeployable();
-            _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ToolMesh = "wire_hold.obj", ToolColor = new Color(0.42f, 0.30f, 0.16f), IsRopeTool = true };   // hemp brown
-            AddChild(_viewmodel);
-            RelinkViewmodelLighting();
-            GD.Print("[rope] holding the Tow Rope tool");
-        }
+        public void EquipRopeTool(SDG.Unturned.Item backing = null) => EquipTool(ToolDef.Rope, backing);
 
         // Put the held deployable away (called whenever another item is equipped).
         void ClearDeployable()
