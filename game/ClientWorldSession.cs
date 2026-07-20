@@ -268,6 +268,11 @@ namespace UnturnedGodot
             // has no per-echo event either). Adoption is the LAST HP writer so local regen/starve can't move it;
             // the HUD keeps its exact Player.Health read. Runs before the riding branch so HP tracks while seated too.
             if (Client.CombatState.TryGet(Client.PlayerId, out var vit)) Shell.AdoptReplicatedVitals(vit.Health);
+            // B5 (SP/MP-unify): the owner-only fine vitals (food/water/stamina/infection) are server-authoritative
+            // too -- mirror the SystemVitals(13) owner block into the shell each tick (the AdoptReplicatedVitals
+            // analogue), so the HUD bars read server truth and the local PlayerVitalsSim.Step fine mutation is skipped.
+            if (Client.Vitals.TryGet(Client.PlayerId, out var fv))
+                Shell.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection);
             // Part A DRIVING (CLIENT_PREDICTION_PLAN §5.2 A1, replacing the C6 v1 puppet-ride): seated in a
             // replicated vehicle -- the shell drives a CLIENT-LOCAL real Vehicle through the SP direct-drive
             // path (0 ms wheel response; retail client authority) and this step streams VehicleState @25 Hz

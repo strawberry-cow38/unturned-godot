@@ -84,6 +84,7 @@ namespace UnturnedGodot.Net
         readonly DeployableReplication _deployables;
         readonly CropReplication _crops;
         readonly ResourceReplication _resources;
+        readonly PlayerVitalsReplication _vitals;   // B5: OnConsume raises server food/water/stamina/infection here
         readonly NetIdMinter _ids;
         readonly Func<long> _tick;
         readonly Action<byte[]> _broadcast;
@@ -94,11 +95,12 @@ namespace UnturnedGodot.Net
                                   WorldItemReplication worldItems, DeployableReplication deployables,
                                   NetIdMinter ids, Func<long> tick,
                                   Action<byte[]> broadcast, Action<ushort, byte[]> sendTo,
-                                  CropReplication crops = null, ResourceReplication resources = null)
+                                  CropReplication crops = null, ResourceReplication resources = null,
+                                  PlayerVitalsReplication vitals = null)
         {
             _players = players; _combat = combat;
             _skills = skills; _inventories = inventories; _worldItems = worldItems; _deployables = deployables;
-            _crops = crops; _resources = resources;
+            _crops = crops; _resources = resources; _vitals = vitals;
             _ids = ids; _tick = tick; _broadcast = broadcast; _sendTo = sendTo;
             var rng = new Random();   // server-side only (§2.5: only the server rolls); tests inject a stub
             Rand = () => (float)rng.NextDouble();
@@ -389,14 +391,20 @@ namespace UnturnedGodot.Net
             inv.removeItemAmount(asset.id, 1);   // the SP consume path removes by id (PlayerController.TickConsume)
             Diag.ConsumesApplied++;
 
-            // vitals: the server-side combat state carries health; food/water/stamina/infection have no
-            // server model yet (Phase 5 replicated coarse health only) -- deferred with the vitals split.
+            // HP stays the coarse-combat authority; the useHealth bump raises it directly (as before).
             if (asset.useHealth > 0 && _combat.TryGet(sender, out var ce) && ce.Alive)
             {
                 ce.HealthExact = Mathf.Min(100f, ce.HealthExact + asset.useHealth);
                 ce.Health = (byte)Mathf.RoundToInt(ce.HealthExact);
                 _combat.MarkDirty(ce, _tick());
             }
+            // B5 (SP/MP-unify): the previously-stubbed fine-vitals effects now land on the server sim -- the
+            // .dat 0-100 values map to the port's 0..1 vitals (÷100). Virus RAISES infection, Disinfectant
+            // LOWERS it; Energy restores stamina. The owner-block echo re-adopts them onto the shell.
+            _vitals?.ServerRaise(sender,
+                asset.useFood / 100f, asset.useWater / 100f, asset.useEnergy / 100f,
+                (asset.useVirus - asset.useDisinfectant) / 100f,
+                asset.useStopsBleeding, asset.useHealBroken, _tick());
         }
 
         void OnPlantCrop(ushort sender, PlantCropCommand cmd)

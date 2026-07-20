@@ -61,6 +61,23 @@ namespace UnturnedGodot.Net
             return result;
         }
 
+        /// <summary>Same idea as QuantizeClampedFloat, for WriteUnsignedNormalizedFloat -- what the B5
+        /// SystemVitals owner block runs food/water/stamina/infection through (8 bits each). The server hashes
+        /// the ROUND-TRIPPED value so its StateHashFor matches the owner replica's StateHash exactly (the
+        /// replica only ever holds this quantized reconstruction), never a tolerance -- the signed-float
+        /// mirror above, unsigned.</summary>
+        public static float QuantizeUnsignedNormalizedFloat(float value, int bitCount)
+        {
+            var w = new NetPakWriter { buffer = new byte[8] };
+            w.Reset();
+            w.WriteUnsignedNormalizedFloat(value, bitCount);
+            w.Flush();
+            var r = new NetPakReader();
+            r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            r.ReadUnsignedNormalizedFloat(bitCount, out float result);
+            return result;
+        }
+
         /// <summary>Same idea as QuantizeClampedFloat, for WriteDegrees/ReadDegrees.</summary>
         public static float QuantizeDegrees(float value, int bitCount)
         {

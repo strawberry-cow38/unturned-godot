@@ -78,7 +78,7 @@ namespace UnturnedGodot.Net
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
-                                                  Crops, Resources);
+                                                  Crops, Resources, Vitals);
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             VehicleHost.Register(Commands);
@@ -114,6 +114,36 @@ namespace UnturnedGodot.Net
             };
             Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
+            // B5 (SP/MP-unify): server-authoritative fine vitals. HP is NEVER owned by the vitals sim -- each
+            // tick ServerStep re-seeds Sim.Health from the single HP authority (CombatState.HealthExact) and
+            // routes the delta OUT: starvation loss through the queued DamagePlayerExternal env sink (death-
+            // capable, landing in THIS tick's Combat.Step, which runs right after Vitals.ServerStep in
+            // TickSimulation), regen through a direct HealthExact raise. Stamina is server-owned but sprint
+            // stays client-auth: the server derives `sprinting` from the ADOPTED stance (PlayerHost DrivenState
+            // for the MP shell, or the held MoveInput for a loopback/demo walker) -- no second body. HP-delta
+            // routing runs only while SurvivalDrain is on (default OFF = SP byte-identical coarse-HP path).
+            Vitals.IsAlive = pid => CombatState.IsAlive(pid);
+            Vitals.SprintingOf = pid =>
+                PlayerHost.TryGetDrivenState(pid, out var ds) ? ds.Stance == EPlayerStance.SPRINT
+                : Players.TryGetHeldInput(pid, out var mi) && mi.Stance == EPlayerStance.SPRINT;
+            Vitals.MultipliersOf = pid => Skills.TryGet(pid, out var se)
+                ? new PlayerVitalsSim.Multipliers
+                {
+                    ExerciseStaminaDrain = se.Skills.ExerciseStaminaDrainMultiplier(),
+                    CardioStaminaRegen = se.Skills.CardioStaminaRegenMultiplier(),
+                    SurvivalDrain = se.Skills.SurvivalDrainMultiplier(),
+                    VitalityRegen = se.Skills.VitalityRegenMultiplier(),
+                }
+                : PlayerVitalsSim.Multipliers.None;
+            Vitals.HealthOf = pid => CombatState.TryGet(pid, out var ce) ? ce.HealthExact : 100f;
+            Vitals.DamageSink = (pid, dmg) => Combat.DamagePlayerExternal(pid, dmg);   // env attacker 0 -> Killer 0, death-capable
+            Vitals.RegenSink = (pid, amt) =>
+            {
+                if (!CombatState.TryGet(pid, out var ce) || !ce.Alive) return;
+                ce.HealthExact = System.Math.Min(100f, ce.HealthExact + amt);
+                ce.Health = (byte)System.Math.Clamp((int)System.Math.Ceiling(ce.HealthExact), 0, 100);   // same coarsening as ApplyPlayerDamage
+                CombatState.MarkDirty(ce, Session.CurrentTick);
+            };
             Commands.Register<MoveInputPacket>(ReplicationIds.CommandMoveInput, MoveInputPacket.TryRead,
                 // C1 (plan §4.2): enqueue every carried entry oldest-first -- ServerQueueInput's
                 // strictly-increasing-seq guard drops the entries an earlier datagram already delivered,
@@ -140,6 +170,7 @@ namespace UnturnedGodot.Net
                 // so the joiner's own owner-only skills/inventory blocks ride the join snapshot too.
                 Skills.ServerAdd(peer.PlayerId, Session.CurrentTick);
                 Inventories.ServerAdd(peer.PlayerId, Session.CurrentTick);
+                Vitals.ServerAdd(peer.PlayerId, Session.CurrentTick);   // B5: one PlayerVitalsSim per player, owner-only on the wire
                 // The join flow (MP_PLAN §4 Phase 4): Accept -> reliable FULL snapshot -> deltas. The full
                 // snapshot rides ReliableOrdered where fragmentation is safe (§2.2) -- a lost datagram
                 // retransmits instead of the client waiting out unreliable full-resends. Composed in
@@ -159,6 +190,7 @@ namespace UnturnedGodot.Net
                 Players.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 CombatState.ServerRemove(peer.PlayerId, Session.CurrentTick);
                 Skills.ServerRemove(peer.PlayerId);
+                Vitals.ServerRemove(peer.PlayerId);   // B5: the leaving peer's vitals sim dies with it
                 Inventories.ServerRemove(peer.PlayerId, Session.CurrentTick);   // also releases any crate they held open
                 Composer.ForgetClient(peer.PlayerId);
                 _pendingRecoveryFulls.Remove(peer.PlayerId);   // a reused playerId must not inherit a stale hold
@@ -208,6 +240,9 @@ namespace UnturnedGodot.Net
             }
             Players.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
             VehicleHost.Step(Session.CurrentTick);   // drivers ride their vehicle entity; dead drivers exit
+            // B5: BETWEEN VehicleHost.Step and Combat.Step so a queued starvation drain lands in THIS tick's
+            // Combat.Step (the external-damage queue drains at the top of Combat.Step) -- death same tick.
+            Vitals.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
             Combat.Step(Session.CurrentTick);
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
             Inventories.ServerCommitDirty(Session.CurrentTick);

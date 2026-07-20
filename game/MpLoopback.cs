@@ -301,9 +301,23 @@ namespace UnturnedGodot
             if (ConsumeDeployables && Client.CombatState.TryGet(Client.PlayerId, out var vit))
                 Player.AdoptReplicatedVitals(vit.Health);
 
-            // 1) the shell's captured input goes over the wire as this tick's MoveInput (held-keys model)
+            // B5 (SP/MP-unify): the loopback host's fine vitals are server-owned too. Mirror PlayerController's
+            // SurvivalDrain (F1 `survival on|off`, static) into the server authority, then adopt the owner
+            // SystemVitals(13) block into the shell each tick (after HP adoption). Gated on --spconsume, so
+            // default SP/loopback keeps its LOCAL vitals byte-identical.
+            if (ConsumeDeployables)
+            {
+                Server.Vitals.SurvivalDrain = PlayerController.SurvivalDrain;
+                if (Client.Vitals.TryGet(Client.PlayerId, out var fv))
+                    Player.AdoptReplicatedFineVitals(fv.Sim.Food, fv.Sim.Water, fv.Sim.Stamina, fv.Sim.Infection);
+            }
+
+            // 1) the shell's captured input goes over the wire as this tick's MoveInput (held-keys model). B5:
+            //    PACK the shell's stance (was buttons=0) so the server derives `sprinting` from the adopted
+            //    stance for the stamina drain -- stamina server-owned while the sprint decision stays client-auth.
             float yaw = Player.RotationDegrees.Y;
-            ushort seq = Client.SendMoveInput(Player.LastMoveInput.x, Player.LastMoveInput.y, yaw);
+            ushort seq = Client.SendMoveInput(Player.LastMoveInput.x, Player.LastMoveInput.y, yaw,
+                                              MoveInput.PackStance(Player.Stance));
 
             // 2) the local node IS the authority (listen-server): write its sim-core + real-collision
             //    result into the replication entity; ServerStep skips externally-driven entities

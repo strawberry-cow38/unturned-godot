@@ -1607,6 +1607,28 @@ namespace UnturnedGodot
             Health = _netAdoptedHealth;   // apply immediately -- the HUD may read Player.Health at any point
         }
 
+        // ---- B5 (SP/MP-unify): server-authoritative FINE vitals (food/water/stamina/infection). The owner-
+        // only SystemVitals(13) block is the sole writer of these while adopted -- UpdateVitals skips the local
+        // PlayerVitalsSim.Step fine mutation (which was the shipped bug: it drained food to 0 locally while the
+        // `died` result was discarded and the server ran no hunger sim). Wired ONLY by ClientWorldSession (MP
+        // shell) + MpLoopback --spconsume; null in default SP so vitals stay local + byte-identical. HP is a
+        // SEPARATE authority (the coarse CombatEntity byte via AdoptReplicatedVitals); this never touches it.
+        public bool NetFineVitalsAdopted { get; private set; }
+
+        /// <summary>Mirror the owner's replicated fine vitals into the shell each tick (the AdoptReplicatedVitals
+        /// analogue). Stamina is server-owned but the SPRINT decision stays client-auth -- the shell reads this
+        /// adopted Stamina to gate sprint, and the server derives `sprinting` from the adopted stance (a few
+        /// ticks of lag, like HP adoption). Bleeding/Broken ride the wire but the server has no source yet, so
+        /// they are NOT clobbered here (they'd only ever wipe a locally-meaningful flag to false).</summary>
+        public void AdoptReplicatedFineVitals(float food, float water, float stamina, float infection)
+        {
+            NetFineVitalsAdopted = true;
+            Food = Mathf.Clamp(food, 0f, 1f);
+            Water = Mathf.Clamp(water, 0f, 1f);
+            Stamina = Mathf.Clamp(stamina, 0f, 1f);
+            Infection = Mathf.Clamp(infection, 0f, 1f);
+        }
+
         // Server-owned death/respawn while adopting: the shell renders the SP death corpse/cam + respawn
         // visuals, but the SERVER owns the 3.5 s clock (the local _deathTimer self-respawn is disabled) and the
         // respawn REPOSITION rides the recov/freeze-until-echo primitive (a bare GlobalPosition write is
@@ -2305,6 +2327,15 @@ namespace UnturnedGodot
         {
             if (NetAvatar) return;   // v1 invulnerability (see TakeDamage): no local starvation/infection death on a server avatar either
             if (_dead) return;
+            // B5 (SP/MP-unify): when the fine vitals (food/water/stamina/infection) are server-owned, the
+            // owner-block adoption (AdoptReplicatedFineVitals) is their SOLE writer -- SKIP the local sim's
+            // fine mutation entirely (running it would re-introduce the shipped bug: local food draining to 0
+            // while the server owns the real drain + death). HP stays pinned to the coarse adopted value.
+            if (NetFineVitalsAdopted)
+            {
+                if (NetVitalsAdopted) Health = _netAdoptedHealth;
+                return;
+            }
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
             bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
             {

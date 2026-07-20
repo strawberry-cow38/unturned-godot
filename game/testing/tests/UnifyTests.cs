@@ -1914,4 +1914,196 @@ namespace UnturnedGodot.Testing
                     World.GetTree().GetNodesInGroup("worlditems").Count == worldItemsBefore);
         }
     }
+
+    // B5 (SP/MP-unify) phase gate 1: a REAL ClientWorldSession shell, server-authoritative fine vitals. The
+    // shipped bug: HP was server-adopted but food/water/stamina ran the shell's LOCAL sim and the `died`
+    // result was DISCARDED under adoption -> you drained to Food=0 and never died (the server ran no hunger
+    // sim). Post-fix the server owns the hunger sim (stepped BETWEEN VehicleHost.Step and Combat.Step) and the
+    // shell CONSUMES the SystemVitals(13) owner block (AdoptReplicatedFineVitals) -- its local fine mutation
+    // is skipped. Phase A: the shell STARVES TO DEATH server-owned (HP drains through the SAME ServerCombat
+    // sink weapons use -> PlayerDied Killer=0), then the server owns the respawn clock. Phase B: a consumed
+    // FOOD raises server Food over the wire and HP REGENS (fed + hydrated) -- with clean teeth (pre-fix
+    // OnConsume never raises food, so the food-gate stays closed and HP never regens). DESYNC-QUIET throughout.
+    public class UnifyFineVitalsStarve : GameTest
+    {
+        public override string Name => "unify.fine_vitals_starve";
+        public override double TimeoutSimSeconds => 90;
+
+        static bool FindCell(PlayerInventory inv, ushort id, out byte page, out byte x, out byte y)
+        {
+            for (byte p = 0; p < inv.items.Length; p++)
+            {
+                var pg = inv.items[p];
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                {
+                    var j = pg.getItem(i);
+                    if (j?.item != null && j.item.id == id) { page = p; x = j.x; y = j.y; return true; }
+                }
+            }
+            page = x = y = 0; return false;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // id 13 (Canned Beans: useFood 55, useHealth 10) resolves as a FOOD consumable
+
+            var net = new MemNetwork(20260725);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "starver" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true, SurvivalDrain = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+            var myDeaths = new List<PlayerDiedEvent>();
+            sess.Client.PlayerDied += myDeaths.Add;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            T.Check("the DedicatedServer mirrored SurvivalDrain onto the vitals authority", ded.Server.Vitals.SurvivalDrain);
+            yield return Ticks(5);
+            T.Check("the shell adopts server-authoritative FINE vitals (NetFineVitalsAdopted)", sess.Shell.NetFineVitalsAdopted);
+
+            // --- Phase A: starve to death, server-owned ---
+            T.Check("the server owns a vitals entry for the player", ded.Server.Vitals.TryGet(sess.Client.PlayerId, out _));
+            ded.Server.Vitals.TryGet(sess.Client.PlayerId, out var ve);
+            ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var ce);
+            ve.Sim.Food = 0f;                     // no food -> starvation
+            ce.HealthExact = 5f; ce.Health = 5;   // seed HP low so death lands inside the budget
+
+            yield return Until(() => sess.Shell.Food <= 0.02f, 5);
+            T.Check($"(A) the shell adopted the server's starving Food ({sess.Shell.Food:0.00}), not its own local sim", sess.Shell.Food <= 0.02f);
+
+            yield return Until(() => sess.Shell.IsDead, 12);
+            T.Check("(A) the shell STARVED TO DEATH server-owned (IsDead)", sess.Shell.IsDead);
+            bool sOk = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var dCs);
+            T.Check("(A) the server owns the death (Alive false, Health 0)", sOk && !dCs.Alive && dCs.Health == 0);
+            bool sawKiller0 = false;
+            foreach (var e in myDeaths) if (e.Victim == sess.Client.PlayerId && e.Killer == 0) sawKiller0 = true;
+            T.Check("(A) PlayerDied(Killer=0) reached the owner (starvation routed through the env sink)", sawKiller0);
+
+            // re-feed the server sim during the dead window so the respawned shell isn't instantly re-starving
+            ve.Sim.Food = 1f; ve.Sim.Water = 1f;
+
+            // --- server owns the 3.5 s respawn clock -> the shell revives at full HP + food ---
+            yield return Until(() => !sess.Shell.IsDead, 8);
+            T.Check("(A) the owner revived on the server respawn fact", !sess.Shell.IsDead);
+            yield return Ticks(30);   // let the recov reposition + resume settle
+            T.Check($"(A) respawned to full HP, adopted ({sess.Shell.Health:0})", Mathf.IsEqualApprox(sess.Shell.Health, 100f));
+
+            // --- Phase B: consume a FOOD raises server Food; HP then REGENS (fed + hydrated) ---
+            bool haveInv = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            T.Check("the server owns the local player's inventory", haveInv);
+            if (!haveInv) yield break;
+            bool seeded = sInv.Inventory.items[2].tryAddItem(new Item(13));
+            T.Check("seeded a Canned Beans into the SERVER grid", seeded);
+
+            // damage HP to 60 and drop food BELOW the 0.30 regen gate so pre-consume there is NO regen
+            ded.Server.Combat.QueueDebugPlayerDamage(sess.Client.PlayerId, 40f, 0);
+            yield return Until(() => sess.Shell.Health <= 61f, 5);
+            ded.Server.Vitals.TryGet(sess.Client.PlayerId, out ve);
+            ve.Sim.Food = 0.20f;   // < 0.30 -> the fed-gate is closed, HP holds
+            yield return Ticks(30);
+            T.Check($"(B) HP HOLDS while under-fed -- no regen ({sess.Shell.Health:0} ~ 60)", sess.Shell.Health <= 62f);
+
+            yield return Until(() => sess.Shell.Inventory.getItemCount(13) >= 1, 5);
+            T.Check("the shell adopted the seeded beans", sess.Shell.Inventory.getItemCount(13) >= 1);
+            FindCell(sess.Shell.Inventory, 13, out byte bp, out byte bx, out byte by);
+            var ui = new InventoryUI { Inv = sess.Shell.Inventory, Player = sess.Shell };
+            World.AddChild(ui);
+            yield return Ticks(2);   // _Ready builds the columns so UseSelected is safe
+            ui.DebugUse(bp, bx, by);   // the REAL Use-button path -> RequestConsume over the wire
+
+            yield return Until(() => ded.Server.Vitals.TryGet(sess.Client.PlayerId, out var v2) && v2.Sim.Food > 0.5f, 5);
+            ded.Server.Vitals.TryGet(sess.Client.PlayerId, out ve);
+            T.Check($"(B) the consumed FOOD raised server Food ({ve.Sim.Food:0.00} > 0.5, +0.55)", ve.Sim.Food > 0.5f);
+
+            // the +10 useHealth bump lands first (60->70); the CONTINUED rise past it is passive regen (post-fix
+            // only -- pre-fix the food was never raised, so the fed-gate stays closed and HP stays flat at 70).
+            yield return Until(() => sess.Shell.Health >= 69f, 5);
+            float hpFed = sess.Shell.Health;
+            yield return Until(() => sess.Shell.Health > hpFed + 1f, 5);
+            T.Check($"(B) HP REGENS while fed ({sess.Shell.Health:0} rose past the just-fed {hpFed:0})", sess.Shell.Health > hpFed + 1f);
+            T.Check($"DESYNC-QUIET across starve + respawn + feed ({desyncs} fired)", desyncs == 0);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // B5 (SP/MP-unify) phase gate 2: the loopback listen-server host. The host drives via the direct SP path
+    // (its node IS the authority), but its vitals are server-owned + adopted like the MP shell. Two teeth: (1)
+    // SPRINT is reflected in server Stamina -- proving MpLoopback now PACKS the shell's stance into SendMoveInput
+    // (was buttons=0), so the server derives `sprinting` from the adopted stance and drains stamina (stamina
+    // server-owned, sprint client-auth, no second body); pre-fix buttons=0 => the server sees STAND and stamina
+    // never drains. (2) The host STARVES server-side and DIES -- the loopback's PlayerDied wiring renders it.
+    public class UnifyFineVitalsLoopbackStarve : GameTest
+    {
+        public override string Name => "unify.fine_vitals_loopback_starve";
+        public override double TimeoutSimSeconds => 45;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();   // MpLoopback --spconsume seeds the SP demo kit on join
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);   // let _Ready run (shell built)
+
+            bool prevDrain = PlayerController.SurvivalDrain;
+            PlayerController.SurvivalDrain = true;   // F1 `survival on` -- the loopback mirrors it into the server authority
+
+            var loop = new MpLoopback { Player = player, Driver = driver,
+                                        DayNight = dayNight, Resources = resources,
+                                        ConsumeDeployables = true };
+            World.AddChild(loop);
+
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Vitals.TryGet(loop.Client.PlayerId, out _), 15);
+            T.Check("loopback connected + server vitals entry present",
+                    loop.Client.State == NetSessionState.Connected && loop.Server.Vitals.TryGet(loop.Client.PlayerId, out _));
+            yield return Ticks(6);
+            T.Check("the loopback mirrored PlayerController.SurvivalDrain onto the server authority", loop.Server.Vitals.SurvivalDrain);
+            T.Check("the host shell adopts server-authoritative fine vitals", player.NetFineVitalsAdopted);
+
+            // --- teeth 1: sprint reflected in server Stamina (proves the SendMoveInput stance-pack) ---
+            loop.Server.Vitals.TryGet(loop.Client.PlayerId, out var ve);
+            float staminaBefore = ve.Sim.Stamina;
+            T.Check($"(sprint) stamina starts near full ({staminaBefore:0.00})", staminaBefore > 0.9f);
+            player.ScriptedInput = new UnityEngine.Vector2(0f, 1f);   // run forward
+            player.ScriptedStance = EPlayerStance.SPRINT;             // force the sprint stance the shell packs
+
+            yield return Until(() => loop.Server.Vitals.TryGet(loop.Client.PlayerId, out var v) && v.Sim.Stamina < staminaBefore - 0.03f, 6);
+            loop.Server.Vitals.TryGet(loop.Client.PlayerId, out ve);
+            T.Check($"(sprint) the server derived sprinting from the PACKED stance -> Stamina drained ({ve.Sim.Stamina:0.00} < {staminaBefore:0.00})",
+                    ve.Sim.Stamina < staminaBefore - 0.03f);
+            T.Check($"(sprint) the host shell adopted the server Stamina ({player.Stamina:0.00})", player.Stamina <= ve.Sim.Stamina + 0.05f);
+            player.ScriptedInput = UnityEngine.Vector2.zero;
+            player.ScriptedStance = null;
+
+            // --- teeth 2: starve to death server-side ---
+            loop.Server.Vitals.TryGet(loop.Client.PlayerId, out ve);
+            loop.Server.CombatState.TryGet(loop.Client.PlayerId, out var ce);
+            ve.Sim.Food = 0f;                     // no food -> starvation
+            ce.HealthExact = 4f; ce.Health = 4;   // seed HP low so death lands inside the budget
+
+            yield return Until(() => player.IsDead, 12);
+            T.Check("(starve) the host shell drained to DEATH server-side (IsDead)", player.IsDead);
+            bool cOk = loop.Server.CombatState.TryGet(loop.Client.PlayerId, out var dCs);
+            T.Check("(starve) the server owns the death (Alive false, Health 0)", cOk && !dCs.Alive && dCs.Health == 0);
+
+            PlayerController.SurvivalDrain = prevDrain;   // restore the process-global toggle
+        }
+    }
 }
