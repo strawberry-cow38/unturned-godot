@@ -51,13 +51,40 @@ namespace UnturnedGodot
             _host = host;
         }
 
+        /// <summary>B8 (SP/MP-unify): reconcile the LISTEN-SERVER local player's direct SP enter/exit into the
+        /// entity occupancy (§3.6). A remote EnterVehicle command validates against DriverPlayerId (the one
+        /// occupancy truth), so the host's direct-path Driving state must claim/free that seat here. Split OUT
+        /// of Tick() and run as a PRE-SIM step (MpLoopback registers net.vehicles.occupancy BEFORE net.server.sim)
+        /// so the seat reflects the host's CURRENT Driving state before the sim dispatches+validates any remote
+        /// Enter that tick -- pre-B8 this ran inside Tick() (AFTER net.server.sim), so a same-tick remote Enter
+        /// validated against a stale DriverPlayerId==0 and double-seated the host. Applies ONLY the claim/free;
+        /// no mint/publish (Tick() owns those). No-op on a dedicated server (no local player -> localId==0) and
+        /// in solo (no remotes to arbitrate). Iterates only already-tracked nodes -- a node minted THIS tick (in
+        /// Tick, post-sim) is reconciled next tick, before which no entity exists for a remote to contest.</summary>
+        public void ReconcileLocalOccupancy()
+        {
+            ushort localId = LocalPlayerId?.Invoke() ?? 0;
+            if (localId == 0) return;
+            long tick = _server.Session.CurrentTick;
+            Vehicle localDriving = LocalPlayer != null && GodotObject.IsInstanceValid(LocalPlayer) ? LocalPlayer.Driving : null;
+            foreach (var kv in _tracked)
+            {
+                var v = kv.Key;
+                if (!GodotObject.IsInstanceValid(v)) continue;
+                if (!_server.Vehicles.TryGet(kv.Value.NetId, out var e)) continue;
+                if (v == localDriving && e.DriverPlayerId == 0)
+                    _server.Vehicles.ServerSetDriver(new NetId(kv.Value.NetId), localId, tick);
+                else if (v != localDriving && e.DriverPlayerId == localId)
+                    _server.Vehicles.ServerSetDriver(new NetId(kv.Value.NetId), 0, tick);
+            }
+        }
+
         public void Tick()
         {
             long tick = _server.Session.CurrentTick;
             var tree = _host.GetTree();
             if (tree == null) return;
             ushort localId = LocalPlayerId?.Invoke() ?? 0;
-            Vehicle localDriving = LocalPlayer != null && GodotObject.IsInstanceValid(LocalPlayer) ? LocalPlayer.Driving : null;
 
             foreach (var n in tree.GetNodesInGroup("vehicles"))
             {
@@ -74,15 +101,11 @@ namespace UnturnedGodot
                 }
                 if (!_server.Vehicles.TryGet(t.NetId, out var e)) continue;
 
-                // the LISTEN-SERVER local player's direct SP enter/exit -> occupancy truth (§3.6): remote
-                // Enter commands validate against DriverPlayerId, so the direct path must claim/free it too
-                if (localId != 0)
-                {
-                    if (v == localDriving && e.DriverPlayerId == 0)
-                        _server.Vehicles.ServerSetDriver(new NetId(t.NetId), localId, tick);
-                    else if (v != localDriving && e.DriverPlayerId == localId)
-                        _server.Vehicles.ServerSetDriver(new NetId(t.NetId), 0, tick);
-                }
+                // B8 (SP/MP-unify): the LISTEN-SERVER local player's direct SP enter/exit -> occupancy truth
+                // (§3.6) is now reconciled by ReconcileLocalOccupancy(), which MpLoopback registers as a PRE-SIM
+                // step (net.vehicles.occupancy, before net.server.sim). Running it there -- rather than here,
+                // AFTER net.server.sim -- claims/frees the seat BEFORE a remote EnterVehicle validates against
+                // DriverPlayerId that same tick, closing the 1-tick double-seat race. Publish/drive/hold stays here.
 
                 // a REMOTE driver's held DriveInput feeds the one drive seam every tick (the SP shell's cadence)
                 ushort driver = e.DriverPlayerId;

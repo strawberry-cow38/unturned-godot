@@ -1354,4 +1354,131 @@ namespace UnturnedGodot.Testing
                     player.Skills.skills[SPEC][IDX].level == 1);
         }
     }
+
+    // B8 (SP/MP-unify): vehicle seat arbitration is a tick-ORDERING race, not a missing seam. The listen-server
+    // host drives via the direct SP path (its node IS the authority -- routing it through the puppet/Net* path
+    // would build a SECOND client-local body = the two-body inchworm). Its occupancy becomes TRUTH (the entity's
+    // DriverPlayerId, which a remote EnterVehicle validates against) ONLY via VehicleNetSync's local-occupancy
+    // reconcile. B8 moves that reconcile out of VehicleNetSync.Tick() (which runs AFTER net.server.sim) into a
+    // dedicated PRE-SIM step (MpLoopback registers net.vehicles.occupancy before net.server.sim), so the host's
+    // CURRENT Driving state is stamped into DriverPlayerId BEFORE the sim dispatches+validates a remote Enter
+    // that same tick. ZERO protocol change -- pure step-order.
+    //
+    // This exercises a REAL MpLoopback (like unify.loopback_upgrade_skill) because the gap lives in MpLoopback's
+    // OWN _Ready step ORDER -- a hand-wired stand-in reconciling at an arbitrary point would mask it. A real
+    // remote NetWorldClient joins the loopback's in-process server over the same MemNetwork; the host SP-direct-
+    // enters a jeep and, in the SAME coroutine gap (so both land on one tick T), the remote sends EnterVehicle
+    // for that NetId.
+    //
+    // TEETH: the race bites ONLY on the tick the host BECOMES the driver -- in steady state both orderings reject
+    // the remote. The test sets the host's _driving and transmits the remote's Enter in the same gap: SendReliable
+    // transmits immediately with DeliverTick == the net's fixed CurrentTick, so the next tick's net.server.sim
+    // dispatches it -- the SAME tick the host transitions, with DriverPlayerId==0 entering it. POST-fix the pre-sim
+    // reconcile claims the seat for the host first, so CanEnter REJECTS the remote and DriverPlayerId stays the
+    // host. PRE-fix the reconcile runs only in Tick() (after net.server.sim), so the remote's Enter validates
+    // against the stale DriverPlayerId==0, WINS the seat, and Tick()'s later reconcile can't reclaim it (its claim
+    // branch requires DriverPlayerId==0) -> DriverPlayerId ends up the REMOTE (double-seat). Verified by moving the
+    // occupancy step back after net.server.sim, rebuilding, and confirming this test fails with seat==remote.
+    public class UnifyHostSeatArbitration : GameTest
+    {
+        public override string Name => "unify.host_seat_arbitration";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();   // the server's PeerConnected reads gun defs (Combat.GunFor) -> resolve against the catalog
+
+            // headless-safe stand-ins for exactly what the SP GAME feeds AttachMpLoopback (see unify.loopback_upgrade_skill)
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));   // the REAL host shell the loopback drives
+            yield return Ticks(2);
+
+            // the publish-only loopback is enough: the vehicle occupancy sync is registered UNCONDITIONALLY (outside
+            // the --spconsume block), so ConsumeDeployables stays false -> minimal machinery, same step order.
+            var loop = new MpLoopback { Player = player, Driver = driver, DayNight = dayNight, Resources = resources };
+            World.AddChild(loop);
+            yield return Until(() => loop.Client.State == NetSessionState.Connected, 15);
+            T.Check("host loopback client connected", loop.Client.State == NetSessionState.Connected);
+
+            // a REAL remote joins the SAME in-process server over the loopback's MemNetwork; its own pump only ticks
+            // the remote client (Net.Tick is the loopback's, one per sim tick -- never double-tick the network).
+            var remote = new NetWorldClient(new MemClientTransport(loop.Net), "remote", contentHash: NetContent.Hash);
+            var remotePump = new DelegateSimStep((t, dt) => remote.Tick(), "l1.remotepump");
+            driver.Sim.Add(remotePump);
+            remote.Connect();
+            yield return Until(() => remote.State == NetSessionState.Connected
+                                     && loop.Server.Players.TryGetByOwner(remote.PlayerId, out _), 15);
+            T.Check("remote client joined the loopback server", remote.State == NetSessionState.Connected
+                    && loop.Server.Players.TryGetByOwner(remote.PlayerId, out _));
+            ushort hostId = loop.Client.PlayerId;
+            ushort remoteId = remote.PlayerId;
+            T.Check($"distinct player ids (host {hostId}, remote {remoteId})", hostId != 0 && remoteId != 0 && hostId != remoteId);
+
+            // the remote's server entity is frozen at spawn (no MoveInput -> ServerStep skips it), so place the
+            // cars right on it -> the remote is well inside EnterReach (6 m) for CanEnter.
+            loop.Server.Players.TryGetByOwner(remoteId, out var rp);
+            var near = new Vector3(rp.Pos.x, rp.Pos.y + 0.5f, rp.Pos.z);
+
+            // a real jeep in reach -> VehicleNetSync mints its entity once it's in the "vehicles" group + tree
+            var jeep = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep);
+            jeep.GlobalPosition = near;
+            yield return Until(() => loop.Server.Vehicles.Count == 1, 10);
+            T.Check("VehicleNetSync minted the jeep entity", loop.Server.Vehicles.Count == 1);
+            uint netId = 0;
+            foreach (var e in loop.Server.Vehicles.All) { netId = e.NetIdValue; break; }
+            T.Check($"jeep has a server NetId ({netId})", netId != 0);
+            T.Check("(baseline) seat empty", loop.Server.Vehicles.TryGet(netId, out var b0) && b0.DriverPlayerId == 0);
+            T.Check("(baseline) host not driving", !player.IsDriving);
+
+            // --- THE RACE (forward, TEETH) --- one coroutine gap == the net's CurrentTick is fixed here: the host
+            // SP-direct-enters the jeep (sets _driving NOW, so it's the driver ENTERING the next tick, DriverPlayerId
+            // still 0), and the remote transmits EnterVehicle for the same NetId (DeliverTick == CurrentTick). The
+            // next tick's net.server.sim dispatches it -- the SAME tick the host transitions.
+            player.EnterVehicle(jeep);
+            T.Check("host took the seat via the direct SP path", player.IsDriving && player.Driving == jeep);
+            bool sent = remote.SendEnterVehicle(netId);
+            T.Check("remote dispatched EnterVehicle for the jeep", sent);
+            yield return Ticks(1);    // the transition tick: occupancy(pre-sim) -> sim(dispatch remote Enter) -> vehicles.sync
+            yield return Ticks(3);    // settle (steady state -- no reclaim possible)
+
+            bool got = loop.Server.Vehicles.TryGet(netId, out var after);
+            ushort seat = got ? after.DriverPlayerId : (ushort)0;
+            T.Check($"the host KEEPS the seat -- remote Enter rejected (DriverPlayerId {seat}, host {hostId}, remote {remoteId})",
+                    got && seat == hostId);
+            T.Check("the host is still driving its real body", player.IsDriving && player.Driving == jeep);
+            T.Check("the remote was NOT registered as a driver server-side", !loop.Server.VehicleHost.IsDriver(remoteId));
+
+            // --- REVERSE (complementary) --- remote drives an EMPTY car; the host's F is blocked by NetDriverId.
+            var jeep2 = Vehicle.BuildByName("jeep");
+            World.AddChild(jeep2);
+            jeep2.GlobalPosition = new Vector3(rp.Pos.x, rp.Pos.y + 0.5f, rp.Pos.z + 1.0f);   // still in the remote's reach
+            yield return Until(() => loop.Server.Vehicles.Count == 2, 10);
+            uint netId2 = 0;
+            foreach (var e in loop.Server.Vehicles.All) { if (e.NetIdValue != netId) { netId2 = e.NetIdValue; break; } }
+            T.Check($"second jeep minted ({netId2})", netId2 != 0);
+            remote.SendEnterVehicle(netId2);   // empty car, remote in reach -> CanEnter passes
+            yield return Until(() => loop.Server.Vehicles.TryGet(netId2, out var e2) && e2.DriverPlayerId == remoteId, 10);
+            T.Check("remote took the empty second jeep (server occupancy)",
+                    loop.Server.Vehicles.TryGet(netId2, out var re2) && re2.DriverPlayerId == remoteId);
+            // VehicleNetSync.Tick stamps NetDriverId on the node for a remote-held seat -> the host's direct
+            // EnterVehicle guard (if NetDriverId != 0 return) blocks it.
+            yield return Until(() => jeep2.NetDriverId == remoteId, 10);
+            T.Check("the node's NetDriverId reflects the remote driver", jeep2.NetDriverId == remoteId);
+            player.EnterVehicle(jeep2);   // host F on the remote-occupied car
+            T.Check("host F is BLOCKED by NetDriverId (never seats on the remote's car)",
+                    !player.IsDriving || player.Driving != jeep2);
+            T.Check("the remote still holds the second seat (no host takeover)",
+                    loop.Server.Vehicles.TryGet(netId2, out var re3) && re3.DriverPlayerId == remoteId);
+
+            driver.Sim.Remove(remotePump);   // teardown: nothing touches the dying MemNetwork after QueueFree
+            remote.Disconnect();
+        }
+    }
 }

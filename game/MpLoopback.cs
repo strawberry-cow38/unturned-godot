@@ -204,6 +204,15 @@ namespace UnturnedGodot
             }
 
             Driver.Sim.Add(new DelegateSimStep((t, dt) => TickLocal((float)dt), "mp.loopback.local"));
+            // Phase 7 / B8 (SP/MP-unify): construct the vehicle sync here so its local-occupancy reconcile can
+            // run as a PRE-SIM step. The host's direct SP enter/exit only becomes occupancy TRUTH (the entity's
+            // DriverPlayerId, which remote Enter commands validate against) via that reconcile; running it BEFORE
+            // net.server.sim guarantees the host's CURRENT Driving state is stamped before the sim dispatches+
+            // validates a remote EnterVehicle that same tick. Pre-B8 the reconcile lived inside Tick() (below,
+            // AFTER net.server.sim), so a same-tick remote Enter validated against a stale DriverPlayerId==0 and
+            // double-seated the host (the 1-tick race). The publish/drive/hold half stays POST-sim (net.vehicles.sync).
+            VehicleSync = new VehicleNetSync(Server, this) { LocalPlayer = Player, LocalPlayerId = () => Client.PlayerId };
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => VehicleSync.ReconcileLocalOccupancy(), "net.vehicles.occupancy"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickSimulation(), "net.server.sim"));
             // Phase 5: the world's real zombie brains publish into ZombieReplication at 12.5 Hz (§3.5) --
             // every loopback session soaks the zombie wire; the local view renders the brains directly
@@ -215,9 +224,9 @@ namespace UnturnedGodot
             WorldItemSync = new WorldItemNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));
             // Phase 7: the loopback world's vehicles publish as entities too (§3.6) -- every SP-loopback
-            // session soaks the vehicle wire. The LOCAL player keeps the direct SP drive path (the node IS
-            // the authority); the sync publishes that occupancy so remote Enter commands respect the seat.
-            VehicleSync = new VehicleNetSync(Server, this) { LocalPlayer = Player, LocalPlayerId = () => Client.PlayerId };
+            // session soaks the vehicle wire. The LOCAL player keeps the direct SP drive path (the node IS the
+            // authority); this half publishes/drives/holds POST-sim. (VehicleSync is constructed above, and its
+            // occupancy reconcile is registered PRE-sim as net.vehicles.occupancy -- B8.)
             Driver.Sim.Add(new DelegateSimStep((t, dt) => VehicleSync.Tick(), "net.vehicles.sync"));
             // Phase 8 world state (§3.7): the loopback world's clock/crops/resources publish too -- every
             // SP-loopback session soaks the world-state wire. The local DayNightCycle keeps SP's exact
