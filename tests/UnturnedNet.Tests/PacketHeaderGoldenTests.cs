@@ -65,7 +65,7 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750B08000000000000002800"));
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750C08000000000000002800"));   // v12: fluid-fix inventory fuelLevel bump -- only the version byte (0B->0C) moves
         }
 
         [Test]

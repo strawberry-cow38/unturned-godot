@@ -2540,6 +2540,12 @@ namespace UnturnedGodot.Testing
             yield return Until(() => ServerCanFuel(loop, CAN) >= 19.9f, 15);
             T.Check($"(gate) the held can filled server-side ({ServerCanFuel(loop, CAN)})", ServerCanFuel(loop, CAN) >= 19.9f);
 
+            // GATE 2b (fluid-fix, v12): the CLIENT's owner inventory re-adopts the FILLED can -- the fuel LEVEL now
+            // rides the inventory wire. Pre-fix WriteJar dropped fuelLevel, so the client's can stayed EMPTY even
+            // though the server filled it ("can won't fill", the unified-SP regression). This is the teeth.
+            yield return Until(() => ClientCanFuel(loop, CAN) >= 19.9f, 15);
+            T.Check($"(gate) the CLIENT's can shows the pumped fuel over the wire ({ClientCanFuel(loop, CAN)})", ClientCanFuel(loop, CAN) >= 19.9f);
+
             // GATE 3: BOTH pumps replicate the SAME drained percent (< 100 -- the fan-out fired), the view mirrors it
             yield return Until(() => loop.Client.Deployables.TryGet(p0, out var a) && loop.Client.Deployables.TryGet(p1, out var b) && a.Fuel == b.Fuel && a.Fuel < 100f, 15);
             loop.Client.Deployables.TryGet(p0, out var ce0); loop.Client.Deployables.TryGet(p1, out var ce1);
@@ -2563,6 +2569,16 @@ namespace UnturnedGodot.Testing
         static float ServerCanFuel(MpLoopback loop, ushort id)
         {
             if (!loop.Server.Inventories.TryGet(loop.Client.PlayerId, out var e)) return -999f;
+            foreach (var page in e.Inventory.items)
+                foreach (var jar in page.items)
+                    if (jar.item != null && jar.item.id == id) return jar.item.fuelLevel;
+            return -999f;
+        }
+
+        // the CLIENT's replicated owner inventory (fluid-fix v12: the can's fuelLevel now rides the wire)
+        static float ClientCanFuel(MpLoopback loop, ushort id)
+        {
+            if (!loop.Client.Inventories.TryGet(loop.Client.PlayerId, out var e)) return -999f;
             foreach (var page in e.Inventory.items)
                 foreach (var jar in page.items)
                     if (jar.item != null && jar.item.id == id) return jar.item.fuelLevel;

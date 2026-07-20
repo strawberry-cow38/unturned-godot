@@ -377,6 +377,11 @@ namespace UnturnedGodot.Net
             w.WriteInt8((sbyte)(j.item?.gunFiremode ?? -1));
             w.WriteInt32(j.item?.gunMagId ?? -1);
             w.WriteInt32(j.item?.gunAttach ?? -1);
+            // fuel-container level (gas can): server-owned -- a pump extract fills the can SERVER-side, and the
+            // owner-inventory echo re-adopts it, so the level MUST ride the wire or a filled can shows empty on the
+            // client ("can won't fill", the unified-SP regression from the old local-fill path). -1 (non-fuel /
+            // fresh) clamps to 0; only fuel containers ever read it back (Mathf.Max(0) on use).
+            w.WriteClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), 12, 2);
         }
 
         static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
@@ -391,7 +396,8 @@ namespace UnturnedGodot.Net
             if (!r.ReadInt8(out sbyte gunFiremode)) return false;
             if (!r.ReadInt32(out int gunMagId)) return false;
             if (!r.ReadInt32(out int gunAttach)) return false;
-            item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach };
+            if (!r.ReadClampedFloat(12, 2, out float fuelLevel)) return false;   // gas-can fuel level (server-filled)
+            item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel };
             return true;
         }
 
@@ -453,6 +459,7 @@ namespace UnturnedGodot.Net
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunFiremode ?? -1));
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunMagId ?? -1));
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunAttach ?? -1));
+                    h = NetHash.MixFloat(h, NetQuantization.QuantizeClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), 12, 2));   // gas-can fuel level, quantized to the wire value so both sides mix the same
                 }
             }
             foreach (var worn in new[] { e.Inventory.wornHat, e.Inventory.wornGlasses, e.Inventory.wornMask,
