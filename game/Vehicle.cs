@@ -1585,7 +1585,11 @@ namespace UnturnedGodot
             {
                 float stretch = dist - _towRestLen;
                 float sepVel = (towed.LinearVelocity - LinearVelocity).Dot(dir);   // >0 = separating -> damping ADDS tension
-                float f = Mathf.Clamp(TowStiffness * stretch + TowDamping * sepVel, 0f, TowMaxForce);
+                // vehiclerework: scale the pull with the TOWED weight (vs the 900kg baseline the tow was tuned for) so a
+                // heavy vehicle tows with the SAME feel as a light one -- the new per-vehicle masses broke the fixed-force
+                // tow (a 9000kg firetruck barely moved). Towed accel = f/mass -> mass-independent. (900kg -> 1.0, unchanged.)
+                float towMs = towed.Mass / GlobalMass;
+                float f = Mathf.Clamp((TowStiffness * stretch + TowDamping * sepVel) * towMs, 0f, TowMaxForce * towMs);
                 // keep both bodies awake + dynamic: a settled car is Sleeping (and Godot ignores continuous ApplyForce on
                 // a sleeping body) and may be Freeze-Static from the park settle -- Wake clears Freeze, Sleeping=false clears sleep.
                 towed.Wake(); Wake(); towed.Sleeping = false; Sleeping = false;
