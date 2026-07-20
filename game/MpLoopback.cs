@@ -96,6 +96,12 @@ namespace UnturnedGodot
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
                 Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
                 Player.NetCloseStorage = () => Client.SendCloseStorage();
+                // B7 (SP/MP-unify): route the local player's skill-upgrade through the loopback server -- the
+                //     server's PlayerSkills.TryUpgrade is the cost/cap validator; the owner skills echo re-levels
+                //     the shell via AdoptReplicatedSkills in TickLocal. Verbatim from ClientWorldSession.SpawnShell:468.
+                //     Null in default SP/loopback, so SkillsUI's local TryUpgrade stays the SP path byte-identical;
+                //     SETTING it makes RequestUpgradeSkill take the wire branch (PlayerController.cs:1909) instead.
+                Player.NetUpgradeSkill = (spec, index) => Client.SendUpgradeSkill(spec, index);
 
                 // (c) P1b -- server-authoritative inventory for the LOCAL player. The placement seam above
                 //     (P1) routes over the wire, where OnPlaceDeployable SPENDS the deployable item before
@@ -258,6 +264,14 @@ namespace UnturnedGodot
                 Player.AdoptReplicatedInventory(invEntry.Inventory);
                 _localInventoryAdopted = true;
             }
+
+            // B7 (SP/MP-unify): server-authoritative skills for the local player -- mirror the replicated owner
+            // skills block into the shell each tick (the owner-inventory adoption analogue; SkillsReplication has
+            // no per-echo event). Gated on --spconsume, so default SP/loopback keeps its LOCAL skills byte-identical.
+            // Verbatim from ClientWorldSession:260. The server owns the XP + level; RequestUpgradeSkill routes the
+            // spend over the wire (the NetUpgradeSkill seam above) and this adoption re-levels the shell.
+            if (ConsumeDeployables && Client.Skills.TryGet(Client.PlayerId, out var sk))
+                Player.AdoptReplicatedSkills(sk.Skills);
 
             // P3a (SP/MP-unify): server-authoritative HP for the local player -- mirror the replicated
             // CombatEntity coarse health (0..100) into the shell each tick (the owner-inventory adoption

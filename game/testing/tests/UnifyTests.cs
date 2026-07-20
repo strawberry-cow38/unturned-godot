@@ -1262,4 +1262,96 @@ namespace UnturnedGodot.Testing
                     shelf.Storage.getItemCount() == 1 && shelf.Storage.getItem(0)?.item?.id == 95);
         }
     }
+
+    // GAP B7 regression: skills wired + adopted in the loopback.
+    //
+    // The consuming loopback (MpLoopback --spconsume) left TWO seams unwired that the MP shell (ClientWorldSession)
+    // has: (1) Player.NetUpgradeSkill, so a skill spend never routed over the wire -- SkillsUI fell back to a LOCAL
+    // TryUpgrade against the shell's 0-XP pool (SP grants no demo skills) and did nothing; and (2) the per-tick
+    // AdoptReplicatedSkills in TickLocal, so even server-owned XP/levels never mirrored onto the shell. The fix wires
+    // NetUpgradeSkill = Client.SendUpgradeSkill (verbatim ClientWorldSession:468) and adopts Client.Skills each tick
+    // beside the vitals adoption (verbatim ClientWorldSession:260). Zero protocol change: CommandUpgradeSkill(6) +
+    // SystemSkills(5) already exist; this is pure seam-wiring.
+    //
+    // This exercises a REAL MpLoopback (not a DedicatedServer + hand-rolled NetWorldClient stand-in like the P1-P5
+    // gates), because the gap lives in MpLoopback's OWN _Ready wiring + TickLocal -- a stand-in that hand-sets the
+    // seam would mask the bug. It builds the actual node the SP GAME boots: a real PlayerController shell + SimDriver
+    // spine + DayNight/Resources (the headless-safe rig the L1 host uses -- the full WorldBuilder Playable path NREs
+    // under pure --headless because its player HUD/window/camera need a display; this rig gives the loopback the exact
+    // same handles: a real shell, the sim spine, and non-null clock/resource fields) + MpLoopback{ConsumeDeployables=
+    // true}, awards XP server-side, spends it through the SkillsUI request path, ticks, and asserts the shell's LOCAL
+    // Skills level rose via adoption.
+    //
+    // TEETH: pre-fix NetUpgradeSkill is null -> RequestUpgradeSkill returns false -> the SkillsUI fallback runs the
+    // LOCAL TryUpgrade against 0 XP (no-op), the server entity is never leveled (no command sent), and adoption is
+    // never wired -- so BOTH the "(server) leveled" Until and the "(gate) local adopted" check fail. With the fix the
+    // spend routes over the wire, the server levels + replicates, and TickLocal adopts the rise onto the shell.
+    public class UnifyLoopbackUpgradeSkill : GameTest
+    {
+        public override string Name => "unify.loopback_upgrade_skill";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();   // MpLoopback --spconsume seeds the SP demo kit on join -> resolve items against the catalog
+
+            // headless-safe stand-ins for exactly what the SP GAME feeds AttachMpLoopback (Player/Sim/DayNight/
+            // Resources): a real shell, the real sim spine, and the two world-state fields the loopback's syncs read.
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };   // headless: no Sun/Env, so keep _Process off (WorldClockNetSync reads .Time only)
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false }; // the dedicated/headless shape (§5 fx hygiene)
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));       // the REAL PlayerController shell the loopback drives + adopts onto
+            yield return Ticks(2);   // let _Ready run (shell Inventory/Skills built)
+
+            // attach the REAL consuming loopback -- the exact node AttachMpLoopback builds on the SP GAME path. Its
+            // _Ready spins up the in-process listen-server + client over MemTransport and registers the sim steps
+            // (TickLocal + server sim/replicate) onto driver.Sim, driven by the SimDriver each physics tick.
+            var loop = new MpLoopback { Player = player, Driver = driver,
+                                        DayNight = dayNight, Resources = resources,
+                                        ConsumeDeployables = true };
+            World.AddChild(loop);
+
+            // wait for the loopback client to connect + the server to ServerAdd the skills entity (fires on PeerConnected)
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Skills.TryGet(loop.Client.PlayerId, out _), 15);
+            T.Check("loopback client connected + server skills entity present",
+                    loop.Client.State == NetSessionState.Connected
+                    && loop.Server.Skills.TryGet(loop.Client.PlayerId, out _));
+
+            const byte SPEC = (byte)SDG.Unturned.EPlayerSpeciality.OFFENSE;
+            const byte IDX  = (byte)SDG.Unturned.EPlayerOffense.OVERKILL;   // baseCost 10 @ level 0 -> 50 XP is plenty for one level
+
+            // baseline: OVERKILL is level 0 on the shell and the shell holds no XP (SP demo grants none), so a bare
+            // LOCAL SkillsUI TryUpgrade could never level it -- only the server's XP + the wire can.
+            T.Check("(baseline) local shell OVERKILL is level 0", player.Skills.skills[SPEC][IDX].level == 0);
+            T.Check("(baseline) local shell has 0 XP (SP demo grants no skills)", player.Skills.experience == 0);
+
+            // award XP SERVER-SIDE (the §3.2 XP hook kills/harvests/console feed) -- authoritative server state the
+            // shell only ever sees via replication + adoption.
+            uint total = loop.Server.Transactions.AwardXp(loop.Client.PlayerId, 50);
+            T.Check("(server) 50 XP awarded on the server skills entity", total == 50);
+            yield return Ticks(3);   // pump a few replication ticks so the owner skills block lands + TickLocal adopts it
+
+            // spend it via the SkillsUI upgrade path VERBATIM (SkillsUI.cs:109-110): request over the wire, else fall
+            // back to the LOCAL TryUpgrade. With the fix the seam is set -> request wins; pre-fix it is null -> the
+            // fallback runs against 0 local XP and does nothing.
+            if (!player.RequestUpgradeSkill(SPEC, IDX))
+                player.Skills.TryUpgrade(SPEC, IDX);
+
+            // the wire spend: server validates cost/cap, levels its entity, and replicates the owner block
+            yield return Until(() => loop.Server.Skills.TryGet(loop.Client.PlayerId, out var se)
+                                     && se.Skills.skills[SPEC][IDX].level == 1, 15);
+            T.Check("(server) the server skills entity leveled OVERKILL to 1 (wire-validated spend)",
+                    loop.Server.Skills.TryGet(loop.Client.PlayerId, out var sSk) && sSk.Skills.skills[SPEC][IDX].level == 1);
+
+            // THE GATE: MpLoopback.TickLocal's AdoptReplicatedSkills mirrors the server level rise onto the shell.
+            yield return Until(() => player.Skills.skills[SPEC][IDX].level == 1, 10);
+            T.Check($"(gate) the local shell adopted the server level rise (OVERKILL lvl {player.Skills.skills[SPEC][IDX].level}, expected 1)",
+                    player.Skills.skills[SPEC][IDX].level == 1);
+        }
+    }
 }
