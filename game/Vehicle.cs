@@ -37,6 +37,7 @@ namespace UnturnedGodot
         // vehicle status for the HUD (source InteractableVehicle): fuel drains while the engine's on; health = damage; battery = accessories
         public float Fuel, FuelMax, Health, HealthMax, Battery;
         public float FuelBurn;   // fuel drained per second while driving (PZ-scale, per vehicle CLASS -- master); set from FuelClassOf at build
+        public static bool InfiniteFuel = true;   // master 2026-07-20: cars DON'T burn fuel by DEFAULT (playtesting); the infFuel console command toggles it. SP-local static.
         public bool EngineOn; public string DisplayName; public Vector3 SeatOffset;   // per-vehicle driver-seat spot for the 3rd-person body
         public string SpecKey = "jeep"; public int SpawnVariant;   // MP §3.6: which Spec built this + its paint variant -- VehicleNetSync replicates them so client puppets rebuild the same look
         public ushort NetDriverId;   // MP §3.6: remote player holding the driver seat (set by VehicleNetSync); 0 = none. Gates the local direct-path enter; never set in pure SP.
@@ -1872,7 +1873,7 @@ namespace UnturnedGodot
             if (_wNodes == null || _husk) return;   // a settled wreck is a dead husk -- no per-frame sim at all (master, perf)
             if (NetHeld)   // MP Part A: a driver's client owns this body's physics -- the frozen node only burns fuel + counts down its explosion (retail simulateBurnFuel / explode run server-side for driven cars too); settle/damage/gear sim all skip
             {
-                if (EngineOn && Fuel > 0f) Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
+                if (EngineOn && Fuel > 0f && !InfiniteFuel) Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
                 if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;   // ran dry -> cut the engine (master)
                 if (_deadTimer > 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }   // Explode unfreezes + flings; VehicleNetSync then aborts the hold + force-exits the driver
                 return;
@@ -1953,7 +1954,7 @@ namespace UnturnedGodot
                 if (loud > 2f) SoundBus.Emit(GetTree(), GlobalPosition, loud);
             }
             if (OnFire) EngineOn = false;   // caught fire -> engine force-killed EVERY frame: can't drive, can't restart, unfixable (master)
-            if (EngineOn && Fuel > 0f)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs
+            if (EngineOn && Fuel > 0f && !InfiniteFuel)   // source simulateBurnFuel: burn fuelBurnRate/sec while the engine runs (dev infFuel skips the drain)
                 Fuel = Mathf.Max(0f, Fuel - FuelBurn * (float)delta);
             if (EngineOn && FuelMax > 0f && Fuel <= 0f) EngineOn = false;   // ran DRY (or entered an empty car) -> cut the engine; Drive gates on EngineOn so it coasts to a stop. Refuel (gas can / pump) + re-enter to restart (master)
             if (_headlightsOn)   // source: headlights burn the battery (EBatteryMode.Burn); die when it's empty

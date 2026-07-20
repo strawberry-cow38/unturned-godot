@@ -110,6 +110,8 @@ namespace UnturnedGodot
                             new UnityEngine.Vector3(f.Pos.X, f.Pos.Y, f.Pos.Z), f.YawDegrees, Server.Session.CurrentTick);
                         if (fe != null && DeployableDef.ById(f.DefId)?.Fixture == FixtureKind.GasPump)
                             GasStation.RegisterPump(fe, f.StationId, Server.Deployables, Server.Session.CurrentTick);   // A2: map pump->station + seed the replicated full percent
+                        else if (fe != null && DeployableDef.ById(f.DefId)?.Fixture == FixtureKind.GridSource)
+                            fe.ToggledOn = true;   // D (master 2026-07-20): grid mains ON by DEFAULT (was OFF). Pre-snapshot set -> rides the join snapshot; the client's GridPowerSource derives PowerProducing from this replicated ToggledOn (NetProducingOverride), so grid power just works without a toggleGlobalPower.
                     }
                 Server.Transactions.FuelStations = GasStation;   // A2: the extract choke reads the absolute tanks through this seam
                 // (b) set the local player's deployable seams to route over the wire (verbatim from

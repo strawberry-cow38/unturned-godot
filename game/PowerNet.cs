@@ -16,10 +16,11 @@ namespace UnturnedGodot
         public static void MarkDirty() => _dirty = true;
 
         // Global grid-power flag (SP): while ON, every GridPowerSource (a Circuit_0 breaker box) feeds its 10kW into
-        // the wire graph; while OFF the mains are dead. Default OFF -- the grid starts unpowered and the F1 console
-        // `toggleGlobalPower` energizes it. A flag flip is NOT a structural change (the wire/deployable counts don't
-        // move), so the toggle path MUST MarkDirty() or RecomputeIfDirty's count-backstop would skip the recompute.
-        static bool _globalPower = false;
+        // the wire graph; while OFF the mains are dead. Default ON (master 2026-07-20 -- grid power just works out of
+        // the box); the F1 console `toggleGlobalPower` flips it. A flag flip is NOT a structural change (the wire/
+        // deployable counts don't move), so the toggle path MUST MarkDirty() or RecomputeIfDirty's count-backstop
+        // would skip the recompute. (Under --spconsume the mains ride the replicated ToggledOn, seeded ON in MpLoopback.)
+        static bool _globalPower = true;
         public static bool GlobalPower => _globalPower;
         public static bool ToggleGlobalPower() { _globalPower = !_globalPower; MarkDirty(); return _globalPower; }
         public static void SetGlobalPower(bool on) { if (_globalPower != on) { _globalPower = on; MarkDirty(); } }

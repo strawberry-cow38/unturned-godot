@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -111,6 +111,18 @@ namespace UnturnedGodot
                         : !PowerNet.GlobalPower;
                 PowerNet.SetGlobalPower(on);   // flips the flag + MarkDirty()s so the graph recomputes (Circuit_0 sources turn on/off)
                 Log($"grid power {(PowerNet.GlobalPower ? "ON" : "OFF")}");
+                return;
+            }
+
+            // infFuel [on|off]  -- dev/playtesting: ALL cars stop burning fuel. ON by DEFAULT (master 2026-07-20);
+            // bare form FLIPS it. Handled above the arg guard so the no-arg toggle works. SP-local static, not networked.
+            if (verb == "inffuel")
+            {
+                string f = arg.ToLowerInvariant();
+                Vehicle.InfiniteFuel = f == "on" || f == "1" || f == "true" ? true
+                                     : f == "off" || f == "0" || f == "false" ? false
+                                     : !Vehicle.InfiniteFuel;
+                Log($"infFuel {(Vehicle.InfiniteFuel ? "ON -- cars won't burn fuel" : "OFF -- fuel drains normally")}");
                 return;
             }
 
