@@ -72,6 +72,14 @@ namespace UnturnedGodot
             }
         }
 
+        // Pre-warm helper: flash every wire-tool port arrow visible (show) or hide, so their shared spatial-shader
+        // compiles at load instead of all-at-once on the first wire-tool activation (the hitch, master). See PowerManager._prewarm.
+        public static void PrewarmWireArrows(SceneTree tree, bool show)
+        {
+            foreach (var n in tree.GetNodesInGroup("ports"))
+                if (n is ConnectionPort p && GodotObject.IsInstanceValid(p)) p.SetArrowState(show, false);
+        }
+
         static PowerPortKind Kind(DeployableDef.PortKind k) => k switch
         {
             DeployableDef.PortKind.Output => PowerPortKind.Output,
@@ -83,6 +91,15 @@ namespace UnturnedGodot
     // Ticks the power net once a frame. One instance is created lazily by the first placed deployable.
     public partial class PowerManager : Node
     {
-        public override void _Process(double delta) => PowerNet.RecomputeIfDirty(GetTree());
+        // Pre-warm the wire-tool arrow SHADER over the first few frames (master): the port arrows are created hidden at
+        // spawn, so their shared spatial-shader wouldn't compile until the tool first comes out -> all of them compile
+        // at once = a hitch on the first wire interaction. Flash them visible for a couple frames so it compiles up
+        // front (any in-view arrow warms the shared shader). Runs during/right-after load, then never again.
+        int _prewarm = 3;
+        public override void _Process(double delta)
+        {
+            PowerNet.RecomputeIfDirty(GetTree());
+            if (_prewarm > 0) { PowerNet.PrewarmWireArrows(GetTree(), _prewarm > 1); _prewarm--; }
+        }
     }
 }
