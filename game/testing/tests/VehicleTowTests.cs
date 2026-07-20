@@ -1,5 +1,8 @@
 using Godot;
 using System.Collections.Generic;
+using SDG.NetTransport.Mem;
+using SDG.Unturned;
+using UnturnedGodot.Net;
 
 namespace UnturnedGodot.Testing
 {
@@ -129,6 +132,94 @@ namespace UnturnedGodot.Testing
             float towForce = Mathf.Abs(tower.EngineForce);
             T.Check($"towing debuffs the engine to ~0.7x ({towForce:0}/{baseForce:0} = {towForce / baseForce:0.00})",
                     baseForce > 0f && Mathf.Abs(towForce / baseForce - 0.7f) < 0.02f);
+        }
+    }
+
+    // A6 (SP/MP-unify): the rope-tow RELATIONSHIP replicates. A host AttachTow on two real server jeep nodes
+    // lands as entity.TowedNetId + TowRestLen on an OBSERVER client's replica, and the client's
+    // VehicleReplicaView materializes exactly ONE cosmetic TowRope between the two puppets; a DetachTow clears
+    // both fields and retires the rope. Physics stays host-authoritative (Vehicle.UpdateTow on the real
+    // bodies); this proves only the publish + consume of the relationship. Teeth: with VehicleNetSync's
+    // ServerPublishTow call reverted, the observer's TowedNetId never leaves 0 -> RopeCount stays 0 and the
+    // "tow replicated" / "exactly one rope" checks fail.
+    public class RopeTowReplicates : GameTest
+    {
+        public override string Name => "vehicle.rope_tow_replicates";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(76161);
+            var observer = new NetWorldClient(new MemClientTransport(net), "observer", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); observer.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // BEFORE the DedicatedServer -> server sim + vehicle sync + replicate stay LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+            var view = new VehicleReplicaView { Client = observer };
+            World.AddChild(view);
+            observer.Connect();
+
+            // two real jeep nodes on the server world, tower ahead (-Z is forward) and towed behind, gap in reach
+            var tower = Vehicle.BuildByName("jeep"); World.AddChild(tower); tower.GlobalPosition = new Vector3(0f, 1.2f, 0f);
+            var towed = Vehicle.BuildByName("jeep"); World.AddChild(towed); towed.GlobalPosition = new Vector3(0f, 1.2f, 7f);
+
+            yield return Until(() => observer.State == NetSessionState.Connected, 5);
+            T.Check("observer joined", observer.State == NetSessionState.Connected);
+            yield return Until(() => observer.Vehicles.Count == 2, 5);
+            T.Check("both jeep nodes replicated (VehicleNetSync minted their entities)", observer.Vehicles.Count == 2);
+
+            yield return Ticks(50);   // settle onto the fallback ground before tying
+            bool tied = tower.AttachTow(towed);
+            T.Check("host AttachTow succeeded (rear->front gap within reach)", tied);
+            T.Check("tower.Towing points at the towed node", tower.Towing == towed);
+
+            // the relationship must publish (ServerPublishTow) + replicate to the observer
+            yield return Until(() =>
+            {
+                foreach (var e in observer.Vehicles.All) if (e.TowedNetId != 0) return true;
+                return false;
+            }, 5);
+
+            VehicleReplication.VehicleEntity towerE = null, towedE = null;
+            foreach (var e in observer.Vehicles.All)
+                if (e.TowedNetId != 0) towerE = e;
+            T.Check("the tow relationship replicated to the observer (some entity carries TowedNetId!=0)", towerE != null);
+            if (towerE != null)
+            {
+                T.Check("the tower's TowedNetId points at another vehicle entity", observer.Vehicles.TryGet(towerE.TowedNetId, out towedE) && towedE != null);
+                float wantRest = NetQuantization.QuantizeClampedFloat(tower.TowRestLenValue, VehicleReplication.TowRestIntBits, VehicleReplication.TowRestFracBits);
+                T.Check($"the replicated TowRestLen matches the host's quantized rope rest length ({towerE.TowRestLen:0.000} vs {wantRest:0.000})",
+                        Mathf.Abs(towerE.TowRestLen - wantRest) < 0.001f);
+                T.Check("the towed end carries NO TowedNetId of its own (derived, not replicated)", towedE == null || towedE.TowedNetId == 0);
+            }
+
+            // the client view materializes exactly one cosmetic rope between the two puppets
+            yield return Until(() => view.RopeCount == 1, 5);
+            T.Check($"the observer's VehicleReplicaView drew exactly one TowRope ({view.RopeCount})", view.RopeCount == 1);
+            T.Check("both puppets exist for the rope endpoints", towerE != null
+                    && view.TryGetPuppet(towerE.NetIdValue, out _) && view.TryGetPuppet(towerE.TowedNetId, out _));
+
+            // detach on the host -> the fields clear and the rope retires
+            tower.DetachTow();
+            yield return Until(() =>
+            {
+                foreach (var e in observer.Vehicles.All) if (e.TowedNetId != 0) return false;
+                return view.RopeCount == 0;
+            }, 5);
+            bool cleared = true;
+            foreach (var e in observer.Vehicles.All) if (e.TowedNetId != 0) cleared = false;
+            T.Check("detach cleared TowedNetId on the replica", cleared);
+            T.Check($"the cosmetic rope was retired ({view.RopeCount})", view.RopeCount == 0);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            observer.Disconnect();
         }
     }
 

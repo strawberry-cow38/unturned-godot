@@ -20,6 +20,14 @@ namespace UnturnedGodot
         public string SpecKey = "jeep";
         public WheelDress[] Wheels = System.Array.Empty<WheelDress>();
 
+        // A6 rope tow: bumper-height rope attach points (front = -Z / the towed end, rear = +Z / the tower
+        // end), set by BuildPuppetByName with the IDENTICAL formula the real Vehicle.Build uses so the
+        // cosmetic client rope hangs off the same spots the host's physics rope does. VehicleReplicaView
+        // draws a TowRope between the tower puppet's RearTowWorld and the towed puppet's FrontTowWorld.
+        public Vector3 FrontTowLocal, RearTowLocal;
+        public Vector3 FrontTowWorld => ToGlobal(FrontTowLocal);
+        public Vector3 RearTowWorld => ToGlobal(RearTowLocal);
+
         // Interior steering wheel model (#38): the puppet analogue of the SP _steerPivot/_steerAxis
         // (Vehicle.cs Build) -- built by BuildPuppetByName from the spec's steer part / SteerModel and
         // rotated 1:1 with the replicated steer angle in DressWheels. Null when the spec has no steer

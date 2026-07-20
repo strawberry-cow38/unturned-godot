@@ -320,6 +320,46 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void TowRelationship_RoundTrips_HashParity()
+        {
+            // A6: the rope-tow relationship (TowedNetId + TowRestLen -- the disjoint THIRD writer,
+            // ServerPublishTow) survives a full AND a delta snapshot to exact StateHash parity, and the
+            // tower's TowedNetId + quantized rest length land verbatim on the client replica; the towed end
+            // carries NO TowedNetId of its own ("am I towed" is derived client-side, never replicated).
+            // Teeth: pre-fix VehicleEntity has no tow fields (won't compile). And the rest length is tied at
+            // 3.3 m, which is NOT wire-exact -- it quantizes to 3.25 @ 3int/4frac -- so if ServerPublishTow
+            // stored the RAW value instead of quantizing, the server would hash 3.3 while the client hashes
+            // the wire-reconstructed 3.25 and the parity asserts fail.
+            var server = new VehicleReplication();
+            var client = new VehicleReplication();
+            var composer = new SnapshotComposer(new List<IReplicatedSystem> { server });
+            var applier = new SnapshotApplier(new List<IReplicatedSystem> { client });
+
+            server.ServerSpawn(new NetId(1), typeId: 0, variant: 0, new Vector3(0f, 0f, 0f), tick: 1);   // the tower
+            server.ServerSpawn(new NetId(2), typeId: 0, variant: 0, new Vector3(0f, 0f, 3f), tick: 1);   // the towed
+            server.ServerPublishTow(new NetId(1), towedNetId: 2, restLen: 3.3f, tick: 2);
+
+            var full = composer.Compose(serverTick: 2, clientPlayerId: 1, Vector3.zero);
+            Assert.That(applier.Apply(full, full.Length), Is.True, "full snapshot applied");
+            Assert.That(client.StateHash(), Is.EqualTo(server.StateHash()), "full round-trip parity with a tow set");
+
+            Assert.That(client.TryGet(1u, out var tower), Is.True);
+            Assert.That(tower.TowedNetId, Is.EqualTo(2u), "the tower's TowedNetId replicated");
+            Assert.That(tower.TowRestLen, Is.EqualTo(3.25f).Within(0.001f), "the rest length rode the wire quantized (3.3 -> 3.25)");
+            Assert.That(client.TryGet(2u, out var towedReplica), Is.True);
+            Assert.That(towedReplica.TowedNetId, Is.EqualTo(0u), "the towed end carries no TowedNetId -- 'am I towed' is derived, not replicated");
+
+            // delta: the tower detaches -> both tow fields clear, and the change rides the delta to parity
+            composer.SetClientBaseline(1, 2);
+            server.ServerPublishTow(new NetId(1), towedNetId: 0, restLen: 0f, tick: 3);
+            var delta = composer.Compose(serverTick: 3, clientPlayerId: 1, Vector3.zero);
+            Assert.That(applier.Apply(delta, delta.Length), Is.True, "delta snapshot applied");
+            Assert.That(client.StateHash(), Is.EqualTo(server.StateHash()), "delta round-trip parity after the detach");
+            Assert.That(client.TryGet(1u, out var detached) && detached.TowedNetId == 0u && detached.TowRestLen == 0f, Is.True,
+                        "the detach cleared both tow fields on the replica");
+        }
+
+        [Test]
         public void VehicleBlock_GoldenBytes()
         {
             // Locks the §3.6 vehicle wire format. An INTENTIONAL format change must bump
@@ -336,7 +376,10 @@ namespace UnturnedNet.Tests
             // serverTick:32 + baselineTick:32 (0 = full) + systemId:8 (9) + byteLen:16 + one entity:
             // id:32 + type:8 + variant:8 + driver:16 + pos (11.8/9.8/11.8) + yaw/pitch/roll (11 ea)
             // + linvel/angvel (6.6 x3 ea) + steer (9) + fuel (12.1) + health (10.1) + battery (14.0) + flags:8
-            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092500010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB9DBFFFFFF02"));
+            // + A6: towedNetId (u32) + towRestLen (3int/4frac clamped) -- appended after flags. This golden
+            // MOVED +5 bytes when A6 landed under v11 (byteLen 0x25->0x2A): not towing here, so the tail
+            // gains towedNetId=0 (00000000) + restLen=0. Re-baselined to the actual (run 2026-07-20).
+            Assert.That(ToHex(bytes), Is.EqualTo("E803000000000000092A00010009000000050200000C040C08103E6000E1E0F8260002130802200402ECB9DBFFFFFF020000000002"));
         }
 
         static ushort Driver(Harness h, uint veh)

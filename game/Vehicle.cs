@@ -131,6 +131,7 @@ namespace UnturnedGodot
         TowRope _rope;              // the visual rope, owned by the TOWER, re-pointed each physics tick, freed on detach
         MeshInstance3D _towFrontNub, _towRearNub;   // small marker cubes shown while a rope tool is out (mirrors the wire-tool port arrows)
         float _towRestLen;          // this rope's natural length (set at attach = clamped current gap) -> slack below it, tension above
+        public float TowRestLenValue => _towRestLen;   // A6: the live rope rest length (set at AttachTow) -> published by VehicleNetSync via ServerPublishTow so the client rope sags to the same length
         public const float TowRestMin = 2.0f;       // floor on the rope's rest length (a bumper-to-bumper tie still gets a 2m rope, slack)
         public const float TowAttachReach = 4.5f;   // max rear<->front world gap allowed when tying (walk the cars close first) -> also the rest-length CEILING, so the rope always forms at exactly the current gap and never yanks on attach
         public const float TowBreakLen = 7.5f;     // stretched past this -> the rope snaps (overload / one car driving off)
@@ -1032,6 +1033,14 @@ namespace UnturnedGodot
                 p.AddChild(pivot);
                 p.Wheels[i] = new VehiclePuppet.WheelDress { Pivot = pivot, Steer = steer, Radius = wr };
             }
+            // A6 rope-tow attach nodes: the IDENTICAL formula the real Build uses (lines ~1143-1147) so the
+            // client's cosmetic rope hangs off the same bumper-height spots the host's physics rope does.
+            float towFrontZ = s.BoxCenter.Z - s.BoxSize.Z * 0.5f - 0.15f;
+            float towRearZ = s.BoxCenter.Z + s.BoxSize.Z * 0.5f + 0.15f;
+            float towY = s.BoxCenter.Y - s.BoxSize.Y * 0.30f;
+            p.FrontTowLocal = new Vector3(s.BoxCenter.X, towY, towFrontZ);
+            p.RearTowLocal = new Vector3(s.BoxCenter.X, towY, towRearZ);
+
             p.OutlineColor = ItemTool.RarityColorUI(s.Rarity);   // match the real vehicle's look-at rim colour (line 931)
             p.SetNameLabel(s.Name, p.OutlineColor);              // look-at name tag (hidden until focused), like the real Vehicle's InfoBillboard title
             // look-detection collider (client-only): the vehicle-layer box (bit 5) so the player's look-ray/sphere finds

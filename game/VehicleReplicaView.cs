@@ -31,6 +31,14 @@ namespace UnturnedGodot
         }
         readonly Dictionary<uint, Tracked> _puppets = new();
 
+        // A6: cosmetic tow ropes, keyed by TOWER NetId (the entity carrying TowedNetId). Diff-driven like the
+        // puppet mirror -- a rope appears when a tower entity echoes TowedNetId!=0 and both puppets exist,
+        // is re-pointed every frame between the two puppets' tow nodes, and is retired the moment the tower
+        // detaches (TowedNetId->0), either puppet vanishes, or the tower entity leaves the replica. Pure
+        // render: the pull physics stays host-authoritative in Vehicle.UpdateTow on the real bodies.
+        readonly Dictionary<uint, TowRope> _ropes = new();
+        public int RopeCount => _ropes.Count;
+
         /// <summary>Part A (CLIENT_PREDICTION_PLAN §5.2 A1): NetIds whose puppet this VIEW must not render
         /// -- the driver's own vehicle, replaced by the session's client-local real Vehicle. VIEW-only by
         /// design: the replica STORE keeps mirroring snapshots verbatim (hash parity + "replicas mirror
@@ -101,6 +109,37 @@ namespace UnturnedGodot
                 {
                     if (IsInstanceValid(_puppets[id].Node)) _puppets[id].Node.QueueFree();
                     _puppets.Remove(id);
+                }
+
+            // A6: the cosmetic tow-rope layer -- runs AFTER the puppet transforms are updated this frame, so
+            // the rope reads the just-glided tow-node world positions. A tower entity (TowedNetId != 0) draws
+            // one TowRope from its own puppet's REAR node to the towed puppet's FRONT node; "am I towed" is
+            // never on the wire, it's derived here from being someone's TowedNetId. A rope needs BOTH puppets
+            // present (a suppressed/not-yet-built end skips it), and is retired when the tower detaches or
+            // either puppet is gone.
+            var ropesSeen = new HashSet<uint>();
+            foreach (var e in Client.Vehicles.All)
+            {
+                if (e.TowedNetId == 0) continue;
+                if (!TryGetPuppet(e.NetIdValue, out var tower)) continue;   // tower puppet suppressed/gone
+                if (!TryGetPuppet(e.TowedNetId, out var towed)) continue;   // towed puppet not built yet
+                ropesSeen.Add(e.NetIdValue);
+                if (!_ropes.TryGetValue(e.NetIdValue, out var rope) || !IsInstanceValid(rope))
+                {
+                    rope = new TowRope();
+                    parent.AddChild(rope);
+                    _ropes[e.NetIdValue] = rope;
+                }
+                rope.SetEndpoints(tower.RearTowWorld, towed.FrontTowWorld, e.TowRestLen);
+            }
+            List<uint> goneRopes = null;
+            foreach (var kv in _ropes)
+                if (!ropesSeen.Contains(kv.Key)) (goneRopes ??= new List<uint>()).Add(kv.Key);
+            if (goneRopes != null)
+                foreach (uint id in goneRopes)
+                {
+                    if (IsInstanceValid(_ropes[id])) _ropes[id].QueueFree();
+                    _ropes.Remove(id);
                 }
         }
     }

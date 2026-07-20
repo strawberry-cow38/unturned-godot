@@ -33,6 +33,13 @@ namespace UnturnedGodot.Net
         const int BatteryIntBits = 14, BatteryFracBits = 0;
         public const int SteerBits = 9;   // steer wraps [0,360) like every degree field; real range is +-~35deg (public: VehicleStateCommand rides the same encoding)
 
+        // A6 rope-tow relationship: restLen is a signed ClampedFloat clamped to [Vehicle.TowRestMin 2.0,
+        // Vehicle.TowAttachReach 4.5]; 3 int bits (range [-4,4)) caps a long rope at ~3.94m (a purely
+        // cosmetic sag length -- the PHYSICS rope keeps its real rest length on the host node), 4 frac bits
+        // = 1/16 m. Both sides quantize through the SAME QuantizeClampedFloat, so the wire round-trips
+        // bit-exact and StateHash stays byte-identical server<->client (a globally-mirrored system).
+        public const int TowRestIntBits = 3, TowRestFracBits = 4;
+
         public sealed class VehicleEntity
         {
             public uint NetIdValue { get; internal set; }
@@ -50,6 +57,9 @@ namespace UnturnedGodot.Net
             public float Health { get; internal set; }
             public float Battery { get; internal set; }
             public byte Flags { get; internal set; }
+            // A6 rope tow (published by the disjoint ServerPublishTow writer, never the transform/vitals paths):
+            public uint TowedNetId { get; internal set; }   // the vehicle THIS entity tows (0 = not towing). "Am I towed" is DERIVED client-side (being someone else's TowedNetId) -- NEVER replicated (a redundant TowedByNetId would be a hash-divergence footgun).
+            public float TowRestLen { get; internal set; }  // the tow rope's rest length (quantized via QuantizeClampedFloat); cosmetic sag on the client rope. 0 when not towing.
             public long LastChangedTick { get; internal set; }
 
             public bool Exploded => (Flags & FlagExploded) != 0;
@@ -177,6 +187,26 @@ namespace UnturnedGodot.Net
             if (newFuel == e.Fuel && newHealth == e.Health && newBattery == e.Battery && newFlags == e.Flags) return;
             e.Fuel = newFuel; e.Health = newHealth; e.Battery = newBattery;
             e.Flags = newFlags;
+            e.LastChangedTick = tick;
+        }
+
+        /// <summary>A6: the rope-tow relationship half of the vehicle block -- a THIRD disjoint writer.
+        /// The tow fields (TowedNetId + TowRestLen) are NEVER touched by ServerPublish /
+        /// ServerAdoptDriverState / ServerPublishVitals, so a driven or predicted-and-adopted vehicle has no
+        /// double writer: transform, vitals, and tow cover strictly disjoint fields. The NODE
+        /// (Vehicle.Towing + _towRestLen) is the single source of truth; the entity is publish-only. RestLen
+        /// is quantized with the SAME QuantizeClampedFloat the wire uses so the stored value is already
+        /// bit-identical to what every client reconstructs -> StateHash parity needs no tolerance. Dirty-
+        /// checks both fields and stamps LastChangedTick ONLY on a real change, so a static rope (or a car
+        /// that isn't towing) costs zero delta bytes between snapshots. towedNetId==0 zeroes restLen too, so
+        /// a detach clears both fields in one publish.</summary>
+        public void ServerPublishTow(NetId id, uint towedNetId, float restLen, long tick)
+        {
+            if (!_vehicles.TryGet(id, out var e)) return;
+            float newRest = towedNetId != 0 ? NetQuantization.QuantizeClampedFloat(restLen, TowRestIntBits, TowRestFracBits) : 0f;
+            if (towedNetId == e.TowedNetId && newRest == e.TowRestLen) return;
+            e.TowedNetId = towedNetId;
+            e.TowRestLen = newRest;
             e.LastChangedTick = tick;
         }
 
@@ -313,6 +343,11 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixFloat(h, e.Health);
                 h = NetHash.MixFloat(h, e.Battery);
                 h = NetHash.MixByte(h, e.Flags);
+                // A6: mix the tow fields AFTER Flags, symmetric with WriteEntity/ReadEntity. One StateHash()
+                // serves both server + client, so the mix is inherently symmetric; the quantized restLen
+                // (stored by ServerPublishTow) is byte-identical to the client's wire-read value.
+                h = NetHash.MixUInt32(h, e.TowedNetId);
+                h = NetHash.MixFloat(h, e.TowRestLen);
             }
             return h;
         }
@@ -339,6 +374,8 @@ namespace UnturnedGodot.Net
             w.WriteClampedFloat(e.Health, HealthIntBits, HealthFracBits);
             w.WriteClampedFloat(e.Battery, BatteryIntBits, BatteryFracBits);
             w.WriteUInt8(e.Flags);
+            w.WriteUInt32(e.TowedNetId);                                        // A6: appended after Flags
+            w.WriteClampedFloat(e.TowRestLen, TowRestIntBits, TowRestFracBits); // A6: cosmetic rope rest length
         }
 
         static bool ReadEntity(NetPakReader r, out VehicleEntity e)
@@ -359,12 +396,15 @@ namespace UnturnedGodot.Net
             if (!r.ReadClampedFloat(HealthIntBits, HealthFracBits, out float health)) return false;
             if (!r.ReadClampedFloat(BatteryIntBits, BatteryFracBits, out float battery)) return false;
             if (!r.ReadUInt8(out byte flags)) return false;
+            if (!r.ReadUInt32(out uint towedNetId)) return false;                                     // A6: appended after Flags
+            if (!r.ReadClampedFloat(TowRestIntBits, TowRestFracBits, out float towRestLen)) return false; // A6
             e = new VehicleEntity
             {
                 NetIdValue = id, TypeId = typeId, Variant = variant, DriverPlayerId = driver,
                 Pos = pos, YawDegrees = yaw, PitchDegrees = pitch, RollDegrees = roll,
                 LinVel = lin, AngVel = ang, SteerDegrees = steer,
                 Fuel = fuel, Health = health, Battery = battery, Flags = flags,
+                TowedNetId = towedNetId, TowRestLen = towRestLen,
             };
             return true;
         }

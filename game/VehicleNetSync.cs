@@ -185,6 +185,19 @@ namespace UnturnedGodot
                         ToU(v.LinearVelocity), ToU(v.AngularVelocity), v.SteerAngleDegrees,
                         v.Fuel, v.Health, v.Battery, flags, tick);
                 }
+
+                // A6: publish the rope-tow relationship UNCONDITIONALLY -- the tow fields are field-disjoint
+                // from both the held (vitals) and non-held (transform) publish above, so this THIRD writer is
+                // safe under either path and never touches the driver-state hot path. The node
+                // (Vehicle.Towing + _towRestLen) is the sole truth; resolve the towed node to its entity
+                // NetId (0 = not towing). The dirty-check in ServerPublishTow makes a static rope -- or a car
+                // that isn't towing -- cost zero delta bytes. A one-tick lag if the towed node was minted
+                // later in this same iteration is benign (next tick's dirty-check publishes it).
+                uint towedNetId = 0;
+                if (v.Towing != null && GodotObject.IsInstanceValid(v.Towing)
+                    && _tracked.TryGetValue(v.Towing, out var towedTracked))
+                    towedNetId = towedTracked.NetId;
+                _server.Vehicles.ServerPublishTow(new NetId(t.NetId), towedNetId, v.TowRestLenValue, tick);
             }
 
             // freed nodes (despawned wrecks / teardown) -> eject any driver, retire the entity
