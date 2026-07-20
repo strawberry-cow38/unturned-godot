@@ -119,6 +119,35 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // master's Power Switch: a toggle-gated relay -- power passes to its OUT only when ON (PowerConducting gates the passthrough).
+    public class PowerSwitchGates : GameTest
+    {
+        public override string Name => "power.switch_gates";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);
+            var sw = Deployable.Spawn(World, DeployableDef.Switch, new Vector3(0f, 0f, 0f), 0f);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(3f, 0f, 0f), 0f);
+            yield return Ticks(1);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var swIn = sw.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var swOut = sw.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+            var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            T.Check("switch has an IN (consumer) + an OUT (passthrough)", swIn != null && swOut != null);
+
+            PowerRig.Connect(World, genOut, swIn);       // gen -> switch IN
+            PowerRig.Connect(World, swOut, spotIn);      // switch OUT -> spotlight
+            gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("switch ON (default) -> spotlight powered through it", spotIn.Powered);
+
+            sw.TogglePower(); PowerNet.Recompute(Tree);  // switch OFF
+            T.Check("switch OFF -> spotlight loses power (passthrough dead)", !spotIn.Powered);
+
+            sw.TogglePower(); PowerNet.Recompute(Tree);  // switch back ON
+            T.Check("switch back ON -> spotlight powered again (state toggles cleanly)", spotIn.Powered);
+        }
+    }
+
     public class PowerWireClearUnpowers : GameTest
     {
         public override string Name => "power.wire_clear_unpowers";

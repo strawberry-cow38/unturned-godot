@@ -14,6 +14,7 @@ namespace UnturnedGodot
         // IPowerDevice: how the power net sees this deployable (a gas pump implements the same interface w/o being a Deployable)
         public bool PowerProducing => IsPowered;
         public bool PowerOnFire => OnFire;
+        public bool PowerConducting => Def == null || !Def.IsSwitch || _switchOn;   // a switch OFF stops conducting -> its passthrough dies
         public uint PowerNetId => NetId;
         public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => Ports;
         public float Health, HealthMax;
@@ -26,6 +27,7 @@ namespace UnturnedGodot
         CpuParticles3D _smoke, _smoke0, _fire;
         OmniLight3D _fireLight;
         MeshInstance3D _mesh;      // the body mesh (charred on explode)
+        MeshInstance3D _switchLight;   // a Power Switch's on/off state light (green = on, red = off)
         Vector3 _firePos;          // world-space fire/smoke origin (top of the object); particles are TopLevel so they rise in WORLD up despite the stood-up body basis
         const float ExplodeDelay = 4f, SmokeFrac = 0.45f, HeavyFrac = 0.22f;   // light smoke < 45% HP, heavy < 22% (vehicle uses ~200/100 of ~600)
 
@@ -33,6 +35,8 @@ namespace UnturnedGodot
         //     the looping engine AudioSource). The src has NO vibration animation (the Engine node is just an
         //     AudioSource) -- the small shake here is a non-source touch (strawberry asked for it). ---
         bool _powered;             // target state (F toggles it)
+        bool _switchOn = true;     // a Power Switch's remembered on/off state (F toggles it); defaults ON = passes power
+        public bool SwitchOn => _switchOn;   // for the state light + the [F] prompt
         float _powerLevel;         // 0 = off .. 1 = running; ramps up over WarmupTime / down over CooldownTime -- the shake + engine spin-up follow it
         AudioStreamPlayer3D _engineAudio;
         float _vibePhase;
@@ -40,7 +44,7 @@ namespace UnturnedGodot
         public bool OnFire => _deadTimer >= 0f || _exploded;   // catching fire at 0 HP (deadTimer) through the burning wreck -> a dead/dying generator, can't be run (PowerNet reads this)
         float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
         bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
-        public bool CanTogglePower => !OnFire && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled, NOT-on-fire generator toggles, and only once the ramp has settled (buffer)
+        public bool CanTogglePower => !OnFire && Def != null && (Def.IsSwitch || (Def.Fuel > 0f && PowerSettled));   // a switch always toggles; a generator only when fuelled + ramp-settled (buffer)
         public bool IsPowered => Def != null && Def.IsBattery ? (Energy > 0f && !OnFire) : RunTarget > 0.5f;   // a battery's OUT produces while it has charge; a generator's while the engine runs -- PowerNet reads this
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
@@ -146,6 +150,12 @@ namespace UnturnedGodot
                 if (pdef.Kind == DeployableDef.PortKind.Consumer) d._consumerPort = port;   // this consumer's Powered flag lights the lamps
                 else if (pdef.Kind == DeployableDef.PortKind.Output) d._outputPort = port;   // this output's Draw drives the load bar + vibration
             }
+            if (def.IsSwitch)   // a state light on top: green = on (passing power) / red = off
+            {
+                d._switchLight = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.06f, 0.12f) }, Position = EnvVec3("UG_SWLP", new Vector3(0f, 0.20f, -0.14f)) };   // front face, upper (flat frame: +Y front, -Z = up after stand-up)
+                d.AddChild(d._switchLight);
+                d.UpdateSwitchLight();
+            }
             foreach (var ldef in def.Lights)   // consumer lamps (spotlight): children in the flat frame -> stand up with the model, off until powered
             {
                 Light3D lamp;
@@ -236,7 +246,18 @@ namespace UnturnedGodot
 
         // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
         // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
-        public void TogglePower() { if (CanTogglePower) { _powered = !_powered; PowerNet.MarkDirty(); } }   // IsPowered flipped -> the net needs a recompute
+        public void TogglePower()   // IsPowered/conduction flipped -> the net needs a recompute
+        {
+            if (Def != null && Def.IsSwitch) { _switchOn = !_switchOn; UpdateSwitchLight(); PowerNet.MarkDirty(); return; }   // a switch flips its gate (no fuel/ramp)
+            if (CanTogglePower) { _powered = !_powered; PowerNet.MarkDirty(); }
+        }
+
+        void UpdateSwitchLight()   // green = on (passing power), red = off
+        {
+            if (_switchLight == null) return;
+            var c = _switchOn ? new Color(0.15f, 0.9f, 0.2f) : new Color(0.9f, 0.15f, 0.15f);
+            _switchLight.MaterialOverride = new StandardMaterial3D { AlbedoColor = c, EmissionEnabled = true, Emission = c, EmissionEnergyMultiplier = _switchOn ? 1.6f : 0.8f };
+        }
 
         // MP replica apply (DeployableReplicaView): the server already validated this toggle, so it lands
         // without the local CanTogglePower interaction gating. The warmup/cooldown ramp still runs locally.
@@ -479,7 +500,7 @@ namespace UnturnedGodot
                 string prompt;
                 if (PickupProgress > 0.01f) prompt = $"Picking up... {Mathf.Clamp((int)(PickupProgress * 100f), 0, 99)}%";
                 else if (OnFire) prompt = "";
-                else prompt = (Def != null && Def.Fuel > 0f ? $"[F] Turn {(_powered ? "Off" : "On")} · " : "") + "Hold [F]: pick up";
+                else prompt = ((Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[F] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")} · " : "") + "Hold [F]: pick up";
                 _info.SetPrompt(prompt, OutlineColor);
             }
         }

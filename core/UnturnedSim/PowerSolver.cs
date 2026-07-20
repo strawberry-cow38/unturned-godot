@@ -30,6 +30,7 @@ namespace SDG.Unturned
     {
         public bool Producing;     // a generator whose engine is effectively running (on + fuelled + not on fire)
         public bool OnFire;        // a burning/wrecked device stops conducting (its passthrough dies with it)
+        public bool Conducting = true;   // a SWITCH toggled OFF stops conducting too (its passthrough dies) -- default true = normal relay
         public readonly List<PowerPort> Ports = new List<PowerPort>();
         public PowerPort AddPort(PowerPortKind kind, float watts)
         {
@@ -77,7 +78,7 @@ namespace SDG.Unturned
                             // a normal consumer (Watts>0) needs at least its usage; a 0-watt RELAY (splitter/combiner
                             // input) just needs any live input, since it takes nothing for itself.
                             bool hasInput = p.Watts > 0f ? p.Live >= p.Watts : p.Live > 0f;
-                            p.Powered = !d.OnFire && hasInput;   // a burning consumer stops conducting
+                            p.Powered = !d.OnFire && d.Conducting && hasInput;   // a burning OR switched-off consumer stops conducting -> nothing exported -> passthrough dead
                             if (p.Powered) exported += p.Live - p.Watts;
                         }
                     if (anyConsumer)

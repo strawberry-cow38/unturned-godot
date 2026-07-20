@@ -1263,7 +1263,8 @@ namespace UnturnedGodot
             // back row: PLACED objects (surface = ground; the base is sat on it)
             bool showSplit = System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1344,6 +1345,17 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.15f, 0f);
                 cam.Position = new Vector3(0.9f, 0.7f, 1.3f);
                 cam.Fov = 45f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_SWITCH=1: two Power Switches side by side -- left ON (green light), right toggled OFF (red) -- verify the state light + gate.
+            if (System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1")
+            {
+                var swOn = Deployable.Spawn(this, DeployableDef.Switch, new Vector3(-0.5f, 0f, 0f), 0f);    // default ON -> green
+                var swOff = Deployable.Spawn(this, DeployableDef.Switch, new Vector3(0.5f, 0f, 0f), 0f);
+                swOff.TogglePower();   // -> OFF, red
+                foreach (var pt in swOn.Ports) pt.SetArrowState(true, true);
+                look = new Vector3(0f, 0.2f, 0f);
+                cam.Position = new Vector3(0.7f, 0.9f, 1.7f);
+                cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read

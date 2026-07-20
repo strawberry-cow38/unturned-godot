@@ -19,6 +19,7 @@ namespace UnturnedGodot
         public float Health;
         public float Fuel;         // src .dat Capacity: fuel tank size (InteractableGenerator.capacity). 0 = no fuel gauge (e.g. spotlight, which draws from a wired generator)
         public bool IsBattery;     // a battery: its IN terminal charges the stored Energy, its OUT terminal discharges it (produces while Energy > 0)
+        public bool IsSwitch;      // a power switch: an F-toggle gates its Passthrough (PowerConducting). Remembers state; a light shows on/off
         public float EnergyMax, ChargeWatts;   // battery: stored-energy capacity (watt-SECONDS) + the IN charge rate (W)
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
@@ -112,6 +113,20 @@ namespace UnturnedGodot
         }
         public static readonly DeployableDef Combiner2 = MakeCombiner(9104, "2-Way Combiner", 0.55f, new[] { -0.14f, 0.14f });
 
+        // --- Switch (custom): power in one side, out the other, gated by an F-toggle. A 0-watt relay Consumer (IN) + a
+        //     Passthrough (OUT); PowerConducting = the toggle state, so OFF kills the passthrough = no downstream power.
+        //     Remembers its state; a state light on top reads green (on) / red (off). ---
+        public static readonly DeployableDef Switch = new()
+        {
+            Id = 9105, Name = "Power Switch", ProcBox = true, IsSwitch = true, PlaceSound = "metalplacement",
+            Size = new Vector3(0.5f, 0.36f, 0.5f),   // same flat frame as the splitters (X width, Y depth port faces, Z stands up)
+            Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f, Fuel = 0f,
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer,    Pos = new Vector3(0f, -0.18f, 0f), Watts = 0f },   // IN relay (back face)
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f,  0.18f, 0f), Watts = 0f },   // OUT (front) -- gated OFF by the switch
+            },
+        };
+
         // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
         //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
         //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
@@ -126,7 +141,7 @@ namespace UnturnedGodot
             },
         };
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -135,6 +150,7 @@ namespace UnturnedGodot
             9102 => Splitter3,
             9103 => Splitter4,
             9104 => Combiner2,
+            9105 => Switch,
             1450 => Battery,
             _ => null,
         };
