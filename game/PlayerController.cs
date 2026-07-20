@@ -1836,6 +1836,17 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>MP consume (InventoryUI Use button): the server deletes the item by id (the cell just
+        /// names one) + applies useHealth into the server CombatEntity; the owner echo empties/decrements the
+        /// cell. Mirrors TickConsume's completion routing -- vitals stay client-led (AdoptReplicatedVitals owns
+        /// HP), so the caller still applies Consume(asset) locally and skips its own decrement when this routes.</summary>
+        public bool RequestConsume(byte page, byte x, byte y)
+        {
+            if (NetConsume == null) return false;
+            NetConsume(page, x, y);
+            return true;
+        }
+
         /// <summary>MP deployable placement (TickDeploy's place-confirm): the server validates the spot +
         /// spends the item; DeployablePlaced broadcasts and the replica view spawns the real node.</summary>
         public bool RequestPlaceDeployable(ushort defId, Vector3 pos, float yawDeg)

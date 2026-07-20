@@ -288,6 +288,101 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // GAP B4 (guard-fix): the InventoryUI "Use" button (UseSelected) must ROUTE the delete through
+    // NetConsume (like TickConsume's completion) and SKIP its local decrement -- not decrement the local
+    // jar and leave the server grid untouched. This drives the REAL UI action via DebugUse over a connected
+    // ClientWorldSession shell (the same net stack net.shell_consume uses), through the RequestConsume seam.
+    //
+    // TEETH (the resurrect bug, exactly what ClientWorldSession.cs:193-194 warns about -- "consume decrement
+    // is resurrected by the next full-state echo"): PRE-FIX, UseSelected decrements only the LOCAL jar (2->1)
+    // and never calls NetConsume, so (a) the SERVER grid still holds amount 2 (Until times out, assert fails)
+    // and Diag.ConsumesApplied never bumps, and (c) the next Inventories.ReplicaUpdated -> AdoptReplicatedInventory
+    // re-adopts the server's 2, jumping the local bag BACK UP to 2 (the resurrect) -- so "stays 1 after an echo"
+    // fails. POST-FIX the server owns the delete (2->1) and the echo repaints 1 with no resurrect. Mirror of
+    // net.shell_consume, but driven through the UI Use button rather than the held-consume eat timer.
+    public class UnifyUseButtonConsume : GameTest
+    {
+        public override string Name => "unify.use_button_consume";
+        public override double TimeoutSimSeconds => 40;
+
+        // the single grid cell of item `id` on page `p` (cleared to be unique) -> its (x,y)
+        static bool FindCell(PlayerInventory inv, byte p, ushort id, out byte x, out byte y)
+        {
+            var pg = inv.items[p];
+            for (byte i = 0; i < pg.getItemCount(); i++)
+            {
+                var j = pg.getItem(i);
+                if (j?.item != null && j.item.id == id) { x = j.x; y = j.y; return true; }
+            }
+            x = y = 0; return false;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();   // id 14 (Bottled Water) resolves as a WATER consumable
+
+            var net = new MemNetwork(20260720);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "user" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            T.Check("server owns the local player's inventory", sHave);
+            if (!sHave) yield break;
+            yield return Ticks(10);
+
+            // Seed a CLEAN consumable STACK (amount 2) in a bag cell: clear the demo Bottled Waters first so
+            // the id is unique (OnConsume's removeItemAmount-by-id + getItemCount are unambiguous), then add
+            // one 1x1 stack of amount 2 into POCKETS (page 2). Let it replicate to the shell.
+            sInv.Inventory.removeItemAmount(14, 999);   // drop every demo Bottled Water across the bag
+            bool seeded = sInv.Inventory.items[2].tryAddItem(new Item(14, 2));
+            T.Check("seeded a Bottled Water stack (amount 2) into the SERVER pockets grid",
+                    seeded && sInv.Inventory.getItemCount(14) == 2);
+            T.Check("found the seeded stack's cell", FindCell(sInv.Inventory, 2, 14, out byte cx, out byte cy));
+            FindCell(sInv.Inventory, 2, 14, out cx, out cy);
+
+            yield return Until(() => sess.Shell.Inventory.getItemCount(14) == 2
+                                  && sess.Shell.Inventory.items[2].getIndex(cx, cy) != byte.MaxValue, 5);
+            T.Check("the shell adopted the seeded stack at (2,cx,cy) with amount 2",
+                    sess.Shell.Inventory.getItemCount(14) == 2
+                 && sess.Shell.Inventory.items[2].getIndex(cx, cy) != byte.MaxValue);
+
+            // the InventoryUI wired exactly as the SP/MP shell wires it (Inv = the shell bag, Player = the shell)
+            var ui = new InventoryUI { Inv = sess.Shell.Inventory, Player = sess.Shell };
+            World.AddChild(ui);
+            yield return Ticks(2);   // _Ready builds the storage columns so Refresh() is safe
+
+            long consumesBefore = ded.Server.Transactions.Diag.ConsumesApplied;
+            ui.DebugUse(2, cx, cy);   // the REAL Use-button path (UseSelected) -- routes RequestConsume, skips local decrement
+
+            yield return Until(() => sInv.Inventory.getItemCount(14) == 1, 5);
+            T.Check("(a) the SERVER grid decremented the stack to 1 (Use routed NetConsume)",
+                    sInv.Inventory.getItemCount(14) == 1);
+            T.Check("(b) Diag.ConsumesApplied bumped (the server owned the delete)",
+                    ded.Server.Transactions.Diag.ConsumesApplied == consumesBefore + 1);
+
+            // let several more owner-block echoes land AFTER the consume -- pre-fix this is where the local jar
+            // resurrects (AdoptReplicatedInventory re-adopts the still-2 server grid). Post-fix it holds at 1.
+            yield return Until(() => sess.Shell.Inventory.getItemCount(14) == 1, 5);
+            yield return Ticks(20);
+            T.Check("(c) the local bag STAYS at 1 after the echo -- no resurrect",
+                    sess.Shell.Inventory.getItemCount(14) == 1);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // SP/MP-unify P2 phase gate. Proves the "local view CONSUMES a server WORLD-ITEM (dropped/loot) replica
     // instead of OWNING a direct SP node" seam -- the exact shape MpLoopback now takes under --spconsume
     // (a WorldItemReplicaView + the NetPickupItem wire seam), the direct world-item mirror of

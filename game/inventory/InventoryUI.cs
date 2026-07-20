@@ -546,6 +546,9 @@ namespace UnturnedGodot
         public void DebugEquip(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; EquipSelected(); }
         // demo/verify: select a consumable and equip it to the hands (headless can't click the button)
         public void DebugHold(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; HoldSelected(); }
+        // demo/verify: select a consumable and run its Use (the Use button) headlessly -- drives the same
+        // UseSelected core, so an L1 can prove the consume routes NetConsume + skips the local decrement.
+        public void DebugUse(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; UseSelected(); }
 
         void DropSelected()
         {
@@ -578,10 +581,19 @@ namespace UnturnedGodot
             byte idx = pg.getIndex(_selX, _selY);
             if (idx == byte.MaxValue) return;
             var jar = pg.getItem(idx);
-            Player?.Consume(jar.GetAsset());
-            var item = jar.item;
-            if (item != null && item.amount > 1) item.amount--;   // consume one from the stack
-            else pg.removeItem(idx);                              // or the whole item
+            Player?.Consume(jar.GetAsset());   // vitals stay client-led (HP server-adopted via AdoptReplicatedVitals; food/water local)
+            // MP: the DELETE is a REQUEST -- the server removes by id (the cell just names one) and the owner
+            // echo repaints the decremented grid, so SKIP the local decrement (mirror DropSelected @558-567 /
+            // TickConsume @1038-1050). SP: the direct local decrement, unchanged.
+            if (Player != null && Player.RequestConsume(_selPage, _selX, _selY))
+            {   // server owns the delete; the owner echo empties/decrements the cell
+            }
+            else
+            {
+                var item = jar.item;
+                if (item != null && item.amount > 1) item.amount--;   // consume one from the stack
+                else pg.removeItem(idx);                              // or the whole item
+            }
             CloseSelection();
             Refresh();
         }
