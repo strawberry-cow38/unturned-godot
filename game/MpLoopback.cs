@@ -53,6 +53,7 @@ namespace UnturnedGodot
         public StorageReplicaView Storage { get; private set; }      // A1 --spconsume: server container fixtures -> local StoreShelf nodes (null unless ConsumeDeployables; the SP-local SpawnMapContainers is gated off)
         public ZombieNetSync ZombieSync { get; private set; }
         public AnimalNetSync AnimalSync { get; private set; }   // A5: publishes the host's real AnimalAgent brains as replicas (no puppets here -- the host owns them)
+        public PlayerAppearanceNetSync AppearanceSync { get; private set; }   // B10: publishes each player's worn clothing + stance into the combat block
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
         public WorldClockNetSync ClockSync { get; private set; }
@@ -284,6 +285,10 @@ namespace UnturnedGodot
             // brains directly (no AnimalPuppets here -- puppets are for a remote client that doesn't own them).
             AnimalSync = new AnimalNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => AnimalSync.Tick(), "net.animals.publish"));
+            // B10: publish each player's worn clothing + stance into the combat block so joiners' RemotePlayers
+            // puppets dress right (dirty-only; the local player's own appearance rides too, harmless on the host).
+            AppearanceSync = new PlayerAppearanceNetSync(Server);
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => AppearanceSync.Tick(), "net.appearance.publish"));
             // Phase 6: the loopback world's dropped/loot items publish as entities too (§3.3) -- every SP
             // session soaks the world-item wire the same way it soaks the zombie wire.
             WorldItemSync = new WorldItemNetSync(Server, this);

@@ -359,6 +359,65 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // B10 (SP/MP-unify): a player's worn clothing round-trips through the REAL consuming loopback --
+    // PlayerAppearanceNetSync reads the server-side worn inventory + publishes it into the combat block, which
+    // replicates; and RemotePlayers.ApplyWorn reconstructs the worn slots from that replica (the render's core,
+    // exercised directly since a puppet only spawns for a networked REMOTE player). The wire parity is L0
+    // (PlayerAppearanceReplicationTests). Held-gun id is deferred (needs PlayerStateCommand.HeldItemId).
+    public class UnifyPlayerAppearance : GameTest
+    {
+        public override string Name => "unify.player_appearance";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);
+
+            var loop = new MpLoopback { Player = player, Driver = driver, DayNight = dayNight, Resources = resources, ConsumeDeployables = true };
+            World.AddChild(loop);
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _), 15);
+            ushort pid = loop.Client.PlayerId;
+
+            // dress the player's SERVER-side inventory (as the consuming wear path populates it)
+            loop.Server.Inventories.TryGet(pid, out var sinv);
+            sinv.Inventory.wearShirt(new SDG.Unturned.Item(3));       // Orange Hoodie
+            sinv.Inventory.wearPants(new SDG.Unturned.Item(209));     // Cargo Pants
+            sinv.Inventory.wearBackpack(new SDG.Unturned.Item(253));  // Alicepack
+
+            // PlayerAppearanceNetSync publishes it into the combat block -> replicated to the (loopback) client
+            yield return Until(() => loop.Client.CombatState.TryGet(pid, out var ce) && ce.WornShirt == 3, 15);
+            loop.Client.CombatState.TryGet(pid, out var c1);
+            T.Check("worn shirt published + replicated", c1.WornShirt == 3);
+            T.Check($"worn pants replicated ({c1.WornPants})", c1.WornPants == 209);
+            T.Check($"worn backpack replicated ({c1.WornBackpack})", c1.WornBackpack == 253);
+
+            // RENDER: RemotePlayers reconstructs the worn slots from the replica (the outfit a joiner would dress)
+            var puppetInv = new SDG.Unturned.PlayerInventory();
+            RemotePlayers.ApplyWorn(puppetInv, c1);
+            T.Check($"puppet worn shirt reconstructed ({puppetInv.wornShirt?.id})", puppetInv.wornShirt != null && puppetInv.wornShirt.id == 3);
+            T.Check("puppet worn pants reconstructed", puppetInv.wornPants != null && puppetInv.wornPants.id == 209);
+            T.Check("puppet has no hat (unworn slot stays empty)", puppetInv.wornHat == null);
+
+            // a change re-publishes (swap the shirt off) -> the replica + a fresh reconstruction both clear it
+            sinv.Inventory.wearShirt(null);
+            yield return Until(() => loop.Client.CombatState.TryGet(pid, out var ce) && ce.WornShirt == 0, 15);
+            loop.Client.CombatState.TryGet(pid, out var c2);
+            RemotePlayers.ApplyWorn(puppetInv, c2);
+            T.Check("(gate) removing the shirt re-published + the puppet un-dressed it", c2.WornShirt == 0 && puppetInv.wornShirt == null);
+        }
+    }
+
     // SP/MP-unify P1b phase gate (SECOND pattern-setter). Closes the gap P1 surfaced: a wire placement (P1)
     // SPENDS an item server-side BEFORE broadcasting, so the local loopback player's SERVER inventory must be
     // STOCKED + owner-replicated or a real placement is server-REJECTED. This proves the server-authoritative
