@@ -14,14 +14,15 @@ using Avalonia.Threading;
 public class MainWindow : Window
 {
     const string RepoUrl = "https://github.com/strawberry-cow38/unturned-godot.git";
-    const string Branch = "main";
+    const string DefaultBranch = "main";
+    string _branch = DefaultBranch;   // the tracked branch -- the dropdown switches it; persisted to branch.txt
     const string Solution = "game/UnturnedGodot.sln";
     const string BuildConfig = "Debug";
 
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 8;   // v8: crash-log to disk + verify the self-update download before swapping (v7 self-update could brick on a bad swap)
+    const int LauncherVersion = 9;   // v9: branch-select dropdown + hardened branch-switch git (explicit-refspec fetch so origin/<branch> always exists, offline branch fallback, fetch-failure guard)
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
     // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
@@ -41,6 +42,7 @@ public class MainWindow : Window
     readonly TextBlock _status = new() { Foreground = Brushes.Gray };
     readonly TextBox _log;
     readonly Button _action = new() { MinWidth = 150, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Right, FontSize = 16, IsEnabled = false };
+    readonly ComboBox _branchBox = new() { MinWidth = 220, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };   // branch selector (populated from the remote after clone)
     // (The old "Multiplayer test" checkbox was removed -- MP is now a top-level "Multiplayer" button on the
     // in-game main menu, which connects to claw.bitvox.me itself. Server browser later.)
     Mode _mode = Mode.Busy;
@@ -51,6 +53,7 @@ public class MainWindow : Window
         _srcDir = Path.Combine(_baseDir, "source");
         _gameDir = Path.Combine(_srcDir, "game");
         _builtMarker = Path.Combine(_srcDir, ".ugh_built");   // records the commit WE last built; untracked, survives reset --hard
+        _branch = LoadBranch();   // the persisted branch selection (default main); the dropdown updates it
 
         Title = "Unturned Godot — Launcher";
         Width = 680; Height = 520; MinWidth = 560; MinHeight = 420;
@@ -96,9 +99,19 @@ public class MainWindow : Window
         _status.VerticalAlignment = VerticalAlignment.Center;
         footer.Children.Add(_status); footer.Children.Add(rightSide);
 
-        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
+        var branchRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Avalonia.Thickness(0, 0, 0, 10),
+            Children =
+            {
+                new TextBlock { Text = "Branch:", Foreground = new SolidColorBrush(Color.Parse("#7a828c")), VerticalAlignment = VerticalAlignment.Center, FontSize = 13 },
+                _branchBox,
+            },
+        };
+
+        var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,*,Auto"), Margin = new Avalonia.Thickness(16) };
         void Row(Control c, int r) { Grid.SetRow(c, r); grid.Children.Add(c); }
-        Row(header, 0); Row(sub, 1); Row(buildBox, 2); Row(logHeader, 3); Row(_log, 4); Row(footer, 5);
+        Row(header, 0); Row(sub, 1); Row(branchRow, 2); Row(buildBox, 3); Row(logHeader, 4); Row(_log, 5); Row(footer, 6);
         return grid;
     }
 
@@ -118,11 +131,12 @@ public class MainWindow : Window
         if (!Directory.Exists(Path.Combine(_srcDir, ".git")))
         {
             SetBusy("Cloning source…");
-            Log($"$ git clone --depth 1 {RepoUrl} source");
+            Log($"$ git clone --depth 1 --branch {_branch} {RepoUrl} source");
             // shallow + single-branch: grab ONLY the latest snapshot, not 90+ MiB of history (the launcher always
             // force-resets to latest anyway, so history is dead weight -- this is the "turbo download" fix).
-            if (await RunAsync(_git, new[] { "clone", "--depth", "1", "--single-branch", "--branch", Branch, RepoUrl, _srcDir }, _baseDir) != 0) { Fail("git clone failed (auth set up for the repo?)."); return; }
+            if (await RunAsync(_git, new[] { "clone", "--depth", "1", "--single-branch", "--branch", _branch, RepoUrl, _srcDir }, _baseDir) != 0) { Fail($"git clone failed (branch '{_branch}' exists + auth set up?)."); return; }
         }
+        await PopulateBranchesAsync();   // fill the dropdown from the remote (origin exists now)
         await RefreshAsync();
     }
 
@@ -172,23 +186,49 @@ public class MainWindow : Window
         catch (Exception ex) { Log("(launcher self-update skipped: " + ex.Message + ")"); return false; }
     }
 
+    // Fetch the SELECTED branch with an EXPLICIT refspec so origin/<branch> always exists locally. The initial clone is
+    // --single-branch (only main's tracking ref + fetch config), so a plain `git fetch origin <other>` updates FETCH_HEAD
+    // but may not create origin/<other> -- which the rev-parse/reset below need. The +<branch>:refs/remotes/origin/<branch>
+    // form force-creates the remote-tracking ref for ANY branch, so branch-switching Just Works on the shallow clone.
+    async Task<int> FetchBranchAsync() =>
+        await RunAsync(_git, new[] { "fetch", "--depth", "1", "origin", $"+{_branch}:refs/remotes/origin/{_branch}" }, _srcDir);
+
     async Task RefreshAsync()
     {
         SetBusy("Checking for updates…");
-        Log("$ git fetch --depth 1 origin " + Branch);
-        await RunAsync(_git, new[] { "fetch", "--depth", "1", "origin", Branch }, _srcDir);
+        Log($"$ git fetch --depth 1 origin {_branch}:refs/remotes/origin/{_branch}");
+        int fetchRc = await FetchBranchAsync();
 
         string localHash = await Capture(_git, new[] { "rev-parse", "--short", "HEAD" });
         string localDate = await Capture(_git, new[] { "show", "-s", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", "HEAD" });
         string localMsg = await Capture(_git, new[] { "show", "-s", "--format=%s", "HEAD" });
-        string remoteHash = await Capture(_git, new[] { "rev-parse", "--short", $"origin/{Branch}" });
-        string remoteDate = await Capture(_git, new[] { "show", "-s", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", $"origin/{Branch}" });
-        string remoteMsg = await Capture(_git, new[] { "show", "-s", "--format=%s", $"origin/{Branch}" });
-        // shallow clones have no history to rev-list, so compare tips: differ = update available (src is gospel).
-        bool behind = !string.IsNullOrEmpty(remoteHash) && !string.IsNullOrEmpty(localHash) && remoteHash != localHash;
+        string remoteHash = await Capture(_git, new[] { "rev-parse", "--short", $"origin/{_branch}" });
+        string remoteDate = await Capture(_git, new[] { "show", "-s", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", $"origin/{_branch}" });
+        string remoteMsg = await Capture(_git, new[] { "show", "-s", "--format=%s", $"origin/{_branch}" });
+
+        // fetch failed / the branch doesn't exist on the remote -> never misreport "up to date". Let the user retry or
+        // reselect; if there's a local tree we can still rebuild/switch, otherwise it's broken.
+        if (fetchRc != 0 || string.IsNullOrEmpty(remoteHash))
+        {
+            bool haveLocal = !string.IsNullOrEmpty(localHash);
+            Dispatcher.UIThread.Post(() =>
+            {
+                _currentLabel.Text = $"Current build:   {Or(localHash, "—")}   ·   {Or(localDate, "unknown")}\n   {Or(localMsg, "")}";
+                _latestLabel.Text = $"Latest build:    (couldn't reach origin/{_branch})";
+            });
+            if (haveLocal) SetMode(Mode.Update, "Retry", $"Couldn't reach branch '{_branch}' — retry, or pick another.");
+            else Fail($"Couldn't reach branch '{_branch}' on the remote.");
+            return;
+        }
+
+        // shallow clones have no history to rev-list, so compare tips: differ = update available (src is gospel). After a
+        // branch SWITCH, HEAD is still the old branch's commit (working tree not reset yet) -> differs -> "Update", which
+        // performs the switch on click. Same commit across branches = identical tree = genuinely up to date.
+        bool behind = remoteHash != localHash && !string.IsNullOrEmpty(localHash);
         // "built" = WE built this exact commit. Do NOT trust game/.godot existing -- the repo may ship a committed
         // (stale, machine-specific) .godot with pre-built assemblies, which would let a fresh clone "Play" a mismatched
-        // dll and crash with "Cannot instantiate C# script res://Main.cs". Only our own build marker counts.
+        // dll and crash with "Cannot instantiate C# script res://Main.cs". Only our own build marker counts. On a branch
+        // switch the marker holds the OLD commit != the new HEAD -> not "built" -> a rebuild is forced. Correct.
         bool built = false;
         try { built = File.Exists(_builtMarker) && File.ReadAllText(_builtMarker).Trim() == localHash && !string.IsNullOrEmpty(localHash); } catch { }
 
@@ -198,9 +238,47 @@ public class MainWindow : Window
             _latestLabel.Text = $"Latest build:    {Or(remoteHash, "—")}   ·   {Or(remoteDate, "unknown")}\n   {Or(remoteMsg, "")}";
         });
 
-        if (!built) SetMode(Mode.Update, "Install & Play", "First run — build needed.");
+        if (!built) SetMode(Mode.Update, behind ? "Switch & build" : "Install & Play", behind ? $"On '{_branch}' — build needed." : "First run — build needed.");
         else if (behind) SetMode(Mode.Update, "Update", "Update available.");
         else SetMode(Mode.Play, "Play", "Up to date.");
+    }
+
+    // Fill the branch dropdown from the remote. `git ls-remote --heads origin` hits the remote directly, so it lists ALL
+    // branches even though our working clone is --single-branch. Falls back to just the current + default branch if the
+    // remote can't be reached. The change handler is (re)wired AFTER setting the initial selection so restoring the saved
+    // branch never fires a spurious switch.
+    async Task PopulateBranchesAsync()
+    {
+        var branches = new List<string>();
+        string outp = await Capture(_git, new[] { "ls-remote", "--heads", "origin" });
+        if (!string.IsNullOrWhiteSpace(outp))
+            foreach (var line in outp.Split('\n'))
+            {
+                const string mark = "refs/heads/";
+                int i = line.IndexOf(mark);
+                if (i >= 0) branches.Add(line.Substring(i + mark.Length).Trim());
+            }
+        if (!branches.Contains(DefaultBranch)) branches.Add(DefaultBranch);   // always offer main
+        if (!branches.Contains(_branch)) branches.Add(_branch);               // keep a saved (maybe deleted) branch selectable
+        branches = branches.Where(b => !string.IsNullOrWhiteSpace(b)).Distinct()
+                           .OrderBy(b => b == DefaultBranch ? "\0" : b, StringComparer.OrdinalIgnoreCase).ToList();   // main first, then alpha
+        Dispatcher.UIThread.Post(() =>
+        {
+            _branchBox.SelectionChanged -= OnBranchChanged;   // don't fire while (re)binding
+            _branchBox.ItemsSource = branches;
+            _branchBox.SelectedItem = branches.Contains(_branch) ? _branch : DefaultBranch;
+            _branchBox.SelectionChanged += OnBranchChanged;
+        });
+    }
+
+    async void OnBranchChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_mode == Mode.Busy) return;   // ignore selection churn mid-operation
+        if (_branchBox.SelectedItem is not string sel || sel == _branch) return;
+        _branch = sel;
+        SaveBranch(sel);
+        Log($"Branch -> {sel}");
+        await RefreshAsync();   // re-fetch the new branch + show if a switch/build is needed (the switch itself happens on Update)
     }
 
     async Task OnActionAsync()
@@ -212,9 +290,9 @@ public class MainWindow : Window
     async Task DoUpdateAsync()
     {
         SetBusy("Updating…");
-        Log("$ git fetch --depth 1 origin " + Branch + " && git reset --hard origin/" + Branch + "   (force — src is gospel)");
-        await RunAsync(_git, new[] { "fetch", "--depth", "1", "origin", Branch }, _srcDir);
-        if (await RunAsync(_git, new[] { "reset", "--hard", $"origin/{Branch}" }, _srcDir) != 0) { Log("!! git reset failed."); await RefreshAsync(); return; }
+        Log($"$ git fetch --depth 1 origin {_branch} && git reset --hard origin/{_branch}   (force — src is gospel)");
+        if (await FetchBranchAsync() != 0) { Log($"!! fetch failed for branch '{_branch}'."); await RefreshAsync(); return; }
+        if (await RunAsync(_git, new[] { "reset", "--hard", $"origin/{_branch}" }, _srcDir) != 0) { Log("!! git reset failed."); await RefreshAsync(); return; }
 
         SetBusy("Building…");
         Log($"$ dotnet build {Solution} -c {BuildConfig}");
@@ -386,6 +464,15 @@ public class MainWindow : Window
             ? Directory.GetFiles(dir, "Godot_v*_win64.exe", SearchOption.AllDirectories)
                 .FirstOrDefault(f => !f.Contains("console", StringComparison.OrdinalIgnoreCase))
             : null;
+
+    // ---- branch selection persistence (remembers the dropdown choice across launches) ----
+    string BranchConfig => Path.Combine(_baseDir, "branch.txt");
+    string LoadBranch()
+    {
+        try { if (File.Exists(BranchConfig)) { var b = File.ReadAllText(BranchConfig).Trim(); if (!string.IsNullOrWhiteSpace(b)) return b; } } catch { }
+        return DefaultBranch;
+    }
+    void SaveBranch(string b) { try { File.WriteAllText(BranchConfig, b); } catch (Exception ex) { Log("(couldn't save branch: " + ex.Message + ")"); } }
 
     // ---- Unturned install resolution (the game reads its real map terrain from here via UG_UNTURNED_DIR) ----
     string UnturnedDirConfig => Path.Combine(_baseDir, "unturned_dir.txt");
