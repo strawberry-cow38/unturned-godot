@@ -413,8 +413,8 @@ namespace UnturnedGodot
             // -> "Dequip" (back to fists); else "Equip" (gun/melee/deployable) or "Hold" (consumable). Then Drop + Close.
             float by = 150;
             bool isDeploy = DeployableDef.ById(asset.id) != null;   // generator/spotlight -> equip into placement mode
-            bool isWire = asset.id == 65;   // the Wire tool -> equip into wiring mode
-            if (asset.gunName != null || asset.meleeName != null || asset.IsConsumable || isDeploy || isWire || asset.IsFuelContainer)
+            ToolDef tool = ToolDef.ById(asset.id);   // held tools (Wire 65 / Rope 64 / future) -> equip into that tool's mode. Data-driven: was `id == 65`, so the ROPE had no branch and its menu showed only Drop/Close (master: "the option to hold is NOT THERE")
+            if (HasHandAction(asset))
             {
                 if (Player != null && Player.IsHeld(asset, jar.item))
                     AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); });
@@ -424,8 +424,8 @@ namespace UnturnedGodot
                     AddActionButton(panel, "Hold", new Vector2(228, by), HoldFuelSelected);   // equip the gas can -> LMB pours into a gen/vehicle, RMB sucks from a pump
                 else if (isDeploy)
                     AddActionButton(panel, "Equip", new Vector2(228, by), PlaceSelected);   // equip the deployable -> close inventory, aim the ghost, LMB plants it
-                else if (isWire)
-                    AddActionButton(panel, "Equip", new Vector2(228, by), WireSelected);   // equip the wire tool -> close inventory, wiring mode
+                else if (tool != null)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), ToolSelected);   // wire -> wiring mode, rope -> tow mode, any ToolDef -> its mode
                 else
                     AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
                 by += 44;
@@ -444,6 +444,14 @@ namespace UnturnedGodot
             b.Pressed += onClick;
             parent.AddChild(b);
         }
+
+        // The holdable predicate -- the single source of truth for "does this item get a hand action (Equip/Hold/Dequip)
+        // in its menu?" Centralized + data-driven so an item can't have the equip code but NO menu option to reach it
+        // (master 2026-07-20: the Rope did exactly that -- holdable in code, but its item menu showed only Drop/Close).
+        // A new holdable type is added HERE + the button dispatch in openSelection; regressed by InventoryTests.HandActions.
+        public static bool HasHandAction(ItemAsset asset) =>
+            asset != null && (asset.gunName != null || asset.meleeName != null || asset.IsConsumable
+                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer);
 
         void EquipSelected()
         {
@@ -528,15 +536,18 @@ namespace UnturnedGodot
             Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
-        // Equip the Wire tool -> close the inventory so the player is in wiring mode.
-        void WireSelected()
+        // Equip a held TOOL into the hands -> close the inventory so the tool's mode is active (Wire -> wiring, Rope -> towing).
+        // Data-driven off ToolDef (master: "is there no standard holdable flag / are u hard coding holds for each thing"):
+        // a new held tool is a ToolDef entry + this one method, NOT another per-id branch here.
+        void ToolSelected()
         {
             var pg = Inv.items[_selPage];
             byte idx = pg.getIndex(_selX, _selY);
             if (idx == byte.MaxValue) return;
             var jar = pg.getItem(idx);
-            if (jar.GetAsset()?.id != 65) return;
-            Player?.EquipWireTool(jar.item);
+            var tool = ToolDef.ById(jar.GetAsset()?.id ?? 0);
+            if (tool == null) return;
+            Player?.EquipTool(tool, jar.item);
             CloseSelection();
             Close();
             Input.MouseMode = Input.MouseModeEnum.Captured;
@@ -546,6 +557,8 @@ namespace UnturnedGodot
         public void DebugEquip(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; EquipSelected(); }
         // demo/verify: select a consumable and equip it to the hands (headless can't click the button)
         public void DebugHold(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; HoldSelected(); }
+
+        public void DebugTool(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; ToolSelected(); }   // rope/wire equip via the menu path (regression: the rope had no menu Hold option)
         // demo/verify: select a consumable and run its Use (the Use button) headlessly -- drives the same
         // UseSelected core, so an L1 can prove the consume routes NetConsume + skips the local decrement.
         public void DebugUse(byte page, byte x, byte y) { _selPage = page; _selX = x; _selY = y; UseSelected(); }

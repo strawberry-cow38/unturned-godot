@@ -37,6 +37,30 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Regression (master 2026-07-20): a HOLDABLE item must offer a hand action in its item menu, not just Drop/Close.
+    // The Rope (item 64) had the equip code (EquipRopeTool) but the menu special-cased only the Wire (id==65) and never
+    // consulted the Rope, so it showed just Drop/Close -- "the option to hold is NOT THERE". InventoryUI.HasHandAction is
+    // the data-driven holdable predicate the menu now gates on; assert every holdable KIND trips it (both tools via ToolDef)
+    // and that a plain SUPPLY item -- the SAME item type as the rope -- does not (proving it's the registry, not the type).
+    public class InventoryHandActions : GameTest
+    {
+        public override string Name => "inventory.hand_actions";
+        public override IEnumerable<Step> Run()
+        {
+            // catalog-free: HasHandAction reads fields off the asset (gunName/meleeName/IsConsumable/IsFuelContainer) + the
+            // DeployableDef/ToolDef registries by id, so bare ItemAssets exercise every branch without RegisterAll.
+            T.Check("rope (tool 64) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { id = 64, type = EItemType.SUPPLY }));
+            T.Check("wire (tool 65) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { id = 65, type = EItemType.SUPPLY }));
+            T.Check("a gun offers a hand action", InventoryUI.HasHandAction(new ItemAsset { gunName = "eaglefire" }));
+            T.Check("a melee offers a hand action", InventoryUI.HasHandAction(new ItemAsset { meleeName = "knife_military" }));
+            T.Check("a consumable (FOOD) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { type = EItemType.FOOD }));
+            T.Check("a fuel can offers a hand action", InventoryUI.HasHandAction(new ItemAsset { fuelCapacity = 500f }));
+            T.Check("a plain SUPPLY item (no ToolDef entry) offers NO hand action", !InventoryUI.HasHandAction(new ItemAsset { id = 63333, type = EItemType.SUPPLY }));
+            T.Check("null asset -> no hand action", !InventoryUI.HasHandAction(null));
+            yield break;
+        }
+    }
+
     // Port of --invusetest: PlayerController.Consume applies the real .dat consumable effects to the vitals --
     // Medkit +75 hp + stops bleeding, Canned Beans +food (health capped), Bottled Water +water, energy/antibiotics,
     // and the previously-inert catalog items work from consumable_stats.tsv.
