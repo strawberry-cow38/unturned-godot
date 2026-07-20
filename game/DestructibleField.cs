@@ -44,16 +44,20 @@ namespace UnturnedGodot
         public float MaxHealth(int index) => index >= 0 && index < _recs.Length && _recs[index] != null ? _recs[index].MaxHealth : 0f;
         public long ResetTicks(int index) => index >= 0 && index < _recs.Length && _recs[index] != null ? _recs[index].ResetTicks : 0L;
 
-        /// <summary>Reserve the index space (called once with the total destructible-placement count).</summary>
-        public void SetCount(int total)
-        {
-            _recs = new Rec[total];
-        }
+        void EnsureSize(int n) { if (n > _recs.Length) System.Array.Resize(ref _recs, n); }
 
-        /// <summary>Bind a built destructible's live nodes + rubble scalars to its deterministic index.</summary>
+        /// <summary>Reserve the whole index space to `total` slots. GROW-ONLY: WorldBuilder calls Register
+        /// DURING the placement scan (before it knows the final count) and SetCount AFTER, so this must never
+        /// shrink away already-registered recs -- it only extends to cover reserved-but-unbuilt tail slots
+        /// (out-of-season holiday) so the bitmap size matches across peers.</summary>
+        public void SetCount(int total) => EnsureSize(total);
+
+        /// <summary>Bind a built destructible's live nodes + rubble scalars to its deterministic index. Grows
+        /// the backing array to fit (Register runs before SetCount in the WorldBuilder scan order).</summary>
         public void Register(int index, StaticBody3D body, MeshInstance3D[] meshes, float maxHealth, long resetTicks)
         {
-            if (index < 0 || index >= _recs.Length) return;
+            if (index < 0) return;
+            EnsureSize(index + 1);
             _recs[index] = new Rec { Meshes = meshes, Body = body, BodyLayer = body?.CollisionLayer ?? 0u,
                                      MaxHealth = maxHealth, ResetTicks = resetTicks };
         }

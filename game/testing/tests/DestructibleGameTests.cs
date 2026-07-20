@@ -57,4 +57,40 @@ namespace UnturnedGodot.Testing
             T.Check("respawned: field reports the slot alive", field.IsAlive(0));
         }
     }
+
+    // Regression: WorldBuilder calls Register DURING the placement scan and SetCount AFTER it (the final
+    // destructible count isn't known until the scan finishes). An earlier version sized the array only in
+    // SetCount, so every inline Register no-oped against an empty array -> NOTHING on the dedicated server
+    // was destructible (health metadata never bound). This locks the register-before-setcount order.
+    public class DestructibleRegisterBeforeSetCount : GameTest
+    {
+        public override string Name => "destructible.register_before_setcount";
+
+        public override IEnumerable<Step> Run()
+        {
+            var field = new DestructibleField();
+            var m0 = new MeshInstance3D { Mesh = new BoxMesh() }; World.AddChild(m0);
+            var b0 = new StaticBody3D { CollisionLayer = 1u << 6 }; World.AddChild(b0);
+            var m2 = new MeshInstance3D { Mesh = new BoxMesh() }; World.AddChild(m2);
+            var b2 = new StaticBody3D { CollisionLayer = 1u << 6 }; World.AddChild(b2);
+
+            // the WorldBuilder order: Register the built props FIRST (during the scan)...
+            field.Register(0, b0, new[] { m0 }, maxHealth: 275f, resetTicks: 15000);
+            field.Register(2, b2, new[] { m2 }, maxHealth: 50f, resetTicks: 3000);
+            // ...THEN SetCount with the final total (4 -> index 3 is a reserved-but-unbuilt holiday tail slot)
+            field.SetCount(4);
+            yield return Ticks(1);
+
+            T.Check("index space covers the reserved total", field.InstanceCount == 4);
+            T.Check("registered-before-setcount slot 0 kept its health (275)", field.MaxHealth(0) == 275f);
+            T.Check("registered-before-setcount slot 2 kept its health (50)", field.MaxHealth(2) == 50f);
+            T.Check("unregistered slot 1 is indestructible (health 0)", field.MaxHealth(1) == 0f);
+            T.Check("reserved tail slot 3 is indestructible (health 0)", field.MaxHealth(3) == 0f);
+
+            field.SetAlive(0, false);
+            yield return Ticks(1);
+            T.Check("a registered slot actually breaks (mesh hidden)", !m0.Visible);
+            T.Check("a registered slot's collider drops", b0.CollisionLayer == 0u);
+        }
+    }
 }
