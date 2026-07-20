@@ -115,15 +115,59 @@ Output lands in **`game/content/`**:
 - Drivable `vehicle.prefab` ≠ static wreck `object.prefab` — rip the right one.
 - Content `.txt`/PNG changes are picked up at runtime; only C# changes need a rebuild.
 
-## Multiplayer (MP)
+## Developing for SP + MP — the unified paradigm (READ THIS FIRST)
 
-All 8 MP_PLAN phases are live; `docs/MP_PLAN.md` is the architecture doc (§7 = current status + security
-posture). Working reference:
+**Singleplayer IS an in-process server now.** The SP game boots an integrated listen-server + a local client
+over `MemTransport` (`game/MpLoopback.cs`); the local player consumes server replicas + routes intents through
+the server, exactly like a remote MP client but with no socket. There is no separate "SP direct path vs MP wire
+path" for the game anymore — **you build a feature ONCE, server-authoritative, and the client (local or remote)
+consumes it.** (A thin direct-construct path is kept ONLY for the `--deploytest`/`--vehicle`/… test + render
+harnesses and the `--direct` opt-out; the actual game always consumes.) Details: `docs/SP_MP_UNIFICATION_PLAN.md`.
 
-**Every feature must be MP-compatible unless the task explicitly says SP-only.** SP is the fallback shell; the
-real target is the dedicated server + joined clients. Before building anything that touches game state, ask "what
-is the server-authoritative version of this?" — never a client-local mutation of shared state. The recipe, proven
-across all 8 phases + the live fixes:
+**The one rule: never mutate shared game state on the client.** Build the authoritative version server-side; the
+client sends an *intent* and renders the *replicated result*. Which of two patterns you use depends on what the
+thing IS:
+
+- **Entity-based systems** (deployables, power, inventory, loot, world-items, crops — DATA + a rendered node):
+  the **server owns a plain data entity** (a `core/UnturnedNet` replication `SystemId`); the client materializes
+  it into the real Godot node via a **ReplicaView** (`DeployableReplicaView` / `WorldItemReplicaView` — the same
+  `Spawn` SP always used, stamped with the server `NetId`); the local player's action routes as an intent through
+  a `Net*` seam (`NetPlaceDeployable`/`NetPickupItem`/`NetMoveItem`…) → `Client.Send*` → server validates
+  (`ServerTransactions`) → mutates the entity → replicates → the ReplicaView reflects it. **The server holds NO
+  Godot node — just the entity; the client makes the only node.** The clean case: no double-body, no physics
+  problem. Copy `DeployableReplicaView` + the deployable seams.
+- **Physics-body systems** (player, vehicles, zombies, animals — a real `CharacterBody3D`/`VehicleBody3D`/nav
+  body): the **host KEEPS the real body** (listen-server) and runs server logic ON it — do NOT spin up a second
+  server body + a client puppet in one process (two independent `MoveAndSlide` solves CANNOT converge at
+  geometry cliffs — the "inchworm", structurally unfixable). Only REMOTE clients get dead-reckoned puppets. The
+  owner's own body (on-foot + the vehicle they drive) is **client-authoritative-position**: the client owns its
+  transform + streams it; the server **envelope-validates + ADOPTS** it (`PlayerAuthority.cs`/`ServerVehicles`,
+  a per-axis leaky-bucket speed/teleport bound) and **never re-simulates** it. Gross cheats roll back via a recov
+  event (`PlayerRecovEvent`, freeze-until-echo); inside the envelope it's the client's word (the intentional
+  cheat-surface tradeoff for Godot determinism). Move a body ONLY via `TeleportTo` (resets render-interp) or the
+  recov path — NEVER a bare `GlobalPosition` write (silently undone next physics tick).
+- **Vitals / damage / death = split authority.** HP is server-owned + adopted onto the owner each tick like
+  inventory (`AdoptReplicatedVitals`); position stays client-auth. ALL damage runs server-side (bullets/melee/
+  grenade in `ServerCombat`; zombie/blast via `DamagePlayerExternal`; fall server-DERIVED from the streamed
+  `Vel`+`Grounded`, never client-reported; OOB). Death/respawn are server events; the respawn teleport rides the
+  recov, not a bare teleport.
+
+**Recipe for a new feature:** (1) entity or physics-body? pick the pattern. (2) authoritative logic + validation
+server-side. (3) route the player's action as an intent (`Net*` seam / `CommandRegistry` command), never a local
+mutation. (4) reflect it via a ReplicaView (entities) or adoption (owner HP/inventory). (5) ship the tests in the
+same commit — an L0 round-trip in `tests/UnturnedNet.Tests/` + an L1 `net.shell_*`/`unify.*` test proving the
+client SEES the result, with teeth (fails without the wiring). (6) verify the VISUAL result with a render, not
+just green tests. Never re-create the deleted two-body machinery (predict/reconcile/rewind, ack-band,
+DeterministicGround) — the owner has ONE body.
+
+## Multiplayer (MP) — the underlying net stack
+
+`docs/MP_PLAN.md` is the architecture doc (§7 = status + security posture). The unified-paradigm section above is
+the DEV rule; this section is the plumbing it rests on.
+
+**Every feature is server-authoritative** (per the paradigm above). Before building anything that touches game
+state, ask "what is the server-authoritative version of this?" — never a client-local mutation of shared state.
+The round-trip recipe, proven across all 8 MP phases + the unification:
 
 1. **The server owns all truth.** A client never mutates authoritative state (world / player / inventory / vehicle)
    locally — it sends an *intent* and renders the *result*. The client "never seats itself": it waits for the
