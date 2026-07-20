@@ -191,6 +191,8 @@ namespace UnturnedGodot
             _ => null,
         };
 
+        public enum Drivetrain { AWD, FWD, RWD }   // vehiclerework: which wheels get engine power (AWD=all, FWD=front/steering, RWD=rear)
+
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
@@ -201,6 +203,7 @@ namespace UnturnedGodot
             // DriveGears = per-speed-band force multipliers (grunt low gear .. 1.0 top gear). Mass<=0 / Torque<=0 / null
             // DriveGears on a vehicle -> Build DERIVES them from the old Engine/SpeedMax so un-tuned vehicles still drive.
             public float Mass, Torque;   public float[] DriveGears;
+            public Drivetrain Drive;   // vehiclerework: which wheels get engine power -- AWD (default, all) / FWD (front/steering) / RWD (rear)
             public float[] WheelRadii;   // optional per-wheel radius (tractor: small front, big rear); null = uniform WheelRadius
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
@@ -623,7 +626,7 @@ namespace UnturnedGodot
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
-            Mass = 1500f, Torque = 1000f, DriveGears = new[] { 2.2f, 1.7f, 1.4f, 1.2f, 1.05f, 1f },   // vehiclerework BASELINE: mid weight/torque/top-speed, 6-speed (the reference car)
+            Mass = 1500f, Torque = 1000f, DriveGears = new[] { 2.2f, 1.7f, 1.4f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.FWD,   // vehiclerework BASELINE: mid, 6-speed, FWD (pulls, mild understeer)
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -746,7 +749,7 @@ namespace UnturnedGodot
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 11f, SpeedMin = -5f, Brake = 32f,
-            Mass = 9000f, Torque = 4200f, DriveGears = new[] { 3.2f, 2.6f, 2.1f, 1.7f, 1.35f, 1.1f, 1f },   // vehiclerework HEAVY HAULER: big weight + big torque, LOW top speed, 7-speed (lots of low grunt to haul + climb)
+            Mass = 9000f, Torque = 4200f, DriveGears = new[] { 3.2f, 2.6f, 2.1f, 1.7f, 1.35f, 1.1f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework HEAVY HAULER: heavy + torquey, LOW top, 7-speed, RWD
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -828,7 +831,7 @@ namespace UnturnedGodot
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 18.5f, SpeedMin = -6f, Brake = 32f,
-            Mass = 1750f, Torque = 1250f, DriveGears = new[] { 2.3f, 1.8f, 1.45f, 1.2f, 1.05f, 1f },   // vehiclerework BUFFED SEDAN (crown vic): a bit heavier than the sedan but more torque + higher top speed, 6-speed
+            Mass = 1750f, Torque = 1250f, DriveGears = new[] { 2.3f, 1.8f, 1.45f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework BUFFED SEDAN (crown vic): heavier + more torque + higher top, 6-speed, RWD (tail-happy)
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -1207,7 +1210,10 @@ namespace UnturnedGodot
                 float wscale = wr / s.WheelRadius;                                   // scale the shared wheel mesh to match
                 var w = new VehicleWheel3D
                 {
-                    Position = new Vector3(x, y, z), UseAsSteering = steer, UseAsTraction = s.Kingpin == Vector3.Zero,   // a TRAILER's wheels are passive rollers, NOT traction -- traction wheels on a towed body resist the pull
+                    Position = new Vector3(x, y, z), UseAsSteering = steer,
+                    // vehiclerework: which wheels get engine power. TRAILER = none (passive rollers, else they resist the tow).
+                    // Else per the drivetrain: AWD = all, FWD = the front (steering) wheels, RWD = the rear (non-steering) wheels.
+                    UseAsTraction = s.Kingpin == Vector3.Zero && (s.Drive == Drivetrain.AWD || (s.Drive == Drivetrain.FWD ? steer : !steer)),
                     WheelRadius = wr, WheelRestLength = 0.25f, SuspensionTravel = 0.25f,
                     // stiffer + higher max force so 900kg doesn't compress the suspension into a permanent SQUAT; more
                     // damping to settle without bounce; higher friction slip = more TRACTION (was sliding/understeering).
