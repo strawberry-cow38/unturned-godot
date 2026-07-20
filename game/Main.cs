@@ -1264,7 +1264,8 @@ namespace UnturnedGodot
             bool showSplit = System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1356,6 +1357,35 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.2f, 0f);
                 cam.Position = new Vector3(0.7f, 0.9f, 1.7f);
                 cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_SWITCHCKT=1: a working circuit -- generator -> switch -> spotlight, + sources on the switch's turn-on
+            // (green) / turn-off (red) trigger inputs. Default: TurnOn source fed -> switch ON -> spotlight LIT.
+            // UG_TRIGOFF=1: the TurnOff source is fed instead -> the switch flips OFF -> the spotlight goes DARK.
+            if (System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1")
+            {
+                var g = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-2.6f, 0f, 0.8f), 0f);
+                var sw = Deployable.Spawn(this, DeployableDef.Switch, new Vector3(0f, 0f, 0.8f), 90f);
+                var lamp = Deployable.Spawn(this, DeployableDef.Spotlight, new Vector3(2.6f, 0f, 0.8f), 180f);
+                var onSrc = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-1.4f, 0f, -2.3f), 0f);
+                var offSrc = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(1.4f, 0f, -2.3f), 0f);
+                ConnectionPort P(Deployable d, DeployableDef.PortKind k) => d.Ports.Find(p => p.Kind == k);
+                var swIn = sw.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer && p.Role == DeployableDef.SwitchRole.None);
+                var swOn = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOn);
+                var swOff = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOff);
+                void W(ConnectionPort a, ConnectionPort b) { var wr = new Wire(); AddChild(wr); wr.Source = a; wr.Consumer = b; wr.AddToGroup("wires"); wr.SetPoints(new System.Collections.Generic.List<Vector3> { a.GlobalPosition, b.GlobalPosition }, valid: true); }
+                W(P(g, DeployableDef.PortKind.Output), swIn);
+                W(P(sw, DeployableDef.PortKind.Passthrough), P(lamp, DeployableDef.PortKind.Consumer));
+                W(P(onSrc, DeployableDef.PortKind.Output), swOn);
+                W(P(offSrc, DeployableDef.PortKind.Output), swOff);
+                g.TogglePower();   // main power on
+                if (System.Environment.GetEnvironmentVariable("UG_TRIGOFF") == "1") offSrc.TogglePower();   // fire TurnOff -> switch OFF -> dark
+                else onSrc.TogglePower();                                                                   // fire TurnOn  -> switch ON  -> lit
+                PowerNet.Recompute(GetTree());
+                env.AmbientLightEnergy = 0.09f; env.BackgroundColor = new Color(0.03f, 0.03f, 0.05f);
+                dirLight.LightEnergy = 0.12f;
+                look = new Vector3(0.4f, 0.5f, -0.4f);
+                cam.Position = new Vector3(0.2f, 3.4f, 7.0f);
+                cam.Fov = 60f; cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read
