@@ -1398,10 +1398,10 @@ namespace UnturnedGodot
             // up: near-full lock at a crawl, tight + planted at speed (you can't flick it at 70mph). (guard div-by-0 on a towed body.)
             float t = _speedMax > 0f ? Mathf.Sqrt(Mathf.Clamp(speed / _speedMax, 0f, 1f)) : 0f;
             // vehiclerework: WEIGHT-dependent steering (master) -- a heavy vehicle turns much less than a light one (sqrt of
-            // the mass ratio vs the 900kg baseline, clamped), times a big across-the-board 0.65 debuff -> heavy + deliberate.
+            // the mass ratio vs the 900kg baseline, clamped), times an across-the-board 0.85 (-15%) debuff -> heavy + deliberate.
             float massSteer = Mathf.Clamp(Mathf.Sqrt(GlobalMass / Mass), 0.45f, 1.15f);
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right).
-            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t) * massSteer * 0.65f;   // smoothed toward in _PhysicsProcess via the AnimatedSteeringAngle-style ramp
+            _steerTarget = -steer * Mathf.Lerp(_steerMax, _steerMin, t) * massSteer * 0.85f;   // smoothed toward in _PhysicsProcess via the AnimatedSteeringAngle-style ramp (master: -35% -> -15%)
             // SPACE = handbrake (locks hard); S-into-forward-motion = foot brake. Both far stronger than the old raw .dat Brake.
             _handbraking = handbrake;   // remembered so the car freezes (no jitter) when stopped with the handbrake held
             bool coasting = Mathf.Abs(throttle) < 0.05f && !footBrake;   // no throttle + no brake input -> engine braking drags it down FASTER than pure friction (master: slow faster on its own)
