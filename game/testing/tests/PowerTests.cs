@@ -85,6 +85,146 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // master's "wire multiple batteries together = a bigger battery": daisy-chain A.OUT -> B.IN so the upstream battery
+    // refills the downstream one while it powers a load. Proves the POOLING -- the load's energy is drawn from A's reserve
+    // (A drains, B stays topped by A), so A+B back the load together = a bigger effective battery.
+    public class PowerBatteryDaisyChain : GameTest
+    {
+        public override string Name => "power.battery_daisy_chain";
+        public override IEnumerable<Step> Run()
+        {
+            var batA = Deployable.Spawn(World, DeployableDef.Battery, new Vector3(-3f, 0f, 0f), 0f);
+            var batB = Deployable.Spawn(World, DeployableDef.Battery, new Vector3(0f, 0f, 0f), 0f);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(3f, 0f, 0f), 0f);
+            yield return Ticks(1);
+            batA.Energy = DeployableDef.Battery.EnergyMax;      // both batteries start full
+            batB.Energy = DeployableDef.Battery.EnergyMax;
+            var aOut = batA.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var bIn = batB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var bOut = batB.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+
+            PowerRig.Connect(World, aOut, bIn);                 // battery A OUT -> battery B IN  (A refills B)
+            PowerRig.Connect(World, bOut, spotIn);              // battery B OUT -> the load
+            PowerNet.Recompute(Tree);
+            yield return Ticks(1); PowerNet.Recompute(Tree);
+            T.Check("load runs off the daisy-chained batteries", spotIn.Powered);
+
+            float a0 = batA.Energy, b0 = batB.Energy;
+            yield return Ticks(60);                             // ~1s: B powers the load, A keeps B topped up
+            PowerNet.Recompute(Tree);
+            T.Check("load still powered after a second", spotIn.Powered);
+            T.Check($"upstream battery A drains feeding B (energy {batA.Energy:0} < {a0:0})", batA.Energy < a0 - 1f);
+            T.Check($"downstream battery B stays topped by A (energy {batB.Energy:0} >= 90% of {b0:0})", batB.Energy >= b0 * 0.9f);
+        }
+    }
+
+    // master's Power Switch: a toggle-gated relay -- power passes to its OUT only when ON (PowerConducting gates the passthrough).
+    public class PowerSwitchGates : GameTest
+    {
+        public override string Name => "power.switch_gates";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);
+            var sw = Deployable.Spawn(World, DeployableDef.Switch, new Vector3(0f, 0f, 0f), 0f);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(3f, 0f, 0f), 0f);
+            yield return Ticks(1);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var swIn = sw.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            var swOut = sw.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+            var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            T.Check("switch has an IN (consumer) + an OUT (passthrough)", swIn != null && swOut != null);
+
+            PowerRig.Connect(World, genOut, swIn);       // gen -> switch IN
+            PowerRig.Connect(World, swOut, spotIn);      // switch OUT -> spotlight
+            gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("switch ON (default) -> spotlight powered through it", spotIn.Powered);
+
+            sw.TogglePower(); PowerNet.Recompute(Tree);  // switch OFF
+            T.Check("switch OFF -> spotlight loses power (passthrough dead)", !spotIn.Powered);
+
+            sw.TogglePower(); PowerNet.Recompute(Tree);  // switch back ON
+            T.Check("switch back ON -> spotlight powered again (state toggles cleanly)", spotIn.Powered);
+
+            // remote trigger: feed the TurnOff side >=1w -> the switch flips OFF on its own (triggers draw 0w)
+            var swOff = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOff);
+            var swOn = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOn);
+            T.Check("switch has TurnOn + TurnOff trigger ports", swOn != null && swOff != null);
+            var gen2 = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 3f), 0f);
+            gen2.TogglePower();
+            PowerRig.Connect(World, gen2.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output), swOff);
+            PowerNet.Recompute(Tree);
+            yield return Ticks(3);   // _Process reads the trigger's Live and flips the switch
+            PowerNet.Recompute(Tree);
+            T.Check("TurnOff trigger fed >=1w -> switch flips OFF -> spotlight dead", !spotIn.Powered);
+        }
+    }
+
+    // Generator remote on/off (master): a >=1w sense wire on the TurnOn/TurnOff trigger (0w draw) commands the engine
+    // on/off -> its startup/cooldown ramp. The switch trigger mechanism applied to a generator's _powered toggle.
+    public class PowerGeneratorTriggers : GameTest
+    {
+        public override string Name => "power.generator_triggers";
+        public override IEnumerable<Step> Run()
+        {
+            PowerNet.ResetForTests();
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(0f, 0f, 0f), 0f);   // fuelled, default OFF
+            var src = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);   // the sense source
+            src.TogglePower();                                                                          // running -> feeds >=1w
+            var srcOut = src.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var tOn = gen.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOn);
+            var tOff = gen.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOff);
+            yield return Ticks(1);
+            T.Check("generator has TurnOn + TurnOff trigger ports", tOn != null && tOff != null);
+            T.Check("triggers draw 0w", tOn.Watts == 0f && tOff.Watts == 0f);
+            T.Check("generator starts OFF", !gen.PoweredTarget && !gen.IsPowered);
+
+            var wOn = PowerRig.Connect(World, srcOut, tOn);        // feed the TurnOn trigger >=1w
+            PowerNet.Recompute(Tree);
+            yield return Ticks(3);                                 // _Process reads the trigger's Live + spins the engine up
+            PowerNet.Recompute(Tree);
+            T.Check("TurnOn trigger fed >=1w -> generator commanded ON", gen.PoweredTarget);
+            T.Check("commanded-on generator produces power", gen.IsPowered);
+
+            wOn.QueueFree();                                       // drop the TurnOn sense (doesn't stop it) then feed TurnOff
+            yield return Ticks(1);
+            var wOff = PowerRig.Connect(World, srcOut, tOff);
+            PowerNet.Recompute(Tree);
+            yield return Ticks(3);
+            PowerNet.Recompute(Tree);
+            T.Check("TurnOff trigger fed >=1w -> generator commanded OFF", !gen.PoweredTarget);
+            T.Check("commanded-off generator stops producing", !gen.IsPowered);
+        }
+    }
+
+    // Wind turbine (master): output ramps with a drifting WindField sample x a height-above-sea multiplier; blades spin
+    // ~ the wind. TestWind forces a fixed wind so the noise doesn't flake the checks.
+    public class PowerWindTurbine : GameTest
+    {
+        public override string Name => "power.wind_turbine";
+        public override IEnumerable<Step> Run()
+        {
+            PowerNet.ResetForTests();
+            var sea = Deployable.Spawn(World, DeployableDef.WindTurbine, new Vector3(0f, 25.6f, 0f), 0f);   // at PEI sea level (world-Y 25.6)
+            var high = Deployable.Spawn(World, DeployableDef.WindTurbine, new Vector3(5f, 65.6f, 0f), 0f);  // +40 m above sea -> ~2x height mult
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(0f, 0f, 3f), 0f);
+            var spotIn = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            PowerRig.Connect(World, sea.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output), spotIn);
+
+            WindField.TestWind = 0f;
+            yield return Ticks(2); PowerNet.Recompute(Tree);
+            T.Check("dead calm -> turbine not producing -> spotlight dead", !sea.IsPowered && !spotIn.Powered);
+
+            WindField.TestWind = 0.6f;
+            yield return Ticks(2); PowerNet.Recompute(Tree);
+            T.Check("wind 0.6 at sea level -> ~0.6 factor, producing", sea.IsPowered && PowerRig.Approx(sea.WindFactorForTest, 0.6f));
+            T.Check("windy turbine powers a wired spotlight", spotIn.Powered);
+            T.Check("same wind at +40 m -> ~2x factor (higher = better, master)", PowerRig.Approx(high.WindFactorForTest, 1.2f));
+
+            WindField.TestWind = null;   // restore live wind for other tests
+        }
+    }
+
     public class PowerWireClearUnpowers : GameTest
     {
         public override string Name => "power.wire_clear_unpowers";

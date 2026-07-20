@@ -323,7 +323,7 @@ namespace UnturnedGodot
 
         void UpdateWireLook()
         {
-            if (!HoldingWireTool) { if (_wiring) CancelWire(); if (IsInstanceValid(_wirePort)) _wirePort.SetHighlighted(false); _wirePort = null; WireHudSet(null); return; }
+            if (!HoldingWireTool) { if (_wiring) CancelWire(); if (IsInstanceValid(_wirePort)) _wirePort.SetHighlight(ConnectionPort.PortHi.None); _wirePort = null; WireHudSet(null); return; }
             // the connection cube currently aimed at
             ConnectionPort port = null;
             if (_cam != null && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -335,12 +335,14 @@ namespace UnturnedGodot
                 var hit = space.IntersectRay(_wireRayQ);
                 if (hit.Count > 0 && hit["collider"].As<GodotObject>() is ConnectionPort cp && IsInstanceValid(cp)) port = cp;
             }
-            if (port != _wirePort) { if (IsInstanceValid(_wirePort)) _wirePort.SetHighlighted(false); _wirePort = port; _wirePort?.SetHighlighted(true); }
+            if (port != _wirePort) { if (IsInstanceValid(_wirePort)) _wirePort.SetHighlight(ConnectionPort.PortHi.None); _wirePort = port; }
 
             if (_wiring)
             {
                 if (!IsInstanceValid(_wireSrc)) { CancelWire(); WireHudSet(null); return; }   // source deployable gone -> drop the wire
                 bool snapEnd = CanCompleteWire(_wireSrc, _wirePort);   // snap to the compatible opposite-role port (an already-wired / burning / same-device port won't accept it)
+                if (IsInstanceValid(_wirePort))   // colour the hovered target: green = can complete, red = occupied/incompatible (master); the source stays a neutral focus
+                    _wirePort.SetHighlight(_wirePort == _wireSrc ? ConnectionPort.PortHi.Focus : (snapEnd ? ConnectionPort.PortHi.WireOk : ConnectionPort.PortHi.WireBad));
                 Vector3 end = snapEnd ? _wirePort.GlobalPosition : WirePlacePoint();
                 var pts = new System.Collections.Generic.List<Vector3> { _wireSrc.GlobalPosition };
                 pts.AddRange(_wireNodes); pts.Add(end);
@@ -349,7 +351,11 @@ namespace UnturnedGodot
                 _wirePreview?.SetPoints(pts, valid: !overLimit);   // over-limit paints RED even when snapping -> completion is blocked too
                 WireHudSet($"nodes {_wireNodes.Count}/{MaxWireNodes}    {len:0.0}/{MaxWireLen:0}m" + (overLimit ? "   -- LIMIT" : ""));
             }
-            else WireHudSet(_wirePort == null ? null : _wirePort.InfoLine() + (PortWired(_wirePort) ? "   ([RMB] hold: clear · tap: unplug)" : ""));
+            else
+            {
+                if (IsInstanceValid(_wirePort)) _wirePort.SetHighlight(ConnectionPort.PortHi.Focus);   // just looking -> a little brighter (master)
+                WireHudSet(_wirePort == null ? null : _wirePort.InfoLine() + (PortWired(_wirePort) ? "   ([RMB] hold: clear · tap: unplug)" : ""));
+            }
         }
 
         // is this port already an endpoint of a committed wire? (max 1 wire per connection point -- strawberry)

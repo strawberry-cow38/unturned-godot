@@ -20,7 +20,10 @@ namespace UnturnedGodot
         public float Health;
         public float Fuel;         // src .dat Capacity: fuel tank size (InteractableGenerator.capacity). 0 = no fuel gauge (e.g. spotlight, which draws from a wired generator)
         public bool IsBattery;     // a battery: its IN terminal charges the stored Energy, its OUT terminal discharges it (produces while Energy > 0)
+        public bool IsSwitch;      // a power switch: an F-toggle gates its Passthrough (PowerConducting). Remembers state; a light shows on/off
         public float EnergyMax, ChargeWatts;   // battery: stored-energy capacity (watt-SECONDS) + the IN charge rate (W)
+        public bool IsWindTurbine;    // a wind turbine: output ramps with WindField wind x a height-above-sea multiplier; blades spin ~ wind
+        public bool Upright;          // build the mesh already-vertical (skip the flat->stand-up rotation) -- for procedural models like the turbine
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
@@ -36,7 +39,8 @@ namespace UnturnedGodot
         // --- power connection points (nodes). A wire runs OUTPUT -> ... -> CONSUMER; a CONSUMER may also have a
         //     PASSTHROUGH that re-exports (input - usage). Pos is in the flat authored mesh frame (stands up with the model). ---
         public enum PortKind { Output, Consumer, Passthrough }
-        public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
+        public enum SwitchRole { None, TurnOn, TurnOff }   // a SWITCH's side trigger inputs: fed >=1w -> set the switch state on / off (they draw 0w)
+        public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; public SwitchRole Role; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();
 
         // --- lamps a CONSUMER lights up when powered (src InteractableSpot: the "Spots" node of Light children,
@@ -52,16 +56,21 @@ namespace UnturnedGodot
             Id = 458, Name = "Generator", Model = "Generator_0",
             HoldMesh = "generator_hold.obj", HoldAlbedo = "generator_hold_tex.png", PlaceSound = "metalplacement",   // src Generator_Small.dat PlacementAudioClip Sounds/MetalPlacement.mp3
             Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 60f,   // PZ-scale fuel (master): ~7 portable cans; burned by LOAD while running (GenFuelBurnPerSec). src Capacity was 2000
-            Ports = new[] { new Port { Kind = PortKind.Output, Pos = new Vector3(0.4f, 0.6f, 0.05f), Watts = 4000f } },   // output on the gray-face mid-right (flat frame; tuned visually)
+            Ports = new[] {
+                new Port { Kind = PortKind.Output, Pos = new Vector3(0.4f, 0.6f, 0.05f), Watts = 4000f },   // output on the gray-face mid-right (flat frame; tuned visually)
+                new Port { Kind = PortKind.Consumer, Role = SwitchRole.TurnOn, Pos = new Vector3(-0.5f, 0.4f, -0.2f), Watts = 0f },   // remote START (green): a >=1w sense (0w draw) spins the engine UP. UG_GTON tunes.
+                new Port { Kind = PortKind.Consumer, Role = SwitchRole.TurnOff, Pos = new Vector3(-0.5f, 0.4f, 0.3f), Watts = 0f },  // remote STOP (red): a >=1w sense (0w draw) spins it DOWN. UG_GTOFF tunes.
+            },
         };
         // src Spotlight.dat: id 459, Useable Barricade, Build Spot, footprint 2x2x0.55, Offset 1.12
         public static readonly DeployableDef Spotlight = new()
         {
             Id = 459, Name = "Spotlight", Model = "Spotlight_deploy", PlaceSound = "metalplacement",   // src Spotlight.dat PlacementAudioClip Sounds/MetalPlacement.mp3
             Size = new Vector3(2f, 2f, 0.55f), Offset = 1.12f, Radius = 0.5f, Range = 4f, Health = 300f, ShatterOnDeath = true,   // shatters into pieces, no husk/salvage (strawberry)
-            Ports = new[] {   // consumer on the back of the central pillar, passthrough on the front (flat frame; tuned visually)
-                new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, -0.35f, 0f), Watts = 250f },
-                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f, 0.35f, 0f), Watts = 0f },
+            Ports = new[] {   // I/O on the left/right of the central pillar, dropped to the feet-X (flat frame: authored X = the
+                              // horizontal sides after stand-up, +Z = down toward the base). Master-tuned; UG_SPC/UG_SPP override.
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.13f, 0f, 0.65f), Watts = 250f },
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0.13f, 0f, 0.65f), Watts = 0f },
             },
             // src barricade.prefab "Spots": two point lamps (bulb glow) + a spot beam. Positions/dir from the prefab,
             // z-negated into our rip frame; the spot's src full angle 60 -> Godot half-angle 30.
@@ -114,17 +123,19 @@ namespace UnturnedGodot
         }
         public static readonly DeployableDef Combiner2 = MakeCombiner(9104, "2-Way Combiner", 0.55f, new[] { -0.14f, 0.14f });
 
-        // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
-        //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
-        //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). ProcBox for now. ---
-        public static readonly DeployableDef Battery = new()
+        // --- Switch (custom): power in one side, out the other, gated by an F-toggle. A 0-watt relay Consumer (IN) + a
+        //     Passthrough (OUT); PowerConducting = the toggle state, so OFF kills the passthrough = no downstream power.
+        //     Remembers its state; a state light on top reads green (on) / red (off). ---
+        public static readonly DeployableDef Switch = new()
         {
-            Id = 1450, Name = "Vehicle Battery", ProcBox = true, PlaceSound = "metalplacement",
-            Size = new Vector3(0.5f, 0.3f, 0.28f), Offset = 0.5f, Radius = 0.24f, Range = 4f, Health = 200f, Fuel = 0f,
-            IsBattery = true, EnergyMax = 600f * 3600f, ChargeWatts = 4000f,   // 600 Wh (12V*50Ah car battery) in watt-SECONDS; charges/discharges at up to 4kW
+            Id = 9105, Name = "Power Switch", ProcBox = true, IsSwitch = true, PlaceSound = "metalplacement",
+            Size = new Vector3(0.5f, 0.36f, 0.5f),   // same flat frame as the splitters (X width, Y depth port faces, Z stands up)
+            Offset = 0.7f, Radius = 0.35f, Range = 4f, Health = 200f, Fuel = 0f,
             Ports = new[] {
-                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.2f, 0f, 0.05f), Watts = 4000f },   // IN terminal (charge), one end
-                new Port { Kind = PortKind.Output,   Pos = new Vector3( 0.2f, 0f, 0.05f), Watts = 4000f },   // OUT terminal (discharge), opposite end
+                new Port { Kind = PortKind.Consumer,    Pos = new Vector3(0f, -0.18f, 0f), Watts = 0f },   // IN relay (back face)
+                new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f,  0.18f, 0f), Watts = 0f },   // OUT (front) -- gated OFF by the switch
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.26f, 0f, 0f), Watts = 0f, Role = SwitchRole.TurnOn },   // LEFT side trigger: fed >=1w -> switch ON
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3( 0.26f, 0f, 0f), Watts = 0f, Role = SwitchRole.TurnOff },  // RIGHT side trigger: fed >=1w -> switch OFF
             },
         };
 
@@ -157,7 +168,33 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = UnturnedGodot.GasPump.PortLocal, Watts = UnturnedGodot.GasPump.Watts } },
         };
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, GridSource, GasPump };
+        // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
+        //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
+        //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
+        public static readonly DeployableDef Battery = new()
+        {
+            Id = 1450, Name = "Vehicle Battery", Model = "Battery_0", MeshEuler = new Vector3(180f, 0f, 180f), PlaceSound = "metalplacement",   // item 1450 world mesh (extract_battery.py); MeshEuler flips it upright + 180 yaw (master)
+            Size = new Vector3(0.5f, 0.3f, 0.28f), Offset = 0.5f, Radius = 0.24f, Range = 4f, Health = 200f, Fuel = 0f,
+            IsBattery = true, EnergyMax = 600f * 3600f, ChargeWatts = 600f,   // 600 Wh (12V*50Ah); realistic ~600W (1C) sustained in/out (master) -> ~1h at full draw. Scale up via gen->splitter->batteries->combiners
+            Ports = new[] {
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.2f, 0f, 0.05f), Watts = 600f },   // IN terminal (charge), one end (Pos is stood-up local: X=along, Y=height, Z=depth)
+                new Port { Kind = PortKind.Output,   Pos = new Vector3( 0.2f, 0f, 0.05f), Watts = 600f },   // OUT terminal (discharge), opposite end — realistic 600W (master)
+            },
+        };
+
+        // A wind turbine (custom): a procedural tower + nacelle + 3-blade hub. A SOURCE whose output ramps with the local
+        // WIND (WindField noise sampled at its X/Z) x a height-above-sea multiplier; the blades spin ~ the wind. No fuel
+        // or toggle -- always harvesting whatever wind is present.
+        public static readonly DeployableDef WindTurbine = new()
+        {
+            Id = 9106, Name = "Wind Turbine", IsWindTurbine = true, Upright = true, PlaceSound = "metalplacement",
+            Size = new Vector3(0.6f, 3.8f, 0.6f), Offset = 0.5f, Radius = 0.5f, Range = 5f, Health = 300f,
+            Ports = new[] { new Port { Kind = PortKind.Output, Pos = new Vector3(0.16f, 0.12f, 0f), Watts = 2500f } },   // rated 2.5kW at full wind; the output CAP ramps 0..2x with wind x height (PowerScale)
+        };
+
+        // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
+        // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -166,7 +203,9 @@ namespace UnturnedGodot
             9102 => Splitter3,
             9103 => Splitter4,
             9104 => Combiner2,
+            9105 => Switch,
             1450 => Battery,
+            9106 => WindTurbine,
             9200 => GridSource,
             9201 => GasPump,
             _ => null,
@@ -201,6 +240,24 @@ namespace UnturnedGodot
         // (BarricadeManager.getRotation: Quaternion.Euler(0,yaw,0) * Quaternion.Euler(-90,0,0)).
         public static Basis StandBasis(float yawDeg) =>
             new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(StandRotX));
+
+        // Per-def model orientation fixup applied to the MESH itself (Vector3.Zero = none, the common case). The
+        // battery's ripped world mesh stands up UPSIDE-DOWN + 180 off (master), so it carries a correction here.
+        // UG_BATROT="x,y,z" (deg) overrides at runtime for tuning the battery; otherwise the def's MeshEuler.
+        public Vector3 MeshEuler;
+        public Basis MeshBasis()
+        {
+            Vector3 e = MeshEuler;
+            string env = System.Environment.GetEnvironmentVariable("UG_BATROT");
+            if (Id == 1450 && env != null)
+            {
+                var p = env.Split(',');
+                if (p.Length == 3 && float.TryParse(p[0], out float x) && float.TryParse(p[1], out float y) && float.TryParse(p[2], out float z))
+                    e = new Vector3(x, y, z);
+            }
+            return e == Vector3.Zero ? Basis.Identity
+                : Basis.FromEuler(new Vector3(Mathf.DegToRad(e.X), Mathf.DegToRad(e.Y), Mathf.DegToRad(e.Z)));
+        }
 
         // How far to lift the model origin so the STANDING mesh's base sits exactly on the surface point.
         // (Yaw about world-up doesn't change the vertical extent, so only the fixed X stand-up matters.) This

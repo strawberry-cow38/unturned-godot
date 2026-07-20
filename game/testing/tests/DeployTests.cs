@@ -44,7 +44,7 @@ namespace UnturnedGodot.Testing
             var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-2f, 0f, 0f), 0f);
             var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(2f, 0f, 0f), 0f);
             yield return Ticks(1);
-            T.Check("generator has 1 port, spotlight has 2", gen.Ports.Count == 1 && spot.Ports.Count == 2);
+            T.Check("generator has 3 ports (output + 2 remote-triggers), spotlight has 2", gen.Ports.Count == 3 && spot.Ports.Count == 2);
             bool allHidden = true, allShown = true;
             foreach (var d in new[] { gen, spot })
                 foreach (var p in d.Ports) if (p.DebugArrowVisible) allHidden = false;

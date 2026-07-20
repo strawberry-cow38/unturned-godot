@@ -22,6 +22,7 @@ namespace UnturnedGodot.Testing
 
         public override void _Ready()
         {
+            Deployable.InstantRampForTests = true;   // L1: generators settle their spin-up/cooldown instantly so power-flow checks see steady state (the gradual ramp is gameplay-verified in-render)
             Discover();
             _t0 = Time.GetTicksMsec();
             if (_tests.Count == 0) { GD.Print($"[L1] no tests match filter '{Filter}'"); GetTree().Quit(0); return; }

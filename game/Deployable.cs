@@ -14,6 +14,8 @@ namespace UnturnedGodot
         // IPowerDevice: how the power net sees this deployable (a gas pump implements the same interface w/o being a Deployable)
         public bool PowerProducing => IsPowered;
         public bool PowerOnFire => OnFire;
+        public bool PowerConducting => Def == null || !Def.IsSwitch || _switchOn;   // a switch OFF stops conducting -> its passthrough dies
+        public float PowerScale => Def == null ? 1f : Def.IsWindTurbine ? _windFactor : (Def.Fuel > 0f && !Def.IsBattery) ? _powerLevel : 1f;   // generator ramps 0..1 with the engine spin-up; wind turbine = live wind x height (0..2); battery + others = full
         public uint PowerNetId => NetId;
         public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => Ports;
         public float Health, HealthMax;
@@ -26,6 +28,7 @@ namespace UnturnedGodot
         CpuParticles3D _smoke, _smoke0, _fire;
         OmniLight3D _fireLight;
         MeshInstance3D _mesh;      // the body mesh (charred on explode)
+        MeshInstance3D _switchLight;   // a Power Switch's on/off state light (green = on, red = off)
         Vector3 _firePos;          // world-space fire/smoke origin (top of the object); particles are TopLevel so they rise in WORLD up despite the stood-up body basis
         const float ExplodeDelay = 4f, SmokeFrac = 0.45f, HeavyFrac = 0.22f;   // light smoke < 45% HP, heavy < 22% (vehicle uses ~200/100 of ~600)
 
@@ -33,15 +36,21 @@ namespace UnturnedGodot
         //     the looping engine AudioSource). The src has NO vibration animation (the Engine node is just an
         //     AudioSource) -- the small shake here is a non-source touch (strawberry asked for it). ---
         bool _powered;             // target state (F toggles it)
+        bool _switchOn = true;     // a Power Switch's remembered on/off state (F toggles it); defaults ON = passes power
+        public bool SwitchOn => _switchOn;   // for the state light + the [F] prompt
         float _powerLevel;         // 0 = off .. 1 = running; ramps up over WarmupTime / down over CooldownTime -- the shake + engine spin-up follow it
+        float _windFactor;         // wind turbine: 0..2 current wind strength x height bonus (drives the output cap + blade spin)
+        float _lastWindDirty;      // wind level at the last MarkDirty -- re-solve the net only when the wind moves enough
+        Node3D _bladeHub;          // wind turbine: the spinning 3-blade hub
+        const float WindSeaLevel = 25.6f;   // PEI's real sea level in world-Y (Lighting.dat seaLevel 0.1 x TERRAIN 256, see Terrain.cs water plane); height bonus = above this
         AudioStreamPlayer3D _engineAudio;
         float _vibePhase;
         const float WarmupTime = 1.3f, CooldownTime = 1.1f;   // spin-up / wind-down; doubles as the anti-spam buffer (can't re-toggle mid-ramp)
         public bool OnFire => _deadTimer >= 0f || _exploded;   // catching fire at 0 HP (deadTimer) through the burning wreck -> a dead/dying generator, can't be run (PowerNet reads this)
         float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
         bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
-        public bool CanTogglePower => !OnFire && Def != null && Def.Fuel > 0f && PowerSettled;   // only a fuelled, NOT-on-fire generator toggles, and only once the ramp has settled (buffer)
-        public bool IsPowered => Def != null && Def.IsBattery ? (Energy > 0f && !OnFire) : RunTarget > 0.5f;   // a battery's OUT produces while it has charge; a generator's while the engine runs -- PowerNet reads this
+        public bool CanTogglePower => !OnFire && Def != null && (Def.IsSwitch || (Def.Fuel > 0f && PowerSettled));   // a switch always toggles; a generator only when fuelled + ramp-settled (buffer)
+        public bool IsPowered => Def == null ? (!OnFire && _powerLevel > 0.02f) : Def.IsBattery ? (Energy > 0f && !OnFire) : Def.IsWindTurbine ? (!OnFire && _windFactor > 0.03f) : (!OnFire && _powerLevel > 0.02f);   // battery: charged; wind turbine: wind present; generator: engine spun up (_powerLevel); a FIRE kills output instantly -- PowerNet reads this
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
@@ -49,6 +58,38 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
         ConnectionPort _consumerPort, _outputPort;
         public float LoadFraction => _outputPort != null && GodotObject.IsInstanceValid(_outputPort) && _outputPort.Watts > 0f ? Mathf.Clamp(_outputPort.Draw / _outputPort.Watts, 0f, 1f) : 0f;   // generator: 0..1 of capacity currently drawn
+
+        // Real-world run-time left AT THE CURRENT LOAD (master): a battery empties Energy/Draw; a running generator
+        // empties Fuel / (per-sec burn scaled by load). -1 = N/A (idle / off / no draw). Shown as a "· 45m" name suffix.
+        float SecondsRemaining()
+        {
+            if (Def == null) return -1f;
+            if (Def.IsBattery)
+            {
+                float draw = (_outputPort != null && GodotObject.IsInstanceValid(_outputPort)) ? _outputPort.Draw : 0f;
+                return draw > 0.5f && Energy > 0f ? Energy / draw : -1f;   // Energy is watt-SECONDS, Draw is watts -> seconds
+            }
+            if (Def.Fuel > 0f && _powered && Fuel > 0f)   // running generator
+            {
+                float rate = DeployableDef.GenFuelBurnPerSec * (0.2f + 0.8f * LoadFraction);
+                return rate > 0f ? Fuel / rate : -1f;
+            }
+            return -1f;
+        }
+
+        string RuntimeSuffix()
+        {
+            float s = SecondsRemaining();
+            if (s < 0f) return "";
+            string t = s >= 3600f ? $"{(int)(s / 3600f)}h {(int)(s % 3600f / 60f)}m" : s >= 60f ? $"{(int)(s / 60f)}m" : $"{(int)s}s";
+            return $"  · {t}";
+        }
+        // Wind turbine billboard suffix: its LIVE output = rated output x current wind (master) -> "· 1500w".
+        string WindSuffix()
+        {
+            float w = (_outputPort != null && GodotObject.IsInstanceValid(_outputPort) ? _outputPort.Watts : 0f) * _windFactor;
+            return $"  · {w:0}w";
+        }
         float _lampLevel;                    // 0..1 lamp envelope, ramps with power over WarmupTime/CooldownTime
         float _lampFlicker = 1f, _lampFlickerT;   // while the source spins up/down (mid-ramp) the lamp stutters (strawberry)
         static readonly bool DbgFlicker = System.Environment.GetEnvironmentVariable("UG_WIREFLICKER") == "1";
@@ -64,10 +105,55 @@ namespace UnturnedGodot
         // authored frame, before the -90 X stand-up). Shared by the placed object and the placement ghost.
         public static MeshInstance3D BuildMesh(DeployableDef def, out Aabb localAabb)
         {
+            if (def.IsWindTurbine) return BuildTurbine(def, out localAabb);   // procedural tower + nacelle + spinning blade hub
             Mesh mesh = def.ProcBox ? new BoxMesh { Size = def.Size } : def.LoadMesh();   // splitter = a plain gray box, no .obj
             var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = def.MakeMaterial() };
-            localAabb = mesh != null ? mesh.GetAabb() : new Aabb();
+            Basis mrot = def.MeshBasis();   // per-def model orientation fixup (battery's ripped mesh stands up upside-down + 180 off); identity for the rest
+            if (mrot != Basis.Identity) mi.Basis = mrot;
+            localAabb = mesh != null ? new Transform3D(mrot, Vector3.Zero) * mesh.GetAabb() : new Aabb();   // rotated aabb -> ground-lift + collider stay correct
+            if (def.Id == 1450 && mesh != null)   // battery: a white rectangle label on the front face (master)
+            {
+                var lbl = new MeshInstance3D
+                {
+                    Mesh = new QuadMesh { Size = new Vector2(0.35f, 0.135f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = Colors.White, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
+                };
+                lbl.Position = EnvVec3("UG_LBLP", new Vector3(0f, 0.179f, 0.0375f));   // on the +Y face of the raw mesh, slightly proud
+                Vector3 eul = EnvVec3("UG_LBLR", new Vector3(-90f, 0f, 0f));           // face outward (+Z quad -> +Y)
+                lbl.Basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(eul.X), Mathf.DegToRad(eul.Y), Mathf.DegToRad(eul.Z)));
+                mi.AddChild(lbl);   // child of the mesh -> rides MeshBasis + the stand-up, stays on the face
+            }
             return mi;
+        }
+
+        // A simple procedural wind turbine: a tapered tower (the body/_mesh) + a nacelle box + a "BladeHub" node holding a
+        // hub cap and 3 flat blades 120 apart. Built UPRIGHT (def.Upright skips the flat->stand-up); _Process spins the hub.
+        static MeshInstance3D BuildTurbine(DeployableDef def, out Aabb localAabb)
+        {
+            const float H = 2.6f;
+            var gray = new StandardMaterial3D { AlbedoColor = new Color(0.80f, 0.81f, 0.83f), Metallic = 0.1f, Roughness = 0.55f };
+            var white = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.94f, 0.96f), Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            var tower = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.06f, BottomRadius = 0.10f, Height = H, RadialSegments = 10 }, Position = new Vector3(0f, H * 0.5f, 0f), MaterialOverride = gray };
+            tower.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.20f, 0.18f, 0.40f) }, Position = new Vector3(0f, H * 0.5f, 0.05f), MaterialOverride = gray });   // nacelle at the top, slightly forward
+            var hub = new Node3D { Name = "BladeHub", Position = new Vector3(0f, H * 0.5f, 0.28f) };   // in front of the nacelle; spins around +Z
+            hub.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.08f, Height = 0.16f, RadialSegments = 8, Rings = 4 }, MaterialOverride = gray });   // hub cap
+            for (int i = 0; i < 3; i++)
+            {
+                var arm = new Node3D { RotationDegrees = new Vector3(0f, 0f, i * 120f) };
+                arm.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.07f, 1.05f, 0.02f) }, Position = new Vector3(0f, 0.58f, 0f), MaterialOverride = white });
+                hub.AddChild(arm);
+            }
+            tower.AddChild(hub);
+            localAabb = new Aabb(new Vector3(-1.15f, 0f, -0.15f), new Vector3(2.3f, H + 1.15f, 1.2f));
+            return tower;
+        }
+
+        // Parse a "x,y,z" env var (runtime tuning for the battery label) or return the default.
+        internal static Vector3 EnvVec3(string name, Vector3 dflt)
+        {
+            var e = System.Environment.GetEnvironmentVariable(name);
+            if (e != null) { var p = e.Split(','); if (p.Length == 3 && float.TryParse(p[0], out var x) && float.TryParse(p[1], out var y) && float.TryParse(p[2], out var z)) return new Vector3(x, y, z); }
+            return dflt;
         }
 
         // `surface` = the ground contact point (the raycast hit); the model is lifted so its base sits there.
@@ -87,16 +173,26 @@ namespace UnturnedGodot
                 Shape = new BoxShape3D { Size = ab.Size == Vector3.Zero ? def.Size : ab.Size },
                 Position = ab.GetCenter(),
             });
-            d.Position = surface + Vector3.Up * DeployableDef.GroundLift(ab);   // base sits on the surface
-            d.Basis = DeployableDef.StandBasis(yawDeg);   // yaw + the stand-up
+            d.Position = surface + Vector3.Up * (def.Upright ? -ab.Position.Y : DeployableDef.GroundLift(ab));   // base sits on the surface (upright models skip the stand-up lift)
+            d.Basis = def.Upright ? new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) : DeployableDef.StandBasis(yawDeg);   // yaw (+ the stand-up for flat-authored ripped models)
+            if (def.IsWindTurbine) d._bladeHub = mi.FindChild("BladeHub", true, false) as Node3D;   // the spinning blade hub
             d.AddToGroup("deployables");
             foreach (var pdef in def.Ports)   // power connection cubes (children -> stand up with the model)
             {
-                var port = ConnectionPort.Create(d, pdef, def.Name);
+                var pd = pdef;
+                if (def.Id == 459) pd.Pos = EnvVec3(pd.Kind == DeployableDef.PortKind.Consumer ? "UG_SPC" : "UG_SPP", pd.Pos);   // spotlight port tuning (master: touch pillar + feet)
+                else if (def.Id == 458 && pd.Role != DeployableDef.SwitchRole.None) pd.Pos = EnvVec3(pd.Role == DeployableDef.SwitchRole.TurnOn ? "UG_GTON" : "UG_GTOFF", pd.Pos);   // generator trigger tuning
+                var port = ConnectionPort.Create(d, pd, def.Name);
                 d.AddChild(port);
                 d.Ports.Add(port);
                 if (pdef.Kind == DeployableDef.PortKind.Consumer) d._consumerPort = port;   // this consumer's Powered flag lights the lamps
                 else if (pdef.Kind == DeployableDef.PortKind.Output) d._outputPort = port;   // this output's Draw drives the load bar + vibration
+            }
+            if (def.IsSwitch)   // a state light on top: green = on (passing power) / red = off
+            {
+                d._switchLight = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.12f, 0.06f, 0.12f) }, Position = EnvVec3("UG_SWLP", new Vector3(0f, 0.20f, -0.14f)) };   // front face, upper (flat frame: +Y front, -Z = up after stand-up)
+                d.AddChild(d._switchLight);
+                d.UpdateSwitchLight();
             }
             foreach (var ldef in def.Lights)   // consumer lamps (spotlight): children in the flat frame -> stand up with the model, off until powered
             {
@@ -188,12 +284,25 @@ namespace UnturnedGodot
 
         // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
         // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
-        public void TogglePower() { if (CanTogglePower) { _powered = !_powered; PowerNet.MarkDirty(); } }   // IsPowered flipped -> the net needs a recompute
+        public void TogglePower()   // IsPowered/conduction flipped -> the net needs a recompute
+        {
+            if (Def != null && Def.IsSwitch) { _switchOn = !_switchOn; UpdateSwitchLight(); PowerNet.MarkDirty(); return; }   // a switch flips its gate (no fuel/ramp)
+            if (CanTogglePower) { _powered = !_powered; if (InstantRampForTests) _powerLevel = RunTarget; PowerNet.MarkDirty(); }
+        }
+
+        void UpdateSwitchLight()   // green = on (passing power), red = off
+        {
+            if (_switchLight == null) return;
+            var c = _switchOn ? new Color(0.15f, 0.9f, 0.2f) : new Color(0.9f, 0.15f, 0.15f);
+            _switchLight.MaterialOverride = new StandardMaterial3D { AlbedoColor = c, EmissionEnabled = true, Emission = c, EmissionEnergyMultiplier = _switchOn ? 1.6f : 0.8f };
+        }
 
         // MP replica apply (DeployableReplicaView): the server already validated this toggle, so it lands
         // without the local CanTogglePower interaction gating. The warmup/cooldown ramp still runs locally.
         public void NetSetPowered(bool on) { if (_powered != on) { _powered = on; PowerNet.MarkDirty(); } }
         public bool PoweredTarget => _powered;   // the F-toggle TARGET state (IsPowered adds fuel/fire gating) -- what an MP toggle request inverts
+        internal static bool InstantRampForTests;   // L1 (set by TestHost): skip the spin-up/cooldown ramp so a gen produces/stops instantly for power-flow checks; the gradual ramp is gameplay-verified in-render
+        public float WindFactorForTest => _windFactor;   // L1 probe for power.wind_turbine
 
         void Explode()   // src explode: blast nearby, then either shatter into pieces (spotlight) or become a burning salvageable wreck (generator)
         {
@@ -349,6 +458,18 @@ namespace UnturnedGodot
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * SmokeFrac);
             if (_smoke0 != null) _smoke0.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * HeavyFrac);
 
+            if (Def != null && (Def.IsSwitch || (Def.Fuel > 0f && !Def.IsBattery)))   // remote control: a side trigger fed >=1w SETS on/off (master); triggers draw 0w. A switch flips its gate; a generator flips _powered -> its startup/cooldown ramp.
+            {
+                foreach (var port in Ports)
+                {
+                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Role == DeployableDef.SwitchRole.None || port.Live < 1f) continue;
+                    bool wantOn = port.Role == DeployableDef.SwitchRole.TurnOn;
+                    if (Def.IsSwitch) { if (_switchOn != wantOn) { _switchOn = wantOn; UpdateSwitchLight(); PowerNet.MarkDirty(); } }
+                    else if (wantOn && !_powered && Fuel > 0f) { _powered = true; PowerNet.MarkDirty(); }   // remote START -> engine spins UP (needs fuel); the ramp forces the startup
+                    else if (!wantOn && _powered) { _powered = false; PowerNet.MarkDirty(); }               // remote STOP -> engine spins DOWN (cooldown ramp)
+                }
+            }
+
             // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
             // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
             float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
@@ -366,7 +487,15 @@ namespace UnturnedGodot
                     Energy = Mathf.Min(Def.EnergyMax, Energy + Def.ChargeWatts * (float)delta);   // charge while the IN is fed by a source
                 if ((Energy > 0f) != wasProducing) PowerNet.MarkDirty();   // crossed empty <-> charged -> the OUT starts/stops producing
             }
-            if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
+            if (Def != null && Def.IsWindTurbine)   // wind turbine: output CAP + blade spin follow the local wind x a height-above-sea multiplier (master)
+            {
+                float heightMult = 1f + Mathf.Clamp((GlobalPosition.Y - WindSeaLevel) / 40f, 0f, 1f);   // higher above sea = more wind (up to ~2x)
+                _windFactor = Mathf.Min(2f, WindField.SampleWind(GlobalPosition) * heightMult);
+                if (_bladeHub != null && IsInstanceValid(_bladeHub)) _bladeHub.RotateZ((float)delta * (0.25f + 5.5f * _windFactor));   // spin ~ wind (+ a slow idle turn)
+                if (Mathf.Abs(_windFactor - _lastWindDirty) > 0.04f) { _lastWindDirty = _windFactor; PowerNet.MarkDirty(); }   // wind moved enough -> re-solve the net
+            }
+            if (InstantRampForTests) _powerLevel = pTarget;   // L1: no ramp -> instant settle for power-flow tests
+            else if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)
             if (_engineAudio != null)
@@ -379,7 +508,7 @@ namespace UnturnedGodot
                 }
                 else if (_engineAudio.Playing) _engineAudio.Stop();
             }
-            if (_mesh != null)   // NON-source shake (src Engine node has no anim) -- ~6mm at idle, up to ~3.5x harder + faster under full load
+            if (_mesh != null && (Def == null || !Def.IsWindTurbine))   // NON-source shake (src Engine node has no anim); skip the turbine -- its _mesh carries a fixed tower offset
             {
                 if (_powerLevel > 0.01f && !_exploded)
                 {
@@ -421,17 +550,21 @@ namespace UnturnedGodot
             _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
             if (!_exploded)
             {
-                _info.SetName(Def?.Name, OutlineColor);
+                bool wind = Def != null && Def.IsWindTurbine;
+                _info.SetName(Def?.Name + (wind ? WindSuffix() : RuntimeSuffix()), OutlineColor);   // gen: "· 45m" fuel time; turbine: "· 1500w" live output (master)
                 _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
-                _info.SetBar(1, Def != null && Def.IsBattery ? (Def.EnergyMax > 0f ? Energy / Def.EnergyMax : 0f) : (FuelMax > 0f ? Fuel / FuelMax : 0f), InfoBillboard.FuelColor, (FuelMax > 0f) || (Def != null && Def.IsBattery));   // fuel / battery-CHARGE bar (yellow); hidden if neither
-                _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null);   // usage bar (cyan): load / capacity -- generators only
+                if (wind)
+                    _info.SetBar(1, Mathf.Clamp(_windFactor, 0f, 1f), InfoBillboard.LoadColor, true);   // WIND-level bar (cyan) in the fuel slot (master)
+                else
+                    _info.SetBar(1, Def != null && Def.IsBattery ? (Def.EnergyMax > 0f ? Energy / Def.EnergyMax : 0f) : (FuelMax > 0f ? Fuel / FuelMax : 0f), InfoBillboard.FuelColor, (FuelMax > 0f) || (Def != null && Def.IsBattery));   // fuel / battery-CHARGE bar (yellow); hidden if neither
+                _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null && !wind);   // usage bar (cyan): generators only, not the turbine
                 // While the player HOLDS F to pick it up, show the progress; otherwise the interact hint. src checkHint:
                 // GENERATOR_OFF when on, GENERATOR_ON when off (_powered is the target -> reads as the next action even
                 // mid-ramp). A generator adds a tap-toggle in front of the hold-to-pick-up. No prompt once on fire.
                 string prompt;
                 if (PickupProgress > 0.01f) prompt = $"Picking up... {Mathf.Clamp((int)(PickupProgress * 100f), 0, 99)}%";
                 else if (OnFire) prompt = "";
-                else prompt = (Def != null && Def.Fuel > 0f ? $"[F] Turn {(_powered ? "Off" : "On")} · " : "") + "Hold [F]: pick up";
+                else prompt = ((Def != null && (Def.Fuel > 0f || Def.IsSwitch)) ? $"[F] Turn {((Def.IsSwitch ? _switchOn : _powered) ? "Off" : "On")} · " : "") + "Hold [F]: pick up";
                 _info.SetPrompt(prompt, OutlineColor);
             }
         }

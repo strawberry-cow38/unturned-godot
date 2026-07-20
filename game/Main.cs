@@ -1240,8 +1240,41 @@ namespace UnturnedGodot
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
         // placement GHOST (front row) -> verify the ripped models stand up right (palette, -90 X), the collider,
         // and the ghost materials. The interactive hold->aim->LMB flow needs a live player, tested in-game.
+        // Blend the WindField as a heatmap over PEI's real map image (master: "what does the noisemap look like over PEI").
+        // Per pixel -> world X/Z (inverse of MapUI.WorldToNorm, levelSize 1920) -> sample the live wind -> thermal tint.
+        void RenderWindMap()
+        {
+            string mp = ProjectSettings.GlobalizePath("res://content/pei_map.png");
+            var img = System.IO.File.Exists(mp) ? Image.LoadFromFile(mp) : null;
+            if (img == null) { GD.Print("[windmap] missing pei_map.png"); GetTree().Quit(1); return; }
+            if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+            int W = img.GetWidth(), H = img.GetHeight();
+            const float LevelSize = 1920f;
+            for (int py = 0; py < H; py++)
+                for (int px = 0; px < W; px++)
+                {
+                    float wx = ((float)px / W - 0.5f) * LevelSize;
+                    float wz = ((float)py / H - 0.5f) * LevelSize;
+                    float w = WindField.SampleWind(new Vector3(wx, 0f, wz));   // 0..1
+                    img.SetPixel(px, py, img.GetPixel(px, py).Lerp(WindHeat(w), 0.5f));
+                }
+            img.SavePng("res://windmap.png");
+            GD.Print("[windmap] saved windmap.png");
+            GetTree().Quit(0);
+        }
+
+        static Color WindHeat(float w)   // 0 calm (blue) -> 1 windy (red): a thermal ramp
+        {
+            w = Mathf.Clamp(w, 0f, 1f);
+            if (w < 0.25f) return new Color(0f, w * 4f, 1f);
+            if (w < 0.5f)  return new Color(0f, 1f, 1f - (w - 0.25f) * 4f);
+            if (w < 0.75f) return new Color((w - 0.5f) * 4f, 1f, 0f);
+            return new Color(1f, 1f - (w - 0.75f) * 4f, 0f);
+        }
+
         void BuildDeployTest()
         {
+            if (System.Environment.GetEnvironmentVariable("UG_WINDMAP") == "1") { RenderWindMap(); return; }   // wind heatmap over PEI, then quit
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
@@ -1264,7 +1297,14 @@ namespace UnturnedGodot
             var gen = DeployableDef.Generator; var spot = DeployableDef.Spotlight;
             // back row: PLACED objects (surface = ground; the base is sat on it)
             bool showSplit = System.Environment.GetEnvironmentVariable("UG_SPLITTERS") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_GASPUMP") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1332,6 +1372,124 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 1.2f, 0f);
                 cam.Position = new Vector3(2.8f, 1.5f, 3.6f);
                 cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_BATTERY=1: the placeable Vehicle Battery (item 1450 real mesh) with its IN (charge) + OUT (discharge)
+            // port arrows on -- verify the model stands up right + the terminals sit on opposite ends.
+            if (System.Environment.GetEnvironmentVariable("UG_BATTERY") == "1")
+            {
+                var batMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Battery_0.obj"));
+                if (batMesh != null) { var bb = batMesh.GetAabb(); GD.Print($"[BATTERY] mesh AABB size={bb.Size} center={bb.GetCenter()}"); }
+                var bat = Deployable.Spawn(this, DeployableDef.Battery, Vector3.Zero, 0f);
+                if (System.Environment.GetEnvironmentVariable("UG_WIREARROWS") == "1")
+                    foreach (var pt in bat.Ports) pt.SetArrowState(true, true);   // arrows only for port-debug; default = clean product shot
+                look = new Vector3(0f, 0.15f, 0f);
+                cam.Position = new Vector3(0.9f, 0.7f, 1.3f);
+                cam.Fov = 45f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_SWITCH=1: two Power Switches side by side -- left ON (green light), right toggled OFF (red) -- verify the state light + gate.
+            if (System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1")
+            {
+                var swOn = Deployable.Spawn(this, DeployableDef.Switch, new Vector3(-0.5f, 0f, 0f), 0f);    // default ON -> green
+                var swOff = Deployable.Spawn(this, DeployableDef.Switch, new Vector3(0.5f, 0f, 0f), 0f);
+                swOff.TogglePower();   // -> OFF, red
+                foreach (var pt in swOn.Ports) pt.SetArrowState(true, true);
+                look = new Vector3(0f, 0.2f, 0f);
+                cam.Position = new Vector3(0.7f, 0.9f, 1.7f);
+                cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_WINDTURBINE=1: the wind turbine -- tower + nacelle + 3-blade hub + the output port. (Blades spin in-game
+            // ~ the local wind; a still shot just shows the model at a frozen blade angle.)
+            if (System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1")
+            {
+                var wt = Deployable.Spawn(this, DeployableDef.WindTurbine, Vector3.Zero, 35f);
+                wt.SetLookFocused(true);   // show the info billboard (wind bar + live output wattage)
+                foreach (var pt in wt.Ports) pt.SetArrowState(true, true);
+                look = new Vector3(0f, 0.62f, 0f);
+                cam.Position = new Vector3(1.5f, 0.95f, 2.4f);
+                cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_SWITCHCKT=1: a working circuit -- generator -> switch -> spotlight, + sources on the switch's turn-on
+            // (green) / turn-off (red) trigger inputs. Default: TurnOn source fed -> switch ON -> spotlight LIT.
+            // UG_TRIGOFF=1: the TurnOff source is fed instead -> the switch flips OFF -> the spotlight goes DARK.
+            if (System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1")
+            {
+                var g = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-2.6f, 0f, 0.8f), 0f);
+                var sw = Deployable.Spawn(this, DeployableDef.Switch, new Vector3(0f, 0f, 0.8f), 90f);
+                var lamp = Deployable.Spawn(this, DeployableDef.Spotlight, new Vector3(2.6f, 0f, 0.8f), 180f);
+                var onSrc = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-1.4f, 0f, -2.3f), 0f);
+                var offSrc = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(1.4f, 0f, -2.3f), 0f);
+                ConnectionPort P(Deployable d, DeployableDef.PortKind k) => d.Ports.Find(p => p.Kind == k);
+                var swIn = sw.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer && p.Role == DeployableDef.SwitchRole.None);
+                var swOn = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOn);
+                var swOff = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOff);
+                void W(ConnectionPort a, ConnectionPort b) { var wr = new Wire(); AddChild(wr); wr.Source = a; wr.Consumer = b; wr.AddToGroup("wires"); wr.SetPoints(new System.Collections.Generic.List<Vector3> { a.GlobalPosition, b.GlobalPosition }, valid: true); }
+                W(P(g, DeployableDef.PortKind.Output), swIn);
+                W(P(sw, DeployableDef.PortKind.Passthrough), P(lamp, DeployableDef.PortKind.Consumer));
+                W(P(onSrc, DeployableDef.PortKind.Output), swOn);
+                W(P(offSrc, DeployableDef.PortKind.Output), swOff);
+                g.TogglePower();   // main power on
+                if (System.Environment.GetEnvironmentVariable("UG_TRIGOFF") == "1") offSrc.TogglePower();   // fire TurnOff -> switch OFF -> dark
+                else onSrc.TogglePower();                                                                   // fire TurnOn  -> switch ON  -> lit
+                PowerNet.Recompute(GetTree());
+                env.AmbientLightEnergy = 0.09f; env.BackgroundColor = new Color(0.03f, 0.03f, 0.05f);
+                dirLight.LightEnergy = 0.12f;
+                look = new Vector3(0.4f, 0.5f, -0.4f);
+                cam.Position = new Vector3(0.2f, 3.4f, 7.0f);
+                cam.Fov = 60f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_SPOTPORTS=1: the spotlight alone with its i/o ports + arrows, close up -- verify the ports sit on the
+            // pillar/feet + the arrows point perpendicular straight out of each cube face (master's electricity quirk fix).
+            if (System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1")
+            {
+                var sp = Deployable.Spawn(this, DeployableDef.Spotlight, Vector3.Zero, 0f);
+                // feed a generator into the spotlight's consumer so THAT port reads occupied (dark grey); the passthrough
+                // stays free (light grey) -> the close-up shows both I/O-cube states + the translucency in one shot.
+                var feed = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(0f, 0f, -5.5f), 0f);
+                var spIn = sp.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+                var spOut = sp.Ports.Find(p => p.Kind == DeployableDef.PortKind.Passthrough);
+                var genOut = feed.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+                var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = spIn; wr.AddToGroup("wires");
+                wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, spIn.GlobalPosition }, valid: true);
+                PowerNet.Recompute(GetTree());
+                foreach (var pt in sp.Ports) pt.SetArrowState(true, true);
+                Vector3 mid = (spIn.GlobalPosition + spOut.GlobalPosition) * 0.5f;   // aim precisely at the two I/O cubes
+                look = mid;
+                cam.Position = mid + new Vector3(0.85f, 0.42f, 1.15f);
+                cam.Fov = 38f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_PORTSTATES=1: two spotlights side by side showing every I/O-port state at once -- (left) base grey + brighter
+            // FOCUS (look-at); (right) RED occupied/invalid wire target + GREEN valid target (master's wire-feedback pass).
+            if (System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1")
+            {
+                var a = Deployable.Spawn(this, DeployableDef.Spotlight, new Vector3(-1.1f, 0f, 0f), 0f);
+                var b = Deployable.Spawn(this, DeployableDef.Spotlight, new Vector3(1.1f, 0f, 0f), 0f);
+                foreach (var d in new[] { a, b }) foreach (var pt in d.Ports) pt.SetArrowState(true, true);
+                PowerNet.Recompute(GetTree());   // settle (no wires -> base grey) BEFORE forcing states; ApplyHi keeps them after
+                ConnectionPort PS(Deployable d, DeployableDef.PortKind k) => d.Ports.Find(p => p.Kind == k);
+                PS(a, DeployableDef.PortKind.Consumer).SetHighlight(ConnectionPort.PortHi.None);       // base grey (free)
+                PS(a, DeployableDef.PortKind.Passthrough).SetHighlight(ConnectionPort.PortHi.Focus);   // a little brighter (look-at)
+                PS(b, DeployableDef.PortKind.Consumer).SetHighlight(ConnectionPort.PortHi.WireBad);    // red: occupied / invalid target
+                PS(b, DeployableDef.PortKind.Passthrough).SetHighlight(ConnectionPort.PortHi.WireOk);  // green: valid target
+                look = new Vector3(0f, 0.55f, 0f);
+                cam.Position = new Vector3(0f, 1.05f, 3.1f);
+                cam.Fov = 48f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_DEVIO=1: generator (left) + gas pump (right) with their I/O port arrows on -- master check: how the new
+            // grey / flat-arrow / occupancy treatment reads on the OTHER devices (generator output, gas-pump 750w input).
+            if (System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1")
+            {
+                var g = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-1.5f, 0f, 0f), 0f);
+                foreach (var pt in g.Ports) pt.SetArrowState(true, true);
+                var pumpMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Gas_Pump_0.obj"));
+                var standUp = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+                var pumpPos = new Vector3(1.5f, 0f, 0f);
+                if (pumpMesh != null)
+                    AddChild(new MeshInstance3D { Mesh = pumpMesh, Basis = standUp, Position = pumpPos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.67f, 0.7f), Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });
+                var gp = GasPump.Attach(this, pumpPos, standUp, Deployable.EnvVec3("UG_GPP", GasPump.PortLocal), pumpMesh);
+                foreach (var pt in gp.PowerPorts) pt.SetArrowState(true, true);
+                look = new Vector3(0f, 0.9f, 0f);
+                cam.Position = new Vector3(0.4f, 1.7f, 4.6f);
+                cam.Fov = 52f; cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read
