@@ -5,14 +5,23 @@
 #   [SUMMARY] TOTAL: <P> passed, <F> failed | first failure: <name> | trx: <dir>
 # Exit: 0 = clean, 1 = test failure, 2 = infrastructure failure (build/dotnet error).
 #
-# Layers (fable's proposal): L0 = engine-free `dotnet test`. L1 = batched in-engine TestHost
-# (one headless boot). L2 = visual golden PNGs (xvfb+lavapipe renders diffed vs tests/visual/golden;
-# opt-in via --visual/--all, ~30s/scene; re-baseline with tools/visual_tests.py --update <name>).
+# Layers (fable's proposal): L0 = engine-free `dotnet test` (~4s). L1 = batched in-engine TestHost
+# (one headless godot boot; the FULL set is ~8min). L2 = visual golden PNGs (xvfb+lavapipe renders
+# diffed vs tests/visual/golden, ~30s/scene; re-baseline with tools/visual_tests.py --update <name>).
+#
+# TEST POLICY (bitvox 2026-07-20): the DEFAULT is the FAST tier ONLY -- `./test.sh` runs L0 and stops,
+# so per-iteration + staging-branch builds stay snappy. The SLOW tiers (full L1, visual) are opt-in and
+# should be run when ASKED and BEFORE MERGING TO MAIN:
+#   ./test.sh                       # FAST: L0 engine-free logic only (~4s) -- the default, for quick iteration
+#   ./test.sh --l1 --only 'deploy.*'# a TARGETED in-engine slice (one boot, just the affected tests) while iterating
+#   ./test.sh --all                 # the FULL sweep: L0 + all of L1 + visual goldens -- run this before a main merge / deploy
+#   ./test.sh --l1                  # the full in-engine suite alone (slow); --visual for goldens alone; --l0 explicit
 #
 # --report renders the run to a static HTML dashboard (tools/gen_report.py) after it finishes --
 # served via Caddy at claw.bitvox.me/ugtests/ for at-a-glance review (UG_REPORT_DIR overrides the dir).
 #
 # Usage: ./test.sh [--l0] [--l1] [--visual] [--all] [--only <glob>] [--failfast] [--report] [-h]
+#        default (no flags) = L0 only (fast). Use --all before merging to main.
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -35,8 +44,14 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# default = the fast sub-60s set: engine-free logic (L0) + batched in-engine (L1). --visual (L2) is opt-in.
-if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ] && [ $RUN_VISUAL -eq 0 ]; then RUN_L0=1; RUN_L1=1; fi
+# default = the FAST tier ONLY: engine-free logic (L0, ~4s). The slow tiers (full L1 in-engine, L2 visual)
+# are opt-in (--l1 / --visual / --all) -- run them when asked + before merging to main (bitvox 2026-07-20).
+DEFAULTED=0
+if [ $RUN_L0 -eq 0 ] && [ $RUN_L1 -eq 0 ] && [ $RUN_VISUAL -eq 0 ]; then RUN_L0=1; DEFAULTED=1; fi
+if [ $DEFAULTED -eq 1 ]; then
+  echo "[test.sh] FAST tier only (L0). The slow in-engine (L1) + visual (L2) tiers were SKIPPED."
+  echo "[test.sh] Before merging to main / deploying, run the full sweep:  ./test.sh --all"
+fi
 
 rm -rf "$RESULTS"; mkdir -p "$RESULTS"
 TOTAL_PASS=0; TOTAL_FAIL=0; FIRST_FAILURE=""; INFRA_FAIL=0
