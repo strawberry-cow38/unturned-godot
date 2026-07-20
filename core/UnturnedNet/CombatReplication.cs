@@ -410,6 +410,12 @@ namespace UnturnedGodot.Net
             public byte Health = 100;            // coarse 0..100 (the wire byte; server keeps the exact float)
             public ushort Kills;
             public ushort Deaths;
+            // ---- appearance (B10): worn clothing + held item + stance -- carried on the combat block (delta-on-
+            // change, replicated for EVERY player) so a joiner's RemotePlayers puppets dress right, WITHOUT bloating
+            // the 25 Hz transform. Server publishes them from each player's server-side worn inventory (PlayerAppearanceNetSync).
+            public ushort WornHat, WornGlasses, WornMask, WornShirt, WornVest, WornBackpack, WornPants;
+            public ushort HeldId;   // equipped item id (0 = nothing / fists)
+            public byte Stance;     // EPlayerStance (stand/crouch/prone/...)
             public long LastChangedTick;
 
             // ---- server-only (never on the wire; replicas keep defaults) ----
@@ -520,6 +526,9 @@ namespace UnturnedGodot.Net
                 h = NetHash.MixByte(h, e.Health);
                 h = NetHash.MixUInt32(h, e.Kills);
                 h = NetHash.MixUInt32(h, e.Deaths);
+                h = NetHash.MixUInt32(h, e.WornHat); h = NetHash.MixUInt32(h, e.WornGlasses); h = NetHash.MixUInt32(h, e.WornMask);
+                h = NetHash.MixUInt32(h, e.WornShirt); h = NetHash.MixUInt32(h, e.WornVest); h = NetHash.MixUInt32(h, e.WornBackpack); h = NetHash.MixUInt32(h, e.WornPants);
+                h = NetHash.MixUInt32(h, e.HeldId); h = NetHash.MixByte(h, e.Stance);
             }
             return h;
         }
@@ -531,6 +540,9 @@ namespace UnturnedGodot.Net
             w.WriteUInt8(e.Health);
             w.WriteUInt16(e.Kills);
             w.WriteUInt16(e.Deaths);
+            w.WriteUInt16(e.WornHat); w.WriteUInt16(e.WornGlasses); w.WriteUInt16(e.WornMask);
+            w.WriteUInt16(e.WornShirt); w.WriteUInt16(e.WornVest); w.WriteUInt16(e.WornBackpack); w.WriteUInt16(e.WornPants);
+            w.WriteUInt16(e.HeldId); w.WriteUInt8(e.Stance);
         }
 
         static bool ReadEntity(NetPakReader r, out CombatEntity e)
@@ -541,7 +553,12 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt8(out byte health)) return false;
             if (!r.ReadUInt16(out ushort kills)) return false;
             if (!r.ReadUInt16(out ushort deaths)) return false;
-            e = new CombatEntity { OwnerPlayerId = owner, Alive = alive, Health = health, Kills = kills, Deaths = deaths };
+            if (!r.ReadUInt16(out ushort wHat) || !r.ReadUInt16(out ushort wGlasses) || !r.ReadUInt16(out ushort wMask)) return false;
+            if (!r.ReadUInt16(out ushort wShirt) || !r.ReadUInt16(out ushort wVest) || !r.ReadUInt16(out ushort wBackpack) || !r.ReadUInt16(out ushort wPants)) return false;
+            if (!r.ReadUInt16(out ushort held) || !r.ReadUInt8(out byte stance)) return false;
+            e = new CombatEntity { OwnerPlayerId = owner, Alive = alive, Health = health, Kills = kills, Deaths = deaths,
+                WornHat = wHat, WornGlasses = wGlasses, WornMask = wMask, WornShirt = wShirt, WornVest = wVest,
+                WornBackpack = wBackpack, WornPants = wPants, HeldId = held, Stance = stance };
             return true;
         }
 
