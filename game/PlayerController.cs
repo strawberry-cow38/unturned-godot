@@ -1510,6 +1510,11 @@ namespace UnturnedGodot
         {
             if (crate == null) return false;
             if (crate is StoreShelf shelf) crate = shelf.ResolveSide(GlobalPosition);   // double-sided gondola: open the side the player is on
+            // B9: a REPLICATED container (server-owned, NetId != 0) opens over the WIRE -- its local grid is only a
+            // display mirror; the server holds the authoritative contents (StorageOpened + the owner echo carry them
+            // into STORAGE page 7, and OnReplicatedStorageOpened opens the dashboard on the fact, never on the send).
+            if (crate.NetId != 0 && NetOpenStorage != null)
+                return RequestOpenStorage(crate.NetId);
             var near = crate;
             _openCrate = near;
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);

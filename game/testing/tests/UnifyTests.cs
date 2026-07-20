@@ -235,6 +235,71 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // A1 + B9 (SP/MP-unify): a world-build CONTAINER round-trips end-to-end through the REAL consuming loopback --
+    // ContainerNetSync registers it server-side (fixture + a crate grid under one NetId), the StorageReplicaView
+    // materializes it as a ServerOwned StoreShelf node (no local loot roll), and OpenCrate on that node opens the
+    // dashboard OVER THE WIRE (B9), never a local copy-back. Built on the exact MpLoopback AttachMpLoopback builds
+    // under --spconsume, with the SP-local SpawnMapContainers gated OFF -- so a server NetId on the node PROVES it
+    // came from the replica, not an SP spawn. (The loot roll + display digest are L0-covered in ContainerReplicationTests.)
+    public class UnifyContainerMaterializeAndOpen : GameTest
+    {
+        public override string Name => "unify.container_materialize";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();   // makeLoot / display resolve against the real catalog
+
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));   // the REAL shell the loopback drives
+            yield return Ticks(2);
+
+            // a one-container manifest -- a store gondola at (2,0,0), the exact shape WorldBuilder.result.Containers carries
+            var manifest = new System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)>
+            {
+                ("Shelf_1", 6, true, "Store Shelf", new Vector3(2f, 0f, 0f), 0f),
+            };
+
+            var loop = new MpLoopback { Player = player, Driver = driver,
+                                        DayNight = dayNight, Resources = resources,
+                                        Containers = manifest,
+                                        ConsumeDeployables = true };
+            World.AddChild(loop);
+
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _), 15);
+            T.Check("loopback client connected", loop.Client.State == NetSessionState.Connected);
+
+            // ContainerNetSync registered the fixture server-side + the StorageReplicaView materialized it locally
+            yield return Until(() => loop.Storage != null && loop.Storage.NodeCount == 1, 15);
+            T.Check("the container materialized as a replica StoreShelf node", loop.Storage != null && loop.Storage.NodeCount == 1);
+
+            uint cid = 0;
+            foreach (var e in loop.Client.Containers.All) cid = e.NetIdValue;
+            // TEETH: a server NetId proves the node came from the replica view, not the SP SpawnMapContainers (gated off)
+            T.Check($"container has a server NetId ({cid})", cid != 0 && loop.Storage.TryGetNode(cid, out _));
+            loop.Storage.TryGetNode(cid, out var shelfNode);
+            T.Check("the materialized shelf is ServerOwned (no local loot roll)", shelfNode != null && shelfNode.ServerOwned);
+
+            // the server owns the authoritative crate grid under the SAME NetId (ContainerNetSync mints one id for both)
+            T.Check("the server registered the crate grid under the fixture's NetId",
+                    loop.Server.Inventories.TryGetCrate(cid, out _));
+
+            // THE ACT (B9): open the replicated container. OpenCrate must route NetId!=0 over the wire, not copy locally.
+            T.Check("OpenCrate routed the replicated container over the wire (B9)", player.OpenCrate(shelfNode));
+
+            // GATE: the server validated (reach) + the StorageOpened fact opened the dashboard with the server's grid
+            yield return Until(() => player.DashboardOpen, 15);
+            T.Check("(gate) the storage dashboard opened on the server's StorageOpened fact", player.DashboardOpen);
+        }
+    }
+
     // SP/MP-unify P1b phase gate (SECOND pattern-setter). Closes the gap P1 surfaced: a wire placement (P1)
     // SPENDS an item server-side BEFORE broadcasting, so the local loopback player's SERVER inventory must be
     // STOCKED + owner-replicated or a real placement is server-REJECTED. This proves the server-authoritative
