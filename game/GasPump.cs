@@ -11,9 +11,9 @@ namespace UnturnedGodot
     public partial class GasPump : Node3D, IPowerDevice
     {
         public const float Watts = 750f;
-        // where the orange input cube sits in the pump's LOCAL (flat-authored) frame: raw Z is the pump's height, so
-        // Z=1.2 is ~waist up when the map stands it upright; Y=-0.4 puts it just off one of the thin faces.
-        public static readonly Vector3 PortLocal = new Vector3(0f, -0.4f, 1.2f);
+        // where the input cube sits in the pump's LOCAL (flat-authored) frame: raw Z is the pump's height (small Z = low,
+        // below the band), authored X = the horizontal side (+X = right). Master: right side, bottom, below the band.
+        public static readonly Vector3 PortLocal = new Vector3(0.45f, -0.3f, 0.25f);   // UG_GPP tunes it in UG_DEVIO
 
         public int StationId;   // pumps sharing a stationId share one underground tank (map-editor field, or auto from position)
         readonly List<ConnectionPort> _ports = new();

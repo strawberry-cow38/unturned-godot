@@ -52,7 +52,11 @@ namespace UnturnedGodot
             Id = 458, Name = "Generator", Model = "Generator_0",
             HoldMesh = "generator_hold.obj", HoldAlbedo = "generator_hold_tex.png", PlaceSound = "metalplacement",   // src Generator_Small.dat PlacementAudioClip Sounds/MetalPlacement.mp3
             Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 60f,   // PZ-scale fuel (master): ~7 portable cans; burned by LOAD while running (GenFuelBurnPerSec). src Capacity was 2000
-            Ports = new[] { new Port { Kind = PortKind.Output, Pos = new Vector3(0.4f, 0.6f, 0.05f), Watts = 4000f } },   // output on the gray-face mid-right (flat frame; tuned visually)
+            Ports = new[] {
+                new Port { Kind = PortKind.Output, Pos = new Vector3(0.4f, 0.6f, 0.05f), Watts = 4000f },   // output on the gray-face mid-right (flat frame; tuned visually)
+                new Port { Kind = PortKind.Consumer, Role = SwitchRole.TurnOn, Pos = new Vector3(-0.5f, 0.4f, -0.2f), Watts = 0f },   // remote START (green): a >=1w sense (0w draw) spins the engine UP. UG_GTON tunes.
+                new Port { Kind = PortKind.Consumer, Role = SwitchRole.TurnOff, Pos = new Vector3(-0.5f, 0.4f, 0.3f), Watts = 0f },  // remote STOP (red): a >=1w sense (0w draw) spins it DOWN. UG_GTOFF tunes.
+            },
         };
         // src Spotlight.dat: id 459, Useable Barricade, Build Spot, footprint 2x2x0.55, Offset 1.12
         public static readonly DeployableDef Spotlight = new()

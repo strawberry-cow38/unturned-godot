@@ -15,6 +15,7 @@ namespace UnturnedGodot
         public bool PowerProducing => IsPowered;
         public bool PowerOnFire => OnFire;
         public bool PowerConducting => Def == null || !Def.IsSwitch || _switchOn;   // a switch OFF stops conducting -> its passthrough dies
+        public float PowerScale => (Def != null && Def.Fuel > 0f && !Def.IsBattery) ? _powerLevel : 1f;   // generator OUTPUT ramps 0..1 with the engine spin-up/cooldown (master); battery + everything else = full
         public uint PowerNetId => NetId;
         public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => Ports;
         public float Health, HealthMax;
@@ -45,7 +46,7 @@ namespace UnturnedGodot
         float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
         bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
         public bool CanTogglePower => !OnFire && Def != null && (Def.IsSwitch || (Def.Fuel > 0f && PowerSettled));   // a switch always toggles; a generator only when fuelled + ramp-settled (buffer)
-        public bool IsPowered => Def != null && Def.IsBattery ? (Energy > 0f && !OnFire) : RunTarget > 0.5f;   // a battery's OUT produces while it has charge; a generator's while the engine runs -- PowerNet reads this
+        public bool IsPowered => Def != null && Def.IsBattery ? (Energy > 0f && !OnFire) : (!OnFire && _powerLevel > 0.02f);   // battery OUT produces while charged; a generator produces while the engine is spun up (_powerLevel ramps 0..1 -> gradual power, master); a FIRE kills output instantly (not a graceful cooldown) -- PowerNet reads this
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
@@ -115,7 +116,7 @@ namespace UnturnedGodot
         }
 
         // Parse a "x,y,z" env var (runtime tuning for the battery label) or return the default.
-        static Vector3 EnvVec3(string name, Vector3 dflt)
+        internal static Vector3 EnvVec3(string name, Vector3 dflt)
         {
             var e = System.Environment.GetEnvironmentVariable(name);
             if (e != null) { var p = e.Split(','); if (p.Length == 3 && float.TryParse(p[0], out var x) && float.TryParse(p[1], out var y) && float.TryParse(p[2], out var z)) return new Vector3(x, y, z); }
@@ -146,6 +147,7 @@ namespace UnturnedGodot
             {
                 var pd = pdef;
                 if (def.Id == 459) pd.Pos = EnvVec3(pd.Kind == DeployableDef.PortKind.Consumer ? "UG_SPC" : "UG_SPP", pd.Pos);   // spotlight port tuning (master: touch pillar + feet)
+                else if (def.Id == 458 && pd.Role != DeployableDef.SwitchRole.None) pd.Pos = EnvVec3(pd.Role == DeployableDef.SwitchRole.TurnOn ? "UG_GTON" : "UG_GTOFF", pd.Pos);   // generator trigger tuning
                 var port = ConnectionPort.Create(d, pd, def.Name);
                 d.AddChild(port);
                 d.Ports.Add(port);
@@ -251,7 +253,7 @@ namespace UnturnedGodot
         public void TogglePower()   // IsPowered/conduction flipped -> the net needs a recompute
         {
             if (Def != null && Def.IsSwitch) { _switchOn = !_switchOn; UpdateSwitchLight(); PowerNet.MarkDirty(); return; }   // a switch flips its gate (no fuel/ramp)
-            if (CanTogglePower) { _powered = !_powered; PowerNet.MarkDirty(); }
+            if (CanTogglePower) { _powered = !_powered; if (InstantRampForTests) _powerLevel = RunTarget; PowerNet.MarkDirty(); }
         }
 
         void UpdateSwitchLight()   // green = on (passing power), red = off
@@ -265,6 +267,7 @@ namespace UnturnedGodot
         // without the local CanTogglePower interaction gating. The warmup/cooldown ramp still runs locally.
         public void NetSetPowered(bool on) { if (_powered != on) { _powered = on; PowerNet.MarkDirty(); } }
         public bool PoweredTarget => _powered;   // the F-toggle TARGET state (IsPowered adds fuel/fire gating) -- what an MP toggle request inverts
+        internal static bool InstantRampForTests;   // L1 (set by TestHost): skip the spin-up/cooldown ramp so a gen produces/stops instantly for power-flow checks; the gradual ramp is gameplay-verified in-render
 
         void Explode()   // src explode: blast nearby, then either shatter into pieces (spotlight) or become a burning salvageable wreck (generator)
         {
@@ -420,13 +423,15 @@ namespace UnturnedGodot
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * SmokeFrac);
             if (_smoke0 != null) _smoke0.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * HeavyFrac);
 
-            if (Def != null && Def.IsSwitch)   // remote control: a side trigger fed >=1w SETS the switch state (master); triggers draw 0w
+            if (Def != null && (Def.IsSwitch || (Def.Fuel > 0f && !Def.IsBattery)))   // remote control: a side trigger fed >=1w SETS on/off (master); triggers draw 0w. A switch flips its gate; a generator flips _powered -> its startup/cooldown ramp.
             {
                 foreach (var port in Ports)
                 {
-                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Live < 1f) continue;
-                    if (port.Role == DeployableDef.SwitchRole.TurnOn && !_switchOn) { _switchOn = true; UpdateSwitchLight(); PowerNet.MarkDirty(); }
-                    else if (port.Role == DeployableDef.SwitchRole.TurnOff && _switchOn) { _switchOn = false; UpdateSwitchLight(); PowerNet.MarkDirty(); }
+                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Role == DeployableDef.SwitchRole.None || port.Live < 1f) continue;
+                    bool wantOn = port.Role == DeployableDef.SwitchRole.TurnOn;
+                    if (Def.IsSwitch) { if (_switchOn != wantOn) { _switchOn = wantOn; UpdateSwitchLight(); PowerNet.MarkDirty(); } }
+                    else if (wantOn && !_powered && Fuel > 0f) { _powered = true; PowerNet.MarkDirty(); }   // remote START -> engine spins UP (needs fuel); the ramp forces the startup
+                    else if (!wantOn && _powered) { _powered = false; PowerNet.MarkDirty(); }               // remote STOP -> engine spins DOWN (cooldown ramp)
                 }
             }
 
@@ -447,7 +452,8 @@ namespace UnturnedGodot
                     Energy = Mathf.Min(Def.EnergyMax, Energy + Def.ChargeWatts * (float)delta);   // charge while the IN is fed by a source
                 if ((Energy > 0f) != wasProducing) PowerNet.MarkDirty();   // crossed empty <-> charged -> the OUT starts/stops producing
             }
-            if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
+            if (InstantRampForTests) _powerLevel = pTarget;   // L1: no ramp -> instant settle for power-flow tests
+            else if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)
             if (_engineAudio != null)

@@ -1267,7 +1267,8 @@ namespace UnturnedGodot
                           || System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_SWITCHCKT") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1425,6 +1426,23 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.55f, 0f);
                 cam.Position = new Vector3(0f, 1.05f, 3.1f);
                 cam.Fov = 48f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_DEVIO=1: generator (left) + gas pump (right) with their I/O port arrows on -- master check: how the new
+            // grey / flat-arrow / occupancy treatment reads on the OTHER devices (generator output, gas-pump 750w input).
+            if (System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1")
+            {
+                var g = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(-1.5f, 0f, 0f), 0f);
+                foreach (var pt in g.Ports) pt.SetArrowState(true, true);
+                var pumpMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/Gas_Pump_0.obj"));
+                var standUp = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+                var pumpPos = new Vector3(1.5f, 0f, 0f);
+                if (pumpMesh != null)
+                    AddChild(new MeshInstance3D { Mesh = pumpMesh, Basis = standUp, Position = pumpPos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.67f, 0.7f), Roughness = 0.7f, CullMode = BaseMaterial3D.CullModeEnum.Disabled } });
+                var gp = GasPump.Attach(this, pumpPos, standUp, Deployable.EnvVec3("UG_GPP", GasPump.PortLocal), pumpMesh);
+                foreach (var pt in gp.PowerPorts) pt.SetArrowState(true, true);
+                look = new Vector3(0f, 0.9f, 0f);
+                cam.Position = new Vector3(0.4f, 1.7f, 4.6f);
+                cam.Fov = 52f; cam.LookAt(look, Vector3.Up);
             }
             if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1")
             {   // drop to near-night + aim at the powered spotlight so the lit lamps + beam actually read

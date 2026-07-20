@@ -9,6 +9,7 @@ namespace UnturnedGodot
         bool PowerProducing { get; }   // a running generator; false for a pure consumer (spotlight/gas pump)
         bool PowerOnFire { get; }      // a burning/wrecked device stops conducting
         bool PowerConducting => true;  // default: conducts (relay/passthrough works). A SWITCH toggled OFF returns false -> its passthrough dies.
+        float PowerScale => 1f;        // output-capacity multiplier: a GENERATOR ramps this 0..1 with its engine spin-up/cooldown (master); everything else = full
         uint PowerNetId { get; }       // MP replica id (0 = SP / local / world fixture)
         System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts { get; }
     }

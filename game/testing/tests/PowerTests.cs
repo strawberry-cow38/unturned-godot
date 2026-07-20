@@ -160,6 +160,43 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Generator remote on/off (master): a >=1w sense wire on the TurnOn/TurnOff trigger (0w draw) commands the engine
+    // on/off -> its startup/cooldown ramp. The switch trigger mechanism applied to a generator's _powered toggle.
+    public class PowerGeneratorTriggers : GameTest
+    {
+        public override string Name => "power.generator_triggers";
+        public override IEnumerable<Step> Run()
+        {
+            PowerNet.ResetForTests();
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(0f, 0f, 0f), 0f);   // fuelled, default OFF
+            var src = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);   // the sense source
+            src.TogglePower();                                                                          // running -> feeds >=1w
+            var srcOut = src.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var tOn = gen.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOn);
+            var tOff = gen.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOff);
+            yield return Ticks(1);
+            T.Check("generator has TurnOn + TurnOff trigger ports", tOn != null && tOff != null);
+            T.Check("triggers draw 0w", tOn.Watts == 0f && tOff.Watts == 0f);
+            T.Check("generator starts OFF", !gen.PoweredTarget && !gen.IsPowered);
+
+            var wOn = PowerRig.Connect(World, srcOut, tOn);        // feed the TurnOn trigger >=1w
+            PowerNet.Recompute(Tree);
+            yield return Ticks(3);                                 // _Process reads the trigger's Live + spins the engine up
+            PowerNet.Recompute(Tree);
+            T.Check("TurnOn trigger fed >=1w -> generator commanded ON", gen.PoweredTarget);
+            T.Check("commanded-on generator produces power", gen.IsPowered);
+
+            wOn.QueueFree();                                       // drop the TurnOn sense (doesn't stop it) then feed TurnOff
+            yield return Ticks(1);
+            var wOff = PowerRig.Connect(World, srcOut, tOff);
+            PowerNet.Recompute(Tree);
+            yield return Ticks(3);
+            PowerNet.Recompute(Tree);
+            T.Check("TurnOff trigger fed >=1w -> generator commanded OFF", !gen.PoweredTarget);
+            T.Check("commanded-off generator stops producing", !gen.IsPowered);
+        }
+    }
+
     public class PowerWireClearUnpowers : GameTest
     {
         public override string Name => "power.wire_clear_unpowers";

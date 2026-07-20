@@ -46,7 +46,8 @@ namespace UnturnedGodot
                     {
                         if (p == null || !GodotObject.IsInstanceValid(p)) continue;
                         p.Occupied = false;   // reset; the wire loop below re-marks the wired ports
-                        portMap[p] = dev.AddPort(Kind(p.Kind), p.Watts);
+                        float watts = p.Kind == DeployableDef.PortKind.Output ? p.Watts * d.PowerScale : p.Watts;   // a generator's output CAP ramps with its spin-up/cooldown (master); consumer/passthrough unscaled
+                        portMap[p] = dev.AddPort(Kind(p.Kind), watts);
                     }
                     devices.Add(dev);
                 }
