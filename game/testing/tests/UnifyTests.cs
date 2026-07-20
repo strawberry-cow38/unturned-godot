@@ -1481,4 +1481,173 @@ namespace UnturnedGodot.Testing
             remote.Disconnect();
         }
     }
+
+    // GAP A4 (crops client-view): proves the CropReplicaView materializes a server crop entity into a real
+    // CropNode on a joined client AND derives its GROWTH STAGE from the snapshot tick -- NOT a client
+    // CropManager clock (there is none). One client stands in for the local loopback player: the server plants
+    // a FRESH crop, the view materializes it (young), and after the def's growth window elapses on the tick
+    // clock the node's stage FLIPS to grown -- straight off Client.Crops.IsGrown(e, LastAppliedServerTick).
+    //
+    // Carrot's real growth (10800 s) can't be simmed, so its schema def is overridden to GrowthSeconds=2 (100
+    // ticks) on BOTH sides -- a client+server-agreed DERIVATION only (growth stage is never a wire/StateHash
+    // byte; only SeedId/Pos/PlantedAtTick/Grown-flag are), so the override moves no bytes and can't desync.
+    //
+    // TEETH: the node must carry the SERVER entity NetId (a SP direct CropNode.Spawn stamps 0), start YOUNG,
+    // then FLIP to grown purely from the advancing tick. Without the view -> no node (materialize fails);
+    // without the tick-derived SetGrown -> the node stays young forever (the grow assertion times out).
+    public class UnifyCropView : GameTest
+    {
+        public override string Name => "unify.crop_view";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260725);
+            var client = new NetWorldClient(new MemClientTransport(net), "local", contentHash: NetContent.Hash);
+            CropNetSchema.RegisterAll(client.Crops.Schema);   // loads Crop/FarmRegistry (server side registered by DedicatedServer's CropNetSync)
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+
+            // the A4 pattern: the SOLE crop materializer on a joined client (no client CropManager)
+            var view = new CropReplicaView { Client = client };
+            World.AddChild(view);
+
+            client.Connect();
+            yield return Until(() => client.State == NetSessionState.Connected, 5);
+            T.Check("local client joined the loopback server", client.State == NetSessionState.Connected);
+
+            // shrink carrot's growth to 2 s (100 ticks) so the FLIP is simmable -- a pure derivation on both
+            // sides (growth stage is never hashed), applied AFTER the server's CropNetSync registered its schema
+            var fast = new CropNetDef { SeedId = 330, GrowthSeconds = 2, YieldItemId = 329 };
+            client.Crops.Schema.Register(fast);
+            ded.Server.Crops.Schema.Register(fast);
+
+            // plant a FRESH carrot server-side (the remote/console Plant path funnels through this same PlantCrop)
+            var e = ded.Server.Transactions.PlantCrop(330, new UnityEngine.Vector3(3f, 0f, 3f), grown: false);
+            T.Check("server planted a fresh carrot entity", e != null && ded.Server.Crops.Count == 1);
+            if (e == null) yield break;
+
+            // the consume payoff: the view materialized the entity into a real CropNode
+            yield return Until(() => view.TryGetNode(e.NetIdValue, out _), 5);
+            bool have = view.TryGetNode(e.NetIdValue, out var node);
+            T.Check("the CropReplicaView materialized a CropNode for the entity", have);
+            if (!have) yield break;
+            // TEETH: a server-assigned NetId proves it came from the replicated entity, not a direct SP spawn (NetId 0)
+            T.Check($"the node carries the SERVER entity NetId ({node.NetId})", node.NetId == e.NetIdValue && node.NetId != 0);
+            T.Check("the replica joined the harvest-scannable \"crop\" group", node.IsInGroup("crop"));
+            // fresh + <100 ticks elapsed -> the tick-derived stage is YOUNG (the pre-flip half of the teeth)
+            T.Check("the fresh replica starts YOUNG (tick-derived, not grown yet)",
+                    !node.Grown && !client.Crops.IsGrown(e, client.Applier.LastAppliedServerTick));
+
+            // step past the 2 s (100-tick) growth window: the node's stage FLIPS to grown, driven ONLY by the
+            // advancing snapshot tick through Client.Crops.IsGrown -- no client CropManager clock exists
+            yield return Until(() => view.TryGetNode(e.NetIdValue, out var n) && n.Grown, 5);
+            T.Check("the replica FLIPPED to grown off the snapshot tick (Client.Crops.IsGrown-derived)",
+                    view.TryGetNode(e.NetIdValue, out var grown) && grown.Grown
+                    && client.Crops.IsGrown(e, client.Applier.LastAppliedServerTick));
+
+            world.Sim.Sim.Remove(pump);
+            client.Disconnect();
+        }
+    }
+
+    // GAP A4 (crops client harvest): proves a joined client can HARVEST a grown replicated crop -- the shell's
+    // F-interact seam RequestHarvestNearestCrop scans the "crop" group for the nearest grown NetId!=0 and routes
+    // Client.SendHarvestCrop; the server validates + removes the crop + drops the yield as a replicated world
+    // item, and BOTH results reflect on the client: the crop replica DESPAWNS and a visible+focusable yield
+    // puppet materializes through the WorldItemReplicaView. A real ClientWorldSession shell + server over
+    // MemTransport (the net.shell_* pattern); the crop is planted GROWN server-side within the shell's reach.
+    //
+    // TEETH: pre-fix the shell has NO NetHarvestCrop seam (RequestHarvestNearestCrop returns false) and no
+    // CropReplicaView materializes a NetId-stamped grown node -> the harvest never sends, the crop stays, no
+    // yield appears. Post-fix the request fires, the crop despawns, and the yield puppet is the visible+focusable
+    // reflection. (Verified by reverting the seam wiring: RequestHarvestNearestCrop then returns false.)
+    public class UnifyCropClientHarvest : GameTest
+    {
+        public override string Name => "unify.crop_client_harvest";
+        public override double TimeoutSimSeconds => 40;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        // a world-item is visible + focusable iff it renders AND carries a collider on the item look-hit layer
+        // (bit 7 -- what the player's look-ray focuses). Matches UnifyPassiveLootSingle's check.
+        static bool VisibleFocusable(Node3D n)
+        {
+            if (n == null || !GodotObject.IsInstanceValid(n) || !n.Visible) return false;
+            if (n is CollisionObject3D self && (self.CollisionLayer & WorldItem.ItemHitLayer) != 0) return true;
+            foreach (var ch in n.GetChildren())
+                if (ch is CollisionObject3D co && (co.CollisionLayer & WorldItem.ItemHitLayer) != 0) return true;
+            return false;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // the yield world-item puppet resolves against the real catalog
+
+            var net = new MemNetwork(20260726);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "farmer" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            yield return Ticks(5);
+
+            // plant a GROWN carrot ~1 m from the shell (well inside the 3 m harvest reach). Grown:true -> the
+            // entity's Grown flag short-circuits IsGrown, so the replica renders grown + is harvest-scannable.
+            var cropPos = sess.Shell.GlobalPosition + new Vector3(1.0f, 0f, 0f);
+            var e = ded.Server.Transactions.PlantCrop(330, ToU(cropPos), grown: true);
+            T.Check("server planted a GROWN carrot near the shell", e != null && ded.Server.Crops.Count == 1);
+            if (e == null) yield break;
+
+            // the CropReplicaView materialized it (grown) into a NetId-stamped node in the "crop" group
+            yield return Until(() => sess.Crops.TryGetNode(e.NetIdValue, out var n) && n.Grown, 5);
+            bool have = sess.Crops.TryGetNode(e.NetIdValue, out var cropNode);
+            T.Check("the grown crop replica materialized on the shell's view", have && cropNode.Grown);
+            T.Check($"the replica carries the server NetId ({(have ? cropNode.NetId : 0)}) in the \"crop\" group",
+                    have && cropNode.NetId == e.NetIdValue && cropNode.NetId != 0 && cropNode.IsInGroup("crop"));
+            int itemsBefore = sess.Items.NodeCount;
+            T.Check("no yield world item yet (the harvest hasn't fired)", itemsBefore == 0 && ded.Server.WorldItems.Count == 0);
+
+            // the F-interact seam: scan the "crop" group -> SendHarvestCrop. Public so we drive it without the raycast.
+            bool req = sess.Shell.RequestHarvestNearestCrop();
+            T.Check("RequestHarvestNearestCrop found the grown replica and routed the harvest", req);
+
+            // (a) the server validated + removed the crop, and the replica DESPAWNED off the diff-driven view
+            yield return Until(() => ded.Server.Crops.Count == 0, 5);
+            T.Check("(a) the server removed the crop (harvest validated + CropHarvested broadcast)", ded.Server.Crops.Count == 0);
+            yield return Until(() => !sess.Crops.TryGetNode(e.NetIdValue, out _), 5);
+            T.Check("(a) the crop replica despawned from the shell's view", !sess.Crops.TryGetNode(e.NetIdValue, out _));
+
+            // (b) the yield dropped as a replicated world item, materialized as a visible+focusable puppet
+            yield return Until(() => ded.Server.WorldItems.Count >= 1, 5);
+            uint yieldId = 0;
+            foreach (var wi in ded.Server.WorldItems.All) { yieldId = wi.NetIdValue; break; }
+            T.Check($"(b) the server spawned the harvest yield world item ({yieldId})", yieldId != 0);
+            yield return Until(() => sess.Items.TryGetNode(yieldId, out _), 5);
+            bool haveYield = sess.Items.TryGetNode(yieldId, out var yieldNode);
+            T.Check("(b) the yield world item materialized on the shell's WorldItemReplicaView", haveYield);
+            T.Check("(b) the yield puppet is visible + focusable (the harvest reflection)",
+                    haveYield && VisibleFocusable(yieldNode) && ((WorldItemPuppet)yieldNode).NetId == yieldId);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
 }

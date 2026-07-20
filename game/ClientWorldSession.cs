@@ -44,6 +44,7 @@ namespace UnturnedGodot
         public RemotePlayers Remotes { get; private set; }
         public ZombiePuppets Puppets { get; private set; }        // C5: server zombies as interpolated puppets
         public WorldItemReplicaView Items { get; private set; }   // C5: replicated world items as static visuals
+        public CropReplicaView Crops { get; private set; }        // A4: replicated crops as real CropNodes (the SOLE crop materializer on a joined client -- no client CropManager)
         public DeployableReplicaView Deploys { get; private set; }   // Phase 6/8: replicated deployables/wires as real nodes (L1 tests reach the netId-stamped nodes through this)
         public VehicleReplicaView VehicleView { get; private set; }   // C6: the puppet registry -- ride mode chases these
         public PlayerController Shell { get; private set; }   // null until the first authoritative own-entity sample
@@ -148,6 +149,10 @@ namespace UnturnedGodot
             AddChild(Puppets);
             Items = new WorldItemReplicaView { Client = Client };
             AddChild(Items);
+            // A4: the SOLE crop materializer on a joined client -- the shell has no CropManager (server owns
+            // growth), so this view is the only thing that renders crops. NEVER on MpLoopback (double-render).
+            Crops = new CropReplicaView { Client = Client };
+            AddChild(Crops);
             AddChild(new WorldClockView { Client = Client, DayNight = DayNight });
             _resourceView = new ResourceAliveView { Client = Client, Field = Resources };
             AddChild(_resourceView);
@@ -466,6 +471,10 @@ namespace UnturnedGodot
             shell.NetOpenStorage = netId => Client.SendOpenStorage(netId);
             shell.NetCloseStorage = () => Client.SendCloseStorage();
             shell.NetUpgradeSkill = (spec, index) => Client.SendUpgradeSkill(spec, index);
+            // A4: crops route as intents -- plant sends seed+point, harvest sends the grown replica's NetId;
+            // the CropReplicaView renders the result (materialize / grow / despawn) + the yield rides Items.
+            shell.NetPlantCrop = (seedId, pos) => Client.SendPlantCrop(seedId, ToU(pos));
+            shell.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
             // owner-grid initial pull (Step 4): the join snapshot's owner block landed before this shell
             // existed -- adopt it now; the ReplicaUpdated subscription (in _Ready) carries every echo after
             if (Client.Inventories.TryGet(Client.PlayerId, out var invEntry))

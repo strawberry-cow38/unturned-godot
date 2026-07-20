@@ -148,7 +148,21 @@ namespace UnturnedGodot
                 // plant <crop> [grown]  -- spawn a growing crop at the look point (or already grown, for harvest testing)
                 var pp = arg.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
                 bool grown = pp.Length > 1 && (pp[1].Equals("grown", System.StringComparison.OrdinalIgnoreCase) || pp[1] == "1");
-                if (!CropManager.Active) { Log("no crop manager in this scene"); return; }
+                if (!CropManager.Active)
+                {
+                    // A4 joined client: no CropManager (the server owns growth) -- route the plant over the wire.
+                    // Resolve the crop name -> seed id HERE (CropRegistry is game-side) and send the seed the
+                    // server's schema plants. `grown` is a listen-server/UG_FARMSPEED aid, N/A here -> ignored.
+                    if (RemoteClient != null)
+                    {
+                        if (!CropRegistry.TryByName(pp[0].ToLowerInvariant(), out var cd) || cd.SeedId == 0)
+                        { Log($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
+                        Log(RemoteClient.SendPlantCrop(cd.SeedId, new UnityEngine.Vector3(at.X, at.Y, at.Z))
+                            ? $"-> plant {pp[0]} sent to server" : "not connected");
+                        return;
+                    }
+                    Log("no crop manager in this scene"); return;
+                }
                 var crop = CropManager.Plant(pp[0], at, grown);
                 if (crop == null) { Log($"no crop '{pp[0]}' (try: carrot, corn, wheat, potato, tomato, pumpkin...)"); return; }
                 Log($"planted {pp[0]}{(grown ? " (grown)" : "")} -- UG_FARMSPEED speeds growth; E near a grown crop to harvest");

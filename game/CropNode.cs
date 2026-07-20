@@ -47,6 +47,11 @@ namespace UnturnedGodot
         bool _lastGrown;
         public PlantedCrop Crop;        // the growth-logic instance (Def + PlantedAt); null in the render test
         public string CropName;
+        // A4 (SP/MP-unify): a joined client's CropReplicaView materializes this node from a replicated crop
+        // entity and stamps NetId (the server crop it mirrors) + drives its stage via SetGrown -- so the
+        // harvest scan (RequestHarvestNearestCrop) can pick a GROWN replica with NO local PlantedCrop.Crop.
+        public uint NetId;                             // 0 for a SP direct CropNode (CropManager), the server crop id for a replica
+        public bool Grown => _lastGrown;               // current stage (SetGrown-driven) -- the replica-safe read (Crop may be null)
 
         // The Model_0 dirt base lies FLAT on the ground as-extracted (no rotation), but the Foliage_0/Foliage_1
         // billboards are authored lying down and need standing UP = -90 deg about X (verified by the croptest A/B:

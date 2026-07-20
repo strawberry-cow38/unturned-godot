@@ -1751,6 +1751,11 @@ namespace UnturnedGodot
         public System.Action<uint> NetOpenStorage;                   // crate netId -> Client.SendOpenStorage (StorageOpened + the owner echo carry the grid back)
         public System.Action NetCloseStorage;                        // -> Client.SendCloseStorage (server saves the STORAGE page back into the crate)
         public System.Action<byte, byte> NetUpgradeSkill;            // (speciality,index) -> Client.SendUpgradeSkill
+        // A4 (SP/MP-unify) crop seams -- the NetPickupItem pattern: wired ONLY by ClientWorldSession, null in
+        // SP/loopback so the direct CropManager path below stays byte-identical. Plant routes seed+point;
+        // harvest routes the grown replica's server NetId (the yield drops as a replicated world item).
+        public System.Action<ushort, Vector3> NetPlantCrop;          // (seedId, worldPos) -> Client.SendPlantCrop
+        public System.Action<uint> NetHarvestCrop;                   // grown crop NetId -> Client.SendHarvestCrop
 
         VehiclePuppet NearestPuppet()
         {
@@ -1802,6 +1807,28 @@ namespace UnturnedGodot
             if (NetExitVehicle == null) return false;
             if (_riding == null && !DrivingPredicted) return false;
             NetExitVehicle();
+            return true;
+        }
+
+        /// <summary>A4 MP harvest interact seam (the RequestPickupPuppet pattern): F near a GROWN replicated
+        /// crop (~3 m, the SP CropManager.NearestGrown reach) asks the server to harvest it. Scans the "crop"
+        /// group for the nearest grown NetId!=0 -- the CropReplicaView stamps both, so a SP direct CropNode
+        /// (NetId 0, growth via PlantedCrop) is never matched here and a joined client (no CropManager) has
+        /// only replicas. A REQUEST only, no local mutation: the crop despawns + the yield world item appear
+        /// when the server's CropHarvested + WorldItem facts come back. Public so the L1 tests drive it
+        /// without the F raycast. False when not an MP shell or nothing grown is near -> F falls through.</summary>
+        public bool RequestHarvestNearestCrop(float reach = 3.0f)
+        {
+            if (NetHarvestCrop == null) return false;   // not an MP shell -> no replicated crops (SP fast-out)
+            CropNode best = null; float bestD = reach * reach;
+            foreach (var n in GetTree().GetNodesInGroup("crop"))
+                if (n is CropNode c && IsInstanceValid(c) && c.Grown && c.NetId != 0)
+                {
+                    float d = GlobalPosition.DistanceSquaredTo(c.GlobalPosition);
+                    if (d < bestD) { bestD = d; best = c; }
+                }
+            if (best == null) return false;
+            NetHarvestCrop(best.NetId);
             return true;
         }
 
@@ -2513,6 +2540,7 @@ namespace UnturnedGodot
                     // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
                     _fHeldDeploy = _focusDeployable; _deployPickupTimer = 0f;
                 }
+                else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (_focusShelf != null && IsInstanceValid(_focusShelf) && OpenCrate(_focusShelf)) { }   // looking at a shelf/container -> open it (look-based, not proximity)
                 else if (OpenNearestCrate()) { }                           // open a nearby storage crate
