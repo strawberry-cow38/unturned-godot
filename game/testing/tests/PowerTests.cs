@@ -387,6 +387,50 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Ramp AUTO-RESOLVE (master 2026-07-20: "turn genny off, pump STILL reads powered"). The rest of this suite runs
+    // under InstantRampForTests + manual Recompute, so it never exercises the gradual spin-up/cooldown against the
+    // auto-ticking PowerManager -- which is exactly where the bug lived. The power net only recomputes on MarkDirty,
+    // and a generator toggle marks dirty ONCE (at the toggle instant, before _powerLevel has moved). With the real
+    // 1.3s/1.1s ramp, that lone solve runs while the gen is still at full _powerLevel on a toggle-OFF, so a wired
+    // consumer froze POWERED through the whole cooldown. The fix re-solves each frame the output ramps (Deployable
+    // _Process), mirroring the battery/wind re-solve. This drives the REAL ramp + the lazily-spawned PowerManager with
+    // NO manual Recompute -- the game's own path. Identical for a replica gen under --spconsume (same _Process ramp),
+    // which is the case master hit. Toggles InstantRampForTests off for this one test and restores it after.
+    public class PowerGenRampReSolves : GameTest
+    {
+        public override string Name => "power.gen_ramp_resolves";
+        public override double TimeoutSimSeconds => 30;
+        public override IEnumerable<Step> Run()
+        {
+            Deployable.InstantRampForTests = false;   // exercise the REAL ramp (the suite default is instant)
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);   // lazily spawns the PowerManager that auto-ticks the net
+            var pump = GasPump.Attach(World, new Vector3(3f, 0f, 0f), Basis.Identity, GasPump.PortLocal);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            yield return Ticks(1);
+            PowerRig.Connect(World, genOut, pump.PowerPorts[0]);   // gen OUT -> pump IN
+            PowerNet.MarkDirty();
+
+            // toggle ON with the real ramp: the pump must auto-power as the gen spins past the producing threshold,
+            // with NO manual Recompute -- only the auto-ticking PowerManager + the per-frame ramp re-solve drive it.
+            gen.TogglePower();
+            yield return Until(() => pump.IsPowered, 10);
+            T.Check("real ramp ON: pump auto-powers as the gen spins up (PowerManager + ramp re-solve, no manual solve)", pump.IsPowered);
+
+            // let the warmup fully settle so the gen can be toggled again (CanTogglePower gates on PowerSettled)
+            yield return Until(() => gen.CanTogglePower, 10);
+            T.Check("gen settled after warmup (toggle buffer released)", gen.CanTogglePower);
+
+            // THE BUG + fix: toggle OFF. Pre-fix the lone toggle-instant solve left the pump powered through the whole
+            // 1.1s cooldown (gen still at full _powerLevel when it ran) -> master's "gen off, STILL reads powered".
+            // The ramp re-solve un-powers it as _powerLevel winds past the threshold.
+            gen.TogglePower();
+            yield return Until(() => !pump.IsPowered, 10);
+            T.Check("real ramp OFF: pump auto-UNPOWERS as the gen winds down (master's 'gen off, still powered' fix)", !pump.IsPowered);
+
+            Deployable.InstantRampForTests = true;   // restore the suite default for the remaining tests
+        }
+    }
+
     // Grid power source (SP grid-power feature): a Circuit_0 breaker box is a GridPowerSource -- a 10kW OUTPUT that
     // produces while the global mains flag (PowerNet.GlobalPower) is ON. Wire it to a spotlight consumer and prove the
     // FLAG is the gate: OFF -> unpowered; toggleGlobalPower -> ON -> powered (consumer receives the 10kW export, draws

@@ -497,6 +497,16 @@ namespace UnturnedGodot
             if (InstantRampForTests) _powerLevel = pTarget;   // L1: no ramp -> instant settle for power-flow tests
             else if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
+            // RE-SOLVE THE NET WHILE THE OUTPUT RAMPS: a fuel generator's whole output CAP scales with _powerLevel
+            // (PowerScale), so a wired consumer must be re-evaluated each frame the level moves. The power net only
+            // recomputes on MarkDirty (PowerNet.RecomputeIfDirty), and the toggle fires just ONE mark -- solved at the
+            // toggle instant, when _powerLevel hasn't moved yet. So a gen toggled OFF is still at full _powerLevel when
+            // that lone solve runs and stays "producing" through the entire 1.1s cooldown -> consumers freeze POWERED
+            // (master: "turn genny off, pump STILL reads powered"; same for the spotlight lamp, it just reads less
+            // obviously). The battery (energy-crossing @488) + wind turbine (wind-move @495) already re-solve on their
+            // output change; the fuel generator's entire output IS this ramp, so mark dirty until it settles. Cheap --
+            // only fires the ~1s a gen is actively spinning up/down, never at steady state (PowerSettled) or idle.
+            if (Def != null && Def.Fuel > 0f && !Def.IsBattery && !PowerSettled) PowerNet.MarkDirty();
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)
             if (_engineAudio != null)
             {
