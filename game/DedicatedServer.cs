@@ -158,6 +158,7 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));
             // vehicle nodes -> VehicleReplication publish + remote DriveInput onto Vehicle.Drive (§3.6, Phase 7)
             VehicleSync = new VehicleNetSync(Server, this);
+            VehicleSync.RegisterCommands();   // B11: tow tie/untie handlers on _server.Commands (game-side -- they mutate real Vehicle nodes)
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => VehicleSync.Tick(), "net.vehicles.sync"));
             // Phase 8 world state (§3.7): tick-derived day-night, crops, the resource alive-bitmap
             ClockSync = new WorldClockNetSync(Server, DayNight, driveFromTick: true);

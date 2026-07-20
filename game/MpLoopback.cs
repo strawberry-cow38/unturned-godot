@@ -256,6 +256,7 @@ namespace UnturnedGodot
             // AFTER net.server.sim), so a same-tick remote Enter validated against a stale DriverPlayerId==0 and
             // double-seated the host (the 1-tick race). The publish/drive/hold half stays POST-sim (net.vehicles.sync).
             VehicleSync = new VehicleNetSync(Server, this) { LocalPlayer = Player, LocalPlayerId = () => Client.PlayerId };
+            VehicleSync.RegisterCommands();   // B11: a joined client's tow tie/untie intents apply on the listen-server host's real nodes
             Driver.Sim.Add(new DelegateSimStep((t, dt) => VehicleSync.ReconcileLocalOccupancy(), "net.vehicles.occupancy"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickSimulation(), "net.server.sim"));
             // Phase 5: the world's real zombie brains publish into ZombieReplication at 12.5 Hz (§3.5) --

@@ -601,6 +601,42 @@ namespace UnturnedGodot.Net
         public static bool TryRead(NetPakReader r, out ExitVehicleCommand cmd) { cmd = default; return true; }
     }
 
+    /// <summary>B11: tie a tow rope between two vehicles -- the tower's REAR node hooks the towed's FRONT node.
+    /// {uint TowerNetId, uint TowedNetId}. The server RESOLVES both NetIds to real Vehicle nodes and, at the
+    /// game-side choke point (VehicleNetSync.OnAttachTow), validates existence + not-remote-driven +
+    /// not-already-roped + reach before calling towerNode.AttachTow(towedNode). No rest length rides -- AttachTow
+    /// computes it from the LIVE gap; the committed relationship echoes back through A6's replicated TowedNetId/
+    /// TowRestLen (the CompleteWire discipline -- the client never mutates tow state locally).</summary>
+    public struct AttachTowCommand
+    {
+        public uint TowerNetId;
+        public uint TowedNetId;
+        public void Write(NetPakWriter w) { w.WriteUInt32(TowerNetId); w.WriteUInt32(TowedNetId); }
+        public static bool TryRead(NetPakReader r, out AttachTowCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint tower)) return false;
+            if (!r.ReadUInt32(out uint towed)) return false;   // fail-closed: a short read leaves cmd=default and returns false (no partial apply)
+            cmd = new AttachTowCommand { TowerNetId = tower, TowedNetId = towed };
+            return true;
+        }
+    }
+
+    /// <summary>B11: untie a vehicle's tow rope. {uint NetId} of EITHER end -- the handler resolves to the tower
+    /// exactly like Vehicle.DetachTow. The cleared relationship echoes back through A6's TowedNetId->0.</summary>
+    public struct DetachTowCommand
+    {
+        public uint NetId;
+        public void Write(NetPakWriter w) => w.WriteUInt32(NetId);
+        public static bool TryRead(NetPakReader r, out DetachTowCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;   // fail-closed on a short read
+            cmd = new DetachTowCommand { NetId = id };
+            return true;
+        }
+    }
+
     public struct VehicleEnteredEvent
     {
         public uint NetId;

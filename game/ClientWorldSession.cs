@@ -472,6 +472,11 @@ namespace UnturnedGodot
             shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
             shell.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
             shell.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica gas pump -> server drains the shared station tank into the held can
+            // B11: rope tie/untie route over the wire -- the joined client scans PUPPETS + sends NetIds; the
+            // server validates + attaches the real host nodes; the committed rope renders when A6's TowedNetId
+            // echoes back. Left NULL in SP/MpLoopback so the host keeps the DIRECT AttachTow (no double-attach).
+            shell.NetAttachTow = (towerId, towedId) => Client.SendAttachTow(towerId, towedId);
+            shell.NetDetachTow = netId => Client.SendDetachTow(netId);
             shell.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
             shell.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
             shell.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);

@@ -223,6 +223,160 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // B11 (SP/MP-unify): a JOINED CLIENT ties a rope over the wire. A bare observer client's SendAttachTow ties
+    // two HOST vehicles -> tower.Towing==towed on the real server node + the relationship replicates back
+    // (observer replica's TowedNetId) + the client view draws exactly ONE puppet rope; SendDetachTow clears all
+    // three. And the game-side choke point REJECTS: an out-of-reach requester, an already-roped end, and a
+    // remote-driven (client-auth/held) end. Teeth: pre-fix there is NO SendAttachTow / no game-side handler, so
+    // the tie never applies (tower.Towing stays null, no replicated TowedNetId, RopeCount stays 0); and with the
+    // reach / remote-driven / already-roped guards removed, the reject phases would wrongly tie.
+    public class RopeTowRemoteTie : GameTest
+    {
+        public override string Name => "vehicle.rope_tow_remote_tie";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(76211);
+            var observer = new NetWorldClient(new MemClientTransport(net), "tier", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); observer.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);   // BEFORE the DedicatedServer -> server sim + vehicle sync + replicate stay LAST (§2.5)
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);
+            var view = new VehicleReplicaView { Client = observer };
+            World.AddChild(view);
+            observer.Connect();
+
+            var tower = Vehicle.BuildByName("jeep"); World.AddChild(tower); tower.GlobalPosition = new Vector3(0f, 1.2f, 0f);
+            var towed = Vehicle.BuildByName("jeep"); World.AddChild(towed); towed.GlobalPosition = new Vector3(0f, 1.2f, 7f);
+            var far   = Vehicle.BuildByName("jeep"); World.AddChild(far);   far.GlobalPosition   = new Vector3(0f, 1.2f, 60f);   // out of reach
+
+            yield return Until(() => observer.State == NetSessionState.Connected, 5);
+            T.Check("observer joined", observer.State == NetSessionState.Connected);
+            yield return Until(() => observer.Vehicles.Count == 3, 5);
+            T.Check("all three jeep nodes replicated", observer.Vehicles.Count == 3);
+            yield return Ticks(50);   // settle onto the fallback ground
+
+            bool haveIds = ded.VehicleSync.TryGetNetId(tower, out uint towerId)
+                         & ded.VehicleSync.TryGetNetId(towed, out uint towedId)
+                         & ded.VehicleSync.TryGetNetId(far, out uint farId);
+            T.Check("resolved host NetIds for all three jeeps", haveIds && towerId != 0 && towedId != 0 && farId != 0);
+
+            bool hasPlayer = ded.Server.Players.TryGetByOwner(observer.PlayerId, out _);
+            T.Check("server owns the observer's player entity (reach source)", hasPlayer);
+            // stand the requester between the near pair (~3.5 m from each), far from the z=60 jeep
+            ded.Server.Players.ServerTeleport(observer.PlayerId, new UnityEngine.Vector3(0f, 1f, 3.5f), ded.Server.Session.CurrentTick);
+            yield return Ticks(4);
+
+            // ---- reject 1: OUT OF REACH (tie the near tower to the z=60 jeep -> choke point drops it) ----
+            observer.SendAttachTow(towerId, farId);
+            yield return Ticks(20);
+            T.Check("out-of-reach tie REJECTED (tower not towing the far jeep)", tower.Towing == null);
+
+            // ---- reject 2: REMOTE-DRIVEN end (a client-auth/held vehicle can't be a rope end) ----
+            ded.Server.Vehicles.ServerSetDriver(new NetId(towedId), (ushort)9999, ded.Server.Session.CurrentTick);
+            yield return Ticks(6);
+            observer.SendAttachTow(towerId, towedId);
+            yield return Ticks(20);
+            T.Check("remote-driven-end tie REJECTED (tower not towing a driven car)", tower.Towing == null);
+            ded.Server.Vehicles.ServerSetDriver(new NetId(towedId), 0, ded.Server.Session.CurrentTick);   // free the seat again
+            yield return Ticks(30);   // let the freed jeep un-ghost + park + settle
+
+            // ---- success: the same tie now lands on the real host nodes + replicates + draws one puppet rope ----
+            observer.SendAttachTow(towerId, towedId);
+            yield return Until(() => tower.Towing == towed, 5);
+            T.Check("client tie applied: tower.Towing == towed on the real host node", tower.Towing == towed);
+            yield return Until(() => observer.Vehicles.TryGet(towerId, out var e) && e.TowedNetId == towedId, 5);
+            bool repl = observer.Vehicles.TryGet(towerId, out var towerE) && towerE.TowedNetId == towedId;
+            T.Check("the relationship replicated back to the observer (TowedNetId == towed)", repl);
+            yield return Until(() => view.RopeCount == 1, 5);
+            T.Check($"the client view drew exactly one puppet rope ({view.RopeCount})", view.RopeCount == 1);
+
+            // ---- reject 3: ALREADY ROPED (retie the same pair -> both ends already tied) ----
+            observer.SendAttachTow(towedId, towerId);
+            yield return Ticks(20);
+            T.Check("already-roped retie REJECTED (tower still tows the ORIGINAL towed, towed tows no one)",
+                    tower.Towing == towed && towed.Towing == null);
+            T.Check("still exactly one rope after the rejected retie", view.RopeCount == 1);
+
+            // ---- detach over the wire: clears the node ref, the replicated field, and the puppet rope ----
+            observer.SendDetachTow(towerId);
+            yield return Until(() => tower.Towing == null
+                                  && observer.Vehicles.TryGet(towerId, out var e) && e.TowedNetId == 0
+                                  && view.RopeCount == 0, 5);
+            T.Check("detach cleared the real node ref (tower.Towing == null)", tower.Towing == null);
+            bool cleared = observer.Vehicles.TryGet(towerId, out var afterE) && afterE.TowedNetId == 0;
+            T.Check("detach cleared the replicated TowedNetId", cleared);
+            T.Check($"detach retired the puppet rope ({view.RopeCount})", view.RopeCount == 0);
+
+            world.Sim.Sim.Remove(pump);
+            observer.Disconnect();
+        }
+    }
+
+    // B11: the rope-tool SCAN retargets to PUPPETS on a joined client. A real ClientWorldSession shell (its
+    // NetAttachTow seam wired at join, its real cars RemoveFromGroup'd) aims at a replicated jeep's puppet tow
+    // node and PickTowNode finds it in the "vehicle_puppets" group carrying the puppet's NetId. Teeth: pre-fix
+    // (and if TowScanGroup is reverted to always scan "vehicles") the scan iterates the EMPTY client "vehicles"
+    // group and finds nothing -> PickTowNode returns null, so a joiner could never pick a car to rope.
+    public class RopeTowScanFindsPuppets : GameTest
+    {
+        public override string Name => "vehicle.rope_tow_scan_finds_puppets";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var net = new MemNetwork(76221);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "roper" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned (joined client)", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            T.Check("the shell's NetAttachTow seam is wired (a joined client, not the SP host)", sess.Shell.NetAttachTow != null);
+
+            // a real server jeep -> the client's VehicleReplicaView builds a puppet in "vehicle_puppets"
+            var jeep = Vehicle.BuildByName("jeep"); World.AddChild(jeep); jeep.GlobalPosition = new Vector3(0f, 1.2f, 0f);
+            yield return Until(() => sess.VehicleView != null && sess.VehicleView.PuppetCount == 1, 5);
+            T.Check("the server jeep replicated as a client puppet", sess.VehicleView.PuppetCount == 1);
+            yield return Ticks(30);   // let the puppet glide onto the replicated transform
+
+            bool haveId = ded.VehicleSync.TryGetNetId(jeep, out uint jeepId);
+            T.Check("resolved the jeep's host NetId", haveId && jeepId != 0);
+            bool havePup = sess.VehicleView.TryGetPuppet(jeepId, out var pup);
+            T.Check("the puppet carries the jeep's NetId", havePup && pup != null);
+            if (!havePup) yield break;
+
+            // aim a synthetic look ray straight at the puppet's REAR tow node from 2 m out (well within RopeReach)
+            Vector3 target = pup.RearTowWorld;
+            Vector3 from = target + new Vector3(2f, 0f, 0f);
+            Vector3 fwd = (target - from).Normalized();
+            var picked = sess.Shell.PickTowNode(from, fwd, out bool rear);
+            T.Check("the scan found the puppet's tow node (iterating vehicle_puppets, not the empty client vehicles group)", picked != null);
+            T.Check("the pick is the aimed puppet", ReferenceEquals(picked, pup));
+            T.Check("the picked node is the REAR (tower) end", rear);
+            T.Check("the picked node carries the puppet's wire NetId", picked != null && picked.TowNetId == jeepId);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
     // Overstretch snaps the rope: yank the towed car past the break length and the tow auto-detaches next tick.
     public class RopeTowBreaks : GameTest
     {

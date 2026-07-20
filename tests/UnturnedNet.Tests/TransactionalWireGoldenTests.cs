@@ -51,6 +51,20 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void AttachTowCommand_GoldenBytes()
+        {
+            var cmd = new AttachTowCommand { TowerNetId = 7, TowedNetId = 42 };   // B11: {uint TowerNetId, uint TowedNetId}; id 30 (0x1E) + 7 (LE) + 42 (LE)
+            Assert.That(Pack(ReplicationIds.CommandAttachTow, cmd.Write), Is.EqualTo("1E070000002A000000"));
+        }
+
+        [Test]
+        public void DetachTowCommand_GoldenBytes()
+        {
+            var cmd = new DetachTowCommand { NetId = 42 };   // B11: {uint NetId} (either end), same shape as Pickup/Extract; id 31 (0x1F) + 42 (LE uint32)
+            Assert.That(Pack(ReplicationIds.CommandDetachTow, cmd.Write), Is.EqualTo("1F2A000000"));
+        }
+
+        [Test]
         public void ConnectWireCommand_GoldenBytes()
         {
             var cmd = new ConnectWireCommand { SrcId = 7, SrcPort = 0, DstId = 9, DstPort = 1 };

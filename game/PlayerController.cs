@@ -414,15 +414,21 @@ namespace UnturnedGodot
         const float RopeReach = 6f;          // how far you can aim at a tow node
         const float RopePickRadius = 0.7f;   // aim within this of a node (perpendicular) to select it
         bool _roping;                        // mid-tie: a rear source node is picked, waiting for a front dest
-        Vehicle _ropeSrc;                    // the tower whose rear node we started from
+        ITowNode _ropeSrc;                   // the tower whose rear node we started from (a Vehicle in SP, a VehiclePuppet on a joined client)
         TowRope _ropePreview;                // the live rope being tied (follows the aim)
-        Vehicle _ropeLookVeh; bool _ropeLookRear;   // the tow node currently aimed at (null = none)
+        ITowNode _ropeLookVeh; bool _ropeLookRear;   // the tow node currently aimed at (null = none)
         bool _ropeNubsOn;                    // are all vehicles' tow nubs currently shown (rope tool out)?
+
+        // B11: which group the rope tool scans. A JOINED client (NetAttachTow wired) scans VehiclePuppet nodes
+        // -- its real cars are RemoveFromGroup("vehicles")'d, so the pre-fix "vehicles"-only scan found NOTHING
+        // and a joiner couldn't tie. The SP/loopback host (seam null) keeps scanning real "vehicles" + attaches
+        // directly. Both node kinds are ITowNode, so the pick/highlight/preview code is one path either way.
+        string TowScanGroup() => NetAttachTow != null ? "vehicle_puppets" : "vehicles";
 
         void SetAllTowNubs(bool on)
         {
-            foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                if (n is Vehicle v && IsInstanceValid(v)) v.SetTowNodesVisible(on);
+            foreach (var n in GetTree().GetNodesInGroup(TowScanGroup()))
+                if (n is ITowNode v && IsInstanceValid(n)) v.SetTowNodesVisible(on);
             _ropeNubsOn = on;
         }
 
@@ -433,40 +439,51 @@ namespace UnturnedGodot
             {
                 if (_ropeNubsOn) SetAllTowNubs(false);
                 if (_roping) CancelRope();
-                if (_ropeLookVeh != null) { if (IsInstanceValid(_ropeLookVeh)) _ropeLookVeh.SetTowNubHighlighted(_ropeLookRear, false); _ropeLookVeh = null; }
+                if (_ropeLookVeh != null) { if (TowValid(_ropeLookVeh)) _ropeLookVeh.SetTowNubHighlighted(_ropeLookRear, false); _ropeLookVeh = null; }
                 return;
             }
             if (!_ropeNubsOn) SetAllTowNubs(true);
 
-            Vehicle bestVeh = null; bool bestRear = false; float bestPerp = RopePickRadius;
+            ITowNode bestVeh = null; bool bestRear = false;
             if (_cam != null && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured)
+                bestVeh = PickTowNode(_cam.GlobalPosition, -_cam.GlobalTransform.Basis.Z, out bestRear);
+
+            if (!ReferenceEquals(bestVeh, _ropeLookVeh) || bestRear != _ropeLookRear)
             {
-                Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
-                foreach (var n in GetTree().GetNodesInGroup("vehicles"))
-                {
-                    if (n is not Vehicle v || !IsInstanceValid(v) || v.Exploded) continue;
-                    ConsiderTowNode(v, true,  v.RearTowWorld,  from, fwd, ref bestVeh, ref bestRear, ref bestPerp);
-                    ConsiderTowNode(v, false, v.FrontTowWorld, from, fwd, ref bestVeh, ref bestRear, ref bestPerp);
-                }
-            }
-            if (bestVeh != _ropeLookVeh || bestRear != _ropeLookRear)
-            {
-                if (_ropeLookVeh != null && IsInstanceValid(_ropeLookVeh)) _ropeLookVeh.SetTowNubHighlighted(_ropeLookRear, false);
+                if (_ropeLookVeh != null && TowValid(_ropeLookVeh)) _ropeLookVeh.SetTowNubHighlighted(_ropeLookRear, false);
                 _ropeLookVeh = bestVeh; _ropeLookRear = bestRear;
                 _ropeLookVeh?.SetTowNubHighlighted(_ropeLookRear, true);
             }
 
             if (_roping)
             {
-                if (!IsInstanceValid(_ropeSrc)) { CancelRope(); return; }
-                bool onDest = _ropeLookVeh != null && !_ropeLookRear && _ropeLookVeh != _ropeSrc;
+                if (!TowValid(_ropeSrc)) { CancelRope(); return; }
+                bool onDest = _ropeLookVeh != null && !_ropeLookRear && !ReferenceEquals(_ropeLookVeh, _ropeSrc);
                 Vector3 a = _ropeSrc.RearTowWorld;
                 Vector3 b = onDest ? _ropeLookVeh.FrontTowWorld : (_cam.GlobalPosition + (-_cam.GlobalTransform.Basis.Z) * RopeReach);
                 _ropePreview?.SetEndpoints(a, b, Vehicle.TowRestMin, valid: onDest);
             }
         }
 
-        void ConsiderTowNode(Vehicle v, bool rear, Vector3 p, Vector3 from, Vector3 fwd, ref Vehicle bestVeh, ref bool bestRear, ref float bestPerp)
+        static bool TowValid(ITowNode t) => t is GodotObject go && GodotObject.IsInstanceValid(go);
+
+        // B11: the best tow node under the aim ray, from the ACTIVE tow group (VehiclePuppets on a joined client,
+        // real Vehicles on the SP/loopback host). Analytic pick (aim ray vs the two world tow points), no
+        // colliders. Public so the L1 scan test can drive it with a synthetic aim (no camera needed).
+        public ITowNode PickTowNode(Vector3 from, Vector3 fwd, out bool rear)
+        {
+            rear = false;
+            ITowNode best = null; float bestPerp = RopePickRadius;
+            foreach (var n in GetTree().GetNodesInGroup(TowScanGroup()))
+            {
+                if (n is not ITowNode v || !IsInstanceValid(n) || !v.TowScannable) continue;
+                ConsiderTowNode(v, true,  v.RearTowWorld,  from, fwd, ref best, ref rear, ref bestPerp);
+                ConsiderTowNode(v, false, v.FrontTowWorld, from, fwd, ref best, ref rear, ref bestPerp);
+            }
+            return best;
+        }
+
+        void ConsiderTowNode(ITowNode v, bool rear, Vector3 p, Vector3 from, Vector3 fwd, ref ITowNode bestVeh, ref bool bestRear, ref float bestPerp)
         {
             float t = (p - from).Dot(fwd);
             if (t < 0f || t > RopeReach) return;   // behind the camera or out of reach
@@ -480,18 +497,23 @@ namespace UnturnedGodot
             if (_dead) return;
             if (!_roping)
             {
-                if (_ropeLookVeh != null && _ropeLookRear && _ropeLookVeh.Towing == null && _ropeLookVeh.TowedBy == null)
+                if (_ropeLookVeh != null && _ropeLookRear && !_ropeLookVeh.TowRoped)
                 {
                     _roping = true; _ropeSrc = _ropeLookVeh;
                     _ropePreview = new TowRope(); GetParent().AddChild(_ropePreview);
-                    GD.Print($"[rope] tow started from {_ropeSrc.DisplayName} (rear)");
+                    GD.Print("[rope] tow started (rear)");
                 }
                 return;
             }
-            if (!IsInstanceValid(_ropeSrc)) { CancelRope(); return; }   // source car despawned mid-tie -> drop the pending rope
-            if (_ropeLookVeh != null && !_ropeLookRear && _ropeLookVeh != _ropeSrc)
+            if (!TowValid(_ropeSrc)) { CancelRope(); return; }   // source car despawned mid-tie -> drop the pending rope
+            if (_ropeLookVeh != null && !_ropeLookRear && !ReferenceEquals(_ropeLookVeh, _ropeSrc))
             {
-                if (_ropeSrc.AttachTow(_ropeLookVeh)) GD.Print($"[rope] towing {_ropeLookVeh.DisplayName}");
+                // B11: a joined client (NetAttachTow wired) sends the tie as an INTENT by NetId -- the server
+                // validates + attaches the REAL nodes, and the committed rope renders only when A6's replicated
+                // TowedNetId echoes back (never mutate tow state client-side). The SP/loopback host attaches
+                // its own real Vehicle nodes directly (the seam is null, so no double-attach).
+                if (NetAttachTow != null) NetAttachTow(_ropeSrc.TowNetId, _ropeLookVeh.TowNetId);
+                else if (_ropeSrc is Vehicle towerV && _ropeLookVeh is Vehicle towedV && towerV.AttachTow(towedV)) GD.Print("[rope] towing");
                 CancelRope();
             }
         }
@@ -500,7 +522,11 @@ namespace UnturnedGodot
         void RopeRmb()
         {
             if (_roping) { CancelRope(); return; }
-            if (_ropeLookVeh != null && (_ropeLookVeh.Towing != null || _ropeLookVeh.TowedBy != null)) _ropeLookVeh.DetachTow();
+            if (_ropeLookVeh == null) return;
+            // B11: a joined client sends the untie INTENT by NetId (the server drops the rope on either end,
+            // no-ops if there's none); the SP/loopback host unties its real node directly.
+            if (NetDetachTow != null) NetDetachTow(_ropeLookVeh.TowNetId);
+            else if (_ropeLookVeh.TowRoped && _ropeLookVeh is Vehicle rv) rv.DetachTow();
         }
 
         void CancelRope()
@@ -1785,6 +1811,8 @@ namespace UnturnedGodot
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
         public System.Action<uint> NetPickupDeployable;              // B2: -> Client.SendPickupDeployable (the removal + owner-inventory echo return the item; the replica view retires the node)
         public System.Action<uint> NetExtractFuel;                   // A2: pumpNetId -> Client.SendExtractFuel (server drains the shared station tank into the held can; owner echo re-adopts the fuller can)
+        public System.Action<uint, uint> NetAttachTow;               // B11: (towerNetId, towedNetId) -> Client.SendAttachTow; the committed rope echoes back via A6's replicated TowedNetId (never mutated client-side)
+        public System.Action<uint> NetDetachTow;                     // B11: netId (either end) -> Client.SendDetachTow; the cleared relationship echoes back via A6's TowedNetId->0
         public System.Action<uint, byte, uint, byte> NetConnectWire; // (srcId,srcPort, dstId,dstPort) -> Client.SendConnectWire
         public System.Action<uint> NetRemoveWire;                    // wireId -> Client.SendRemoveWire
         public System.Action<uint, bool> NetToggleDeployable;        // (netId,on) -> Client.SendToggleDeployable (NetSetPowered lands the echo)

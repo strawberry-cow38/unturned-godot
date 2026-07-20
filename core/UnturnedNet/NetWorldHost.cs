@@ -719,6 +719,12 @@ namespace UnturnedGodot.Net
         public bool SendExtractFuel(uint pumpNetId)   // A2: RMB a powered pump with a gas can -> server drains the shared station tank into the can (owner echo re-adopts the fuller can)
             => SendCommand(ReplicationIds.CommandExtractFuel, new ExtractFuelCommand { PumpNetId = pumpNetId }.Write);
 
+        public bool SendAttachTow(uint towerNetId, uint towedNetId)   // B11: tie a rope between two replicated vehicles (tower rear -> towed front); the committed rope echoes back via A6's TowedNetId (never mutated client-side)
+            => SendCommand(ReplicationIds.CommandAttachTow, new AttachTowCommand { TowerNetId = towerNetId, TowedNetId = towedNetId }.Write);
+
+        public bool SendDetachTow(uint netId)   // B11: untie a roped vehicle (either end); the cleared relationship echoes back via A6's TowedNetId->0
+            => SendCommand(ReplicationIds.CommandDetachTow, new DetachTowCommand { NetId = netId }.Write);
+
         public bool SendConnectWire(uint srcId, byte srcPort, uint dstId, byte dstPort)
             => SendCommand(ReplicationIds.CommandConnectWire, new ConnectWireCommand { SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort }.Write);
 

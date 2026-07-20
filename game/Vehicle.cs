@@ -5,7 +5,7 @@ namespace UnturnedGodot
 {
     // Drivable vehicle. Source: InteractableVehicle + VehicleAsset (WheelCollider rig -> Godot VehicleBody3D +
     // VehicleWheel3D 1:1). Meshes ripped by tools/extract_vehicle_mesh.py; params + real _PaintColor from the .dat.
-    public partial class Vehicle : VehicleBody3D
+    public partial class Vehicle : VehicleBody3D, ITowNode
     {
         float _engineForce = 600f;                  // acceleration feel (calibrated: Unity WheelCollider torque doesn't map 1:1)
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
@@ -1441,6 +1441,11 @@ namespace UnturnedGodot
             return new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * 0.16f }, MaterialOverride = m, Position = pos, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
         }
         public void SetTowNodesVisible(bool on) { if (_towFrontNub != null) _towFrontNub.Visible = on; if (_towRearNub != null) _towRearNub.Visible = on; }
+        // B11 ITowNode: a real Vehicle is the SP/loopback-host tie target -> NetId 0 (the host attaches directly,
+        // no wire). Roped = either end already tied; Scannable = not a wreck (mirrors the UpdateRopeLook skip).
+        public uint TowNetId => 0;
+        public bool TowRoped => Towing != null || TowedBy != null;
+        public bool TowScannable => !Exploded;
         public void SetTowNubHighlighted(bool rear, bool on)   // brighten the looked-at node while roping
         {
             var nub = rear ? _towRearNub : _towFrontNub;

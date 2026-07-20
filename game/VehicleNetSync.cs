@@ -44,12 +44,77 @@ namespace UnturnedGodot
             node = _byId.TryGetValue(netId, out var t) ? t.Node : null;
             return node != null && GodotObject.IsInstanceValid(node);
         }
+        // The reverse of TryGetNode: a real node -> its minted entity NetId (0 = untracked). Used by the B11
+        // tow choke point's neighbours and the L1 tie tests to address a specific host vehicle over the wire.
+        public bool TryGetNetId(Vehicle node, out uint netId)
+        {
+            if (node != null && _tracked.TryGetValue(node, out var t)) { netId = t.NetId; return true; }
+            netId = 0; return false;
+        }
 
         public VehicleNetSync(NetWorldServer server, Node host)
         {
             _server = server;
             _host = host;
         }
+
+        /// <summary>B11 server-side reach: the requester must be near BOTH vehicles being roped. The client aims
+        /// within RopeReach (6 m, PlayerController) of a tow NODE, and a tow node can sit up to ~2.5 m out from
+        /// the vehicle CENTER; the server bounds player&lt;-&gt;center generously (like ServerVehicles.EnterReach 6 m
+        /// + that node offset), so a legit tie never false-rejects while a cross-map cheat still does.</summary>
+        public const float RopeReach = 9f;
+
+        /// <summary>B11: register the tow tie/untie commands on the SERVER command registry. GAME-side (not core
+        /// ServerVehicles) because the apply mutates real Vehicle NODES (AttachTow/DetachTow). Dispatched inside
+        /// Server.TickSimulation (net.server.sim), which runs BEFORE net.vehicles.sync -> the tie applied this
+        /// tick is published by A6's ServerPublishTow the SAME tick and replicated LAST (§2.5). DedicatedServer +
+        /// the consuming MpLoopback host both call this at setup; the pure-SP shell never does (no server peers).</summary>
+        public void RegisterCommands()
+        {
+            _server.Commands.Register<AttachTowCommand>(ReplicationIds.CommandAttachTow, AttachTowCommand.TryRead,
+                (sender, cmd) => OnAttachTow(sender, cmd),
+                validate: (sender, cmd) => cmd.TowerNetId != 0 && cmd.TowedNetId != 0 && cmd.TowerNetId != cmd.TowedNetId);
+            _server.Commands.Register<DetachTowCommand>(ReplicationIds.CommandDetachTow, DetachTowCommand.TryRead,
+                (sender, cmd) => OnDetachTow(sender, cmd),
+                validate: (sender, cmd) => cmd.NetId != 0);
+        }
+
+        // B11: the tie choke point + anti-cheat gate. Resolve both NetIds to real nodes, then validate: both
+        // exist + in-tree, NEITHER remote-driven (a held/client-auth vehicle can't be a rope end), neither
+        // already roped, and the requester is within reach of both. AttachTow does the FINAL physics gate
+        // (same-car / wrecked / tow-point gap <= TowAttachReach) and computes restLen from the live gap, so the
+        // command carries no length. A6's ServerPublishTow (net.vehicles.sync, this tick) mirrors the result back.
+        void OnAttachTow(ushort sender, AttachTowCommand cmd)
+        {
+            if (!TryGetNode(cmd.TowerNetId, out var towerNode) || !TryGetNode(cmd.TowedNetId, out var towedNode)) return;
+            if (!towerNode.IsInsideTree() || !towedNode.IsInsideTree()) return;
+            if (IsRemoteDriven(cmd.TowerNetId) || IsRemoteDriven(cmd.TowedNetId)) return;
+            if (towerNode.TowRoped || towedNode.TowRoped) return;   // neither already a rope end (AttachTow re-checks; fail-closed here too)
+            if (!WithinReach(sender, towerNode) || !WithinReach(sender, towedNode)) return;
+            towerNode.AttachTow(towedNode);
+        }
+
+        // B11: the untie choke point. NetId is EITHER end; DetachTow resolves to the tower like Vehicle.DetachTow
+        // (no-ops if the node carries no rope). Validate existence + in-tree + reach; detaching only REMOVES a
+        // constraint, so no remote-driven gate is needed (the enter-guard already drops a boarded car's rope).
+        void OnDetachTow(ushort sender, DetachTowCommand cmd)
+        {
+            if (!TryGetNode(cmd.NetId, out var node) || !node.IsInsideTree()) return;
+            if (!WithinReach(sender, node)) return;
+            node.DetachTow();
+        }
+
+        // "remote-driven" = the entity has a driver that isn't the listen-server host (localId). On a dedicated
+        // server localId==0, so any driver is remote; mirrors the `remote` bool Tick() computes.
+        bool IsRemoteDriven(uint netId)
+        {
+            ushort localId = LocalPlayerId?.Invoke() ?? 0;
+            return _server.Vehicles.TryGet(netId, out var e) && e.DriverPlayerId != 0 && e.DriverPlayerId != localId;
+        }
+
+        bool WithinReach(ushort sender, Vehicle node)
+            => _server.Players.TryGetByOwner(sender, out var p)
+               && (p.Pos - ToU(node.GlobalPosition)).magnitude <= RopeReach;
 
         /// <summary>B8 (SP/MP-unify): reconcile the LISTEN-SERVER local player's direct SP enter/exit into the
         /// entity occupancy (§3.6). A remote EnterVehicle command validates against DriverPlayerId (the one
@@ -118,6 +183,11 @@ namespace UnturnedGodot
                         v.NetDriverId = driver;
                         v.EngineOn = true;
                         v.Wake();
+                        // B11: a remote driver taking a rope-end vehicle DROPS the rope. A client-auth/held
+                        // vehicle can't stay a tow end -- the host's tow spring (Vehicle.UpdateTow) would fight
+                        // the adopted transform. OnAttachTow's not-remote-driven validate blocks NEW ties on a
+                        // driven car; this drops an EXISTING rope the moment such a car is boarded (either end).
+                        if (v.Towing != null || v.TowedBy != null) v.DetachTow();
                         // Part A: ghost the driven body (layer bit0 -> bit6) the moment the seat is taken --
                         // the driver's CLIENT builds a real physics twin of this node; ghosting from enter
                         // (not first-adopt) closes the few-tick overlap window in a shared-tree L1 host.

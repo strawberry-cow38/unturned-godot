@@ -360,6 +360,43 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void AttachDetachTow_WireRoundTrip_FailClosed()
+        {
+            // B11: the two new tow COMMANDS (30 AttachTow {tower,towed}, 31 DetachTow {netId}) round-trip
+            // their payload write->read intact, and TryRead FAILS CLOSED on a short buffer (a truncated /
+            // hostile datagram must never yield a partially-applied command at the choke point). Teeth: if
+            // AttachTowCommand.TryRead didn't bail on the second ReadUInt32, it would return true on 4 bytes
+            // and the handler would act on a garbage TowedNetId; the fail-closed assert catches exactly that.
+            var w = new NetPakWriter { buffer = new byte[64] };
+            var r = new NetPakReader();
+
+            // AttachTow round-trip: both NetIds survive
+            var attach = new AttachTowCommand { TowerNetId = 7, TowedNetId = 42 };
+            w.Reset(); attach.Write(w); w.Flush();
+            r.Reset(); r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(AttachTowCommand.TryRead(r, out var readAttach), Is.True, "AttachTow round-trips");
+            Assert.That(readAttach.TowerNetId, Is.EqualTo(7u));
+            Assert.That(readAttach.TowedNetId, Is.EqualTo(42u));
+
+            // DetachTow round-trip: the single NetId survives
+            var detach = new DetachTowCommand { NetId = 99 };
+            w.Reset(); detach.Write(w); w.Flush();
+            r.Reset(); r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(DetachTowCommand.TryRead(r, out var readDetach), Is.True, "DetachTow round-trips");
+            Assert.That(readDetach.NetId, Is.EqualTo(99u));
+
+            // fail-closed: AttachTow needs TWO u32s (8 bytes); a 4-byte buffer (only the tower id) must reject
+            w.Reset(); w.WriteUInt32(7u); w.Flush();
+            r.Reset(); r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(AttachTowCommand.TryRead(r, out _), Is.False, "AttachTow fails closed on a short read (missing TowedNetId)");
+
+            // fail-closed: DetachTow needs one u32 (4 bytes); an empty buffer must reject
+            w.Reset(); w.Flush();
+            r.Reset(); r.SetBufferSegment(w.buffer, w.writeByteIndex);
+            Assert.That(DetachTowCommand.TryRead(r, out _), Is.False, "DetachTow fails closed on an empty read");
+        }
+
+        [Test]
         public void VehicleBlock_GoldenBytes()
         {
             // Locks the §3.6 vehicle wire format. An INTENTIONAL format change must bump

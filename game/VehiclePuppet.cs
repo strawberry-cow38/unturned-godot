@@ -7,7 +7,7 @@ namespace UnturnedGodot
     // dead-reckons its transform from snapshots; DressWheels applies the replicated steer angle plus a
     // spin derived from the replicated forward speed (rolling wheels need no spin on the wire).
     // Built by Vehicle.BuildPuppetByName so puppet and server node share the same Spec data.
-    public partial class VehiclePuppet : Node3D, IPuppetFocusable
+    public partial class VehiclePuppet : Node3D, IPuppetFocusable, ITowNode
     {
         public sealed class WheelDress
         {
@@ -27,6 +27,37 @@ namespace UnturnedGodot
         public Vector3 FrontTowLocal, RearTowLocal;
         public Vector3 FrontTowWorld => ToGlobal(FrontTowLocal);
         public Vector3 RearTowWorld => ToGlobal(RearTowLocal);
+
+        // B11 ITowNode: a joined client scans PUPPETS (its real cars are RemoveFromGroup'd) and sends a tie/untie
+        // intent by NetId -- the server owns the physics + validation. TowRoped/TowScannable stay loose here
+        // (the puppet has no local rope/wreck state; the server re-validates not-already-roped + not-a-wreck at
+        // the choke point). Nub visuals mirror the real Vehicle's (built lazily on first show, same 0.16m cubes).
+        public uint TowNetId => NetId;
+        public bool TowRoped => false;
+        public bool TowScannable => true;
+
+        MeshInstance3D _towFrontNub, _towRearNub;
+        static MeshInstance3D MakeTowNub(Color c, Vector3 pos)
+        {
+            var m = new StandardMaterial3D { AlbedoColor = c, ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Metallic = 0f, Roughness = 0.6f };
+            return new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * 0.16f }, MaterialOverride = m, Position = pos, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+        }
+        public void SetTowNodesVisible(bool on)
+        {
+            if (on && _towFrontNub == null)   // build once, on the first show while a rope tool is out
+            {
+                _towFrontNub = MakeTowNub(new Color(0.30f, 0.85f, 1.0f), FrontTowLocal);   // front / towed end -> cyan
+                _towRearNub = MakeTowNub(new Color(1.0f, 0.72f, 0.20f), RearTowLocal);     // rear / tower end -> amber
+                AddChild(_towFrontNub); AddChild(_towRearNub);
+            }
+            if (_towFrontNub != null) _towFrontNub.Visible = on;
+            if (_towRearNub != null) _towRearNub.Visible = on;
+        }
+        public void SetTowNubHighlighted(bool rear, bool on)
+        {
+            var nub = rear ? _towRearNub : _towFrontNub;
+            if (nub != null && nub.MaterialOverride is StandardMaterial3D m) { m.EmissionEnabled = on; m.Emission = m.AlbedoColor; m.EmissionEnergyMultiplier = on ? 1.0f : 0f; }
+        }
 
         // Interior steering wheel model (#38): the puppet analogue of the SP _steerPivot/_steerAxis
         // (Vehicle.cs Build) -- built by BuildPuppetByName from the spec's steer part / SteerModel and
