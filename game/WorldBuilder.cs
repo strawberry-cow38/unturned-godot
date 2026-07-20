@@ -89,6 +89,21 @@ namespace UnturnedGodot
             ["4f2b60ecae204b899eec282891a79e05"] = ("Container_2", 2, false, "Container"), // shipping container x19 -> Military Canada
         };
 
+        // MP (A1): the DISTINCT container kinds (mesh/display/label), sorted deterministically, so ContainerSchema can
+        // assign each a stable KindId that the server + client agree on WITHOUT re-running the world build (the client
+        // never spawns the SP StoreShelf nodes -- it materializes fixtures from the replica by KindId).
+        public static System.Collections.Generic.List<(string mesh, bool display, string label)> ContainerKinds()
+        {
+            var seen = new System.Collections.Generic.List<(string mesh, bool display, string label)>();
+            foreach (var kv in ContainerShelf)
+            {
+                var k = (kv.Value.mesh, kv.Value.display, kv.Value.label);
+                if (!seen.Contains(k)) seen.Add(k);
+            }
+            seen.Sort((a, b) => string.CompareOrdinal(a.mesh, b.mesh));
+            return seen;
+        }
+
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
         // whole build runs synchronously inside one _Ready (the --bakenav/--navpathtest/--zombietest tools
         // and the dedicated server use this); bakeNav additionally re-bakes + saves the canonical navmesh.

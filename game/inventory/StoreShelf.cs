@@ -33,6 +33,28 @@ namespace UnturnedGodot
         };
         static Profile Prof(string mesh) => Profiles.TryGetValue(mesh, out var p) ? p : Profiles["Shelf_1"];
 
+        // MP (A1): the crate grid dims + loot count + the roll itself, exposed statically so the server's ContainerNetSync
+        // stocks a container IDENTICALLY to how a StoreShelf node does in SP -- no StoreShelf node needed server-side.
+        // Dims mirror Spawn(): a display shelf uses PerTier x tier-count; a solid prop uses the roomy 8x6 crate grid.
+        public static (byte w, byte h) GridDims(string mesh, bool display)
+        {
+            var pr = Prof(mesh);
+            return display ? ((byte)pr.PerTier, (byte)pr.TierY.Length) : ((byte)8, (byte)6);
+        }
+        public static (int min, int max) LootCount(string mesh) { var pr = Prof(mesh); return (pr.Min, pr.Max); }
+        public static void RollInto(Items storage, int minItems, int maxItems, int table)
+        {
+            var rng = new RandomNumberGenerator();
+            int n = rng.RandiRange(minItems, maxItems);
+            for (int i = 0; i < n; i++)
+            {
+                int id = LootTables.Roll(table);
+                if (id < 0) continue;
+                var item = Assets.makeLoot((ushort)id);
+                if (item != null) storage.tryAddItem(item);
+            }
+        }
+
         static readonly Dictionary<string, ArrayMesh> _meshes = new();
         static readonly Dictionary<string, Material> _mats = new();
 
@@ -195,15 +217,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             base._Ready();   // Storage grid + BuildVisual (shelf mesh + label) + "crates" group
-            var rng = new RandomNumberGenerator();
-            int n = rng.RandiRange(MinItems, MaxItems);
-            for (int i = 0; i < n; i++)
-            {
-                int id = LootTables.Roll(TableIndex);
-                if (id < 0) continue;
-                var item = Assets.makeLoot((ushort)id);
-                if (item != null) Add(item);
-            }
+            RollInto(Storage, MinItems, MaxItems, TableIndex);
             if (ShowItems) SyncDisplay();   // open shelves show loot on tiers; solid props hold it hidden (F to see)
             GD.Print($"[store-shelf] {MeshName} table {TableIndex} ({LootTables.TableName(TableIndex)}) -> {Storage.getItemCount()} items{(ShowItems ? " on tiers" : " (F-open)")}");
         }

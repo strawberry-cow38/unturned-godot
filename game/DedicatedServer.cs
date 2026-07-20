@@ -25,6 +25,7 @@ namespace UnturnedGodot
         public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
         public bool SurvivalDrain = false;           // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. OFF by default = SP byte-identical coarse-HP path (strawberry runs survival off); flip on for a survival server.
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -> ServerPlaced into the deployable graph at boot (mains OFF)
+        public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Godot.Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
         public GasStationServer GasStation { get; private set; }          // A2: authoritative per-station fuel tanks (built from the placed gas-pump fixtures; the ExtractFuel choke drains them)
 
         public NetWorldServer Server { get; private set; }
@@ -34,6 +35,7 @@ namespace UnturnedGodot
         public VehicleNetSync VehicleSync { get; private set; }
         public WorldClockNetSync ClockSync { get; private set; }
         public CropNetSync CropSync { get; private set; }
+        public ContainerNetSync ContainerSync { get; private set; }   // A1: publishes world-build containers as server-owned fixtures + display digests
         public ResourceNetSync ResourceSync { get; private set; }
 
         long _lastStatusTick;
@@ -165,6 +167,8 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ClockSync.Tick(), "net.worldclock.sync"));
             CropSync = new CropNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => CropSync.Tick(), "net.crops.sync"));
+            ContainerSync = new ContainerNetSync(Server, this, Containers);   // A1: register + publish the world-build containers as server-owned fixtures
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => ContainerSync.Tick(), "net.containers.publish"));
             ResourceSync = new ResourceNetSync(Server, Resources);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ResourceSync.Tick(), "net.resources.sync"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)

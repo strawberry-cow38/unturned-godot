@@ -40,6 +40,7 @@ namespace UnturnedGodot
         // name is kept for continuity. Opt-in and behavior-neutral when false: SP/loopback keep the direct path.
         public bool ConsumeDeployables;   // "--spconsume": the local player consumes the replica subsystems instead of owning direct nodes
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -- ServerPlaced under consume, direct-Attached otherwise
+        public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
         bool _localInventoryAdopted;   // P1b: latches the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457)
 
         public MemNetwork Net { get; private set; }
@@ -54,6 +55,7 @@ namespace UnturnedGodot
         public VehicleNetSync VehicleSync { get; private set; }
         public WorldClockNetSync ClockSync { get; private set; }
         public CropNetSync CropSync { get; private set; }
+        public ContainerNetSync ContainerSync { get; private set; }   // A1: publishes world-build containers as server-owned fixtures + display digests
         public ResourceNetSync ResourceSync { get; private set; }
 
         public override void _Ready()
@@ -281,6 +283,11 @@ namespace UnturnedGodot
             CropSync = new CropNetSync(Server, this);
             CropNetSchema.RegisterAll(Client.Crops.Schema);   // the local replica derives growth stages too
             Driver.Sim.Add(new DelegateSimStep((t, dt) => CropSync.Tick(), "net.crops.sync"));
+            // A1: the loopback world's containers publish as server-owned fixtures too -- every SP-loopback session
+            // soaks the container wire (the store shelves / crates the world build placed). Constructed here so the
+            // manifest is registered before the first replication send (net.server.replicate is LAST).
+            ContainerSync = new ContainerNetSync(Server, this, Containers);
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => ContainerSync.Tick(), "net.containers.publish"));
             ResourceSync = new ResourceNetSync(Server, Resources);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ResourceSync.Tick(), "net.resources.sync"));
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)

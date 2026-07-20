@@ -2055,6 +2055,7 @@ namespace UnturnedGodot
             AddChild(new MpLoopback { Player = res.Player, Driver = res.Sim,
                                       DayNight = res.DayNight, Resources = res.Resources,   // Phase 8 world-state syncs (§3.7)
                                       Fixtures = res.Fixtures,                              // A3: grid-power fixtures -- ServerPlaced under consume, direct-Attached otherwise
+                                      Containers = res.Containers,                          // A1: container manifest -> ContainerNetSync publishes server-owned fixtures
                                       ConsumeDeployables = consume });                      // P6a: true by default on the GAME path
         }
 
@@ -2545,6 +2546,7 @@ namespace UnturnedGodot
                 AddChild(new DedicatedServer { Port = PortEnv(), Driver = res.Sim, Terr = res.Terr,   // Terr: server grenades bounce on real terrain height (Phase 5)
                     DayNight = res.DayNight, Resources = res.Resources, MapRoot = _mapRoot,          // Phase 8: tick-derived clock + resource bitmap + nav-pocket relevancy cells (§3.7/§2.6)
                     Fixtures = res.Fixtures,                                                         // A3: server-place the Circuit_0 grid-power sources into the deployable graph (mains OFF)
+                    Containers = res.Containers,                                                     // A1: container manifest -> ContainerNetSync publishes server-owned fixtures
                     RemoteAvatars = true,                                                            // C2: remote peers get real avatar bodies (real spawns/collision/jump) on this world
                     ActiveHoliday = holiday,                                                         // P3 (wire v6): joiners build THIS holiday's props/colliders
                     AllowCheats = System.Environment.GetEnvironmentVariable("UG_DEDICATED_NOCHEATS") != "1" });   // test server: give/xp/skill console cheats ON (useful for testing); set UG_DEDICATED_NOCHEATS=1 to lock them off, no code change (review C1 toggle)
