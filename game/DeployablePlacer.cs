@@ -81,8 +81,9 @@ namespace UnturnedGodot
         void Apply()
         {
             if (_ghost == null) return;
-            _ghost.GlobalTransform = new Transform3D(DeployableDef.StandBasis(Yaw),
-                Point + Vector3.Up * DeployableDef.GroundLift(_localAabb));   // base sits on the surface point
+            bool up = Def != null && Def.Upright;   // upright models (wind turbine) skip the flat->stand-up
+            _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(Yaw)) : DeployableDef.StandBasis(Yaw),
+                Point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));   // base sits on the surface point
             _ghost.MaterialOverride = Valid ? ValidMat : InvalidMat;
             if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
@@ -93,8 +94,9 @@ namespace UnturnedGodot
             Valid = true; Point = point; Yaw = yaw;
             if (_ghost == null) return;
             _ghost.Visible = true;
-            _ghost.GlobalTransform = new Transform3D(DeployableDef.StandBasis(yaw),
-                point + Vector3.Up * DeployableDef.GroundLift(_localAabb));
+            bool up = Def != null && Def.Upright;
+            _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(yaw)) : DeployableDef.StandBasis(yaw),
+                point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));
             _ghost.MaterialOverride = ValidMat;
             if (_arrowMat != null) { var c = ConnectionPort.ArrowBlue; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }

@@ -182,16 +182,16 @@ namespace UnturnedGodot
             }
             else if (verb == "deploy")
             {
-                // deploy <generator|spot|split2|split3|split4>  -- hold a deployable; aim shows a blue(valid)/red(invalid) ghost, LMB plants it
-                string a = arg.Trim().ToLowerInvariant();
-                DeployableDef def = (a.StartsWith("gen") || a == "458") ? DeployableDef.Generator
-                                  : (a.StartsWith("spot") || a == "459") ? DeployableDef.Spotlight
-                                  : (a == "split2" || a == "splitter2" || a == "9101") ? DeployableDef.Splitter2
-                                  : (a == "split3" || a == "splitter3" || a == "9102") ? DeployableDef.Splitter3
-                                  : (a == "split4" || a == "splitter4" || a == "9103") ? DeployableDef.Splitter4
-                                  : (a == "combine2" || a == "combiner2" || a == "9104") ? DeployableDef.Combiner2
-                                  : null;
-                if (def == null) { Log("usage: deploy <generator|spot|split2|split3|split4|combine2>"); return; }
+                // deploy <name|id>  -- hold any registered deployable; aim shows a blue(valid)/red(invalid) ghost, LMB plants it
+                string a = arg.Trim().ToLowerInvariant().Replace(" ", "");
+                DeployableDef def = a.StartsWith("gen") ? DeployableDef.Generator
+                                  : a.StartsWith("spot") ? DeployableDef.Spotlight
+                                  : (a == "split2" || a == "splitter2") ? DeployableDef.Splitter2
+                                  : (a == "split3" || a == "splitter3") ? DeployableDef.Splitter3
+                                  : (a == "split4" || a == "splitter4") ? DeployableDef.Splitter4
+                                  : (a == "combine2" || a == "combiner2") ? DeployableDef.Combiner2
+                                  : DeployableDef.All.FirstOrDefault(d => a == d.Id.ToString() || d.Name.ToLowerInvariant().Replace(" ", "").Contains(a));   // any deployable by id or name (battery/switch/windturbine/future)
+                if (def == null) { Log("usage: deploy <" + string.Join("|", DeployableDef.All.Select(d => d.Name.ToLowerInvariant().Replace(" ", ""))) + ">"); return; }
                 if (Player == null) { Log("no player"); return; }
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
