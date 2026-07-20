@@ -38,6 +38,11 @@ namespace UnturnedGodot.Net
         public readonly WorldClockReplication Clock = new WorldClockReplication();
         public readonly CropReplication Crops = new CropReplication();
         public readonly ResourceReplication Resources = new ResourceReplication();
+        // SP/MP-unify wave 2 (v11): three new systems, empty stubs at reservation; bodies filled by owners
+        // (13 = tinyclaw, 14/15 = cow tools). Registered in the Composer array below; EXCLUDED from EnableSyncCheck.
+        public readonly PlayerVitalsReplication Vitals = new PlayerVitalsReplication();
+        public readonly ContainerReplication Containers = new ContainerReplication();
+        public readonly AnimalReplication Animals = new AnimalReplication();
         public readonly ServerVehicles VehicleHost;
         public readonly ServerPlayerAuthority PlayerHost;   // mp-clientauth-foot (v9): on-foot claims -> envelope -> ServerDrive adopt
         public readonly ServerCombat Combat;
@@ -66,7 +71,8 @@ namespace UnturnedGodot.Net
                                            activeHoliday: activeHoliday);
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
-                                                                      Vehicles, Clock, Crops, Resources });
+                                                                      Vehicles, Clock, Crops, Resources,
+                                                                      Vitals, Containers, Animals });   // wave 2 (v11): SystemId 13/14/15 ascending; EXCLUDED from EnableSyncCheck
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
@@ -351,6 +357,10 @@ namespace UnturnedGodot.Net
         public readonly WorldClockReplication Clock = new WorldClockReplication();
         public readonly CropReplication Crops = new CropReplication();
         public readonly ResourceReplication Resources = new ResourceReplication();
+        // SP/MP-unify wave 2 (v11): three new client-side replicas, empty stubs at reservation (bodies filled by owners).
+        public readonly PlayerVitalsReplication Vitals = new PlayerVitalsReplication();
+        public readonly ContainerReplication Containers = new ContainerReplication();
+        public readonly AnimalReplication Animals = new AnimalReplication();
         public readonly SnapshotApplier Applier;
         public readonly EventRegistry Events = new EventRegistry();
         public readonly ClientPrediction Prediction = new ClientPrediction();
@@ -412,7 +422,8 @@ namespace UnturnedGodot.Net
             Session = new NetClientSession(transport, playerName, contentHash: contentHash);
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                     Skills, Deployables, Inventories, WorldItems,
-                                                                    Vehicles, Clock, Crops, Resources });
+                                                                    Vehicles, Clock, Crops, Resources,
+                                                                    Vitals, Containers, Animals });   // wave 2 (v11): SystemId 13/14/15 ascending, symmetric with the server Composer
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {

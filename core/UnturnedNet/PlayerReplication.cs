@@ -25,6 +25,12 @@ namespace UnturnedGodot.Net
         public const byte SystemWorldClock = 10;    // Phase 8: day-night base + day length; time derives from the snapshot tick (WorldReplication.cs, §3.7)
         public const byte SystemCrops = 11;         // Phase 8: planted crops -- growth derives from PlantedAtTick (WorldReplication.cs, §3.7)
         public const byte SystemResources = 12;     // Phase 8: tree/resource alive-bitmap keyed by load-order index (WorldReplication.cs, §3.7)
+        // SP/MP-unify wave 2 (v11): three new systems allocated together, composed after Resources, EXCLUDED
+        // from EnableSyncCheck (owner-only / relevancy-filtered). Registered as empty stubs by the reservation
+        // commit; bodies filled by their owners (13 = tinyclaw, 14/15 = cow tools).
+        public const byte SystemVitals = 13;        // owner-only fine vitals (food/water/stamina/infection); resolves the long-reserved SystemId 13 (B5). PlayerVitalsReplication.cs
+        public const byte SystemContainers = 14;    // world containers/store-shelves as replicated fixtures (A1). ContainerReplication.cs
+        public const byte SystemAnimals = 15;       // wildlife (deer/pig/cow) puppets (A5). AnimalReplication.cs
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -56,6 +62,12 @@ namespace UnturnedGodot.Net
         public const byte CommandHarvestCrop = 25;     // Phase 8: server checks growth + rolls the AGRICULTURE second yield
         public const byte CommandVehicleState = 26;    // Part A (CLIENT_PREDICTION_PLAN §5.2): the predicted DRIVER's reported vehicle state @25 Hz UnreliableSeq -- envelope-validated at the choke point, then ADOPTED as the vehicle's truth (retail client authority). CommandDriveInput 23 stays registered as the non-predicted fallback.
         public const byte CommandPlayerState = 27;     // mp-clientauth-foot (wire v9): the OWNER's on-foot transform stream @50 Hz UnreliableSeq -- the vehicle client-authority model applied to walking (PlayerAuthority.cs): envelope-validated, then adopted via ServerDrive. Replaces MoveInput as the shell client's movement wire; MoveInput 1 stays registered for demo walkers/loopback.
+
+        // SP/MP-unify wave 2 (v11): four new client->server commands, allocated together with the systems above.
+        public const byte CommandPickupDeployable = 28;   // B2: return a placed deployable to the bag (distinct from Salvage's scrap)
+        public const byte CommandExtractFuel = 29;        // A2: pull fuel from a gas-station pump into a held can
+        public const byte CommandAttachTow = 30;          // B11: tie a rope between two vehicles (tower NetId, towed NetId)
+        public const byte CommandDetachTow = 31;          // B11: untie a vehicle's rope (either end)
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
