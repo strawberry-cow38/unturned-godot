@@ -1097,4 +1097,68 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // GAP B1 regression: storage item-loss on close for a NON-replicated (look-opened / SP-local) crate.
+    //
+    // Post-A1/B9 most containers replicate (NetId!=0) and route their close over the wire (NetCloseStorage set by
+    // the loopback). But a shelf opened via the LOOK path -- PlayerController.OpenCrate -- copies the crate grid
+    // into STORAGE (page 7) WITHOUT latching a server NetId (only OnReplicatedStorageOpened does that), so
+    // _openCrateNetId stays 0. On the pre-fix CloseCrate the mere presence of a wired NetCloseStorage took the net
+    // branch, saw _openCrateNetId==0, and RETURNED before any copy-back -- everything dragged into the shelf was
+    // silently dropped. The fix guards that branch on `_openCrateNetId != 0` so a NetId==0 crate FALLS THROUGH to
+    // the local copy-back (STORAGE -> crate.Storage).
+    //
+    // TEETH: NetCloseStorage is wired (a no-op stand-in for the loopback seam) and the shelf is opened via the look
+    // path (_openCrateNetId==0). Drop an item into the STORAGE grid, then CloseCrate, and assert the shelf's own
+    // Storage KEPT it. On pre-fix code the net branch returns before the copy-back, so crate.Storage stays empty
+    // (getItemCount 0) and this fails -- the exact shipped item-loss bug.
+    public class UnifyStorageCloseNoLoss : GameTest
+    {
+        public override string Name => "unify.storage_close_no_loss";
+        public override double TimeoutSimSeconds => 15;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            ItemCatalog.RegisterAll();   // item 95 (Bandage, 1x1) resolves against the catalog
+
+            // a SP-LOCAL StoreShelf: NetId==0 (never replicated), no rolled loot + no tier-display machinery
+            // (MinItems=MaxItems=0, ShowItems=false) so the copy-back is what's exercised, not the render. It is
+            // still a real StoreShelf -- the exact class the bug was reported on.
+            var shelf = new StoreShelf { MinItems = 0, MaxItems = 0, ShowItems = false, RenderMesh = false };
+            World.AddChild(shelf);
+            shelf.GlobalPosition = new Vector3(2f, 0f, 0f);
+
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);   // let both _Ready run (shelf Storage grid + player Inventory built)
+
+            T.Check("the shelf is SP-local (its own Storage grid exists, starts empty)",
+                    shelf.Storage != null && shelf.Storage.getItemCount() == 0);
+
+            // wire the close seam exactly as the loopback does (NetCloseStorage != null) -- a no-op stand-in, since
+            // there is no server here; the point is the delegate is NON-NULL, which is what tripped the buggy branch.
+            player.NetCloseStorage = () => { };
+
+            // open via the LOOK path -- OpenCrate loads the (empty) crate grid into STORAGE (7) and does NOT latch a
+            // server NetId, so _openCrateNetId stays 0 (only OnReplicatedStorageOpened sets it).
+            bool opened = player.OpenCrate(shelf);
+            T.Check("look-opened the shelf (STORAGE page loaded, dashboard open)", opened && player.DashboardOpen);
+
+            // drop an item into the STORAGE grid (page 7) at a fixed cell -- the "drag into the shelf" the user did
+            var storagePage = player.Inventory.items[PlayerInventory.STORAGE];
+            storagePage.addItem(0, 0, 0, new Item(95));
+            T.Check("an item sits in the open STORAGE view before close", storagePage.getItemCount() == 1);
+            T.Check("...and the crate's own Storage is still empty (not yet written back)", shelf.Storage.getItemCount() == 0);
+
+            // close the crate (the ESC/Tab path, without an InputEvent). With the fix, NetId==0 falls through to the
+            // local copy-back; pre-fix the net branch returned here and the item was lost.
+            player.DebugCloseCrate();
+
+            // THE GATE: the item was SAVED into the shelf's Storage (getItemCount preserved), not silently dropped.
+            T.Check($"(gate) the item was written back into the shelf's Storage (count {shelf.Storage.getItemCount()}, expected 1)",
+                    shelf.Storage.getItemCount() == 1);
+            T.Check("(gate) the written-back item is the one we dropped (Bandage 95)",
+                    shelf.Storage.getItemCount() == 1 && shelf.Storage.getItem(0)?.item?.id == 95);
+        }
+    }
 }

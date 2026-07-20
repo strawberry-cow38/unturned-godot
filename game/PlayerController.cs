@@ -1481,13 +1481,17 @@ namespace UnturnedGodot
         // save the open crate's contents back and clear the STORAGE view (called when the dashboard closes)
         void CloseCrate()
         {
-            if (NetCloseStorage != null)
+            if (NetCloseStorage != null && _openCrateNetId != 0)
             {
                 // MP: the server saves the STORAGE page back into the crate and clears it; the owner
                 // echo empties the local view (no local copy-back -- the crate grid is the server's).
-                if (_openCrateNetId != 0) { NetCloseStorage(); _openCrateNetId = 0; }
+                NetCloseStorage(); _openCrateNetId = 0;
                 return;
             }
+            // GAP B1: a NON-replicated crate (_openCrateNetId==0 -- a look-opened / SP-local shelf that was
+            // never routed over the wire, so OnReplicatedStorageOpened never latched a NetId) FALLS THROUGH to
+            // the local copy-back below. Without this guard the net branch above returned early on NetId==0 and
+            // the edited STORAGE page was silently dropped (item-loss on close).
             if (_openCrate == null) return;
             CopyPage(Inventory.items[PlayerInventory.STORAGE], _openCrate.Storage, _openCrate.Width, _openCrate.Height);
             (_openCrate as StoreShelf)?.EndLiveDisplay();   // stop mirroring page 7; final sync from the written-back grid
