@@ -119,10 +119,10 @@ namespace UnturnedGodot
         {
             Id = 1450, Name = "Vehicle Battery", Model = "Battery_0", MeshEuler = new Vector3(180f, 0f, 180f), PlaceSound = "metalplacement",   // item 1450 world mesh (extract_battery.py); MeshEuler flips it upright + 180 yaw (master)
             Size = new Vector3(0.5f, 0.3f, 0.28f), Offset = 0.5f, Radius = 0.24f, Range = 4f, Health = 200f, Fuel = 0f,
-            IsBattery = true, EnergyMax = 600f * 3600f, ChargeWatts = 4000f,   // 600 Wh (12V*50Ah car battery) in watt-SECONDS; charges/discharges at up to 4kW
+            IsBattery = true, EnergyMax = 600f * 3600f, ChargeWatts = 600f,   // 600 Wh (12V*50Ah); realistic ~600W (1C) sustained in/out (master) -> ~1h at full draw. Scale up via gen->splitter->batteries->combiners
             Ports = new[] {
-                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.2f, 0f, 0.05f), Watts = 4000f },   // IN terminal (charge), one end (Pos is stood-up local: X=along, Y=height, Z=depth)
-                new Port { Kind = PortKind.Output,   Pos = new Vector3( 0.2f, 0f, 0.05f), Watts = 4000f },   // OUT terminal (discharge), opposite end
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.2f, 0f, 0.05f), Watts = 600f },   // IN terminal (charge), one end (Pos is stood-up local: X=along, Y=height, Z=depth)
+                new Port { Kind = PortKind.Output,   Pos = new Vector3( 0.2f, 0f, 0.05f), Watts = 600f },   // OUT terminal (discharge), opposite end — realistic 600W (master)
             },
         };
 

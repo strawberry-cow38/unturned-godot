@@ -49,6 +49,32 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<float> _lampBase = new();   // per-lamp base energy (display = base * envelope * flicker)
         ConnectionPort _consumerPort, _outputPort;
         public float LoadFraction => _outputPort != null && GodotObject.IsInstanceValid(_outputPort) && _outputPort.Watts > 0f ? Mathf.Clamp(_outputPort.Draw / _outputPort.Watts, 0f, 1f) : 0f;   // generator: 0..1 of capacity currently drawn
+
+        // Real-world run-time left AT THE CURRENT LOAD (master): a battery empties Energy/Draw; a running generator
+        // empties Fuel / (per-sec burn scaled by load). -1 = N/A (idle / off / no draw). Shown as a "· 45m" name suffix.
+        float SecondsRemaining()
+        {
+            if (Def == null) return -1f;
+            if (Def.IsBattery)
+            {
+                float draw = (_outputPort != null && GodotObject.IsInstanceValid(_outputPort)) ? _outputPort.Draw : 0f;
+                return draw > 0.5f && Energy > 0f ? Energy / draw : -1f;   // Energy is watt-SECONDS, Draw is watts -> seconds
+            }
+            if (Def.Fuel > 0f && _powered && Fuel > 0f)   // running generator
+            {
+                float rate = DeployableDef.GenFuelBurnPerSec * (0.2f + 0.8f * LoadFraction);
+                return rate > 0f ? Fuel / rate : -1f;
+            }
+            return -1f;
+        }
+
+        string RuntimeSuffix()
+        {
+            float s = SecondsRemaining();
+            if (s < 0f) return "";
+            string t = s >= 3600f ? $"{(int)(s / 3600f)}h {(int)(s % 3600f / 60f)}m" : s >= 60f ? $"{(int)(s / 60f)}m" : $"{(int)s}s";
+            return $"  · {t}";
+        }
         float _lampLevel;                    // 0..1 lamp envelope, ramps with power over WarmupTime/CooldownTime
         float _lampFlicker = 1f, _lampFlickerT;   // while the source spins up/down (mid-ramp) the lamp stutters (strawberry)
         static readonly bool DbgFlicker = System.Environment.GetEnvironmentVariable("UG_WIREFLICKER") == "1";
@@ -443,7 +469,7 @@ namespace UnturnedGodot
             _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
             if (!_exploded)
             {
-                _info.SetName(Def?.Name, OutlineColor);
+                _info.SetName(Def?.Name + RuntimeSuffix(), OutlineColor);   // name + "· 45m" real-time remaining at the current load (master)
                 _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
                 _info.SetBar(1, Def != null && Def.IsBattery ? (Def.EnergyMax > 0f ? Energy / Def.EnergyMax : 0f) : (FuelMax > 0f ? Fuel / FuelMax : 0f), InfoBillboard.FuelColor, (FuelMax > 0f) || (Def != null && Def.IsBattery));   // fuel / battery-CHARGE bar (yellow); hidden if neither
                 _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null);   // usage bar (cyan): load / capacity -- generators only
