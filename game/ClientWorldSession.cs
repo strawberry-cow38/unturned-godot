@@ -465,6 +465,7 @@ namespace UnturnedGodot
             shell.NetCraft = index => Client.SendCraft(index);
             shell.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);
             shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
+            shell.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
             shell.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
             shell.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
             shell.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);

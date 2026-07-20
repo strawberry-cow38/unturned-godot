@@ -202,6 +202,82 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void deploy_pickup_returns_item()
+        {
+            // B2: hold-F pickup returns the LIVE deployable (with its HP quality + fuel) to the bag and cascades
+            // its wires -- distinct from salvage, which scraps a burning wreck. Pre-fix the round trip can't even
+            // be expressed (no command), and the SP @677 early-return left a placed generator un-retrievable
+            // under consume. Here: place gen->wire->spot, damage/drain the gen server-side, then pick it up.
+            var (h, genId, spotId) = BuildRig(9101, "a");
+            var a = h.Clients[0];
+
+            // 225/450 HP -> quality 50; 30 fuel -> fuelLevel 30 (both integers survive the scalar quantization)
+            h.Server.Deployables.ServerSetScalars(genId, 225f, 30f, onFire: false, h.Server.Session.CurrentTick);
+
+            Assert.That(h.Server.Inventories.TryGet(a.PlayerId, out var inv0), Is.True);
+            Assert.That(inv0.Inventory.getItemCount(GEN), Is.EqualTo(0), "both granted deployables were placed (bag empty of generators)");
+
+            a.SendPickupDeployable(genId);
+            Assert.That(h.StepUntil(() => !h.Server.Deployables.TryGet(genId, out _)
+                                       && h.Server.Deployables.WireCount == 0
+                                       && h.Server.Inventories.TryGet(a.PlayerId, out var i)
+                                       && i.Inventory.getItemCount(GEN) == 1), Is.True,
+                        $"generator removed + wire cascade-removed + item back in the bag (seed={h.Net.Seed})");
+
+            Assert.That(h.Server.Deployables.Count, Is.EqualTo(1), "only the spotlight remains");
+            Assert.That(h.Server.Deployables.TryGet(spotId, out _), Is.True, "the spotlight survives the pickup");
+
+            // the returned item is the ACTUAL generator with its stamped HP quality + fuel (not scrap)
+            var item = FindItem(inv0.Inventory, GEN);
+            Assert.That(item, Is.Not.Null, "the generator item is in the server bag");
+            Assert.That((int)item.quality, Is.EqualTo(50), "HP 225/450 -> quality 50%");
+            Assert.That(item.fuelLevel, Is.EqualTo(30f), "the tank (30 fuel) rode back on the item");
+        }
+
+        [Test]
+        public void deploy_pickup_full_bag_drops_world_item()
+        {
+            // B2 full-bag branch: with no room in the grid the returned deployable drops as a world item at the
+            // entity's position (SP "drop where it stood" @691), instead of vanishing.
+            var h = new TransactionalHarness(9102).Connected("a");
+            var a = h.Clients[0];
+
+            // place a generator over the wire (spends the one granted item -> bag empty, a real NetId placed)
+            h.Grant(a.PlayerId, new Item(GEN));
+            a.SendPlaceDeployable(GEN, new Vector3(1f, 0f, 1f), 0f);
+            Assert.That(h.StepUntil(() => a.Deployables.Count == 1), Is.True, $"placement replicated (seed={h.Net.Seed})");
+            uint genId = h.FindDeployable(a, GEN);
+            Assert.That(genId, Is.Not.EqualTo(0u));
+
+            // now STUFF the 5x3 pocket grid so a 2x2 generator can no longer fit (two 2x2 gens leave no 2x2 gap)
+            h.Grant(a.PlayerId, new Item(GEN));
+            h.Grant(a.PlayerId, new Item(GEN));
+            Assert.That(h.Server.Inventories.TryGet(a.PlayerId, out var inv), Is.True);
+            Assert.That(inv.Inventory.getItemCount(GEN), Is.EqualTo(2));
+
+            int worldItemsBefore = h.Server.WorldItems.Count;
+            a.SendPickupDeployable(genId);
+            Assert.That(h.StepUntil(() => !h.Server.Deployables.TryGet(genId, out _)
+                                       && h.Server.WorldItems.Count == worldItemsBefore + 1), Is.True,
+                        $"full bag -> the generator dropped as a world item (seed={h.Net.Seed})");
+            Assert.That(inv.Inventory.getItemCount(GEN), Is.EqualTo(2), "the bag was full -> pickup did NOT add a third generator");
+
+            bool found = false;
+            foreach (var wi in h.Server.WorldItems.All)
+                if (wi.ItemId == GEN) { found = true; break; }
+            Assert.That(found, Is.True, "the spawned world item is the generator (458)");
+        }
+
+        // scan every page for the first jar holding the given item id (server-grid inspection)
+        static Item FindItem(PlayerInventory inv, ushort id)
+        {
+            foreach (var page in inv.items)
+                foreach (var jar in page.items)
+                    if (jar.item != null && jar.item.id == id) return jar.item;
+            return null;
+        }
+
+        [Test]
         public void late_joiner_gets_the_graph_from_the_join_snapshot()
         {
             var (h, genId, spotId) = BuildRig(9078, "a");

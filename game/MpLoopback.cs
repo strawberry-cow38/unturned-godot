@@ -91,6 +91,7 @@ namespace UnturnedGodot
                 //     point of the pattern: one owner of the node graph, and it's the replica view.
                 Player.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);
                 Player.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
+                Player.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
                 Player.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
                 Player.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);

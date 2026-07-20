@@ -143,6 +143,98 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // B2 (SP/MP-unify): hold-F pickup of a placed deployable must route over the wire under the consuming
+    // loopback. The SHIPPED SOLO BUG was PlayerController.PickupDeployable @677 early-returning on
+    // `d.NetId != 0` -- under --spconsume deployables ARE replica nodes (NetId!=0), so retrieving a placed
+    // generator did NOTHING. The fix drops that guard and routes the pickup as an intent (NetPickupDeployable
+    // -> Client.SendPickupDeployable); the server tears the entity down + hands the item back through the
+    // owner-inventory echo, and the DeployableReplicaView retires the node off EventDeployableRemoved.
+    //
+    // Built on the REAL node graph the SP game boots (a PlayerController shell + the actual MpLoopback under
+    // ConsumeDeployables), verbatim from unify.loopback_upgrade_skill -- a substituted seam would mask the bug.
+    //
+    // TEETH: PickupDeployable is called on the MATERIALIZED replica node (NetId!=0). Pre-fix the @677
+    // early-return leaves the node standing AND sends no item echo -- both Until()s below time out. Post-fix
+    // the node retires and the damaged generator (quality 50) lands back in the local bag.
+    public class UnifyLoopbackPickupDeployable : GameTest
+    {
+        public override string Name => "unify.deploy_pickup";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();   // `give 458` resolves against the real catalog; the returned item fits the demo bag
+
+            // the same headless-safe SP stand-ins unify.loopback_upgrade_skill feeds AttachMpLoopback
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));   // the REAL shell the loopback drives + adopts onto
+            yield return Ticks(2);   // let _Ready build the shell Inventory
+
+            // the REAL consuming loopback -- the exact node AttachMpLoopback builds under --spconsume
+            var loop = new MpLoopback { Player = player, Driver = driver,
+                                        DayNight = dayNight, Resources = resources,
+                                        ConsumeDeployables = true };
+            World.AddChild(loop);
+
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _), 15);
+            T.Check("loopback client connected + server inventory present",
+                    loop.Client.State == NetSessionState.Connected
+                    && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _));
+
+            // stock the server grid with a generator (console-give, server-gated), then place it OVER THE WIRE --
+            // the DeployableReplicaView materializes it into a real local node stamped with the server NetId.
+            loop.Client.SendConsole("give 458");
+            yield return Until(() => loop.Server.Inventories.TryGet(loop.Client.PlayerId, out var si)
+                                     && si.Inventory.getItemCount(458) == 1, 10);
+            loop.Client.SendPlaceDeployable(458, new UnityEngine.Vector3(2f, 0f, 0f), 0f);
+            yield return Until(() => loop.Deploys != null && loop.Deploys.NodeCount == 1, 10);
+
+            uint genId = 0;
+            foreach (var e in loop.Client.Deployables.All) if (e.DefId == 458) genId = e.NetIdValue;
+            // TEETH: a server NetId proves the node came from the replica view, not a direct SP spawn (NetId 0)
+            T.Check($"generator materialized as a replica node with a server NetId ({genId})",
+                    genId != 0 && loop.Deploys.TryGetNode(genId, out _));
+            // the placement spent the item off the server grid; the owner echo emptied the local bag
+            yield return Until(() => player.Inventory.getItemCount(458) == 0, 10);
+            T.Check("(baseline) local bag holds no generator after placing it", player.Inventory.getItemCount(458) == 0);
+
+            // damage the generator server-side so the returned item carries real state: 225/450 HP -> quality 50
+            loop.Server.Deployables.ServerSetScalars(genId, 225f, 30f, onFire: false, loop.Server.Session.CurrentTick);
+
+            // THE ACT: hold-F pickup on the materialized replica node. Pre-fix @677 early-returns on NetId!=0.
+            loop.Deploys.TryGetNode(genId, out var pick);
+            T.Check("got the materialized node to pick up", pick != null && pick.NetId == genId);
+            player.PickupDeployable(pick);
+
+            // GATE 1: the node retires off the server's EventDeployableRemoved (send-and-return, no local mutation)
+            yield return Until(() => !loop.Deploys.TryGetNode(genId, out _) && loop.Deploys.NodeCount == 0, 15);
+            T.Check("(gate) the replica node retired after the wire pickup", loop.Deploys.NodeCount == 0);
+
+            // GATE 2: the generator returned to the local bag via the owner-inventory echo, HP quality intact
+            yield return Until(() => player.Inventory.getItemCount(458) == 1, 15);
+            T.Check($"(gate) the generator is back in the local bag ({player.Inventory.getItemCount(458)})",
+                    player.Inventory.getItemCount(458) == 1);
+            var back = FindBagItem(player.Inventory, 458);
+            T.Check($"(gate) the returned item carries the stamped HP quality (q{back?.quality}, expected 50)",
+                    back != null && back.quality == 50);
+        }
+
+        static SDG.Unturned.Item FindBagItem(SDG.Unturned.PlayerInventory inv, ushort id)
+        {
+            foreach (var page in inv.items)
+                foreach (var jar in page.items)
+                    if (jar.item != null && jar.item.id == id) return jar.item;
+            return null;
+        }
+    }
+
     // SP/MP-unify P1b phase gate (SECOND pattern-setter). Closes the gap P1 surfaced: a wire placement (P1)
     // SPENDS an item server-side BEFORE broadcasting, so the local loopback player's SERVER inventory must be
     // STOCKED + owner-replicated or a real placement is server-REJECTED. This proves the server-authoritative

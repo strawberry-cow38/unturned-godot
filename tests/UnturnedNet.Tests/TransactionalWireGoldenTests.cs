@@ -37,6 +37,13 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void PickupDeployableCommand_GoldenBytes()
+        {
+            var cmd = new PickupDeployableCommand { NetId = 42 };   // B2: {uint NetId}, same shape as Salvage; id 28 (0x1C) + 42 (LE uint32)
+            Assert.That(Pack(ReplicationIds.CommandPickupDeployable, cmd.Write), Is.EqualTo("1C2A000000"));
+        }
+
+        [Test]
         public void ConnectWireCommand_GoldenBytes()
         {
             var cmd = new ConnectWireCommand { SrcId = 7, SrcPort = 0, DstId = 9, DstPort = 1 };

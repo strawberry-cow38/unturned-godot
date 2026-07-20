@@ -127,6 +127,15 @@ namespace UnturnedGodot.Net
                                         && e.OnFire   // only a dead/burning wreck tears down (SP: blowtorch a cooled wreck)
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
 
+            // B2: hold-F pickup returns the LIVE deployable to the bag (distinct intent from Salvage's scrap --
+            // the client gates hold-F on !IsWreck/!OnFire, so this never collides with a wreck salvage). The
+            // validator only guarantees the handler's derefs are safe; ownership + reach + wreck-gating are
+            // deferred TODO(mp-security) alongside the salvage/wire/toggle M2 deferral above.
+            commands.Register<PickupDeployableCommand>(ReplicationIds.CommandPickupDeployable, PickupDeployableCommand.TryRead,
+                OnPickupDeployable,
+                validate: (sender, cmd) => _inventories.TryGet(sender, out _)
+                                        && _deployables.TryGet(cmd.NetId, out _));
+
             // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
             commands.Register<ConnectWireCommand>(ReplicationIds.CommandConnectWire, ConnectWireCommand.TryRead,
                 OnConnectWire,
@@ -261,6 +270,35 @@ namespace UnturnedGodot.Net
             if (def != null && def.SalvageItemId != 0)
                 for (int i = 0; i < def.SalvageCount; i++)
                     SpawnWorldItem(new Item(def.SalvageItemId), e.Pos + new Vector3((i - 0.5f) * 0.6f, 0.5f, 0f), Vector3.zero);
+        }
+
+        void OnPickupDeployable(ushort sender, PickupDeployableCommand cmd)
+        {
+            // authority: read the LIVE entity's state before we tear it down, then reuse the salvage teardown
+            // (ServerRemove + broadcast the removed/wire-removed facts). The DeployableReplicaView retires the
+            // client node off EventDeployableRemoved; the returned item lands via the owner-inventory echo.
+            _deployables.TryGet(cmd.NetId, out var e);
+            _deployables.Schema.TryGet(e.DefId, out var def);
+            var cascaded = _deployables.ServerRemove(cmd.NetId, _tick());
+            var evt = new DeployableRemovedEvent { NetId = cmd.NetId };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableRemoved, evt.Write));
+            foreach (uint wid in cascaded)
+            {
+                var wevt = new WireRemovedEvent { WireId = wid };
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventWireRemoved, wevt.Write));
+            }
+            // hand back the ACTUAL deployable item with its HP (quality %) + fuel stamped on, so re-placing
+            // restores them -- mirrors SP PlayerController.PickupDeployable @682-685.
+            var item = Assets.makeLoot(e.DefId);
+            if (def != null)
+            {
+                if (def.Health > 0f) item.quality = (byte)Mathf.Clamp(Mathf.RoundToInt(e.Health / def.Health * 100f), 1, 100);
+                if (def.FuelCapacity > 0f) item.fuelLevel = e.Fuel;
+            }
+            // to the bag if it fits, else drop where it stood (SP "drop where it stood" @691)
+            var inv = SenderInventory(sender);
+            if (inv == null || !inv.tryAddItem(item))
+                SpawnWorldItem(item, e.Pos + Vector3.up, Vector3.zero);
         }
 
         void OnConnectWire(ushort sender, ConnectWireCommand cmd)

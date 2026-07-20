@@ -678,6 +678,9 @@ namespace UnturnedGodot.Net
         public bool SendSalvageDeployable(uint netId)
             => SendCommand(ReplicationIds.CommandSalvageDeployable, new SalvageDeployableCommand { NetId = netId }.Write);
 
+        public bool SendPickupDeployable(uint netId)   // B2: hold-F returns the live deployable to the bag (removal echoes back through the replica view)
+            => SendCommand(ReplicationIds.CommandPickupDeployable, new PickupDeployableCommand { NetId = netId }.Write);
+
         public bool SendConnectWire(uint srcId, byte srcPort, uint dstId, byte dstPort)
             => SendCommand(ReplicationIds.CommandConnectWire, new ConnectWireCommand { SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort }.Write);
 

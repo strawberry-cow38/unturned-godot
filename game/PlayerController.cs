@@ -671,10 +671,14 @@ namespace UnturnedGodot
         }
 
         // Return a live placed deployable to the bag: disconnect its wires + despawn, grant the item back (dropped at its
-        // feet if the bag is full). A REPLICATED (MP) deployable would need a server request -- SP/local nodes only for now.
-        void PickupDeployable(Deployable d)
+        // feet if the bag is full). A REPLICATED (MP) node (NetId!=0) routes the pickup as an intent over the wire
+        // (B2): the server tears it down + hands the item back through the owner-inventory echo, and the
+        // DeployableReplicaView retires the node off EventDeployableRemoved -- send-and-return, no local mutation
+        // (the replica view stays the SOLE node owner). SP/local nodes (NetId==0) take the direct path below.
+        internal void PickupDeployable(Deployable d)
         {
-            if (d == null || !IsInstanceValid(d) || d.IsWreck || d.OnFire || d.NetId != 0) return;
+            if (d == null || !IsInstanceValid(d) || d.IsWreck || d.OnFire) return;
+            if (d.NetId != 0) { NetPickupDeployable?.Invoke(d.NetId); return; }
             ushort id = d.Def?.Id ?? 0;
             string name = d.Def?.Name;
             Vector3 pos = d.GlobalPosition;
@@ -1745,6 +1749,7 @@ namespace UnturnedGodot
         public System.Action<ushort> NetCraft;                       // blueprintIndex (BlueprintRegistry.All order, content-hash-matched) -> Client.SendCraft
         public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
+        public System.Action<uint> NetPickupDeployable;              // B2: -> Client.SendPickupDeployable (the removal + owner-inventory echo return the item; the replica view retires the node)
         public System.Action<uint, byte, uint, byte> NetConnectWire; // (srcId,srcPort, dstId,dstPort) -> Client.SendConnectWire
         public System.Action<uint> NetRemoveWire;                    // wireId -> Client.SendRemoveWire
         public System.Action<uint, bool> NetToggleDeployable;        // (netId,on) -> Client.SendToggleDeployable (NetSetPowered lands the echo)

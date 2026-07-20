@@ -81,6 +81,22 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>B2: hold-F to return a live placed deployable to the bag (distinct from Salvage's scrap --
+    /// this hands back the actual item with its HP quality + fuel restored). Same {uint NetId} shape as
+    /// SalvageDeployableCommand.</summary>
+    public struct PickupDeployableCommand
+    {
+        public uint NetId;
+        public void Write(NetPakWriter w) => w.WriteUInt32(NetId);
+        public static bool TryRead(NetPakReader r, out PickupDeployableCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            cmd = new PickupDeployableCommand { NetId = id };
+            return true;
+        }
+    }
+
     public struct ConnectWireCommand
     {
         public uint SrcId; public byte SrcPort;
