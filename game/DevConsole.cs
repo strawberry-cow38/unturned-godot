@@ -251,9 +251,12 @@ namespace UnturnedGodot
         {
             if (ushort.TryParse(arg, out var id)) return Assets.find(id);
             string a = arg.Replace(" ", "");
-            return Assets.all().FirstOrDefault(x => string.Equals(x.itemName, arg, System.StringComparison.OrdinalIgnoreCase))
-                ?? Assets.all().Where(x => !string.IsNullOrEmpty(x.itemName) && x.itemName.Replace(" ", "").StartsWith(a, System.StringComparison.OrdinalIgnoreCase))
-                             .OrderBy(x => x.itemName.Length).FirstOrDefault();
+            var named = Assets.all().Where(x => !string.IsNullOrEmpty(x.itemName));
+            // exact name, then name-starts-with, then name-CONTAINS (so `give battery`/`switch`/`turbine` hit the multi-word
+            // "Vehicle Battery"/"Power Switch"/"Wind Turbine"); shortest name wins = most specific.
+            return named.FirstOrDefault(x => string.Equals(x.itemName, arg, System.StringComparison.OrdinalIgnoreCase))
+                ?? named.Where(x => x.itemName.Replace(" ", "").StartsWith(a, System.StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.itemName.Length).FirstOrDefault()
+                ?? named.Where(x => x.itemName.Replace(" ", "").Contains(a, System.StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.itemName.Length).FirstOrDefault();
         }
 
         void Autocomplete()

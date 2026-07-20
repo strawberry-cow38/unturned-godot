@@ -1400,10 +1400,11 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1")
             {
                 var wt = Deployable.Spawn(this, DeployableDef.WindTurbine, Vector3.Zero, 35f);
+                wt.SetLookFocused(true);   // show the info billboard (wind bar + live output wattage)
                 foreach (var pt in wt.Ports) pt.SetArrowState(true, true);
-                look = new Vector3(0f, 1.5f, 0f);
-                cam.Position = new Vector3(2.8f, 2.1f, 4.4f);
-                cam.Fov = 52f; cam.LookAt(look, Vector3.Up);
+                look = new Vector3(0f, 0.62f, 0f);
+                cam.Position = new Vector3(1.5f, 0.95f, 2.4f);
+                cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
             }
             // UG_SWITCHCKT=1: a working circuit -- generator -> switch -> spotlight, + sources on the switch's turn-on
             // (green) / turn-off (red) trigger inputs. Default: TurnOn source fed -> switch ON -> spotlight LIT.

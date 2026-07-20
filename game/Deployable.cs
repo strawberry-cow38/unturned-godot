@@ -84,6 +84,12 @@ namespace UnturnedGodot
             string t = s >= 3600f ? $"{(int)(s / 3600f)}h {(int)(s % 3600f / 60f)}m" : s >= 60f ? $"{(int)(s / 60f)}m" : $"{(int)s}s";
             return $"  · {t}";
         }
+        // Wind turbine billboard suffix: its LIVE output = rated output x current wind (master) -> "· 1500w".
+        string WindSuffix()
+        {
+            float w = (_outputPort != null && GodotObject.IsInstanceValid(_outputPort) ? _outputPort.Watts : 0f) * _windFactor;
+            return $"  · {w:0}w";
+        }
         float _lampLevel;                    // 0..1 lamp envelope, ramps with power over WarmupTime/CooldownTime
         float _lampFlicker = 1f, _lampFlickerT;   // while the source spins up/down (mid-ramp) the lamp stutters (strawberry)
         static readonly bool DbgFlicker = System.Environment.GetEnvironmentVariable("UG_WIREFLICKER") == "1";
@@ -544,10 +550,14 @@ namespace UnturnedGodot
             _info.GlobalPosition = GlobalPosition + Vector3.Up * InfoH;
             if (!_exploded)
             {
-                _info.SetName(Def?.Name + RuntimeSuffix(), OutlineColor);   // name + "· 45m" real-time remaining at the current load (master)
+                bool wind = Def != null && Def.IsWindTurbine;
+                _info.SetName(Def?.Name + (wind ? WindSuffix() : RuntimeSuffix()), OutlineColor);   // gen: "· 45m" fuel time; turbine: "· 1500w" live output (master)
                 _info.SetBar(0, HealthMax > 0f ? Health / HealthMax : 0f, InfoBillboard.HealthColor);   // HP bar (red)
-                _info.SetBar(1, Def != null && Def.IsBattery ? (Def.EnergyMax > 0f ? Energy / Def.EnergyMax : 0f) : (FuelMax > 0f ? Fuel / FuelMax : 0f), InfoBillboard.FuelColor, (FuelMax > 0f) || (Def != null && Def.IsBattery));   // fuel / battery-CHARGE bar (yellow); hidden if neither
-                _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null);   // usage bar (cyan): load / capacity -- generators only
+                if (wind)
+                    _info.SetBar(1, Mathf.Clamp(_windFactor, 0f, 1f), InfoBillboard.LoadColor, true);   // WIND-level bar (cyan) in the fuel slot (master)
+                else
+                    _info.SetBar(1, Def != null && Def.IsBattery ? (Def.EnergyMax > 0f ? Energy / Def.EnergyMax : 0f) : (FuelMax > 0f ? Fuel / FuelMax : 0f), InfoBillboard.FuelColor, (FuelMax > 0f) || (Def != null && Def.IsBattery));   // fuel / battery-CHARGE bar (yellow); hidden if neither
+                _info.SetBar(2, LoadFraction, InfoBillboard.LoadColor, _outputPort != null && !wind);   // usage bar (cyan): generators only, not the turbine
                 // While the player HOLDS F to pick it up, show the progress; otherwise the interact hint. src checkHint:
                 // GENERATOR_OFF when on, GENERATOR_ON when off (_powered is the target -> reads as the next action even
                 // mid-ramp). A generator adds a tap-toggle in front of the hold-to-pick-up. No prompt once on fire.
