@@ -99,12 +99,15 @@ namespace UnturnedGodot
         // A3 (SP/MP-unify): materialize a grid source from its REPLICATED entity (DeployableReplicaView) --
         // a self-contained node stamped with the server NetId, its one Output port hung off PortLocal, in the
         // "deployables" group the local PowerNet reads. NetProducingOverride is seeded OFF (mains default off)
-        // and re-derived from entity.ToggledOn each tick by the view. Positioned at the quantized entity pos
-        // with a plain yaw basis (the Circuit_0 mesh is drawn separately by WorldBuilder, byte-identical); no
-        // stand-up rotation -- PortLocal is authored in the box's as-loaded frame, not a flat-barricade frame.
+        // and re-derived from entity.ToggledOn each tick by the view. Positioned at the quantized entity pos with
+        // the SAME flat->upright basis the world-drawn Circuit_0 mesh + GasPump.Materialize + SpawnEditorGridPower
+        // use: yaw THEN a -90deg stand-up (raw Z-height -> world Y). WITHOUT the stand-up (the old plain-yaw basis)
+        // the port cube stayed in the box's as-loaded FLAT frame while the mesh stood up -> the output node floated
+        // off the box face = "no visual node on breaker box" (master 2026-07-20). PortLocal is authored in the
+        // STOOD-UP frame -- the same one Attach's full placement basis produces (render-verified on the +X face).
         public static GridPowerSource Materialize(Node parent, Vector3 pos, float yawDegrees, float watts, uint netId)
         {
-            var basis = new Basis(Vector3.Up, Mathf.DegToRad(yawDegrees));
+            var basis = new Basis(Vector3.Up, Mathf.DegToRad(yawDegrees)) * new Basis(Vector3.Right, Mathf.DegToRad(-90f));   // yaw + stand the flat-authored box upright (matches GasPump.Materialize + SpawnEditorGridPower)
             var g = new GridPowerSource { Transform = new Transform3D(basis, pos), Watts = watts, NetId = netId, NetProducingOverride = false };
             parent.AddChild(g);
             var port = ConnectionPort.Create(g, new DeployableDef.Port { Kind = DeployableDef.PortKind.Output, Pos = PortLocal, Watts = watts }, "Grid Power");

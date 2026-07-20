@@ -477,6 +477,28 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // #3 (master 2026-07-20 "no visual node on breaker box"): the breaker's output port must STAND UP with the box
+    // under CONSUME. GridPowerSource.Materialize was missing the flat->upright rotation that GasPump.Materialize +
+    // SpawnEditorGridPower both apply, so the port cube stayed in the box's as-loaded FLAT frame while the world-drawn
+    // mesh stood up -> the node floated off the box face. Assert the materialized port sits at box mid-HEIGHT (PortLocal.Z
+    // = 0.933, the box's height axis, rotates to world-Y after the stand-up), NOT the un-stood-up depth (~0.18).
+    public class PowerGridMaterializePortStandsUp : GameTest
+    {
+        public override string Name => "power.grid_materialize_port_standsup";
+        public override IEnumerable<Step> Run()
+        {
+            var grid = GridPowerSource.Materialize(World, Vector3.Zero, 0f, GridPowerSource.DefaultWatts, netId: 4242);
+            yield return Ticks(1);
+            var port = grid.PowerPorts.Count > 0 ? grid.PowerPorts[0] : null;
+            T.Check("materialized breaker has its wire-able output port", port != null && port.Kind == DeployableDef.PortKind.Output);
+            // stood up: the box's height axis (PortLocal.Z=0.933) rotates to world-Y -> the port sits ~0.93 m up ON the box
+            // face. Pre-fix (plain yaw, no stand-up) that height axis stayed in world-Z and world-Y was the ~0.18 depth ->
+            // the cube floated off the box ("no visual node"). world-Y is the teeth: it flips 0.18 -> 0.93 with the fix.
+            T.Check($"output port stands up ON the box (world-Y {port?.GlobalPosition.Y:0.00} ~ 0.93 mid-height, not ~0.18 flat depth)",
+                    port != null && Mathf.Abs(port.GlobalPosition.Y - GridPowerSource.PortLocal.Z) < 0.25f);
+        }
+    }
+
     // The UG_WIREWRECK fact (strawberry): wrecking a wired spotlight must take its wire + port cubes with it --
     // the spotlight shatters (ShatterOnDeath -> no husk), the wire is freed, and the generator's load drops to 0.
     public class PowerWreckDropsWires : GameTest
