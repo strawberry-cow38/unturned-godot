@@ -7,7 +7,12 @@ namespace UnturnedGodot
     // VehicleWheel3D 1:1). Meshes ripped by tools/extract_vehicle_mesh.py; params + real _PaintColor from the .dat.
     public partial class Vehicle : VehicleBody3D, ITowNode
     {
-        float _engineForce = 600f;                  // acceleration feel (calibrated: Unity WheelCollider torque doesn't map 1:1)
+        float _engineForce = 600f;                  // acceleration feel (calibrated: Unity WheelCollider torque doesn't map 1:1). OLD flat-force model; kept for the derive-defaults fallback (see Build)
+        // vehiclerework (master 2026-07-20): the realistic geared-torque drivetrain. _torque = base engine drive force
+        // (game-calibrated); _driveGears = per-speed-band force MULTIPLIERS (grunty low gear .. 1.0 top gear) so gears
+        // feed torque; _dragK = aero drag coeff (F_drag = _dragK*v^2), derived so top speed lands at _speedMax on flat
+        // ground -- so a load/hill drops it BELOW _speedMax (power != speed). Real per-vehicle Mass drives accel = F/m.
+        float _torque = 600f, _dragK; float[] _driveGears = { 1f };
         float _steerMax = 28f, _steerMin = 14f;      // Steer_Max (at rest) .. Steer_Min (at full speed), degrees -- source .dat
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
@@ -192,6 +197,10 @@ namespace UnturnedGodot
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
+            // vehiclerework: real weight + the geared-torque knobs. Mass = kg. Torque = base drive force (game units).
+            // DriveGears = per-speed-band force multipliers (grunt low gear .. 1.0 top gear). Mass<=0 / Torque<=0 / null
+            // DriveGears on a vehicle -> Build DERIVES them from the old Engine/SpeedMax so un-tuned vehicles still drive.
+            public float Mass, Torque;   public float[] DriveGears;
             public float[] WheelRadii;   // optional per-wheel radius (tractor: small front, big rear); null = uniform WheelRadius
             public Vector3 BoxSize, BoxCenter;   // source BoxCollider (Godot space: center Z negated)
             public float[] ForwardGears;   // .dat ForwardGearRatios (engine RPM = wheelRPM * ratio)
@@ -614,6 +623,7 @@ namespace UnturnedGodot
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
+            Mass = 1500f, Torque = 1000f, DriveGears = new[] { 2.0f, 1.5f, 1.2f, 1f },   // vehiclerework BASELINE: mid weight, mid torque, mid top speed (the reference car)
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -735,7 +745,8 @@ namespace UnturnedGodot
         {
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
-            WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 14.5f, SpeedMin = -6f, Brake = 32f,
+            WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 11f, SpeedMin = -5f, Brake = 32f,
+            Mass = 9000f, Torque = 4200f, DriveGears = new[] { 2.6f, 1.9f, 1.4f, 1f },   // vehiclerework HEAVY HAULER: big weight + big torque, LOW top speed (grunts off the line, tows well, tops out early)
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -816,7 +827,8 @@ namespace UnturnedGodot
         {
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
-            WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 17f, SpeedMin = -6f, Brake = 32f,
+            WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 18.5f, SpeedMin = -6f, Brake = 32f,
+            Mass = 1750f, Torque = 1250f, DriveGears = new[] { 2.1f, 1.55f, 1.2f, 1f },   // vehiclerework BUFFED SEDAN (crown vic): a bit heavier than the sedan but more torque + a higher top speed
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -1063,6 +1075,11 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            // vehiclerework drivetrain: real weight + geared torque; un-tuned vehicles DERIVE from the old stats so all still drive.
+            v.Mass = s.Mass > 0f ? s.Mass : GlobalMass;                         // real per-vehicle weight (kg); un-set -> the old shared 900
+            v._torque = s.Torque > 0f ? s.Torque : s.Engine;                    // base drive force; un-set -> the old Engine value (same cruise grunt)
+            v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.7f, 1.35f, 1.1f, 1f };   // un-set -> a sane 4-band spread (launch grunt -> cruise)
+            v._dragK = s.SpeedMax > 0f ? v._torque * v._driveGears[v._driveGears.Length - 1] / (s.SpeedMax * s.SpeedMax) : 0f;   // drag so top-gear force = drag at SpeedMax -> flat-ground top lands there
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
@@ -1346,11 +1363,16 @@ namespace UnturnedGodot
             // S while rolling FORWARD (or W while rolling backward) = a foot BRAKE, not an instant reverse -- real pedal feel
             bool footBrake = (throttle < 0f && fwd > 0.6f) || (throttle > 0f && fwd < -0.6f);
             bool neutral = handbrake && speed < 0.5f;   // near-stop + handbrake -> NEUTRAL: cut engine force so a slow reverse doesn't fight the brake + jitter (master)
-            float eng = (footBrake || neutral) ? 0f : throttle * _engineForce;
+            // vehiclerework: GEARED TORQUE. The drive-gear band comes from speed vs top speed (grunty low band .. 1.0
+            // cruise band); force = torque * that multiplier, so gears feed torque. Real top speed is DRAG-limited (see
+            // the aero drag in _PhysicsProcess), so this only has a SOFT safety ceiling just above _speedMax, not a wall.
+            int dg = _driveGears.Length > 0 ? Mathf.Clamp((int)(Mathf.Clamp(speed / Mathf.Max(0.1f, _speedMax), 0f, 0.999f) * _driveGears.Length), 0, _driveGears.Length - 1) : 0;
+            float mult = _driveGears.Length > 0 ? _driveGears[dg] : 1f;
+            float eng = (footBrake || neutral) ? 0f : throttle * _torque * mult;
             if (CoupledTrailer != null) eng *= 0.5f;   // towing a loaded trailer halves the pull -> even slower accel while hooked up (strawberry 2026-07-15)
-            if (Towing != null) eng *= 0.9f;   // towing a car on a rope: only a touch sluggish now -> the tower keeps most of its power to actually haul the load (0.7->0.9, master "WAYYY too weak" 2026-07-20)
-            if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
-            if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
+            if (Towing != null) eng *= 0.9f;   // towing a car on a rope: only a touch sluggish -> the tower keeps most of its power to actually haul the load (master 2026-07-20)
+            if (throttle > 0f && speed >= _speedMax * 1.05f) eng = 0f;    // soft ceiling just above the top: hand-tuned cars drag-limit BELOW this; DERIVED cars ride it (~= their old SpeedMax)
+            if (throttle < 0f && speed >= -_speedMin * 1.05f) eng = 0f;   // same for reverse
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
             float t = _speedMax > 0f ? Mathf.Clamp(speed / _speedMax, 0f, 1f) : 0f;   // guard div-by-0 for a towed body (_speedMax=0) -> NaN steer target; matches ForwardSpeedPct's _speedMax<=0 guard
             // target steer angle (deg); NEGATE because Godot VehicleBody3D steers LEFT for positive (D(+1)=right). 28deg at rest -> 14 at full speed.
@@ -1879,6 +1901,11 @@ namespace UnturnedGodot
             }
             if (CanTow && CoupledTrailer != null) UpdateCoupled(CoupledTrailer, (float)delta);   // coupled: rollover/clip disconnect + jackknife clamp
             else if (CanTow) UpdateTrailerApproach();     // ghost this cab vs a trailer it's backing under (exception + layer swap) so it phases the low deck+legs; solid vs the player throughout
+            if (_dragK > 0f && !Freeze)   // vehiclerework aero drag: F = _dragK*v^2 opposing horizontal motion -> the drag-limited top speed (a load/hill slows the car below _speedMax -> power != speed)
+            {
+                Vector3 hv = LinearVelocity; hv.Y = 0f; float sp = hv.Length();
+                if (sp > 0.3f) ApplyCentralForce(-hv / sp * (_dragK * sp * sp));
+            }
             if (Towing != null) UpdateTow((float)delta);   // rope tower: spring-tension pull on both bodies + redraw the rope (SP)
             if (Freeze && _deadTimer < 0f && !_alarmed)   // a frozen parked car off-screen -> skip the settle sim (but NOT an alarmed one -- its alarm keeps watching/looping); particles render on their own (master, perf)
             {

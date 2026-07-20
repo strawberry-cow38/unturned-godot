@@ -433,4 +433,38 @@ namespace UnturnedGodot.Testing
             T.Check("rope tool away: both nubs hidden", !tower.TowFrontNubVisible && !tower.TowRearNubVisible);
         }
     }
+
+    // vehiclerework CALIBRATION PROBE (not a strict gate): drive each archetype full-throttle from rest on flat ground
+    // and PRINT the measured top speed + 0->8 m/s time, so the torque/mass/drag values can be tuned to intent
+    // (firetruck heavy+torquey+slow, sedan mid, police buffed). Read the [PROBE] lines to calibrate.
+    public class VehicleDrivetrainProbe : GameTest
+    {
+        public override string Name => "vehicle.drivetrain_probe";
+        public override double TimeoutSimSeconds => 120;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            foreach (var name in new[] { "firetruck", "sedan", "police", "jeep" })
+            {
+                var v = Vehicle.BuildByName(name); World.AddChild(v); v.GlobalPosition = new Vector3(0f, 1.2f, 0f);
+                for (int i = 0; i < 40; i++) yield return Ticks(1);   // drop + settle onto the ground
+                v.EngineOn = true; v.Fuel = v.FuelMax > 0f ? v.FuelMax : 100f; v.LinearVelocity = Vector3.Zero; v.AngularVelocity = Vector3.Zero; v.Wake();
+                float top = 0f, t8 = -1f, simT = 0f;
+                for (int i = 0; i < 550; i++)   // ~11 s at 50 Hz -> approaches the drag-limited top speed
+                {
+                    v.Drive(1f, 0f, false);
+                    yield return Ticks(1);
+                    simT += 0.02f;
+                    float sp = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
+                    top = Mathf.Max(top, sp);
+                    if (t8 < 0f && sp >= 8f) t8 = simT;
+                }
+                GD.Print($"[PROBE] {name,-10} mass={v.Mass,-6:0} topSpeed={top,5:0.0} m/s   0->8m/s={(t8 < 0f ? " n/a " : t8.ToString("0.0") + "s")}");
+                v.QueueFree();
+                yield return Ticks(5);
+            }
+            T.Check("drivetrain probe ran (read the [PROBE] lines for measured top-speed + accel)", true);
+        }
+    }
 }
