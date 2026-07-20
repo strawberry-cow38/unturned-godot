@@ -145,6 +145,18 @@ namespace UnturnedGodot.Testing
 
             sw.TogglePower(); PowerNet.Recompute(Tree);  // switch back ON
             T.Check("switch back ON -> spotlight powered again (state toggles cleanly)", spotIn.Powered);
+
+            // remote trigger: feed the TurnOff side >=1w -> the switch flips OFF on its own (triggers draw 0w)
+            var swOff = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOff);
+            var swOn = sw.Ports.Find(p => p.Role == DeployableDef.SwitchRole.TurnOn);
+            T.Check("switch has TurnOn + TurnOff trigger ports", swOn != null && swOff != null);
+            var gen2 = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 3f), 0f);
+            gen2.TogglePower();
+            PowerRig.Connect(World, gen2.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output), swOff);
+            PowerNet.Recompute(Tree);
+            yield return Ticks(3);   // _Process reads the trigger's Live and flips the switch
+            PowerNet.Recompute(Tree);
+            T.Check("TurnOff trigger fed >=1w -> switch flips OFF -> spotlight dead", !spotIn.Powered);
         }
     }
 

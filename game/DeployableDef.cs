@@ -35,7 +35,8 @@ namespace UnturnedGodot
         // --- power connection points (nodes). A wire runs OUTPUT -> ... -> CONSUMER; a CONSUMER may also have a
         //     PASSTHROUGH that re-exports (input - usage). Pos is in the flat authored mesh frame (stands up with the model). ---
         public enum PortKind { Output, Consumer, Passthrough }
-        public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
+        public enum SwitchRole { None, TurnOn, TurnOff }   // a SWITCH's side trigger inputs: fed >=1w -> set the switch state on / off (they draw 0w)
+        public struct Port { public PortKind Kind; public Vector3 Pos; public float Watts; public SwitchRole Role; }   // Output.Watts = produced (when source on); Consumer.Watts = drawn; Passthrough.Watts unused (= input - consumers)
         public Port[] Ports = System.Array.Empty<Port>();
 
         // --- lamps a CONSUMER lights up when powered (src InteractableSpot: the "Spots" node of Light children,
@@ -124,6 +125,8 @@ namespace UnturnedGodot
             Ports = new[] {
                 new Port { Kind = PortKind.Consumer,    Pos = new Vector3(0f, -0.18f, 0f), Watts = 0f },   // IN relay (back face)
                 new Port { Kind = PortKind.Passthrough, Pos = new Vector3(0f,  0.18f, 0f), Watts = 0f },   // OUT (front) -- gated OFF by the switch
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3(-0.26f, 0f, 0f), Watts = 0f, Role = SwitchRole.TurnOn },   // LEFT side trigger: fed >=1w -> switch ON
+                new Port { Kind = PortKind.Consumer, Pos = new Vector3( 0.26f, 0f, 0f), Watts = 0f, Role = SwitchRole.TurnOff },  // RIGHT side trigger: fed >=1w -> switch OFF
             },
         };
 

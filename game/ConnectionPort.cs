@@ -23,6 +23,7 @@ namespace UnturnedGodot
 
         public IPowerDevice Owner;   // the deployable or fixture this port sits on (was Deployable; now any IPowerDevice, e.g. a gas pump)
         public DeployableDef.PortKind Kind;
+        public DeployableDef.SwitchRole Role;   // a switch trigger port (TurnOn/TurnOff), else None
         public float Watts;         // output: produced; consumer: drawn; passthrough: unused
         public string ProviderName;
         public float Live;          // live power (recomputed by PowerNet): output = produced now, consumer = received, passthrough = exported now
@@ -35,22 +36,27 @@ namespace UnturnedGodot
         public static readonly Color ArrowBlue = new Color(0.30f, 0.62f, 1f);   // blueprint-ghost blue (available)
         public static readonly Color ArrowRed = new Color(1f, 0.28f, 0.28f);    // blueprint-ghost red (wired / unusable)
 
-        static Color BaseColor(DeployableDef.PortKind k) => k switch
+        static Color BaseColor(DeployableDef.PortKind k, DeployableDef.SwitchRole role) => role switch
         {
-            DeployableDef.PortKind.Output => new Color(0.25f, 0.85f, 0.30f),        // green: produces power
-            DeployableDef.PortKind.Consumer => new Color(0.95f, 0.55f, 0.15f),      // orange: draws power
-            DeployableDef.PortKind.Passthrough => new Color(0.30f, 0.75f, 0.95f),   // cyan: re-exports leftover
-            _ => Colors.White,
+            DeployableDef.SwitchRole.TurnOn => new Color(0.30f, 0.90f, 0.40f),     // green: the "turn ON" trigger input
+            DeployableDef.SwitchRole.TurnOff => new Color(0.95f, 0.30f, 0.30f),    // red: the "turn OFF" trigger input
+            _ => k switch
+            {
+                DeployableDef.PortKind.Output => new Color(0.25f, 0.85f, 0.30f),        // green: produces power
+                DeployableDef.PortKind.Consumer => new Color(0.95f, 0.55f, 0.15f),      // orange: draws power
+                DeployableDef.PortKind.Passthrough => new Color(0.30f, 0.75f, 0.95f),   // cyan: re-exports leftover
+                _ => Colors.White,
+            },
         };
 
         public static ConnectionPort Create(IPowerDevice owner, DeployableDef.Port p, string providerName)
         {
             var cp = new ConnectionPort
             {
-                Owner = owner, Kind = p.Kind, Watts = p.Watts, ProviderName = providerName,
+                Owner = owner, Kind = p.Kind, Role = p.Role, Watts = p.Watts, ProviderName = providerName,
                 Position = p.Pos, CollisionLayer = PortLayer, CollisionMask = 0,   // detectable, but doesn't collide with anything
             };
-            cp._mat = new StandardMaterial3D { AlbedoColor = BaseColor(p.Kind), ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Metallic = 0f, Roughness = 0.6f };
+            cp._mat = new StandardMaterial3D { AlbedoColor = BaseColor(p.Kind, p.Role), ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Metallic = 0f, Roughness = 0.6f };
             cp._cube = new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * CubeSize }, MaterialOverride = cp._mat };
             cp.AddChild(cp._cube);
             cp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = Vector3.One * CubeSize } });
@@ -129,7 +135,7 @@ namespace UnturnedGodot
         {
             if (_mat == null) return;
             _mat.EmissionEnabled = on;
-            _mat.Emission = BaseColor(Kind);
+            _mat.Emission = BaseColor(Kind, Role);
             _mat.EmissionEnergyMultiplier = on ? 0.9f : 0f;
         }
     }

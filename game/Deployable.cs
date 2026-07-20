@@ -418,6 +418,16 @@ namespace UnturnedGodot
             if (_smoke != null) _smoke.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * SmokeFrac);
             if (_smoke0 != null) _smoke0.Emitting = _burnTime < 60f && (_exploded || Health < HealthMax * HeavyFrac);
 
+            if (Def != null && Def.IsSwitch)   // remote control: a side trigger fed >=1w SETS the switch state (master); triggers draw 0w
+            {
+                foreach (var port in Ports)
+                {
+                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Live < 1f) continue;
+                    if (port.Role == DeployableDef.SwitchRole.TurnOn && !_switchOn) { _switchOn = true; UpdateSwitchLight(); PowerNet.MarkDirty(); }
+                    else if (port.Role == DeployableDef.SwitchRole.TurnOff && _switchOn) { _switchOn = false; UpdateSwitchLight(); PowerNet.MarkDirty(); }
+                }
+            }
+
             // power ramp: warmup toward on / cooldown toward off. The engine spin (pitch + volume fade) and the body
             // shake amplitude both follow _powerLevel, so turning on builds up and turning off winds down.
             float pTarget = RunTarget;   // an on-fire / fuel-dry generator's engine is dead regardless of the _powered toggle
