@@ -628,7 +628,7 @@ namespace UnturnedGodot
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
             WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 32f, SpeedMin = -12f, Brake = 32f,
-            Mass = 1500f, Torque = 1300f, DriveGears = new[] { 1.5f, 1.35f, 1.22f, 1.13f, 1.06f, 1f }, Drive = Drivetrain.FWD,   // vehiclerework BASELINE: mid, ~72mph, 6-speed, FWD; flatter low gears -> gentler launch
+            Mass = 1500f, Torque = 1100f, DriveGears = new[] { 1.6f, 1.38f, 1.2f, 1.08f, 1f }, Drive = Drivetrain.FWD,   // vehiclerework BASELINE: mid, ~72mph, 5-speed (wider spacing), FWD; sluggish + gentle launch
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -751,7 +751,7 @@ namespace UnturnedGodot
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
             WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 22f, SpeedMin = -9f, Brake = 32f,
-            Mass = 9000f, Torque = 5500f, DriveGears = new[] { 2.0f, 1.7f, 1.45f, 1.3f, 1.18f, 1.08f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework HEAVY HAULER: ~49mph (low), heavy, 7-speed, RWD; still grunty but tamer launch
+            Mass = 9000f, Torque = 4700f, DriveGears = new[] { 2.2f, 1.75f, 1.4f, 1.15f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework HEAVY HAULER: ~49mph (low), heavy, 5-speed (wide spacing), RWD
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -833,7 +833,7 @@ namespace UnturnedGodot
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
             WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 40f, SpeedMin = -13f, Brake = 32f,
-            Mass = 1750f, Torque = 1650f, DriveGears = new[] { 1.6f, 1.4f, 1.26f, 1.15f, 1.06f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework BUFFED SEDAN (crown vic): ~90mph, 6-speed, RWD (tail-happy); flatter low gears
+            Mass = 1750f, Torque = 1400f, DriveGears = new[] { 1.65f, 1.42f, 1.22f, 1.09f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework BUFFED SEDAN (crown vic): ~90mph, 5-speed (wider spacing), RWD (tail-happy)
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -1078,14 +1078,14 @@ namespace UnturnedGodot
             v._baseCollisionMask = v.CollisionMask;      // and the un-ghosted mask, so a ghosted trailer can add bit6 (to hit the cab's sleeper hull) and restore it
             v.AddToGroup("vehicles");      // so NearestVehicle + explosion damage (grenades) find every vehicle, not just harness-grouped ones
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
-            v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
+            v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin * 0.5f;   // vehiclerework: halve the high-speed steer lock -> steering much LESS effective at speed (master), on top of the sqrt falloff
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
             // vehiclerework drivetrain: real weight + geared torque; un-tuned vehicles DERIVE from the old stats so all still drive.
             bool derivedDrive = s.Torque <= 0f;   // no explicit drivetrain stats -> derive + rescale from the old arcade values so the WHOLE fleet gets realistic speeds
             v.Mass = s.Mass > 0f ? s.Mass : GlobalMass;                         // real per-vehicle weight (kg); un-set -> the old shared 900
             if (derivedDrive) v._speedMax = s.SpeedMax * 2.0f;                  // old arcade tops (~12-19 m/s / 25-40mph) -> realistic (~24-38 m/s / 55-85mph); exemplars keep their explicit SpeedMax
-            v._torque = derivedDrive ? s.Engine * 1.3f : s.Torque;             // un-set -> the old Engine value, bumped to pull up to the higher top
-            v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.5f, 1.35f, 1.22f, 1.13f, 1.06f, 1f };   // un-set -> a FLATTER 6-speed spread (gentle launch -> cruise)
+            v._torque = derivedDrive ? s.Engine * 1.1f : s.Torque;             // un-set -> the old Engine value, bumped to pull up to the higher top
+            v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.55f, 1.35f, 1.18f, 1.07f, 1f };   // un-set -> a 5-speed, wider-spaced spread (gentle launch -> cruise)
             v._dragK = v._speedMax > 0f ? v._torque * v._driveGears[v._driveGears.Length - 1] / (v._speedMax * v._speedMax) : 0f;   // drag so top-gear force = drag at the (rescaled) top -> flat-ground top lands there
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
