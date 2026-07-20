@@ -421,6 +421,9 @@ namespace UnturnedGodot
         const float RopePickRadius = 0.7f;   // aim within this of a node (perpendicular) to select it
         bool _roping;                        // mid-tie: a rear source node is picked, waiting for a front dest
         ITowNode _ropeSrc;                   // the tower whose rear node we started from (a Vehicle in SP, a VehiclePuppet on a joined client)
+        ITowNode _towClearVeh;               // RMB-armed roped vehicle under the crosshair: hold to clear the tow rope, tap to disconnect that side (mirrors the wire tool's _clearPort)
+        float _towClearHold;                 // seconds the RMB clear has been held
+        CanvasLayer _ropeHudLayer; Label _ropeHudLabel;   // the rope tool's own centred HUD (separate from the wire's so neither clobbers the other)
         TowRope _ropePreview;                // the live rope being tied (follows the aim)
         ITowNode _ropeLookVeh; bool _ropeLookRear;   // the tow node currently aimed at (null = none)
         bool _ropeNubsOn;                    // are all vehicles' tow nubs currently shown (rope tool out)?
@@ -446,6 +449,7 @@ namespace UnturnedGodot
                 if (_ropeNubsOn) SetAllTowNubs(false);
                 if (_roping) CancelRope();
                 if (_ropeLookVeh != null) { if (TowValid(_ropeLookVeh)) _ropeLookVeh.SetTowNubHighlighted(_ropeLookRear, false); _ropeLookVeh = null; }
+                _towClearVeh = null; _towClearHold = 0f; RopeHudSet(null);   // rope put away -> drop any armed clear + hide the rope HUD
                 return;
             }
             if (!_ropeNubsOn) SetAllTowNubs(true);
@@ -468,6 +472,22 @@ namespace UnturnedGodot
                 Vector3 a = _ropeSrc.RearTowWorld;
                 Vector3 b = onDest ? _ropeLookVeh.FrontTowWorld : (_cam.GlobalPosition + (-_cam.GlobalTransform.Basis.Z) * RopeReach);
                 _ropePreview?.SetEndpoints(a, b, Vehicle.TowRestMin, valid: onDest);
+            }
+
+            // HUD (mirrors the wire tool): while tying, the live rope length vs the max reach; on a roped node the RMB
+            // manage hint; on an open rear node the tie hint. Skipped while a clear is armed -- UpdateRopeManage owns it then.
+            if (_towClearVeh == null)
+            {
+                if (_roping && TowValid(_ropeSrc) && _cam != null)
+                {
+                    bool onDest2 = _ropeLookVeh != null && !_ropeLookRear && !ReferenceEquals(_ropeLookVeh, _ropeSrc) && !_ropeLookVeh.TowRoped;
+                    Vector3 tip = onDest2 ? _ropeLookVeh.FrontTowWorld : (_cam.GlobalPosition + (-_cam.GlobalTransform.Basis.Z) * RopeReach);
+                    float gap = _ropeSrc.RearTowWorld.DistanceTo(tip);
+                    RopeHudSet($"tow rope   {gap:0.0}/{Vehicle.TowAttachReach:0.0}m" + (gap > Vehicle.TowAttachReach ? "   -- TOO FAR" : (onDest2 ? "   [LMB] tie" : "")));
+                }
+                else if (_ropeLookVeh != null && _ropeLookVeh.TowRoped) RopeHudSet("[RMB]  hold: clear rope  ·  tap: disconnect");
+                else if (_ropeLookVeh != null && _ropeLookRear && !_ropeLookVeh.TowRoped) RopeHudSet("[LMB] start tow");
+                else RopeHudSet(null);
             }
         }
 
@@ -528,15 +548,61 @@ namespace UnturnedGodot
             }
         }
 
-        // RMB with the rope tool: cancel a pending tie, or untie a rope on the car you're looking at.
-        void RopeRmb()
+        // RMB PRESS with the rope tool while NOT tying: arm a clear/disconnect on the roped vehicle under the crosshair
+        // (mirrors the wire tool's WireManageArm). Arming off the press edge keeps a routing-cancel press from managing.
+        void RopeManageArm()
         {
-            if (_roping) { CancelRope(); return; }
-            if (_ropeLookVeh == null) return;
-            // B11: a joined client sends the untie INTENT by NetId (the server drops the rope on either end,
-            // no-ops if there's none); the SP/loopback host unties its real node directly.
-            if (NetDetachTow != null) NetDetachTow(_ropeLookVeh.TowNetId);
-            else if (_ropeLookVeh.TowRoped && _ropeLookVeh is Vehicle rv) rv.DetachTow();
+            if (_dead || _driving != null || !HoldingRopeTool || Input.MouseMode != Input.MouseModeEnum.Captured) return;
+            if (CanManageTow(_ropeLookVeh)) { _towClearVeh = _ropeLookVeh; _towClearHold = 0f; }
+        }
+
+        // SP knows a node is roped (real Vehicle.TowRoped); a joined client's puppet keeps it loose (always false), so on
+        // the wire we allow managing ANY aimed node -- the server drops the rope on either end or no-ops (like the old untie).
+        bool CanManageTow(ITowNode v) => v != null && TowValid(v) && (NetDetachTow != null || v.TowRoped);
+
+        // Per-frame: an armed RMB hold on a roped tow node -- held to WireClearTime CLEARS the tow rope, released quickly
+        // (<= WireClickMax) DISCONNECTS that side. One rope per car end, so both untie the single rope; the hold is the
+        // deliberate clear (with a % readout), the tap the quick disconnect. Mirrors UpdateWireManage (master tow UX 2026-07-20).
+        void UpdateRopeManage(float delta)
+        {
+            if (_towClearVeh == null) return;
+            bool active = HoldingRopeTool && !_roping && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
+            if (!active || !ReferenceEquals(_ropeLookVeh, _towClearVeh) || !CanManageTow(_towClearVeh)) { _towClearVeh = null; _towClearHold = 0f; RopeHudSet(null); return; }
+            if (Input.IsMouseButtonPressed(MouseButton.Right))
+            {
+                _towClearHold += delta;
+                if (_towClearHold >= WireClearTime) { DoDetachTow(_towClearVeh); _towClearVeh = null; _towClearHold = 0f; RopeHudSet(null); return; }   // held long enough -> clear
+                RopeHudSet($"clearing tow rope... {Mathf.Clamp((int)(_towClearHold / WireClearTime * 100f), 0, 99)}%");
+            }
+            else { if (_towClearHold <= WireClickMax) DoDetachTow(_towClearVeh); _towClearVeh = null; _towClearHold = 0f; RopeHudSet(null); }   // released quick -> tap-disconnect
+        }
+
+        // Untie a tow rope on the vehicle you're looking at: a joined client sends the intent by NetId (B11, the server
+        // drops the rope on either end, no-ops if there's none), the SP/loopback host unties its real node directly.
+        void DoDetachTow(ITowNode veh)
+        {
+            if (veh == null || !TowValid(veh)) return;
+            if (NetDetachTow != null) NetDetachTow(veh.TowNetId);
+            else if (veh.TowRoped && veh is Vehicle rv) rv.DetachTow();
+        }
+
+        // The rope tool's centred HUD (mirrors WireHudSet): live rope length vs max reach, or the RMB manage hint. Its
+        // OWN label so it never clobbers the wire tool's HUD (the two tools are mutually exclusive but share the screen slot).
+        void RopeHudSet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) { if (_ropeHudLabel != null) _ropeHudLabel.Visible = false; return; }
+            if (_ropeHudLabel == null)
+            {
+                _ropeHudLayer = new CanvasLayer { Layer = 40 }; AddChild(_ropeHudLayer);
+                _ropeHudLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+                _ropeHudLabel.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+                _ropeHudLabel.AnchorLeft = 0.5f; _ropeHudLabel.AnchorRight = 0.5f; _ropeHudLabel.OffsetTop = 90f; _ropeHudLabel.OffsetLeft = -300f; _ropeHudLabel.OffsetRight = 300f;
+                _ropeHudLabel.AddThemeFontSizeOverride("font_size", 26);
+                _ropeHudLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 0.9f));
+                _ropeHudLabel.AddThemeConstantOverride("outline_size", 6);
+                _ropeHudLayer.AddChild(_ropeHudLabel);
+            }
+            _ropeHudLabel.Text = text; _ropeHudLabel.Visible = true;
         }
 
         void CancelRope()
@@ -2609,7 +2675,7 @@ namespace UnturnedGodot
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
-                else if (HoldingRopeTool) { if (rmb.Pressed) RopeRmb(); }    // rope tool: cancel a pending tie, or untie a roped car you're looking at
+                else if (HoldingRopeTool) { if (rmb.Pressed) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
@@ -3326,6 +3392,7 @@ namespace UnturnedGodot
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
             UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview
+            UpdateRopeManage((float)delta);                                                   // rope tool: poke a roped node -> hold RMB clear / tap RMB disconnect (mirrors the wire tool)
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes

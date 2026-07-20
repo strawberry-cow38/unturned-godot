@@ -135,9 +135,9 @@ namespace UnturnedGodot
         public const float TowRestMin = 2.0f;       // floor on the rope's rest length (a bumper-to-bumper tie still gets a 2m rope, slack)
         public const float TowAttachReach = 4.5f;   // max rear<->front world gap allowed when tying (walk the cars close first) -> also the rest-length CEILING, so the rope always forms at exactly the current gap and never yanks on attach
         public const float TowBreakLen = 7.5f;     // stretched past this -> the rope snaps (overload / one car driving off)
-        const float TowStiffness = 7000f;          // spring: newtons per metre of stretch beyond rest
-        const float TowDamping = 1600f;            // spring damper along the rope axis (kills bounce/oscillation)
-        const float TowMaxForce = 13000f;          // clamp so a hard yank can't explode the 900kg bodies at the physics rate
+        const float TowStiffness = 20000f;         // spring: newtons per metre of stretch beyond rest (7000->20000: cars were WAYYY too weak to tow -- master 2026-07-20)
+        const float TowDamping = 3200f;            // spring damper along the rope axis (kills bounce/oscillation; scaled up with the stiffer spring to stay stable)
+        const float TowMaxForce = 30000f;          // clamp so a hard yank can't explode the ~900kg bodies at the physics rate (13000->30000: let a real haul actually pull)
         float _engineNoiseT;   // Phase 3 hearing: throttle the moving-car engine-noise emit
         public Vector3 BodyExtents, BodyCenter;   // BoxCollider half-size + centre (local) -> zombies reach for the body SURFACE, not the centre
         const float BatteryMax = 10000f;   // battery full = 10000 (fuel burn is now per-class -> Vehicle.FuelBurn, set by FuelClassOf)
@@ -1348,7 +1348,7 @@ namespace UnturnedGodot
             bool neutral = handbrake && speed < 0.5f;   // near-stop + handbrake -> NEUTRAL: cut engine force so a slow reverse doesn't fight the brake + jitter (master)
             float eng = (footBrake || neutral) ? 0f : throttle * _engineForce;
             if (CoupledTrailer != null) eng *= 0.5f;   // towing a loaded trailer halves the pull -> even slower accel while hooked up (strawberry 2026-07-15)
-            if (Towing != null) eng *= 0.7f;   // towing a car on a rope: a bit sluggish -> slower accel while hauling the load (strawberry 2026-07-19)
+            if (Towing != null) eng *= 0.9f;   // towing a car on a rope: only a touch sluggish now -> the tower keeps most of its power to actually haul the load (0.7->0.9, master "WAYYY too weak" 2026-07-20)
             if (throttle > 0f && speed >= _speedMax) eng = 0f;    // cap forward at Speed_Max (12.5)
             if (throttle < 0f && speed >= -_speedMin) eng = 0f;   // cap reverse at -Speed_Min (7)
             EngineForce = -eng;   // NEGATE: Godot drives this rig +Z for positive force, so W(throttle+1) was going backward
@@ -1440,7 +1440,16 @@ namespace UnturnedGodot
             var m = new StandardMaterial3D { AlbedoColor = c, ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Metallic = 0f, Roughness = 0.6f };
             return new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * 0.16f }, MaterialOverride = m, Position = pos, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
         }
-        public void SetTowNodesVisible(bool on) { if (_towFrontNub != null) _towFrontNub.Visible = on; if (_towRearNub != null) _towRearNub.Visible = on; }
+        // Show the tow nubs while a rope tool is out, but HIDE the DISALLOWED node (master 2026-07-20): a car that is
+        // TOWING has its FRONT node hidden (it can't also be towed), one being TOWED has its REAR node hidden (it can't
+        // also tow) -- one rope per car end (AttachTow). The OCCUPIED node stays shown so you can RMB-disconnect it.
+        public void SetTowNodesVisible(bool on)
+        {
+            if (_towFrontNub != null) _towFrontNub.Visible = on && Towing == null;
+            if (_towRearNub  != null) _towRearNub.Visible  = on && TowedBy == null;
+        }
+        public bool TowFrontNubVisible => _towFrontNub != null && _towFrontNub.Visible;   // test accessors for the node-hiding regression
+        public bool TowRearNubVisible  => _towRearNub  != null && _towRearNub.Visible;
         // B11 ITowNode: a real Vehicle is the SP/loopback-host tie target -> NetId 0 (the host attaches directly,
         // no wire). Roped = either end already tied; Scannable = not a wreck (mirrors the UpdateRopeLook skip).
         public uint TowNetId => 0;

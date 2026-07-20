@@ -105,7 +105,7 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // The tower drives sluggish while hauling: Drive scales the engine force to 0.7x while Towing != null.
+    // The tower drives a touch sluggish while hauling: Drive scales the engine force to 0.9x while Towing != null.
     public class RopeTowDebuff : GameTest
     {
         public override string Name => "vehicle.rope_tow_debuff";
@@ -125,13 +125,13 @@ namespace UnturnedGodot.Testing
             float baseForce = Mathf.Abs(tower.EngineForce);
             T.Check($"baseline engine force is non-zero ({baseForce:0})", baseForce > 1f);
 
-            // now towing -> Drive should scale the engine force to 0.7x
+            // now towing -> Drive should scale the engine force to 0.9x
             T.Check("tie succeeds", tower.AttachTow(towed));
             tower.LinearVelocity = Vector3.Zero; tower.AngularVelocity = Vector3.Zero;
             tower.Drive(1f, 0f, false);
             float towForce = Mathf.Abs(tower.EngineForce);
-            T.Check($"towing debuffs the engine to ~0.7x ({towForce:0}/{baseForce:0} = {towForce / baseForce:0.00})",
-                    baseForce > 0f && Mathf.Abs(towForce / baseForce - 0.7f) < 0.02f);
+            T.Check($"towing debuffs the engine to ~0.9x ({towForce:0}/{baseForce:0} = {towForce / baseForce:0.00})",
+                    baseForce > 0f && Mathf.Abs(towForce / baseForce - 0.9f) < 0.02f);
         }
     }
 
@@ -396,6 +396,41 @@ namespace UnturnedGodot.Testing
             yield return Ticks(3);
             T.Check("overstretch snapped the rope (tower)", tower.Towing == null);
             T.Check("overstretch snapped the rope (towed)", towed.TowedBy == null);
+        }
+    }
+
+    // Node-hiding (master 2026-07-20): while a rope tool is out, the DISALLOWED node hides -- a TOWING car shows its
+    // rear (occupied) nub but hides its front; a TOWED car shows its front but hides its rear; an untied car shows both.
+    public class RopeTowNodeHiding : GameTest
+    {
+        public override string Name => "vehicle.rope_tow_node_hiding";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var tower = Vehicle.BuildByName("jeep"); World.AddChild(tower); tower.GlobalPosition = new Vector3(0f, 1.2f, 0f);
+            var towed = Vehicle.BuildByName("jeep"); World.AddChild(towed); towed.GlobalPosition = new Vector3(0f, 1.2f, 7f);
+            yield return Ticks(50);
+
+            tower.SetTowNodesVisible(true); towed.SetTowNodesVisible(true);
+            T.Check("untied: both nubs show (tower)", tower.TowFrontNubVisible && tower.TowRearNubVisible);
+            T.Check("untied: both nubs show (towed)", towed.TowFrontNubVisible && towed.TowRearNubVisible);
+
+            T.Check("tie succeeds", tower.AttachTow(towed));
+            tower.SetTowNodesVisible(true); towed.SetTowNodesVisible(true);   // re-evaluate against the live tow state
+            T.Check("TOWING car HIDES its FRONT node (can't also be towed)", !tower.TowFrontNubVisible);
+            T.Check("TOWING car still SHOWS its REAR node (occupied -> RMB-disconnectable)", tower.TowRearNubVisible);
+            T.Check("TOWED car HIDES its REAR node (can't also tow)", !towed.TowRearNubVisible);
+            T.Check("TOWED car still SHOWS its FRONT node (occupied -> RMB-disconnectable)", towed.TowFrontNubVisible);
+
+            tower.DetachTow();
+            tower.SetTowNodesVisible(true); towed.SetTowNodesVisible(true);
+            T.Check("after untie: both nubs show again (tower)", tower.TowFrontNubVisible && tower.TowRearNubVisible);
+            T.Check("after untie: both nubs show again (towed)", towed.TowFrontNubVisible && towed.TowRearNubVisible);
+
+            tower.SetTowNodesVisible(false);
+            T.Check("rope tool away: both nubs hidden", !tower.TowFrontNubVisible && !tower.TowRearNubVisible);
         }
     }
 }
