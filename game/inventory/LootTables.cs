@@ -13,6 +13,10 @@ namespace UnturnedGodot
 
         public static bool Loaded => _loaded && _tiers != null;
         public static int TableCount => _tiers?.Length ?? 0;
+
+        // ---- test hooks (L1 loot-projection tests need a deterministic table without a real Items.dat) ----
+        public static void ResetForTests() { _loaded = false; _tiers = null; _names = null; }
+        public static void LoadTiersForTests((float chance, ushort[] ids)[][] tiers, string[] names) { _tiers = tiers; _names = names; _loaded = true; }
         public static string TableName(int t) => _names != null && t >= 0 && t < _names.Length ? _names[t] : $"table {t}";
 
         public static void Load(string itemsDatPath)

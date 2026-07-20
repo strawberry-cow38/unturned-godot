@@ -300,6 +300,57 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // A1 (regression, master 2026-07-20 empty-shelves fix): with loot tables LOADED, a display shelf's tier loot
+    // projects end-to-end through the consume path -- ContainerNetSync rolls into the crate, the display digest carries
+    // the items, and StorageReplicaView.ApplyDisplay applies them onto the shelf's grid. The bug was the tables never
+    // loading under consume (LootTables.Load lived in the gated-off SpawnMapContainers -> empty crates -> bare shelves);
+    // this guards that once they ARE loaded the projection works. Uses an injected table (no real Items.dat needed).
+    public class UnifyContainerLoot : GameTest
+    {
+        public override string Name => "unify.container_loot";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            // deterministic table 0: one always-hit tier of real demo items (so tryAddItem sizes + places them)
+            LootTables.ResetForTests();
+            LootTables.LoadTiersForTests(
+                new (float, ushort[])[][] { new (float, ushort[])[] { (1f, new ushort[] { 209, 253, 458 }) } },
+                new[] { "TestLoot" });
+
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);
+
+            var manifest = new System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)>
+            {
+                ("Shelf_1", 0, true, "Store Shelf", new Vector3(2f, 0f, 0f), 0f),   // display gondola rolling table 0
+            };
+            var loop = new MpLoopback { Player = player, Driver = driver, DayNight = dayNight, Resources = resources, Containers = manifest, ConsumeDeployables = true };
+            World.AddChild(loop);
+            yield return Until(() => loop.Client.State == NetSessionState.Connected, 15);
+
+            // the container replicates + its display digest carries the ROLLED loot (the fix's whole point)
+            yield return Until(() => loop.Client.Containers.Count == 1, 15);
+            uint cid = 0; int cells = 0;
+            foreach (var e in loop.Client.Containers.All) { cid = e.NetIdValue; cells = e.Display.Length; }
+            T.Check($"the shelf's display digest carries rolled loot ({cells} cells)", cells > 0);
+
+            // and StorageReplicaView applied it onto the materialized shelf's grid (ApplyDisplay with real items)
+            yield return Until(() => loop.Storage != null && loop.Storage.TryGetNode(cid, out _), 15);
+            loop.Storage.TryGetNode(cid, out var shelf);
+            T.Check($"(gate) the materialized shelf shows loot on its tiers ({shelf?.Storage?.getItemCount()} items)",
+                    shelf != null && shelf.Storage != null && shelf.Storage.getItemCount() > 0);
+        }
+    }
+
     // A5 (SP/MP-unify): wildlife round-trips through the REAL consuming loopback -- a host AnimalAgent brain (as
     // AnimalField spawns) is published by AnimalNetSync into AnimalReplication, replicates to the (loopback)
     // client, and AnimalPuppets materializes it from the replica by species. Mirrors the zombie brain/puppet
