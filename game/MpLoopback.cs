@@ -125,6 +125,11 @@ namespace UnturnedGodot
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
                 Player.NetOpenStorage = netId => Client.SendOpenStorage(netId);
                 Player.NetCloseStorage = () => Client.SendCloseStorage();
+                // B9: the server's StorageOpened fact must open the dashboard on the loopback HOST too (mirrors
+                // ClientWorldSession) -- the host SENDS the open request (above) but must also RECEIVE the
+                // confirmation, else a replicated container's F-open sends but never opens the grid. Latched on
+                // the fact, never the request, so the dashboard mirrors the server's open arbitration.
+                Client.StorageOpened += e => { if (Player != null && IsInstanceValid(Player)) Player.OnReplicatedStorageOpened(e.NetId); };
                 // B7 (SP/MP-unify): route the local player's skill-upgrade through the loopback server -- the
                 //     server's PlayerSkills.TryUpgrade is the cost/cap validator; the owner skills echo re-levels
                 //     the shell via AdoptReplicatedSkills in TickLocal. Verbatim from ClientWorldSession.SpawnShell:468.
