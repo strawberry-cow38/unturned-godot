@@ -169,6 +169,40 @@ namespace UnturnedNet.Tests
             Assert.That(h.Server.Combat.Diag.ShotsAccepted, Is.EqualTo(4), "firing works again after the reload");
         }
 
+        // The FULL bullet -> destructible chain (what the "power line doesn't break" report probed): a server
+        // bullet whose world hit is a destructible collider (WorldRay reports its index) routes ObjectDamage
+        // into ServerDestructibles, whittles the health pool, and breaks it at 0 -- replicated to the client.
+        // Proves the combat integration end to end; the field-contract (mesh/collider) is the L1 test.
+        [Test]
+        public void Fire_AtADestructible_WhittlesHealth_ThenBreaks_AndReplicates()
+        {
+            var h = new Harness(50110);
+            // a world where every bullet's world hit is destructible index 0 (the tagged-collider stand-in)
+            h.Server.Combat.WorldRay = (Vector3 from, Vector3 to, out Vector3 hp, out int dest) => { hp = to; dest = 0; return true; };
+            h.Server.DestructibleHost.ServerInit(4, h.Server.Session.CurrentTick);
+            h.Server.DestructibleHost.SetMeta(0, maxHealth: 50f, resetTicks: 100);   // Object_Damage 25 -> breaks on the 2nd hit
+            h.Connected("shooter");
+            var a = h.Clients[0];
+            h.Server.Players.TryGetByOwner(a.PlayerId, out var pe);
+            var origin = Eye(pe.Pos);
+            var dir = new Vector3(0f, 0f, 1f);
+            Assert.That(a.Destructibles.Count, Is.EqualTo(4), "the join snapshot carried the rubble bitmap");
+
+            int tick = 0, shots = 0;
+            // one shot: 50 -> 25, survives
+            h.Step(30, () => { if (tick++ % 7 == 0 && shots < 1) { a.SendFire(origin, dir); shots++; } });
+            Assert.That(h.Server.Combat.Diag.BulletHitsWorld, Is.GreaterThanOrEqualTo(1), "the bullet resolved a world hit");
+            Assert.That(h.Server.Destructibles.IsAlive(0), Is.True, "one hit doesn't break a 50-hp prop (25 Object_Damage)");
+            Assert.That(h.Server.DestructibleHost.Health(0), Is.EqualTo(25f).Within(0.01f), "health whittled to 25");
+
+            // second shot: 25 -> 0, breaks, and the client's replica flips
+            tick = 0; shots = 0;
+            h.Step(30, () => { if (tick++ % 7 == 0 && shots < 1) { a.SendFire(origin, dir); shots++; } });
+            Assert.That(h.Server.Destructibles.IsAlive(0), Is.False, "the 2nd hit crosses 0 -> the prop breaks server-side");
+            h.Step(20);
+            Assert.That(a.Destructibles.IsAlive(0), Is.False, "the break replicated to the client's rubble bitmap");
+        }
+
         // ---------------------------------------------------------------- kill credit (the §4 Phase 5 test)
 
         [Test]
