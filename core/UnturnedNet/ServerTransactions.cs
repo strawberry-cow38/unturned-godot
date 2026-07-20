@@ -59,6 +59,13 @@ namespace UnturnedGodot.Net
         /// server would flip this off (admin gating is deferred policy, the choke point is the mechanism).</summary>
         public bool AllowCheats = true;
 
+        /// <summary>A2 (SP/MP-unify): the authoritative gas-station tanks the ExtractFuel choke drains, behind
+        /// the IFuelStation seam. The HOST supplies it (game: GasStationServer built from the placed gas-pump
+        /// fixtures; tests: a fake). Null on a world with no gas pumps -> ExtractFuel is a no-op. Set after
+        /// construction (like AllowCheats/IsSeated), since GasStationServer is built from the server-placed
+        /// fixtures which mint their NetIds off this same server.</summary>
+        public IFuelStation FuelStations;
+
         /// <summary>Seat query for the console teleport (#27): while seated the seat teleport owns the
         /// entity (ServerVehicles.Step re-asserts it every tick), so a ServerTeleport would silently lose
         /// the fight -- reject instead. NetWorldServer wires this to VehicleHost.IsDriver (it's built
@@ -137,6 +144,22 @@ namespace UnturnedGodot.Net
                 OnPickupDeployable,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _)
                                         && _deployables.TryGet(cmd.NetId, out _));
+
+            // A2: pull fuel from a gas-station pump into a held gas can. The validate is the cheap deref guard
+            // (sender exists + the target is a registered gas-pump FIXTURE within reach + a station tank owns
+            // it); OnExtractFuel does the REAL gating -- a fresh deterministic Solve() (the pump's Consumer
+            // port must be Powered), a held can with free space, and the min(canSpace, remaining) drain. Extract
+            // is the SOLE mutation on the shared tank, so it can't be double-spent (§ determinism 1/2/5).
+            commands.Register<ExtractFuelCommand>(ReplicationIds.CommandExtractFuel, ExtractFuelCommand.TryRead,
+                OnExtractFuel,
+                validate: (sender, cmd) => FuelStations != null
+                                        && FuelStations.TryGetStation(cmd.PumpNetId, out _)
+                                        && TryGetSenderPos(sender, out var pos)
+                                        && _deployables.TryGet(cmd.PumpNetId, out var e)
+                                        && _deployables.Schema.TryGet(e.DefId, out var def)
+                                        && def.FixtureKind == FixtureKind.GasPump
+                                        && (e.Pos - pos).magnitude <= DeployableReplication.WireReach
+                                        && SenderInventory(sender) != null);
 
             // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
             commands.Register<ConnectWireCommand>(ReplicationIds.CommandConnectWire, ConnectWireCommand.TryRead,
@@ -301,6 +324,78 @@ namespace UnturnedGodot.Net
             var inv = SenderInventory(sender);
             if (inv == null || !inv.tryAddItem(item))
                 SpawnWorldItem(item, e.Pos + Vector3.up, Vector3.zero);
+        }
+
+        // A2 (SP/MP-unify): the ONE server-authoritative fuel-extract. The pump is a FixtureKind.GasPump
+        // deployable; the shared 8000 L station tank lives ONLY here (FuelStations), never on the wire. Gate:
+        // a FRESH deterministic Solve() (the pump's Consumer port must be Powered -- same solver both sides),
+        // a held gas can with free space, and pulled = min(canSpace, stationRemaining) so the tank can't be
+        // double-spent. Drain the absolute tank, fill the can (the owner-inventory echo re-adopts the fuller
+        // can locally -- the client NEVER adds fuel itself), then write the recomputed 0..100 percent onto
+        // EVERY same-station pump's Fuel scalar in ONE tick (atomic fan-out; a divergent per-pump fill desyncs).
+        void OnExtractFuel(ushort sender, ExtractFuelCommand cmd)
+        {
+            if (FuelStations == null || !FuelStations.TryGetStation(cmd.PumpNetId, out int stationId)) return;
+            if (!_deployables.TryGet(cmd.PumpNetId, out var pump)) return;
+
+            // (1) powered gate: a fresh Solve() (pure/deterministic), reject unless the pump's Consumer port is live.
+            _deployables.Solve();
+            if (!IsPumpPowered(pump)) return;
+
+            // (2) held gas can with free space (the SP _heldFuelItem, server-side = the sender's fullest-fillable can)
+            var inv = SenderInventory(sender);
+            if (inv == null) return;
+            var can = FindFillableFuelCan(inv, out float canSpace);
+            if (can == null || canSpace <= 0.01f) return;
+
+            // (3) pulled = min(can free space, station remaining) -- validated server-side, so no double-spend
+            float remaining = FuelStations.Remaining(stationId);
+            float pulled = Mathf.Min(canSpace, remaining);
+            if (pulled <= 0.01f) return;
+
+            // (4) drain the ABSOLUTE tank + fill the can (owner echo carries the fuller can back to the client)
+            FuelStations.Drain(stationId, pulled);
+            can.fuelLevel = Mathf.Max(0f, can.fuelLevel) + pulled;
+
+            // (5) recompute the 0..100 percent + fan it out onto EVERY same-station pump in ONE tick (same
+            // LastChangedTick) so no two pumps ever replicate divergent fill. entity.Fuel IS the percent (the
+            // absolute litres never leave the server); the pump has no HP/fire, so Health/OnFire pass through.
+            float cap = FuelStations.Capacity(stationId);
+            float percent = cap > 0f ? Mathf.Clamp(FuelStations.Remaining(stationId) / cap * 100f, 0f, 100f) : 0f;
+            long tick = _tick();
+            foreach (uint pid in FuelStations.Pumps(stationId))
+                if (_deployables.TryGet(pid, out var pe))
+                    _deployables.ServerSetScalars(pid, pe.Health, percent, pe.OnFire, tick);
+        }
+
+        // The pump's Consumer port is Powered after the fresh Solve() (a pure consumer needs a live wired
+        // source; ToggledOn is irrelevant for a consumer). Scans the def's ports for the Consumer index.
+        bool IsPumpPowered(DeployableReplication.DeployableEntity pump)
+        {
+            if (!_deployables.Schema.TryGet(pump.DefId, out var def)) return false;
+            for (int i = 0; i < def.Ports.Length && i < pump.Solved.Length; i++)
+                if (def.Ports[i].Kind == (byte)PowerPortKind.Consumer && pump.Solved[i].Powered) return true;
+            return false;
+        }
+
+        // Server-side stand-in for the SP _heldFuelItem: the first fuel-container item in the sender's own
+        // pages that still has free space (deterministic page/index scan). out its free space (capacity - fuel).
+        static Item FindFillableFuelCan(PlayerInventory inv, out float space)
+        {
+            space = 0f;
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var page = inv.items[b];
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var it = page.getItem(i)?.item;
+                    var a = it?.GetAsset();
+                    if (a == null || !a.IsFuelContainer) continue;
+                    float free = a.fuelCapacity - Mathf.Max(0f, it.fuelLevel);   // -1 (fresh) reads as empty, same as SP TryExtractFuel
+                    if (free > 0.01f) { space = free; return it; }
+                }
+            }
+            return null;
         }
 
         void OnConnectWire(ushort sender, ConnectWireCommand cmd)

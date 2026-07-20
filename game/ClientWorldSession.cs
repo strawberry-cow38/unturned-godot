@@ -471,6 +471,7 @@ namespace UnturnedGodot
             shell.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);
             shell.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
             shell.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
+            shell.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica gas pump -> server drains the shared station tank into the held can
             shell.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
             shell.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
             shell.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);

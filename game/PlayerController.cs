@@ -888,7 +888,13 @@ namespace UnturnedGodot
         // RMB with a gas can in hand + looking at a POWERED pump: fill the can as much as possible = min(its free space,
         // the pump's remaining fuel). One click (master). Nothing happens if the pump's unpowered/empty or the can's full.
         // RMB = SUCK fuel INTO the can: from a powered pump, else OUT of a vehicle you're looking at (master: cars are suckable).
-        void TryExtractFuel()
+        // A2 test seam (L1 unify.gaspump_fixture_extract): headless tests can't drive the look-ray or spin up the
+        // gas-can viewmodel, so they set the focused pump + the held can directly + call TryExtractFuel to exercise
+        // the REAL controller extract path (the replica-pump wire route).
+        internal void SetFocusGasPumpForTest(GasPump pump) => _focusGasPump = pump;
+        internal void SetHeldFuelCanForTest(SDG.Unturned.Item backing) => _heldFuelItem = backing;
+
+        internal void TryExtractFuel()
         {
             if (_heldFuelItem == null) return;
             var asset = _heldFuelItem.GetAsset();
@@ -898,6 +904,12 @@ namespace UnturnedGodot
             if (space <= 0.01f) { GD.Print("[fuel] can is full"); return; }
             if (IsInstanceValid(_focusGasPump))
             {
+                // A2 (SP/MP-unify): a REPLICATED pump (NetId!=0, consuming loopback / joined client) routes the
+                // extract as an intent over the wire and RETURNS -- the server drains the shared station tank + fills
+                // the can, and the owner-inventory echo re-adopts the fuller can. NO local Extract/fuelLevel add (the
+                // direct tank-drain is DISABLED under consume; a local add would double-count + desync). Powered is
+                // checked server-side (a fresh Solve). Direct SP pumps (NetId==0) take the local path below.
+                if (_focusGasPump.NetId != 0) { NetExtractFuel?.Invoke(_focusGasPump.NetId); return; }
                 if (!_focusGasPump.IsPowered) { GD.Print("[fuel] that pump has no power"); return; }
                 float pulled = _focusGasPump.Extract(space);   // drains the pump's shared station tank, capped at what's left
                 if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GD.Print($"[fuel] +{pulled:0} from pump -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}"); }
@@ -1772,6 +1784,7 @@ namespace UnturnedGodot
         public System.Action<ushort, Vector3, float> NetPlaceDeployable;   // (defId,pos,yaw) -> Client.SendPlaceDeployable (server spends the item + broadcasts; the replica view renders it)
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
         public System.Action<uint> NetPickupDeployable;              // B2: -> Client.SendPickupDeployable (the removal + owner-inventory echo return the item; the replica view retires the node)
+        public System.Action<uint> NetExtractFuel;                   // A2: pumpNetId -> Client.SendExtractFuel (server drains the shared station tank into the held can; owner echo re-adopts the fuller can)
         public System.Action<uint, byte, uint, byte> NetConnectWire; // (srcId,srcPort, dstId,dstPort) -> Client.SendConnectWire
         public System.Action<uint> NetRemoveWire;                    // wireId -> Client.SendRemoveWire
         public System.Action<uint, bool> NetToggleDeployable;        // (netId,on) -> Client.SendToggleDeployable (NetSetPowered lands the echo)

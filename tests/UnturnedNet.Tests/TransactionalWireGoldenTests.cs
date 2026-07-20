@@ -44,6 +44,13 @@ namespace UnturnedNet.Tests
         }
 
         [Test]
+        public void ExtractFuelCommand_GoldenBytes()
+        {
+            var cmd = new ExtractFuelCommand { PumpNetId = 42 };   // A2: {uint PumpNetId}, same shape as Salvage/Pickup; id 29 (0x1D) + 42 (LE uint32)
+            Assert.That(Pack(ReplicationIds.CommandExtractFuel, cmd.Write), Is.EqualTo("1D2A000000"));
+        }
+
+        [Test]
         public void ConnectWireCommand_GoldenBytes()
         {
             var cmd = new ConnectWireCommand { SrcId = 7, SrcPort = 0, DstId = 9, DstPort = 1 };

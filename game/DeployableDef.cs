@@ -141,7 +141,23 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Output, Pos = GridPowerSource.PortLocal, Watts = GridPowerSource.DefaultWatts } },
         };
 
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, GridSource };
+        // A2 (SP/MP-unify): the gas-station PUMP (the Gas_Pump_0 map object), promoted from an SP-local
+        // IPowerDevice into a server-placed DEPLOYABLE-GRAPH fixture so it rides the existing SystemDeployables
+        // replication (the mesh + collider are still drawn by WorldBuilder). A single 750 W Consumer port, no
+        // HP/pickup/salvage, NOT player-placeable. FuelCapacity=0: the pump's entity.Fuel does NOT hold litres,
+        // it carries a replicated 0..100 PERCENT of the shared 8000 L station tank (the absolute tank stays
+        // server-side in GasStationServer -- entity.Fuel is 12int/2frac, can't hold 8000). Extract is the only
+        // mutation, server-routed over CommandExtractFuel.
+        public static readonly DeployableDef GasPump = new()
+        {
+            Id = 9201, Name = "Gas Pump", Fixture = FixtureKind.GasPump,
+            Size = new Vector3(0.8f, 2.4f, 0.8f),   // standing Gas_Pump_0 AABB (cosmetic here -- the fixture node is a GasPump, never a Deployable body)
+            Offset = 0f, Radius = 0f, Range = 4f, Health = 0f, Fuel = 0f,   // a world fixture: no HP bar, no salvage/pickup; Fuel scalar reused as the 0..100 station-fill percent
+            // NB: fully-qualified so the CLASS UnturnedGodot.GasPump wins over this DeployableDef.GasPump field.
+            Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = UnturnedGodot.GasPump.PortLocal, Watts = UnturnedGodot.GasPump.Watts } },
+        };
+
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, GridSource, GasPump };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -152,6 +168,7 @@ namespace UnturnedGodot
             9104 => Combiner2,
             1450 => Battery,
             9200 => GridSource,
+            9201 => GasPump,
             _ => null,
         };
 

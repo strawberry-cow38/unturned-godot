@@ -25,6 +25,7 @@ namespace UnturnedGodot
         public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
         public bool SurvivalDrain = false;           // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. OFF by default = SP byte-identical coarse-HP path (strawberry runs survival off); flip on for a survival server.
         public System.Collections.Generic.List<FixtureRecord> Fixtures;   // A3: world power fixtures (Circuit_0 grid sources) recorded by WorldBuilder -> ServerPlaced into the deployable graph at boot (mains OFF)
+        public GasStationServer GasStation { get; private set; }          // A2: authoritative per-station fuel tanks (built from the placed gas-pump fixtures; the ExtractFuel choke drains them)
 
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
@@ -81,10 +82,18 @@ namespace UnturnedGodot
             // deterministic map-file order, mains default OFF (ToggledOn = false). They ride SystemDeployables
             // to every joiner, whose DeployableReplicaView materializes a GridPowerSource node. NetIds minted
             // server-side only (§2.6). Registered AFTER the schema above so ServerPlace resolves DefId 9200.
+            // A2 (SP/MP-unify): the authoritative fuel-station tanks (built from the gas-pump fixtures below).
+            GasStation = new GasStationServer();
             if (Fixtures != null)
                 foreach (var f in Fixtures)
-                    Server.Deployables.ServerPlace(Server.Ids.Mint(), f.DefId, 0,
+                {
+                    var fe = Server.Deployables.ServerPlace(Server.Ids.Mint(), f.DefId, 0,
                         new UnityEngine.Vector3(f.Pos.X, f.Pos.Y, f.Pos.Z), f.YawDegrees, Server.Session.CurrentTick);
+                    // A2: a placed gas pump joins its shared station tank + seeds its replicated full percent.
+                    if (fe != null && DeployableDef.ById(f.DefId)?.Fixture == FixtureKind.GasPump)
+                        GasStation.RegisterPump(fe, f.StationId, Server.Deployables, Server.Session.CurrentTick);
+                }
+            Server.Transactions.FuelStations = GasStation;   // A2: the ExtractFuel choke drains the tanks through this seam
             // Phase 5 combat hooks: server bullets/blasts stop at the world's real geometry, grenades
             // bounce on real ground height. Both are optional seams on the engine-free ServerCombat.
             Server.Combat.WorldRay = GodotWorldRay;

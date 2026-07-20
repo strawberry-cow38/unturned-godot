@@ -2214,4 +2214,125 @@ namespace UnturnedGodot.Testing
             client.Disconnect();
         }
     }
+
+    // A2 (SP/MP-unify): server-authoritative gas-pump fuel extract over the consuming loopback. Every Gas_Pump_0
+    // is promoted from an SP-local FluidTank the client never sees into a server-placed DeployableEntity
+    // (FixtureKind.GasPump); the shared 8000 L tank lives ONLY on the server (GasStationServer), and
+    // CommandExtractFuel is the SOLE mutation: it gates on a fresh Solve() (the pump's Consumer port Powered),
+    // drains the absolute tank by min(canSpace, remaining), fills the held can, and writes the recomputed
+    // 0..100 percent onto EVERY same-station pump's entity.Fuel in one tick.
+    //
+    // Built on the REAL MpLoopback under ConsumeDeployables (the exact node the SP game boots) + a real
+    // PlayerController shell + TWO pumps sharing one station -- so the RMB extract drives the actual controller
+    // seam (TryExtractFuel -> NetExtractFuel -> the wire), the server drains the shared tank, and both pumps'
+    // replicated fill drops together. TEETH: without OnExtractFuel + GasStationServer the station never drains,
+    // the can stays empty, and the pumps stay at their seeded 100% (every gate + the reject below flips on it).
+    public class UnifyGasPumpFixtureExtract : GameTest
+    {
+        public override string Name => "unify.gaspump_fixture_extract";
+        public override double TimeoutSimSeconds => 40;
+
+        const ushort CAN = 1440;   // Industrial gas can (fuelCapacity 20) -- big enough that draining it moves the 8000 L station's quantized percent visibly (100 -> 99.75)
+
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();   // item 1440 resolves for `give` + the shell's held-can guard
+
+            // the same headless-safe SP stand-ins unify.deploy_pickup feeds the loopback
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));   // the REAL shell the loopback drives + adopts onto
+            yield return Ticks(2);
+
+            // two gas pumps on ONE station (S), near the player, handed to the loopback as recorded world fixtures
+            const int S = 4242;
+            var fixtures = new List<FixtureRecord>
+            {
+                new FixtureRecord { DefId = DeployableDef.GasPump.Id, Pos = new Vector3(2f, 0f, 0f), YawDegrees = 0f, Basis = Basis.Identity, StationId = S },
+                new FixtureRecord { DefId = DeployableDef.GasPump.Id, Pos = new Vector3(3.5f, 0f, 0f), YawDegrees = 0f, Basis = Basis.Identity, StationId = S },
+            };
+            var loop = new MpLoopback { Player = player, Driver = driver, DayNight = dayNight, Resources = resources,
+                                        Fixtures = fixtures, ConsumeDeployables = true };
+            World.AddChild(loop);
+
+            yield return Until(() => loop.Client.State == NetSessionState.Connected
+                                     && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _), 15);
+            T.Check("loopback client connected + server inventory present",
+                    loop.Client.State == NetSessionState.Connected
+                    && loop.Server.Inventories.TryGet(loop.Client.PlayerId, out _));
+
+            // the two pumps rode the join snapshot -> fixture entities + materialized GasPump nodes, seeded 100% full
+            uint p0 = 0, p1 = 0;
+            yield return Until(() => { p0 = 0; p1 = 0; foreach (var e in loop.Client.Deployables.All) if (e.DefId == DeployableDef.GasPump.Id) { if (p0 == 0) p0 = e.NetIdValue; else p1 = e.NetIdValue; } return p0 != 0 && p1 != 0; }, 10);
+            T.Check($"both gas pumps replicated as fixture entities ({p0}, {p1})", p0 != 0 && p1 != 0);
+            yield return Until(() => loop.Deploys != null && loop.Deploys.GasPumpCount == 2, 10);
+            T.Check($"the view materialized 2 GasPump nodes ({loop.Deploys?.GasPumpCount})", loop.Deploys != null && loop.Deploys.GasPumpCount == 2);
+            loop.Client.Deployables.TryGet(p0, out var seed0);
+            T.Check($"the pump seeded FULL (100%) before any extract (Fuel={seed0.Fuel})", seed0.Fuel >= 99.9f);
+
+            // power pump#0: a live generator wired to its Consumer port (authority-seeded on the loopback server)
+            var srv = loop.Server.Deployables;
+            long stick = loop.Server.Session.CurrentTick;
+            var gen = srv.ServerPlace(loop.Server.Ids.Mint(), DeployableDef.Generator.Id, 0, new UnityEngine.Vector3(-2f, 0f, 0f), 0f, stick);
+            srv.ServerToggle(gen.NetIdValue, true, stick);
+            srv.ServerConnectWire(loop.Server.Ids.Mint(), gen.NetIdValue, 0, p0, 0, stick);
+
+            // give the server a gas can (the extract fills THIS server-side item), and hand the shell a held can (the
+            // RMB guard). Two separate items: the shell's is the guard, the server's is the authoritative fill.
+            loop.Client.SendConsole($"give {CAN}");
+            yield return Until(() => ServerCanFuel(loop, CAN) >= 0f, 10);
+            player.SetHeldFuelCanForTest(new SDG.Unturned.Item(CAN));   // fuelLevel -1 (fresh) -> 20 free space
+
+            float full = loop.Server.Transactions.FuelStations.Remaining(S);
+            T.Check($"the shared station tank starts full ({full} L)", full >= 7999f);
+
+            // THE ACT: focus pump#0 + drive the REAL controller extract path (TryExtractFuel -> NetExtractFuel -> wire)
+            loop.Deploys.TryGetGasPump(p0, out var node0);
+            T.Check("got the materialized pump node to extract from", node0 != null && node0.NetId == p0);
+            player.SetFocusGasPumpForTest(node0);
+            player.TryExtractFuel();
+
+            // GATE 1: the absolute station tank drained by the can's 20 L (server-authoritative)
+            yield return Until(() => loop.Server.Transactions.FuelStations.Remaining(S) <= full - 19.9f, 15);
+            float after = loop.Server.Transactions.FuelStations.Remaining(S);
+            T.Check($"(gate) the shared station tank drained by the extract ({full} -> {after})", after <= full - 19.9f);
+
+            // GATE 2: the server-side can filled by the pulled amount (the owner echo re-adopts the fuller can locally)
+            yield return Until(() => ServerCanFuel(loop, CAN) >= 19.9f, 15);
+            T.Check($"(gate) the held can filled server-side ({ServerCanFuel(loop, CAN)})", ServerCanFuel(loop, CAN) >= 19.9f);
+
+            // GATE 3: BOTH pumps replicate the SAME drained percent (< 100 -- the fan-out fired), the view mirrors it
+            yield return Until(() => loop.Client.Deployables.TryGet(p0, out var a) && loop.Client.Deployables.TryGet(p1, out var b) && a.Fuel == b.Fuel && a.Fuel < 100f, 15);
+            loop.Client.Deployables.TryGet(p0, out var ce0); loop.Client.Deployables.TryGet(p1, out var ce1);
+            T.Check($"(gate) both pumps replicate the SAME drained percent ({ce0.Fuel} == {ce1.Fuel}, < 100 = fan-out)", ce0.Fuel == ce1.Fuel && ce0.Fuel < 100f);
+            loop.Deploys.TryGetGasPump(p0, out var mirror);
+            T.Check($"(gate) the materialized pump node mirrors the replicated percent ({mirror.FillPercent} ~= {ce0.Fuel})",
+                    Mathf.Abs(mirror.FillPercent - ce0.Fuel) < 0.01f);
+
+            // reject-unpowered (TEETH): extract from pump#1 (never wired to a source) pulls nothing
+            float before = loop.Server.Transactions.FuelStations.Remaining(S);
+            loop.Deploys.TryGetGasPump(p1, out var node1);
+            player.SetFocusGasPumpForTest(node1);
+            player.TryExtractFuel();
+            yield return Ticks(30);
+            T.Check($"(teeth) an UNPOWERED pump drains nothing ({loop.Server.Transactions.FuelStations.Remaining(S)} == {before})",
+                    Mathf.Abs(loop.Server.Transactions.FuelStations.Remaining(S) - before) < 0.01f);
+
+            loop.Client.Disconnect();
+        }
+
+        static float ServerCanFuel(MpLoopback loop, ushort id)
+        {
+            if (!loop.Server.Inventories.TryGet(loop.Client.PlayerId, out var e)) return -999f;
+            foreach (var page in e.Inventory.items)
+                foreach (var jar in page.items)
+                    if (jar.item != null && jar.item.id == id) return jar.item.fuelLevel;
+            return -999f;
+        }
+    }
 }

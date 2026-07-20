@@ -716,6 +716,9 @@ namespace UnturnedGodot.Net
         public bool SendPickupDeployable(uint netId)   // B2: hold-F returns the live deployable to the bag (removal echoes back through the replica view)
             => SendCommand(ReplicationIds.CommandPickupDeployable, new PickupDeployableCommand { NetId = netId }.Write);
 
+        public bool SendExtractFuel(uint pumpNetId)   // A2: RMB a powered pump with a gas can -> server drains the shared station tank into the can (owner echo re-adopts the fuller can)
+            => SendCommand(ReplicationIds.CommandExtractFuel, new ExtractFuelCommand { PumpNetId = pumpNetId }.Write);
+
         public bool SendConnectWire(uint srcId, byte srcPort, uint dstId, byte dstPort)
             => SendCommand(ReplicationIds.CommandConnectWire, new ConnectWireCommand { SrcId = srcId, SrcPort = srcPort, DstId = dstId, DstPort = dstPort }.Write);
 

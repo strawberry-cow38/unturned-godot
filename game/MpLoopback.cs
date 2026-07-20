@@ -47,6 +47,7 @@ namespace UnturnedGodot
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
         public DeployableReplicaView Deploys { get; private set; }   // P1 --spconsume: server deployable/wire entities -> local nodes (null unless ConsumeDeployables)
+        public GasStationServer GasStation { get; private set; }     // A2 --spconsume: authoritative per-station fuel tanks (the ExtractFuel choke drains them)
         public WorldItemReplicaView Items { get; private set; }      // P2 --spconsume: server world-item (drop/loot) entities -> local puppets (null unless ConsumeDeployables)
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
@@ -90,10 +91,20 @@ namespace UnturnedGodot
                 // the toggle as a ConsoleCommand (server flips every GridSource's ToggledOn + broadcasts),
                 // never a local process-global PowerNet.GlobalPower flip.
                 DevConsole.RemoteClient = Client;
+                // A2 (SP/MP-unify): the authoritative fuel-station tanks. Built from the server-placed gas-pump
+                // fixtures below (each registered pump seeds its replicated 100% full percent); the ExtractFuel
+                // choke drains through it. Set on the loopback server's transactions so a local RMB-extract (routed
+                // over the wire via NetExtractFuel) mutates the shared tank server-side.
+                GasStation = new GasStationServer();
                 if (Fixtures != null)
                     foreach (var f in Fixtures)
-                        Server.Deployables.ServerPlace(Server.Ids.Mint(), f.DefId, 0,
+                    {
+                        var fe = Server.Deployables.ServerPlace(Server.Ids.Mint(), f.DefId, 0,
                             new UnityEngine.Vector3(f.Pos.X, f.Pos.Y, f.Pos.Z), f.YawDegrees, Server.Session.CurrentTick);
+                        if (fe != null && DeployableDef.ById(f.DefId)?.Fixture == FixtureKind.GasPump)
+                            GasStation.RegisterPump(fe, f.StationId, Server.Deployables, Server.Session.CurrentTick);   // A2: map pump->station + seed the replicated full percent
+                    }
+                Server.Transactions.FuelStations = GasStation;   // A2: the extract choke reads the absolute tanks through this seam
                 // (b) set the local player's deployable seams to route over the wire (verbatim from
                 //     ClientWorldSession.SpawnShell:446-452). Each seam is null in default SP/loopback, so
                 //     the direct mutation below it stays byte-identical; SETTING it makes PlayerController's
@@ -105,6 +116,7 @@ namespace UnturnedGodot
                 Player.NetPlaceDeployable = (defId, pos, yaw) => Client.SendPlaceDeployable(defId, ToU(pos), yaw);
                 Player.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
                 Player.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
+                Player.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica pump -> server drains the shared station tank into the held can
                 Player.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
                 Player.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);

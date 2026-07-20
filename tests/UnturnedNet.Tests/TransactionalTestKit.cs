@@ -112,6 +112,8 @@ namespace UnturnedNet.Tests
         public const ushort GeneratorId = 458;
         public const ushort SpotlightId = 459;
         public const ushort GridSourceId = 9200;   // A3: the grid-power mains SOURCE fixture (a 10kW Output, FixtureKind.GridSource)
+        public const ushort GasPumpId = 9201;       // A2: the gas-station PUMP fixture (a 750W Consumer, FixtureKind.GasPump)
+        public const ushort GasCanId = 28;          // A2: a Portable Gas Can -- a fuel container (IsFuelContainer) the extract fills
         public const ushort ScrapId = 67;
         public const ushort BeansId = 13;
         public const ushort RifleId = 4;
@@ -130,6 +132,8 @@ namespace UnturnedNet.Tests
             Assets.add(new ItemAsset { id = RifleId, itemName = "Eaglefire", size_x = 4, size_y = 2, type = EItemType.GUN });
             Assets.add(new ItemAsset { id = LogId, itemName = "Log", size_x = 1, size_y = 1, guid = "fixture-log" });
             Assets.add(new ItemAsset { id = PlankId, itemName = "Plank", size_x = 1, size_y = 1, guid = "fixture-plank" });
+            Assets.add(new ItemAsset { id = GasCanId, itemName = "Portable Gas Can", size_x = 2, size_y = 2, fuelCapacity = 100f });   // A2: a fuel container the pump fills
+
         }
 
         /// <summary>The PowerSolverTests devices as net defs: a 4000 W generator (one Output) and a 250 W
@@ -158,6 +162,14 @@ namespace UnturnedNet.Tests
             {
                 DefId = GridSourceId, Health = 0f, FuelCapacity = 0f, Range = 4f, FixtureKind = FixtureKind.GridSource,
                 Ports = new[] { new DeployablePortSpec { Kind = (byte)PowerPortKind.Output, Watts = 10000f } },
+            });
+            // A2: the gas-station PUMP -- a server-placed fixture with one 750W Consumer port. FixtureKind.GasPump
+            // marks it for the ExtractFuel choke; the game registers the same def from DeployableDef.GasPump (9201).
+            // FuelCapacity=0: the entity.Fuel scalar carries a replicated 0..100 percent, not litres.
+            schema.Register(new DeployableNetDef
+            {
+                DefId = GasPumpId, Health = 0f, FuelCapacity = 0f, Range = 4f, FixtureKind = FixtureKind.GasPump,
+                Ports = new[] { new DeployablePortSpec { Kind = (byte)PowerPortKind.Consumer, Watts = 750f } },
             });
         }
 

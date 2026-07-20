@@ -108,6 +108,24 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>A2: pull fuel from a gas-station pump (a FixtureKind.GasPump deployable) into a held gas can.
+    /// {uint PumpNetId}, the same shape as Salvage/Pickup. The server owns the absolute per-station fuel tank
+    /// (game GasStationServer via the IFuelStation seam) and is the SOLE mutation point -- it drains the tank,
+    /// fills the sender's can, and writes the recomputed 0..100 PERCENT onto EVERY same-station pump's Fuel
+    /// scalar in one tick. The pump's own entity carries no absolute litres; entity.Fuel is that percent.</summary>
+    public struct ExtractFuelCommand
+    {
+        public uint PumpNetId;
+        public void Write(NetPakWriter w) => w.WriteUInt32(PumpNetId);
+        public static bool TryRead(NetPakReader r, out ExtractFuelCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            cmd = new ExtractFuelCommand { PumpNetId = id };
+            return true;
+        }
+    }
+
     public struct ConnectWireCommand
     {
         public uint SrcId; public byte SrcPort;

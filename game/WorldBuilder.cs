@@ -21,10 +21,11 @@ namespace UnturnedGodot
     // deployable graph (replicated + client-materialized), while pure-direct SP Attaches it as a local node.
     public struct FixtureRecord
     {
-        public ushort DefId;        // the DeployableDef.Id (GridSource = 9200)
+        public ushort DefId;        // the DeployableDef.Id (GridSource = 9200, GasPump = 9201)
         public Vector3 Pos;         // world position of the drawn mesh (the ServerPlace / Attach point)
         public float YawDegrees;    // object yaw (ServerPlace/Materialize rebuild a plain-yaw basis from this)
         public Basis Basis;         // the FULL placement basis (yaw*pitch*roll*scale) -- the direct Attach path uses it for a byte-identical node transform
+        public int StationId;       // A2 (GasPump only): the shared fuel-station id (StationFuel.StationIdFor(pos)); 0/unused for other fixtures
     }
 
     public sealed class WorldBuildResult
@@ -265,9 +266,14 @@ namespace UnturnedGodot
                 }
                 if (fmesh != null) root.AddChild(new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = 240f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });   // leaves cull closer
-                // gas pumps (master): a powered FLUID TANK -- the GasPump hosts the 750w port + 100L... err, fuel; the world
-                // still draws the mesh below. Created before the collider so we can tag it (look-ray -> collider -> GasPump).
-                GasPump gasPump = (mode == WorldMode.Playable && name == "Gas_Pump_0") ? GasPump.Attach(root, gpos, basis, GasPump.PortLocal, mesh) : null;
+                // gas pumps (A2): every Gas_Pump_0 is a 750W-consumer fuel PUMP over a shared station tank. RECORD
+                // it in EVERY mode (the mesh + collider below stay byte-identical); the caller realizes it -- the
+                // dedicated / consuming-loopback server ServerPlaces it into the deployable graph (so it rides
+                // SystemDeployables and the client's DeployableReplicaView materializes it, with a gaspump-meta
+                // interaction collider of its own), while pure-direct SP Attaches a local node + adds that collider
+                // (WorldBuilder.SpawnFixturesDirect). stationId derived identically via StationFuel.StationIdFor.
+                if (name == "Gas_Pump_0")
+                    result.Fixtures.Add(new FixtureRecord { DefId = DeployableDef.GasPump.Id, Pos = gpos, YawDegrees = 180f - ey, Basis = basis, StationId = StationFuel.StationIdFor(gpos) });
                 // grid power (A3): every Circuit_0 breaker box is a 10kW mains SOURCE. RECORD it in EVERY mode
                 // (the mesh + collider above stay byte-identical); the caller realizes it -- the dedicated /
                 // consuming-loopback server ServerPlaces it into the deployable graph so it rides SystemDeployables
@@ -287,7 +293,8 @@ namespace UnturnedGodot
                         bool losBlocker = maxDim >= 5f && MatFor(name).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
-                        if (gasPump != null) body.SetMeta("gaspump", gasPump);   // look-ray hits this collider -> resolve the GasPump (outline / tooltip / rmb-extract)
+                        // A2: the gas pump's interaction collider is now the fixture node's OWN gaspump-meta box
+                        // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
                     }
@@ -676,8 +683,16 @@ namespace UnturnedGodot
             foreach (var f in fixtures)
             {
                 var def = DeployableDef.ById(f.DefId);
-                if (def == null || def.Fixture != Net.FixtureKind.GridSource) continue;   // A3 realizes grid sources; A2 will add its GasPump branch
-                GridPowerSource.Attach(root, f.Pos, f.Basis, GridPowerSource.PortLocal);
+                if (def == null) continue;
+                if (def.Fixture == Net.FixtureKind.GridSource)
+                    GridPowerSource.Attach(root, f.Pos, f.Basis, GridPowerSource.PortLocal);
+                else if (def.Fixture == Net.FixtureKind.GasPump)
+                {
+                    // A2: pure-direct SP -- a local pump over its shared StationFuel tank (NetId 0), plus its own
+                    // gaspump-meta interaction collider (the world mesh's collider is no longer tagged).
+                    var gp = GasPump.Attach(root, f.Pos, f.Basis, GasPump.PortLocal, null, f.StationId);
+                    gp.AddInteractionCollider();
+                }
             }
         }
 

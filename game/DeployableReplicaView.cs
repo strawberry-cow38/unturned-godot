@@ -21,12 +21,15 @@ namespace UnturnedGodot
 
         readonly Dictionary<uint, Deployable> _nodes = new();
         readonly Dictionary<uint, GridPowerSource> _grids = new();   // A3: server-placed grid-power SOURCE fixtures (a GridPowerSource node, not a Deployable body)
+        readonly Dictionary<uint, GasPump> _gaspumps = new();        // A2: server-placed gas-pump fixtures (a GasPump node, not a Deployable body)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
         public bool TryGetNode(uint netId, out Deployable node) => _nodes.TryGetValue(netId, out node) && IsInstanceValid(node);
         public int GridCount => _grids.Count;   // A3: how many grid-source fixtures have materialized
         public bool TryGetGrid(uint netId, out GridPowerSource grid) => _grids.TryGetValue(netId, out grid) && IsInstanceValid(grid);
+        public int GasPumpCount => _gaspumps.Count;   // A2: how many gas-pump fixtures have materialized
+        public bool TryGetGasPump(uint netId, out GasPump pump) => _gaspumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
 
         public override void _PhysicsProcess(double delta)
         {
@@ -54,6 +57,21 @@ namespace UnturnedGodot
                     grid.NetProducingOverride = e.ToggledOn;
                     continue;
                 }
+                if (def.Fixture == FixtureKind.GasPump)
+                {
+                    // A2: a server-placed gas-station pump -- a GasPump node (NOT a Deployable body). Its fuel bar
+                    // rides the replicated 0..100 station-fill percent (entity.Fuel); it owns no local tank, and
+                    // an RMB extract routes over the wire (the server drains the shared tank -> re-broadcasts the
+                    // percent onto every same-station pump). _input.Powered still solves locally from the replicated
+                    // wire graph, so "no power" shows correctly.
+                    if (!_gaspumps.TryGetValue(e.NetIdValue, out var pump) || !IsInstanceValid(pump))
+                    {
+                        pump = GasPump.Materialize(parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees, e.NetIdValue);
+                        _gaspumps[e.NetIdValue] = pump;
+                    }
+                    pump.FillPercent = e.Fuel;   // the replicated 0..100 percent of the shared station tank
+                    continue;
+                }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
@@ -66,6 +84,7 @@ namespace UnturnedGodot
             }
             RetireMissing(_nodes, seen, node => { if (IsInstanceValid(node)) node.QueueFree(); });
             RetireMissing(_grids, seen, grid => { if (IsInstanceValid(grid)) grid.QueueFree(); PowerNet.MarkDirty(); });
+            RetireMissing(_gaspumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); PowerNet.MarkDirty(); });
 
             // wires: create between the mapped ports (port index = def port order, the §2.6 sub-address).
             // Endpoints may be a Deployable body OR a GridPowerSource fixture (A3), so resolve ports from both.
@@ -102,6 +121,12 @@ namespace UnturnedGodot
             {
                 if (portIndex >= g.PowerPorts.Count) return false;
                 port = g.PowerPorts[portIndex];
+                return true;
+            }
+            if (_gaspumps.TryGetValue(netId, out var gp) && IsInstanceValid(gp))   // A2: a gas pump is a wire-able Consumer endpoint
+            {
+                if (portIndex >= gp.PowerPorts.Count) return false;
+                port = gp.PowerPorts[portIndex];
                 return true;
             }
             return false;
