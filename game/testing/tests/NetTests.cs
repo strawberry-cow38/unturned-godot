@@ -1995,15 +1995,16 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // PEI_COMBAT_PLAN §3 Phase D1 -- the combat lane opens: a joined client's fire routes OVER THE WIRE and
+    // PEI_COMBAT_PLAN §3 / SP-MP-unify P3a -- the combat lane: a joined client's fire routes OVER THE WIRE and
     // kills a real server zombie brain, with the server's facts (HitConfirmed / ZombieDied / kill credit /
-    // the replicated Dead anim) rendering the result, while PvP stays OFF. The net.shell_walk_reconcile rig
-    // (ClientWorldSession + DedicatedServer{RemoteAvatars}) plus the net.zombie_chase_sync brain. The shell
-    // fires through the D1 seam (scripted Shell.Fire() with NetFire wired -- never polled input): its LOCAL
-    // bullet is COSMETIC (tracer only -- Kills stays 0, the shared-world brain takes no direct DamageHit),
-    // the server's bullet is the authority. Then a burst at a second peer's avatar proves the D1 posture:
-    // no player damage, no PlayerDied, Health 100 -- and the whole run is DESYNC-QUIET (SystemPlayerCombat
-    // is in the EnableSyncCheck set, so the kill counter itself is hash-checked).
+    // the replicated Dead anim) rendering the result. The net.shell_walk_reconcile rig (ClientWorldSession +
+    // DedicatedServer{RemoteAvatars}) plus the net.zombie_chase_sync brain. The shell fires through the seam
+    // (scripted Shell.Fire() with NetFire wired -- never polled input): its LOCAL bullet is COSMETIC (tracer
+    // only -- Kills stays 0, the shared-world brain takes no direct DamageHit), the server's bullet is the
+    // authority. Then a burst at a second peer's avatar proves the P3a posture: PvP is now ON, so the burst is
+    // server-resolved PLAYER damage that drops the bystander (was the D1 "players aren't targets" no-op) -- and
+    // the whole run stays DESYNC-QUIET (SystemPlayerCombat is in the EnableSyncCheck set, so the kill/health
+    // counters are hash-checked).
     public class NetShellFireZombie : GameTest
     {
         public override string Name => "net.shell_fire_zombie";
@@ -2048,7 +2049,7 @@ namespace UnturnedGodot.Testing
             yield return Until(() => sess.Shell != null && bystander.State == NetSessionState.Connected, 5);
             T.Check("shell spawned + bystander joined", sess.Shell != null && bystander.State == NetSessionState.Connected);
             if (sess.Shell == null) yield break;
-            T.Check("D1 posture: PvP is OFF on the dedicated server", !ded.Server.Combat.PvPEnabled);
+            T.Check("P3a posture: PvP is ON on the dedicated server", ded.Server.Combat.PvPEnabled);
             T.Check($"the MP shell spawns holding the EAGLEFIRE -- the server's validation profile ({sess.Shell.HeldGunName})",
                     sess.Shell.HasGunOut && sess.Shell.HeldGunName == "eaglefire");
             yield return Until(() => ded.PlayerSync.TrackedCount == 2, 5);
@@ -2100,28 +2101,32 @@ namespace UnturnedGodot.Testing
             T.Check("CombatState parity: bystander replica == server",
                     bystander.CombatState.StateHash() == ded.Server.CombatState.StateHash());
 
-            // PvP-OFF: a burst at the bystander's avatar (~2 m away, aimed at head height -- 3 landed shots
-            // would be 360 damage if PvP were on). The D1 posture: players are simply not targets.
+            // PvP-ON (P3a): a burst at the bystander's avatar (~2 m away, torso height) is server-resolved
+            // PLAYER damage now -- 3 landed Eaglefire torso shots (40 each) drop the 100 HP bystander. This was
+            // the D1 "players are simply not targets" no-op; P3a makes the server own the damage + death fact.
             long hitsPlayerBefore = ded.Server.Combat.Diag.BulletHitsPlayer;
             bool haveBy = ded.Server.Players.TryGetByOwner(bystander.PlayerId, out var bype);
             T.Check("bystander player entity exists server-side", haveBy);
             int pvpShots = 0;
-            for (int i = 0; i < 200 && pvpShots < 3; i++)
+            for (int i = 0; i < 200 && pvpShots < 4; i++)
             {
                 var eye = sess.Shell.TruePhysicsPosition + Vector3.Up * 1.6f;
-                var dir = new Vector3(bype.Pos.x, bype.Pos.y + 1.6f, bype.Pos.z) - eye;
+                var dir = new Vector3(bype.Pos.x, bype.Pos.y + 1.0f, bype.Pos.z) - eye;   // torso zone (1.0x), like the L0 kill-credit rig
                 sess.Shell.RotationDegrees = new Vector3(0f, Mathf.RadToDeg(Mathf.Atan2(-dir.X, -dir.Z)), 0f);
                 if (sess.Shell.Fire()) pvpShots++;
                 yield return Ticks(1);
             }
             yield return Ticks(50);   // every bullet adjudicated + snapshots flushed
             T.Check($"a full burst went at the second peer ({pvpShots} shots)", pvpShots >= 3);
-            T.Check("PvP-OFF: no bullet ever resolved on a player", ded.Server.Combat.Diag.BulletHitsPlayer == hitsPlayerBefore);
-            T.Check("no PlayerDied fact reached any client", pDeaths.Count == 0);
+            T.Check($"PvP-ON: bullets resolved on the player ({ded.Server.Combat.Diag.BulletHitsPlayer - hitsPlayerBefore} hits)",
+                    ded.Server.Combat.Diag.BulletHitsPlayer > hitsPlayerBefore);
+            bool sawByDeath = false;
+            foreach (var d in pDeaths) if (d.Victim == bystander.PlayerId) sawByDeath = true;
+            T.Check("a PlayerDied fact for the bystander reached the clients (server-owned death)", sawByDeath);
             bool byOk = ded.Server.CombatState.TryGet(bystander.PlayerId, out var byCs);
-            T.Check("bystander untouched server-side: Alive, Health 100", byOk && byCs.Alive && byCs.Health == 100);
+            T.Check("bystander took server-authoritative damage: dead, Health 0", byOk && !byCs.Alive && byCs.Health == 0);
             bool byRepOk = bystander.CombatState.TryGet(bystander.PlayerId, out var byRep);
-            T.Check("...and its own replica agrees", byRepOk && byRep.Alive && byRep.Health == 100);
+            T.Check("...and its own replica agrees (dead, Health 0)", byRepOk && !byRep.Alive && byRep.Health == 0);
 
             // the D1 hash-convergence proof: SystemPlayerCombat is in the sync-check set, so the kill/death
             // counters themselves were hash-checked all run -- and the detector stayed silent

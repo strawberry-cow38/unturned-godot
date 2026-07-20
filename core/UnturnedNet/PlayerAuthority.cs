@@ -364,6 +364,41 @@ namespace UnturnedGodot.Net
             _players.ServerDrive(sender, cmd.Pos, cmd.YawDegrees, cmd.Seq, tick);
         }
 
+        /// <summary>
+        /// P3a (SP/MP-unify) server-authoritative respawn reposition. The owner's entity is client-driven, so
+        /// its next PlayerStateCommand would ServerDrive it right back off the respawn point -- a bare
+        /// ServerTeleport is lost. Ride the recov primitive instead: publish the entity at SpawnPos NOW (both
+        /// what observers see and the last-good the envelope validates the resume claim against), open the
+        /// freeze window (bump the counter + Recovering -> every claim whose RecovAck lags is discarded, exactly
+        /// the out-of-envelope rollback path), and unicast a PlayerRecovEvent so the client teleports its shell
+        /// to SpawnPos and echoes the counter. The dead-window claims were already dropped at the IsAlive gate;
+        /// this closes the tight respawn race where a still-in-flight death-position claim would otherwise drag
+        /// the freshly-respawned entity back. Returns false when this owner has no client-auth stream yet (never
+        /// sent a PlayerStateCommand) -- the caller then falls back to a plain ServerTeleport.
+        /// </summary>
+        public bool RepositionOwner(ushort playerId, Vector3 pos, long tick)
+        {
+            if (!_driven.TryGetValue(playerId, out var st)) return false;   // not client-driven -> caller ServerTeleports
+            // publish the entity at the spawn (observers + the envelope baseline the resume claim measures against)
+            _players.ServerTeleport(playerId, pos, tick);
+            // the last-good the recov teleports the shell to must be the ENTITY's quantized pos, so the resume
+            // claim (shell now sitting there, re-quantized) lands a ~zero delta and adopts clean
+            Vector3 landed = _players.TryGetByOwner(playerId, out var e) ? e.Pos : pos;
+            st.RecovCounter++;
+            st.Recovering = true;
+            var evt = new PlayerRecovEvent { Pos = landed, Vel = Vector3.zero, RecovCounter = st.RecovCounter };
+            _sendTo?.Invoke(playerId, NetMessagePak.Pack(ReplicationIds.EventPlayerRecov, evt.Write));
+            if (NetLog.Enabled)
+                NetLog.Sink($"[NET] player {playerId}: server respawn reposition -> recov #{st.RecovCounter} to ({landed.x:0.0},{landed.y:0.0},{landed.z:0.0}) (freeze until echo)");
+            return true;
+        }
+
+        /// <summary>Test view (P3a): the owner's recov counter -- bumps once per envelope rollback AND once per
+        /// server respawn reposition. 0 = never rolled back. Proves the freeze-until-echo primitive fired.</summary>
+        public byte DebugRecovCounter(ushort playerId) => _driven.TryGetValue(playerId, out var st) ? st.RecovCounter : (byte)0;
+        /// <summary>Test view (P3a): is the owner mid-freeze (discarding claims until the RecovAck echoes)?</summary>
+        public bool DebugRecovering(ushort playerId) => _driven.TryGetValue(playerId, out var st) && st.Recovering;
+
         /// <summary>A leaving peer's authority window dies with it -- a recycled playerId starts clean.</summary>
         public void OnPeerDisconnected(ushort playerId) => _driven.Remove(playerId);
     }

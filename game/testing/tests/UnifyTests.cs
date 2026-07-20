@@ -404,4 +404,214 @@ namespace UnturnedGodot.Testing
             client.Disconnect();
         }
     }
+
+    // SP/MP-unify P3a phase gate (part 1 of 3): server-authoritative HP ADOPTION on the owner shell. A real
+    // first-person shell (ClientWorldSession) joins a DedicatedServer (PvP now ON) over MemTransport; the shell
+    // mirrors the owner's replicated CombatEntity coarse Health into its own vitals each tick (the
+    // AdoptReplicatedInventory/Skills analogue), so a HUD Player.Health read tracks server truth.
+    //
+    // TEETH (a): real server damage (QueueDebugPlayerDamage -> the SAME ApplyPlayerDamage the bullet/grenade/
+    // melee paths funnel through, applied at the live tick inside Combat.Step) drops the ADOPTED shell HP to
+    // match the server exactly, and adoption PINS it
+    // (local regen can't drag it back up -- the last-writer rule). TEETH (d): PvP-on does NOT rubber-band a
+    // LIVING owner -- the client-auth walk still adopts with ZERO recovs; owning HP is orthogonal to owning the
+    // transform. On the pre-P3a shell (vitals local, PvP off) neither could be observed: the HUD showed a local
+    // 100 while the server thought you were hurt/dead -- exactly the "rubber-band an unrendered death" this closes.
+    public class UnifyVitalsAdopt : GameTest
+    {
+        public override string Name => "unify.vitals_adopt";
+        public override double TimeoutSimSeconds => 30;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260721);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "adopter" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            T.Check("P3a posture: PvP is ON on the dedicated server", ded.Server.Combat.PvPEnabled);
+
+            yield return Ticks(5);   // let a couple of ShellStep adoption passes run
+            T.Check("the shell adopted server-authoritative vitals (NetVitalsAdopted)", sess.Shell.NetVitalsAdopted);
+            T.Check($"adopted full health at spawn (shell {sess.Shell.Health:0})", Mathf.IsEqualApprox(sess.Shell.Health, 100f));
+
+            // (d) a LIVING owner walks under client authority with PvP ON -- adoption of HP must not manufacture
+            // a position recov (they are orthogonal). This is the "no rubber-band on a living owner" bar.
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            for (int i = 0; i < 100; i++) yield return Ticks(1);
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            yield return Ticks(20);
+            T.Check($"(d) PvP-on did NOT rubber-band the living owner ({sess.RecovsApplied} recovs)", sess.RecovsApplied == 0);
+            T.Check($"(d) a living owner keeps full HP with no combat (shell {sess.Shell.Health:0})", Mathf.IsEqualApprox(sess.Shell.Health, 100f));
+            T.Check("(d) the walking owner is client-driven server-side", ded.Server.PlayerHost.IsClientDriven(sess.Client.PlayerId));
+
+            // (a) real server damage through the production path: 40 -> exactly HealthExact 60 -> coarse 60. The
+            // adopted shell HP must track it (HUD Player.Health), and adoption pins it (no local regen back to 100).
+            ded.Server.Combat.QueueDebugPlayerDamage(sess.Client.PlayerId, 40f, 0);
+            yield return Until(() => sess.Shell.Health <= 61f, 5);
+            bool sOk = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var sCs);
+            T.Check("(a) server applied the damage (coarse Health 60, still alive)", sOk && sCs.Health == 60 && sCs.Alive);
+            T.Check($"(a) the ADOPTED shell HP dropped to match the server (shell {sess.Shell.Health:0} == server 60)",
+                    Mathf.IsEqualApprox(sess.Shell.Health, 60f));
+            T.Check("(a) the shell is NOT rendering death (alive at 60)", !sess.Shell.IsDead);
+            bool rOk = sess.Client.CombatState.TryGet(sess.Client.PlayerId, out var rCs);
+            T.Check("(a) the owner's own combat replica agrees (Health 60)", rOk && rCs.Health == 60);
+
+            // adoption is the LAST HP writer: over a full second of local ticks the shell must NOT regen back up
+            yield return Ticks(50);
+            T.Check($"(a) adoption pins HP -- no local regen ({sess.Shell.Health:0} still 60)", Mathf.IsEqualApprox(sess.Shell.Health, 60f));
+            T.Check($"DESYNC-QUIET across the adoption run ({desyncs} fired)", desyncs == 0);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // SP/MP-unify P3a phase gate (part 2 of 3): server-authoritative DEATH/RESPAWN rendering + the recov
+    // reposition -- the subtle correctness point of the phase. A real shell (ClientWorldSession) walks AWAY from
+    // its spawn, then real server damage kills it: the server's PlayerDied fact renders death on the OWNER
+    // (corpse, _dead), and -- because the server owns the 3.5 s clock -- the shell does NOT self-respawn; it
+    // revives only when PlayerRespawned lands. The teeth: the respawn REPOSITION rides the recov/freeze-until-
+    // echo primitive, NOT a bare ServerTeleport (which the client-auth owner's next PlayerStateCommand would
+    // overwrite). Since NetRespawn deliberately does NOT reposition the shell, the ONLY thing that can move it
+    // off the death spot back to spawn is the server recov -- so "shell ends at spawn, not the death spot" +
+    // "the server recov counter bumped" together prove the recov path carried it. DESYNC-QUIET throughout.
+    public class UnifyDeathRespawnRecov : GameTest
+    {
+        public override string Name => "unify.death_respawn_recov";
+        public override double TimeoutSimSeconds => 45;
+
+        static UnityEngine.Vector3 ToU(Vector3 v) => new UnityEngine.Vector3(v.X, v.Y, v.Z);
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260722);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "diver" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            int desyncs = 0;
+            sess.Client.DesyncDetected += _ => desyncs++;
+            var myDeaths = new List<PlayerDiedEvent>();
+            sess.Client.PlayerDied += myDeaths.Add;
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned on the first authoritative own-entity sample", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            var spawn = sess.Shell.TruePhysicsPosition;
+
+            // walk away from spawn so the death spot is far from where a respawn must land
+            sess.Shell.ScriptedInput = new UnityEngine.Vector2(0f, 1f);
+            for (int i = 0; i < 110; i++) yield return Ticks(1);
+            sess.Shell.ScriptedInput = UnityEngine.Vector2.zero;
+            yield return Ticks(30);
+            var deathSpot = sess.Shell.TruePhysicsPosition;
+            float walked = spawn.DistanceTo(deathSpot);
+            T.Check($"the shell walked well off its spawn ({walked:0.0} m)", walked > 3f);
+            T.Check($"clean walk, ZERO recovs before death ({sess.RecovsApplied})", sess.RecovsApplied == 0);
+            byte recovBefore = ded.Server.PlayerHost.DebugRecovCounter(sess.Client.PlayerId);
+            T.Check("no recov yet server-side (counter 0)", recovBefore == 0);
+
+            // (b) real server damage kills the owner -> the server death fact renders on the OWNER shell
+            ded.Server.Combat.QueueDebugPlayerDamage(sess.Client.PlayerId, 200f, 0);
+            yield return Until(() => sess.Shell.IsDead, 5);
+            T.Check("(b) the server death fact RENDERED on the owner (shell _dead)", sess.Shell.IsDead);
+            bool dOk = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var dCs);
+            T.Check("(b) server owns the death (Alive false, Health 0)", dOk && !dCs.Alive && dCs.Health == 0);
+            bool sawMyDeath = false;
+            foreach (var e in myDeaths) if (e.Victim == sess.Client.PlayerId) sawMyDeath = true;
+            T.Check("(b) a PlayerDied fact for self reached the owner", sawMyDeath);
+
+            // (c) the SERVER owns the 3.5 s clock: the shell revives only on the server's PlayerRespawned, and
+            // the reposition to spawn rides the recov. RespawnDelayTicks = 175 ticks (3.5 s).
+            yield return Until(() => !sess.Shell.IsDead, 8);
+            T.Check("(c) the owner revived on the server respawn fact (shell no longer _dead)", !sess.Shell.IsDead);
+            T.Check($"(c) the respawn rode the RECOV path client-side ({sess.RecovsApplied} recovs applied)", sess.RecovsApplied >= 1);
+            T.Check($"(c) the server recov/freeze primitive fired (counter {recovBefore} -> {ded.Server.PlayerHost.DebugRecovCounter(sess.Client.PlayerId)})",
+                    ded.Server.PlayerHost.DebugRecovCounter(sess.Client.PlayerId) > recovBefore);
+
+            yield return Ticks(40);   // let the recov teleport + resume claim settle
+            float toSpawn = sess.Shell.TruePhysicsPosition.DistanceTo(spawn);
+            float toDeath = sess.Shell.TruePhysicsPosition.DistanceTo(deathSpot);
+            // TEETH: NetRespawn does NOT reposition the shell -- so landing on spawn (and NOT stranded at the
+            // death spot) is only possible because the server recov teleport carried it there. A bare
+            // ServerTeleport would leave RecovsApplied 0 AND strand the shell at the death spot (its claim would
+            // just re-drive the entity back to it) -- both asserts would fail.
+            T.Check($"(c) the shell was repositioned to SPAWN via recov (err {toSpawn:0.00} m)", toSpawn < 0.6f);
+            T.Check($"(c) NOT stranded at the death spot ({toDeath:0.0} m away from it)", toDeath > 2.5f);
+            bool eOk = ded.Server.Players.TryGetByOwner(sess.Client.PlayerId, out var ent);
+            T.Check($"(c) the server entity is held AT spawn (freeze-until-echo held, err {(eOk ? (ent.Pos - ToU(spawn)).magnitude : 9f):0.00} m)",
+                    eOk && (ent.Pos - ToU(spawn)).magnitude < 0.6f);
+            T.Check($"(c) respawned to full HP, adopted ({sess.Shell.Health:0})", !sess.Shell.IsDead && Mathf.IsEqualApprox(sess.Shell.Health, 100f));
+            T.Check($"DESYNC-QUIET across death + respawn ({desyncs} fired)", desyncs == 0);
+
+            world.Sim.Sim.Remove(pump);
+        }
+    }
+
+    // SP/MP-unify P3a phase gate (part 3 of 3): the crisp "server owns the respawn clock" teeth, in isolation
+    // (no net stack). Two bare shells on the ground: one under server-authoritative vitals (NetVitalsAdopted +
+    // NetDie), one plain (the default SP path). Both die; both local death timers run out (well past 3.5 s).
+    // The SERVER-OWNED shell stays dead -- its local self-respawn is DISABLED (the server drives NetRespawn) --
+    // while the PLAIN shell self-respawns exactly as SP always did (byte-identical). This is the direct proof
+    // that flipping HP to server-owned disables the local clock, without which the owner would double-respawn.
+    public class UnifyDeathRespawnLocalClock : GameTest
+    {
+        public override string Name => "unify.death_respawn_local_clock";
+        public override double TimeoutSimSeconds => 15;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var served = new PlayerController { CaptureMouse = false };
+            World.AddChild(served);
+            served.GlobalPosition = new Vector3(0f, 1f, 0f);
+            var local = new PlayerController { CaptureMouse = false };
+            World.AddChild(local);
+            local.GlobalPosition = new Vector3(4f, 1f, 0f);
+            yield return Ticks(3);   // let both _Ready + settle on the ground
+
+            served.AdoptReplicatedVitals(100);   // HP is now server-owned on this shell
+            T.Check("served shell adopted server vitals", served.NetVitalsAdopted);
+
+            served.NetDie();                 // the server death fact
+            local.TakeDamage(9999f);         // the default SP local-death path
+            T.Check("both shells rendered death", served.IsDead && local.IsDead);
+            T.Check("server-owned death zeroed HP", Mathf.IsEqualApprox(served.Health, 0f));
+
+            // 200 ticks = 4 s, well past the 3.5 s local death timer both shells carry
+            yield return Ticks(200);
+            // TEETH: the server-owned shell must NOT have self-respawned -- the server owns the clock (only
+            // NetRespawn revives it). The plain shell self-respawned on its local timer, exactly as SP always did.
+            T.Check("(teeth) the SERVER-owned shell stayed dead past 3.5 s (local self-respawn DISABLED)", served.IsDead);
+            T.Check("(contrast) the plain SP shell self-respawned on its local timer (byte-identical)", !local.IsDead);
+
+            served.NetRespawn(reposition: true);   // the server's respawn fact drives the revive
+            T.Check("NetRespawn revived the server-owned shell", !served.IsDead);
+            T.Check("...to full HP", Mathf.IsEqualApprox(served.Health, served.MaxHealth));
+        }
+    }
 }

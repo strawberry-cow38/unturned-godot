@@ -120,8 +120,13 @@ namespace UnturnedGodot
             // resurrect when the gate re-opens (respawn / vehicle exit). The server's alive/not-seated
             // validate rejects those state packets, so they never ack and never drain -- drop the ring the
             // moment we observe our OWN seat/death/respawn. (Seat is handled just above.)
-            Client.PlayerDied += e => { if (e.Victim == Client.PlayerId) Client.ClearCombatRing(); };
-            Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId) Client.ClearCombatRing(); };
+            // P3a (SP/MP-unify): the server owns this owner's HP + death/respawn lifecycle. On our OWN death,
+            // render it on the shell (Die() corpse + death-cam, local self-respawn clock DISABLED -- the server
+            // owns the 3.5 s timer) and drop the un-acked combat backlog. On our OWN respawn, render the
+            // Respawn() visuals WITHOUT a local reposition -- the move to SpawnPos rides the server's
+            // PlayerRecovEvent (freeze-until-echo), which lands via _pendingRecov in ShellStep.
+            Client.PlayerDied += e => { if (e.Victim == Client.PlayerId) { if (Shell != null && IsInstanceValid(Shell)) Shell.NetDie(); Client.ClearCombatRing(); } };
+            Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId) { if (Shell != null && IsInstanceValid(Shell)) Shell.NetRespawn(reposition: false); Client.ClearCombatRing(); } };
             // Part A: the server rolled our driven vehicle back (out-of-envelope state) -- retail tellRecov
             // (U3 InteractableVehicle.cs:2095-2109): teleport the LOCAL vehicle to the last-good payload,
             // zero velocity, freeze; DriveStep sends the RecovAck echo next tick and releases.
@@ -253,6 +258,11 @@ namespace UnturnedGodot
             // owner skills block -> the shell's local PlayerSkills (the AdoptReplicatedInventory analogue;
             // SkillsReplication has no per-echo event, so mirror every tick -- 23 bytes, idempotent)
             if (Client.Skills.TryGet(Client.PlayerId, out var sk)) Shell.AdoptReplicatedSkills(sk.Skills);
+            // P3a (SP/MP-unify): owner HP is server-authoritative -- mirror the replicated CombatEntity coarse
+            // health (0..100) into the shell each tick (the AdoptReplicatedSkills analogue; PlayerCombatReplication
+            // has no per-echo event either). Adoption is the LAST HP writer so local regen/starve can't move it;
+            // the HUD keeps its exact Player.Health read. Runs before the riding branch so HP tracks while seated too.
+            if (Client.CombatState.TryGet(Client.PlayerId, out var vit)) Shell.AdoptReplicatedVitals(vit.Health);
             // Part A DRIVING (CLIENT_PREDICTION_PLAN §5.2 A1, replacing the C6 v1 puppet-ride): seated in a
             // replicated vehicle -- the shell drives a CLIENT-LOCAL real Vehicle through the SP direct-drive
             // path (0 ms wheel response; retail client authority) and this step streams VehicleState @25 Hz

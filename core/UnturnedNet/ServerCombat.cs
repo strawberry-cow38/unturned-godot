@@ -107,6 +107,17 @@ namespace UnturnedGodot.Net
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
         public Func<float, float, float> GroundHeight;        // (x,z) -> ground y for grenade bounces; null = y 0
 
+        /// <summary>P3a (SP/MP-unify) respawn-reposition seam: a client-authoritative owner's entity is
+        /// overwritten by its next PlayerStateCommand (ServerPlayerAuthority adopts through ServerDrive), so a
+        /// bare ServerTeleport to SpawnPos is silently clobbered the very next tick. NetWorldServer wires this
+        /// to ServerPlayerAuthority.RepositionOwner, which rides the recov/freeze-until-echo primitive: publish
+        /// the entity at SpawnPos, open the recov freeze (discard the owner's claims until it echoes the bumped
+        /// counter), and unicast a PlayerRecovEvent so the client teleports its shell there. Returns true iff it
+        /// handled the reposition (owner has a client-auth stream); false -> Respawn falls back to ServerTeleport
+        /// (a bystander avatar / the loopback node re-asserts its own transform anyway). Null on a bare
+        /// NetWorldServer keeps every pre-P3a combat harness byte-identical (ServerTeleport path).</summary>
+        public Func<ushort, Vector3, long, bool> RepositionOwner;
+
         /// <summary>D1 posture (PEI_COMBAT_PLAN §3): while false, players are not combat targets at all --
         /// bullets fly through them, melee ignores them, blasts spare them (self-damage included, since a
         /// D1 shell has no server-auth vitals and an invisible entity death would just rubber-band it).
@@ -172,6 +183,17 @@ namespace UnturnedGodot.Net
         public ServerGunProfile GunFor(ushort playerId) => _gunByPlayer.TryGetValue(playerId, out var p) ? p : DefaultGun;
 
         public int AmmoOf(ushort playerId) => _state.TryGet(playerId, out var e) ? e.Ammo : -1;
+
+        readonly List<(ushort victim, float damage, ushort attacker)> _debugDamageQueue = new List<(ushort, float, ushort)>();
+
+        /// <summary>Test seam (P3a): queue a unit of server-authoritative player damage to land at the NEXT
+        /// combat Step, so it runs INSIDE the server tick with the LIVE tick -- exactly like the real bullet/
+        /// grenade/melee path funnels through ApplyPlayerDamage. That matters: applying it out-of-tick from a
+        /// test coroutine marks the CombatState dirty at a stale (possibly already-acked) tick, so the delta
+        /// would never ship while the sync-check hash reflects it -- a phantom desync. Lets an L1 owner-
+        /// adoption/death-render test apply a deterministic amount without staging bullet geometry on a moving
+        /// owner. attacker 0 = environment (no kill credit, Killer 0).</summary>
+        public void QueueDebugPlayerDamage(ushort victim, float damage, ushort attacker) => _debugDamageQueue.Add((victim, damage, attacker));
 
         // ------------------------------------------------------------------ commands (dispatch choke point)
 
@@ -240,6 +262,11 @@ namespace UnturnedGodot.Net
 
         public void Step(long tick)
         {
+            if (_debugDamageQueue.Count > 0)   // test seam: apply queued player damage at the live tick (see QueueDebugPlayerDamage)
+            {
+                foreach (var d in _debugDamageQueue) ApplyPlayerDamage(d.victim, d.damage, d.attacker, tick, out _);
+                _debugDamageQueue.Clear();
+            }
             foreach (var cs in _state.All)
             {
                 if (cs.ReloadDoneTick == tick) cs.Ammo = GunFor(cs.OwnerPlayerId).MagCapacity;
@@ -257,7 +284,11 @@ namespace UnturnedGodot.Net
             cs.Health = 100;
             cs.RespawnAtTick = -1;
             _state.MarkDirty(cs, tick);
-            _players.ServerTeleport(cs.OwnerPlayerId, cs.SpawnPos, tick);
+            // P3a: for a client-authoritative owner, ServerTeleport alone is clobbered by the shell's next
+            // PlayerStateCommand -- ride the recov/freeze-until-echo primitive so the reposition holds. The
+            // seam falls back to a plain ServerTeleport when the owner isn't client-driven (bystander/loopback).
+            if (RepositionOwner == null || !RepositionOwner(cs.OwnerPlayerId, cs.SpawnPos, tick))
+                _players.ServerTeleport(cs.OwnerPlayerId, cs.SpawnPos, tick);
             var evt = new PlayerRespawnedEvent { PlayerId = cs.OwnerPlayerId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerRespawned, evt.Write));
         }

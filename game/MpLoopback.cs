@@ -135,6 +135,15 @@ namespace UnturnedGodot
                     if (owner != Client.PlayerId || Player == null || !IsInstanceValid(Player)) return;
                     if (Client.Inventories.TryGet(owner, out var inv)) Player.AdoptReplicatedInventory(inv.Inventory);
                 };
+                // P3a (SP/MP-unify): the loopback already runs PvP ON (only the dedicated server ever set it
+                // false), so a remote joiner shooting the local player already produced server-side damage --
+                // this is the first place server-authoritative HP + death bites. Render the server's death fact
+                // on the local shell and revive off the respawn fact. The listen-server node IS the authority
+                // here (TickLocal ServerDrives its position), so unlike the MP shell the respawn REPOSITIONS the
+                // node itself (to its local Spawn) -- there is no ServerPlayerAuthority recov stream for it. The
+                // per-tick HP adoption itself rides TickLocal (mirrors the owner-inventory adoption there).
+                Client.PlayerDied += e => { if (e.Victim == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetDie(); };
+                Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetRespawn(reposition: true); };
 
                 // (d) P2 -- world-item (dropped/loot) consume, over the wire. Same shape as the deployable
                 //     view in (a): the SAME diff-materializer the MP client uses (ClientWorldSession:144-145)
@@ -229,6 +238,13 @@ namespace UnturnedGodot
                 Player.AdoptReplicatedInventory(invEntry.Inventory);
                 _localInventoryAdopted = true;
             }
+
+            // P3a (SP/MP-unify): server-authoritative HP for the local player -- mirror the replicated
+            // CombatEntity coarse health (0..100) into the shell each tick (the owner-inventory adoption
+            // analogue; PlayerCombatReplication has no per-echo event). Gated on --spconsume, so default
+            // SP/loopback keeps its LOCAL vitals byte-identical.
+            if (ConsumeDeployables && Client.CombatState.TryGet(Client.PlayerId, out var vit))
+                Player.AdoptReplicatedVitals(vit.Health);
 
             // 1) the shell's captured input goes over the wire as this tick's MoveInput (held-keys model)
             float yaw = Player.RotationDegrees.Y;

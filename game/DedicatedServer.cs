@@ -77,7 +77,12 @@ namespace UnturnedGodot
             // Phase 5 combat hooks: server bullets/blasts stop at the world's real geometry, grenades
             // bounce on real ground height. Both are optional seams on the engine-free ServerCombat.
             Server.Combat.WorldRay = GodotWorldRay;
-            Server.Combat.PvPEnabled = false;   // D1 (PEI_COMBAT_PLAN §3): players safe -- shell vitals are still local, so server-side player damage would only rubber-band an unrendered death. Removed in D2.
+            // P3a (SP/MP-unify): PvP is now ON (the ServerCombat default). Server-authoritative player damage
+            // is owned + rendered on the owner shell: the coarse Health replica drives the HUD via
+            // AdoptReplicatedVitals, PlayerDied/PlayerRespawned render death/respawn on the owner, and the
+            // respawn reposition rides the recov/freeze-until-echo primitive. Landed ATOMICALLY with that
+            // adoption -- flipping it alone (the old D1 posture removed here) would rubber-band an unrendered
+            // death, which is exactly why it was held false until now.
             if (Terr != null) Server.Combat.GroundHeight = (x, z) => Terr.SampleHeight(x, z);
             // C6 (§7 risk 6): the vehicle-exit teleport spot has no ground snap in core -- on a hillside the
             // beside-the-door point can land INSIDE the slope and drop the avatar through the world. Lift a

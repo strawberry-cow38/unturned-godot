@@ -82,6 +82,11 @@ namespace UnturnedGodot.Net
             PlayerHost = new ServerPlayerAuthority(Players, CombatState, VehicleHost.IsDriver,
                                                    () => Session.CurrentTick, SendEventTo);
             PlayerHost.Register(Commands);
+            // P3a (SP/MP-unify): a server respawn of a client-authoritative owner must ride the recov/
+            // freeze-until-echo primitive (else the shell's next PlayerStateCommand ServerDrives the entity
+            // straight back off the spawn). ServerCombat.Respawn calls this; it no-ops (returns false ->
+            // ServerCombat ServerTeleports) for owners with no client-auth stream (bystander avatars, loopback).
+            Combat.RepositionOwner = PlayerHost.RepositionOwner;
             // mp-event-coalesce (v10): route each deduped carried combat event to the ServerCombat handler
             // by Kind. The authority holds only a PlayerCombatReplication (for IsAlive); the OnFire/etc
             // handlers live on ServerCombat, so the carry is dispatched through this delegate. The standalone

@@ -1561,6 +1561,58 @@ namespace UnturnedGodot
             }
         }
 
+        // ---- P3a (SP/MP-unify): server-authoritative HP adoption. When the owner's health is server-owned,
+        // the replicated PlayerCombatReplication coarse Health (0..100 byte, SystemId 2) is the ONLY writer of
+        // the shell's HP -- the AdoptReplicatedInventory/Skills analogue. Local regen/starve/fall/zombie damage
+        // can't move it (those damage sources route server-side in P3b); death + respawn are driven off the
+        // server's PlayerDied/PlayerRespawned facts via NetDie()/NetRespawn(). Wired ONLY by ClientWorldSession
+        // (MP shell) + MpLoopback --spconsume; null in default SP so vitals stay local + byte-identical. ----
+        public bool NetVitalsAdopted { get; private set; }
+        float _netAdoptedHealth = 100f;   // the coarse server HP the shell is pinned to while adopting
+
+        /// <summary>MP/loopback owner: mirror the owner's replicated CombatEntity coarse health (0..100 byte)
+        /// into the shell's vitals, re-asserted as the LAST writer each tick (UpdateVitals re-pins to it,
+        /// TakeDamage no-ops), so nothing local moves HP while the server owns it. MaxHealth is the source 100.
+        /// v1 grain note: the coarse byte is +-1 HP -- fine for the HUD's Player.Health read; a fine owner-only
+        /// vitals block (exact float, sub-HP) is a later interest-block refinement, not needed for the gate.</summary>
+        public void AdoptReplicatedVitals(int coarseHealth)
+        {
+            NetVitalsAdopted = true;
+            MaxHealth = 100f;
+            _netAdoptedHealth = Mathf.Clamp(coarseHealth, 0, 100);
+            Health = _netAdoptedHealth;   // apply immediately -- the HUD may read Player.Health at any point
+        }
+
+        // Server-owned death/respawn while adopting: the shell renders the SP death corpse/cam + respawn
+        // visuals, but the SERVER owns the 3.5 s clock (the local _deathTimer self-respawn is disabled) and the
+        // respawn REPOSITION rides the recov/freeze-until-echo primitive (a bare GlobalPosition write is
+        // overwritten by the client-auth owner's next PlayerStateCommand), never a local teleport here.
+        bool _serverOwnedRespawn;
+        public bool IsDead => _dead;   // L1 net tests: did the server death fact render on the owner
+
+        /// <summary>Server-authoritative death (PlayerDiedEvent for self): render the local Die() corpse +
+        /// death-cam, but disable the local self-respawn clock -- the server owns the timer and drives
+        /// NetRespawn() off PlayerRespawnedEvent. Idempotent (a re-broadcast is a no-op).</summary>
+        public void NetDie()
+        {
+            if (_dead) return;
+            Health = 0f;
+            _serverOwnedRespawn = true;
+            Die();
+        }
+
+        /// <summary>Server-authoritative respawn (PlayerRespawnedEvent for self): the SP Respawn() visuals
+        /// (clear corpse, restore cam + vitals). reposition=false for the client-auth MP shell -- the move to
+        /// SpawnPos rides the server's PlayerRecovEvent (freeze-until-echo), because a GlobalPosition write is
+        /// clobbered by the shell's next state claim. reposition=true for the loopback listen-server, where the
+        /// node IS the authority (ServerDrive reads it) so it repositions itself to its local Spawn.</summary>
+        public void NetRespawn(bool reposition)
+        {
+            if (!_dead) return;
+            _serverOwnedRespawn = false;
+            Respawn(reposition);
+        }
+
         public Vector3 Spawn = new Vector3(0, 1f, 0);
 
         // Zombie sensing (AlertTool/PlayerStance): Agro increments once per zombie that starts hunting this
@@ -2100,6 +2152,7 @@ namespace UnturnedGodot
         public void TakeDamage(float amount, Vector3? fromPos = null)
         {
             if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
+            if (NetVitalsAdopted) return;   // P3a: HP is server-owned -- local damage sources (fall/zombie melee/blast) route server-side in P3b; a local death here would fight the server clock and rubber-band. Server bullets/grenade/melee already own HP via the CombatState replica.
             if (_dead || Health <= 0f) return;
             Health -= amount;
             if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
@@ -2155,12 +2208,13 @@ namespace UnturnedGodot
             }
         }
 
-        void Respawn()
+        void Respawn(bool reposition = true)
         {
             _dead = false;
             Health = MaxHealth;
+            _netAdoptedHealth = MaxHealth;   // P3a: keep the adopted pin in sync with the fresh HP (the server's coarse Health is 100 on respawn too) so the next UpdateVitals doesn't yank it back down
             Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;   // fresh vitals on respawn
-            GlobalPosition = Spawn;
+            if (reposition) GlobalPosition = Spawn;   // P3a: the client-auth MP shell skips this -- the server's recov teleport owns the move to SpawnPos (a GlobalPosition write would be overwritten by the next state claim)
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
             _clothing?.Refresh();   // re-sync the worn clothing onto the (persistent) body after death (source re-applies thirdClothes on spawn)
@@ -2191,6 +2245,10 @@ namespace UnturnedGodot
                 SurvivalDrain = Skills.SurvivalDrainMultiplier(),                 // SURVIVAL slows hunger/thirst
                 VitalityRegen = Skills.VitalityRegenMultiplier(),                 // VITALITY speeds regen while fed + hydrated
             });
+            // P3a: while server-owned, the cosmetic vitals above (stamina/food/water/infection) still step for
+            // the local HUD, but HP is re-pinned to the adopted server value as the LAST writer of the tick --
+            // local regen/starve never moves it, and starvation never triggers a local death (server-owned).
+            if (NetVitalsAdopted) { Health = _netAdoptedHealth; return; }
             if (died) { Deaths++; Die(); }
         }
 
@@ -3338,7 +3396,10 @@ namespace UnturnedGodot
                 Velocity = Vector3.Zero;
                 LastMoveInput = UnityEngine.Vector2.zero;
                 LastJumpInput = false;
-                if (_deathTimer <= 0) Respawn();
+                // P3a: while server-owned, the SERVER owns the 3.5 s respawn clock -- NetRespawn() drives the
+                // revive off PlayerRespawnedEvent; the local timer must not self-respawn (it would fight the
+                // server, respawning early / at the wrong place). Default SP keeps its local timer verbatim.
+                if (_deathTimer <= 0 && !_serverOwnedRespawn) Respawn();
                 return;
             }
             if (_fireCd > 0f) _fireCd -= (float)delta;
