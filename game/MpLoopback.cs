@@ -144,6 +144,16 @@ namespace UnturnedGodot
                 // per-tick HP adoption itself rides TickLocal (mirrors the owner-inventory adoption there).
                 Client.PlayerDied += e => { if (e.Victim == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetDie(); };
                 Client.PlayerRespawned += e => { if (e.PlayerId == Client.PlayerId && Player != null && IsInstanceValid(Player)) Player.NetRespawn(reposition: true); };
+                // P3b (SP/MP-unify): the loopback host shell is the listen-server's OWN authority (not a follower
+                // body, not a client-auth claim stream), so its LOCAL environmental damage (zombie melee/acid,
+                // blast, fall, OOB) has nowhere to go under P3a's NetVitalsAdopted no-op. Route it to the server
+                // sink -- the shell's TakeDamage forwards here instead of moving local HP. SINGLE source: the
+                // server does NOT independently derive fall/OOB for the loopback owner (it has no
+                // ServerPlayerAuthority claim stream -- MpLoopback ServerDrives its position directly), so no
+                // double count. ExpectServerVitals latches the spawn-window guard so no local death fires before
+                // the first AdoptReplicatedVitals. Client.PlayerId is read at hit time (connected by then).
+                Player.ExpectServerVitals();
+                Player.NetDamageSink = amount => Server.Combat.DamagePlayerExternal(Client.PlayerId, amount);
 
                 // (d) P2 -- world-item (dropped/loot) consume, over the wire. Same shape as the deployable
                 //     view in (a): the SAME diff-materializer the MP client uses (ClientWorldSession:144-145)

@@ -184,16 +184,29 @@ namespace UnturnedGodot.Net
 
         public int AmmoOf(ushort playerId) => _state.TryGet(playerId, out var e) ? e.Ammo : -1;
 
-        readonly List<(ushort victim, float damage, ushort attacker)> _debugDamageQueue = new List<(ushort, float, ushort)>();
+        readonly List<(ushort victim, float damage, ushort attacker)> _externalDamageQueue = new List<(ushort, float, ushort)>();
+
+        /// <summary>P3b (SP/MP-unify): the PUBLIC non-weapon player-damage entry -- the wrapper over the private
+        /// ApplyPlayerDamage sink for the damage sources P3a left stranded on the invulnerable NetAvatar/adopted
+        /// body: zombie melee + acid, vehicle/deployable blast, server-derived fall, and out-of-bounds. All
+        /// funnel through the SAME ApplyPlayerDamage the bullet/melee/grenade paths use, so HP stays fully
+        /// server-authored. Like the P3a debug seam it QUEUES to land at the next Step with the LIVE tick (never
+        /// out-of-tick: applying it at a stale/already-acked tick would mark the CombatState dirty at a tick the
+        /// sync-check already reflects -- a phantom desync); it also lets a game-side actor (a zombie brain, an
+        /// exploding deployable) enqueue from its own Godot _PhysicsProcess and have the hit land cleanly inside
+        /// the server tick. attacker 0 = environment (no kill credit, Killer 0). NOT PvP-gated: this is PvE/
+        /// environmental damage, which lands even on a PvP-off server -- the PvP toggle only governs player-vs-
+        /// player target SELECTION (bullets/melee/blast), never the HP sink itself.</summary>
+        public void DamagePlayerExternal(ushort victimPlayerId, float damage, ushort attackerPlayerId = 0)
+            => _externalDamageQueue.Add((victimPlayerId, damage, attackerPlayerId));
 
         /// <summary>Test seam (P3a): queue a unit of server-authoritative player damage to land at the NEXT
         /// combat Step, so it runs INSIDE the server tick with the LIVE tick -- exactly like the real bullet/
-        /// grenade/melee path funnels through ApplyPlayerDamage. That matters: applying it out-of-tick from a
-        /// test coroutine marks the CombatState dirty at a stale (possibly already-acked) tick, so the delta
-        /// would never ship while the sync-check hash reflects it -- a phantom desync. Lets an L1 owner-
-        /// adoption/death-render test apply a deterministic amount without staging bullet geometry on a moving
-        /// owner. attacker 0 = environment (no kill credit, Killer 0).</summary>
-        public void QueueDebugPlayerDamage(ushort victim, float damage, ushort attacker) => _debugDamageQueue.Add((victim, damage, attacker));
+        /// grenade/melee path funnels through ApplyPlayerDamage. Now a thin alias over DamagePlayerExternal
+        /// (identical semantics: environment damage landing at the live tick inside Combat.Step). Lets an L1
+        /// owner-adoption/death-render test apply a deterministic amount without staging bullet geometry on a
+        /// moving owner.</summary>
+        public void QueueDebugPlayerDamage(ushort victim, float damage, ushort attacker) => DamagePlayerExternal(victim, damage, attacker);
 
         // ------------------------------------------------------------------ commands (dispatch choke point)
 
@@ -262,10 +275,14 @@ namespace UnturnedGodot.Net
 
         public void Step(long tick)
         {
-            if (_debugDamageQueue.Count > 0)   // test seam: apply queued player damage at the live tick (see QueueDebugPlayerDamage)
+            if (_externalDamageQueue.Count > 0)   // P3b: drain non-weapon damage (fall/OOB/zombie/blast + the P3a debug seam) at the live tick (see DamagePlayerExternal)
             {
-                foreach (var d in _debugDamageQueue) ApplyPlayerDamage(d.victim, d.damage, d.attacker, tick, out _);
-                _debugDamageQueue.Clear();
+                for (int i = 0; i < _externalDamageQueue.Count; i++)   // index loop tolerates an enqueue during ApplyPlayerDamage's death broadcast
+                {
+                    var d = _externalDamageQueue[i];
+                    ApplyPlayerDamage(d.victim, d.damage, d.attacker, tick, out _);
+                }
+                _externalDamageQueue.Clear();
             }
             foreach (var cs in _state.All)
             {

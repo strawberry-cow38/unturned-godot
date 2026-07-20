@@ -614,4 +614,319 @@ namespace UnturnedGodot.Testing
             T.Check("...to full HP", Mathf.IsEqualApprox(served.Health, served.MaxHealth));
         }
     }
+
+    // SP/MP-unify P3b phase gate (source 3 of 5): SERVER-DERIVED fall damage. The client-auth walker streams
+    // its (envelope-validated) Vel + Grounded each PlayerStateCommand; the server tracks the peak downward
+    // speed while airborne and, on the airborne->grounded edge, applies the SAME FallMath curve the SP client
+    // uses in CheckFallDamage -- WITHOUT the client ever reporting a damage number (the one client-auth cheat
+    // hole this closes). Position is held static so the derivation is exercised off Vel+Grounded alone (the
+    // envelope keys on position delta, which is 0 here).
+    //
+    // TEETH: a GENTLE landing (peak 10 m/s, under the 22 m/s threshold) does NOT damage; a HARD landing (peak
+    // 40 m/s) drops the server HP by exactly FallMath.Damage(-40)=40, and the owner's replica adopts it. On the
+    // pre-P3b server neither could land -- fall was a local TakeDamage the adopted shell no-op'd (invulnerable).
+    public class UnifyDamageFall : GameTest
+    {
+        public override string Name => "unify.damage_fall";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260730);
+            var walker = new NetWorldClient(new MemClientTransport(net), "faller", contentHash: NetContent.Hash);
+            bool send = false, grounded = true;
+            UnityEngine.Vector3 claim = default, claimVel = default;
+            byte recovAck = 0;
+            walker.PlayerRecov += e => { recovAck = e.RecovCounter; claim = e.Pos; };   // stray-recov insurance (none expected on a static claim)
+            var pump = new DelegateSimStep((t, dt) =>
+            {
+                net.Tick(); walker.Tick();
+                if (send) walker.SendPlayerState(claim, 0f, 0f, claimVel, 0, grounded, recovAck);
+            }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            walker.Connect();
+
+            yield return Until(() => walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1, 5);
+            T.Check("walker joined", walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1);
+            walker.Players.TryGetByOwner(walker.PlayerId, out var spawnE);
+            claim = spawnE.Pos;
+
+            // grounded baseline: adopt the claim stream, HP full
+            send = true; grounded = true; claimVel = default;
+            yield return Ticks(8);
+            T.Check("the walking owner is client-driven server-side", ded.Server.PlayerHost.IsClientDriven(walker.PlayerId));
+            T.Check("(baseline) full server HP before any fall", ServerHp(ded, walker) == 100);
+
+            // (teeth 1) a GENTLE landing: airborne at 10 m/s down (under the 22 m/s threshold), then touch down.
+            grounded = false; claimVel = new UnityEngine.Vector3(0f, -10f, 0f);
+            yield return Ticks(10);
+            grounded = true; claimVel = default;
+            yield return Ticks(8);
+            T.Check($"(teeth) a gentle {10} m/s landing dealt NO fall damage (server HP {ServerHp(ded, walker)})", ServerHp(ded, walker) == 100);
+
+            // (teeth 2) a HARD landing: airborne peaking at 30 m/s down (within the [-32,32) wire LinVel range,
+            // so it round-trips exactly), then touch down -> FallMath.Damage(-30)=30. (A fall harder than 32 m/s
+            // is wire-clamped to 32 and caps at 32 damage server-side -- flagged in ServerPlayerAuthority.)
+            int expected = 100 - FallMath.Damage(-30f);   // 70
+            grounded = false; claimVel = new UnityEngine.Vector3(0f, -30f, 0f);
+            yield return Ticks(12);
+            grounded = true; claimVel = default;
+            yield return Until(() => ServerHp(ded, walker) < 100, 5);
+            T.Check($"(teeth) a hard 40 m/s landing dropped server HP to the FallMath curve (got {ServerHp(ded, walker)}, expect {expected})",
+                    ServerHp(ded, walker) == expected);
+            T.Check("the owner is still alive after the survivable fall", ded.Server.CombatState.TryGet(walker.PlayerId, out var aCs) && aCs.Alive);
+            yield return Until(() => OwnerHp(walker) == expected, 5);
+            T.Check($"the owner's replica adopted the server fall HP (replica {OwnerHp(walker)} == server {expected})", OwnerHp(walker) == expected);
+
+            world.Sim.Sim.Remove(pump);
+            walker.Disconnect();
+        }
+
+        static int ServerHp(DedicatedServer ded, NetWorldClient c) => ded.Server.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
+        static int OwnerHp(NetWorldClient c) => c.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
+    }
+
+    // SP/MP-unify P3b phase gate (source 4 of 5): OUT-OF-BOUNDS is the server-side safety net (review finding 1).
+    // An adopted authoritative Y below the world floor (-1030, matching PlayerController.cs:3386) is lethal --
+    // without it an owner who clips through the floor falls forever. DisableEnvelope adopts the below-floor claim
+    // verbatim (a real terminal-velocity plunge would adopt over many legal ticks; this is the deterministic seam).
+    //
+    // TEETH: an adopted position below -1030 KILLS the server-owned player (Health 0, not Alive) and the owner
+    // adopts the death; a position just ABOVE the floor does not. On the pre-P3b server the plunging shell's
+    // local OOB TakeDamage was a no-op -> it fell forever with the server none the wiser.
+    public class UnifyDamageOob : GameTest
+    {
+        public override string Name => "unify.damage_oob";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260731);
+            var walker = new NetWorldClient(new MemClientTransport(net), "plunger", contentHash: NetContent.Hash);
+            bool send = false;
+            UnityEngine.Vector3 claim = default;
+            byte recovAck = 0;
+            walker.PlayerRecov += e => { recovAck = e.RecovCounter; claim = e.Pos; };
+            var pump = new DelegateSimStep((t, dt) =>
+            {
+                net.Tick(); walker.Tick();
+                if (send) walker.SendPlayerState(claim, 0f, 0f, UnityEngine.Vector3.zero, 0, grounded: true, recovAck);
+            }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            walker.Connect();
+
+            yield return Until(() => walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1, 5);
+            walker.Players.TryGetByOwner(walker.PlayerId, out var spawnE);
+            claim = spawnE.Pos;
+            ded.Server.PlayerHost.DisableEnvelope = true;   // adopt the (otherwise fast) below-floor claim verbatim
+            send = true;
+            yield return Ticks(6);
+            T.Check("(baseline) alive at full HP above the floor", ded.Server.CombatState.TryGet(walker.PlayerId, out var b0) && b0.Alive && b0.Health == 100);
+
+            // a deep-but-in-bounds Y (-100, well within the ±256 wire band, above the -250 server floor): NOT OOB
+            claim = new UnityEngine.Vector3(spawnE.Pos.x, -100f, spawnE.Pos.z);
+            yield return Ticks(10);
+            T.Check("(teeth) a deep-but-in-bounds Y (-100) does NOT kill", ded.Server.CombatState.TryGet(walker.PlayerId, out var a0) && a0.Alive);
+
+            // below the world floor: the wire Pos.y clamps to -256 (< the -250 server OOB floor) -> lethal
+            claim = new UnityEngine.Vector3(spawnE.Pos.x, -1030.5f, spawnE.Pos.z);
+            yield return Until(() => ded.Server.CombatState.TryGet(walker.PlayerId, out var cs) && !cs.Alive, 5);
+            T.Check("(teeth) a below-world adopted Y (wire-pinned at -256, under the -250 server floor) KILLED the player (Alive false, Health 0)",
+                    ded.Server.CombatState.TryGet(walker.PlayerId, out var kCs) && !kCs.Alive && kCs.Health == 0);
+            yield return Until(() => walker.CombatState.TryGet(walker.PlayerId, out var r) && !r.Alive, 5);
+            T.Check("the owner's replica adopted the OOB death", walker.CombatState.TryGet(walker.PlayerId, out var rCs) && !rCs.Alive);
+
+            world.Sim.Sim.Remove(pump);
+            walker.Disconnect();
+        }
+    }
+
+    // SP/MP-unify P3b phase gate (source 1 of 5): ZOMBIE MELEE. A real server-side zombie BRAIN adjacent to the
+    // client-auth walker's follower body swings and its hit lands on the SERVER HP -- routed through the follower
+    // body's NetDamageSink (PlayerNetSync) into ServerCombat.DamagePlayerExternal, instead of the old NetAvatar
+    // no-op. This is the whole point of the source: the brain runs unchanged (SP-identical), the sink is what P3b
+    // adds. On the pre-P3b server the zombie chased + swung forever while the adopted body stayed invulnerable.
+    public class UnifyDamageZombie : GameTest
+    {
+        public override string Name => "unify.damage_zombie";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260732);
+            var walker = new NetWorldClient(new MemClientTransport(net), "bitten", contentHash: NetContent.Hash);
+            bool send = false;
+            UnityEngine.Vector3 claim = default;
+            byte recovAck = 0;
+            walker.PlayerRecov += e => { recovAck = e.RecovCounter; claim = e.Pos; };
+            var pump = new DelegateSimStep((t, dt) =>
+            {
+                net.Tick(); walker.Tick();
+                if (send) walker.SendPlayerState(claim, 0f, 0f, UnityEngine.Vector3.zero, 0, grounded: true, recovAck);
+            }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            walker.Connect();
+
+            yield return Until(() => walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1, 5);
+            walker.Players.TryGetByOwner(walker.PlayerId, out var spawnE);
+            claim = spawnE.Pos;
+            send = true;   // adopt -> the follower body spawns
+            yield return Until(() => ded.PlayerSync != null && ded.PlayerSync.TrackedCount == 1, 5);
+            bool haveBody = ded.PlayerSync.TryGetBody(walker.PlayerId, out var body);
+            T.Check("the follower body spawned for the adopted owner", haveBody && body.NetAvatar);
+            if (!haveBody) { world.Sim.Sim.Remove(pump); walker.Disconnect(); yield break; }
+            yield return Ticks(2);
+
+            // a real NORMAL zombie brain placed 1 m dead ahead of the body (at the body's -Z so its default facing
+            // points at it -> the vision cone catches it on the first idle sense tick), targeting the body.
+            var bp = body.GlobalPosition;
+            var z = new ZombieController { Target = body };
+            World.AddChild(z);
+            z.GlobalPosition = new Vector3(bp.X, bp.Y, bp.Z + 1.0f);   // within ATTACK_PLAYER reach (sqrt2 ~ 1.41 m)
+            z.Rotation = Vector3.Zero;                                 // forward -Z -> toward the body
+            T.Check("(baseline) full server HP before the zombie swings", ServerHp(ded, walker) == 100);
+
+            // the brain senses -> hunts -> plants -> swings; the hit lands mid-swing (~0.4 s) on the SERVER HP
+            yield return Until(() => ServerHp(ded, walker) < 100, 15);
+            int hp = ServerHp(ded, walker);
+            T.Check($"(teeth) the server zombie brain's melee landed on the SERVER HP (100 -> {hp})", hp < 100 && hp <= 100 - (int)z.AttackDamage + 1);
+            T.Check($"(teeth) exactly one swing's worth (AttackDamage {z.AttackDamage:0}) so far (server HP {hp})", hp == 100 - (int)z.AttackDamage);
+            yield return Until(() => OwnerHp(walker) == hp, 5);
+            T.Check($"the owner's replica adopted the zombie-melee HP (replica {OwnerHp(walker)} == server {hp})", OwnerHp(walker) == hp);
+
+            world.Sim.Sim.Remove(pump);
+            walker.Disconnect();
+        }
+
+        static int ServerHp(DedicatedServer ded, NetWorldClient c) => ded.Server.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
+        static int OwnerHp(NetWorldClient c) => c.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
+    }
+
+    // SP/MP-unify P3b phase gate (source 2 of 5): EXPLOSIONS. A real server-side deployable Explode group-scan
+    // hits the client-auth walker's follower body, routed through its NetDamageSink into DamagePlayerExternal
+    // with the source LINEAR falloff. On the pre-P3b server the blast's TakeDamage on the adopted body was a
+    // no-op -> explosions couldn't hurt an adopted player.
+    public class UnifyDamageExplosion : GameTest
+    {
+        public override string Name => "unify.damage_explosion";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+
+            var net = new MemNetwork(20260733);
+            var walker = new NetWorldClient(new MemClientTransport(net), "blasted", contentHash: NetContent.Hash);
+            bool send = false;
+            UnityEngine.Vector3 claim = default;
+            byte recovAck = 0;
+            walker.PlayerRecov += e => { recovAck = e.RecovCounter; claim = e.Pos; };
+            var pump = new DelegateSimStep((t, dt) =>
+            {
+                net.Tick(); walker.Tick();
+                if (send) walker.SendPlayerState(claim, 0f, 0f, UnityEngine.Vector3.zero, 0, grounded: true, recovAck);
+            }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+            walker.Connect();
+
+            yield return Until(() => walker.State == NetSessionState.Connected && walker.JoinSnapshotsApplied >= 1, 5);
+            walker.Players.TryGetByOwner(walker.PlayerId, out var spawnE);
+            claim = spawnE.Pos;
+            send = true;
+            yield return Until(() => ded.PlayerSync != null && ded.PlayerSync.TrackedCount == 1, 5);
+            bool haveBody = ded.PlayerSync.TryGetBody(walker.PlayerId, out var body);
+            T.Check("the follower body spawned for the adopted owner", haveBody && body.NetAvatar);
+            if (!haveBody) { world.Sim.Sim.Remove(pump); walker.Disconnect(); yield break; }
+            yield return Ticks(2);
+
+            // a server-owned deployable ~1 m from the body; DebugStage("wreck") detonates it immediately so the
+            // Explode() group-scan runs THIS frame (no 4 s dead-timer wait), hitting the body over the wire sink.
+            var bp = body.GlobalPosition;
+            var dep = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(bp.X + 1.0f, bp.Y, bp.Z), 0f);
+            yield return Ticks(2);   // let it enter the tree + settle onto the ground
+            T.Check("(baseline) full server HP before the blast", ServerHp(ded, walker) == 100);
+
+            float d = dep.GlobalPosition.DistanceTo(body.GlobalPosition);
+            int expected = Mathf.Clamp(Mathf.CeilToInt(100f - ExplosionMath.Linear(120f, d, 5f)), 0, 100);
+            dep.DebugStage("wreck");
+            yield return Until(() => ServerHp(ded, walker) < 100, 5);
+            int hp = ServerHp(ded, walker);
+            T.Check($"(teeth) the deployable blast landed on the SERVER HP with LINEAR falloff (d {d:0.00} m -> HP {hp}, expect {expected})",
+                    hp == expected && hp < 100);
+            yield return Until(() => OwnerHp(walker) == hp, 5);
+            T.Check($"the owner's replica adopted the blast HP (replica {OwnerHp(walker)} == server {hp})", OwnerHp(walker) == hp);
+
+            world.Sim.Sim.Remove(pump);
+            walker.Disconnect();
+        }
+
+        static int ServerHp(DedicatedServer ded, NetWorldClient c) => ded.Server.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
+        static int OwnerHp(NetWorldClient c) => c.CombatState.TryGet(c.PlayerId, out var cs) ? cs.Health : -1;
+    }
+
+    // SP/MP-unify P3b (source 5 of 5): the spawn-window guard (review finding 5), in isolation (no net stack).
+    // Between shell spawn and the first AdoptReplicatedVitals latching NetVitalsAdopted there is a 1-3 tick
+    // window; ExpectServerVitals (set at spawn by ClientWorldSession/MpLoopback) suppresses a LOCAL death there
+    // so it can't fire before the server owns HP. A plain SP shell (no pend) dies normally -- the contrast proof.
+    public class UnifyDamageSpawnWindow : GameTest
+    {
+        public override string Name => "unify.damage_spawn_window";
+        public override double TimeoutSimSeconds => 10;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var pending = new PlayerController { CaptureMouse = false };
+            World.AddChild(pending);
+            pending.GlobalPosition = new Vector3(0f, 1f, 0f);
+            var plain = new PlayerController { CaptureMouse = false };
+            World.AddChild(plain);
+            plain.GlobalPosition = new Vector3(4f, 1f, 0f);
+            yield return Ticks(3);
+
+            pending.ExpectServerVitals();   // server vitals PENDING (spawn window) -- not yet adopted
+            T.Check("pending shell has not adopted server vitals yet", !pending.NetVitalsAdopted);
+
+            // a lethal hit in the spawn window: the pending shell must NOT die locally; the plain shell dies as SP always did
+            pending.TakeDamage(9999f);
+            plain.TakeDamage(9999f);
+            T.Check("(teeth) the pending-vitals shell did NOT die in the spawn window (local death suppressed)", !pending.IsDead && pending.Health > 0f);
+            T.Check("(contrast) the plain SP shell died normally (byte-identical)", plain.IsDead);
+
+            // once adoption lands, HP is server-owned -> local death stays suppressed (the P3a guard takes over)
+            pending.AdoptReplicatedVitals(100);
+            pending.TakeDamage(9999f);
+            T.Check("still no local death after adoption (server owns HP)", !pending.IsDead);
+        }
+    }
 }

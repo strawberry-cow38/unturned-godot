@@ -1570,6 +1570,22 @@ namespace UnturnedGodot
         public bool NetVitalsAdopted { get; private set; }
         float _netAdoptedHealth = 100f;   // the coarse server HP the shell is pinned to while adopting
 
+        /// <summary>P3b (SP/MP-unify): server-side damage routing for a body whose HP is server-authoritative.
+        /// When set, an incoming TakeDamage (zombie melee/acid, vehicle/deployable blast, and on the loopback
+        /// listen-server host its own fall/OOB) is FORWARDED to the server sink (ServerCombat.DamagePlayerExternal)
+        /// instead of moving local HP. The follower NetAvatar body (PlayerNetSync) and the loopback host shell
+        /// (MpLoopback --spconsume) wire this. Null in default SP AND on a true MP client shell (whose local
+        /// TakeDamage no-ops via NetVitalsAdopted and whose fall/OOB are SERVER-derived from its state claims),
+        /// so those paths stay byte-identical.</summary>
+        public System.Action<float> NetDamageSink;
+
+        // P3b (review finding 5): the 1-3 tick spawn window before the first AdoptReplicatedVitals latches
+        // NetVitalsAdopted -- a fall/starvation death firing there would run the LOCAL death path and fight the
+        // server clock. Set at shell spawn (ClientWorldSession/MpLoopback) so local death is suppressed until
+        // adoption is confirmed. Never set in default SP, so that path is byte-identical.
+        bool _pendServerVitals;
+        public void ExpectServerVitals() => _pendServerVitals = true;
+
         /// <summary>MP/loopback owner: mirror the owner's replicated CombatEntity coarse health (0..100 byte)
         /// into the shell's vitals, re-asserted as the LAST writer each tick (UpdateVitals re-pins to it,
         /// TakeDamage no-ops), so nothing local moves HP while the server owns it. MaxHealth is the source 100.
@@ -2151,8 +2167,13 @@ namespace UnturnedGodot
         // (starvation/infection) which flashes but doesn't kick the camera.
         public void TakeDamage(float amount, Vector3? fromPos = null)
         {
+            // P3b: a server-owned body ROUTES damage to the server sink (zombie melee/acid + vehicle/deployable
+            // blast on a NetAvatar follower body; also fall/OOB on the loopback host shell) instead of moving
+            // local HP. Must precede the guards below, which would otherwise swallow the hit. The server sink
+            // owns HP/death; the local cosmetics (flash/flinch) are skipped -- the death fact renders via NetDie().
+            if (NetDamageSink != null) { NetDamageSink(amount); return; }
             if (NetAvatar) return;   // C2 v1: server avatars are invulnerable to LOCAL damage -- zombies chase + swing but an unreplicated death would desync every client (server-authoritative vitals are deferred, PEI_CLIENT_PLAN §6)
-            if (NetVitalsAdopted) return;   // P3a: HP is server-owned -- local damage sources (fall/zombie melee/blast) route server-side in P3b; a local death here would fight the server clock and rubber-band. Server bullets/grenade/melee already own HP via the CombatState replica.
+            if (NetVitalsAdopted || _pendServerVitals) return;   // P3a: HP is server-owned; P3b: also suppress in the pre-adoption spawn window (review finding 5). A local death here would fight the server clock and rubber-band. Server-owned bodies route via NetDamageSink above; a true MP client's fall/OOB are server-derived from its claims.
             if (_dead || Health <= 0f) return;
             Health -= amount;
             if (amount > 1f) { Bleeding = true; _bleedTimer = 5.0; }   // show the bleeding status icon after a real hit
@@ -2249,6 +2270,7 @@ namespace UnturnedGodot
             // the local HUD, but HP is re-pinned to the adopted server value as the LAST writer of the tick --
             // local regen/starve never moves it, and starvation never triggers a local death (server-owned).
             if (NetVitalsAdopted) { Health = _netAdoptedHealth; return; }
+            if (_pendServerVitals) return;   // P3b (review finding 5): no local starvation death in the pre-adoption spawn window (server owns HP the moment it adopts)
             if (died) { Deaths++; Die(); }
         }
 

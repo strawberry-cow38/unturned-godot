@@ -87,6 +87,10 @@ namespace UnturnedGodot.Net
             // straight back off the spawn). ServerCombat.Respawn calls this; it no-ops (returns false ->
             // ServerCombat ServerTeleports) for owners with no client-auth stream (bystander avatars, loopback).
             Combat.RepositionOwner = PlayerHost.RepositionOwner;
+            // P3b (SP/MP-unify): route the server-DERIVED fall + out-of-bounds damage (computed off the owner's
+            // adopted Vel/Grounded/Pos, never a client-reported number) into the same ServerCombat sink the weapon
+            // paths funnel through. Keeps HP fully server-authored for the client-auth walker.
+            PlayerHost.DamageOwner = (victim, dmg) => Combat.DamagePlayerExternal(victim, dmg);
             // mp-event-coalesce (v10): route each deduped carried combat event to the ServerCombat handler
             // by Kind. The authority holds only a PlayerCombatReplication (for IsAlive); the OnFire/etc
             // handlers live on ServerCombat, so the carry is dispatched through this delegate. The standalone

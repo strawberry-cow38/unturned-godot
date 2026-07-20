@@ -194,6 +194,23 @@ namespace UnturnedGodot.Net
         /// not incidental fire-rate/cooldown timing, is what makes the redundant carry idempotent.</summary>
         public bool DisableCombatDedup;
 
+        /// <summary>P3b (SP/MP-unify): the server-authoritative non-weapon player-damage sink. Wired in
+        /// NetWorldHost to ServerCombat.DamagePlayerExternal. Fall damage (SERVER-DERIVED from the adopted
+        /// Vel+Grounded -- the client never reports a damage number, so the one client-auth cheat hole is
+        /// closed) and out-of-bounds (the adopted authoritative Y dropping below the world floor) route here.
+        /// Null keeps every pre-P3b authority harness byte-identical. (victim, damage).</summary>
+        public Action<ushort, float> DamageOwner;
+
+        /// <summary>The world floor for the client-auth walker: an adopted authoritative Y below this is
+        /// out-of-bounds -> lethal (else an owner who clips through the floor falls forever, review finding 1).
+        /// NOTE it is NOT the SP shell's -1030 (PlayerController.cs:3386): the wire Pos.y clamps to [-256, 256)
+        /// (NetQuantization.PositionYIntBits = 9), so an adopted below-world Y PINS at exactly -256 -- the server
+        /// can never observe -1030. -250 sits just above that clamp so a shell that has fallen through the floor
+        /// (pinned at -256) trips it, while no real map terrain approaches it (the ±256 Y budget is "ample
+        /// headroom" over shallow terrain, per NetQuantization). The loopback host shell keeps the real -1030 via
+        /// its own local OOB check routed through NetDamageSink -- only the WIRE path is clamp-bound.</summary>
+        public const float OutOfBoundsFloorY = -250f;
+
         /// <summary>The raw adopted claim beyond what the entity itself stores -- the game-side follower
         /// body (PlayerNetSync) dresses stance/pitch/velocity from here.</summary>
         public struct DrivenPlayerState
@@ -219,6 +236,11 @@ namespace UnturnedGodot.Net
             // mp-event-coalesce (v10): the strictly-increasing combat-seq guard that dedups the redundant
             // combat-event carry (the ServerQueueInput shape). Resets clean with the DrivenState on recycle.
             public bool HasCombatSeq; public ushort LastCombatSeq;
+            // P3b (SP/MP-unify): server-derived fall damage. Track the peak downward speed over the current
+            // airborne interval; on the airborne->grounded edge, FallMath the peak into DamageOwner. HP stays
+            // fully server-authored -- only the envelope-validated Vel+Grounded feed it, never a wire damage number.
+            public float PeakFallSpeed;   // max(-LinVel.y) while the adopted claim is airborne (m/s down)
+            public bool WasAirborne;      // the previous adopted claim's !Grounded -- detects the landing edge
         }
         readonly Dictionary<ushort, DrivenState> _driven = new Dictionary<ushort, DrivenState>();
 
@@ -362,6 +384,43 @@ namespace UnturnedGodot.Net
                 Vel = cmd.LinVel, Buttons = cmd.Buttons, Grounded = cmd.Grounded,
             };
             _players.ServerDrive(sender, cmd.Pos, cmd.YawDegrees, cmd.Seq, tick);
+
+            // ---- P3b (SP/MP-unify): server-derived fall damage + out-of-bounds, off the JUST-adopted (envelope-
+            // validated) Vel/Grounded/Pos. HP stays fully server-authored -- the client reports its state, never a
+            // damage number, so the client-auth model's one cheat hole (a client claiming its own fall damage) is
+            // closed. Only reachable once DamageOwner is wired (default null -> pre-P3b harnesses byte-identical). ----
+            if (DamageOwner != null)
+            {
+                if (!cmd.Grounded)
+                {
+                    float down = -cmd.LinVel.y;                       // downward speed this airborne tick (m/s)
+                    if (down > st.PeakFallSpeed) st.PeakFallSpeed = down;
+                }
+                else if (st.WasAirborne)
+                {
+                    // the airborne->grounded landing edge: the SAME FallMath curve the SP client applies in
+                    // CheckFallDamage, fed the peak downward speed as the signed landing velocity (-peak). The
+                    // last airborne claim carries the biggest -Vel.y (gravity is monotonic to terminal), so the
+                    // peak == the client's landing vy. armorMultiplier 1 -- the clothing FallingDamageMultiplier +
+                    // STRENGTH skill mitigation are NOT yet applied server-side (deferred like infection/starvation),
+                    // so a default (ungeared) faller matches the client curve exactly; a geared one takes slightly more.
+                    // FIDELITY CAP (flagged): the wire LinVel field clamps to [-32, 32) m/s (WriteClampedFloat 6
+                    // int bits -- the CombatReplication comment claiming "±64 m/s" is wrong), so a fall harder than
+                    // 32 m/s is seen as 32 and deals FallMath.Damage(-32) = 32 max, UNDER the SP curve (terminal
+                    // -100 -> 100). Safe direction (never over-punishes); the OOB net below catches true void
+                    // plunges. Full-range parity needs a wider LinVel encoding (wire-format change) or deriving the
+                    // fall speed from the unclamped-within-±256 position stream -- both deferred to review.
+                    int dmg = FallMath.Damage(-st.PeakFallSpeed);
+                    if (dmg > 0) DamageOwner(sender, dmg);
+                    st.PeakFallSpeed = 0f;
+                }
+                st.WasAirborne = !cmd.Grounded;
+
+                // out-of-bounds: an adopted authoritative Y below the world floor is lethal (review finding 1 --
+                // without it an owner who clips through the floor falls forever). ApplyPlayerDamage no-ops once the
+                // victim is dead, so the repeated claims of a still-falling shell are harmless.
+                if (cmd.Pos.y < OutOfBoundsFloorY) DamageOwner(sender, 9999f);
+            }
         }
 
         /// <summary>
@@ -384,6 +443,7 @@ namespace UnturnedGodot.Net
             // the last-good the recov teleports the shell to must be the ENTITY's quantized pos, so the resume
             // claim (shell now sitting there, re-quantized) lands a ~zero delta and adopts clean
             Vector3 landed = _players.TryGetByOwner(playerId, out var e) ? e.Pos : pos;
+            st.PeakFallSpeed = 0f; st.WasAirborne = false;   // P3b: a respawn wipes any in-flight fall so the resume claim can't inherit a phantom landing
             st.RecovCounter++;
             st.Recovering = true;
             var evt = new PlayerRecovEvent { Pos = landed, Vel = Vector3.zero, RecovCounter = st.RecovCounter };

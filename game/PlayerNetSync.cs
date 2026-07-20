@@ -58,6 +58,11 @@ namespace UnturnedGodot
                 if (!_tracked.TryGetValue(e.OwnerPlayerId, out var t))
                 {
                     var body = new PlayerController { NetAvatar = true, NetHold = true, CaptureMouse = false };
+                    // P3b (SP/MP-unify): route zombie melee/acid + explosion-blast hits landing on this server-
+                    // owned follower body into the server HP sink (this is the SOLE thing that damages the body --
+                    // fall/OOB never call TakeDamage on a NetAvatar, they are server-derived from the owner's claims).
+                    ushort owner = e.OwnerPlayerId;
+                    body.NetDamageSink = amount => _server.Combat.DamagePlayerExternal(owner, amount);
                     _host.AddChild(body);                       // in the tree FIRST, else GlobalPosition no-ops
                     body.GlobalPosition = ToG(e.Pos);
                     body.RotationDegrees = new Vector3(0f, e.YawDegrees, 0f);

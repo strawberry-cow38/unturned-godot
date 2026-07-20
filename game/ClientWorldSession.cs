@@ -420,6 +420,11 @@ namespace UnturnedGodot
             // server avatar sim anymore). One movement code path, SP-identical feel.
             var shell = new PlayerController { CaptureMouse = true };
             AddChild(shell);
+            // P3b (review finding 5): this MP shell's HP is server-authoritative (adopted each ShellStep). Latch
+            // the spawn-window guard NOW so a fall/starvation death in the 1-3 ticks before the first
+            // AdoptReplicatedVitals cannot fire a LOCAL death that would fight the server clock. Server-owned
+            // fall/OOB for this owner are DERIVED from its state claims; its local TakeDamage stays a no-op.
+            shell.ExpectServerVitals();
             // D1: spawn holding the EAGLEFIRE (demo-inventory primary slot) -- the server validates every
             // shot as the default Eaglefire profile (ServerCombat), so client + server agree on rate/ammo;
             // a faster demo gun would get half its shots silently rate-rejected and feel broken. Per-gun
