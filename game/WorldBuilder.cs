@@ -700,7 +700,12 @@ namespace UnturnedGodot
                 var def = DeployableDef.ById(f.DefId);
                 if (def == null) continue;
                 if (def.Fixture == Net.FixtureKind.GridSource)
-                    GridPowerSource.Attach(root, f.Pos, f.Basis, GridPowerSource.PortLocal);
+                {
+                    // A3: pure-direct SP -- a local grid source (NetId 0), plus its own gridpower-meta interaction
+                    // collider so the look-ray can focus + wire it (the world mesh's collider is never tagged).
+                    var g = GridPowerSource.Attach(root, f.Pos, f.Basis, GridPowerSource.PortLocal);
+                    g.AddInteractionCollider();
+                }
                 else if (def.Fixture == Net.FixtureKind.GasPump)
                 {
                     // A2: pure-direct SP -- a local pump over its shared StationFuel tank (NetId 0), plus its own

@@ -171,4 +171,56 @@ namespace UnturnedGodot.Testing
             T.Check("manual restart brings it back online", gen.IsPowered);
         }
     }
+
+    // A3 (SP/MP-unify) regression: a materialized/direct grid-power SOURCE (Circuit_0 breaker box) must carry
+    // its OWN "gridpower"-tagged interaction collider so the look-ray can focus + wire it. The world mesh's
+    // collider is never tagged (only the dead SpawnEditorGridPower path did), so pre-fix the consuming SP boxes
+    // rendered but were un-focusable/un-wireable = "grid power doesn't exist" (strawberry). Resolves EXACTLY as
+    // PlayerController.cs:176 does: a child StaticBody3D on the small-prop look layer (1<<6) whose "gridpower"
+    // meta returns the source. Teeth: pre-fix Materialize/Attach make no such collider -> both checks fail.
+    public class GridSourceInteraction : GameTest
+    {
+        public override string Name => "deploy.grid_source_interaction";
+
+        static bool HasTaggedCollider(GridPowerSource g)
+        {
+            foreach (var c in g.GetChildren())
+                if (c is StaticBody3D body && (body.CollisionLayer & (1u << 6)) != 0
+                    && body.HasMeta("gridpower") && body.GetMeta("gridpower").As<GridPowerSource>() == g)
+                    return true;
+            return false;
+        }
+
+        // The look-ray resolution PlayerController.cs:167-176 runs: cast on the small-prop look layer (1<<6) and
+        // resolve the hit collider's "gridpower" meta. Verifies the collider is actually WHERE the box is (right
+        // size/placement), not merely that a tagged node exists somewhere.
+        GridPowerSource LookRayHit(Vector3 from, Vector3 boxPos)
+        {
+            var q = new PhysicsRayQueryParameters3D { From = from, To = boxPos + Vector3.Up * 0.95f, CollisionMask = 1u << 6 };
+            var hit = World.GetWorld3D().DirectSpaceState.IntersectRay(q);
+            if (hit.Count == 0) return null;
+            var col = hit["collider"].As<GodotObject>();
+            return col is Node n && n.HasMeta("gridpower") ? n.GetMeta("gridpower").As<GridPowerSource>() : null;
+        }
+
+        public override IEnumerable<Step> Run()
+        {
+            // consume path: DeployableReplicaView.Materialize (what the SP-consume default + a joined client run)
+            var matPos = new Vector3(-3f, 0f, 0f);
+            var mat = GridPowerSource.Materialize(World, matPos, 0f, GridPowerSource.DefaultWatts, netId: 42);
+            yield return Ticks(1);
+            T.Check("consume (Materialize): grid box has its own gridpower-tagged look collider on layer 1<<6", HasTaggedCollider(mat));
+            T.Check("consume (Materialize): a forward look-ray at the box RESOLVES the grid source (right size/placement)",
+                    LookRayHit(matPos + new Vector3(0f, 1f, 4f), matPos) == mat);
+
+            // pure-direct SP path: SpawnFixturesDirect does Attach + AddInteractionCollider
+            var dirPos = new Vector3(3f, 0f, 0f);
+            var dir = GridPowerSource.Attach(World, dirPos, Basis.Identity, GridPowerSource.PortLocal);
+            dir.AddInteractionCollider();
+            yield return Ticks(1);
+            T.Check("direct (Attach + AddInteractionCollider): grid box has its own gridpower-tagged look collider", HasTaggedCollider(dir));
+            T.Check("direct (Attach): a forward look-ray at the box RESOLVES the grid source",
+                    LookRayHit(dirPos + new Vector3(0f, 1f, 4f), dirPos) == dir);
+        }
+    }
 }

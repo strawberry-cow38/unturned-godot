@@ -113,10 +113,29 @@ namespace UnturnedGodot
             g._output = port;
             g.AddToGroup("deployables");   // PowerNet reads this group (keyed on IPowerDevice, not Deployable)
             g.AddChild(g._info = new InfoBillboard { TopLevel = true });
+            g.AddInteractionCollider();
             if (g.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole net
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
             PowerNet.MarkDirty();
             return g;
+        }
+
+        // A3 (SP/MP-unify): a self-contained gridpower-meta collider so the look-ray focuses the box (outline +
+        // tooltip + wire-tool endpoint) WITHOUT relying on WorldBuilder tagging the world mesh's collider (it
+        // never does -- only the dead SpawnEditorGridPower path did, so the placements.txt Circuit_0 boxes were
+        // un-focusable/un-wireable = "grid power doesn't exist"). Mirrors GasPump.AddInteractionCollider: a
+        // world-space box wrapping the standing breaker box, on the small-prop look layer (1<<6, in
+        // PlayerController's look-ray mask), slightly oversized so it wins the coincident world collider along
+        // the ray. Used by Materialize (replica/consume) and the pure-direct SpawnFixturesDirect.
+        StaticBody3D _hitBody;
+        public void AddInteractionCollider()
+        {
+            // Circuit_0 stands ~1.87 m tall from its placement origin (base); wrap it world-axis-aligned (TopLevel
+            // so the plain-yaw / stand-up node basis doesn't tilt the box), centered mid-height, slightly oversized.
+            _hitBody = new StaticBody3D { TopLevel = true, Transform = new Transform3D(Basis.Identity, GlobalPosition + Vector3.Up * 0.95f), CollisionLayer = 1u << 6, CollisionMask = 0 };
+            _hitBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1.3f, 2.1f, 1.3f) } });
+            _hitBody.SetMeta("gridpower", this);   // look-ray hits this -> resolve the GridPowerSource (PlayerController:176)
+            AddChild(_hitBody);
         }
 
         // Look-at outline + the generator-style info billboard (name + output/load bar). Mirrors GasPump.
