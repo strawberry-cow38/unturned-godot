@@ -300,6 +300,65 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // A5 (SP/MP-unify): wildlife round-trips through the REAL consuming loopback -- a host AnimalAgent brain (as
+    // AnimalField spawns) is published by AnimalNetSync into AnimalReplication, replicates to the (loopback)
+    // client, and AnimalPuppets materializes it from the replica by species. Mirrors the zombie brain/puppet
+    // split. Proves the server-publish + client-materialize halves; the wire parity is L0 (AnimalReplicationTests).
+    public class UnifyAnimalMaterialize : GameTest
+    {
+        public override string Name => "unify.animal_materialize";
+        public override double TimeoutSimSeconds => 40;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var driver = new SimDriver();
+            World.AddChild(driver);
+            var dayNight = new DayNightCycle { VisualsEnabled = false };
+            World.AddChild(dayNight);
+            var resources = new ResourceField { VisualInstances = false };
+            World.AddChild(resources);
+            var player = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            yield return Ticks(2);
+
+            var loop = new MpLoopback { Player = player, Driver = driver,
+                                        DayNight = dayNight, Resources = resources,
+                                        ConsumeDeployables = true };
+            World.AddChild(loop);
+            yield return Until(() => loop.Client.State == NetSessionState.Connected, 15);
+
+            // spawn a real AnimalAgent in the "animals" group (as AnimalField does on the host) -- a cow (species 2)
+            var agent = new AnimalAgent { Species = 2, Home = new Vector3(3f, 0f, 0f) };
+            World.AddChild(agent);
+            agent.GlobalPosition = new Vector3(3f, 0f, 0f);
+            agent.Begin();   // joins the "animals" group + starts the wander state machine
+            T.Check("the agent joined the animals group", agent.IsInGroup("animals"));
+
+            // AnimalNetSync publishes it -> a server entity exists + the loopback client received the replica
+            yield return Until(() => loop.AnimalSync != null && loop.AnimalSync.TrackedCount == 1
+                                     && loop.Server.Animals.Count == 1, 15);
+            T.Check("AnimalNetSync published the agent as a server entity", loop.Server.Animals.Count == 1);
+            yield return Until(() => loop.Client.Animals.Count == 1, 15);
+            T.Check("the animal replicated to the client", loop.Client.Animals.Count == 1);
+
+            uint aid = 0; byte species = 255;
+            foreach (var e in loop.Client.Animals.All) { aid = e.NetIdValue; species = e.Species; }
+            T.Check($"the species byte replicated (cow=2, got {species})", species == 2);
+
+            // materialize a puppet from the replica (the joined-client AnimalPuppets path) -> proves the client half
+            var pups = new AnimalPuppets { Client = loop.Client };
+            World.AddChild(pups);
+            yield return Until(() => pups.PuppetCount == 1 && pups.TryGetPuppet(aid, out _), 15);
+            T.Check("AnimalPuppets materialized the replicated animal", pups.PuppetCount == 1);
+
+            // retire the brain (streamed out) -> the entity + the puppet both retire
+            agent.QueueFree();
+            yield return Until(() => loop.Server.Animals.Count == 0 && loop.Client.Animals.Count == 0
+                                     && pups.PuppetCount == 0, 15);
+            T.Check("(gate) freeing the brain retired the replica + the puppet", pups.PuppetCount == 0);
+        }
+    }
+
     // SP/MP-unify P1b phase gate (SECOND pattern-setter). Closes the gap P1 surfaced: a wire placement (P1)
     // SPENDS an item server-side BEFORE broadcasting, so the local loopback player's SERVER inventory must be
     // STOCKED + owner-replicated or a real placement is server-REJECTED. This proves the server-authoritative

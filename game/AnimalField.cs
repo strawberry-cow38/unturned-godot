@@ -96,7 +96,7 @@ namespace UnturnedGodot
                 if (!Kinds.TryGetValue(id, out var def)) continue;
                 var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
                 if (rc == null) continue;
-                var agent = new AnimalAgent { Terr = Terr, Foot = def.foot, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu };
+                var agent = new AnimalAgent { Terr = Terr, Foot = def.foot, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu, Species = AnimalCatalog.SpeciesForAnimalId(id) };
                 AddChild(agent);
                 agent.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z) + def.foot, p.Z);
                 agent.AddChild(rc);

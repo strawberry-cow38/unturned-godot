@@ -1,4 +1,5 @@
 using Godot;
+using UnturnedGodot.Net;
 
 namespace UnturnedGodot
 {
@@ -12,6 +13,8 @@ namespace UnturnedGodot
         public Vector3 Home;                                        // spawn point; targets stay within HomeRange of it
         public float Foot;                                          // feet-on-terrain offset
         public uint Seed;
+        public byte Species;                                        // A5: AnimalCatalog index (deer/pig/cow), set by AnimalField -> published by AnimalNetSync
+        public byte NetAnim { get; private set; }                   // A5: current anim byte for the replica (idle/eat/glance/walk)
 
         Vector3 _target;
         bool _walking;
@@ -21,12 +24,14 @@ namespace UnturnedGodot
 
         uint R() { Seed = Seed * 1664525u + 1013904223u; return Seed >> 9; }
 
-        public void Begin() => StartIdle();
+        public void Begin() { AddToGroup("animals"); StartIdle(); }   // A5: join the group AnimalNetSync publishes from (host only -- puppets aren't AnimalAgents)
 
         void StartIdle()
         {
             _walking = false;
-            Rig?.Play(Ambient[(int)(R() % (uint)Ambient.Length)]);
+            var clip = Ambient[(int)(R() % (uint)Ambient.Length)];
+            Rig?.Play(clip);
+            NetAnim = clip == "Eat" ? (byte)AnimalNetAnim.Eat : clip.StartsWith("Glance") ? (byte)AnimalNetAnim.Glance : (byte)AnimalNetAnim.Idle;
             _idleTimer = 3.0 + (R() % 600) / 100.0;                 // graze/idle 3-9 s
         }
 
@@ -38,6 +43,7 @@ namespace UnturnedGodot
             if (Terr != null && Terrain.IsWater(Terr.SampleDominantLayer(tx, tz))) { StartIdle(); return; }   // don't wade in
             _target = new Vector3(tx, 0f, tz);
             _walking = true;
+            NetAnim = (byte)AnimalNetAnim.Walk;
             Rig?.Play("Walk");
         }
 

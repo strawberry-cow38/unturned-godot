@@ -31,6 +31,7 @@ namespace UnturnedGodot
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
         public ZombieNetSync ZombieSync { get; private set; }
+        public AnimalNetSync AnimalSync { get; private set; }   // A5: publishes AnimalAgent brains (no-op until AnimalField's streamer is PlayerRegistry-generalized for dedicated)
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
         public WorldClockNetSync ClockSync { get; private set; }
@@ -155,6 +156,8 @@ namespace UnturnedGodot
             // zombie brains -> ZombieReplication at 12.5 Hz (§3.5), BEFORE the snapshot send
             ZombieSync = new ZombieNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ZombieSync.Tick(), "net.zombies.publish"));
+            AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains (currently a no-op on dedicated -- see the AnimalField note above)
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => AnimalSync.Tick(), "net.animals.publish"));
             // world-item nodes (LootField streaming etc.) -> WorldItemReplication at 5 Hz (§3.3)
             WorldItemSync = new WorldItemNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => WorldItemSync.Tick(), "net.worlditems.publish"));

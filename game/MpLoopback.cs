@@ -52,6 +52,7 @@ namespace UnturnedGodot
         public WorldItemReplicaView Items { get; private set; }      // P2 --spconsume: server world-item (drop/loot) entities -> local puppets (null unless ConsumeDeployables)
         public StorageReplicaView Storage { get; private set; }      // A1 --spconsume: server container fixtures -> local StoreShelf nodes (null unless ConsumeDeployables; the SP-local SpawnMapContainers is gated off)
         public ZombieNetSync ZombieSync { get; private set; }
+        public AnimalNetSync AnimalSync { get; private set; }   // A5: publishes the host's real AnimalAgent brains as replicas (no puppets here -- the host owns them)
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
         public WorldClockNetSync ClockSync { get; private set; }
@@ -278,6 +279,11 @@ namespace UnturnedGodot
             // (no ZombiePuppets here -- puppets are for worlds that don't own the brains).
             ZombieSync = new ZombieNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ZombieSync.Tick(), "net.zombies.publish"));
+            // A5: the loopback world's wildlife (AnimalField's real AnimalAgents) publish as replicas too -- every
+            // SP-loopback session soaks the animal wire like the zombie wire. The local view renders the real
+            // brains directly (no AnimalPuppets here -- puppets are for a remote client that doesn't own them).
+            AnimalSync = new AnimalNetSync(Server, this);
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => AnimalSync.Tick(), "net.animals.publish"));
             // Phase 6: the loopback world's dropped/loot items publish as entities too (§3.3) -- every SP
             // session soaks the world-item wire the same way it soaks the zombie wire.
             WorldItemSync = new WorldItemNetSync(Server, this);

@@ -43,6 +43,7 @@ namespace UnturnedGodot
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
         public ZombiePuppets Puppets { get; private set; }        // C5: server zombies as interpolated puppets
+        public AnimalPuppets AnimalPups { get; private set; }     // A5: server wildlife as interpolated puppets (the SOLE animal materializer on a joined client -- no AnimalField)
         public WorldItemReplicaView Items { get; private set; }   // C5: replicated world items as static visuals
         public CropReplicaView Crops { get; private set; }        // A4: replicated crops as real CropNodes (the SOLE crop materializer on a joined client -- no client CropManager)
         public StorageReplicaView Storage { get; private set; }   // A1: replicated world containers as ServerOwned StoreShelf nodes (the SOLE container materializer on a joined client -- no SP SpawnMapContainers)
@@ -148,6 +149,10 @@ namespace UnturnedGodot
             // resources dropping their client visual + trunk collider (§7 risk 7).
             Puppets = new ZombiePuppets { Client = Client };
             AddChild(Puppets);
+            // A5: the SOLE wildlife materializer on a joined client -- the shell runs no AnimalField (server owns
+            // the brains), so this view is the only thing that renders animals. NEVER on a loopback (double-render).
+            AnimalPups = new AnimalPuppets { Client = Client };
+            AddChild(AnimalPups);
             Items = new WorldItemReplicaView { Client = Client };
             AddChild(Items);
             // A4: the SOLE crop materializer on a joined client -- the shell has no CropManager (server owns
