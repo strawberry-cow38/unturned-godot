@@ -627,8 +627,8 @@ namespace UnturnedGodot
         {
             Body = "sedan_body.txt", Wheel = "sedan_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "sedan_palette.png",
             RandomHueGray = true,   // source RandomHueOrGrayscale -> our curated CarColors
-            WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 16.5f, SpeedMin = -6f, Brake = 32f,
-            Mass = 1500f, Torque = 1000f, DriveGears = new[] { 2.2f, 1.7f, 1.4f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.FWD,   // vehiclerework BASELINE: mid, 6-speed, FWD (pulls, mild understeer)
+            WheelRadius = 0.6f, Engine = 700f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 32f, SpeedMin = -12f, Brake = 32f,
+            Mass = 1500f, Torque = 1600f, DriveGears = new[] { 2.2f, 1.7f, 1.4f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.FWD,   // vehiclerework BASELINE: mid, ~72mph top, 6-speed, FWD (pulls, mild understeer)
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -750,8 +750,8 @@ namespace UnturnedGodot
         {
             Body = "firetruck_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "firetruck_palette.png",
             DefaultPaints = new[] { "#b81c1c" },   // red firetruck
-            WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 11f, SpeedMin = -5f, Brake = 32f,
-            Mass = 9000f, Torque = 4200f, DriveGears = new[] { 3.2f, 2.6f, 2.1f, 1.7f, 1.35f, 1.1f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework HEAVY HAULER: heavy + torquey, LOW top, 7-speed, RWD
+            WheelRadius = 0.6f, Engine = 800f, SteerMax = 48f, SteerMin = 24f, SpeedMax = 22f, SpeedMin = -9f, Brake = 32f,
+            Mass = 9000f, Torque = 6500f, DriveGears = new[] { 3.2f, 2.6f, 2.1f, 1.7f, 1.35f, 1.1f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework HEAVY HAULER: ~49mph top (low), heavy + torquey, 7-speed, RWD
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
@@ -832,8 +832,8 @@ namespace UnturnedGodot
         {
             Body = "police_body.txt", Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", Palette = "police_palette.png",
             DefaultPaints = new[] { "#d4d4d4" },   // source Police.dat DefaultPaintColors = #d4d4d4 (white body; the palette's black livery = a black/white cruiser)
-            WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 18.5f, SpeedMin = -6f, Brake = 32f,
-            Mass = 1750f, Torque = 1250f, DriveGears = new[] { 2.3f, 1.8f, 1.45f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework BUFFED SEDAN (crown vic): heavier + more torque + higher top, 6-speed, RWD (tail-happy)
+            WheelRadius = 0.6f, Engine = 720f, SteerMax = 28f, SteerMin = 14f, SpeedMax = 40f, SpeedMin = -13f, Brake = 32f,
+            Mass = 1750f, Torque = 2000f, DriveGears = new[] { 2.3f, 1.8f, 1.45f, 1.2f, 1.05f, 1f }, Drive = Drivetrain.RWD,   // vehiclerework BUFFED SEDAN (crown vic): ~90mph top, more torque, 6-speed, RWD (tail-happy)
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,

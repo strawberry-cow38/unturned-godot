@@ -440,7 +440,7 @@ namespace UnturnedGodot.Testing
     public class VehicleDrivetrainProbe : GameTest
     {
         public override string Name => "vehicle.drivetrain_probe";
-        public override double TimeoutSimSeconds => 120;
+        public override double TimeoutSimSeconds => 180;
 
         public override IEnumerable<Step> Run()
         {
@@ -450,8 +450,8 @@ namespace UnturnedGodot.Testing
                 var v = Vehicle.BuildByName(name); World.AddChild(v); v.GlobalPosition = new Vector3(0f, 1.2f, 0f);
                 for (int i = 0; i < 40; i++) yield return Ticks(1);   // drop + settle onto the ground
                 v.EngineOn = true; v.Fuel = v.FuelMax > 0f ? v.FuelMax : 100f; v.LinearVelocity = Vector3.Zero; v.AngularVelocity = Vector3.Zero; v.Wake();
-                float top = 0f, t8 = -1f, simT = 0f;
-                for (int i = 0; i < 550; i++)   // ~11 s at 50 Hz -> approaches the drag-limited top speed
+                float top = 0f, t8 = -1f, t20 = -1f, simT = 0f;
+                for (int i = 0; i < 1200; i++)   // ~24 s at 50 Hz -> reach the higher drag-limited top speeds
                 {
                     v.Drive(1f, 0f, false);
                     yield return Ticks(1);
@@ -459,8 +459,9 @@ namespace UnturnedGodot.Testing
                     float sp = Mathf.Abs(v.LinearVelocity.Dot(-v.GlobalTransform.Basis.Z));
                     top = Mathf.Max(top, sp);
                     if (t8 < 0f && sp >= 8f) t8 = simT;
+                    if (t20 < 0f && sp >= 20f) t20 = simT;
                 }
-                GD.Print($"[PROBE] {name,-10} mass={v.Mass,-6:0} topSpeed={top,5:0.0} m/s   0->8m/s={(t8 < 0f ? " n/a " : t8.ToString("0.0") + "s")}");
+                GD.Print($"[PROBE] {name,-10} mass={v.Mass,-6:0} top={top,5:0.0}m/s ({top * 2.237f,3:0}mph)  0->8m/s={(t8 < 0f ? "n/a" : t8.ToString("0.0") + "s")}  0->20m/s={(t20 < 0f ? "n/a" : t20.ToString("0.0") + "s")}");
                 v.QueueFree();
                 yield return Ticks(5);
             }
