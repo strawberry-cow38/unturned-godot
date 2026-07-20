@@ -64,19 +64,40 @@ namespace UnturnedGodot
 
         static uint Hash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; x ^= x >> 16; return x; }
 
+        // Streaming anchors (C4, the ZombieField/LootField precedent): an explicitly-set Player is the SP path and is
+        // honored EXACTLY (the single anchor, byte-identical to the old single-Player gate); Player == null (a dedicated
+        // server, where nobody wires one) streams on EVERY registered player via PlayerRegistry -- so a joined client
+        // gets wildlife around it too. Nearest-any-anchor distance, which with one anchor IS the old single-player gate.
+        readonly List<Vector3> _anchors = new();
+        List<Vector3> GatherAnchors()
+        {
+            _anchors.Clear();
+            if (Player != null) { _anchors.Add(Player.GlobalPosition); return _anchors; }
+            foreach (var p in PlayerRegistry.All)
+                if (IsInstanceValid(p)) _anchors.Add(p.GlobalPosition);
+            return _anchors;
+        }
+        static float NearestDistSq(List<Vector3> anchors, float x, float z)
+        {
+            float best = float.MaxValue;
+            foreach (var a in anchors) { float dx = x - a.X, dz = z - a.Z; best = Mathf.Min(best, dx * dx + dz * dz); }
+            return best;
+        }
+
         public override void _Process(double delta)
         {
             _acc += delta;
-            if (_acc < 0.5 || Player == null || Terr == null) return;
+            if (_acc < 0.5 || Terr == null) return;
+            var anchors = GatherAnchors();
+            if (anchors.Count == 0) return;   // pre-join server / no player -> nothing to stream around (was the Player==null gate)
             _acc = 0;
-            var pp = Player.GlobalPosition;
 
             var drop = new List<int>();
             foreach (var kv in _live)
             {
                 if (!IsInstanceValid(kv.Value)) { drop.Add(kv.Key); continue; }
-                float dx = kv.Value.GlobalPosition.X - pp.X, dz = kv.Value.GlobalPosition.Z - pp.Z;
-                if (dx * dx + dz * dz > DespawnR * DespawnR) { kv.Value.QueueFree(); drop.Add(kv.Key); }
+                var gp = kv.Value.GlobalPosition;
+                if (NearestDistSq(anchors, gp.X, gp.Z) > DespawnR * DespawnR) { kv.Value.QueueFree(); drop.Add(kv.Key); }
             }
             foreach (var k in drop) _live.Remove(k);
 
@@ -84,8 +105,7 @@ namespace UnturnedGodot
             {
                 if (_live.ContainsKey(idx)) continue;
                 var p = _pts[idx];
-                float dx = p.X - pp.X, dz = p.Z - pp.Z;
-                if (dx * dx + dz * dz > SpawnR * SpawnR) continue;
+                if (NearestDistSq(anchors, p.X, p.Z) > SpawnR * SpawnR) continue;
                 if (_live.Count >= MaxLive) break;
                 if (Terrain.IsWater(Terr.SampleDominantLayer(p.X, p.Z))) continue;
                 if (_tableIds == null || p.Type >= _tableIds.Length) continue;
@@ -94,13 +114,19 @@ namespace UnturnedGodot
                 uint h = Hash((uint)idx + 0x51ed2701u);
                 ushort id = ids[(int)(h % (uint)ids.Length)];        // deterministic deer/pig/cow pick
                 if (!Kinds.TryGetValue(id, out var def)) continue;
-                var rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
-                if (rc == null) continue;
+                // build the visual rig only where it's actually rendered (SP/loopback host = Player set). A dedicated
+                // server (Player null) streams RIG-LESS: the agent still wanders + AnimalNetSync publishes its
+                // transform/anim/species, and remote clients render the puppet -- so no 36 wasted headless skeletons.
+                RiggedCharacter rc = null;
+                if (Player != null)
+                {
+                    rc = RiggedCharacter.Build($"res://content/{def.rig}_rig.json", Colors.White, false, $"res://content/objects/{def.tex}", null);
+                    if (rc == null) continue;
+                }
                 var agent = new AnimalAgent { Terr = Terr, Foot = def.foot, Home = new Vector3(p.X, 0f, p.Z), Seed = h ^ 0xA53Cu, Species = AnimalCatalog.SpeciesForAnimalId(id) };
                 AddChild(agent);
                 agent.GlobalPosition = new Vector3(p.X, Terr.SampleHeight(p.X, p.Z) + def.foot, p.Z);
-                agent.AddChild(rc);
-                agent.Rig = rc;
+                if (rc != null) { agent.AddChild(rc); agent.Rig = rc; }
                 agent.Begin();                                       // idle -> wander loop (see AnimalAgent)
                 _live[idx] = agent;
             }

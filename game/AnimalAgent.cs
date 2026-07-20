@@ -49,7 +49,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            if (Rig == null || !IsInstanceValid(Rig)) return;
+            if (Rig != null && !IsInstanceValid(Rig)) return;   // a FREED rig bails; a null rig (dedicated, rig-less) still wanders (Rig?.Play is null-safe) so AnimalNetSync has a moving transform to publish
             if (_walking)
             {
                 var pos = GlobalPosition;

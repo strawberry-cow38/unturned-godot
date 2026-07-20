@@ -609,6 +609,16 @@ namespace UnturnedGodot
                     root.AddChild(zf);
                     result.Zombies = zf;
                 }
+                // WILDLIFE (A5 follow-up 2026-07-20): the same Fauna-streamed AnimalField as Playable, NO Player wired --
+                // streams on every registered player via PlayerRegistry (the C4 generalization now extended to
+                // AnimalField, like ZombieField/LootField). Rig-less server-side (the agent wanders + AnimalNetSync
+                // publishes it; remote clients render the puppets), so a joined client gets deer/pig/cow around it.
+                {
+                    await Phase("Animals");
+                    var animals = new AnimalField { Terr = terr };
+                    animals.LoadFromPei(mapRoot);
+                    root.AddChild(animals);
+                }
                 // VEHICLES (C4, §3): the shared Spawns/Vehicles.dat pass, after ItemCatalog.RegisterAll (the
                 // Loot block above). VehicleNetSync publishes every "vehicles"-group node this spawns -- the
                 // net layer needs nothing else.
