@@ -1081,10 +1081,12 @@ namespace UnturnedGodot
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
             // vehiclerework drivetrain: real weight + geared torque; un-tuned vehicles DERIVE from the old stats so all still drive.
+            bool derivedDrive = s.Torque <= 0f;   // no explicit drivetrain stats -> derive + rescale from the old arcade values so the WHOLE fleet gets realistic speeds
             v.Mass = s.Mass > 0f ? s.Mass : GlobalMass;                         // real per-vehicle weight (kg); un-set -> the old shared 900
-            v._torque = s.Torque > 0f ? s.Torque : s.Engine;                    // base drive force; un-set -> the old Engine value (same cruise grunt)
+            if (derivedDrive) v._speedMax = s.SpeedMax * 2.0f;                  // old arcade tops (~12-19 m/s / 25-40mph) -> realistic (~24-38 m/s / 55-85mph); exemplars keep their explicit SpeedMax
+            v._torque = derivedDrive ? s.Engine * 1.6f : s.Torque;             // un-set -> the old Engine value, bumped to pull up to the higher top
             v._driveGears = (s.DriveGears != null && s.DriveGears.Length > 0) ? s.DriveGears : new[] { 1.9f, 1.55f, 1.3f, 1.15f, 1.05f, 1f };   // un-set -> a sane 6-speed spread (launch grunt -> cruise)
-            v._dragK = s.SpeedMax > 0f ? v._torque * v._driveGears[v._driveGears.Length - 1] / (s.SpeedMax * s.SpeedMax) : 0f;   // drag so top-gear force = drag at SpeedMax -> flat-ground top lands there
+            v._dragK = v._speedMax > 0f ? v._torque * v._driveGears[v._driveGears.Length - 1] / (v._speedMax * v._speedMax) : 0f;   // drag so top-gear force = drag at the (rescaled) top -> flat-ground top lands there
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
