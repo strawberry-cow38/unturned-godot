@@ -3734,10 +3734,23 @@ namespace UnturnedGodot
         // the live tick interleaves per-tick client work (viewmodel locomotion, vitals, footstep
         // noise) between the stance decision and the move. Everything physics-relevant lives HERE. ----
 
+        // ---- water / swim state (retail PlayerStance probes; the port's ocean is a single global plane at
+        // Terrain.SeaLevelY, so submersion is a Y test). Player origin = feet; eye = feet+1.75 in SWIM. ----
+        /// <summary>The feet+1.25m body probe is under the surface -> SWIM (PlayerStance.cs:636 isBodyUnderwater).</summary>
+        bool BodyUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.25f < Terrain.SeaLevelY;
+        /// <summary>The eye probe (feet+1.75) is under -> submerged: free-swim in look dir + oxygen drains (areEyesUnderwater).</summary>
+        public bool EyesUnderwater => Terrain.HasWater && GlobalPosition.Y + 1.75f < Terrain.SeaLevelY;
+        /// <summary>Currently in the SWIM stance (deep enough that the body probe is submerged).</summary>
+        public bool IsSwimming => _move.Stance == EPlayerStance.SWIM;
+
         /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).</summary>
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
         {
             _move.Stance = _stance.Step(crouchKey, proneKey, sprintKey, Stamina, Broken, scriptedStance, _capStance, HeadroomFor);
+            // SWIM overrides the key-driven stance the instant the feet+1.25 body probe is underwater
+            // (PlayerStance.cs:636-673) -- deep water; exits back the tick it clears. NetAvatars hold the
+            // replicated stance (NetHoldPose), so only a locally-simulated shell decides SWIM here.
+            if (!NetAvatar && BodyUnderwater) _move.Stance = EPlayerStance.SWIM;
             UpdateHitbox(_move.Stance);   // resize the collision capsule to match the stance (source HeightForStance)
         }
 
@@ -3749,6 +3762,14 @@ namespace UnturnedGodot
         void StepMoveOnce(float strafe, float forward, bool jump, float delta,
                           out bool wasAirborne, out float verticalVel, out bool groundedEntering)
         {
+            if (_move.Stance == EPlayerStance.SWIM)
+            {
+                SwimStep(strafe, forward, jump);   // no gravity, buoyancy/free-swim; own velocity path
+                wasAirborne = false;               // swimming is never airborne -> the caller skips fall damage (retail: SWIM branch never onLanded)
+                verticalVel = Velocity.Y;
+                groundedEntering = false;
+                return;
+            }
             bool grounded = IsOnFloor();
             groundedEntering = grounded;
             var v = _move.Step(new UnityEngine.Vector2(strafe, forward), jump, grounded, delta);
@@ -3758,6 +3779,38 @@ namespace UnturnedGodot
             StepUp(delta, grounded);   // climb small curbs/thresholds so we don't snag (master)
             MoveAndSlide();
             verticalVel = v.y;
+        }
+
+        /// <summary>Swim movement (PlayerMovement.cs:1134-1164): no gravity. Submerged (or look-down + push
+        /// forward) = free-swim following the 3D aim, space swims UP at 3 m/s. At the surface = horizontal in
+        /// the body frame + a buoyancy bob that floats the eyes just above water. Base speed 4.5 m/s (SPEED_SWIM
+        /// 3 x the branch's 1.5). Client-side only (the shell has the camera); NetAvatars hold their pose.</summary>
+        void SwimStep(float strafe, float forward, bool jump)
+        {
+            const float SwimSpeed = PlayerMovementDef.SPEED_SWIM * 1.5f;   // 4.5 m/s (PlayerMovement.cs:1143/1163)
+            const float SwimUp = 3f;                                        // vertical swim/ascend constant (PlayerMovement.cs:104)
+            var local = new Vector3(strafe, 0f, -forward);
+            if (local.LengthSquared() > 1f) local = local.Normalized();     // move.normalized: unit on diagonals, digital single-axis stays 1
+
+            Basis aim = _cam != null && GodotObject.IsInstanceValid(_cam) ? _cam.GlobalTransform.Basis : GlobalTransform.Basis;
+            Vector3 lookFwd = -aim.Z;
+            bool diving = lookFwd.Y < -0.25f && forward > 0.1f;             // look down + forward -> submerge (retail look.pitch>110 & move.z>0.1)
+
+            Vector3 vel;
+            if (EyesUnderwater || diving)
+            {
+                vel = (aim * local) * SwimSpeed;   // 3D velocity follows where you look (dive / ascend)
+                if (jump) vel.Y = SwimUp;          // space always climbs
+            }
+            else
+            {
+                Vector3 horiz = GlobalTransform.Basis * local;   // surface: horizontal follows body yaw
+                float buoy = (Terrain.SeaLevelY - 1.275f - GlobalPosition.Y) / 8f;   // float feet toward surface-1.275 (eyes above water)
+                vel = new Vector3(horiz.X * SwimSpeed, buoy, horiz.Z * SwimSpeed);
+            }
+            Velocity = vel;
+            MoveAndSlide();
+            _move.Velocity = new UnityEngine.Vector3(strafe * SwimSpeed, vel.Y, forward * SwimSpeed);   // keep the sim velocity coherent for consumers
         }
     }
 }
