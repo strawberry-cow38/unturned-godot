@@ -287,4 +287,121 @@ namespace UnturnedGodot.Testing
             client.Disconnect();
         }
     }
+
+    // SP/MP-unify P2 phase gate. Proves the "local view CONSUMES a server WORLD-ITEM (dropped/loot) replica
+    // instead of OWNING a direct SP node" seam -- the exact shape MpLoopback now takes under --spconsume
+    // (a WorldItemReplicaView + the NetPickupItem wire seam), the direct world-item mirror of
+    // unify.deploy_consume_parity. Net stack + pickup round trip modeled on that test + net.shell_pickup_item.
+    //
+    // A SINGLE client stands in for the local loopback player: it CONSUMES the server's world-item entities
+    // through a WorldItemReplicaView (as MpLoopback now wires under --spconsume) AND drives the pickup over the
+    // wire (Client.SendPickupItem -- what the NetPickupItem seam now invokes). The DedicatedServer spawns the
+    // world item, validates the pickup (reach+facing), adds it to the P1b SERVER-authoritative inventory, and
+    // broadcasts the removal; the owner block echoes the add (what AdoptReplicatedInventory copies into a shell).
+    //
+    // TEETH: the puppet must carry a real server-assigned NetId (a direct SP WorldItem.Spawn stamps 0); a pickup
+    // of a NON-EXISTENT NetId is a no-op (the validator's _worldItems.TryGet fails -> no phantom item); a SECOND
+    // pickup of the now-taken NetId is a no-op (count stays 1). Without the view + seam the puppet never
+    // materializes and the pickup never lands -- this cannot pass on the old publish-only loopback.
+    public class UnifyWorldItemConsume : GameTest
+    {
+        public override string Name => "unify.worlditem_consume";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready (the ONE world path, flat fallback on CI)", world.Ready);
+            ItemCatalog.RegisterAll();   // the puppet view + the join demo-kit seeding resolve against the catalog
+
+            // net stack over MemTransport -- ONE client, the local loopback player's stand-in (it consumes AND
+            // picks up, exactly as MpLoopback does under --spconsume). Client pump BEFORE the DedicatedServer so
+            // each tick runs delivery + client BEFORE the server sim, replicate staying LAST (§2.5).
+            var net = new MemNetwork(20260720);
+            var client = new NetWorldClient(new MemClientTransport(net), "local", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); client.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net) };
+            World.AddChild(ded);   // seeds the demo kit into the SERVER grid on join (the P1b server-authoritative bag)
+
+            // the P2 pattern: the local view materializes the server's world-item entities into item puppets --
+            // the SOLE materializer of these entities' local visuals when the pickup seam routes over the wire.
+            var view = new WorldItemReplicaView { Client = client };
+            World.AddChild(view);
+
+            client.Connect();
+            yield return Until(() => client.State == NetSessionState.Connected, 5);
+            T.Check("local client joined the loopback server", client.State == NetSessionState.Connected);
+
+            // the server's authoritative player entity for this peer -- its Pos/yaw are what the pickup validator
+            // reach+facing-checks against. Spawn the item AT the player's feet so the facing cone is SKIPPED
+            // (dist < PickupFacingSkipRange) and reach is trivially met -- robust without a shell driving yaw.
+            yield return Until(() => ded.Server.Players.TryGetByOwner(client.PlayerId, out _), 5);
+            T.Check("server owns the player entity for this peer", ded.Server.Players.TryGetByOwner(client.PlayerId, out _));
+            ded.Server.Players.TryGetByOwner(client.PlayerId, out var me);
+
+            // spawn a GENERATOR (458 -- NOT in the demo kit, so counts discriminate the pickup) on the SERVER at
+            // the player's feet. This is the drop/loot analogue: OnDropItem funnels through this SAME SpawnWorldItem,
+            // so a real over-the-wire drop (P1b's NetDropItem) produces exactly this entity for the view to consume.
+            var e = ded.Server.Transactions.SpawnWorldItem(new Item(458), me.Pos, UnityEngine.Vector3.zero);
+            T.Check("server spawned the world-item entity", e != null && ded.Server.WorldItems.Count == 1);
+
+            // the consume payoff: the replica view materialized the entity into a real item PUPPET
+            yield return Until(() => view.TryGetNode(e.NetIdValue, out _), 5);
+            bool haveNode = view.TryGetNode(e.NetIdValue, out var node);
+            T.Check("the item puppet materialized on the consuming view", haveNode);
+            var wp = node as WorldItemPuppet;
+            // TEETH: a server-assigned NetId proves the puppet came from the replicated ENTITY over the wire, not
+            // a direct SP WorldItem.Spawn (which stamps NetId 0). No view -> no puppet -> fails here.
+            T.Check($"the puppet carries the SERVER entity NetId ({(wp != null ? wp.NetId : 0)})",
+                    wp != null && wp.NetId == e.NetIdValue && wp.NetId != 0);
+
+            int serverBefore = ded.Server.Inventories.TryGet(client.PlayerId, out var sInv0) ? sInv0.Inventory.getItemCount(458) : -1;
+            T.Check("the demo-kit server grid holds NO generator yet (the count discriminates)", serverBefore == 0);
+
+            // TEETH #1 -- a pickup of a NON-EXISTENT NetId is a no-op: the validator's _worldItems.TryGet fails,
+            // so nothing is spent/added and no phantom item appears (an unguarded handler would add a default
+            // entity's ServerItem -> a ghost generator).
+            client.SendPickupItem(0xDEADBEEFu);
+            yield return Ticks(20);
+            T.Check("(teeth) pickup of a non-existent NetId is a no-op -- the entity stays", ded.Server.WorldItems.Count == 1);
+            T.Check("(teeth) no phantom item added to the server grid",
+                    ded.Server.Inventories.TryGet(client.PlayerId, out var sPh) && sPh.Inventory.getItemCount(458) == 0);
+            T.Check("(teeth) the puppet stayed", view.TryGetNode(e.NetIdValue, out _));
+
+            // the real pickup, over the wire (the same Client.SendPickupItem the NetPickupItem seam now invokes)
+            client.SendPickupItem(e.NetIdValue);
+
+            // (a) the server world-item entity retired AND the puppet was diff-driven out of the world
+            yield return Until(() => ded.Server.WorldItems.Count == 0, 5);
+            T.Check("(a) the server world-item entity retired (pickup validated + WorldItemRemoved broadcast)",
+                    ded.Server.WorldItems.Count == 0);
+            yield return Until(() => !view.TryGetNode(e.NetIdValue, out _), 5);
+            T.Check("(a) the puppet retired from the consuming view (diff-driven on WorldItemRemoved)",
+                    !view.TryGetNode(e.NetIdValue, out _));
+
+            // (b) the item landed in the P1b SERVER-authoritative inventory AND echoed to the owner block (the
+            //     grid a shell would AdoptReplicatedInventory -- exactly what MpLoopback re-adopts locally)
+            yield return Until(() => ded.Server.Inventories.TryGet(client.PlayerId, out var s1) && s1.Inventory.getItemCount(458) == 1, 5);
+            T.Check("(b) the item landed in the SERVER-authoritative inventory (count 0 -> 1)",
+                    ded.Server.Inventories.TryGet(client.PlayerId, out var sInv) && sInv.Inventory.getItemCount(458) == 1);
+            yield return Until(() => client.Inventories.TryGet(client.PlayerId, out var r1) && r1.Inventory.getItemCount(458) == 1, 5);
+            T.Check("(b) the add echoed to the owner block (what the shell would adopt locally)",
+                    client.Inventories.TryGet(client.PlayerId, out var rInv) && rInv.Inventory.getItemCount(458) == 1);
+
+            // TEETH #2 -- a SECOND pickup of the now-taken NetId is a no-op: the entity is gone, so the validator
+            // rejects and the count stays 1 (no phantom second generator from a re-picked ghost).
+            client.SendPickupItem(e.NetIdValue);
+            yield return Ticks(20);
+            T.Check("(teeth) a second pickup of the taken NetId is a no-op -- count stays 1",
+                    ded.Server.Inventories.TryGet(client.PlayerId, out var s2) && s2.Inventory.getItemCount(458) == 1);
+
+            // teardown: unhook the pump so nothing touches the dying MemNetwork after QueueFree
+            world.Sim.Sim.Remove(pump);
+            client.Disconnect();
+        }
+    }
 }

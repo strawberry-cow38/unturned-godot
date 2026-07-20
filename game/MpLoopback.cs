@@ -32,7 +32,13 @@ namespace UnturnedGodot
         // so a real placement would be server-REJECTED. P1b closes that: the server owns a stocked inventory
         // for the local player (seeded from the SP demo kit on join) and the local grid/consume/craft seams
         // route over the wire + adopt the owner block -- the MP client's exact end-to-end inventory authority.
-        public bool ConsumeDeployables;
+        //
+        // P2 (SAME --spconsume flag): the local player CONSUMES world-item (dropped/loot) replicas + picks
+        // them up over the wire, mirroring the MP client (ClientWorldSession). Builds on P1b: a wire pickup
+        // adds the item to the now-authoritative SERVER inventory and the owner echo re-adopts it locally.
+        // The one flag drives ALL of these consume subsystems (deployables + inventory + world-items); the
+        // name is kept for continuity. Opt-in and behavior-neutral when false: SP/loopback keep the direct path.
+        public bool ConsumeDeployables;   // "--spconsume": the local player consumes the replica subsystems instead of owning direct nodes
         bool _localInventoryAdopted;   // P1b: latches the one-time initial owner-grid pull (ClientWorldSession.SpawnShell:456-457)
 
         public MemNetwork Net { get; private set; }
@@ -40,6 +46,7 @@ namespace UnturnedGodot
         public NetWorldClient Client { get; private set; }
         public RemotePlayers Remotes { get; private set; }
         public DeployableReplicaView Deploys { get; private set; }   // P1 --spconsume: server deployable/wire entities -> local nodes (null unless ConsumeDeployables)
+        public WorldItemReplicaView Items { get; private set; }      // P2 --spconsume: server world-item (drop/loot) entities -> local puppets (null unless ConsumeDeployables)
         public ZombieNetSync ZombieSync { get; private set; }
         public WorldItemNetSync WorldItemSync { get; private set; }
         public VehicleNetSync VehicleSync { get; private set; }
@@ -128,7 +135,37 @@ namespace UnturnedGodot
                     if (owner != Client.PlayerId || Player == null || !IsInstanceValid(Player)) return;
                     if (Client.Inventories.TryGet(owner, out var inv)) Player.AdoptReplicatedInventory(inv.Inventory);
                 };
-                GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables as replicas + SERVER-AUTHORITATIVE inventory (direct paths disabled for these subsystems)");
+
+                // (d) P2 -- world-item (dropped/loot) consume, over the wire. Same shape as the deployable
+                //     view in (a): the SAME diff-materializer the MP client uses (ClientWorldSession:144-145)
+                //     walks Client.WorldItems.All into focusable item puppets (WorldItem.BuildItemPuppet),
+                //     stamps NetId, and F-on-a-focused-puppet rides the NetPickupItem seam. The player's own
+                //     DROPS already route over the wire (P1b NetDropItem @118): SendDropItem -> the server's
+                //     OnDropItem SpawnWorldItem -- a server world-item ENTITY with NO local SP node -- which
+                //     THIS view then materializes. So a drop leaves the bag, appears in the world as a puppet,
+                //     and is pickup-able again, entirely over the wire (the whole point of the phase).
+                Items = new WorldItemReplicaView { Client = Client };
+                AddChild(Items);
+                // set the pickup seam to route over the wire (verbatim from ClientWorldSession.SpawnShell:436).
+                // Null in default SP/loopback, so the direct SP path stays byte-identical; SETTING it makes F
+                // on a focused item PUPPET send PickupItemCommand (PlayerController.RequestPickupFocusedPuppet
+                // @1712 -> NetPickupItem @1721) instead of nothing. The server validates reach+facing, adds the
+                // item to the P1b-authoritative SERVER grid, and broadcasts WorldItemRemoved; the owner echo
+                // re-adopts the add locally and the diff-driven view retires the puppet.
+                Player.NetPickupItem = netId => Client.SendPickupItem(netId);
+                // INVARIANT (no double, player-driven path): with NetDropItem + NetPickupItem set and this view
+                // present, the local player's DROP and PICKUP paths are superseded by the wire -- a drop spawns
+                // NO local SP WorldItem node (RequestDropItem short-circuits InventoryUI's WorldItem.Spawn), and
+                // a pickup targets the PUPPET (_focusPuppet -> RequestPickupFocusedPuppet), never the SP-node
+                // TryPickup (_focusItem). The view is the SOLE materializer of these entities' local visuals.
+                // KNOWN FOLLOW-UP (P2b, mirrors how P1 surfaced P1b): passive LOOT is different. LootField still
+                // spawns real SP WorldItem nodes locally (WorldBuilder Loot phase) and WorldItemNetSync (@143-144,
+                // unconditional) mints entities from them -- so a node-backed loot/salvage entity would be
+                // materialized TWICE under --spconsume (its real SP node AND this view's puppet). Making the view
+                // the SOLE owner for THOSE too -- suppressing the local SP world-item spawn / the sync's node
+                // minting under the flag, the analogue of P1's "one owner, and it's the replica view" -- is the
+                // next phase; it touches the MP-shared view + the sync, so it is left for review, not bundled here.
+                GD.Print("[MPLOOPBACK] --spconsume: local player CONSUMES deployables + world-items as replicas + SERVER-AUTHORITATIVE inventory (direct player drop/pickup/deploy paths disabled)");
             }
 
             Driver.Sim.Add(new DelegateSimStep((t, dt) => TickLocal((float)dt), "mp.loopback.local"));
