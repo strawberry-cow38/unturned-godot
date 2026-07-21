@@ -1295,8 +1295,17 @@ namespace UnturnedGodot
             CharacterModel.LoadBundled();
 
             var gunDef = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/eaglefire.dat")));
-            _bnSentry = Sentry.Spawn(this, new Vector3(2f, 0f, 0f), 0f, gunDef);
-            _bnSentry.RequiresPower = false;   // always-on for the beacon lifecycle test (the sentry's power gating is covered by --sentrytest); a wired generator would sit in the sentry's own firing arc + block sightlines to zombies behind it
+            // A RING of 4 always-on sentries around the beacon, each facing OUT. Since a sentry now only engages a 60deg
+            // forward arc (+ its +-60deg sweep), one can't hold a 360deg horde -- a ring of them is the faithful defense.
+            // This exercises BOTH the arc gate and the beacon lifecycle. (Always-on: power gating is covered by --sentrytest;
+            // a wired generator would also sit in a sentry's firing arc.)
+            var places = new (Vector3 pos, float yaw)[] { (new Vector3(0f, 0f, -2f), 0f), (new Vector3(2f, 0f, 0f), -90f), (new Vector3(0f, 0f, 2f), 180f), (new Vector3(-2f, 0f, 0f), 90f) };
+            foreach (var (pos, yaw) in places)
+            {
+                var s = Sentry.Spawn(this, pos, yaw, gunDef);
+                s.RequiresPower = false;
+                _bnSentry ??= s;   // the first is the horde's nominal Defender (abandonment check)
+            }
 
             _bnBeacon = new Beacon { Wave = 16, MaxAlive = 8 };   // a short test siege (the real Beacon id1194 is Wave 100)
             AddChild(_bnBeacon);

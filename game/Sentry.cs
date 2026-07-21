@@ -96,14 +96,14 @@ namespace UnturnedGodot
 
         // Keep the current target while it's alive + inside targetLossRadius; otherwise scan for the nearest LOS-clear
         // ZombieController within detectionRadius (source ScanForTargets: nearest valid target with a clear ray).
-        // KNOWN SIMPLIFICATIONS vs source ScanForTargets (deliberate, not bugs -- flagged for a future faithfulness pass):
-        //   * source scans at ~10 Hz; we scan every frame (fine at these counts, but not throttled).
-        //   * source gates a NEW target on Vector3.Dot(dirToTarget, aimForward) >= 0.5 (a 60 deg FORWARD ARC) -- our
-        //     turret is effectively 360 deg (it acquires any in-range LOS-clear zombie regardless of head facing). Adding
-        //     the arc would make a single sentry unable to cover a 360 deg horde (it only sweeps +-60 deg), so it's a
-        //     design/balance change that also needs the beacon test reworked -- left for a dedicated pass.
-        //   * source skips !zombie.isHunting (only aggroed zombies); our ZombieController exposes no hunting/aggro flag,
-        //     so we engage any zombie in range+LOS.
+        // A NEW target must sit within a 60-degree FORWARD ARC of the head's current aim (source ScanForTargets:
+        // Vector3.Dot(dirToTarget, aimTransform.forward) >= 0.5) -- so the turret can't snap to something behind it; it
+        // has to SWEEP around until a zombie enters its arc. The already-acquired target is EXEMPT (it keeps the full
+        // targetLossRadius bubble below), matching source. A single sentry therefore covers ~its sweep+arc, not 360deg --
+        // hold a 360deg horde with several sentries facing out (see --beacontest).
+        // KNOWN SIMPLIFICATIONS still present (deliberate, documented): we scan every frame (source ~10 Hz), and we don't
+        // skip !zombie.isHunting (the port's ZombieController exposes no aggro/hunting flag), so we engage any zombie in
+        // range + arc + LOS.
         void AcquireOrKeepTarget()
         {
             if (_target != null && GodotObject.IsInstanceValid(_target) && !_target.Dead
@@ -112,12 +112,15 @@ namespace UnturnedGodot
             _target = null;
             if (!CanTargetZombies) return;
             float best = DetectionRadius;
+            Vector3 aimFwd = _head != null ? -_head.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;   // source aimTransform.forward
+            Vector3 from = _muzzle != null ? _muzzle.GlobalPosition : GlobalPosition;
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
             {
                 if (n is not ZombieController z) continue;
                 if (!GodotObject.IsInstanceValid(z) || z.Dead) continue;
                 float d = z.GlobalPosition.DistanceTo(GlobalPosition);
                 if (d > best) continue;
+                if ((z.GlobalPosition - from).Normalized().Dot(aimFwd) < 0.5f) continue;   // 60deg forward-arc gate for a NEW target
                 if (!LineOfSightClear(z)) continue;
                 best = d; _target = z;
             }
