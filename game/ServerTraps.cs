@@ -13,28 +13,31 @@ namespace UnturnedGodot
     // entrant + wear the trap's replicated Health down 5 per pass (break at 0); a landmine detonates an AoE + self-
     // destructs. Mirrors ServerSentries (a server system, not a node); the SP Trap node's logic, over server entities.
     //
-    // CUT 1 scope (documented, not hidden): ZOMBIES ONLY. DamageZombieExternal is the zombie seam; players + vehicles
-    // stepping on a trap (the SP Trap damages them too) is the follow-up -- it needs the player/vehicle external-damage
-    // seams (DamagePlayerExternal exists; a vehicle one doesn't yet).
+    // Zombies AND players trigger it (cut-2: a player stepping in takes the flat PlayerDamage / the landmine's squared
+    // blast, via DamagePlayerExternal, attacker 0 = the trap). VEHICLES rolling over a trap are still deferred -- there's
+    // no vehicle server-damage seam yet (the SP Trap only chips tires anyway). No friend/foe: like the source, a trap
+    // bites whoever enters (owner included) -- a foe-only variant would be a mod, not the source-accurate base.
     public sealed class ServerTraps
     {
         readonly ZombieReplication _zombies;
         readonly DeployableReplication _deployables;
         readonly ServerCombat _combat;
+        readonly PlayerReplication _players;
 
-        sealed class TrapState { public float Age; public bool Armed; public readonly HashSet<uint> Inside = new(); }
-        readonly Dictionary<uint, TrapState> _traps = new();   // trap entity NetId -> arm timer + last-tick "inside" set (edge detection)
+        sealed class TrapState { public float Age; public bool Armed; public readonly HashSet<uint> Inside = new(); public readonly HashSet<ushort> InsidePlayers = new(); }
+        readonly Dictionary<uint, TrapState> _traps = new();   // trap entity NetId -> arm timer + last-tick "inside" sets (edge detection)
         readonly HashSet<uint> _seen = new();
         readonly List<(uint id, Vector3 pos, byte spec)> _nowInside = new();   // reused per trap per tick (no per-trap alloc, mirrors ServerSentries._cands)
+        readonly List<(ushort id, Vector3 pos)> _nowInsidePlayers = new();     // reused: players in the footprint this tick
 
-        struct TrapParams { public float ZombieDamage, Range2, TriggerRadius; public bool IsExplosive; }
+        struct TrapParams { public float ZombieDamage, PlayerDamage, Range2, TriggerRadius; public bool IsExplosive; }
         readonly Dictionary<ushort, TrapParams> _paramCache = new();   // per-archetype params (from Trap.ForDefId), cached by DefId
 
         const float SetupDelay = 0.25f;    // Trap_Setup_Delay: arm time after placement (so the placer isn't caught by their own trap)
         const float WearPerTrigger = 5f;   // source: a non-explosive trap's Health drops 5 per trigger; at 0 it breaks + is removed
 
-        public ServerTraps(ZombieReplication zombies, DeployableReplication deployables, ServerCombat combat)
-        { _zombies = zombies; _deployables = deployables; _combat = combat; }
+        public ServerTraps(ZombieReplication zombies, DeployableReplication deployables, ServerCombat combat, PlayerReplication players)
+        { _zombies = zombies; _deployables = deployables; _combat = combat; _players = players; }
 
         // read an archetype's zombie-relevant params from the SAME source the client node uses (Trap.ForDefId), so both
         // sides agree. The transient config node is never added to the tree (no _Ready/visual) and is freed immediately.
@@ -42,7 +45,7 @@ namespace UnturnedGodot
         {
             if (_paramCache.TryGetValue(defId, out var p)) return p;
             var t = Trap.ForDefId(defId);
-            p = new TrapParams { ZombieDamage = t.ZombieDamage, Range2 = t.Range2, TriggerRadius = t.TriggerRadius, IsExplosive = t.IsExplosive };
+            p = new TrapParams { ZombieDamage = t.ZombieDamage, PlayerDamage = t.PlayerDamage, Range2 = t.Range2, TriggerRadius = t.TriggerRadius, IsExplosive = t.IsExplosive };
             t.Free();
             _paramCache[defId] = p;
             return p;
@@ -68,13 +71,16 @@ namespace UnturnedGodot
                 st.Age += dt;
                 if (st.Age < SetupDelay) continue;   // still arming -- inert
 
-                // who's live + inside the footprint this tick (reused list, cleared per trap -- no per-trap alloc)
+                // who's live + inside the footprint this tick (reused lists, cleared per trap -- no per-trap alloc)
                 _nowInside.Clear();
                 foreach (var z in _zombies.All)
                 {
                     if (z.IsDead) continue;
                     if (Vector3.Distance(z.Pos, e.Pos) <= p.TriggerRadius) _nowInside.Add((z.NetIdValue, z.Pos, z.Speciality));
                 }
+                _nowInsidePlayers.Clear();
+                foreach (var pl in _players.All)
+                    if (Vector3.Distance(pl.Pos, e.Pos) <= p.TriggerRadius) _nowInsidePlayers.Add((pl.OwnerPlayerId, pl.Pos));
 
                 // arm-seed on the FIRST armed tick: anything already standing in the footprint is seeded so it isn't hit
                 // until it leaves + re-enters (source OnTriggerEnter fires on ENTER only, not on a pre-existing overlap).
@@ -82,26 +88,33 @@ namespace UnturnedGodot
                 {
                     st.Armed = true;
                     foreach (var zi in _nowInside) st.Inside.Add(zi.id);
+                    foreach (var pi in _nowInsidePlayers) st.InsidePlayers.Add(pi.id);
                     continue;
                 }
 
-                // edge-trigger: any zombie NEWLY inside (not in last tick's set) fires the trap
+                // edge-trigger: any zombie OR player NEWLY inside (not in last tick's set) fires the trap
                 bool broke = false;
                 foreach (var zi in _nowInside)
                 {
                     if (st.Inside.Contains(zi.id)) continue;   // already inside last tick -> not a fresh enter
                     if (p.IsExplosive) { Detonate(e, p, tick, losClear); broke = true; break; }   // landmine: AoE + self-destruct on the first entrant
-
                     Vector3 hit = zi.pos + Vector3.up * SentryTargeting.AimHeight(zi.spec);
                     _combat.DamageZombieExternal(zi.id, p.ZombieDamage, hit, Vector3.up, tick);   // direct bite (renders the death on clients)
-                    float newHp = e.Health - WearPerTrigger;
-                    if (newHp <= 0f) { _deployables.ServerRemove(e.NetIdValue, tick); broke = true; break; }   // worn out -> the trap breaks
-                    _deployables.ServerSetScalars(e.NetIdValue, newHp, e.Fuel, e.OnFire, tick);                // replicate the wear
+                    if (!Wear(e, tick)) { broke = true; break; }
+                }
+                if (!broke) foreach (var pi in _nowInsidePlayers)   // players stepping in (source InteractableTrap bites them too)
+                {
+                    if (st.InsidePlayers.Contains(pi.id)) continue;
+                    if (p.IsExplosive) { Detonate(e, p, tick, losClear); broke = true; break; }
+                    _combat.DamagePlayerExternal(pi.id, p.PlayerDamage, 0);   // direct bite, attacker 0 = the trap (environment)
+                    if (!Wear(e, tick)) { broke = true; break; }
                 }
                 if (broke) { _traps.Remove(e.NetIdValue); continue; }
 
                 st.Inside.Clear();
-                foreach (var zi in _nowInside) st.Inside.Add(zi.id);   // remember for next tick's edge detection
+                foreach (var zi in _nowInside) st.Inside.Add(zi.id);          // remember for next tick's edge detection
+                st.InsidePlayers.Clear();
+                foreach (var pi in _nowInsidePlayers) st.InsidePlayers.Add(pi.id);
             }
 
             // retire state for traps that are gone (worn out / salvaged / destroyed)
@@ -113,8 +126,19 @@ namespace UnturnedGodot
             }
         }
 
-        // LANDMINE: an AoE over Range2 (world-LOS-blocked, linear falloff for zombies -- port convention), then the trap
-        // self-destructs (one-shot). Players/vehicles in the blast are the cut-1 deferral (zombie seam only).
+        // wear a non-explosive trap's replicated Health down per trigger (source: -5/pass); returns false if it broke
+        // (removed at 0). ServerSetScalars updates e.Health in place, so multiple entrants in one tick wear cumulatively.
+        bool Wear(DeployableReplication.DeployableEntity e, long tick)
+        {
+            float newHp = e.Health - WearPerTrigger;
+            if (newHp <= 0f) { _deployables.ServerRemove(e.NetIdValue, tick); return false; }
+            _deployables.ServerSetScalars(e.NetIdValue, newHp, e.Fuel, e.OnFire, tick);
+            return true;
+        }
+
+        // LANDMINE: an AoE over Range2 (world-LOS-blocked), then the trap self-destructs (one-shot). Zombies take LINEAR
+        // falloff (port convention), players SQUARED (source Player.cs:1975; armor deferred -- matches the grenade path).
+        // Vehicles in the blast are still deferred (no vehicle server-damage seam yet).
         void Detonate(DeployableReplication.DeployableEntity e, TrapParams p, long tick, System.Func<Vector3, Vector3, bool> losClear)
         {
             Vector3 center = e.Pos;
@@ -127,6 +151,15 @@ namespace UnturnedGodot
                 if (!losClear(center + Vector3.up * 0.8f, hit)) continue;   // a wall shields the blast (source ExplosionBlocked)
                 float dmg = ExplosionMath.Linear(p.ZombieDamage, d, p.Range2);
                 if (dmg > 0f) _combat.DamageZombieExternal(z.NetIdValue, dmg, hit, (z.Pos - center).normalized, tick);
+            }
+            foreach (var pl in _players.All)
+            {
+                float d = Vector3.Distance(pl.Pos, center);
+                if (d > p.Range2) continue;
+                Vector3 hit = pl.Pos + Vector3.up * 0.9f;
+                if (!losClear(center + Vector3.up * 0.8f, hit)) continue;
+                float dmg = ExplosionMath.Squared(p.PlayerDamage, d, p.Range2);
+                if (dmg > 0f) _combat.DamagePlayerExternal(pl.OwnerPlayerId, dmg, 0);
             }
             _deployables.ServerRemove(e.NetIdValue, tick);
         }

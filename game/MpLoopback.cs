@@ -293,7 +293,7 @@ namespace UnturnedGodot
             // = ZombieNetSync, set above). The view-only replica sentry only renders/aims.
             Sentries = new ServerSentries(Server.Zombies, Server.Deployables, Server.Combat);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Sentries.Tick(t, (float)dt), "net.sentries.tick"));
-            Traps = new ServerTraps(Server.Zombies, Server.Deployables, Server.Combat);   // trap fixtures edge-trigger against the just-published zombies
+            Traps = new ServerTraps(Server.Zombies, Server.Deployables, Server.Combat, Server.Players);   // trap fixtures edge-trigger against the just-published zombies
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Traps.Tick(t, (float)dt), "net.traps.tick"));
             Beacon = new ServerBeacon(Server.Zombies, Server.Deployables, GetParent() ?? (Node)this);   // beacon horde spawns real ZombieControllers into the world root; ZombieNetSync auto-publishes them
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Beacon.Tick(t, (float)dt), "net.beacon.tick"));

@@ -168,7 +168,7 @@ namespace UnturnedGodot
             Sentries = new ServerSentries(Server.Zombies, Server.Deployables, Server.Combat);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Sentries.Tick(tick, (float)dt), "net.sentries.tick"));
             // trap fixtures edge-trigger server-authoritatively against the just-published zombies (same ZombieHost seam).
-            Traps = new ServerTraps(Server.Zombies, Server.Deployables, Server.Combat);
+            Traps = new ServerTraps(Server.Zombies, Server.Deployables, Server.Combat, Server.Players);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Traps.Tick(tick, (float)dt), "net.traps.tick"));
             // beacon fixtures spawn their horde as real server ZombieControllers into the world root; ZombieNetSync
             // (net.zombies.publish, above) auto-mints + publishes each -- a freshly-spawned member lands on the next tick.
