@@ -1296,13 +1296,7 @@ namespace UnturnedGodot
 
             var gunDef = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/eaglefire.dat")));
             _bnSentry = Sentry.Spawn(this, new Vector3(2f, 0f, 0f), 0f, gunDef);
-            var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(3.7f, 0f, 1.3f), 0f);
-            gen.FuelMax = gen.Fuel = 1_000_000f;   // don't let the gen run dry mid-siege (a real gen stopping when empty is correct; the test isolates the beacon lifecycle)
-            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
-            var sentIn = _bnSentry.PowerPorts[0];
-            var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = sentIn; wr.AddToGroup("wires");
-            wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, sentIn.GlobalPosition }, valid: true);
-            gen.TogglePower(); PowerNet.Recompute(GetTree());
+            _bnSentry.RequiresPower = false;   // always-on for the beacon lifecycle test (the sentry's power gating is covered by --sentrytest); a wired generator would sit in the sentry's own firing arc + block sightlines to zombies behind it
 
             _bnBeacon = new Beacon { Wave = 16, MaxAlive = 8 };   // a short test siege (the real Beacon id1194 is Wave 100)
             AddChild(_bnBeacon);
