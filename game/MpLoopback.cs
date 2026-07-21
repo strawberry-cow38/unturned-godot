@@ -297,7 +297,7 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Traps.Tick(t, (float)dt), "net.traps.tick"));
             Beacon = new ServerBeacon(Server.Zombies, Server.Deployables, GetParent() ?? (Node)this);   // beacon horde spawns real ZombieControllers into the world root; ZombieNetSync auto-publishes them
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Beacon.Tick(t, (float)dt), "net.beacon.tick"));
-            Charge = new ServerCharge(Server.Zombies, Server.Deployables, Server.Combat);   // command-triggered (no per-tick)
+            Charge = new ServerCharge(Server.Zombies, Server.Deployables, Server.Combat, Server.Players);   // command-triggered (no per-tick)
             Server.Transactions.OnDetonateCharges = (sender, tick) => Charge.DetonateAll(sender, tick);   // the DetonateCharges command blows the sender's charges through this seam
             // A5: the loopback world's wildlife (AnimalField's real AnimalAgents) publish as replicas too -- every
             // SP-loopback session soaks the animal wire like the zombie wire. The local view renders the real

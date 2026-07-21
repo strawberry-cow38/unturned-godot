@@ -19,12 +19,13 @@ namespace UnturnedGodot
         readonly ZombieReplication _zombies;
         readonly DeployableReplication _deployables;
         readonly ServerCombat _combat;
+        readonly PlayerReplication _players;
 
-        struct ChargeParams { public float ZombieDamage, Range2; }
+        struct ChargeParams { public float ZombieDamage, PlayerDamage, Range2; }
         readonly Dictionary<ushort, ChargeParams> _paramCache = new();   // per-variant params (from Charge.ForDefId), cached by DefId
 
-        public ServerCharge(ZombieReplication zombies, DeployableReplication deployables, ServerCombat combat)
-        { _zombies = zombies; _deployables = deployables; _combat = combat; }
+        public ServerCharge(ZombieReplication zombies, DeployableReplication deployables, ServerCombat combat, PlayerReplication players)
+        { _zombies = zombies; _deployables = deployables; _combat = combat; _players = players; }
 
         // read a variant's zombie-relevant params from the SAME source the client node uses (Charge.ForDefId). The
         // transient config node is never added to the tree and is freed immediately.
@@ -32,7 +33,7 @@ namespace UnturnedGodot
         {
             if (_paramCache.TryGetValue(defId, out var p)) return p;
             var c = Charge.ForDefId(defId);
-            p = new ChargeParams { ZombieDamage = c.ZombieDamage, Range2 = c.Range2 };
+            p = new ChargeParams { ZombieDamage = c.ZombieDamage, PlayerDamage = c.PlayerDamage, Range2 = c.Range2 };
             c.Free();
             _paramCache[defId] = p;
             return p;
@@ -69,6 +70,18 @@ namespace UnturnedGodot
                     if (!losClear(c.pos + Vector3.up * 0.8f, hit)) continue;   // a wall shields the blast (source ExplosionBlocked)
                     float dmg = ExplosionMath.Linear(p.ZombieDamage, d, p.Range2);
                     if (dmg > 0f) _combat.DamageZombieExternal(z.NetIdValue, dmg, hit, (z.Pos - c.pos).normalized, tick);
+                }
+                // players in the blast: SQUARED falloff (source Player.cs:1975; the thrower is included). Matches
+                // ServerCombat's grenade path (ServerCombat:556) which likewise applies NO server-side explosion armor
+                // yet -- that's a shared follow-up (SP applies pc.Inventory.ExplosionArmor; the server doesn't). attacker = owner.
+                foreach (var pl in _players.All)
+                {
+                    float d = Vector3.Distance(pl.Pos, c.pos);
+                    if (d > p.Range2) continue;
+                    Vector3 hit = pl.Pos + Vector3.up * 0.9f;
+                    if (!losClear(c.pos + Vector3.up * 0.8f, hit)) continue;
+                    float dmg = ExplosionMath.Squared(p.PlayerDamage, d, p.Range2);
+                    if (dmg > 0f) _combat.DamagePlayerExternal(pl.OwnerPlayerId, dmg, ownerPlayerId);
                 }
                 _deployables.ServerRemove(c.netId, tick);   // the charge self-destructs after firing
             }

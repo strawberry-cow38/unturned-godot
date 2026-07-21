@@ -176,7 +176,7 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Beacon.Tick(tick, (float)dt), "net.beacon.tick"));
             // charge fixtures are command-triggered (no per-tick): the DetonateCharges command routes through the
             // OnDetonateCharges seam to blow the sender's charges (server resolves ownership).
-            Charge = new ServerCharge(Server.Zombies, Server.Deployables, Server.Combat);
+            Charge = new ServerCharge(Server.Zombies, Server.Deployables, Server.Combat, Server.Players);
             Server.Transactions.OnDetonateCharges = (sender, tick) => Charge.DetonateAll(sender, tick);
             AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains (currently a no-op on dedicated -- see the AnimalField note above)
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => AnimalSync.Tick(), "net.animals.publish"));
