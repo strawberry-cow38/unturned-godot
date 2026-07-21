@@ -167,11 +167,14 @@ DeterministicGround) — the owner has ONE body.
 > standalone console-spawned `Node3D` with its own logic — works great in SP and on the host, and is **invisible to
 > every joined client**. That is half a feature, not a done one. The gate, before you call an entity feature done:
 > (1) it's a replicated entity / `FixtureKind` + a def (never a bare console-spawned node); (2) a `ReplicaView`
-> branch `Materialize`s it on the client, mirroring only replicated scalars (Health/Fuel/ToggledOn) and deriving the
-> rest LOCALLY (aim, fx, power-solve) — never running server-auth logic (damage/spawn/detonate) client-side; (3)
-> server-place routes through the real Place path (`NetPlaceDeployable`), not a direct/console spawn; (4) an L1
-> `net.shell_*` test **with teeth** proves a *joined* client materializes it (a passing SP/host run proves nothing
-> about replication). If you can't point at that net test, it isn't done.
+> branch `Materialize`s it on the client as a **VIEW-ONLY node** — mirrors only replicated scalars
+> (Health/Fuel/ToggledOn) and derives the rest LOCALLY (aim, fx, power-solve), and **NEVER runs server-auth logic**
+> (a Materialized sentry renders aim + tracers but must never `DamageHit`; no spawn/detonate/trigger client-side);
+> (3) server-place routes through the **real `PlaceDeployable` intent** — a console verb, a `--chargetest`/`--direct`
+> spawn, or any direct-construct is the TEST-ONLY seam (see line ~124) and does **NOT** count as placement, full
+> stop; (4) an L1 `net.shell_*` test **with teeth** proves a *joined* client materializes it (a passing SP/host run
+> proves nothing about replication), and the render-verify (recipe step 6) is taken **from the joined client's
+> camera, not the host's**. If you can't point at that net test, it isn't done.
 
 ## Multiplayer (MP) — the underlying net stack
 
