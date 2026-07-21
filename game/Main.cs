@@ -1200,10 +1200,24 @@ namespace UnturnedGodot
             AddChild(_stZombie);
             _stZombie.GlobalPosition = new Vector3(0f, 1.0f, -10f);
 
+            // Power the sentry (requiresPower default true -> inert until fed). Wire a generator into its consumer port,
+            // exactly like the power tests: TogglePower + Recompute powers the port synchronously. UG_SENTRY_NOPOWER=1
+            // skips this -> the sentry stays unpowered so the harness can verify it does NOT fire (the gating).
+            bool noPower = System.Environment.GetEnvironmentVariable("UG_SENTRY_NOPOWER") == "1";
+            if (!noPower)
+            {
+                var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(2.4f, 0f, 1.6f), 0f);
+                var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+                var sentIn = _stSentry.PowerPorts[0];   // the sentry's Consumer port, built in Sentry._Ready
+                var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = sentIn; wr.AddToGroup("wires");
+                wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, sentIn.GlobalPosition }, valid: true);
+                gen.TogglePower(); PowerNet.Recompute(GetTree());
+            }
+
             var cam = new Camera3D { Current = true, Fov = 60f, Position = new Vector3(6f, 3f, 3f) };
             AddChild(cam);
             cam.LookAt(new Vector3(0f, 1.2f, -5f), Vector3.Up);
-            GD.Print($"[SENTRYTEST] sentry@origin + stationary zombie 10 m -Z; gun={gun ?? "eaglefire"} zdmg={gunDef.ZombieDamage:0} firerate={gunDef.Firerate} -- expect the turret to acquire + shred it");
+            GD.Print($"[SENTRYTEST] sentry@origin + stationary zombie 10 m -Z; gun={gun ?? "eaglefire"} zdmg={gunDef.ZombieDamage:0} firerate={gunDef.Firerate} power={(noPower ? "NONE (expect inert)" : $"wired gen -> IsPowered {_stSentry.IsPowered}")} -- expect the turret to acquire + shred it");
         }
 
         // --craftui: open the crafting menu over a player with a stocked inventory so the recipe list renders.
@@ -2956,9 +2970,15 @@ namespace UnturnedGodot
             {
                 _stFrame++;
                 bool killed = _stZombie == null || !IsInstanceValid(_stZombie) || _stZombie.Dead;
+                bool noPower = System.Environment.GetEnvironmentVariable("UG_SENTRY_NOPOWER") == "1";
                 if (_stFrame % 20 == 0 || killed)
-                    GD.Print($"[SENTRYTEST] f{_stFrame}: zombie {(killed ? "DEAD" : $"HP {_stZombie.Health:0}")}");
-                if (killed) { GD.Print("[SENTRYTEST] PASS -- turret acquired, tracked + shredded the zombie"); if (_shotPath == null) GetTree().Quit(); }
+                    GD.Print($"[SENTRYTEST] f{_stFrame}: zombie {(killed ? "DEAD" : $"HP {_stZombie.Health:0}")} powered={_stSentry.IsPowered}");
+                if (noPower)   // the unpowered sentry must stay inert -- the zombie should survive (verifies the power gate)
+                {
+                    if (killed) { GD.Print("[SENTRYTEST] FAIL -- unpowered sentry fired (zombie died)"); GetTree().Quit(); }
+                    else if (_stFrame > 200) { GD.Print("[SENTRYTEST] PASS -- unpowered sentry stayed inert (zombie alive, IsPowered false)"); if (_shotPath == null) GetTree().Quit(); }
+                }
+                else if (killed) { GD.Print("[SENTRYTEST] PASS -- turret acquired, tracked + shredded the zombie"); if (_shotPath == null) GetTree().Quit(); }
                 else if (_stFrame > 400) { GD.Print("[SENTRYTEST] TIMEOUT -- zombie still alive (sentry not firing?)"); GetTree().Quit(); }
             }
             if (_peiPlay && _peiPlayer != null)

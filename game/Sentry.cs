@@ -15,9 +15,19 @@ namespace UnturnedGodot
     // projectile -- faithful at a LOS-confirmed 48 m target where a 500 m/s bullet lands in ~0.1 s), lose it past
     // targetLossRadius, sweep when idle. Power gating (requiresPower -> the power net) + a storage-selected gun +
     // players/animals/vehicles as targets are the next increments.
-    public partial class Sentry : Node3D
+    public partial class Sentry : Node3D, IPowerDevice
     {
         public GunDef Gun;                                  // the mounted gun (Zombie_Damage / Range / Firerate)
+        public bool RequiresPower = true;                   // ItemSentryAsset.requiresPower default -- inert unless its port is fed
+        public const float Watts = 50f;                     // a sentry sips power (consumer draw)
+        readonly System.Collections.Generic.List<ConnectionPort> _ports = new();
+        ConnectionPort _powerPort;
+        // IPowerDevice (a pure consumer, mirrors GasPump): the local PowerNet walks the "deployables" group + feeds ports.
+        public bool PowerProducing => false;
+        public bool PowerOnFire => false;
+        public uint PowerNetId => 0;                        // SP/local
+        public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => _ports;
+        public bool IsPowered => !RequiresPower || (_powerPort != null && GodotObject.IsInstanceValid(_powerPort) && _powerPort.Powered);
         public float DetectionRadius = 48f;                 // ItemSentryAsset.detectionRadius default
         public float TargetLossRadius = 48f * 1.2f;         // won't drop a target inside this (anti-flicker)
         public float SweepHalfYaw = Mathf.DegToRad(60f);    // Sweep_Yaw 120 deg / 2
@@ -56,6 +66,16 @@ namespace UnturnedGodot
             _head.AddChild(_muzzle);
             _tracer = new MeshInstance3D { Visible = false, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.85f, 0.3f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha } };
             AddChild(_tracer);
+
+            // wire into the local power net as a consumer (source Requires_Power). Mirrors GasPump: a Consumer port in the
+            // "deployables" group the PowerNet walks, + the lazily-spawned PowerManager. Unpowered -> IsPowered false -> inert.
+            _powerPort = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Pos = new Vector3(0.22f, 0.3f, 0.18f), Watts = Watts }, "Sentry");
+            AddChild(_powerPort);
+            _ports.Add(_powerPort);
+            AddToGroup("deployables");
+            if (GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)
+            { var pm = new PowerManager(); pm.AddToGroup("powermgr"); GetParent().AddChild(pm); }
+            PowerNet.MarkDirty();
         }
 
         public override void _Process(double delta)
@@ -63,6 +83,7 @@ namespace UnturnedGodot
             float dt = (float)delta;
             if (_fireCd > 0f) _fireCd -= dt;
             if (_tracerT > 0f) { _tracerT -= dt; if (_tracerT <= 0f && _tracer != null) _tracer.Visible = false; }
+            if (!IsPowered) return;   // an unpowered sentry is inert -- no scan, aim, fire, or sweep (source Requires_Power)
 
             AcquireOrKeepTarget();
             if (_target != null && GodotObject.IsInstanceValid(_target))
