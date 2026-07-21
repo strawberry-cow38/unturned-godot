@@ -217,6 +217,16 @@ namespace UnturnedGodot
         public static readonly DeployableDef Beacon = new()
         { Id = 1194, Name = "Horde Beacon", Fixture = FixtureKind.Beacon, ProcBox = true, Size = new Vector3(0.7f, 1.6f, 0.7f), Radius = 0.5f, Range = 4f, Health = 80f };
 
+        // C4 / REMOTE CHARGE (source InteractableCharge, Charge id1241 / Charge_Precision id1393): a planted raiding
+        // explosive fired by a DETONATOR (all of the owner's charges at once). Fixture=Charge -> the client materializes
+        // a VIEW-ONLY UnturnedGodot.Charge brick; the server-side ServerCharge owns Detonate over a server-routed
+        // detonator command. ProcBox: the C4 brick is built procedurally in Charge.BuildVisual (no .obj). Health 1 (.dat-
+        // verified: a fragile planted explosive, destroyed by ~any hit). NB Charge_Bounce (1691) exists but isn't ported.
+        public static readonly DeployableDef Charge = new()
+        { Id = 1241, Name = "Charge", Fixture = FixtureKind.Charge, ProcBox = true, Size = new Vector3(0.28f, 0.12f, 0.18f), Radius = 0.2f, Range = 4f, Health = 1f };
+        public static readonly DeployableDef ChargePrecision = new()
+        { Id = 1393, Name = "Precision Charge", Fixture = FixtureKind.Charge, ProcBox = true, Size = new Vector3(0.28f, 0.12f, 0.18f), Radius = 0.2f, Range = 4f, Health = 1f };
+
         // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
         //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
         //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
@@ -243,7 +253,7 @@ namespace UnturnedGodot
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump, Sentry, TrapSpike, TrapBarbedwire, TrapCaltrop, TrapLandmine, Beacon };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump, Sentry, TrapSpike, TrapBarbedwire, TrapCaltrop, TrapLandmine, Beacon, Charge, ChargePrecision };
         public static DeployableDef ById(ushort id) => id switch
         {
             1219 => OilPump,
@@ -253,6 +263,8 @@ namespace UnturnedGodot
             382 => TrapCaltrop,
             1101 => TrapLandmine,
             1194 => Beacon,
+            1241 => Charge,
+            1393 => ChargePrecision,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

@@ -14,6 +14,8 @@ namespace UnturnedGodot
         public float Range2 = 8f;                                    // ItemChargeAsset.range2 (Charge id1241)
         public float PlayerDamage = 200f, ZombieDamage = 200f, AnimalDamage = 200f;
         public float BarricadeDamage = 1000f, StructureDamage = 1000f, VehicleDamage = 500f, ResourceDamage = 2000f, ObjectDamage = 1000f;
+        public uint NetId;              // MP: the server entity this view mirrors (0 = the SP/host authoritative node)
+        public bool IsReplica;          // MP: a client-side VIEW-ONLY replica -- renders the C4 only; the SERVER (ServerCharge) owns Detonate (the detonator is a server-routed command)
 
         public static Charge Spawn(Node parent, Vector3 pos, float yawDeg = 0f)
         {
@@ -32,6 +34,16 @@ namespace UnturnedGodot
 
         public override void _Ready() { AddToGroup("charges"); BuildVisual(); }
 
+        // MP: the client's DeployableReplicaView calls this for a FixtureKind.Charge entity -> a VIEW-ONLY C4 brick
+        // (both the standard + precision variants render the same, and a replica never detonates, so no variant needed).
+        // The SERVER (ServerCharge) owns Detonate over a server-routed detonator command. Mirrors OilPump.Materialize.
+        public static Charge Materialize(Node parent, Vector3 pos, float yawDegrees, uint netId)
+        {
+            var c = new Charge { Position = pos, RotationDegrees = new Vector3(0f, yawDegrees, 0f), NetId = netId, IsReplica = true };
+            parent.AddChild(c);
+            return c;
+        }
+
         // Fire EVERY planted charge at once -- source: a detonator triggers all of the owner's charges. SP = one owner.
         public static int DetonateAll(SceneTree tree)
         {
@@ -44,6 +56,7 @@ namespace UnturnedGodot
         // source Charge.Detonate: DamageTool.explode over Range2 with the per-type damages, then the charge self-destructs.
         public void Detonate()
         {
+            if (IsReplica) return;   // a client REPLICA never applies blast damage or self-removes -- ServerCharge owns Detonate; the ReplicaView retires this node when the server retires the entity
             Vector3 p = GlobalPosition;
             foreach (var node in GetTree().GetNodesInGroup("zombies"))
                 if (node is ZombieController z && !z.Dead)
