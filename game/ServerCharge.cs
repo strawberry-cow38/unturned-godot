@@ -71,10 +71,11 @@ namespace UnturnedGodot
                     float dmg = ExplosionMath.Linear(p.ZombieDamage, d, p.Range2);
                     if (dmg > 0f) _combat.DamageZombieExternal(z.NetIdValue, dmg, hit, (z.Pos - c.pos).normalized, tick);
                 }
-                // players in the blast: SQUARED falloff (source Player.cs:1975; the thrower is included). Matches
-                // ServerCombat's grenade path (ServerCombat:556) which likewise applies NO server-side explosion armor
-                // yet -- that's a shared follow-up (SP applies pc.Inventory.ExplosionArmor; the server doesn't). attacker = owner.
-                foreach (var pl in _players.All)
+                // players in the blast: PvP-GATED (source DamageTool.explode:1009 canDealPlayerDamage = Provider.isPvP;
+                // a PvE server's C4 never touches a player -- same gate my grenade path uses, ServerCombat:550). SQUARED
+                // falloff (source Player.cs:1975; thrower included). No server-side explosion armor yet (shared follow-up
+                // -- SP applies pc.Inventory.ExplosionArmor, the server doesn't). attacker = owner.
+                if (_combat.PvPEnabled) foreach (var pl in _players.All)
                 {
                     float d = Vector3.Distance(pl.Pos, c.pos);
                     if (d > p.Range2) continue;

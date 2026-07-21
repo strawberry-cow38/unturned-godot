@@ -14,9 +14,10 @@ namespace UnturnedGodot
     // destructs. Mirrors ServerSentries (a server system, not a node); the SP Trap node's logic, over server entities.
     //
     // Zombies AND players trigger it (cut-2: a player stepping in takes the flat PlayerDamage / the landmine's squared
-    // blast, via DamagePlayerExternal, attacker 0 = the trap). VEHICLES rolling over a trap are still deferred -- there's
-    // no vehicle server-damage seam yet (the SP Trap only chips tires anyway). No friend/foe: like the source, a trap
-    // bites whoever enters (owner included) -- a foe-only variant would be a mod, not the source-accurate base.
+    // blast, via DamagePlayerExternal, attacker 0 = the trap). Player damage is PvP-GATED (source InteractableTrap:198/151
+    // require Provider.isPvP) -- on a PvE server traps never bite a player, zombie damage stays always-on; on a PvP server
+    // they bite ANY player (owner included, no friend/foe -- source-faithful). VEHICLES are still deferred (no vehicle
+    // server-damage seam yet; the SP Trap only chips tires anyway).
     public sealed class ServerTraps
     {
         readonly ZombieReplication _zombies;
@@ -102,7 +103,9 @@ namespace UnturnedGodot
                     _combat.DamageZombieExternal(zi.id, p.ZombieDamage, hit, Vector3.up, tick);   // direct bite (renders the death on clients)
                     if (!Wear(e, tick)) { broke = true; break; }
                 }
-                if (!broke) foreach (var pi in _nowInsidePlayers)   // players stepping in (source InteractableTrap bites them too)
+                // players stepping in: PvP-GATED (source InteractableTrap:198/151 -- spike bite + landmine-on-enter both
+                // require Provider.isPvP; a PvE server's traps never bite a player). Zombie damage above is always-on.
+                if (!broke && _combat.PvPEnabled) foreach (var pi in _nowInsidePlayers)
                 {
                     if (st.InsidePlayers.Contains(pi.id)) continue;
                     if (p.IsExplosive) { Detonate(e, p, tick, losClear); broke = true; break; }
@@ -152,7 +155,7 @@ namespace UnturnedGodot
                 float dmg = ExplosionMath.Linear(p.ZombieDamage, d, p.Range2);
                 if (dmg > 0f) _combat.DamageZombieExternal(z.NetIdValue, dmg, hit, (z.Pos - center).normalized, tick);
             }
-            foreach (var pl in _players.All)
+            if (_combat.PvPEnabled) foreach (var pl in _players.All)   // players PvP-gated (source DamageTool.explode:1009); squared falloff
             {
                 float d = Vector3.Distance(pl.Pos, center);
                 if (d > p.Range2) continue;

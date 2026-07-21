@@ -143,12 +143,27 @@ namespace UnturnedGodot.Testing
             T.Check("(teeth) the un-detonated charge does NOT hurt the player",
                     ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csIdle) && csIdle.Health == 100);
 
-            // detonate -> the blast damages the player server-side (squared falloff via DamagePlayerExternal)
+            // (PvP GATE -- PvE side) on a PvE server the blast must NOT touch a player (source DamageTool.explode:1009
+            // canDealPlayerDamage = Provider.isPvP). Fire the charge with PvP OFF: it self-destructs but leaves the player
+            // untouched -- the same gate the grenade path uses.
+            ded.Server.Combat.PvPEnabled = false;
+            sess.Shell.RequestDetonateCharges();
+            for (int i = 0; i < 40; i++) yield return Ticks(1);
+            T.Check("(PvE) the detonated charge does NOT damage the player -- PvP-gated",
+                    ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csPve) && csPve.Health == 100);
+
+            // (PvP GATE -- PvP side) turn PvP ON, plant + fire a second charge -> the blast now damages the player
+            ded.Server.Combat.PvPEnabled = true;
+            T.Check("server granted a second Charge", sInv.Inventory.tryAddItem(new Item(ChargeId)));
+            yield return Until(() => sess.Shell.Inventory.getItemCount(ChargeId) == 1, 5);
+            T.Check("planted a second charge next to the player",
+                    sess.Shell.RequestPlaceDeployable(ChargeId, sess.Shell.GlobalPosition + Vector3.Right * 1f, 0f));
+            yield return Until(() => ded.Server.Deployables.Count == 1, 5);
             sess.Shell.RequestDetonateCharges();
             yield return Until(() => ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csHit) && csHit.Health < 100, 5);
             bool ok = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csFinal);
             int fhp = ok ? csFinal.Health : -1;
-            T.Check($"the detonator blast damaged the player server-side (health {fhp} < 100)", ok && csFinal.Health < 100);
+            T.Check($"(PvP) the detonator blast damaged the player server-side (health {fhp} < 100)", ok && csFinal.Health < 100);
         }
     }
 }
