@@ -783,6 +783,7 @@ namespace UnturnedGodot
                 // FOR FREE (the gun follows the bone, so no bone-delta compensation, no barrel-forward shortcut, no magic
                 // per-gun pitch). Only the per-shot recoil spring is layered on top, in camera space.
                 Basis basis = att.GlobalTransform.Basis * Basis.FromEuler(new Vector3(0f, 0f, Mathf.DegToRad(90f)));
+                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GUNPITCH"), out var _gp)) basis = basis * Basis.FromEuler(new Vector3(Mathf.DegToRad(_gp), 0f, 0f));   // SWEEP-ONLY: mesh-local pitch to find the pistol leveling angle
                 Vector3 rr = _recoilRotSpring.CurrentPosition;   // (pitch, yaw, roll) degrees -- muzzle climb, spring-decayed
                 Basis cb = _cam.GlobalTransform.Basis;
                 basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))     // pitch -> muzzle climb
