@@ -49,6 +49,7 @@ namespace UnturnedGodot
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
+        bool _sentryTest; Sentry _stSentry; ZombieController _stZombie; int _stFrame;   // --sentrytest: the auto-turret core harness
         bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
@@ -61,7 +62,7 @@ namespace UnturnedGodot
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, sentryTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -72,6 +73,7 @@ namespace UnturnedGodot
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
+                else if (arg == "--sentrytest") sentryTest = true;   // verify the auto-turret: a stationary zombie 10m off -> the sentry acquires + shreds it (logs HP -> DEAD, --shot=OUT for a frame)
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
@@ -171,6 +173,15 @@ namespace UnturnedGodot
                 _fireTest = true;
                 _shotPath = shot;   // --shot: capture at a late frame (below) with live impacts down-range
                 BuildFireTest(supp, gun);
+                return;
+            }
+
+            if (sentryTest)   // auto-turret core: a stationary zombie 10 m off -> the sentry acquires + shreds it
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _sentryTest = true;
+                _shotPath = shot;
+                BuildSentryTest(gun);
                 return;
             }
 
@@ -1162,6 +1173,37 @@ namespace UnturnedGodot
             AddChild(z);
             z.GlobalPosition = new Vector3(0, 1.0f, System.Environment.GetEnvironmentVariable("UG_HITZOMBIE") == "1" ? -6f : -25f);   // UG_HITZOMBIE: point-blank so shots connect -> verify blood
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
+        }
+
+        // --sentrytest: an auto-turret (Sentry) at origin + a stationary zombie 10 m ahead. The sentry should acquire it
+        // (range + LOS), aim the head, and auto-fire the mounted gun's Zombie_Damage on the gun's firerate until it drops.
+        // Logs the zombie HP falling -> DEAD (the PASS) or a timeout. --shot=OUT captures a frame of the turret tracking.
+        void BuildSentryTest(string gun)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.58f, 0.6f, 0.62f), AmbientLightEnergy = 0.7f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(240, 240) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) } };
+            ground.AddChild(gmesh); AddChild(ground);
+            CharacterModel.LoadBundled();
+
+            var gunDef = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath($"res://content/{gun ?? "eaglefire"}.dat")));
+            _stSentry = Sentry.Spawn(this, Vector3.Zero, 0f, gunDef);   // barrel forward is -Z; the zombie is 10 m down -Z
+
+            _stZombie = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> stands still (a fixed target)
+            AddChild(_stZombie);
+            _stZombie.GlobalPosition = new Vector3(0f, 1.0f, -10f);
+
+            var cam = new Camera3D { Current = true, Fov = 60f, Position = new Vector3(6f, 3f, 3f) };
+            AddChild(cam);
+            cam.LookAt(new Vector3(0f, 1.2f, -5f), Vector3.Up);
+            GD.Print($"[SENTRYTEST] sentry@origin + stationary zombie 10 m -Z; gun={gun ?? "eaglefire"} zdmg={gunDef.ZombieDamage:0} firerate={gunDef.Firerate} -- expect the turret to acquire + shred it");
         }
 
         // --craftui: open the crafting menu over a player with a stocked inventory so the recipe list renders.
@@ -2943,6 +2985,15 @@ namespace UnturnedGodot
                     if (_frame == 100) _vm.SetReloading(true);
                     if (_frame == 150) _vm.SetReloading(false);
                     if (System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1" && _frame == 50) _vm.PlayHammer();   // verify the rack rotates the gun (bone-follow)
+                }
+                if (_sentryTest && _stSentry != null)   // auto-turret core: watch the sentry acquire + kill the stationary zombie
+                {
+                    _stFrame++;
+                    bool killed = _stZombie == null || !IsInstanceValid(_stZombie) || _stZombie.Dead;
+                    if (_stFrame % 20 == 0 || killed)
+                        GD.Print($"[SENTRYTEST] f{_stFrame}: zombie {(killed ? "DEAD" : $"HP {_stZombie.Health:0}")}");
+                    if (killed) { GD.Print("[SENTRYTEST] PASS -- turret acquired, tracked + shredded the zombie"); if (_shotPath == null) GetTree().Quit(); }
+                    else if (_stFrame > 400) { GD.Print("[SENTRYTEST] TIMEOUT -- zombie still alive (sentry not firing?)"); GetTree().Quit(); }
                 }
                 if (_pivots)   // --pivots: pin the arrows to the live coupling points; no driving
                 {
