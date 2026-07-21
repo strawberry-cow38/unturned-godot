@@ -3021,6 +3021,19 @@ namespace UnturnedGodot
                 if (_rigShot < _rigCaptureFrames.Length && _frame == _rigCaptureFrames[_rigShot])
                 {
                     var im = GetViewport().GetTexture().GetImage();
+                    if (_vmTest && _vm != null)   // the gun+arms render in the Viewmodel's own SubViewport (composited by a CanvasLayer), which GetViewport() misses -> blend it over the background so the still actually shows the weapon
+                    {
+                        var g = _vm.CaptureViewport();
+                        GD.Print($"[VMCAP] g={(g == null ? "null" : $"{g.GetSize()} fmt{(int)g.GetFormat()}")} main={im.GetSize()} fmt{(int)im.GetFormat()}");
+                        if (g != null)
+                        {
+                            g.SavePng($"{_rigDir}/vpraw_{_rigShot:D2}.png");   // DEBUG: the raw SubViewport capture (does it hold the gun?)
+                            if (im.GetFormat() != Image.Format.Rgba8) im.Convert(Image.Format.Rgba8);
+                            if (g.GetFormat() != Image.Format.Rgba8) g.Convert(Image.Format.Rgba8);
+                            if (g.GetSize() != im.GetSize()) g.Resize(im.GetWidth(), im.GetHeight());
+                            im.BlendRect(g, new Rect2I(Vector2I.Zero, g.GetSize()), Vector2I.Zero);
+                        }
+                    }
                     string p = $"{_rigDir}/rig_{_rigShot:D2}.png";
                     im.SavePng(p);
                     GD.Print($"[RIG] saved {p} (frame {_frame})");

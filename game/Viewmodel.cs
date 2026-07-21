@@ -170,6 +170,16 @@ namespace UnturnedGodot
         bool EquipDone => _equipLen <= 0f || _equipElapsed >= _equipLen;
         public bool IsEquipComplete => EquipDone;
 
+        // The gun+arms live in this isolated SubViewport (composited over the main view by a CanvasLayer), so the
+        // main GetViewport().GetImage() misses them -> a still-frame --vm capture came out background-only. Expose the
+        // viewport image (RGBA, transparent bg) so the render harness can BlendRect it over the background frame.
+        public Image CaptureViewport()
+        {
+            if (_vp == null) return null;
+            RenderingServer.ForceDraw();   // flush the SubViewport render so GetImage reads the CURRENT gun -- an in-_Process GetImage otherwise reads an empty/stale render target (-> a background-only still)
+            return _vp.GetTexture()?.GetImage();
+        }
+
         public override void _Ready()
         {
             _vp = new SubViewport
