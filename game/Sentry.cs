@@ -33,7 +33,7 @@ namespace UnturnedGodot
         public float SweepHalfYaw = Mathf.DegToRad(60f);    // Sweep_Yaw 120 deg / 2
         public float SweepPeriod = Mathf.Tau;               // seconds for a full left->right->left sweep
         public bool CanTargetZombies = true;
-        public ESentryMode Mode = ESentryMode.HOSTILE;
+        public ESentryMode Mode = ESentryMode.NEUTRAL;   // source ItemSentryAsset default + vanilla Sentry.dat (Mode gates PLAYER targeting; zombies are gated by CanTargetZombies, so this doesn't change our zombie-only behavior)
 
         Node3D _head;                 // yaw+pitch turret head
         Node3D _muzzle;               // fire origin (barrel tip)
@@ -89,13 +89,21 @@ namespace UnturnedGodot
             if (_target != null && GodotObject.IsInstanceValid(_target))
             {
                 AimAt(_target.GlobalPosition + Vector3.Up * 1.0f, dt);
-                if (_fireCd <= 0f && LineOfSightClear(_target)) { Fire(_target); _fireCd = (Gun?.Firerate ?? 8) / 50f; }   // firerate = sim ticks between shots; cooldown = ticks/50 s (matches UseableGun)
+                if (_fireCd <= 0f && LineOfSightClear(_target)) { Fire(_target); _fireCd = (Gun?.Firerate ?? 8) / 50f * 3.33f; }   // source InteractableSentry: fireTime = firerateTicks/50 * 3.33 ("lower than normal firerate") -- a sentry fires 3.33x slower than a player holding the same gun
             }
             else Sweep(dt);
         }
 
         // Keep the current target while it's alive + inside targetLossRadius; otherwise scan for the nearest LOS-clear
         // ZombieController within detectionRadius (source ScanForTargets: nearest valid target with a clear ray).
+        // KNOWN SIMPLIFICATIONS vs source ScanForTargets (deliberate, not bugs -- flagged for a future faithfulness pass):
+        //   * source scans at ~10 Hz; we scan every frame (fine at these counts, but not throttled).
+        //   * source gates a NEW target on Vector3.Dot(dirToTarget, aimForward) >= 0.5 (a 60 deg FORWARD ARC) -- our
+        //     turret is effectively 360 deg (it acquires any in-range LOS-clear zombie regardless of head facing). Adding
+        //     the arc would make a single sentry unable to cover a 360 deg horde (it only sweeps +-60 deg), so it's a
+        //     design/balance change that also needs the beacon test reworked -- left for a dedicated pass.
+        //   * source skips !zombie.isHunting (only aggroed zombies); our ZombieController exposes no hunting/aggro flag,
+        //     so we engage any zombie in range+LOS.
         void AcquireOrKeepTarget()
         {
             if (_target != null && GodotObject.IsInstanceValid(_target) && !_target.Dead

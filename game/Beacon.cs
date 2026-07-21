@@ -40,7 +40,7 @@ namespace UnturnedGodot
             Defender = defender;
             _remaining = Wave;
             _active = true;
-            int burst = Mathf.Min(MaxAlive, Wave);   // source init sets 'alive' up front -> spawn the opening swarm at once
+            int burst = Mathf.Min(MaxAlive, Wave);   // opening swarm. (Source init(amount) seeds alive = the participant count already in the nav region, NOT MaxAlive; SP has no pre-existing zombies, so we open with a full cap-sized swarm as an SP tuning.)
             for (int i = 0; i < burst; i++) SpawnOne();
             GD.Print($"[beacon] HORDE STARTED -- wave {Wave}, max {MaxAlive} alive (opening swarm {burst}), defender {(defender?.Name ?? "(none)")}");
         }
@@ -60,37 +60,34 @@ namespace UnturnedGodot
             if (_done) { _freeT -= delta; if (_freeT <= 0.0) QueueFree(); return; }   // brief "cleared" beat, then self-destruct
             if (!_active) return;
 
-            // count our living horde + tally kills as they fall
+            // count our horde as it falls -- a zombie removed for ANY reason is gone, so tally it either way (a node freed
+            // before its Dead flag latched would otherwise silently drop from the count and skip the kill tally).
             _horde.RemoveAll(z => {
-                if (z == null || !GodotObject.IsInstanceValid(z)) return true;
+                if (z == null || !GodotObject.IsInstanceValid(z)) { _killed++; return true; }
                 if (z.Dead) { _killed++; return true; }
                 return false;
             });
             int alive = _horde.Count;
 
-            // abandoned: no valid defender for 5 s -> cancel without loot (source: no player in nav for 3 s)
+            // CLEARED, checked FIRST: the whole wave has spawned AND everything's dead -> complete + reward. Before the
+            // abandon test so a wave cleared on the same frame the defender dies still pays out (source drops loot in
+            // ManualOnDestroy when remaining+alive == 0, independent of the abandon path).
+            if (_remaining == 0 && alive == 0) { Complete(dropLoot: true); return; }
+
+            // abandoned -> cancel without loot. NB source self-destructs when no player is in the beacon's nav REGION
+            // (proximity, after a 3 s startup grace); our SP adaptation is LIVENESS-based (the defender node is gone --
+            // e.g. the player died/despawned) with a short grace, since the port has no nav-region participant tracking.
             if (Defender == null || !GodotObject.IsInstanceValid(Defender))
             {
                 _abandonT += delta;
-                if (_abandonT > 5.0) { GD.Print("[beacon] abandoned -> self-destruct (no loot)"); Complete(dropLoot: false); }
+                if (_abandonT > 3.0) { GD.Print("[beacon] abandoned -> self-destruct (no loot)"); Complete(dropLoot: false); }
                 return;
             }
             _abandonT = 0.0;
 
             // trickle the wave in up to the concurrent cap
             _spawnCd -= delta;
-            if (_remaining > 0 && alive < MaxAlive && _spawnCd <= 0.0)
-            {
-                var z = new ZombieController { Target = Defender, Speciality = RollSpeciality() };
-                AddChild(z);
-                float a = GD.Randf() * Mathf.Tau, r = 9f + GD.Randf() * 6f;
-                z.GlobalPosition = GlobalPosition + new Vector3(Mathf.Sin(a) * r, 0.2f, Mathf.Cos(a) * r);
-                _horde.Add(z); _remaining--;
-                _spawnCd = 0.6;
-            }
-
-            // cleared: the whole wave has spawned AND everything's dead -> complete + reward
-            if (_remaining == 0 && alive == 0) Complete(dropLoot: true);
+            if (_remaining > 0 && alive < MaxAlive && _spawnCd <= 0.0) { SpawnOne(); _spawnCd = 0.6; }
         }
 
         void Complete(bool dropLoot)
@@ -101,6 +98,8 @@ namespace UnturnedGodot
             if (_light != null) _light.Visible = false;
             if (dropLoot)
             {
+                // source scales the drop count by sqrt(participants) then host Beacon_Rewards_Multiplier / _Max_Rewards;
+                // in SP (1 participant) sqrt(1)=1 and there's no host config, so a flat Rewards count is source-correct here.
                 for (int i = 0; i < Rewards; i++)
                 {
                     int id = RewardPool[(int)(GD.Randi() % (uint)RewardPool.Length)];

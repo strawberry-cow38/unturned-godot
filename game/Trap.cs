@@ -32,6 +32,7 @@ namespace UnturnedGodot
 
         double _age, _lastTriggered = -999.0;
         bool _spent;                           // a landmine (or a worn-out trap) is done -- stop scanning
+        bool _armed;                           // seeded _inside on the first armed frame (pre-existing overlaps don't trigger)
         readonly System.Collections.Generic.HashSet<Node> _inside = new();
 
         public static Trap Spawn(Node parent, Vector3 pos, float yawDeg, Trap t)
@@ -59,18 +60,24 @@ namespace UnturnedGodot
             if (_spent) return;
             _age += delta;
             if (_age < SetupDelay) return;   // still arming -- inert
+            if (!_armed)   // first armed frame: seed _inside with anything ALREADY standing in the footprint so it isn't hit
+            {              // until it leaves + re-enters -- source OnTriggerEnter fires on ENTER only, not on pre-existing overlaps
+                _armed = true;
+                ScanGroup("zombies", _inside, trigger: false); ScanGroup("players", _inside, trigger: false); ScanGroup("vehicles", _inside, trigger: false);
+                return;
+            }
 
             // edge-triggered: fire for any solid entity NEWLY inside the trigger footprint (== OnTriggerEnter). We rebuild
             // the "currently inside" set each frame and trigger only on the entrants (not already in last frame's set).
             var seen = new System.Collections.Generic.HashSet<Node>();
-            ScanGroup("zombies", seen);
-            ScanGroup("players", seen);
-            ScanGroup("vehicles", seen);
+            ScanGroup("zombies", seen, trigger: true);
+            ScanGroup("players", seen, trigger: true);
+            ScanGroup("vehicles", seen, trigger: true);
             if (_spent) return;
             _inside.Clear(); _inside.UnionWith(seen);
         }
 
-        void ScanGroup(string group, System.Collections.Generic.HashSet<Node> seen)
+        void ScanGroup(string group, System.Collections.Generic.HashSet<Node> seen, bool trigger)
         {
             if (_spent) return;
             foreach (var n in GetTree().GetNodesInGroup(group))
@@ -78,7 +85,7 @@ namespace UnturnedGodot
                 if (n is not Node3D e || !GodotObject.IsInstanceValid(e)) continue;
                 if (e.GlobalPosition.DistanceTo(GlobalPosition) > TriggerRadius) continue;
                 seen.Add(e);
-                if (!_inside.Contains(e)) { Trigger(e); if (_spent) return; }
+                if (trigger && !_inside.Contains(e)) { Trigger(e); if (_spent) return; }   // trigger:false = seed-only (arming pass)
             }
         }
 
@@ -93,7 +100,7 @@ namespace UnturnedGodot
             if (entity is ZombieController z && !z.Dead)
             {
                 z.DamageHit(ZombieDamage, z.GlobalPosition, dir);
-                Wear(5f);
+                Wear(5f);   // source: a hyper zombie wears the trap 10; the port has no HYPER speciality, so it's always 5
             }
             else if (entity is PlayerController pc)
             {
@@ -133,7 +140,7 @@ namespace UnturnedGodot
                 if (n is PlayerController pc)
                 {
                     float d = pc.GlobalPosition.DistanceTo(p);
-                    if (d <= Range2) pc.TakeDamage(SDG.Unturned.ExplosionMath.Linear(PlayerDamage, d, Range2), p);
+                    if (d <= Range2) pc.TakeDamage(SDG.Unturned.ExplosionMath.Squared(PlayerDamage, d, Range2) * (pc.Inventory?.ExplosionArmor ?? 1f), p);   // players take SQUARED falloff + worn explosion armor (matches PlayerController.Explode + source getPlayerExplosionArmor); zombies/vehicles use linear per the port convention
                 }
             GD.Print($"[trap] LANDMINE detonated at {p} (r={Range2})");
             QueueFree();

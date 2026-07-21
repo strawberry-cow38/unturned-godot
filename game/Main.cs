@@ -3094,7 +3094,7 @@ namespace UnturnedGodot
                 _bnFrame++;
                 if (_bnBeacon.Done) { GD.Print($"[BEACONTEST] PASS -- horde cleared ({_bnBeacon.Killed}/{_bnBeacon.Wave} killed), beacon self-destructing + rewards dropped"); if (_shotPath == null) GetTree().Quit(); }
                 else if (_bnFrame % 30 == 0) GD.Print($"[BEACONTEST] f{_bnFrame}: killed {_bnBeacon.Killed}, alive {_bnBeacon.Alive}, remaining {_bnBeacon.Remaining}");
-                if (!_bnBeacon.Done && _bnFrame > 1500) { GD.Print($"[BEACONTEST] TIMEOUT -- killed {_bnBeacon.Killed}/{_bnBeacon.Wave}, alive {_bnBeacon.Alive}, remaining {_bnBeacon.Remaining} (sentry not clearing?)"); GetTree().Quit(); }
+                if (!_bnBeacon.Done && _bnFrame > 4000) { GD.Print($"[BEACONTEST] TIMEOUT -- killed {_bnBeacon.Killed}/{_bnBeacon.Wave}, alive {_bnBeacon.Alive}, remaining {_bnBeacon.Remaining} (sentry not clearing?)"); GetTree().Quit(); }   // generous: the sentry's 3.33x-slower firerate takes a while to clear a full siege
             }
             if (_peiPlay && _peiPlayer != null)
             {
