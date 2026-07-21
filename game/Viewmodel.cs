@@ -35,6 +35,7 @@ namespace UnturnedGodot
         float _gunRoll = 0f;
         float _holdPitch = 0f;   // per-gun mesh-local hold pitch (deg): pistols are authored held-at-an-angle in the source, so their Model_0 sits tilted up -- +~20 levels the barrel. Rifles = 0.
         static readonly System.Collections.Generic.HashSet<string> _pistols = new() { "cobra", "colt", "desert_falcon", "ace", "avenger" };   // 2x2 one-handed guns whose mesh needs the hold-pitch correction
+        public static float? PitchOverride = null;   // live tuning: the `vmpitch <deg>` console command sets this to override the baked per-gun pitch (null = use baked)
         double _t;
         // Source-accurate viewmodel-camera motion (PlayerAnimator): the walk BOB (viewmodelMovementOffset,
         // Rk4Spring2) + the per-shot recoil SHAKE (recoilViewmodelCameraOffset, Rk4Spring3), both applied to
@@ -138,7 +139,7 @@ namespace UnturnedGodot
                     Hammer = Snd(c[0] + "_hammer.ogg", "eaglefire_hammer.ogg"),   // rack / bolt-cycle sound (per-gun once ripped; eaglefire's for now)
                     MuzzleHook = V3(c[1]), AimHook = V3(c[2]), ViewOffset = Vector3.Zero,
                     AlbedoTint = new Color(1f, 1f, 1f), Ejects = c[3].Trim() == "1",
-                    HoldPitch = _pistols.Contains(c[0]) ? 20f : 0f,   // pistols' Model_0 is authored tilted up -> level the barrel
+                    HoldPitch = _pistols.Contains(c[0]) ? 12f : 0f,   // pistols' Model_0 is authored tilted up -> level the barrel (tune live via `vmpitch`)
                 };
             }
             // per-gun DEFAULT iron sights (content/sights.tsv: name \t sight_model \t mount(x,y,z)) extracted from each
@@ -784,7 +785,7 @@ namespace UnturnedGodot
                 x = x.Normalized();
                 var basis = new Basis(x, aim, x.Cross(aim).Normalized());   // barrel (+Y) -> aim
                 basis = basis.Rotated(aim, Mathf.DegToRad(_gunRoll));
-                float _pitchDeg = _holdPitch + (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GUNPITCH"), out var _gpV) ? _gpV : 0f);   // baked per-gun hold pitch (pistols +20) + a UG_GUNPITCH additive override for tuning
+                float _pitchDeg = (PitchOverride ?? _holdPitch) + (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GUNPITCH"), out var _gpV) ? _gpV : 0f);   // live `vmpitch` console override (master tuning) falls back to the baked per-gun pitch
                 if (_pitchDeg != 0f) basis = basis * Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f));   // mesh-LOCAL pitch (right-mult) so the aim-hook rotates with it -> levels pistols whose Model_0 is authored tilted, ADS stays consistent
                 // per-shot recoil tilt (source recoilViewmodelCameraRotation, spring-decayed): pitch up about the
                 // camera-right axis (same climb sign as the old muzzle-rise), yaw about camera-up, roll about the barrel.
