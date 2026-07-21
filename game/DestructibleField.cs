@@ -124,29 +124,32 @@ namespace UnturnedGodot
                 var fmat = new StandardMaterial3D
                 {
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                    // NOT VertexColorUseAsAlbedo: CpuParticles3D leaves the per-particle color buffer at default, so tinting
+                    // albedo by it is fragile -- take the sprite straight (AlbedoColor stays white).
                     AlbedoColor = Colors.White, AlbedoTexture = fx.Tex,
                 };
-                if (fx.HFrames > 1) { fmat.ParticlesAnimHFrames = fx.HFrames; fmat.ParticlesAnimVFrames = 1; fmat.ParticlesAnimLoop = false; }
+                // Visibility tuning over the raw retail params: retail's 8-16 chips fly up at 5-10 m/s + vanish in ~1s, so
+                // they zip out of view before you notice (retail leans on the mesh-debris + finale we don't model). Keep the
+                // real sprite/shape but ~3x the count, slower, a gentle arc + a longer life so the chips linger near the break.
                 var ps = new CpuParticles3D
                 {
-                    Emitting = true, OneShot = true, Amount = Mathf.Max(1, fx.Count), Lifetime = Mathf.Max(0.3f, fx.LifeMax),
-                    Explosiveness = 1f, LifetimeRandomness = fx.LifeMax > fx.LifeMin ? 0.3f : 0f, Direction = Vector3.Up,
-                    Spread = fx.Shape == "cone" ? Mathf.Clamp(fx.ConeAngle, 5f, 90f) : (fx.Shape == "sphere" ? 180f : 45f),
-                    InitialVelocityMin = fx.SpeedMin, InitialVelocityMax = fx.SpeedMax,
-                    Gravity = new Vector3(0f, -9.8f * fx.Gravity, 0f),
+                    Emitting = true, OneShot = true, Amount = Mathf.Clamp(fx.Count * 3, 10, 64), Lifetime = Mathf.Max(2f, fx.LifeMax * 2f),
+                    Explosiveness = 0.9f, Randomness = 0.4f, Direction = Vector3.Up,
+                    Spread = fx.Shape == "cone" ? Mathf.Clamp(fx.ConeAngle * 1.4f, 35f, 90f) : (fx.Shape == "sphere" ? 180f : 60f),
+                    InitialVelocityMin = fx.SpeedMin * 0.35f, InitialVelocityMax = fx.SpeedMax * 0.4f,
+                    Gravity = new Vector3(0f, -5f * fx.Gravity, 0f),
                     ScaleAmountMin = fx.SizeMin, ScaleAmountMax = fx.SizeMax,
+                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
                     Mesh = new QuadMesh { Size = Vector2.One, Material = fmat },
                 };
-                if (fx.Shape == "box") { ps.EmissionShape = CpuParticles3D.EmissionShapeEnum.Box; ps.EmissionBoxExtents = halfExt; }
-                else if (fx.Shape == "sphere") { ps.EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere; ps.EmissionSphereRadius = Mathf.Max(0.1f, fx.Radius); }
-                // cone -> the default Point emission + Direction/Spread above (Godot has no cone shape)
-                if (fx.Tumble) { ps.AngleMin = -180f; ps.AngleMax = 180f; ps.AngularVelocityMin = -300f; ps.AngularVelocityMax = 300f; }
-                if (fx.HFrames > 1) { ps.AnimOffsetMin = 0f; ps.AnimOffsetMax = 1f; }   // random flipbook chip per particle
-                if (fx.Shrink) { var c = new Curve(); c.AddPoint(new Vector2(0f, 1f)); c.AddPoint(new Vector2(1f, 0f)); ps.ScaleAmountCurve = c; }
                 scene.AddChild(ps);
                 ps.GlobalPosition = centre;
-                var tr = tree.CreateTimer(fx.LifeMax + 0.6f);
+                // THE FIX: CpuParticles3D's auto-computed visibility AABB does NOT track the launched particles, so the
+                // fast chips leave it within a frame and the whole system gets frustum-culled -> invisible (the "chips don't
+                // render" bug). The slow dust never tripped it. Force a bound covering the emission box + the chips' arc.
+                ps.VisibilityAabb = new Aabb(-halfExt - Vector3.One * 6f, (halfExt + Vector3.One * 6f) * 2f);
+                var tr = tree.CreateTimer(ps.Lifetime + 0.6f);
                 tr.Timeout += () => { if (GodotObject.IsInstanceValid(ps)) ps.QueueFree(); };
                 return;
             }

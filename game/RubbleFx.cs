@@ -53,7 +53,23 @@ namespace UnturnedGodot
                 if (d.ContainsKey("tex"))
                 {
                     string tp = texDir + d["tex"].AsString();
-                    if (File.Exists(tp)) { var img = Image.LoadFromFile(tp); if (img != null) { img.GenerateMipmaps(); fx.Tex = ImageTexture.CreateFromImage(img); } }
+                    if (File.Exists(tp))
+                    {
+                        var img = Image.LoadFromFile(tp);
+                        if (img != null)
+                        {
+                            // The retail sprite is a horizontal N-frame flipbook; crop to a single clean frame here + render
+                            // it as a plain billboard sprite (like the dust). We lose per-chip frame variety but keep it simple.
+                            if (fx.HFrames > 1)
+                            {
+                                int fw = img.GetWidth() / fx.HFrames;
+                                if (fw > 0) img = img.GetRegion(new Rect2I(0, 0, fw, img.GetHeight()));
+                            }
+                            img.GenerateMipmaps();
+                            fx.Tex = ImageTexture.CreateFromImage(img);
+                            fx.HFrames = 1;   // cropped -> single frame, no flipbook
+                        }
+                    }
                 }
                 _byId[id] = fx;
             }
