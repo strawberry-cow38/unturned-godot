@@ -1502,6 +1502,11 @@ namespace UnturnedGodot
             float pr = GlobalPosition.DistanceTo(point);
             if (pr <= radius && !ExplosionBlocked(point, GlobalPosition)) { float t = ExplosionMath.Squared(playerDamage, pr, radius); if (t > 0f) TakeDamage(t * (Inventory?.ExplosionArmor ?? 1f)); }   // wall blocks it (LoS) + worn clothing cuts it (source getPlayerExplosionArmor)
             PlayerRegistry.FlinchAllFromExplosion(point, Mathf.Max(radius * 2f, 12f), 30f);   // camera shake toward the blast (real Bomb effects ~16r/30mag)
+            if (Terrain.WaterLevelY > float.NegativeInfinity && point.Y <= Terrain.WaterLevelY + 2f)   // blast at/below the ocean -> a big water column (retail Explosions/water_0)
+            {
+                var wscene = GetTree().CurrentScene;
+                if (wscene != null) SpawnWaterSplash(wscene, new Vector3(point.X, Terrain.WaterLevelY, point.Z), Mathf.Clamp(radius / 5f, 2f, 4f));
+            }
             GD.Print($"[explode] r={radius} at {point}");
         }
 
@@ -3155,6 +3160,12 @@ namespace UnturnedGodot
             var scene = GetTree().CurrentScene;
             if (scene == null) { GD.PrintErr("[impact] CurrentScene NULL -> no impact spawned"); return; }
             Vector3 up = normal.Normalized();
+            if (surf == Surf.Water)   // the REAL retail water splash (lit alpha-cutout droplets), not the generic debris burst
+            {
+                SpawnWaterSplash(scene, point, 1f);
+                PlayImpactSound(ImpactSnd(surf), point);
+                return;
+            }
             bool hard = surf is Surf.Concrete or Surf.Metal or Surf.Wood;
             bool metal = surf == Surf.Metal;
             var tex = DecalTex(surf);
@@ -3194,6 +3205,42 @@ namespace UnturnedGodot
             dust.GlobalPosition = point + up * 0.03f;
             var t2 = GetTree().CreateTimer(1.4); t2.Timeout += () => { if (IsInstanceValid(dust)) dust.QueueFree(); };
             PlayImpactSound(ImpactSnd(surf), point);   // source impact effects carry per-material audio
+        }
+
+        // The retail water splash (Effects/Impacts/water_static for a bullet hit, Effects/Explosions/water_0 for a blast).
+        // Retail renders these on Unity's Standard shader (Specular) in CUTOUT mode (_Mode=1, _Cutoff 0.5, ZWrite on) --
+        // i.e. a LIT, alpha-cutout billboard, not an additive/unshaded sprite. scale=1 = a bullet-impact plip (~10 droplets,
+        // 45deg cone, 3-6 m/s); scale>=2 = an explosion column (tight upward jet, many fast droplets). Extracted params +
+        // the pale water sprite (impact_water_static_0.png). Droplets shrink over life + tumble; VisibilityAabb guards the
+        // fast particles from the auto-AABB frustum cull (same lesson as the rubble chips).
+        void SpawnWaterSplash(Node scene, Vector3 point, float scale)
+        {
+            bool big = scale >= 2f;
+            var shrink = new Curve(); shrink.AddPoint(new Vector2(0f, 1f)); shrink.AddPoint(new Vector2(1f, 0f));   // size-over-life
+            var mat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel,   // LIT (retail Standard Specular) -> darkens at night
+                Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor, AlphaScissorThreshold = 0.5f,   // retail cutout _Cutoff 0.5
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                Roughness = 1f, Metallic = 0f, SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                AlbedoColor = new Color(0.82f, 0.9f, 1f), AlbedoTexture = ImpactTex(Surf.Water),
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+            };
+            var ps = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Amount = big ? 96 : 10, Lifetime = big ? 2.5f : 1.0f, Explosiveness = 1f, Randomness = 0.4f,
+                Direction = Vector3.Up, Spread = big ? 18f : 45f,   // explosion = tight tall column; bullet = a 45deg cone
+                InitialVelocityMin = big ? 8f : 3f, InitialVelocityMax = big ? 22f : 6f,
+                Gravity = new Vector3(0f, -9.8f, 0f),
+                ScaleAmountMin = 0.28f * scale, ScaleAmountMax = 0.5f * scale, ScaleAmountCurve = shrink,
+                AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -220f, AngularVelocityMax = 220f,
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 0.2f * scale,
+                Mesh = new QuadMesh { Size = Vector2.One, Material = mat },
+            };
+            scene.AddChild(ps);
+            ps.GlobalPosition = point;
+            ps.VisibilityAabb = new Aabb(new Vector3(-8f, -8f, -8f) * scale, new Vector3(16f, 16f, 16f) * scale);
+            var t = GetTree().CreateTimer((big ? 2.5f : 1.0f) + 0.6f); t.Timeout += () => { if (IsInstanceValid(ps)) ps.QueueFree(); };
         }
 
         // Real impact-effect debris texture per surface (Effects/Impacts/<mat>_static extracted PNG), cached. Surf->effect:

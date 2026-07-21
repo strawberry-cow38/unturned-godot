@@ -321,6 +321,7 @@ void fragment() {
         public static bool IsWater(byte layer) => layer == 5;   // splat layer 5 = ocean; every other layer is drivable land
 
         public static Terrain Active;   // most-recently-built terrain -> bullet impacts sample the ground material off its splatmap
+        public static float WaterLevelY = float.NegativeInfinity;   // the ocean surface world-Y for the active map (sentinel = no water plane); explosions near/below it throw up a splash
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
         public PlayerController.Surf SurfAt(float worldX, float worldZ) => SampleDominantLayer(worldX, worldZ) switch
@@ -511,6 +512,7 @@ void fragment() {
             if (System.Environment.GetEnvironmentVariable("UG_NOWATER") != "1")
             {
                 float waterY = 0.1f * 256f;   // = 25.6 world-Y; Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
+                WaterLevelY = waterY;   // explosions near/below this splash (Explode)
                 var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
                 water.MaterialOverride = new StandardMaterial3D
