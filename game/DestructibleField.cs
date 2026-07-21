@@ -123,8 +123,11 @@ namespace UnturnedGodot
             {
                 var fmat = new StandardMaterial3D
                 {
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    // LIT (PerPixel) + matte, NOT Unshaded: debris chips should darken at night with the sun like everything
+                    // else (VoX: they rendered identical day + night). Roughness 1 / no specular so the billboards don't glint.
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                    Roughness = 1f, Metallic = 0f, SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
                     // NOT VertexColorUseAsAlbedo: CpuParticles3D leaves the per-particle color buffer at default, so tinting
                     // albedo by it is fragile -- take the sprite straight (AlbedoColor stays white).
                     AlbedoColor = Colors.White, AlbedoTexture = fx.Tex,
@@ -134,12 +137,15 @@ namespace UnturnedGodot
                 // real sprite/shape but ~3x the count, slower, a gentle arc + a longer life so the chips linger near the break.
                 var ps = new CpuParticles3D
                 {
-                    Emitting = true, OneShot = true, Amount = Mathf.Clamp(fx.Count * 3, 10, 64), Lifetime = Mathf.Max(2f, fx.LifeMax * 2f),
-                    Explosiveness = 0.9f, Randomness = 0.4f, Direction = Vector3.Up,
+                    Emitting = true, OneShot = true, Amount = Mathf.Clamp(Mathf.RoundToInt(fx.Count * 1.5f), 8, 28), Lifetime = Mathf.Max(1.1f, fx.LifeMax * 1.2f),
+                    Explosiveness = 0.9f, Randomness = 0.5f, Direction = Vector3.Up,
                     Spread = fx.Shape == "cone" ? Mathf.Clamp(fx.ConeAngle * 1.4f, 35f, 90f) : (fx.Shape == "sphere" ? 180f : 60f),
-                    InitialVelocityMin = fx.SpeedMin * 0.35f, InitialVelocityMax = fx.SpeedMax * 0.4f,
-                    Gravity = new Vector3(0f, -5f * fx.Gravity, 0f),
-                    ScaleAmountMin = fx.SizeMin, ScaleAmountMax = fx.SizeMax,
+                    InitialVelocityMin = fx.SpeedMin * 0.5f, InitialVelocityMax = fx.SpeedMax * 0.6f,
+                    Gravity = new Vector3(0f, -7f * fx.Gravity, 0f),
+                    // retail startSize reads oversized on our quads -> scale down so chips aren't big blocks; per-chip random
+                    // ROLL + tumble (AngleMin/Max + AngularVelocity) so the billboards scatter instead of a uniform grid (VoX).
+                    ScaleAmountMin = fx.SizeMin * 0.45f, ScaleAmountMax = fx.SizeMax * 0.55f,
+                    AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -400f, AngularVelocityMax = 400f,
                     EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
                     Mesh = new QuadMesh { Size = Vector2.One, Material = fmat },
                 };
