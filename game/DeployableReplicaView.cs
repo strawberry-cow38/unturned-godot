@@ -22,6 +22,7 @@ namespace UnturnedGodot
         readonly Dictionary<uint, Deployable> _nodes = new();
         readonly Dictionary<uint, GridPowerSource> _grids = new();   // A3: server-placed grid-power SOURCE fixtures (a GridPowerSource node, not a Deployable body)
         readonly Dictionary<uint, GasPump> _gaspumps = new();        // A2: server-placed gas-pump fixtures (a GasPump node, not a Deployable body)
+        readonly Dictionary<uint, OilPump> _oilpumps = new();        // oil pump/derrick fixtures (a view-only OilPump node; server owns the Fuel reservoir)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
@@ -30,6 +31,8 @@ namespace UnturnedGodot
         public bool TryGetGrid(uint netId, out GridPowerSource grid) => _grids.TryGetValue(netId, out grid) && IsInstanceValid(grid);
         public int GasPumpCount => _gaspumps.Count;   // A2: how many gas-pump fixtures have materialized
         public bool TryGetGasPump(uint netId, out GasPump pump) => _gaspumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
+        public int OilPumpCount => _oilpumps.Count;   // how many oil-pump fixtures have materialized
+        public bool TryGetOilPump(uint netId, out OilPump pump) => _oilpumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
 
         public override void _PhysicsProcess(double delta)
         {
@@ -72,6 +75,19 @@ namespace UnturnedGodot
                     pump.FillPercent = e.Fuel;   // the replicated 0..100 percent of the shared station tank
                     continue;
                 }
+                if (def.Fixture == FixtureKind.OilPump)
+                {
+                    // an oil pump / derrick -- a VIEW-ONLY OilPump node (NOT a Deployable body). The server owns the
+                    // fuel reservoir (regen/siphon run server-side); the replica just mirrors entity.Fuel so the beam
+                    // rocks + the fuel bar reads right. No local regen (OilPump.IsReplica guards it in Materialize).
+                    if (!_oilpumps.TryGetValue(e.NetIdValue, out var opump) || !IsInstanceValid(opump))
+                    {
+                        opump = OilPump.Materialize(parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees, e.NetIdValue);
+                        _oilpumps[e.NetIdValue] = opump;
+                    }
+                    opump.Fuel = e.Fuel;   // server-owned reservoir level, mirrored onto the view
+                    continue;
+                }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
@@ -85,6 +101,7 @@ namespace UnturnedGodot
             RetireMissing(_nodes, seen, node => { if (IsInstanceValid(node)) node.QueueFree(); });
             RetireMissing(_grids, seen, grid => { if (IsInstanceValid(grid)) grid.QueueFree(); PowerNet.MarkDirty(); });
             RetireMissing(_gaspumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); PowerNet.MarkDirty(); });
+            RetireMissing(_oilpumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); });
 
             // wires: create between the mapped ports (port index = def port order, the §2.6 sub-address).
             // Endpoints may be a Deployable body OR a GridPowerSource fixture (A3), so resolve ports from both.
