@@ -1826,8 +1826,13 @@ namespace UnturnedGodot
         async void BuildObjectsTest()
         {
             _worldBuild = true;   // --shot waits for _worldReady (below) so the async world (incl. Trees) is fully loaded before the screenshot
+            // UG_SYNCLOAD=1: skip EVERY per-phase frame-yield (like --bakenav) for fast HEADLESS repros. Under lavapipe
+            // (no GPU) each per-phase drawn frame software-renders the whole growing scene (612k grass, 3614 objects),
+            // which paces the load; syncLoad never draws mid-load, so the box boots far faster. Off by default (a
+            // real interactive session wants the loading screen); the game still renders normally once loaded.
+            bool syncLoad = _bakeNav || System.Environment.GetEnvironmentVariable("UG_SYNCLOAD") == "1";
             var res = await WorldBuilder.BuildFullWorld(this, _peiPlayable ? WorldMode.Playable : WorldMode.Aerial,
-                _mapRoot, _mapPlace, _noZombies, syncLoad: _bakeNav, bakeNav: _bakeNav, ActiveHoliday());
+                _mapRoot, _mapPlace, _noZombies, syncLoad: syncLoad, bakeNav: _bakeNav, ActiveHoliday());
             // A1 FIX (master 2026-07-20: PEI shelves spawned empty in SP): load the loot tables BEFORE AttachMpLoopback.
             // Under a consuming loopback ContainerNetSync rolls the map containers' loot INSIDE AttachMpLoopback (below),
             // so the tables must be loaded by then -- but the only load site was SpawnMapContainers (@1848), which is
