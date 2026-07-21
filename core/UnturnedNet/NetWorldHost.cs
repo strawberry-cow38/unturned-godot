@@ -737,6 +737,9 @@ namespace UnturnedGodot.Net
         public bool SendExtractFuel(uint pumpNetId)   // A2: RMB a powered pump with a gas can -> server drains the shared station tank into the can (owner echo re-adopts the fuller can)
             => SendCommand(ReplicationIds.CommandExtractFuel, new ExtractFuelCommand { PumpNetId = pumpNetId }.Write);
 
+        public bool SendDetonateCharges()   // base-defense: press the C4 detonator -> the server blows all this player's placed charges (no payload -- the sender's ownership is the target set)
+            => SendCommand(ReplicationIds.CommandDetonateCharges, new DetonateChargesCommand().Write);
+
         public bool SendAttachTow(uint towerNetId, uint towedNetId)   // B11: tie a rope between two replicated vehicles (tower rear -> towed front); the committed rope echoes back via A6's TowedNetId (never mutated client-side)
             => SendCommand(ReplicationIds.CommandAttachTow, new AttachTowCommand { TowerNetId = towerNetId, TowedNetId = towedNetId }.Write);
 

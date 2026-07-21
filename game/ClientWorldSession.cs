@@ -475,6 +475,7 @@ namespace UnturnedGodot
             // item itself": the bag fills only when the owner-block echo lands, the puppet despawns only
             // when WorldItemRemoved broadcasts (WorldItemReplicaView is already diff-driven).
             shell.NetPickupItem = netId => Client.SendPickupItem(netId);
+            shell.NetDetonateCharges = () => Client.SendDetonateCharges();   // base-defense: the detonator intent -> server blows the player's charges
             // Phase 6/8 shell seams (mp-parity-clientseams): every remaining UI action routes as INTENT --
             // grid ops + consume echo back through the owner inventory block, deployable/wire ops through
             // the broadcast facts + replica view, storage through StorageOpened/Closed + the STORAGE page,

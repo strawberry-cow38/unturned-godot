@@ -129,6 +129,15 @@ namespace UnturnedGodot.Net
         }
     }
 
+    /// <summary>A player presses the C4 detonator -> the server blows every charge THEY placed at once (source: the
+    /// detonator fires all of the owner's InteractableCharges). No payload -- the target set is "the sender's charges",
+    /// resolved server-side from ownership, so a client can't detonate someone else's charges.</summary>
+    public struct DetonateChargesCommand
+    {
+        public void Write(NetPakWriter w) { }   // no payload; the server acts on the authenticated sender id
+        public static bool TryRead(NetPakReader r, out DetonateChargesCommand cmd) { cmd = default; return true; }
+    }
+
     public struct ConnectWireCommand
     {
         public uint SrcId; public byte SrcPort;

@@ -66,6 +66,12 @@ namespace UnturnedGodot.Net
         /// fixtures which mint their NetIds off this same server.</summary>
         public IFuelStation FuelStations;
 
+        /// <summary>base-defense: the detonator seam. A DetonateCharges command routes here -> the HOST wires it to
+        /// ServerCharge.DetonateAll(sender, tick) (blows the sender's placed charges). Mirrors the IFuelStation seam:
+        /// core owns the command + auth (the authenticated sender), the game owns the charge state. Null on a world
+        /// with no charges -> the command is a no-op.</summary>
+        public System.Action<ushort, long> OnDetonateCharges;
+
         /// <summary>Seat query for the console teleport (#27): while seated the seat teleport owns the
         /// entity (ServerVehicles.Step re-asserts it every tick), so a ServerTeleport would silently lose
         /// the fight -- reject instead. NetWorldServer wires this to VehicleHost.IsDriver (it's built
@@ -164,6 +170,13 @@ namespace UnturnedGodot.Net
                                         && def.FixtureKind == FixtureKind.GasPump
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach
                                         && SenderInventory(sender) != null);
+
+            // base-defense: a player presses the C4 detonator -> the server blows all THEIR placed charges. No
+            // payload + no per-charge target (the sender's ownership IS the target set, resolved in the seam), so a
+            // client can only ever detonate its own charges. The seam (OnDetonateCharges) is null on a charge-free
+            // world -> a harmless no-op.
+            commands.Register<DetonateChargesCommand>(ReplicationIds.CommandDetonateCharges, DetonateChargesCommand.TryRead,
+                (sender, cmd) => OnDetonateCharges?.Invoke(sender, _tick()));
 
             // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
             commands.Register<ConnectWireCommand>(ReplicationIds.CommandConnectWire, ConnectWireCommand.TryRead,

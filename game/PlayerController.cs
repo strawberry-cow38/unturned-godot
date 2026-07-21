@@ -1888,6 +1888,10 @@ namespace UnturnedGodot
         public System.Action<uint> NetSalvageDeployable;             // -> Client.SendSalvageDeployable (removal echoes back through the replica view)
         public System.Action<uint> NetPickupDeployable;              // B2: -> Client.SendPickupDeployable (the removal + owner-inventory echo return the item; the replica view retires the node)
         public System.Action<uint> NetExtractFuel;                   // A2: pumpNetId -> Client.SendExtractFuel (server drains the shared station tank into the held can; owner echo re-adopts the fuller can)
+        public System.Action NetDetonateCharges;                     // base-defense: press the C4 detonator -> Client.SendDetonateCharges (server blows all this player's placed charges)
+
+        // press the detonator (the C4 console verb / detonator item) -> route the blow-all-my-charges intent to the server.
+        public bool RequestDetonateCharges() { if (NetDetonateCharges == null) return false; NetDetonateCharges(); return true; }
         public System.Action<uint, uint> NetAttachTow;               // B11: (towerNetId, towedNetId) -> Client.SendAttachTow; the committed rope echoes back via A6's replicated TowedNetId (never mutated client-side)
         public System.Action<uint> NetDetachTow;                     // B11: netId (either end) -> Client.SendDetachTow; the cleared relationship echoes back via A6's TowedNetId->0
         public System.Action<uint, byte, uint, byte> NetConnectWire; // (srcId,srcPort, dstId,dstPort) -> Client.SendConnectWire

@@ -69,6 +69,7 @@ namespace UnturnedGodot.Net
         public const byte CommandExtractFuel = 29;        // A2: pull fuel from a gas-station pump into a held can
         public const byte CommandAttachTow = 30;          // B11: tie a rope between two vehicles (tower NetId, towed NetId)
         public const byte CommandDetachTow = 31;          // B11: untie a vehicle's rope (either end)
+        public const byte CommandDetonateCharges = 32;    // base-defense: a player presses the C4 detonator -> the server blows all THEIR placed charges (no payload; server trusts the sender id)
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)

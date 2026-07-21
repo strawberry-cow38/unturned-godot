@@ -130,6 +130,7 @@ namespace UnturnedGodot
                 Player.NetSalvageDeployable = netId => Client.SendSalvageDeployable(netId);
                 Player.NetPickupDeployable = netId => Client.SendPickupDeployable(netId);   // B2: hold-F returns the live deployable to the bag over the wire
                 Player.NetExtractFuel = pumpId => Client.SendExtractFuel(pumpId);   // A2: RMB a replica pump -> server drains the shared station tank into the held can
+                Player.NetDetonateCharges = () => Client.SendDetonateCharges();   // base-defense: the detonator intent -> server blows the player's charges
                 Player.NetConnectWire = (srcId, srcPort, dstId, dstPort) => Client.SendConnectWire(srcId, srcPort, dstId, dstPort);
                 Player.NetRemoveWire = wireId => Client.SendRemoveWire(wireId);
                 Player.NetToggleDeployable = (netId, on) => Client.SendToggleDeployable(netId, on);
@@ -296,7 +297,8 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Traps.Tick(t, (float)dt), "net.traps.tick"));
             Beacon = new ServerBeacon(Server.Zombies, Server.Deployables, GetParent() ?? (Node)this);   // beacon horde spawns real ZombieControllers into the world root; ZombieNetSync auto-publishes them
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Beacon.Tick(t, (float)dt), "net.beacon.tick"));
-            Charge = new ServerCharge(Server.Zombies, Server.Deployables, Server.Combat);   // command-triggered (no per-tick); OnDetonateCharges seam calls Charge.DetonateAll once the net layer lands it
+            Charge = new ServerCharge(Server.Zombies, Server.Deployables, Server.Combat);   // command-triggered (no per-tick)
+            Server.Transactions.OnDetonateCharges = (sender, tick) => Charge.DetonateAll(sender, tick);   // the DetonateCharges command blows the sender's charges through this seam
             // A5: the loopback world's wildlife (AnimalField's real AnimalAgents) publish as replicas too -- every
             // SP-loopback session soaks the animal wire like the zombie wire. The local view renders the real
             // brains directly (no AnimalPuppets here -- puppets are for a remote client that doesn't own them).
