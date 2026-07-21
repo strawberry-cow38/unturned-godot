@@ -20,12 +20,13 @@ namespace UnturnedGodot
         public string[] ClipNames { get; private set; } = Array.Empty<string>();
 
         // FLANKER_STALK: swap the body to a faint translucent shimmer (Unturned's ZombieClothing.ghostMaterial) --
-        // NOT fully gone; a keen eye can still pick out the stalker. Restores the solid tint when off.
-        // Clothes-shader body: drive the ghost_alpha uniform (1.0 solid / 0.2 shimmer). Atlas body: the old
-        // StandardMaterial3D transparency path (unchanged -- FLANKER zombies use the atlas path).
+        // NOT fully gone; a keen eye can still pick out the stalker. Restores the solid tint when off. This is the
+        // ATLAS body path (zombies) -- the only ghost users. The clothes-shader body (player/corpse/1P arms) is now
+        // OPAQUE (so it depth-sorts correctly against the translucent ocean) and can't shimmer; it never ghosts
+        // anyway (only ZombieController calls SetGhost, and zombies build the atlas path so _clothesMat is null there).
         public void SetGhost(bool ghost)
         {
-            if (_clothesMat != null) { _clothesMat.SetShaderParameter("ghost_alpha", ghost ? 0.2f : 1f); return; }
+            if (_clothesMat != null) return;   // opaque clothes body -> no ghost shimmer (not a ghost user)
             if (_bodyMat == null) return;
             _bodyMat.Transparency = ghost ? BaseMaterial3D.TransparencyEnum.Alpha : BaseMaterial3D.TransparencyEnum.Disabled;
             _bodyMat.AlbedoColor = new Color(_bodyTint.R, _bodyTint.G, _bodyTint.B, ghost ? 0.2f : 1f);

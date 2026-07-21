@@ -638,6 +638,20 @@ namespace UnturnedGodot
             ground.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.30f, 0.28f) };
             AddChild(ground);
 
+            // UG_WATER=1: a translucent ocean plane cutting the body at ~waist -- same material as the real sea plane
+            // (Terrain.cs). Reproduces the "3p body renders on top of the water" depth-sort bug for verification.
+            if (System.Environment.GetEnvironmentVariable("UG_WATER") == "1")
+            {
+                var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(20f, 20f) }, Position = new Vector3(0f, 1.0f, 0f) };
+                water.MaterialOverride = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(0.13f, 0.29f, 0.44f, 0.74f),
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    Roughness = 0.12f, Metallic = 0.15f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                };
+                AddChild(water);
+            }
+
             // player skin tint + the Skull face-quad decal (kept exactly as-is) -> the clothes-shader body path (albedoTexPath null)
             var rc = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f), false, null, "res://content/face_19.png");
             if (rc == null) { GD.PrintErr("[clothtest] build failed"); GetTree().Quit(); return; }
