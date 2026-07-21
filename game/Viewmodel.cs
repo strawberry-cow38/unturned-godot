@@ -33,7 +33,13 @@ namespace UnturnedGodot
         // Y is the eye-alignment + the source -0.45 vertical drop (PlayerAnimator:1431, gun sits low).
         Vector3 _armsPos = new Vector3(0f, -1.75f, 0.12f);
         float _gunRoll = 0f;
-        float _holdPitch = 0f;   // per-gun mesh-local hold pitch (deg): pistols are authored held-at-an-angle in the source, so their Model_0 sits tilted up -- +~20 levels the barrel. Rifles = 0.
+        // per-gun mesh-local hold pitch (deg), a PRAGMATIC approximation. Verified via tools/check_model0.py: every gun's
+        // Model_0 is at IDENTITY, so this ISN'T a dropped mesh rotation. The real cause: source PlayerEquipment gives the
+        // model a flat Euler(0,0,90) then the per-gun HOLD ANIMATION poses the hand bone -- that anim orients a pistol vs a
+        // rifle. Our viewmodel simplifies that to "barrel +Y -> camera-forward", which is right for rifles but tilts the
+        // pistols up. The PROPER fix is running the per-gun hold anims (a viewmodel rewrite); +12 here levels the pistols
+        // as a stopgap. Tune live with the `vmpitch` console command. TODO: replace with the source hold-anim pose.
+        float _holdPitch = 0f;
         static readonly System.Collections.Generic.HashSet<string> _pistols = new() { "cobra", "colt", "desert_falcon", "ace", "avenger" };   // 2x2 one-handed guns whose mesh needs the hold-pitch correction
         public static float? PitchOverride = null;   // live tuning: the `vmpitch <deg>` console command sets this to override the baked per-gun pitch (null = use baked)
         double _t;
@@ -779,6 +785,12 @@ namespace UnturnedGodot
             }
             else if (_gun != null && _gun.GetParent() is Node3D att)
             {
+              if (System.Environment.GetEnvironmentVariable("UG_BONEHOLD") == "1")
+                // PROPER (source-accurate): the gun rides the ANIMATED hand-bone HOLD pose (per-gun <Gun>_Equip clip) x the
+                // source held-model Euler(0,0,90), exactly like the melee path -- so each gun sits however its own hold
+                // anim holds it (pistols get their pistol grip, no barrel-forward shortcut, no magic pitch).
+                _gun.GlobalTransform = new Transform3D(att.GlobalTransform.Basis * Basis.FromEuler(new Vector3(0f, 0f, Mathf.DegToRad(90f))), att.GlobalPosition);
+              else {
                 Vector3 aim = -_cam.GlobalTransform.Basis.Z;   // viewmodel-forward
                 Vector3 x = Vector3.Up.Cross(aim);
                 if (x.LengthSquared() < 1e-5f) x = Vector3.Right;
@@ -813,6 +825,7 @@ namespace UnturnedGodot
                     basis = (att.GlobalTransform.Basis * _hammerBoneStart.Inverse()) * basis;
                 }
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
+              }
             }
 
             // integrate ejected casings: gravity + tumble in the viewport world, despawn after ~1.3s
