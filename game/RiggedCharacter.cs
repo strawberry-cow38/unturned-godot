@@ -225,10 +225,13 @@ namespace UnturnedGodot
 
         // Bake the Gun_Aim additive delta (per bone, end relative to frame 0) and switch the arms' player to
         // manual advance so we can apply that delta on top of the base pose each frame. Viewmodel arms only.
-        void SetupAimAdditive()
+        // clip = the additive ADS aim source. The Viewmodel re-bakes this per equipped gun ({Gun}_Aim, ripped from
+        // that gun's own "Aim_Start"), falling back to the generic rifle-tuned "Gun_Aim". One generic delta pitched
+        // pistols UP in ADS; the gun's own aim pose levels it flat, exactly as retail plays the equipped gun's Aim_Start.
+        public void SetupAimAdditive(string clip = "Gun_Aim")
         {
-            if (_ap == null || Skeleton == null || !_ap.HasAnimation("Gun_Aim")) return;
-            var anim = _ap.GetAnimation("Gun_Aim");
+            if (_ap == null || Skeleton == null || !_ap.HasAnimation(clip)) return;
+            var anim = _ap.GetAnimation(clip);
             double end = anim.Length;
             _aimDR = new(); _aimDP = new();
             for (int t = 0; t < anim.GetTrackCount(); t++)

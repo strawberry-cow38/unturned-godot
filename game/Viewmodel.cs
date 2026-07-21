@@ -236,6 +236,11 @@ namespace UnturnedGodot
                 _attachStartClip = _arms.ClipLength(capGun + "_AttachStart") > 0f ? capGun + "_AttachStart" : null;
                 _attachStopClip = _arms.ClipLength(capGun + "_AttachStop") > 0f ? capGun + "_AttachStop" : null;
                 if (_attachStartClip != null) _arms.SetClipLoop(_attachStartClip, false);
+                // ADS aim POSE: re-bake the additive from THIS gun's own aim clip ({Gun}_Aim, ripped from its "Aim_Start"),
+                // else the generic rifle-tuned Gun_Aim. Source: UseableGun aims by playing the equipped gun's own Aim_Start,
+                // so a pistol levels FLAT; the single generic delta pitched every pistol UP in ADS. Re-bake each equip so a
+                // gun-switch never inherits the previous weapon's aim delta.
+                _arms.SetupAimAdditive(_arms.ClipLength(capGun + "_Aim") > 0f ? capGun + "_Aim" : "Gun_Aim");
                 _arms.SetClipLoop("Melee_Equip", false); _arms.SetClipLoop("Melee_Weak", false); _arms.SetClipLoop("Melee_Strong", false);   // generic (knife) melee fallback clips play once
                 _arms.SetClipLoop("Punch_Left", false); _arms.SetClipLoop("Punch_Right", false);   // bare-fists jabs play once (ported from Punch.fbx)
                 if (_meleeCap != null)   // this melee's OWN ripped clips ALL play once and hold (source animator.play plays non-looping); a Repeated tool's continuous "blowtorching" is the spark EMISSION while held, NOT a looping Start_Swing
@@ -783,7 +788,6 @@ namespace UnturnedGodot
                 // FOR FREE (the gun follows the bone, so no bone-delta compensation, no barrel-forward shortcut, no magic
                 // per-gun pitch). Only the per-shot recoil spring is layered on top, in camera space.
                 Basis basis = att.GlobalTransform.Basis * Basis.FromEuler(new Vector3(0f, 0f, Mathf.DegToRad(90f)));
-                if (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GUNPITCH"), out var _gp)) basis = basis * Basis.FromEuler(new Vector3(Mathf.DegToRad(_gp), 0f, 0f));   // SWEEP-ONLY: mesh-local pitch to find the pistol leveling angle
                 Vector3 rr = _recoilRotSpring.CurrentPosition;   // (pitch, yaw, roll) degrees -- muzzle climb, spring-decayed
                 Basis cb = _cam.GlobalTransform.Basis;
                 basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))     // pitch -> muzzle climb

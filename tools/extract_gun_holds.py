@@ -60,13 +60,23 @@ for line in open(r"C:\claude-workspace\unturned-godot\game\content\guns_visual.t
     if nm and nm not in guns: guns.append(nm)
 rig=json.load(open(RIG))
 cap=lambda g: g[0].upper()+g[1:]
-n=0; nogun=[]
+n=0; nogun=[]; aimhave=[]; aimmiss=[]
 for gun in guns:
     clips=gun_clips(gun)
     if not clips: nogun.append(gun); continue
     for cn in ("Equip","Reload","Inspect","Hammer"):   # Hammer = the rechamber/rack played AFTER Reload when the mag was empty (source UseableGun)
         if cn in clips:
             rig["anims"][cap(gun)+"_"+cn]=convert(clips[cn]); n+=1
+    # per-gun ADS aim POSE -> {Cap}_Aim. Source: UseableGun.aim plays the equipped gun's OWN "Aim_Start" clip
+    # (PlayerAnimator ADS), so a pistol levels flat while a rifle barely tilts. The port used ONE rifle-tuned
+    # generic "Gun_Aim" for every gun, which pitched pistols UP in ADS. Try Aim_Start then Aim (older naming).
+    for acn in ("Aim_Start","Aim"):
+        if acn in clips:
+            rig["anims"][cap(gun)+"_Aim"]=convert(clips[acn]); n+=1; aimhave.append(f"{gun}:{acn}"); break
+    else:
+        aimmiss.append(f"{gun}({','.join(sorted(clips))})")   # dump its real clip names so a mis-named aim clip is visible
 print("added",n,"clips across",len(guns),"guns; no-prefab:",nogun)
+print("per-gun AIM clips:",aimhave)
+print("guns with NO Aim_Start/Aim clip:",aimmiss)
 json.dump(rig,open(RIG,"w"))
 print("rig.json bytes:",os.path.getsize(RIG))
