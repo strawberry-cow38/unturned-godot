@@ -49,7 +49,8 @@ for datp in glob.glob(os.path.join(BUND, "**", "*.dat"), recursive=True):
     for i in range(ndrops):
         d = kv(txt, f"Interactability_Drop_{i}")
         if d: drops.append(int(d))
-    guid_rubble[g.lower()] = (health, reset, mode, drops)
+    effect = int(kv(txt, "Rubble_Effect") or 0)   # the retail break effect id (-> game/content/effects/rubble_fx.json)
+    guid_rubble[g.lower()] = (health, reset, mode, effect, drops)
 
 # 2) keep only GUIDs actually placed on PEI (focus + smaller table)
 placed = set()
@@ -59,9 +60,9 @@ if os.path.exists(PLACE):
         if p: placed.add(p[0].lower())
 
 lines, n = [], 0
-for g, (health, reset, mode, drops) in sorted(guid_rubble.items()):
+for g, (health, reset, mode, effect, drops) in sorted(guid_rubble.items()):
     if placed and g not in placed: continue
-    lines.append(f"{g} {health} {reset} {mode} {len(drops)}" + ("".join(f" {d}" for d in drops)))
+    lines.append(f"{g} {health} {reset} {mode} {effect} {len(drops)}" + ("".join(f" {d}" for d in drops)))
     n += 1
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)

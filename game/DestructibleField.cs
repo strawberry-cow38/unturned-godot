@@ -24,6 +24,7 @@ namespace UnturnedGodot
             public uint BodyLayer;
             public float MaxHealth;           // 0 = unregistered slot (indestructible)
             public long ResetTicks;
+            public int EffectId;              // Rubble_Effect id -> the retail break VFX
             public bool Alive = true;
         }
 
@@ -59,13 +60,13 @@ namespace UnturnedGodot
 
         /// <summary>Bind a built destructible's live nodes + rubble scalars to its deterministic index. Grows
         /// the backing array to fit (Register runs before SetCount in the WorldBuilder scan order).</summary>
-        public void Register(int index, StaticBody3D body, MeshInstance3D[] meshes, float maxHealth, long resetTicks)
+        public void Register(int index, StaticBody3D body, MeshInstance3D[] meshes, float maxHealth, long resetTicks, int effectId = 0)
         {
             if (index < 0) return;
             EnsureSize(index + 1);
             if (_recs[index] == null) BuiltCount++;
             _recs[index] = new Rec { Meshes = meshes, Body = body, BodyLayer = body?.CollisionLayer ?? 0u,
-                                     MaxHealth = maxHealth, ResetTicks = resetTicks };
+                                     MaxHealth = maxHealth, ResetTicks = resetTicks, EffectId = effectId };
         }
 
         /// <summary>Break (false) or respawn (true) one prop by index: hide/show its mesh(es) and toggle its
@@ -82,13 +83,13 @@ namespace UnturnedGodot
             if (r.Body != null && GodotObject.IsInstanceValid(r.Body)) r.Body.CollisionLayer = alive ? r.BodyLayer : 0u;
         }
 
-        /// <summary>Play the one-shot break VFX for a prop that just shattered: a burst of tumbling debris chunks
-        /// textured with the prop's OWN material (so a metal billboard sheds metal-looking bits, a wood fence wood
-        /// ones) plus a dust poof, both sized to the prop's mesh. Retail plays a per-prop Rubble_Effect (Metal_5,
-        /// Wheat_0, ...); we can't load those Unity particle prefabs, so this reproduces the debris+dust READ of the
-        /// break, keyed to the actual prop appearance. Wired to Client.ObjectDestroyed (a LIVE break broadcast) so it
-        /// only fires when a prop breaks in front of you -- NOT on the join-sync of props broken before you arrived.
-        /// The field isn't a Node, so it spawns via the (tree-parented) mesh's scene.</summary>
+        /// <summary>Play the one-shot break VFX for a prop that just shattered. Plays the prop's ACTUAL retail
+        /// Rubble_Effect (Metal_5, Glass_0, Wheat_0, ...) -- the real sprite + burst count + cone/box shape + start
+        /// speed/size/lifetime + gravity/tumble, extracted from core.masterbundle (see RubbleFx / tools/
+        /// extract_rubble_effects.py) and reproduced on a CpuParticles3D. A prop with no effect id (0) or a missing
+        /// sprite falls back to a generic material-tint debris puff. Wired to Client.ObjectDestroyed (a LIVE break
+        /// broadcast) so it fires only when a prop breaks in front of you -- NOT on the join-sync of props broken
+        /// before you arrived. The field isn't a Node, so it spawns via the (tree-parented) mesh's scene.</summary>
         public void PlayBreakEffect(int index)
         {
             if (index < 0 || index >= _recs.Length) return;
@@ -110,6 +111,40 @@ namespace UnturnedGodot
             Vector3 halfExt = new Vector3(Mathf.Clamp(worldSize.X * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Y * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Z * 0.5f, 0.2f, 8f));
             Vector3 centre = mesh.GlobalTransform * (aabb.Position + aabb.Size * 0.5f);
 
+            // the prop's ACTUAL retail Rubble_Effect (real sprite + authored params), if we extracted it
+            if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
+            {
+                var fmat = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                    AlbedoColor = Colors.White, AlbedoTexture = fx.Tex,
+                };
+                if (fx.HFrames > 1) { fmat.ParticlesAnimHFrames = fx.HFrames; fmat.ParticlesAnimVFrames = 1; fmat.ParticlesAnimLoop = false; }
+                var ps = new CpuParticles3D
+                {
+                    Emitting = true, OneShot = true, Amount = Mathf.Max(1, fx.Count), Lifetime = Mathf.Max(0.3f, fx.LifeMax),
+                    Explosiveness = 1f, LifetimeRandomness = fx.LifeMax > fx.LifeMin ? 0.3f : 0f, Direction = Vector3.Up,
+                    Spread = fx.Shape == "cone" ? Mathf.Clamp(fx.ConeAngle, 5f, 90f) : (fx.Shape == "sphere" ? 180f : 45f),
+                    InitialVelocityMin = fx.SpeedMin, InitialVelocityMax = fx.SpeedMax,
+                    Gravity = new Vector3(0f, -9.8f * fx.Gravity, 0f),
+                    ScaleAmountMin = fx.SizeMin, ScaleAmountMax = fx.SizeMax,
+                    Mesh = new QuadMesh { Size = Vector2.One, Material = fmat },
+                };
+                if (fx.Shape == "box") { ps.EmissionShape = CpuParticles3D.EmissionShapeEnum.Box; ps.EmissionBoxExtents = halfExt; }
+                else if (fx.Shape == "sphere") { ps.EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere; ps.EmissionSphereRadius = Mathf.Max(0.1f, fx.Radius); }
+                // cone -> the default Point emission + Direction/Spread above (Godot has no cone shape)
+                if (fx.Tumble) { ps.AngleMin = -180f; ps.AngleMax = 180f; ps.AngularVelocityMin = -300f; ps.AngularVelocityMax = 300f; }
+                if (fx.HFrames > 1) { ps.AnimOffsetMin = 0f; ps.AnimOffsetMax = 1f; }   // random flipbook chip per particle
+                if (fx.Shrink) { var c = new Curve(); c.AddPoint(new Vector2(0f, 1f)); c.AddPoint(new Vector2(1f, 0f)); ps.ScaleAmountCurve = c; }
+                scene.AddChild(ps);
+                ps.GlobalPosition = centre;
+                var tr = tree.CreateTimer(fx.LifeMax + 0.6f);
+                tr.Timeout += () => { if (GodotObject.IsInstanceValid(ps)) ps.QueueFree(); };
+                return;
+            }
+
+            // FALLBACK (effect id 0 / no extracted sprite): a generic material-tint debris puff.
             // DEBRIS: tumbling cubes wearing the prop's own material (falls under gravity, ~1.6 s). Reusing the shared
             // material reference is cheap + makes the chunks look like the thing that broke.
             var propMat = mesh.MaterialOverride as StandardMaterial3D;
@@ -156,13 +191,14 @@ namespace UnturnedGodot
         }
 
         // ---- catalog: guid -> rubble scalars, parsed from content/objects/rubble.txt ----
-        // one line: "<guid> <health> <reset> <mode> <ndrops> <dropId>..." (tools/extract_rubble.py)
+        // one line: "<guid> <health> <reset> <mode> <effectId> <ndrops> <dropId>..." (tools/extract_rubble.py)
 
         public readonly struct Rubble
         {
             public readonly float Health;
             public readonly long ResetTicks;   // Rubble_Reset seconds x 50 Hz
-            public Rubble(float health, long resetTicks) { Health = health; ResetTicks = resetTicks; }
+            public readonly int EffectId;      // Rubble_Effect id -> the retail break VFX (RubbleFx catalog)
+            public Rubble(float health, long resetTicks, int effectId) { Health = health; ResetTicks = resetTicks; EffectId = effectId; }
         }
 
         public static Dictionary<string, Rubble> LoadCatalog()
@@ -176,7 +212,8 @@ namespace UnturnedGodot
                 if (sp.Length < 3) continue;
                 if (!float.TryParse(sp[1], System.Globalization.CultureInfo.InvariantCulture, out float health)) continue;
                 if (!float.TryParse(sp[2], System.Globalization.CultureInfo.InvariantCulture, out float resetSecs)) continue;
-                map[sp[0].ToLowerInvariant()] = new Rubble(health, (long)System.Math.Round(resetSecs * 50f));
+                int effectId = sp.Length > 4 && int.TryParse(sp[4], out int e) ? e : 0;   // col 4 = Rubble_Effect id (mode is col 3)
+                map[sp[0].ToLowerInvariant()] = new Rubble(health, (long)System.Math.Round(resetSecs * 50f), effectId);
             }
             GD.Print($"[rubble] catalog {map.Count} destructible object types");
             return map;

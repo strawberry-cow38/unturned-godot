@@ -334,7 +334,7 @@ namespace UnturnedGodot
                 {
                     destBody.SetMeta(DestructibleField.MetaKey, destIndex);
                     var mis = folMi != null ? new[] { mainMi, folMi } : new[] { mainMi };
-                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks);
+                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId);
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));
