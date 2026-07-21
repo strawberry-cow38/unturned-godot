@@ -279,6 +279,19 @@ namespace UnturnedGodot
                        : Trap.SpawnSpike(parent, at, yawDeg);
                 Log($"planted a {t.Kind} trap -- arms in 0.25 s, then bites anything that steps on it");
             }
+            else if (verb == "beacon")
+            {
+                // beacon  -- plant a horde beacon where you're aiming + activate it. It summons a bounded zombie wave
+                // (Beacon id1194 = Wave 100) that converges on you; clear the whole wave and it self-destructs + drops
+                // rewards. Set up sentries + traps first, then pop it to siege your base. Source InteractableBeacon.
+                if (Player == null) { Log("no player"); return; }
+                Node parent = Player.GetParent() ?? GetTree().Root;
+                var b = new Beacon();
+                parent.AddChild(b);
+                b.GlobalPosition = at;
+                b.Activate(Player);
+                Log($"horde beacon ACTIVATED -- wave {b.Wave} inbound, defend it! clear it -> self-destructs + drops {b.Rewards} rewards");
+            }
             else if (verb == "unarmed")
             {
                 // unarmed  -- go to the bare-fists state (LMB weak / RMB strong punch)

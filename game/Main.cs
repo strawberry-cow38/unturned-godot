@@ -51,6 +51,7 @@ namespace UnturnedGodot
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
         bool _sentryTest; Sentry _stSentry; ZombieController _stZombie; int _stFrame;   // --sentrytest: the auto-turret core harness
         bool _trapTest, _ttLandmine; Trap _ttTrap; ZombieController _ttZombie; int _ttFrame; double _ttClock; Vector3 _ttTrapPos, _ttOffPos;   // --traptest: drive a zombie on/off a trap to verify triggers
+        bool _beaconTest; Beacon _bnBeacon; Sentry _bnSentry; int _bnFrame;   // --beacontest: a powered sentry defends a horde-beacon siege
         bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
@@ -63,7 +64,7 @@ namespace UnturnedGodot
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, sentryTest = false, editorMode = false, trapTest = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, sentryTest = false, editorMode = false, trapTest = false, beaconTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -76,6 +77,7 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--sentrytest") sentryTest = true;   // verify the auto-turret: a stationary zombie 10m off -> the sentry acquires + shreds it (logs HP -> DEAD, --shot=OUT for a frame)
                 else if (arg == "--traptest" || arg.StartsWith("--traptest=")) { trapTest = true; if (arg.Contains('=')) trapKind = arg.Split('=')[1]; }   // verify a trap: a zombie steps onto it -> spikes chip it down over passes / a landmine one-shots it (--traptest=landmine)
+                else if (arg == "--beacontest") beaconTest = true;   // verify the horde beacon: a powered sentry defends a beacon-summoned wave -> clears it -> beacon self-destructs + drops rewards
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
@@ -193,6 +195,15 @@ namespace UnturnedGodot
                 _trapTest = true;
                 _shotPath = shot;
                 BuildTrapTest(trapKind);
+                return;
+            }
+
+            if (beaconTest)   // horde beacon: a powered sentry defends a beacon-summoned wave -> clears it -> beacon self-destructs + drops loot
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _beaconTest = true;
+                _shotPath = shot;
+                BuildBeaconTest();
                 return;
             }
 
@@ -1262,6 +1273,45 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.LookAt(new Vector3(0.45f, 0.3f, 0.05f), Vector3.Up);
             GD.Print($"[TRAPTEST] {(_ttLandmine ? "LANDMINE" : "SPIKE")} at origin + a zombie stepping onto it -- expect {(_ttLandmine ? "a one-shot detonation (zombie DEAD + trap gone)" : "the spikes to chip it down over passes")}");
+        }
+
+        // --beacontest: a powered eaglefire sentry beside a horde beacon defends the siege it summons. The beacon rings a
+        // small wave around itself (targeting the sentry); the sentry mows them; when the wave is cleared the beacon
+        // self-destructs + drops rewards. Verifies the whole horde lifecycle (opening swarm -> concurrent cap -> refill
+        // as they die -> completion -> loot). --shot=OUT captures the siege mid-fight.
+        void BuildBeaconTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.30f, 0.33f, 0.42f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.42f, 0.42f, 0.5f), AmbientLightEnergy = 0.6f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 0.9f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            ground.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(240, 240) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.26f, 0.29f, 0.24f) } });
+            AddChild(ground);
+            CharacterModel.LoadBundled();
+
+            var gunDef = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/eaglefire.dat")));
+            _bnSentry = Sentry.Spawn(this, new Vector3(2f, 0f, 0f), 0f, gunDef);
+            var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(3.7f, 0f, 1.3f), 0f);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var sentIn = _bnSentry.PowerPorts[0];
+            var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = sentIn; wr.AddToGroup("wires");
+            wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, sentIn.GlobalPosition }, valid: true);
+            gen.TogglePower(); PowerNet.Recompute(GetTree());
+
+            _bnBeacon = new Beacon { Wave = 16, MaxAlive = 8 };   // a short test siege (the real Beacon id1194 is Wave 100)
+            AddChild(_bnBeacon);
+            _bnBeacon.GlobalPosition = Vector3.Zero;
+            _bnBeacon.Activate(_bnSentry);   // the horde converges on the sentry
+
+            var cam = new Camera3D { Current = true, Fov = 62f, Position = new Vector3(11f, 7f, 14f) };
+            AddChild(cam);
+            cam.LookAt(new Vector3(0f, 0.8f, 0f), Vector3.Up);
+            GD.Print($"[BEACONTEST] beacon (wave {_bnBeacon.Wave}, max {_bnBeacon.MaxAlive}) + a powered eaglefire sentry defending -- expect the sentry to clear the horde -> beacon self-destructs + drops rewards");
         }
 
         // --craftui: open the crafting menu over a player with a stocked inventory so the recipe list renders.
@@ -3044,6 +3094,13 @@ namespace UnturnedGodot
                 else if (zdead) { GD.Print("[TRAPTEST] PASS -- spikes shredded the zombie over repeated passes (+ wore the trap down)"); if (_shotPath == null) GetTree().Quit(); }
                 else if (_ttClock > 12.0) { GD.Print($"[TRAPTEST] TIMEOUT -- zombie still alive (HP {_ttZombie.Health:0})"); GetTree().Quit(); }
             }
+            if (_beaconTest && _bnBeacon != null && IsInstanceValid(_bnBeacon))   // horde-beacon siege: the sentry clears the wave -> beacon completes
+            {
+                _bnFrame++;
+                if (_bnBeacon.Done) { GD.Print($"[BEACONTEST] PASS -- horde cleared ({_bnBeacon.Killed}/{_bnBeacon.Wave} killed), beacon self-destructing + rewards dropped"); if (_shotPath == null) GetTree().Quit(); }
+                else if (_bnFrame % 30 == 0) GD.Print($"[BEACONTEST] f{_bnFrame}: killed {_bnBeacon.Killed}, alive {_bnBeacon.Alive}, remaining {_bnBeacon.Remaining}");
+                if (!_bnBeacon.Done && _bnFrame > 1500) { GD.Print($"[BEACONTEST] TIMEOUT -- killed {_bnBeacon.Killed}/{_bnBeacon.Wave}, alive {_bnBeacon.Alive}, remaining {_bnBeacon.Remaining} (sentry not clearing?)"); GetTree().Quit(); }
+            }
             if (_peiPlay && _peiPlayer != null)
             {
                 _peiFrame++;
@@ -3172,6 +3229,7 @@ namespace UnturnedGodot
             else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
             else if (_trapTest) { if (_ttClock < 0.95) return; }   // traptest: capture during an OFF phase (~0.95s) -- the zombie's been bitten once + stepped beside the trap, so the spikes are fully visible
+            else if (_beaconTest) { if (_bnFrame < 18) return; }   // beacontest: capture mid-siege -- the opening swarm is up + the sentry is firing into it
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state
