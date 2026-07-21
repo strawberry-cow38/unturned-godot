@@ -1,24 +1,24 @@
-cobra	cobra_mag.txt	0.0,-0.1703,0.1005
-zubeknakov	zubeknakov_mag.txt	0.0,-0.049,0.156
-grizzly	grizzly_mag.txt	0.0,0.0402,0.0176
-timberwolf	timberwolf_mag.txt	0.0,0.0885,-0.0029
-sabertooth	sabertooth_mag.txt	0.0,0.054,0.034
-colt	colt_mag.txt	0.0,-0.1694,0.0644
-snayperskya	snayperskya_mag.txt	0.0,0.0633,0.0662
-ace	ace_mag.txt	0.0024,-0.1713,-0.045
-augewehr	augewehr_mag.txt	0.0,-0.4858,0.1812
-avenger	avenger_mag.txt	0.0,-0.1886,0.0631
-nightraider	nightraider_mag.txt	0.0,0.005,0.197
-heartbreaker	heartbreaker_mag.txt	0.0,0.0547,0.0736
-nykorev	nykorev_mag.txt	0.0046,0.0364,0.1075
-sportshot	sportshot_mag.txt	0.0,0.028,0.045
-desert_falcon	desert_falcon_mag.txt	0.0,-0.1526,0.059
-hawkhound	hawkhound_mag.txt	0.0,0.115,-0.0074
-dragonfang	dragonfang_mag.txt	0.0046,0.0692,0.1075
-honeybadger	honeybadger_mag.txt	0.0,0.0313,0.0444
-crossbow	crossbow_mag.txt	0.0,0.318,-0.1467
-bow_maple	bow_maple_mag.txt	0.1708,0.1742,0.005
-bow_birch	bow_birch_mag.txt	0.1708,0.1742,0.005
-bow_pine	bow_pine_mag.txt	0.1708,0.1742,0.005
-bow_compound	bow_compound_mag.txt	0.1708,0.1742,0.005
-launcher_rocket	launcher_rocket_mag.txt	0.0,0.5161,-0.0618
+cobra	cobra_mag.txt	0.0,-0.1703,0.1005	cobra_mag_albedo.png
+zubeknakov	zubeknakov_mag.txt	0.0,-0.049,0.156	zubeknakov_mag_albedo.png
+grizzly	grizzly_mag.txt	0.0,0.0402,0.0176	grizzly_mag_albedo.png
+timberwolf	timberwolf_mag.txt	0.0,0.0885,-0.0029	timberwolf_mag_albedo.png
+sabertooth	sabertooth_mag.txt	0.0,0.054,0.034	sabertooth_mag_albedo.png
+colt	colt_mag.txt	0.0,-0.1694,0.0644	colt_mag_albedo.png
+snayperskya	snayperskya_mag.txt	0.0,0.0633,0.0662	snayperskya_mag_albedo.png
+ace	ace_mag.txt	0.0024,-0.1713,-0.045	ace_mag_albedo.png
+augewehr	augewehr_mag.txt	0.0,-0.4858,0.1812	augewehr_mag_albedo.png
+avenger	avenger_mag.txt	0.0,-0.1886,0.0631	avenger_mag_albedo.png
+nightraider	nightraider_mag.txt	0.0,0.005,0.197	nightraider_mag_albedo.png
+heartbreaker	heartbreaker_mag.txt	0.0,0.0547,0.0736	heartbreaker_mag_albedo.png
+nykorev	nykorev_mag.txt	0.0046,0.0364,0.1075	nykorev_mag_albedo.png
+sportshot	sportshot_mag.txt	0.0,0.028,0.045	sportshot_mag_albedo.png
+desert_falcon	desert_falcon_mag.txt	0.0,-0.1526,0.059	desert_falcon_mag_albedo.png
+hawkhound	hawkhound_mag.txt	0.0,0.115,-0.0074	hawkhound_mag_albedo.png
+dragonfang	dragonfang_mag.txt	0.0046,0.0692,0.1075	dragonfang_mag_albedo.png
+honeybadger	honeybadger_mag.txt	0.0,0.0313,0.0444	honeybadger_mag_albedo.png
+crossbow	crossbow_mag.txt	0.0,0.318,-0.1467	crossbow_mag_albedo.png
+bow_maple	bow_maple_mag.txt	0.1708,0.1742,0.005	bow_maple_mag_albedo.png
+bow_birch	bow_birch_mag.txt	0.1708,0.1742,0.005	bow_birch_mag_albedo.png
+bow_pine	bow_pine_mag.txt	0.1708,0.1742,0.005	bow_pine_mag_albedo.png
+bow_compound	bow_compound_mag.txt	0.1708,0.1742,0.005	bow_compound_mag_albedo.png
+launcher_rocket	launcher_rocket_mag.txt	0.0,0.5161,-0.0618	
