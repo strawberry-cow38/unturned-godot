@@ -1082,9 +1082,13 @@ namespace UnturnedGodot
                     _bobber.GlobalPosition += _bobberVel * dt;
                     if (Terrain.HasWater && _bobber.GlobalPosition.Y <= Terrain.WaterSurfaceY)
                     {
-                        var p = _bobber.GlobalPosition; p.Y = Terrain.WaterSurfaceY; _bobber.GlobalPosition = p;   // snap to the surface
-                        _bobberVel = Vector3.Zero;
-                        _fishing.ConfirmBobberInWater();
+                        if (BobberOverFishableWater(_bobber.GlobalPosition))
+                        {
+                            var p = _bobber.GlobalPosition; p.Y = Terrain.WaterSurfaceY; _bobber.GlobalPosition = p;   // snap to the surface
+                            _bobberVel = Vector3.Zero;
+                            _fishing.ConfirmBobberInWater();
+                        }
+                        else ClearFisher();   // splashed onto dry land / too-shallow water -> no cast (retail GetFishingVolume + minimumDepth)
                     }
                     else if (_bobber.GlobalPosition.Y < Terrain.WaterSurfaceY - 60f)
                         ClearFisher();   // fell into a dry gap / off-map -> abandon the cast
@@ -1111,6 +1115,17 @@ namespace UnturnedGodot
                 _bobber = null;
                 if (_fishLine != null && IsInstanceValid(_fishLine)) { _fishLine.QueueFree(); _fishLine = null; }
             }
+        }
+
+        // Retail UseableFisher gates a cast on the bobber landing in an actual fishing WaterVolume AND >= minimumDepth(4m)
+        // below the surface. The port has one global ocean plane, so "is there water here" = the terrain floor under the
+        // bobber sits at least MinFishDepth below sea level. Without this you could fish on dry land (the flat Y-plane is
+        // true everywhere below 25.6). Null terrain (test/fallback world) -> trust the plane so headless casts still land.
+        bool BobberOverFishableWater(Vector3 pos)
+        {
+            var t = Terrain.Active;
+            if (t == null) return true;
+            return t.SampleHeight(pos.X, pos.Z) <= Terrain.WaterSurfaceY - Terrain.MinFishDepth;
         }
 
         void SpawnBobber()
@@ -1374,6 +1389,7 @@ namespace UnturnedGodot
         {
             if (def == null) return;
             SaveGunState();
+            ClearFisher();   // this equip path sets _deployable directly (doesn't go through ClearDeployable) -> reel in the rod here
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false;
@@ -2574,6 +2590,7 @@ namespace UnturnedGodot
             _deathTimer = 3.5;
             _burstLeft = 0;   // death cancels any in-progress burst (no resume after respawn)
             if (_wiring) CancelWire();   // death drops any in-progress wire (no stale preview / death-cam nodes)
+            ClearFisher();               // death reels in any deployed line (no stale bobber/line surviving into respawn)
             EjectFromVehicleOnDeath();   // review #3: detach before the corpse/respawn setup, else the dead driver wedges
             Velocity = Vector3.Zero;
 

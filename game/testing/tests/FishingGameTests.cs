@@ -15,6 +15,8 @@ namespace UnturnedGodot.Testing
         {
             bool hadWater = Terrain.HasWater;
             float oldSea = Terrain.WaterSurfaceY;
+            var oldActive = Terrain.Active;
+            Terrain.Active = null;   // no real terrain in this harness -> BobberOverFishableWater uses its null-guard (flat plane authoritative)
 
             Rigs.Ground(World);
             var p = Rigs.Player(World, new Vector3(0f, 30f, 0f));   // up high; the ocean sits just below
@@ -75,8 +77,16 @@ namespace UnturnedGodot.Testing
             p.EquipUnarmed();
             T.Check("equipping away from the rod clears HoldingFisher", !p.HoldingFisher);
 
+            // regression (review finding): a DEPLOYABLE equip sets _deployable directly, bypassing the ClearDeployable
+            // hook, so it must clear the rod itself -- else HoldingFisher stays true and the leaked bobber keeps ticking
+            p.EquipItemAsset(Assets.find(503), new Item(503));
+            T.Check("rod re-equipped for the deployable-switch check", p.HoldingFisher);
+            p.EquipHeldDeployable(DeployableDef.Generator);
+            T.Check("switching rod -> deployable reels the line in (no leaked bobber)", !p.HoldingFisher);
+
             Terrain.HasWater = hadWater;         // restore static water -> don't leak into later tests
             Terrain.WaterSurfaceY = oldSea;
+            Terrain.Active = oldActive;
         }
 
         static int TotalFish(PlayerInventory inv)

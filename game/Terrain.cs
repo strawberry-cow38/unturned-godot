@@ -326,6 +326,7 @@ void fragment() {
         // bobber and treats it as "in water" once it drops below this. HasWater is false when UG_NOWATER skips it.
         public static float WaterSurfaceY = 25.6f;
         public static bool HasWater;
+        public const float MinFishDepth = 4f;   // retail UseableFisher minimumDepth: a bobber needs >=4m of water below the surface
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
         public PlayerController.Surf SurfAt(float worldX, float worldZ) => SampleDominantLayer(worldX, worldZ) switch

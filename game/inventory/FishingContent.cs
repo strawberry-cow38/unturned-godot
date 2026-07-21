@@ -25,7 +25,7 @@ namespace SDG.Unturned
         {
             sim.MinBiteInterval = 6f;
             sim.MaxBiteInterval = 14f;
-            sim.MaxStrengthBiteMultiplier = 1.5f;   // a strong cast reaches deeper water -> bites take a little longer
+            sim.MaxStrengthBiteMultiplier = 1f;     // retail Fishing_MaxStrength_Bite_Interval_Multiplier fallback (1.0 = no effect)
             sim.FishBiteIntervalMultiplier = 1f;    // Rod_Fishing Fish_Bite_Interval_Multiplier (default)
             sim.RewardExperienceMin = 3;            // Rod_Fishing Reward_Experience_Min/Max
             sim.RewardExperienceMax = 3;
