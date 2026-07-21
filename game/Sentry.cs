@@ -78,8 +78,10 @@ namespace UnturnedGodot
             PowerNet.MarkDirty();
         }
 
+        int _dbgN;
         public override void _Process(double delta)
         {
+            if (_dbgN++ % 90 == 0) { string s = "none"; foreach (var dn in GetTree().GetNodesInGroup("zombies")) if (dn is ZombieController dz && GodotObject.IsInstanceValid(dz) && !dz.Dead) { s = $"d{dz.GlobalPosition.DistanceTo(GlobalPosition):0}/los{LineOfSightClear(dz)}/hp{dz.Health:0}"; break; } GD.Print($"[SDBG] pow={IsPowered} tgt={_target != null} cd={_fireCd:0.00} firstLive={s}"); }
             float dt = (float)delta;
             if (_fireCd > 0f) _fireCd -= dt;
             if (_tracerT > 0f) { _tracerT -= dt; if (_tracerT <= 0f && _tracer != null) _tracer.Visible = false; }
