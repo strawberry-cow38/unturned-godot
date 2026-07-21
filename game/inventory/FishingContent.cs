@@ -20,7 +20,7 @@ namespace SDG.Unturned
 
         // Configure a fresh FishingSim for a cast: retail Rod_Fishing.dat values + the PEI table + the caster's skill.
         // (Bite intervals: the SDK Gameplay fallback is 1.0/1.0; we widen to a playable 6-14 s window so a bite is a
-        // moment you wait for, not instant. CatchChallenge is a later increment -> challenge-disabled catch here.)
+        // moment you wait for, not instant.)
         public static void ConfigureForPei(FishingSim sim, byte fishingSkillLevel)
         {
             sim.MinBiteInterval = 6f;
@@ -32,6 +32,17 @@ namespace SDG.Unturned
             sim.RodFallbackRewardId = 504;          // Reward_ID fallback (Raw Trout stand-in)
             sim.FishingSkillLevel = fishingSkillLevel;
             sim.SetRewardTable(PeiOcean);
+
+            // Rod_Fishing.dat CatchChallenge block (all the SDK-default values): a bite opens the tracking minigame.
+            sim.EnableCatchChallenge = true;
+            sim.CatchChallengeCursorSize = 2_000;                 // 0.2 * FIXED
+            sim.CatchChallengeGravity = 10_000;                   // 1.0
+            sim.CatchChallengeAcceleration = 10_000;              // 1.0
+            sim.CatchChallengeUpperRestitution = 5_000;           // 0.5
+            sim.CatchChallengeLowerRestitution = 5_000;           // 0.5
+            sim.CatchChallengeCaptureSpeedMultiplier = 1f;
+            sim.CatchChallengeEscapeSpeedMultiplier = 1f;
+            sim.Catchable = FishingCatchableProperties.Default;
         }
     }
 }

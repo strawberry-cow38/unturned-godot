@@ -18,7 +18,39 @@ namespace SDG.Unturned
         PreparingToCast, // holding primary: strength gauge oscillating
         Casting,         // released: bobber in flight, waiting to reach water
         LineDeployed,    // bobber floating; server bite timer running; press-in-window catches
+        CatchChallenge,  // fish hooked (opt-in rods): hold/release to track it with a cursor until captured
         Reeling,         // reel animation playing (transient; game layer times it, sim returns to Idle)
+    }
+
+    // Per-fish catch-challenge tuning (ItemAsset.FishingCatchable in retail; FishingCatchableProperties). Fixed-point
+    // ints (x10000) so the fish/cursor spring integration is bit-identical client<->server. Ported 1:1 with the SDK
+    // defaults; the port uses Default for every fish (no per-item overrides ripped yet).
+    public sealed class FishingCatchableProperties
+    {
+        public const int FIXED_POINT_SCALE = 10_000;   // a [0,1] position as an int
+        public const int TIME_SCALE = 10_000;          // capture/escape durations scaled up for sub-tick rod multipliers
+
+        public int minChangeTargetTicks, maxChangeTargetTicks;
+        public int maxUpwardAcceleration, maxDownwardAcceleration;
+        public int maxUpwardSpeed, maxDownwardSpeed;
+        public int upperRestitution, lowerRestitution;
+        public int minTargetDelta, maxTargetDelta;
+        public int minTargetPosition, maxTargetPosition;
+        public int captureTicks, escapeTicks;
+        public int springStiffness, springDamping;
+
+        // SDK defaults (FishingCatchableProperties field defaults), converted at the retail 50 Hz tock rate.
+        public static FishingCatchableProperties Default => new FishingCatchableProperties
+        {
+            minChangeTargetTicks = 75, maxChangeTargetTicks = 100,          // 1.5s / 2.0s @ 50 Hz
+            maxUpwardAcceleration = 15_000, maxDownwardAcceleration = 12_000, // 1.5 / 1.2 * FIXED
+            maxUpwardSpeed = 6_000, maxDownwardSpeed = 4_500,               // 0.6 / 0.45 * FIXED
+            upperRestitution = 6_000, lowerRestitution = 4_000,            // 0.6 / 0.4 * FIXED
+            minTargetDelta = 3_000, maxTargetDelta = 4_000,               // 0.3 / 0.4 * FIXED
+            minTargetPosition = 1_000, maxTargetPosition = 9_000,         // 0.1 / 0.9 * FIXED
+            captureTicks = 100 * TIME_SCALE, escapeTicks = 100 * TIME_SCALE, // 2.0s @ 50 Hz * TIME_SCALE
+            springStiffness = 16 * FIXED_POINT_SCALE, springDamping = 4 * FIXED_POINT_SCALE,
+        };
     }
 
     // One weighted fish entry from a level fishing spawn table (Spawns/Fishing/Fishing_PEI.asset).
@@ -58,8 +90,28 @@ namespace SDG.Unturned
         public int RewardExperienceMin = 3;                // Reward_Experience_Min
         public int RewardExperienceMax = 3;                // Reward_Experience_Max
 
-        // --- injected from PlayerSkills each cast (affects the strength-gauge period) ---
+        // --- injected from PlayerSkills each cast (affects the strength-gauge period + challenge speeds) ---
         public byte FishingSkillLevel;
+        public byte FishingSkillMax = 5;   // FISHING skill max level (mastery = level/max)
+
+        // --- catch-challenge (ItemFisherAsset); when EnableCatchChallenge, a bite opens a tracking minigame ---
+        public bool EnableCatchChallenge;
+        public int CatchChallengeCursorSize = 2_000;   // 0.2 * FIXED (window the fish must sit inside)
+        public int CatchChallengeGravity = 10_000;     // 1.0 * FIXED (cursor falls while input released)
+        public int CatchChallengeAcceleration = 10_000; // 1.0 * FIXED (cursor rises while input held)
+        public int CatchChallengeUpperRestitution = 5_000, CatchChallengeLowerRestitution = 5_000;  // 0.5 * FIXED
+        public float CatchChallengeCaptureSpeedMultiplier = 1f;
+        public float CatchChallengeEscapeSpeedMultiplier = 1f;
+        public FishingCatchableProperties Catchable = FishingCatchableProperties.Default;
+
+        // challenge runtime (fixed-point). fish bobs on a spring toward a randomly-relocating target; the player's
+        // cursor rises/falls with input; capture fills while the fish is inside the cursor (UseableFisher.tock).
+        int _fishTargetPosition, _fishPosition, _fishVelocity;
+        int _cursorPosition, _cursorVelocity;
+        int _captureProgress, _capturePerTick, _escapePerTick;
+        int _ticksUntilRelocate;
+        bool _pullUp;
+        FishingCatch _pendingCatch;   // set when the challenge is won inside Tock(); drained by the game layer
 
         // Weighted reward table (the level's fishing spawn table). If empty, RodFallbackRewardId is granted
         // (retail EFishingRewardMode.Rod / the ItemFisherAsset.rewardID fallback).
@@ -119,13 +171,15 @@ namespace SDG.Unturned
             {
                 if (IsBiteWindowOpen)
                 {
-                    var caught = ResolveCatch();
+                    if (EnableCatchChallenge) { EnterChallenge(); return FishingCatch.None; }   // opt-in rods -> minigame, reward on win
+                    var caught = ResolveCatch();   // challenge-disabled: press-in-window catches instantly
                     ReelToIdle();
                     return caught;
                 }
                 ReelToIdle();   // reeled in too early / after the fish left -> nothing
                 return FishingCatch.None;
             }
+            if (State == EFishingState.CatchChallenge) { _pullUp = true; return FishingCatch.None; }   // hold LMB -> pull the cursor up
             return FishingCatch.None;
         }
 
@@ -136,7 +190,87 @@ namespace SDG.Unturned
         {
             if (State == EFishingState.PreparingToCast)
                 State = EFishingState.Casting;
+            else if (State == EFishingState.CatchChallenge)
+                _pullUp = false;   // release LMB -> let the cursor fall
         }
+
+        // A challenge won inside Tock() stashes its reward here; the game layer drains it (grants fish + XP).
+        public bool TryTakePendingCatch(out FishingCatch caught)
+        {
+            if (_pendingCatch.Success) { caught = _pendingCatch; _pendingCatch = FishingCatch.None; return true; }
+            caught = FishingCatch.None; return false;
+        }
+
+        // Challenge display state (0..1), for the UI overlay + tests.
+        public float ChallengeFishPos => _fishPosition / (float)FishingCatchableProperties.FIXED_POINT_SCALE;
+        public float ChallengeCursorPos => _cursorPosition / (float)FishingCatchableProperties.FIXED_POINT_SCALE;
+        public float ChallengeCursorSizeNorm => CatchChallengeCursorSize / (float)FishingCatchableProperties.FIXED_POINT_SCALE;
+        public float ChallengeProgress => Catchable.captureTicks == 0 ? 0f : _captureProgress / (float)Catchable.captureTicks;   // -1..1
+        public bool FishInCursor => _fishPosition >= _cursorPosition && _fishPosition <= _cursorPosition + CatchChallengeCursorSize;
+
+        void EnterChallenge()
+        {
+            State = EFishingState.CatchChallenge;
+            _biteActive = false;
+            _ticksUntilRelocate = 0;
+            _fishTargetPosition = _rng.Next(Catchable.minTargetPosition, Catchable.maxTargetPosition + 1);
+            _fishPosition = _fishTargetPosition;
+            _fishVelocity = 0;
+            _captureProgress = 0;
+            float mastery = FishingSkillMax == 0 ? 0f : (float)FishingSkillLevel / FishingSkillMax;
+            _capturePerTick = (int)MathF.Round(FishingCatchableProperties.TIME_SCALE * (1f + mastery * 0.2f) * CatchChallengeCaptureSpeedMultiplier);
+            _escapePerTick = (int)MathF.Round(FishingCatchableProperties.TIME_SCALE * (1f - mastery * 0.2f) * CatchChallengeEscapeSpeedMultiplier);
+            _cursorPosition = ClampInt(_fishTargetPosition - CatchChallengeCursorSize / 2, 0, FishingCatchableProperties.FIXED_POINT_SCALE - CatchChallengeCursorSize);
+            _cursorVelocity = 0;
+            _pullUp = true;
+        }
+
+        // One 50 Hz step of the tracking minigame (UseableFisher.tock CatchChallenge branch): relocate the fish target,
+        // spring-integrate the fish + the input cursor (fixed-point), then grow/shrink capture. Win at captureTicks
+        // (reward stashed), lose at -escapeTicks (fish escapes -> back to a fresh bite).
+        void ChallengeStep()
+        {
+            var c = Catchable;
+            const int FIXED = FishingCatchableProperties.FIXED_POINT_SCALE;
+            const int DELTA_TIME = 50;
+
+            if (_ticksUntilRelocate > 0) _ticksUntilRelocate--;
+            else
+            {
+                _ticksUntilRelocate = _rng.Next(c.minChangeTargetTicks, c.maxChangeTargetTicks);
+                int delta = _rng.Next(c.minTargetDelta, c.maxTargetDelta);
+                if (_fishTargetPosition + delta > c.maxTargetPosition) _fishTargetPosition = Math.Max(c.minTargetPosition, _fishTargetPosition - delta);
+                else if (_fishTargetPosition - delta < c.minTargetPosition) _fishTargetPosition = Math.Min(c.maxTargetPosition, _fishTargetPosition + delta);
+                else { if (_rng.NextDouble() < 0.5) delta = -delta; _fishTargetPosition += delta; }
+            }
+
+            int accel = (c.springStiffness * (_fishTargetPosition - _fishPosition)) / FIXED - (c.springDamping * _fishVelocity) / FIXED;
+            accel = ClampInt(accel, -c.maxDownwardAcceleration, c.maxUpwardAcceleration);
+            _fishVelocity += accel / DELTA_TIME;
+            _fishVelocity = ClampInt(_fishVelocity, -c.maxDownwardSpeed, c.maxUpwardSpeed);
+            _fishPosition += _fishVelocity / DELTA_TIME;
+            if (_fishPosition > FIXED) { _fishPosition = FIXED - (_fishPosition - FIXED); _fishVelocity = -_fishVelocity * c.upperRestitution / FIXED; }
+            else if (_fishPosition < 0) { _fishPosition = -_fishPosition; _fishVelocity = -_fishVelocity * c.lowerRestitution / FIXED; }
+
+            if (_pullUp) _cursorVelocity += CatchChallengeAcceleration / DELTA_TIME;
+            else _cursorVelocity -= CatchChallengeGravity / DELTA_TIME;
+            _cursorPosition += _cursorVelocity / DELTA_TIME;
+            if (_cursorPosition + CatchChallengeCursorSize > FIXED)
+            {
+                _cursorPosition = FIXED - CatchChallengeCursorSize - (_cursorPosition + CatchChallengeCursorSize - FIXED);
+                _cursorVelocity = -_cursorVelocity * CatchChallengeUpperRestitution / FIXED;
+            }
+            else if (_cursorPosition < 0) { _cursorPosition = 0; _cursorVelocity = -_cursorVelocity * CatchChallengeLowerRestitution / FIXED; }
+
+            bool within = FishInCursor;
+            if (within) _captureProgress = Math.Min(Math.Max(0, _captureProgress + _capturePerTick), c.captureTicks);
+            else _captureProgress = Math.Max(_captureProgress - _escapePerTick, -c.escapeTicks);
+
+            if (_captureProgress >= c.captureTicks) { _pendingCatch = ResolveCatch(); ReelToIdle(); }        // caught!
+            else if (_captureProgress <= -c.escapeTicks) { State = EFishingState.LineDeployed; ResetTimeUntilFishAppears(); }   // escaped
+        }
+
+        static int ClampInt(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
         // The game layer calls this once the bobber rigidbody has settled below a water surface
         // (UseableFisher.UpdateBobber -> ReceiveBobberInWaterConfirmation). Starts the server bite timer.
@@ -153,11 +287,17 @@ namespace SDG.Unturned
         // period grows with fishing skill (100 + level*20 tocks) so higher skill = a slower, easier-to-time bar.
         public void Tock()
         {
-            if (State != EFishingState.PreparingToCast) return;
-            _strengthTime++;
-            uint period = 100u + (uint)FishingSkillLevel * 20u;
-            float m = 1f - MathF.Abs(MathF.Sin(((_strengthTime + period / 2) % period) / (float)period * MathF.PI));
-            StrengthMultiplier = m * m;
+            if (State == EFishingState.PreparingToCast)
+            {
+                _strengthTime++;
+                uint period = 100u + (uint)FishingSkillLevel * 20u;
+                float m = 1f - MathF.Abs(MathF.Sin(((_strengthTime + period / 2) % period) / (float)period * MathF.PI));
+                StrengthMultiplier = m * m;
+            }
+            else if (State == EFishingState.CatchChallenge)
+            {
+                ChallengeStep();
+            }
         }
 
         // Per-frame server update (UseableFisher.simulate): once the line's in water, count down to a bite; after

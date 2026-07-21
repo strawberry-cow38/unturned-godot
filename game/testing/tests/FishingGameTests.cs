@@ -55,9 +55,19 @@ namespace UnturnedGodot.Testing
 
             uint xpBefore = p.Skills.experience;
             int fishBefore = TotalFish(p.Inventory);
-            p.FisherPrimaryForTest();                             // press in the window -> land it
+            p.FisherPrimaryForTest();                            // press in the window -> Rod_Fishing opens the catch challenge
+            T.Check($"the bite opened the catch challenge (state={sim.State})", sim.State == EFishingState.CatchChallenge);
 
-            T.Check($"landed a fish into the bag (fish {fishBefore} -> {TotalFish(p.Inventory)})", TotalFish(p.Inventory) == fishBefore + 1);
+            // play the minigame: track the fish with the cursor (hold to rise, release to fall) until it's landed.
+            // GrantFish fires from TickFishing's pending-catch drain on the winning tick.
+            for (int i = 0; i < 4000 && sim.State == EFishingState.CatchChallenge; i++)
+            {
+                float cursorCenter = sim.ChallengeCursorPos + sim.ChallengeCursorSizeNorm / 2f;
+                if (cursorCenter < sim.ChallengeFishPos) p.FisherPrimaryForTest(); else p.FisherReleaseForTest();
+                p.TickFishingForTest(0.02f);
+            }
+
+            T.Check($"tracked + landed a fish into the bag (fish {fishBefore} -> {TotalFish(p.Inventory)})", TotalFish(p.Inventory) == fishBefore + 1);
             T.Check($"fishing paid XP ({xpBefore} -> {p.Skills.experience})", p.Skills.experience > xpBefore);
             T.Check($"line reeled back to idle (state={sim.State})", sim.State == EFishingState.Idle);
 

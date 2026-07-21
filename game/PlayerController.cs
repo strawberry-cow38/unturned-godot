@@ -1060,11 +1060,14 @@ namespace UnturnedGodot
         {
             if (_fishing == null) return;
 
-            // 50 Hz strength-gauge tock (framerate-independent), so the cast bar sweeps at the retail rate
+            // 50 Hz strength-gauge tock (framerate-independent), so the cast bar sweeps at the retail rate; the
+            // catch-challenge minigame also steps here (UseableFisher.tock drives both)
             _fishTockAccum += dt;
             while (_fishTockAccum >= 0.02f) { _fishing.Tock(); _fishTockAccum -= 0.02f; }
 
             _fishing.Simulate(dt);
+
+            if (_fishing.TryTakePendingCatch(out var challengeCatch)) GrantFish(challengeCatch);   // won the tracking minigame
 
             // cast just released -> fling the bobber out along the aim, scaled by the charged strength (retail
             // AddForce Lerp(500,1000,strength); here a launch speed the sim's projectile step integrates)
@@ -1092,6 +1095,11 @@ namespace UnturnedGodot
                     var p = _bobber.GlobalPosition;
                     p.Y = Terrain.WaterSurfaceY + (_fishing.IsBiteWindowOpen ? -0.35f : Mathf.Sin(Time.GetTicksMsec() / 250f) * 0.06f);
                     _bobber.GlobalPosition = p;
+                }
+                else if (_fishing.State == EFishingState.CatchChallenge)
+                {
+                    // fish is fighting on the line -> the bobber stays yanked under the surface
+                    var p = _bobber.GlobalPosition; p.Y = Terrain.WaterSurfaceY - 0.5f; _bobber.GlobalPosition = p;
                 }
                 UpdateFishLine();
             }

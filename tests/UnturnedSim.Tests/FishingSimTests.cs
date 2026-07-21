@@ -168,5 +168,83 @@ namespace UnturnedSim.Tests
             Assert.That(inv.getItemCount(caught.ItemId), Is.EqualTo(1), "the fish is in the inventory");
             Assert.That(skills.experience, Is.EqualTo(xpBefore + 5), "fishing paid XP");
         }
+
+        // --- catch-challenge minigame (increment 3) ---
+
+        static FishingSim MakeChallengeSim(int seed = 11)
+        {
+            var s = MakeSim(seed);
+            s.EnableCatchChallenge = true;
+            s.Catchable = FishingCatchableProperties.Default;
+            return s;
+        }
+
+        static void HookAndEnterChallenge(FishingSim s)
+        {
+            CastToWater(s);
+            StepUntil(s, () => s.HasBite);
+            StepUntil(s, () => s.IsBiteWindowOpen);
+            s.Press();   // opt-in rod -> enters the challenge instead of an instant catch
+        }
+
+        [Test]
+        public void Challenge_EntersOnBite_WhenRodOptsIn()
+        {
+            var s = MakeChallengeSim();
+            HookAndEnterChallenge(s);
+            Assert.That(s.State, Is.EqualTo(EFishingState.CatchChallenge), "an opt-in rod opens the minigame on the bite");
+        }
+
+        [Test]
+        public void Challenge_PerfectTracker_LandsTheFish()
+        {
+            var s = MakeChallengeSim();
+            HookAndEnterChallenge(s);
+
+            FishingCatch caught = FishingCatch.None;
+            for (int i = 0; i < 4000 && s.State == EFishingState.CatchChallenge; i++)
+            {
+                // center the cursor on the fish (hold to rise, release to fall)
+                float cursorCenter = s.ChallengeCursorPos + s.ChallengeCursorSizeNorm / 2f;
+                if (cursorCenter < s.ChallengeFishPos) s.Press(); else s.Release();
+                s.Tock();
+                if (s.TryTakePendingCatch(out caught)) break;
+            }
+            Assert.That(caught.Success, "tracking the fish fills the capture bar and lands it");
+            Assert.That(caught.ItemId, Is.AnyOf(Trout, Salmon));
+            Assert.That(s.State, Is.EqualTo(EFishingState.Idle));
+        }
+
+        [Test]
+        public void Challenge_NoInput_FishEscapes()
+        {
+            var s = MakeChallengeSim();
+            HookAndEnterChallenge(s);
+            bool escaped = false;
+            for (int i = 0; i < 6000 && !escaped; i++)
+            {
+                s.Release();               // never track it -> cursor sinks, fish gets away
+                s.Tock();
+                escaped = s.State != EFishingState.CatchChallenge;
+                Assert.That(s.TryTakePendingCatch(out _), Is.False, "you can't land a fish you never track");
+            }
+            Assert.That(escaped, "an untracked fish escapes");
+            Assert.That(s.State, Is.EqualTo(EFishingState.LineDeployed), "the line re-arms after an escape");
+        }
+
+        [Test]
+        public void Challenge_FishAndCursor_StayNormalized()
+        {
+            var s = MakeChallengeSim();
+            HookAndEnterChallenge(s);
+            for (int i = 0; i < 1500 && s.State == EFishingState.CatchChallenge; i++)
+            {
+                if ((i / 20) % 2 == 0) s.Press(); else s.Release();   // jerky input to slam the walls
+                s.Tock();
+                Assert.That(s.ChallengeFishPos, Is.InRange(0f, 1f));
+                Assert.That(s.ChallengeCursorPos, Is.InRange(0f, 1f));
+                s.TryTakePendingCatch(out _);
+            }
+        }
     }
 }
