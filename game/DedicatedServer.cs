@@ -30,6 +30,7 @@ namespace UnturnedGodot
         public GasStationServer GasStation { get; private set; }          // A2: authoritative per-station fuel tanks (built from the placed gas-pump fixtures; the ExtractFuel choke drains them)
         public ServerSentries Sentries { get; private set; }              // sentry fixtures: the server-authoritative scan/fire/kill (the view-only replica just renders)
         public ServerTraps Traps { get; private set; }                    // trap fixtures: the server-authoritative edge-trigger/bite/landmine (the view-only replica just renders)
+        public ServerBeacon Beacon { get; private set; }                  // beacon fixtures: the server-authoritative horde spawn/track/reward (the view-only replica just renders the obelisk)
 
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
@@ -168,6 +169,10 @@ namespace UnturnedGodot
             // trap fixtures edge-trigger server-authoritatively against the just-published zombies (same ZombieHost seam).
             Traps = new ServerTraps(Server.Zombies, Server.Deployables, Server.Combat);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Traps.Tick(tick, (float)dt), "net.traps.tick"));
+            // beacon fixtures spawn their horde as real server ZombieControllers into the world root; ZombieNetSync
+            // (net.zombies.publish, above) auto-mints + publishes each -- a freshly-spawned member lands on the next tick.
+            Beacon = new ServerBeacon(Server.Zombies, Server.Deployables, GetParent() ?? (Node)this);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => Beacon.Tick(tick, (float)dt), "net.beacon.tick"));
             AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains (currently a no-op on dedicated -- see the AnimalField note above)
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => AnimalSync.Tick(), "net.animals.publish"));
             AppearanceSync = new PlayerAppearanceNetSync(Server);   // B10: publish each connected player's worn clothing + stance into the combat block

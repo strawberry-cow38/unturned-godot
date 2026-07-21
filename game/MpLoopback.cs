@@ -52,6 +52,7 @@ namespace UnturnedGodot
         public GasStationServer GasStation { get; private set; }     // A2 --spconsume: authoritative per-station fuel tanks (the ExtractFuel choke drains them)
         public ServerSentries Sentries { get; private set; }         // sentry fixtures: the server-authoritative scan/fire/kill (the view-only replica just renders)
         public ServerTraps Traps { get; private set; }              // trap fixtures: the server-authoritative edge-trigger/bite/landmine (the view-only replica just renders)
+        public ServerBeacon Beacon { get; private set; }            // beacon fixtures: the server-authoritative horde spawn/track/reward (the view-only replica just renders the obelisk)
         public WorldItemReplicaView Items { get; private set; }      // P2 --spconsume: server world-item (drop/loot) entities -> local puppets (null unless ConsumeDeployables)
         public StorageReplicaView Storage { get; private set; }      // A1 --spconsume: server container fixtures -> local StoreShelf nodes (null unless ConsumeDeployables; the SP-local SpawnMapContainers is gated off)
         public ZombieNetSync ZombieSync { get; private set; }
@@ -292,6 +293,8 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Sentries.Tick(t, (float)dt), "net.sentries.tick"));
             Traps = new ServerTraps(Server.Zombies, Server.Deployables, Server.Combat);   // trap fixtures edge-trigger against the just-published zombies
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Traps.Tick(t, (float)dt), "net.traps.tick"));
+            Beacon = new ServerBeacon(Server.Zombies, Server.Deployables, GetParent() ?? (Node)this);   // beacon horde spawns real ZombieControllers into the world root; ZombieNetSync auto-publishes them
+            Driver.Sim.Add(new DelegateSimStep((t, dt) => Beacon.Tick(t, (float)dt), "net.beacon.tick"));
             // A5: the loopback world's wildlife (AnimalField's real AnimalAgents) publish as replicas too -- every
             // SP-loopback session soaks the animal wire like the zombie wire. The local view renders the real
             // brains directly (no AnimalPuppets here -- puppets are for a remote client that doesn't own them).

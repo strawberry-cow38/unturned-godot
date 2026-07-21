@@ -25,6 +25,7 @@ namespace UnturnedGodot
         sealed class TrapState { public float Age; public bool Armed; public readonly HashSet<uint> Inside = new(); }
         readonly Dictionary<uint, TrapState> _traps = new();   // trap entity NetId -> arm timer + last-tick "inside" set (edge detection)
         readonly HashSet<uint> _seen = new();
+        readonly List<(uint id, Vector3 pos, byte spec)> _nowInside = new();   // reused per trap per tick (no per-trap alloc, mirrors ServerSentries._cands)
 
         struct TrapParams { public float ZombieDamage, Range2, TriggerRadius; public bool IsExplosive; }
         readonly Dictionary<ushort, TrapParams> _paramCache = new();   // per-archetype params (from Trap.ForDefId), cached by DefId
@@ -67,12 +68,12 @@ namespace UnturnedGodot
                 st.Age += dt;
                 if (st.Age < SetupDelay) continue;   // still arming -- inert
 
-                // who's live + inside the footprint this tick
-                var nowInside = new List<(uint id, Vector3 pos, byte spec)>();
+                // who's live + inside the footprint this tick (reused list, cleared per trap -- no per-trap alloc)
+                _nowInside.Clear();
                 foreach (var z in _zombies.All)
                 {
                     if (z.IsDead) continue;
-                    if (Vector3.Distance(z.Pos, e.Pos) <= p.TriggerRadius) nowInside.Add((z.NetIdValue, z.Pos, z.Speciality));
+                    if (Vector3.Distance(z.Pos, e.Pos) <= p.TriggerRadius) _nowInside.Add((z.NetIdValue, z.Pos, z.Speciality));
                 }
 
                 // arm-seed on the FIRST armed tick: anything already standing in the footprint is seeded so it isn't hit
@@ -80,13 +81,13 @@ namespace UnturnedGodot
                 if (!st.Armed)
                 {
                     st.Armed = true;
-                    foreach (var zi in nowInside) st.Inside.Add(zi.id);
+                    foreach (var zi in _nowInside) st.Inside.Add(zi.id);
                     continue;
                 }
 
                 // edge-trigger: any zombie NEWLY inside (not in last tick's set) fires the trap
                 bool broke = false;
-                foreach (var zi in nowInside)
+                foreach (var zi in _nowInside)
                 {
                     if (st.Inside.Contains(zi.id)) continue;   // already inside last tick -> not a fresh enter
                     if (p.IsExplosive) { Detonate(e, p, tick, losClear); broke = true; break; }   // landmine: AoE + self-destruct on the first entrant
@@ -100,7 +101,7 @@ namespace UnturnedGodot
                 if (broke) { _traps.Remove(e.NetIdValue); continue; }
 
                 st.Inside.Clear();
-                foreach (var zi in nowInside) st.Inside.Add(zi.id);   // remember for next tick's edge detection
+                foreach (var zi in _nowInside) st.Inside.Add(zi.id);   // remember for next tick's edge detection
             }
 
             // retire state for traps that are gone (worn out / salvaged / destroyed)
