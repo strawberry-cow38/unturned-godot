@@ -795,6 +795,8 @@ namespace UnturnedGodot
                 basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))     // pitch -> muzzle climb
                              .Rotated(cb.Y, Mathf.DegToRad(rr.Y))     // yaw
                              .Rotated(-cb.Z, Mathf.DegToRad(rr.Z));   // roll about the view axis
+                if (_aimAlpha > 0.001f && float.TryParse(System.Environment.GetEnvironmentVariable("UG_ADSPITCH"), out var _adsp))
+                    basis = basis.Rotated(cb.X, Mathf.DegToRad(_adsp) * _aimAlpha);   // tuning: extra ADS muzzle pitch to level a drooping iron-sight pistol barrel
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
             }
 
