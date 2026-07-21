@@ -93,4 +93,62 @@ namespace UnturnedGodot.Testing
                     sess.Deploys.ChargeCount == 0 && ded.Server.Deployables.Count == 0);
         }
     }
+
+    // cut-2 gate: the charge blast damages PLAYERS too (not just zombies), server-authoritatively. A charge planted
+    // next to the joined client is inert until the detonator fires (teeth); firing it drops the player's server-owned
+    // health via ServerCombat.DamagePlayerExternal (squared falloff). The player stands in for any raider in the blast.
+    public class NetShellChargeDamagesPlayer : GameTest
+    {
+        public override string Name => "net.shell_charge_damages_player";
+        public override double TimeoutSimSeconds => 45;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+            ItemCatalog.RegisterAll();
+
+            var net = new MemNetwork(20260721);
+            var pump = new DelegateSimStep((t, dt) => net.Tick(), "l1.netpump");
+            world.Sim.Sim.Add(pump);
+            var sess = new ClientWorldSession { Driver = world.Sim, TransportOverride = new MemClientTransport(net), PlayerName = "builder" };
+            World.AddChild(sess);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), RemoteAvatars = true };
+            World.AddChild(ded);
+
+            yield return Until(() => sess.Shell != null, 5);
+            T.Check("shell spawned", sess.Shell != null);
+            if (sess.Shell == null) yield break;
+            bool sHave = ded.Server.Inventories.TryGet(sess.Client.PlayerId, out var sInv);
+            yield return Ticks(10);
+
+            const ushort ChargeId = 1241;
+            T.Check("server granted the Charge item", sHave && sInv.Inventory.tryAddItem(new Item(ChargeId)));
+            yield return Until(() => sess.Shell.Inventory.getItemCount(ChargeId) == 1, 5);
+
+            // plant the charge 1 m from the player (within reach), so the blast catches them
+            var spot = sess.Shell.GlobalPosition + Vector3.Right * 1f;
+            T.Check("planted a charge next to the player", sess.Shell.RequestPlaceDeployable(ChargeId, spot, 0f));
+            yield return Until(() => ded.Server.Deployables.Count == 1, 5);
+
+            // baseline: full server-owned health
+            yield return Until(() => ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var cs0) && cs0.Health == 100, 5);
+            T.Check("(baseline) the player is at full health", ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csBase) && csBase.Health == 100);
+
+            // (TEETH) the un-detonated charge is inert -- the player stays at full health
+            for (int i = 0; i < 30; i++) yield return Ticks(1);
+            T.Check("(teeth) the un-detonated charge does NOT hurt the player",
+                    ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csIdle) && csIdle.Health == 100);
+
+            // detonate -> the blast damages the player server-side (squared falloff via DamagePlayerExternal)
+            sess.Shell.RequestDetonateCharges();
+            yield return Until(() => ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csHit) && csHit.Health < 100, 5);
+            bool ok = ded.Server.CombatState.TryGet(sess.Client.PlayerId, out var csFinal);
+            int fhp = ok ? csFinal.Health : -1;
+            T.Check($"the detonator blast damaged the player server-side (health {fhp} < 100)", ok && csFinal.Health < 100);
+        }
+    }
 }
