@@ -426,6 +426,8 @@ namespace UnturnedGodot
                     AddActionButton(panel, "Equip", new Vector2(228, by), PlaceSelected);   // equip the deployable -> close inventory, aim the ghost, LMB plants it
                 else if (tool != null)
                     AddActionButton(panel, "Equip", new Vector2(228, by), ToolSelected);   // wire -> wiring mode, rope -> tow mode, any ToolDef -> its mode
+                else if (asset.type == EItemType.FISHER)
+                    AddActionButton(panel, "Equip", new Vector2(228, by), FisherSelected);   // a fishing rod -> hold it, LMB casts (UseableFisher)
                 else
                     AddActionButton(panel, "Equip", new Vector2(228, by), EquipSelected);
                 by += 44;
@@ -451,7 +453,8 @@ namespace UnturnedGodot
         // A new holdable type is added HERE + the button dispatch in openSelection; regressed by InventoryTests.HandActions.
         public static bool HasHandAction(ItemAsset asset) =>
             asset != null && (asset.gunName != null || asset.meleeName != null || asset.IsConsumable
-                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer);
+                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer
+                || asset.type == EItemType.FISHER);   // a fishing rod is holdable (EquipHeldFisher); without this the rod has the equip code but NO menu option (the Rope bug)
 
         void EquipSelected()
         {
@@ -518,6 +521,22 @@ namespace UnturnedGodot
             if (asset == null || !asset.IsFuelContainer || jar.item == null) return;
             jar.item.fuelLevel = 0f;
             Refresh();
+        }
+
+        // Equip a fishing rod INTO the hands -> close the inventory so LMB casts. Routes through EquipItemAsset (the
+        // unified dispatch that owns the EItemType.FISHER -> EquipHeldFisher branch), like the other hand actions.
+        void FisherSelected()
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || asset.type != EItemType.FISHER) return;
+            Player?.EquipHeldFisher(asset, jar.item);
+            CloseSelection();
+            Close();   // leave the inventory so LMB begins the cast
+            Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
         // Equip a deployable (generator/spotlight) -> close the inventory so the player aims the placement ghost and

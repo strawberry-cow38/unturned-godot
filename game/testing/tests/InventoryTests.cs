@@ -55,6 +55,7 @@ namespace UnturnedGodot.Testing
             T.Check("a melee offers a hand action", InventoryUI.HasHandAction(new ItemAsset { meleeName = "knife_military" }));
             T.Check("a consumable (FOOD) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { type = EItemType.FOOD }));
             T.Check("a fuel can offers a hand action", InventoryUI.HasHandAction(new ItemAsset { fuelCapacity = 500f }));
+            T.Check("a fishing rod (FISHER) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { id = 503, type = EItemType.FISHER }));
             T.Check("a plain SUPPLY item (no ToolDef entry) offers NO hand action", !InventoryUI.HasHandAction(new ItemAsset { id = 63333, type = EItemType.SUPPLY }));
             T.Check("null asset -> no hand action", !InventoryUI.HasHandAction(null));
             yield break;
