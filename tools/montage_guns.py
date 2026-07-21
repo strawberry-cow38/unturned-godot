@@ -24,7 +24,8 @@ def render_and_frame(gun):
                        cwd=GAME, capture_output=True, text=True)
     m = re.search(r"equip .*length = ([\d.]+)s", r.stdout or "")
     eq = float(m.group(1)) if m else 1.633
-    return min(97, int(eq * 30) + 13)   # equip-done frame + 8-frame aim settle + ~5 into the 30-frame ADS hold
+    off = 2 if os.environ.get("MG_HIP") else 13   # MG_HIP=1 -> the HIPFIRE hold (equip-done, before auto-aim); else the ADS frame
+    return min(97, int(eq * 30) + off)   # equip-done frame + settle; ADS = +13 (aim engaged), hipfire = +2 (still held)
 
 th, cols = (360, 203), 4
 tiles = []
