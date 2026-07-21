@@ -100,6 +100,24 @@ for gun in guns:
     if not (hook and sm0 and aim): print(f"AIM {gun}: no Aim hook (sight {folder}) -- keeping old"); continue
     real_aims[gun] = (round(-(hook[0]+sm0[0]+aim[0]), 4), round(hook[1]+sm0[1]+aim[1], 4), round(-(hook[2]+sm0[2]+aim[2]), 4))
 
+def gun_view_hook(gun):   # the gun prefab's "View" child = retail's viewHook (the iron-sight ADS EYE-POINT, no scope needed)
+    p = next((o for pa, o in cont.items() if f"/guns/{gun}/item.prefab" in pa.lower() and o.type.name == "GameObject"), None)
+    if not p: return None
+    _, lp = child_named(p, "View")
+    return (lp["x"], lp["y"], lp["z"]) if lp else None
+
+# Guns WITHOUT a default sight attachment: use their own viewHook ("View") if present. Source: UseableGun
+# GetAimingViewmodelAlignment falls back sight-attachment.aimHook -> viewHook -> sightHook. The iron-sight pistols
+# (cobra/ace/colt/avenger/desert_falcon/sawed_off) DO carry a "View" child = the real EYE-POINT. We were using the
+# "Sight" MOUNT instead, which parks the eye ABOVE the sight line -> pistols aimed "over" the gun / wouldn't lay
+# flat in ADS. flip x,z to port coords (same convention as the sight-aim path). This is THE pistol-ADS fix.
+for gun in guns:
+    if gun in real_aims: continue
+    vh = gun_view_hook(gun)
+    if vh:
+        real_aims[gun] = (round(-vh[0], 4), round(vh[1], 4), round(-vh[2], 4))
+        print(f"VIEW {gun}: viewHook {vh} -> aim {real_aims[gun]}")
+
 gvpath = content + r"\guns_visual.tsv"
 out, patched = [], 0
 for line in open(gvpath):
