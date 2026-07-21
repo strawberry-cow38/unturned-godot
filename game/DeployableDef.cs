@@ -182,6 +182,20 @@ namespace UnturnedGodot
             Size = new Vector3(1.1f, 1.7f, 1.1f), Offset = 0f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 2500f,
         };
 
+        // Auto-turret / SENTRY (source ItemSentryAsset, Sentry.dat id1244, Mode Neutral): a placed FIXTURE that mounts a
+        // gun + auto-fires on aggroed zombies in range. Fixture=Sentry -> the client materializes a VIEW-ONLY
+        // UnturnedGodot.Sentry node (renders + aims off the replicated zombies, never DamageHit); the server-side
+        // ServerSentries tick owns the authoritative scan/fire/DamageHit (§3.1: both sides run the same SentryTargeting).
+        // Requires_Power (default true) -> a Consumer port fed by a wired generator; unpowered = inert. Cut 1 mounts a
+        // fixed eaglefire (no gun-id on the wire yet); a storage-selected gun is the follow-up. Health 150, Range 4 (dat).
+        public static readonly DeployableDef Sentry = new()
+        {
+            Id = 1244, Name = "Sentry", Fixture = FixtureKind.Sentry,
+            ProcBox = true,   // the turret is built procedurally in Sentry (pedestal + head + barrel) -- no .obj Model, so the placement ghost is a Size-box (mirrors the oil pump)
+            Size = new Vector3(0.4f, 0.95f, 0.4f), Offset = 0f, Radius = 0.5f, Range = 4f, Health = 150f,
+            Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = UnturnedGodot.Sentry.PortLocal, Watts = UnturnedGodot.Sentry.Watts } },   // Requires_Power: a 50 W consumer the local wire-solve gates on (mirrors the Sentry node's own port)
+        };
+
         // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
         //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
         //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
@@ -208,10 +222,11 @@ namespace UnturnedGodot
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump, Sentry };
         public static DeployableDef ById(ushort id) => id switch
         {
             1219 => OilPump,
+            1244 => Sentry,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

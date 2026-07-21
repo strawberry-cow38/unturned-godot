@@ -250,26 +250,14 @@ namespace UnturnedGodot
             }
             else if (verb == "sentry")
             {
-                // sentry [gun]  -- plant a WORKING auto-turret emplacement where you're aiming: an armed Sentry + a
-                // generator wired into its power port and running. It scans for zombies (48 m), tracks + auto-fires the
-                // mounted gun, sweeps when idle. Faithful to ItemSentryAsset (requiresPower default true) -- the wired
-                // generator is what makes it live; pull the wire / stop the gen and it goes inert.
+                // sentry  -- place an auto-turret where you're aiming. SP+MP: routed through the REAL PlaceDeployable
+                // intent (defId 1244), so the server owns it, a joined client sees it via the FixtureKind.Sentry
+                // ReplicaView, and the server-side ServerSentries drives the authoritative scan/fire/kill -- NOT a direct
+                // console spawn (a remote client would never see that). Cut 1 mounts a fixed eaglefire (no gun-id on the
+                // wire yet). Requires_Power: wire a running generator to its port to make it live (unpowered = inert).
                 if (Player == null) { Log("no player"); return; }
-                string gname = arg.Trim().Length > 0 ? arg.Trim().ToLowerInvariant().Replace(" ", "") : "eaglefire";
-                string dat = ProjectSettings.GlobalizePath($"res://content/{gname}.dat");
-                if (!System.IO.File.Exists(dat)) { Log($"no gun '{gname}' in content/ -- try eaglefire/maplestrike/..."); return; }
-                Node parent = Player.GetParent() ?? GetTree().Root;
-                var gunDef = GunDef.FromDatText(System.IO.File.ReadAllText(dat));
-                Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
-                float yawDeg = Mathf.RadToDeg(Mathf.Atan2(-fwd.X, -fwd.Z));   // face the turret the way the player faces (barrel is -Z)
-                var s = Sentry.Spawn(parent, at, yawDeg, gunDef);
-                var gen = Deployable.Spawn(parent, DeployableDef.Generator, at - fwd * 1.6f, yawDeg);   // a generator just behind it
-                var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
-                var sentIn = s.PowerPorts[0];
-                var wr = new Wire(); parent.AddChild(wr); wr.Source = genOut; wr.Consumer = sentIn; wr.AddToGroup("wires");
-                wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, sentIn.GlobalPosition }, valid: true);
-                gen.TogglePower(); PowerNet.Recompute(GetTree());
-                Log($"planted a {gname} sentry + wired generator -- it'll acquire + shred zombies within 48 m (unpowered = inert)");
+                Log(Player.RequestPlaceDeployable(1244, at, Mathf.RadToDeg(Mathf.Atan2(Player.GlobalTransform.Basis.Z.X, Player.GlobalTransform.Basis.Z.Z)))
+                    ? "placing a sentry (server-authoritative) -- wire a running generator to its port to power it" : "place failed (no net seam?)");
             }
             else if (verb == "trap")
             {

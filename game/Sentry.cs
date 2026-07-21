@@ -20,6 +20,9 @@ namespace UnturnedGodot
         public GunDef Gun;                                  // the mounted gun (Zombie_Damage / Range / Firerate)
         public bool RequiresPower = true;                   // ItemSentryAsset.requiresPower default -- inert unless its port is fed
         public const float Watts = 50f;                     // a sentry sips power (consumer draw)
+        public static readonly Vector3 PortLocal = new(0.22f, 0.3f, 0.18f);   // the Consumer port's local mount -- DeployableDef.Sentry mirrors this so the net schema + the node agree
+        public uint NetId;                                  // MP: the server entity this view mirrors (0 = the SP/host authoritative node)
+        public bool IsReplica;                              // MP: a client-side VIEW-ONLY replica -- renders + aims off the replicated zombies; the SERVER (ServerSentries) owns the scan/fire/DamageHit
         readonly System.Collections.Generic.List<ConnectionPort> _ports = new();
         ConnectionPort _powerPort;
         // IPowerDevice (a pure consumer, mirrors GasPump): the local PowerNet walks the "deployables" group + feeds ports.
@@ -40,16 +43,44 @@ namespace UnturnedGodot
         MeshInstance3D _tracer;       // brief shot line
         float _tracerT;
         ZombieController _target;
+        ulong _targetId;              // stable id (GetInstanceId) of the current target -- SentryTargeting keeps it across scans
         float _fireCd;                // seconds until the next shot is allowed
         float _sweepT;                // sweep phase clock
         float _baseYaw;               // the placed forward yaw the sweep oscillates around
         float _scanCd;                // ~10 Hz throttle on the acquire scan (source ScanForTargets cadence)
+        readonly System.Collections.Generic.List<SentryTargeting.Candidate> _cands = new();          // reused per scan
+        readonly System.Collections.Generic.Dictionary<ulong, ZombieController> _candNodes = new();  // id -> node, to resolve the chosen target back
+        static UnityEngine.Vector3 ToU(Vector3 v) => new(v.X, v.Y, v.Z);   // Godot -> the sim helper's UnityEngine.Vector3
+        static Vector3 ToG(UnityEngine.Vector3 v) => new(v.x, v.y, v.z);   // ...and back for the Godot raycast
 
         public static Sentry Spawn(Node parent, Vector3 pos, float yawDeg, GunDef gun)
         {
             var s = new Sentry { Gun = gun, Position = pos, RotationDegrees = new Vector3(0f, yawDeg, 0f) };
             parent.AddChild(s);
             return s;
+        }
+
+        // MP: the client's DeployableReplicaView calls this for a FixtureKind.Sentry entity -> a VIEW-ONLY turret that
+        // renders + aims off the replicated zombies (Fire draws a tracer but NEVER DamageHit -- the server-side
+        // ServerSentries owns the authoritative scan/fire/kill, running the SAME SentryTargeting). Cut 1 mounts a fixed
+        // eaglefire (no gun-id on the wire yet -- a storage-selected gun is the follow-up). Mirrors OilPump.Materialize.
+        public static Sentry Materialize(Node parent, Vector3 pos, float yawDegrees, uint netId)
+        {
+            var s = new Sentry { Gun = EaglefireGun(), Position = pos, RotationDegrees = new Vector3(0f, yawDegrees, 0f), NetId = netId, IsReplica = true };
+            parent.AddChild(s);
+            return s;
+        }
+
+        // the cut-1 fixed mount (until gun-id is on the wire): eaglefire, loaded once. On a replica the gun only drives
+        // the aim's range clamp (GunRange) + the tracer cadence (Firerate); ZombieDamage is unused (no DamageHit). A
+        // missing/failed load -> null -> the replica still aims (no clamp), so this never breaks materialization.
+        static GunDef _eaglefire;
+        static GunDef EaglefireGun()
+        {
+            if (_eaglefire != null) return _eaglefire;
+            try { _eaglefire = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/eaglefire.dat"))); }
+            catch { _eaglefire = null; }
+            return _eaglefire;
         }
 
         public override void _Ready()
@@ -70,7 +101,7 @@ namespace UnturnedGodot
 
             // wire into the local power net as a consumer (source Requires_Power). Mirrors GasPump: a Consumer port in the
             // "deployables" group the PowerNet walks, + the lazily-spawned PowerManager. Unpowered -> IsPowered false -> inert.
-            _powerPort = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Pos = new Vector3(0.22f, 0.3f, 0.18f), Watts = Watts }, "Sentry");
+            _powerPort = ConnectionPort.Create(this, new DeployableDef.Port { Kind = DeployableDef.PortKind.Consumer, Pos = PortLocal, Watts = Watts }, "Sentry");
             AddChild(_powerPort);
             _ports.Add(_powerPort);
             AddToGroup("deployables");
@@ -101,61 +132,51 @@ namespace UnturnedGodot
         float GunRange => Gun != null ? Gun.Range : float.PositiveInfinity;
 
         // Aim/LOS/hit point offset per zombie speciality (source ScanForTargets switch: NORMAL 1.75, SPRINTER 1.0,
-        // CRAWLER 0.25, MEGA 2.625). The port has no MEGA; the full-height humanoid types map to NORMAL's 1.75.
-        static float AimHeight(ZombieController z) => z.Speciality switch
-        {
-            ZombieController.ESpeciality.CRAWLER => 0.25f,
-            ZombieController.ESpeciality.SPRINTER => 1.0f,
-            _ => 1.75f,   // NORMAL / FLANKER / BURNER / ACID -- upright humanoids
-        };
+        // CRAWLER 0.25). Shared with the server via SentryTargeting.AimHeight(byte) so both sides hit the same point.
+        static float AimHeight(ZombieController z) => SentryTargeting.AimHeight((byte)z.Speciality);
 
-        // Keep the current target while it's alive + inside targetLossRadius (clamped to gun range); otherwise scan for
-        // the nearest LOS-clear, HUNTING ZombieController within detectionRadius (source ScanForTargets: nearest valid
-        // target with a clear ray). A NEW target must sit within a 60-degree FORWARD ARC of the head's current aim
-        // (source Vector3.Dot(dirToTarget, aimTransform.forward) >= 0.5) -- the turret can't snap to something behind it;
-        // it sweeps until a zombie enters its arc. The already-acquired target is EXEMPT (full targetLossRadius bubble).
-        // Source scans at ~10 Hz, and only aggroed (isHunting) zombies count -- both matched here.
+        // Pick the target through the SHARED SentryTargeting.ChooseTarget -- the SAME pure logic the server-side
+        // ServerSentries runs, so the turret visibly tracks whatever the server actually shoots (MP_PLAN §3.1: keep the
+        // current target while it's alive + inside targetLossRadius (clamped to gun range) + LOS-clear; else acquire the
+        // nearest hunting, LOS-clear zombie inside detectionRadius that sits in the 60-degree forward arc). Throttled to
+        // ~10 Hz (source ScanForTargets); between scans _target is kept + AimAt tracks it smoothly.
+        // Candidates come from the live "zombies" nodes -- a loopback host / SP has the real brains; a REMOTE client's
+        // puppets stay OUT of the group, so a remote replica finds none + sweeps (the kills still land server-side).
         void AcquireOrKeepTarget(float dt)
         {
-            float loss = Mathf.Min(TargetLossRadius, GunRange);
-            if (_target != null && GodotObject.IsInstanceValid(_target) && !_target.Dead
-                && _target.GlobalPosition.DistanceTo(GlobalPosition) <= loss && LineOfSightClear(_target))
-                return;                                      // keep the current target every frame (aim stays smooth)
-            _target = null;
-
-            if (_scanCd > 0f) { _scanCd -= dt; return; }     // throttle the (expensive) acquire scan to ~10 Hz (source)
+            if (_target != null && (!GodotObject.IsInstanceValid(_target) || _target.Dead)) { _target = null; _targetId = 0; }
+            if (_scanCd > 0f) { _scanCd -= dt; return; }     // between scans: keep _target (AimAt in _Process tracks it)
             _scanCd = 0.1f;
-            if (!CanTargetZombies) return;
-            float best = Mathf.Min(DetectionRadius, GunRange);
-            Vector3 aimFwd = _head != null ? -_head.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;   // source aimTransform.forward
-            Vector3 from = _muzzle != null ? _muzzle.GlobalPosition : GlobalPosition;
+            if (!CanTargetZombies) { _target = null; _targetId = 0; return; }
+
+            _cands.Clear(); _candNodes.Clear();
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
             {
-                if (n is not ZombieController z) continue;
-                if (!GodotObject.IsInstanceValid(z) || z.Dead) continue;
-                if (!z.IsHunting) continue;                  // source skips !zombie.isHunting (idle zombies aren't engaged)
-                float d = z.GlobalPosition.DistanceTo(GlobalPosition);
-                if (d > best) continue;
-                if ((z.GlobalPosition - from).Normalized().Dot(aimFwd) < 0.5f) continue;   // 60deg forward-arc gate for a NEW target
-                if (!LineOfSightClear(z)) continue;
-                best = d; _target = z;
+                if (n is not ZombieController z || !GodotObject.IsInstanceValid(z) || z.Dead) continue;
+                ulong id = z.GetInstanceId();
+                _cands.Add(new SentryTargeting.Candidate(id, ToU(z.GlobalPosition), (byte)z.Speciality, z.IsHunting));
+                _candNodes[id] = z;
             }
+            Vector3 muzzle = _muzzle != null ? _muzzle.GlobalPosition : GlobalPosition;
+            Vector3 aimFwd = _head != null ? -_head.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;   // source aimTransform.forward
+            ulong chosen = SentryTargeting.ChooseTarget(_cands, ToU(muzzle), ToU(aimFwd),
+                DetectionRadius, TargetLossRadius, GunRange, (a, b) => WorldLosClear(ToG(a), ToG(b)), _targetId);
+            _targetId = chosen;
+            _target = chosen != 0 && _candNodes.TryGetValue(chosen, out var t) ? t : null;
         }
 
-        // A ray from the muzzle to the target's chest: clear iff nothing solid is hit before the target (source uses
-        // RayMasks.BLOCK_SENTRY = world geometry). We raycast excluding the sentry itself and treat a hit that ISN'T the
-        // target as an obstruction.
-        bool LineOfSightClear(ZombieController z)
+        // A ray from `from` to `to`: clear iff no WORLD geometry blocks it (source RayMasks.BLOCK_SENTRY = world only, so
+        // a wall/terrain shields the target but OTHER zombies / their lingering corpse colliders never do -- that bug
+        // left the last zombie of a cleared horde permanently un-targetable). This is the LOS-query SentryTargeting takes.
+        bool WorldLosClear(Vector3 from, Vector3 to)
         {
-            if (_muzzle == null) return false;
-            Vector3 from = _muzzle.GlobalPosition, to = z.GlobalPosition + Vector3.Up * AimHeight(z);
-            // source RayMasks.BLOCK_SENTRY = WORLD geometry only. Raycast the world layer so a wall/terrain shields the
-            // target, but OTHER zombies never block the shot -- crucially their lingering corpse colliders can't shield a
-            // live zombie behind them (that bug left the last zombie of a cleared horde permanently un-targetable).
             var q = PhysicsRayQueryParameters3D.Create(from, to, ZombieNav.WorldLayer);
             q.CollideWithAreas = false;
-            return GetWorld3D().DirectSpaceState.IntersectRay(q).Count == 0;   // clear iff no world geometry between muzzle and target
+            return GetWorld3D().DirectSpaceState.IntersectRay(q).Count == 0;
         }
+
+        // per-shot LOS re-check at fire time (muzzle -> the target's aim point)
+        bool LineOfSightClear(ZombieController z) => _muzzle != null && WorldLosClear(_muzzle.GlobalPosition, z.GlobalPosition + Vector3.Up * AimHeight(z));
 
         void AimAt(Vector3 worldPos, float dt)
         {
@@ -182,9 +203,10 @@ namespace UnturnedGodot
 
         void Fire(ZombieController z)
         {
-            float dmg = Gun?.ZombieDamage ?? 40f;
             Vector3 point = z.GlobalPosition + Vector3.Up * AimHeight(z);
-            z.DamageHit(dmg, point, (point - _muzzle.GlobalPosition).Normalized());
+            // the SP/host authoritative sentry applies the damage; a client REPLICA only draws the tracer -- the
+            // server-side ServerSentries owns the DamageHit over the wire (a client must never apply server damage).
+            if (!IsReplica) z.DamageHit(Gun?.ZombieDamage ?? 40f, point, (point - _muzzle.GlobalPosition).Normalized());
             ShowTracer(_muzzle.GlobalPosition, point);
         }
 
