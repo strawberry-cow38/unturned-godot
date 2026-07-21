@@ -325,6 +325,8 @@ namespace UnturnedGodot
                     _sight = new Node3D { Name = "AimHook" };
                     mi.AddChild(_sight);
                     _sight.Position = gv.AimHook;
+                    if (System.Environment.GetEnvironmentVariable("UG_AIMHOOK") is string _ah && _ah.Split(',').Length == 3)   // tuning: override the per-gun ADS aim hook (find the value that centers iron sights, then bake it)
+                    { var _p = _ah.Split(','); _sight.Position = new Vector3(float.Parse(_p[0]), float.Parse(_p[1]), float.Parse(_p[2])); }
 
                     // muzzle flash = the REAL Muzzle_0 effect (ID 3; the Eaglefire.dat has Muzzle 3), extracted from
                     // core.masterbundle: a warm point light (Unity color (0.94,0.76,0.15), intensity 1.37 — NOT the old
