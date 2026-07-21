@@ -79,6 +79,15 @@ namespace UnturnedGodot
             Remotes = new RemotePlayers { Client = Client };
             AddChild(Remotes);
 
+            // SP/MP-unify (strawberry 2026-07-21 "props not getting destroyed in SP"): the local player's bullets stay
+            // CLIENT-side in the loopback (combat isn't wire-routed like deployables are), so PlayerController.StepBullets
+            // owns the hit -- but destructible HEALTH is server-owned (ServerDestructibles + the DestructibleNetSync
+            // mirror flips the field's alive-bit). Route a local prop hit to the authoritative server so the break
+            // replicates + the mirror hides it. Without this the StepBullets prop branch only spawned a surface impact
+            // and props never broke in SP (the ServerDestructibles break path only ran in real MP, where fire IS routed).
+            // Unconditional (not under ConsumeDeployables): the server owns destructibles in every loopback mode.
+            Player.NetDamageObject = (idx, dmg) => Server.DestructibleHost.DamageObject(idx, dmg, Server.Session.CurrentTick);
+
             // SP/MP-unify P1 (--spconsume): route the LOCAL player's deployable/power actions through the
             // loopback server and consume the results as replicas, instead of the direct SP path. The schema
             // is already registered on both ends above (@44-45) and Blueprints are set (@46), so the server

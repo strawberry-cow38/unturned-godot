@@ -1869,6 +1869,7 @@ namespace UnturnedGodot
         // but authority moves to the wire: bullets go cosmetic (no damage, no impact fx -- those render from
         // the server's ImpactFx/HitConfirmed events), melee/grenade intent is sent instead of resolved.
         public System.Action<Vector3, Vector3> NetFire;      // (muzzle, undeviated aim axis) -> Client.SendFire
+        public System.Action<int, float> NetDamageObject;    // (destructibleIndex, objectDamage) -> the authoritative ServerDestructibles in the loopback. In SP the local bullet path (StepBullets) owns hits, but destructible HEALTH is server-owned (ServerDestructibles mirrors the alive-bit back onto the field), so a local prop hit must route THERE, not break the field locally (a local break gets reverted by the next mirror tick). Null in pure --direct SP (no server) -> props inert there (documented fallback).
         public System.Action<bool, float> NetMelee;          // (strong, yawDegrees) -> Client.SendMelee
         public System.Action<Vector3, Vector3> NetGrenade;   // (origin, velocity) -> Client.SendGrenade
         public System.Action NetReload;                      // -> Client.SendReload (server ammo/reload clock tracks the local one)
@@ -2965,6 +2966,7 @@ namespace UnturnedGodot
             if (_viewmodel != null && (!_viewmodel.IsEquipComplete || _viewmodel.IsInspecting || _viewmodel.InAttachView)) return false;   // no firing until equip finishes, or during inspect / attachment menu (source canFire gates)
             float damage = Gun?.ZombieDamage ?? 34f;   // range/travel are encoded in the bullet's steps + velocity
             float vehDamage = Gun?.VehicleDamage ?? 40f;   // bullets hurt vehicles less than zombies (source Vehicle_Damage)
+            float objDamage = Gun?.ObjectDamage ?? 25f;    // bullets vs destructible props (source Object_Damage)
             _fireCd = Gun != null ? (Gun.Firerate + 1) / 50f : 0.1f;   // interval = firerate+1 ticks: source fires when clock-lastFire > firerate (STRICT >, UseableGun.tockShoot), so the real gap is firerate+1. Off-by-one made fast guns (zube firerate 4: 750rpm vs correct 600) fire ~25% too hot -- master's "very high ROF"
             Ammo--;
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
@@ -3009,7 +3011,7 @@ namespace UnturnedGodot
             for (int i = 0; i < pellets; i++)
             {
                 Vector3 dir = spread > 0.0001f ? DeviateInCone(aim, spread) : aim;
-                SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage, vehDamage);
+                SpawnBullet(muzzle, dir * muzzleVel, steps, gravity, damage, vehDamage, objDamage);
             }
             // AlertTool point-noise: an unsuppressed gunshot pulls zombies within earshot over to investigate. A silenced
             // barrel skips the alert ENTIRELY (source UseableGun ~936: only alert if barrel==null || !isSilenced) -> stealth.
@@ -3029,12 +3031,12 @@ namespace UnturnedGodot
         // decals/blood. The server's bullet is the authority; impact fx render from the broadcast ImpactFx
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; }
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
-        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage)
+        void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage)
         {
-            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, Cosmetic = NetFire != null, Tracer = MakeTracer() };
+            var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, Cosmetic = NetFire != null, Tracer = MakeTracer() };
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
             if (Gun?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
             _bullets.Add(b);
@@ -3074,6 +3076,11 @@ namespace UnturnedGodot
                             if (Terrain.Active != null && n.IsInGroup("terrain")) sf = Terrain.Active.SurfAt(point.X, point.Z);
                             else if (n.HasMeta(SurfMeta)) sf = (Surf)(int)n.GetMeta(SurfMeta);
                         }
+                        // destructible prop: route the hit to the authoritative destructible system (server-owned health).
+                        // In the loopback NetDamageObject -> Server.DestructibleHost.DamageObject; the break replicates +
+                        // the DestructibleNetSync mirror hides the mesh. (Cosmetic MP bullets never reach here -- line 3061.)
+                        if (collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
+                            NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), b.ObjectDamage);
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), sf);
                     }
                     if (Gun?.Action == "Rocket") { Explode(point, 9f, 250f, 200f, 300f); GD.Print("[rocket] launcher warhead detonated"); }   // rocket launcher: AoE blast on impact (vehicles hit hardest), reusing the grenade explode
