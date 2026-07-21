@@ -102,7 +102,7 @@ namespace UnturnedGodot
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos, MagPos; public Color AlbedoTint, SightColor; public bool Ejects; }
         static GunVisual Visual(string name) => name switch
         {
             "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
@@ -148,6 +148,17 @@ namespace UnturnedGodot
                     if (c.Length < 3 || !d.TryGetValue(c[0], out var gv)) continue;
                     gv.Sight = c[1]; gv.SightPos = V3(c[2]);
                     if (c.Length >= 4) { var rgb = V3(c[3]); gv.SightColor = new Color(rgb.X, rgb.Y, rgb.Z); }   // real per-gun sight _Color
+                    d[c[0]] = gv;
+                }
+            // per-gun default MAGAZINE (content/mags.tsv: name \t mag_model \t mount(x,y,z)) extracted from each gun's
+            // default Magazine item (tools/extract_gun_mags.py) -- every arsenal gun was missing its mag mesh.
+            string mp = ProjectSettings.GlobalizePath("res://content/mags.tsv");
+            if (System.IO.File.Exists(mp))
+                foreach (var line in System.IO.File.ReadAllLines(mp))
+                {
+                    var c = line.Split('\t');
+                    if (c.Length < 3 || !d.TryGetValue(c[0], out var gv)) continue;
+                    gv.Mag = c[1]; gv.MagPos = V3(c[2]);
                     d[c[0]] = gv;
                 }
             return d;
@@ -304,7 +315,7 @@ namespace UnturnedGodot
                     var magMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.07f, 0.07f, 0.08f), Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                     var magMesh = gv.Mag != null ? ContentProvider.ParseObj($"res://content/{gv.Mag}") : null;
                     if (magMesh != null)
-                        mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = new Vector3(0f, 0.0166f, 0.0238f) });
+                        mi.AddChild(new MeshInstance3D { Name = "Magazine", Mesh = magMesh, MaterialOverride = magMat, Position = gv.MagPos != Vector3.Zero ? gv.MagPos : new Vector3(0f, 0.0166f, 0.0238f) });   // per-gun mag mount (extracted); eaglefire/maple keep the tuned hardcoded pos
 
                     // Real Military Suppressor (Barrel attachment) — barrel.prefab Model_0 from core.masterbundle, converted
                     // (x,y,z)->(-x,y,-z). HIDDEN by default (guns ship with no barrel); the T menu toggles it, and when on it
