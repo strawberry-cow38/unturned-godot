@@ -122,12 +122,12 @@ namespace UnturnedGodot
         {
             if (_muzzle == null) return false;
             Vector3 from = _muzzle.GlobalPosition, to = z.GlobalPosition + Vector3.Up * 1.0f;
-            var q = PhysicsRayQueryParameters3D.Create(from, to);
-            q.CollideWithAreas = false;   // the sentry's own meshes carry no collider, so nothing to exclude
-            var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
-            if (hit.Count == 0) return true;   // nothing between the muzzle and the target
-            var collider = hit["collider"].As<GodotObject>();
-            return collider == z || (collider is Node cn && cn.IsAncestorOf(z));   // first thing hit is the target -> clear
+            // source RayMasks.BLOCK_SENTRY = WORLD geometry only. Raycast the world layer so a wall/terrain shields the
+            // target, but OTHER zombies never block the shot -- crucially their lingering corpse colliders can't shield a
+            // live zombie behind them (that bug left the last zombie of a cleared horde permanently un-targetable).
+            var q = PhysicsRayQueryParameters3D.Create(from, to, ZombieNav.WorldLayer);
+            q.CollideWithAreas = false;
+            return GetWorld3D().DirectSpaceState.IntersectRay(q).Count == 0;   // clear iff no world geometry between muzzle and target
         }
 
         void AimAt(Vector3 worldPos, float dt)
