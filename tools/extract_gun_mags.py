@@ -30,12 +30,26 @@ def mag_model(folder):   # the magazine.prefab's Model_0 mesh + its local pos (t
     p = next((o for pa, o in cont.items() if f"/magazines/{folder}/magazine.prefab" in pa.lower() and o.type.name == "GameObject"), None)
     if not p:   # fallback: some mags carry the model on item.prefab instead
         p = next((o for pa, o in cont.items() if f"/magazines/{folder}/item.prefab" in pa.lower() and o.type.name == "GameObject"), None)
-    if not p: return None, None
+    if not p: return None, None, None
     m0, lp = child_named(p, "Model_0")
-    if not m0: return None, None
+    if not m0: return None, None, None
     mf = comp_of(m0.read_typetree(), ("MeshFilter",))
     mesh = by_id.get(mf.read_typetree().get("m_Mesh", {}).get("m_PathID")) if mf else None
-    return mesh, (lp["x"], lp["y"], lp["z"])
+    return mesh, (lp["x"], lp["y"], lp["z"]), m0
+def mag_albedo(m0, gun):   # mag Model_0 MeshRenderer material _MainTex -> {gun}_mag_albedo.png (mirrors extract_gun.py's gun albedo)
+    mr = comp_of(m0.read_typetree(), ("MeshRenderer",)) if m0 else None
+    if not mr: return ""
+    mats = mr.read_typetree().get("m_Materials", [])
+    mo = by_id.get(mats[0].get("m_PathID")) if mats and isinstance(mats[0], dict) else None
+    if not mo: return ""
+    for pair in mo.read_typetree().get("m_SavedProperties", {}).get("m_TexEnvs", []):
+        nm, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (pair.get("first"), pair.get("second"))
+        if nm == "_MainTex" and isinstance(val, dict):
+            to = by_id.get(val.get("m_Texture", {}).get("m_PathID"))
+            if to:
+                to.read().image.convert("RGBA").save(os.path.join(content, gun + "_mag_albedo.png"))
+                return gun + "_mag_albedo.png"
+    return ""
 def export_mesh(mesh, outpath, name):
     txt = mesh.read().export(); Vs, Ns, Ts, Fs = [], [], [], []
     for line in txt.splitlines():
@@ -69,11 +83,12 @@ for gun in guns:
     if not m: print(f"{gun}: no Magazine (shell/bow/launcher) -- skip"); continue
     folder = smap.get(m.group(1))
     if not folder: print(f"{gun}: mag {m.group(1)} not in Items/Magazines -- skip"); continue
-    hook = gun_mag_hook(gun); mesh, mm0 = mag_model(folder)
+    hook = gun_mag_hook(gun); mesh, mm0, m0 = mag_model(folder)
     if not (hook and mesh and mm0): print(f"{gun}: mag {m.group(1)} ({folder}) -- hook={hook is not None} mesh={mesh is not None}"); continue
     nv = export_mesh(mesh, os.path.join(content, gun + "_mag.txt"), gun)
+    alb = mag_albedo(m0, gun)
     mount = (round(hook[0] + mm0[0], 4), round(hook[1] + mm0[1], 4), round(-(hook[2] + mm0[2]), 4))
-    lines.append(f"{gun}\t{gun}_mag.txt\t{mount[0]},{mount[1]},{mount[2]}")
-    print(f"{gun}: mag {m.group(1)} ({folder}) verts={nv} mount={mount}")
+    lines.append(f"{gun}\t{gun}_mag.txt\t{mount[0]},{mount[1]},{mount[2]}\t{alb}")
+    print(f"{gun}: mag {m.group(1)} ({folder}) verts={nv} mount={mount} albedo={alb or 'NONE'}")
 open(content + r"\mags.tsv", "w").write("\n".join(lines) + "\n")
 print("mags.tsv:", len(lines), "guns with default magazines")
