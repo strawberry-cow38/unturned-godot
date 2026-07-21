@@ -176,6 +176,7 @@ namespace UnturnedGodot
             };
             scene.AddChild(debris);
             debris.GlobalPosition = centre;
+            debris.VisibilityAabb = new Aabb(-halfExt - Vector3.One * 6f, (halfExt + Vector3.One * 6f) * 2f);   // same fast-particle cull guard as the chip path (review)
             var t = tree.CreateTimer(2.4);
             t.Timeout += () => { if (GodotObject.IsInstanceValid(debris)) debris.QueueFree(); };
         }
