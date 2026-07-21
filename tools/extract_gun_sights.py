@@ -75,3 +75,38 @@ for gun in guns:
     print(f"{gun}: sight {m.group(1)} ({folder}) verts={nv} mount={mount}")
 open(content + r"\sights.tsv", "w").write("\n".join(lines) + "\n")
 print("sights.tsv:", len(lines), "guns with default sights")
+
+# --- FIX the ADS aim hooks. guns_visual.tsv's aim was Sight-hook + a FIXED eaglefire offset (extract_gun.py:157,
+# "fit to eaglefire, tune later"), so any gun whose sight geometry differs aimed off-centre. Recompute the REAL aim =
+# z/x-neg(SightHook + sight Model_0 local + sight's Aim hook), the exact composition the hand-tuned eaglefire uses
+# (verified: reproduces its 0,-0.4688,-0.2098), and patch guns_visual.tsv's aim column per sighted gun.
+def sight_aim_local(folder):   # the sight prefab's Model_0 child "Aim" (the aperture eye point), local to Model_0
+    p = next((o for pa, o in cont.items() if f"/sights/{folder}/sight.prefab" in pa.lower() and o.type.name == "GameObject"), None)
+    if not p: return None
+    m0, _ = child_named(p, "Model_0")
+    if not m0: return None
+    _, alp = child_named(m0, "Aim")
+    return (alp["x"], alp["y"], alp["z"]) if alp else None
+
+real_aims = {}
+for gun in guns:
+    dat = os.path.join(content, gun + ".dat")
+    if not os.path.exists(dat): continue
+    m = re.search(r"^\s*Sight\s+(\d+)", open(dat, encoding="utf-8-sig", errors="ignore").read(), re.M)
+    if not m: continue
+    folder = smap.get(m.group(1))
+    if not folder: continue
+    hook = gun_sight_hook(gun); _, sm0 = sight_model(folder); aim = sight_aim_local(folder)
+    if not (hook and sm0 and aim): print(f"AIM {gun}: no Aim hook (sight {folder}) -- keeping old"); continue
+    real_aims[gun] = (round(-(hook[0]+sm0[0]+aim[0]), 4), round(hook[1]+sm0[1]+aim[1], 4), round(-(hook[2]+sm0[2]+aim[2]), 4))
+
+gvpath = content + r"\guns_visual.tsv"
+out, patched = [], 0
+for line in open(gvpath):
+    if not line.strip(): out.append(line.rstrip("\n")); continue
+    c = line.rstrip("\n").split("\t")
+    if len(c) >= 4 and c[0] in real_aims:
+        ra = real_aims[c[0]]; print(f"PATCH {c[0]}: aim {c[2]} -> {ra[0]},{ra[1]},{ra[2]}"); c[2] = f"{ra[0]},{ra[1]},{ra[2]}"; patched += 1
+    out.append("\t".join(c))
+open(gvpath, "w").write("\n".join(out) + "\n")
+print("patched", patched, "REAL aim hooks into guns_visual.tsv")
