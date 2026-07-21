@@ -1251,16 +1251,16 @@ namespace UnturnedGodot
 
             _ttLandmine = kind != null && kind.ToLowerInvariant().StartsWith("land");
             _ttTrapPos = Vector3.Zero;
-            _ttOffPos = new Vector3(0f, 0f, 2.4f);   // a step off the trap, outside the trigger radius
+            _ttOffPos = new Vector3(1.5f, 0f, 0.2f);   // a step off the trap (beside it), outside the trigger radius -- keeps both in frame for the shot
             _ttTrap = _ttLandmine ? Trap.SpawnLandmine(this, _ttTrapPos, 0f) : Trap.SpawnSpike(this, _ttTrapPos, 0f);
 
             _ttZombie = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> it stays where we place it
             AddChild(_ttZombie);
             _ttZombie.GlobalPosition = _ttOffPos;
 
-            var cam = new Camera3D { Current = true, Fov = 55f, Position = new Vector3(1.7f, 0.55f, 2.15f) };   // low + close so the 0.5 m spikes read around the victim's legs
+            var cam = new Camera3D { Current = true, Fov = 55f, Position = new Vector3(2.5f, 1.5f, 2.9f) };   // 3/4 view framing the spike cluster + the wounded zombie beside it
             AddChild(cam);
-            cam.LookAt(new Vector3(0f, 0.35f, 0f), Vector3.Up);
+            cam.LookAt(new Vector3(0.45f, 0.3f, 0.05f), Vector3.Up);
             GD.Print($"[TRAPTEST] {(_ttLandmine ? "LANDMINE" : "SPIKE")} at origin + a zombie stepping onto it -- expect {(_ttLandmine ? "a one-shot detonation (zombie DEAD + trap gone)" : "the spikes to chip it down over passes")}");
         }
 
@@ -3171,7 +3171,7 @@ namespace UnturnedGodot
             else if (_fireTest) { if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit
             else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
-            else if (_trapTest) { if (_ttClock < 0.7) return; }   // traptest: capture once the zombie has stepped ONTO the trap (spikes bite at ~0.5s)
+            else if (_trapTest) { if (_ttClock < 0.95) return; }   // traptest: capture during an OFF phase (~0.95s) -- the zombie's been bitten once + stepped beside the trap, so the spikes are fully visible
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state
