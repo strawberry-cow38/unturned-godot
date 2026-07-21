@@ -700,7 +700,7 @@ namespace UnturnedGodot
             // Zombie navmesh POCKETS -- bake NOW, in the FULL world, so the BUILDINGS (layer 1<<0) carve the mesh and
             // zombies route around them. This full-world bake is the CANONICAL one (save:true -> pei_pocket_N.res);
             // the terrain-only peiplay/navshot verify modes pass save:false so they never overwrite it.
-            if (mode != WorldMode.Client)   // client puppets don't path (the server owns zombie AI) -> skip the pocket load/bake entirely (C1: pure load-time savings)
+            if (mode != WorldMode.Client && (!noZombies || bakeNav))   // client puppets don't path; noZombies -> nothing consumes the navmesh (only zombie AI does) so skip the pocket load+sync entirely; bakeNav still forces it (offline bake tool) -- pure load-time savings
                 try { var _navPk = ZombieNav.LoadPockets(mapRoot); ZombieNav.BuildOrLoad(root, _navPk, overlay: false, save: bakeNav, bakeIfMissing: bakeNav); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world nav failed: {_ne.Message}"); }   // --bakenav BAKES+SAVES here; the game just LOADS the committed .res
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
