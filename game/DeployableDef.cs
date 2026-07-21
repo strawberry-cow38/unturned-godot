@@ -174,6 +174,11 @@ namespace UnturnedGodot
         public static readonly DeployableDef OilPump = new()
         {
             Id = 1219, Name = "Oil Pump", Fixture = FixtureKind.OilPump,
+            // ProcBox: the placement GHOST is a Size-box (the real pump-jack has no .obj Model -- its visual is built
+            // procedurally in OilPump.Materialize). Without this, BuildMesh -> LoadMesh() returns null -> an INVISIBLE
+            // ghost, so equipping it from the bag looked like "not equippable" (you saw nothing to place). The PLACED
+            // result is unaffected (it routes through RequestPlaceDeployable -> the fixture's Materialize, not BuildMesh).
+            ProcBox = true,
             Size = new Vector3(1.1f, 1.7f, 1.1f), Offset = 0f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 2500f,
         };
 

@@ -10,6 +10,21 @@ namespace UnturnedGodot.Testing
     // the server plants the entity (server owns the fuel reservoir), and the client's DeployableReplicaView
     // materializes it as a VIEW-ONLY OilPump node mirroring the replicated Fuel. Proves the replication half a
     // joined client needs -- a passing SP/host run proves nothing here. Modeled on net.shell_place_deployable.
+    // The oil pump's placement GHOST must render (ProcBox), or equipping it from the bag shows nothing to place and
+    // reads as "not equippable". Without ProcBox, BuildMesh -> LoadMesh() returns null (no .obj Model) -> invisible.
+    public class OilPumpEquippableGhost : GameTest
+    {
+        public override string Name => "oilpump.equippable_ghost";
+        public override IEnumerable<Step> Run()
+        {
+            var ghost = Deployable.BuildMesh(DeployableDef.OilPump, out _);
+            T.Check("the oil pump is a Fixture", DeployableDef.OilPump.Fixture == FixtureKind.OilPump);
+            T.Check("its placement ghost builds a VISIBLE mesh (equippable)", ghost != null && ghost.Mesh != null);
+            ghost?.QueueFree();
+            yield break;
+        }
+    }
+
     public class NetShellPlaceOilPump : GameTest
     {
         public override string Name => "net.shell_place_oilpump";
