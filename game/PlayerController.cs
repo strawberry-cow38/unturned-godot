@@ -131,6 +131,15 @@ namespace UnturnedGodot
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
+        // Fishing (UseableFisher port): a rod in hand -> hold LMB to charge the cast gauge, release to fling the
+        // bobber into water, a fish bites, press LMB in the window to land it. _fishing owns the state/timing sim.
+        FishingSim _fishing;
+        SDG.Unturned.Item _heldFisherItem;
+        Node3D _bobber;               // the floating bobber node while a line is deployed
+        Vector3 _bobberVel;           // simple projectile integration until it hits the water surface
+        MeshInstance3D _fishLine;     // rod-tip -> bobber line (ImmediateMesh, redrawn per frame)
+        float _fishTockAccum;         // 50 Hz accumulator driving the strength-gauge Tock at a framerate-independent rate
+        public bool HoldingFisher => _fishing != null;
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
         const float DeployPickupTime = 1.0f;    // hold F this long over a deployable to pick it back up (wires disconnect)
@@ -967,6 +976,7 @@ namespace UnturnedGodot
             var tool = ToolDef.ById(asset.id);
             if (tool != null) { EquipTool(tool, backing); return true; }   // Wire (65) / Rope (64) / future tools = data-driven (was hard-coded ids)
             if (asset.IsFuelContainer) { EquipHeldFuelCan(asset, backing); return true; }   // a gas can -> hold it, RMB a powered pump to fill it
+            if (asset.type == EItemType.FISHER) { EquipHeldFisher(asset, backing); return true; }   // a fishing rod -> hold it, LMB casts (UseableFisher)
             return false;
         }
 
@@ -986,6 +996,162 @@ namespace UnturnedGodot
             RelinkViewmodelLighting();
             GD.Print($"[fuel] holding {asset?.itemName} -- {(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f):0}/{asset?.fuelCapacity:0} fuel (RMB a powered pump to fill)");
         }
+
+        // Equip a fishing rod into the hand (UseableFisher). The rod mesh isn't ripped yet -> EmptyHands hold (the
+        // mechanic + the bobber are what matter). _fishing is a fresh sim configured from the rod + the PEI table +
+        // the caster's FISHING skill; LMB drives it (press to charge/cast/catch, release to fling).
+        public void EquipHeldFisher(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState(); ClearDeployable();   // ClearDeployable tears down any prior rod/line before we set up the new one
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldFisherItem = backing;
+            _fishing = new FishingSim((int)(Time.GetTicksMsec() & 0x7fffffff));
+            FishingContent.ConfigureForPei(_fishing, Skills.Level(EPlayerSupport.FISHING));
+            _fishTockAccum = 0f;
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { EmptyHands = true };   // no rod mesh yet -> bare arms in the ready hold
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[fishing] holding {asset?.itemName} -- hold LMB to charge the cast, release to fling, LMB again on the bite to reel it in");
+        }
+
+        // Tear down the rod + any deployed line/bobber. Called by every other equip path (so switching items ends the cast)
+        // and on dequip. Safe to call when not fishing.
+        void ClearFisher()
+        {
+            _fishing = null;
+            _heldFisherItem = null;
+            _fishTockAccum = 0f;
+            if (_bobber != null && IsInstanceValid(_bobber)) _bobber.QueueFree();
+            _bobber = null;
+            if (_fishLine != null && IsInstanceValid(_fishLine)) _fishLine.QueueFree();
+            _fishLine = null;
+        }
+
+        // LMB with a rod out (UseableFisher.startPrimary): in Idle it starts the strength gauge; while a line's out
+        // it attempts the catch -- a press inside the bite window lands the fish, otherwise it reels the line in empty.
+        void FisherPrimary()
+        {
+            if (_fishing == null) return;
+            var caught = _fishing.Press();
+            if (caught.Success) GrantFish(caught);
+        }
+
+        // LMB released (UseableFisher.stopPrimary): lock in the charged strength and cast -- TickFishing spawns the bobber.
+        void FisherRelease() => _fishing?.Release();
+
+        // The rod's actual reward: the caught fish into the bag + fishing XP (UseableFisher.GrantRewards). A fish whose
+        // id isn't registered in the catalog just no-ops the add (still pays XP), so a partial table can't crash a catch.
+        void GrantFish(in FishingCatch caught)
+        {
+            var asset = SDG.Unturned.Assets.find(caught.ItemId);
+            bool added = asset != null && Inventory != null && Inventory.tryAddItem(new SDG.Unturned.Item(caught.ItemId));
+            Skills.AwardExperience((uint)caught.Experience);
+            _invUI?.Refresh();
+            GD.Print($"[fishing] caught {(asset?.itemName ?? $"#{caught.ItemId}")}{(added ? "" : " (no bag room)")} +{caught.Experience} fishing xp");
+        }
+
+        // Per-frame fishing update (UseableFisher.tock + simulate + UpdateBobber). Charges the gauge at a steady 50 Hz,
+        // runs the server bite timer, flies the bobber until it hits water, and redraws the line. NetAvatar-safe (guarded
+        // by HoldingFisher, which only the local owner sets).
+        void TickFishing(float dt)
+        {
+            if (_fishing == null) return;
+
+            // 50 Hz strength-gauge tock (framerate-independent), so the cast bar sweeps at the retail rate
+            _fishTockAccum += dt;
+            while (_fishTockAccum >= 0.02f) { _fishing.Tock(); _fishTockAccum -= 0.02f; }
+
+            _fishing.Simulate(dt);
+
+            // cast just released -> fling the bobber out along the aim, scaled by the charged strength (retail
+            // AddForce Lerp(500,1000,strength); here a launch speed the sim's projectile step integrates)
+            if (_fishing.State == EFishingState.Casting && _bobber == null)
+                SpawnBobber();
+
+            if (_bobber != null && IsInstanceValid(_bobber))
+            {
+                if (_fishing.State == EFishingState.Casting)
+                {
+                    _bobberVel.Y -= 20f * dt;                                   // gravity until it splashes down
+                    _bobber.GlobalPosition += _bobberVel * dt;
+                    if (Terrain.HasWater && _bobber.GlobalPosition.Y <= Terrain.WaterSurfaceY)
+                    {
+                        var p = _bobber.GlobalPosition; p.Y = Terrain.WaterSurfaceY; _bobber.GlobalPosition = p;   // snap to the surface
+                        _bobberVel = Vector3.Zero;
+                        _fishing.ConfirmBobberInWater();
+                    }
+                    else if (_bobber.GlobalPosition.Y < Terrain.WaterSurfaceY - 60f)
+                        ClearFisher();   // fell into a dry gap / off-map -> abandon the cast
+                }
+                else if (_fishing.State == EFishingState.LineDeployed)
+                {
+                    // gentle bob on the surface; tug down while the fish is on the line (UpdateBobber)
+                    var p = _bobber.GlobalPosition;
+                    p.Y = Terrain.WaterSurfaceY + (_fishing.IsBiteWindowOpen ? -0.35f : Mathf.Sin(Time.GetTicksMsec() / 250f) * 0.06f);
+                    _bobber.GlobalPosition = p;
+                }
+                UpdateFishLine();
+            }
+
+            // reeled back to Idle (caught or empty) -> pull the bobber + line
+            if (_fishing.State == EFishingState.Idle && _bobber != null)
+            {
+                if (IsInstanceValid(_bobber)) _bobber.QueueFree();
+                _bobber = null;
+                if (_fishLine != null && IsInstanceValid(_fishLine)) { _fishLine.QueueFree(); _fishLine = null; }
+            }
+        }
+
+        void SpawnBobber()
+        {
+            Vector3 from = _cam != null ? _cam.GlobalPosition : GlobalPosition + Vector3.Up * 1.75f;
+            Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
+            _bobber = new MeshInstance3D
+            {
+                Mesh = new SphereMesh { Radius = 0.08f, Height = 0.16f },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.9f, 0.2f, 0.15f) },
+            };
+            GetTree().Root.AddChild(_bobber);
+            _bobber.GlobalPosition = from + fwd * 0.6f;
+            float speed = Mathf.Lerp(12f, 26f, _fishing.StrengthMultiplier);   // charged strength -> cast distance
+            _bobberVel = fwd * speed + Vector3.Up * 3f;                        // a little arc
+        }
+
+        void UpdateFishLine()
+        {
+            if (_bobber == null || !IsInstanceValid(_bobber)) return;
+            if (_fishLine == null || !IsInstanceValid(_fishLine))
+            {
+                _fishLine = new MeshInstance3D { Mesh = new ImmediateMesh(),
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.85f, 0.8f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
+                GetTree().Root.AddChild(_fishLine);
+            }
+            // rod tip ~ from the hand/camera; good enough without the rod mesh (bobber end is the real signal)
+            Vector3 tip = _cam != null ? _cam.GlobalPosition + (-_cam.GlobalTransform.Basis.Z) * 0.5f + _cam.GlobalTransform.Basis.X * 0.25f - _cam.GlobalTransform.Basis.Y * 0.2f
+                                       : GlobalPosition + Vector3.Up * 1.4f;
+            var im = (ImmediateMesh)_fishLine.Mesh;
+            im.ClearSurfaces();
+            im.SurfaceBegin(Mesh.PrimitiveType.Lines);
+            im.SurfaceAddVertex(tip);
+            im.SurfaceAddVertex(_bobber.GlobalPosition);
+            im.SurfaceEnd();
+        }
+
+        // --- test seams (headless GameTest can't drive the mouse) ---
+        internal void EquipFisherForTest(ushort rodId, int seed)
+        {
+            _fishing = new FishingSim(seed);
+            FishingContent.ConfigureForPei(_fishing, Skills != null ? Skills.Level(EPlayerSupport.FISHING) : (byte)0);
+            _heldFisherItem = new SDG.Unturned.Item(rodId);
+            _fishTockAccum = 0f;
+        }
+        internal FishingSim FisherSimForTest => _fishing;
+        internal void FisherPrimaryForTest() => FisherPrimary();
+        internal void FisherReleaseForTest() => FisherRelease();
+        internal void TickFishingForTest(float dt) => TickFishing(dt);
 
         // RMB with a gas can in hand + looking at a POWERED pump: fill the can as much as possible = min(its free space,
         // the pump's remaining fuel). One click (master). Nothing happens if the pump's unpowered/empty or the can's full.
@@ -1247,6 +1413,7 @@ namespace UnturnedGodot
         // Put the held deployable away (called whenever another item is equipped).
         void ClearDeployable()
         {
+            ClearFisher();   // every equip-into-hand path funnels through here -> a switch away from the rod also reels in the line
             if (_deployable == null && _placer == null) return;
             _deployable = null; _deployItem = null; _placeTimer = 0f;
             _placer?.QueueFree(); _placer = null;
@@ -2666,9 +2833,14 @@ namespace UnturnedGodot
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
                 else if (_heldFuelItem != null) TryDepositFuel();       // holding a gas can: LMB POURS fuel into the generator/vehicle you're aimed at (master)
+                else if (HoldingFisher) FisherPrimary();                // holding a rod: LMB press starts the cast gauge / lands the fish on the bite (UseableFisher.startPrimary)
                 else if (IsRepeatedMelee) { }                          // Repeated tool (blowtorch/chainsaw): LMB is a continuous HOLD driven by the use-tick (UpdateSalvage), never a swing/punch (source UseableMelee.startPrimary: isRepeated -> startSwing)
                 else if (_melee != null) MeleeAttack(false);            // LMB with a normal melee = WEAK swing (source UseableMelee)
                 else StartFire();
+            }
+            else if (@event is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left })
+            {
+                if (HoldingFisher) FisherRelease();   // LMB release with a rod: lock in the charge and fling the bobber (UseableFisher.stopPrimary)
             }
             else if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Right } rmb)
             {
@@ -3398,6 +3570,8 @@ namespace UnturnedGodot
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
+            if (HoldingFisher) TickFishing((float)delta);   // rod out: charge gauge + bite timer + bobber flight/bob + line
+
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)

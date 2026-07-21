@@ -203,6 +203,7 @@ namespace SDG.Unturned
             "Hat" => EItemType.HAT, "Pants" => EItemType.PANTS, "Shirt" => EItemType.SHIRT,
             "Mask" => EItemType.MASK, "Backpack" => EItemType.BACKPACK, "Vest" => EItemType.VEST,
             "Glasses" => EItemType.GLASSES, "Supply" => EItemType.SUPPLY,
+            "Fisher" => EItemType.FISHER,
             _ => EItemType.GENERIC,
         };
 
