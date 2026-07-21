@@ -3466,6 +3466,7 @@ namespace UnturnedGodot
         public bool IsDriving => _driving != null;
         public Vehicle Driving => _driving;   // the vehicle being driven (for zombies to swipe at, source targetPassengerVehicle)
         public void SetSuppressor(bool on) => _viewmodel?.SetSlotAttached("Barrel", on);   // test hook: toggle the silenced barrel
+        public void ForceAim(bool on) => _viewmodel?.SetAiming(on);   // test hook (UG_ADS firetest): drive ADS headlessly to render the real in-game aim view
 
         Vehicle NearestVehicle()
         {
