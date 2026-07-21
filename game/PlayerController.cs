@@ -3066,6 +3066,7 @@ namespace UnturnedGodot
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage
+                    else if (collider is Node bn && bn.HasMeta("beacon") && bn.GetMeta("beacon").As<Beacon>() is Beacon beac && GodotObject.IsInstanceValid(beac)) { beac.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); }   // shoot the horde beacon (Health 80) to cancel the horde early
                     else   // world/prop/terrain -> material impact; terrain samples its splatmap PER-POINT (sand/road/dirt/grass) for the real ground material
                     {
                         Surf sf = Surf.Concrete;

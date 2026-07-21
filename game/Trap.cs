@@ -128,22 +128,32 @@ namespace UnturnedGodot
                 if (n is ZombieController z && !z.Dead)
                 {
                     float d = z.GlobalPosition.DistanceTo(p);
-                    if (d <= Range2) z.DamageHit(SDG.Unturned.ExplosionMath.Linear(ZombieDamage, d, Range2), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
+                    if (d <= Range2 && !ExplosionBlocked(p, z.GlobalPosition)) z.DamageHit(SDG.Unturned.ExplosionMath.Linear(ZombieDamage, d, Range2), z.GlobalPosition, (z.GlobalPosition - p).Normalized());
                 }
             foreach (var n in GetTree().GetNodesInGroup("vehicles"))
                 if (n is Vehicle v && !v.Exploded)
                 {
                     float d = v.GlobalPosition.DistanceTo(p);
-                    if (d <= Range2) v.TakeDamage(SDG.Unturned.ExplosionMath.Linear(VehicleDamage, d, Range2));
+                    if (d <= Range2 && !ExplosionBlocked(p, v.GlobalPosition)) v.TakeDamage(SDG.Unturned.ExplosionMath.Linear(VehicleDamage, d, Range2));
                 }
             foreach (var n in GetTree().GetNodesInGroup("players"))
                 if (n is PlayerController pc)
                 {
                     float d = pc.GlobalPosition.DistanceTo(p);
-                    if (d <= Range2) pc.TakeDamage(SDG.Unturned.ExplosionMath.Squared(PlayerDamage, d, Range2) * (pc.Inventory?.ExplosionArmor ?? 1f), p);   // players take SQUARED falloff + worn explosion armor (matches PlayerController.Explode + source getPlayerExplosionArmor); zombies/vehicles use linear per the port convention
+                    if (d <= Range2 && !ExplosionBlocked(p, pc.GlobalPosition)) pc.TakeDamage(SDG.Unturned.ExplosionMath.Squared(PlayerDamage, d, Range2) * (pc.Inventory?.ExplosionArmor ?? 1f), p);   // players take SQUARED falloff + worn explosion armor (matches PlayerController.Explode + source getPlayerExplosionArmor); zombies/vehicles use linear per the port convention
                 }
             GD.Print($"[trap] LANDMINE detonated at {p} (r={Range2})");
             QueueFree();
+        }
+
+        // A wall/terrain between the blast and a target stops the damage (source Explode -> LineOfSightTest; mirrors
+        // PlayerController.ExplosionBlocked). Ray on the world layer only, at +0.8 m on both ends so it clears the ground.
+        bool ExplosionBlocked(Vector3 point, Vector3 target)
+        {
+            Vector3 a = point + Vector3.Up * 0.8f, b = target + Vector3.Up * 0.8f;
+            var q = PhysicsRayQueryParameters3D.Create(a, b, ZombieNav.WorldLayer);
+            q.CollideWithAreas = false;
+            return GetWorld3D().DirectSpaceState.IntersectRay(q).Count > 0;
         }
 
         void BuildVisual()

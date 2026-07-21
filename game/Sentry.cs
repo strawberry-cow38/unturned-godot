@@ -43,6 +43,7 @@ namespace UnturnedGodot
         float _fireCd;                // seconds until the next shot is allowed
         float _sweepT;                // sweep phase clock
         float _baseYaw;               // the placed forward yaw the sweep oscillates around
+        float _scanCd;                // ~10 Hz throttle on the acquire scan (source ScanForTargets cadence)
 
         public static Sentry Spawn(Node parent, Vector3 pos, float yawDeg, GunDef gun)
         {
@@ -85,39 +86,54 @@ namespace UnturnedGodot
             if (_tracerT > 0f) { _tracerT -= dt; if (_tracerT <= 0f && _tracer != null) _tracer.Visible = false; }
             if (!IsPowered) return;   // an unpowered sentry is inert -- no scan, aim, fire, or sweep (source Requires_Power)
 
-            AcquireOrKeepTarget();
+            AcquireOrKeepTarget(dt);
             if (_target != null && GodotObject.IsInstanceValid(_target))
             {
-                AimAt(_target.GlobalPosition + Vector3.Up * 1.0f, dt);
+                AimAt(_target.GlobalPosition + Vector3.Up * AimHeight(_target), dt);
                 if (_fireCd <= 0f && LineOfSightClear(_target)) { Fire(_target); _fireCd = (Gun?.Firerate ?? 8) / 50f * 3.33f; }   // source InteractableSentry: fireTime = firerateTicks/50 * 3.33 ("lower than normal firerate") -- a sentry fires 3.33x slower than a player holding the same gun
             }
             else Sweep(dt);
         }
 
-        // Keep the current target while it's alive + inside targetLossRadius; otherwise scan for the nearest LOS-clear
-        // ZombieController within detectionRadius (source ScanForTargets: nearest valid target with a clear ray).
-        // A NEW target must sit within a 60-degree FORWARD ARC of the head's current aim (source ScanForTargets:
-        // Vector3.Dot(dirToTarget, aimTransform.forward) >= 0.5) -- so the turret can't snap to something behind it; it
-        // has to SWEEP around until a zombie enters its arc. The already-acquired target is EXEMPT (it keeps the full
-        // targetLossRadius bubble below), matching source. A single sentry therefore covers ~its sweep+arc, not 360deg --
-        // hold a 360deg horde with several sentries facing out (see --beacontest).
-        // KNOWN SIMPLIFICATIONS still present (deliberate, documented): we scan every frame (source ~10 Hz), and we don't
-        // skip !zombie.isHunting (the port's ZombieController exposes no aggro/hunting flag), so we engage any zombie in
-        // range + arc + LOS.
-        void AcquireOrKeepTarget()
+        // The mounted gun's reach: source ScanForTargets clamps BOTH detection + target-loss to the weapon's range
+        // (targetDistance = Min(detectionRadius, maxWeaponDistance)), so a short-range gun (shotgun) can't detect or
+        // hitscan a zombie past where its bullet would actually reach. No gun -> no clamp.
+        float GunRange => Gun != null ? Gun.Range : float.PositiveInfinity;
+
+        // Aim/LOS/hit point offset per zombie speciality (source ScanForTargets switch: NORMAL 1.75, SPRINTER 1.0,
+        // CRAWLER 0.25, MEGA 2.625). The port has no MEGA; the full-height humanoid types map to NORMAL's 1.75.
+        static float AimHeight(ZombieController z) => z.Speciality switch
         {
+            ZombieController.ESpeciality.CRAWLER => 0.25f,
+            ZombieController.ESpeciality.SPRINTER => 1.0f,
+            _ => 1.75f,   // NORMAL / FLANKER / BURNER / ACID -- upright humanoids
+        };
+
+        // Keep the current target while it's alive + inside targetLossRadius (clamped to gun range); otherwise scan for
+        // the nearest LOS-clear, HUNTING ZombieController within detectionRadius (source ScanForTargets: nearest valid
+        // target with a clear ray). A NEW target must sit within a 60-degree FORWARD ARC of the head's current aim
+        // (source Vector3.Dot(dirToTarget, aimTransform.forward) >= 0.5) -- the turret can't snap to something behind it;
+        // it sweeps until a zombie enters its arc. The already-acquired target is EXEMPT (full targetLossRadius bubble).
+        // Source scans at ~10 Hz, and only aggroed (isHunting) zombies count -- both matched here.
+        void AcquireOrKeepTarget(float dt)
+        {
+            float loss = Mathf.Min(TargetLossRadius, GunRange);
             if (_target != null && GodotObject.IsInstanceValid(_target) && !_target.Dead
-                && _target.GlobalPosition.DistanceTo(GlobalPosition) <= TargetLossRadius && LineOfSightClear(_target))
-                return;
+                && _target.GlobalPosition.DistanceTo(GlobalPosition) <= loss && LineOfSightClear(_target))
+                return;                                      // keep the current target every frame (aim stays smooth)
             _target = null;
+
+            if (_scanCd > 0f) { _scanCd -= dt; return; }     // throttle the (expensive) acquire scan to ~10 Hz (source)
+            _scanCd = 0.1f;
             if (!CanTargetZombies) return;
-            float best = DetectionRadius;
+            float best = Mathf.Min(DetectionRadius, GunRange);
             Vector3 aimFwd = _head != null ? -_head.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;   // source aimTransform.forward
             Vector3 from = _muzzle != null ? _muzzle.GlobalPosition : GlobalPosition;
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
             {
                 if (n is not ZombieController z) continue;
                 if (!GodotObject.IsInstanceValid(z) || z.Dead) continue;
+                if (!z.IsHunting) continue;                  // source skips !zombie.isHunting (idle zombies aren't engaged)
                 float d = z.GlobalPosition.DistanceTo(GlobalPosition);
                 if (d > best) continue;
                 if ((z.GlobalPosition - from).Normalized().Dot(aimFwd) < 0.5f) continue;   // 60deg forward-arc gate for a NEW target
@@ -132,7 +148,7 @@ namespace UnturnedGodot
         bool LineOfSightClear(ZombieController z)
         {
             if (_muzzle == null) return false;
-            Vector3 from = _muzzle.GlobalPosition, to = z.GlobalPosition + Vector3.Up * 1.0f;
+            Vector3 from = _muzzle.GlobalPosition, to = z.GlobalPosition + Vector3.Up * AimHeight(z);
             // source RayMasks.BLOCK_SENTRY = WORLD geometry only. Raycast the world layer so a wall/terrain shields the
             // target, but OTHER zombies never block the shot -- crucially their lingering corpse colliders can't shield a
             // live zombie behind them (that bug left the last zombie of a cleared horde permanently un-targetable).
@@ -167,7 +183,7 @@ namespace UnturnedGodot
         void Fire(ZombieController z)
         {
             float dmg = Gun?.ZombieDamage ?? 40f;
-            Vector3 point = z.GlobalPosition + Vector3.Up * 1.0f;
+            Vector3 point = z.GlobalPosition + Vector3.Up * AimHeight(z);
             z.DamageHit(dmg, point, (point - _muzzle.GlobalPosition).Normalized());
             ShowTracer(_muzzle.GlobalPosition, point);
         }

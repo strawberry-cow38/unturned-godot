@@ -1197,8 +1197,8 @@ namespace UnturnedGodot
             GD.Print($"[FIRETEST] suppressed={suppressed} -- firing away from a zombie 25 m off; expect [ALERT] ONLY when unsuppressed");
         }
 
-        // --sentrytest: an auto-turret (Sentry) at origin + a stationary zombie 10 m ahead. The sentry should acquire it
-        // (range + LOS), aim the head, and auto-fire the mounted gun's Zombie_Damage on the gun's firerate until it drops.
+        // --sentrytest: an auto-turret (Sentry) at origin + a HUNTING zombie 10 m ahead advancing on it. The sentry
+        // should acquire it (hunting + in arc + range + LOS), aim the head, and auto-fire the gun's Zombie_Damage until it drops.
         // Logs the zombie HP falling -> DEAD (the PASS) or a timeout. --shot=OUT captures a frame of the turret tracking.
         void BuildSentryTest(string gun)
         {
@@ -1218,7 +1218,10 @@ namespace UnturnedGodot
             var gunDef = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath($"res://content/{gun ?? "eaglefire"}.dat")));
             _stSentry = Sentry.Spawn(this, Vector3.Zero, 0f, gunDef);   // barrel forward is -Z; the zombie is 10 m down -Z
 
-            _stZombie = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> stands still (a fixed target)
+            // Aggroed at the sentry -> IsHunting true, so it's a valid target (source ScanForTargets skips !isHunting
+            // idle zombies -- a sentry only engages attacking ones). It advances from 10 m dead ahead; the turret must
+            // acquire + drop it before it arrives.
+            _stZombie = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL, Target = _stSentry };
             AddChild(_stZombie);
             _stZombie.GlobalPosition = new Vector3(0f, 1.0f, -10f);
 

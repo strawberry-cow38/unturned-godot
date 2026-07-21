@@ -57,6 +57,7 @@ namespace UnturnedGodot
         // AI state (Zombie.cs)
         enum EHunt { NONE, PLAYER, POINT }   // Zombie.EHuntType (+ NONE = idle, not hunting)
         EHunt _hunt = EHunt.NONE;
+        public bool IsHunting => _hunt != EHunt.NONE;   // Zombie.isHunting: aggroed (chasing a player or a noise/point), not idle
         Vector3 _huntPoint;         // POINT target: where a noise (gunshot) came from
         float _lastHunted;          // when the current POINT alert fired (Zombie.lastHunted); ~3 s later -> give up
         bool _startled, _isAttacking;
@@ -240,7 +241,20 @@ namespace UnturnedGodot
             // do-nothing on a non-player Target); a NULL Target -- server worlds, where nobody wires one --
             // hunts the nearest registered player avatar instead of idling forever.
             PlayerController player;
-            if (Target != null) { if (Target is not PlayerController targetPlayer) return; player = targetPlayer; }
+            if (Target != null && Target is not PlayerController)
+            {
+                // A non-player Target -- a horde beacon / the objective a beacon sends its horde at. There's no player
+                // to sense, so PATH to the target's position via the point-hunt mover (nav + gravity + step-up + rig),
+                // refreshing the point each tick so it never times out while the target lives. (Was: a bare `return`
+                // that froze the whole horde whenever the beacon's defender wasn't a player -- e.g. a sentry-defended
+                // siege converged on nothing and only died because the sentries mowed them in place.)
+                _age += delta;
+                if (!_homeSet) { _home = GlobalPosition; _homeSet = true; }
+                _hunt = EHunt.POINT; _huntPoint = Target.GlobalPosition; _lastHunted = (float)_age;
+                TickPoint(g, dt);
+                return;
+            }
+            if (Target != null) player = (PlayerController)Target;
             else { player = PlayerRegistry.Nearest(GlobalPosition); if (player == null) return; }
             _age += delta;
             if (!_homeSet) { _home = GlobalPosition; _homeSet = true; }   // remember the spawn point

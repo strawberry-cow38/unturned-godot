@@ -34,6 +34,20 @@ namespace UnturnedGodot
 
         public override void _Ready() => BuildVisual();
 
+        // Shoot the beacon to cancel the horde early (source: the beacon is a Health-80 barricade; BarricadeManager.damage
+        // -> ManualOnDestroy self-destructs it and despawns the horde with NO loot). Bullets route here via StepBullets.
+        public void TakeDamage(float amount)
+        {
+            if (_done) return;
+            Health -= amount;
+            if (Health <= 0f)
+            {
+                GD.Print($"[beacon] DESTROYED (shot down) -> horde cancelled, no loot");
+                if (_active) Complete(dropLoot: false);   // despawns the horde (children of the beacon) + self-destructs
+                else QueueFree();
+            }
+        }
+
         public void Activate(Node3D defender)
         {
             if (_active) return;
@@ -133,6 +147,12 @@ namespace UnturnedGodot
             // a stout metal obelisk with a glowing red "engine" head (the part the source activates on placement)
             var metal = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.21f, 0.24f), Metallic = 0.5f, Roughness = 0.6f };
             AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.7f, 1.4f, 0.7f) }, Position = new Vector3(0f, 0.7f, 0f), MaterialOverride = metal });
+            // bullet-hittable collider (props layer bit 6, like the gas-pump/grid-power fixtures) so gunfire can destroy
+            // the beacon to cancel the horde. Mask 0 -> it never blocks movement, and it's off the sentry LOS layer (bit 0).
+            var hit = new StaticBody3D { CollisionLayer = 1u << 6, CollisionMask = 0 };
+            hit.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.7f, 1.4f, 0.7f) }, Position = new Vector3(0f, 0.7f, 0f) });
+            hit.SetMeta("beacon", this);   // StepBullets resolves this -> Beacon.TakeDamage
+            AddChild(hit);
             _glow = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.5f, 0.35f, 0.5f) }, Position = new Vector3(0f, 1.6f, 0f),
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.9f, 0.15f, 0.1f), EmissionEnabled = true, Emission = new Color(1f, 0.2f, 0.1f), EmissionEnergyMultiplier = 3f, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
             AddChild(_glow);
