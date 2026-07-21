@@ -26,6 +26,7 @@ namespace UnturnedGodot
         readonly Dictionary<uint, Sentry> _sentries = new();         // auto-turret fixtures (a view-only Sentry node; the server-side ServerSentries owns scan/fire/kill)
         readonly Dictionary<uint, Trap> _traps = new();              // trap fixtures (a view-only Trap node rendering the archetype; the server-side ServerTraps owns trigger/damage)
         readonly Dictionary<uint, Beacon> _beacons = new();          // horde-beacon fixtures (a view-only Beacon obelisk; the server-side ServerBeacon owns the horde -- whose zombies replicate normally)
+        readonly Dictionary<uint, Charge> _charges = new();          // C4 charge fixtures (a view-only Charge brick; the server-side ServerCharge owns the detonator blast)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
@@ -42,6 +43,8 @@ namespace UnturnedGodot
         public bool TryGetTrap(uint netId, out Trap trap) => _traps.TryGetValue(netId, out trap) && IsInstanceValid(trap);
         public int BeaconCount => _beacons.Count;   // how many beacon fixtures have materialized
         public bool TryGetBeacon(uint netId, out Beacon beacon) => _beacons.TryGetValue(netId, out beacon) && IsInstanceValid(beacon);
+        public int ChargeCount => _charges.Count;   // how many charge fixtures have materialized
+        public bool TryGetCharge(uint netId, out Charge charge) => _charges.TryGetValue(netId, out charge) && IsInstanceValid(charge);
 
         public override void _PhysicsProcess(double delta)
         {
@@ -133,6 +136,18 @@ namespace UnturnedGodot
                     }
                     continue;
                 }
+                if (def.Fixture == FixtureKind.Charge)
+                {
+                    // a C4 charge -- a VIEW-ONLY Charge brick. The server-side ServerCharge owns the detonator blast
+                    // (a command fires all the owner's charges); the replica just renders it + vanishes when the
+                    // server retires the entity (on detonation or salvage). Nothing to mirror per-tick.
+                    if (!_charges.TryGetValue(e.NetIdValue, out var charge) || !IsInstanceValid(charge))
+                    {
+                        charge = Charge.Materialize(parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees, e.NetIdValue);
+                        _charges[e.NetIdValue] = charge;
+                    }
+                    continue;
+                }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
@@ -150,6 +165,7 @@ namespace UnturnedGodot
             RetireMissing(_sentries, seen, sentry => { if (IsInstanceValid(sentry)) sentry.QueueFree(); });
             RetireMissing(_traps, seen, trap => { if (IsInstanceValid(trap)) trap.QueueFree(); });
             RetireMissing(_beacons, seen, beacon => { if (IsInstanceValid(beacon)) beacon.QueueFree(); });
+            RetireMissing(_charges, seen, charge => { if (IsInstanceValid(charge)) charge.QueueFree(); });
 
             // wires: create between the mapped ports (port index = def port order, the §2.6 sub-address).
             // Endpoints may be a Deployable body OR a GridPowerSource fixture (A3), so resolve ports from both.

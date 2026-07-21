@@ -31,6 +31,7 @@ namespace UnturnedGodot
         public ServerSentries Sentries { get; private set; }              // sentry fixtures: the server-authoritative scan/fire/kill (the view-only replica just renders)
         public ServerTraps Traps { get; private set; }                    // trap fixtures: the server-authoritative edge-trigger/bite/landmine (the view-only replica just renders)
         public ServerBeacon Beacon { get; private set; }                  // beacon fixtures: the server-authoritative horde spawn/track/reward (the view-only replica just renders the obelisk)
+        public ServerCharge Charge { get; private set; }                  // charge fixtures: the server-authoritative detonator blast (command-triggered via OnDetonateCharges, not per-tick)
 
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
@@ -173,6 +174,9 @@ namespace UnturnedGodot
             // (net.zombies.publish, above) auto-mints + publishes each -- a freshly-spawned member lands on the next tick.
             Beacon = new ServerBeacon(Server.Zombies, Server.Deployables, GetParent() ?? (Node)this);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Beacon.Tick(tick, (float)dt), "net.beacon.tick"));
+            // charge fixtures are command-triggered (no per-tick): the detonator command's OnDetonateCharges seam
+            // (wired below once the net layer lands it) calls Charge.DetonateAll(sender, tick).
+            Charge = new ServerCharge(Server.Zombies, Server.Deployables, Server.Combat);
             AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains (currently a no-op on dedicated -- see the AnimalField note above)
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => AnimalSync.Tick(), "net.animals.publish"));
             AppearanceSync = new PlayerAppearanceNetSync(Server);   // B10: publish each connected player's worn clothing + stance into the combat block

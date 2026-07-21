@@ -17,18 +17,26 @@ namespace UnturnedGodot
         public uint NetId;              // MP: the server entity this view mirrors (0 = the SP/host authoritative node)
         public bool IsReplica;          // MP: a client-side VIEW-ONLY replica -- renders the C4 only; the SERVER (ServerCharge) owns Detonate (the detonator is a server-routed command)
 
-        public static Charge Spawn(Node parent, Vector3 pos, float yawDeg = 0f)
+        // per-variant config (item id: Charge 1241 / Charge_Precision 1393) -- the archetype node (unspawned), the SINGLE
+        // source used by the spawners AND the server-side ServerCharge. 1241 = the field defaults (Range2 8, 200 flesh);
+        // 1393 = the precision override (smaller Range2 3 but heavier -- 250 flesh, 2000 to barricades/structures).
+        public static Charge ForDefId(ushort defId)
         {
-            var c = new Charge { Position = pos, RotationDegrees = new Vector3(0f, yawDeg, 0f) };
-            parent.AddChild(c);
+            var c = new Charge();
+            if (defId == 1393)
+            {
+                c.Label = "Precision Charge"; c.Range2 = 3f; c.PlayerDamage = c.ZombieDamage = c.AnimalDamage = 250f;
+                c.BarricadeDamage = c.StructureDamage = 2000f; c.VehicleDamage = 1000f; c.ResourceDamage = 4000f; c.ObjectDamage = 2000f;
+            }
             return c;
         }
-        // Charge_Precision (id1393): a smaller blast (Range2 3) but heavier -- 250 to flesh, 2000 to barricades/structures.
-        public static Charge SpawnPrecision(Node parent, Vector3 pos, float yawDeg = 0f)
+        public static Charge Spawn(Node parent, Vector3 pos, float yawDeg = 0f) => SpawnDef(parent, pos, yawDeg, 1241);
+        public static Charge SpawnPrecision(Node parent, Vector3 pos, float yawDeg = 0f) => SpawnDef(parent, pos, yawDeg, 1393);
+        static Charge SpawnDef(Node parent, Vector3 pos, float yawDeg, ushort defId)
         {
-            var c = Spawn(parent, pos, yawDeg);
-            c.Label = "Precision Charge"; c.Range2 = 3f; c.PlayerDamage = c.ZombieDamage = c.AnimalDamage = 250f;
-            c.BarricadeDamage = c.StructureDamage = 2000f; c.VehicleDamage = 1000f; c.ResourceDamage = 4000f; c.ObjectDamage = 2000f;
+            var c = ForDefId(defId);
+            c.Position = pos; c.RotationDegrees = new Vector3(0f, yawDeg, 0f);
+            parent.AddChild(c);
             return c;
         }
 
