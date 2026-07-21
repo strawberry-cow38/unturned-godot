@@ -111,7 +111,14 @@ namespace UnturnedGodot
             Vector3 halfExt = new Vector3(Mathf.Clamp(worldSize.X * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Y * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Z * 0.5f, 0.2f, 8f));
             Vector3 centre = mesh.GlobalTransform * (aabb.Position + aabb.Size * 0.5f);
 
-            // the prop's ACTUAL retail Rubble_Effect (real sprite + authored params), if we extracted it
+            var propMat = mesh.MaterialOverride as StandardMaterial3D;
+
+            // Every break kicks up a visible DUST poof. Retail rubble ALSO drops the section mesh as physics debris +
+            // plays a bigger FINALE effect (InteractableObjectRubble.updateRubble) -- the raw Rubble_Effect is a sparse
+            // 8-16 chip burst, too easy to miss on its own; the dust gives the "it came apart" read on every break.
+            SpawnDust(scene, tree, centre, halfExt, radius, propMat != null ? propMat.AlbedoColor : new Color(0.62f, 0.58f, 0.52f));
+
+            // the prop's ACTUAL retail Rubble_Effect debris chips on TOP of the dust, if we extracted it
             if (RubbleFx.TryGet(r.EffectId, out var fx) && fx.Tex != null)
             {
                 var fmat = new StandardMaterial3D
@@ -144,10 +151,8 @@ namespace UnturnedGodot
                 return;
             }
 
-            // FALLBACK (effect id 0 / no extracted sprite): a generic material-tint debris puff.
-            // DEBRIS: tumbling cubes wearing the prop's own material (falls under gravity, ~1.6 s). Reusing the shared
-            // material reference is cheap + makes the chunks look like the thing that broke.
-            var propMat = mesh.MaterialOverride as StandardMaterial3D;
+            // FALLBACK (effect id 0 / no extracted sprite): generic tumbling debris cubes wearing the prop's own material
+            // (the dust above already fired). Falls under gravity, ~1.6 s.
             Material debrisMat = propMat ?? new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.5f, 0.44f) };
             int n = Mathf.Clamp(Mathf.RoundToInt(radius * 14f), 12, 48);
             var debris = new CpuParticles3D
@@ -162,22 +167,26 @@ namespace UnturnedGodot
             };
             scene.AddChild(debris);
             debris.GlobalPosition = centre;
+            var t = tree.CreateTimer(2.4);
+            t.Timeout += () => { if (GodotObject.IsInstanceValid(debris)) debris.QueueFree(); };
+        }
 
-            // DUST poof: a SOFT smoke sprite (veh_smoke_0.png) so it reads as a dust cloud, not hard squares. Mipmaps
-            // are essential -- a runtime-loaded texture has none, so minified/dense particles sample BLACK without them
-            // (the vehicle-smoke black-cluster bug). Tinted toward the prop albedo; a one-shot puff that drifts + fades.
-            Color tint = propMat != null ? propMat.AlbedoColor : new Color(0.62f, 0.58f, 0.52f);
+        /// <summary>A soft dust poof (veh_smoke sprite -- mipmapped so dense particles don't sample black, the vehicle-
+        /// smoke bug), sized to the prop + tinted toward its albedo. Fired on EVERY break so a break always reads, with
+        /// the real Rubble_Effect chips (or generic debris) layered on top.</summary>
+        static void SpawnDust(Node scene, SceneTree tree, Vector3 centre, Vector3 halfExt, float radius, Color tint)
+        {
             var dustMat = new StandardMaterial3D
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, VertexColorUseAsAlbedo = true,
                 AlbedoColor = new Color(Mathf.Lerp(tint.R, 0.85f, 0.65f), Mathf.Lerp(tint.G, 0.82f, 0.65f), Mathf.Lerp(tint.B, 0.76f, 0.65f), 0.55f),
             };
-            string sp = ProjectSettings.GlobalizePath("res://content/veh_smoke_1.png");   // the LIGHTER smoke sprite -> reads as dust, not heavy smoke
+            string sp = ProjectSettings.GlobalizePath("res://content/veh_smoke_1.png");   // the LIGHTER smoke sprite -> reads as dust
             if (File.Exists(sp)) { var simg = Image.LoadFromFile(sp); if (simg != null) { simg.GenerateMipmaps(); dustMat.AlbedoTexture = ImageTexture.CreateFromImage(simg); } }
             var dust = new CpuParticles3D
             {
-                Emitting = true, OneShot = true, Amount = Mathf.Clamp(n / 2, 8, 24), Lifetime = 1.15f, Explosiveness = 0.85f, Randomness = 0.5f,
+                Emitting = true, OneShot = true, Amount = Mathf.Clamp(Mathf.RoundToInt(radius * 8f), 8, 24), Lifetime = 1.15f, Explosiveness = 0.85f, Randomness = 0.5f,
                 Direction = Vector3.Up, Spread = 70f, InitialVelocityMin = 0.4f, InitialVelocityMax = 1.4f,
                 Gravity = new Vector3(0f, 0.3f, 0f), ScaleAmountMin = radius * 0.5f, ScaleAmountMax = radius * 1.1f,
                 EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
@@ -185,9 +194,8 @@ namespace UnturnedGodot
             };
             scene.AddChild(dust);
             dust.GlobalPosition = centre + Vector3.Up * radius * 0.3f;
-
             var t = tree.CreateTimer(2.4);
-            t.Timeout += () => { if (GodotObject.IsInstanceValid(debris)) debris.QueueFree(); if (GodotObject.IsInstanceValid(dust)) dust.QueueFree(); };
+            t.Timeout += () => { if (GodotObject.IsInstanceValid(dust)) dust.QueueFree(); };
         }
 
         // ---- catalog: guid -> rubble scalars, parsed from content/objects/rubble.txt ----
