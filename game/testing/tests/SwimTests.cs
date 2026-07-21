@@ -70,4 +70,37 @@ namespace UnturnedGodot.Testing
             Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea;
         }
     }
+
+    // Can't use a weapon while swimming (source PlayerEquipment: submerged/SWIM + !canUseUnderwater blocks the use;
+    // "No punching while swimming"). Guns are canUseUnderwater=false, so firing is blocked in the SWIM stance and
+    // resumes once out of the water.
+    public class PlayerSwimBlocksFire : GameTest
+    {
+        public override string Name => "player.swim_blocks_fire";
+        public override IEnumerable<Step> Run()
+        {
+            bool hadWater = Terrain.HasWater; float oldSea = Terrain.SeaLevelY;
+            Rigs.Ground(World);
+            Terrain.HasWater = true;
+            Terrain.SeaLevelY = 8f;                                   // ocean surface at Y8
+            var p = Rigs.Player(World, new Vector3(0f, 2f, 0f));      // feet Y2 -> body/eyes submerged -> SWIM (eaglefire in hand)
+            p.Ammo = 30;
+            yield return Ticks(6);
+            T.Check($"submerged player is swimming (stance={p.Stance})", p.Stance == EPlayerStance.SWIM);
+
+            // fire attempts over many ticks (equip anim completes + cooldown clears) -> STILL blocked while swimming
+            for (int i = 0; i < 120 && p.Stance == EPlayerStance.SWIM; i++) { p.Fire(); yield return Ticks(1); }
+            T.Check($"firing is BLOCKED the whole time swimming (Ammo {p.Ammo} == 30)", p.Ammo == 30);
+
+            // teeth/control: lower the sea far below -> not submerged -> the SAME gun now fires
+            Terrain.SeaLevelY = -100f;
+            yield return Ticks(6);
+            T.Check($"out of the water the player is no longer swimming (stance={p.Stance})", p.Stance != EPlayerStance.SWIM);
+            int shots = 0;
+            for (int i = 0; i < 200 && p.Ammo == 30; i++) { if (p.Fire()) shots++; yield return Ticks(1); }
+            T.Check($"out of the water the gun FIRES (Ammo {p.Ammo} < 30, {shots} shots)", p.Ammo < 30);
+
+            Terrain.HasWater = hadWater; Terrain.SeaLevelY = oldSea;
+        }
+    }
 }
