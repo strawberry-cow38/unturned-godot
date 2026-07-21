@@ -1297,6 +1297,7 @@ namespace UnturnedGodot
             var gunDef = GunDef.FromDatText(System.IO.File.ReadAllText(ProjectSettings.GlobalizePath("res://content/eaglefire.dat")));
             _bnSentry = Sentry.Spawn(this, new Vector3(2f, 0f, 0f), 0f, gunDef);
             var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(3.7f, 0f, 1.3f), 0f);
+            gen.FuelMax = gen.Fuel = 1_000_000f;   // don't let the gen run dry mid-siege (a real gen stopping when empty is correct; the test isolates the beacon lifecycle)
             var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
             var sentIn = _bnSentry.PowerPorts[0];
             var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = sentIn; wr.AddToGroup("wires");
@@ -3100,7 +3101,6 @@ namespace UnturnedGodot
                 if (_bnBeacon.Done) { GD.Print($"[BEACONTEST] PASS -- horde cleared ({_bnBeacon.Killed}/{_bnBeacon.Wave} killed), beacon self-destructing + rewards dropped"); if (_shotPath == null) GetTree().Quit(); }
                 else if (_bnFrame % 30 == 0) GD.Print($"[BEACONTEST] f{_bnFrame}: killed {_bnBeacon.Killed}, alive {_bnBeacon.Alive}, remaining {_bnBeacon.Remaining}");
                 if (!_bnBeacon.Done && _bnFrame > 1500) { GD.Print($"[BEACONTEST] TIMEOUT -- killed {_bnBeacon.Killed}/{_bnBeacon.Wave}, alive {_bnBeacon.Alive}, remaining {_bnBeacon.Remaining} (sentry not clearing?)"); GetTree().Quit(); }
-                if (_bnFrame == 600) foreach (var n in GetTree().GetNodesInGroup("zombies")) if (n is ZombieController z && IsInstanceValid(z) && !z.Dead) GD.Print($"[BEACONDBG] stuck {z.Speciality} at {z.GlobalPosition} dist-to-sentry {z.GlobalPosition.DistanceTo(_bnSentry.GlobalPosition):0.0}m hp {z.Health:0}");
             }
             if (_peiPlay && _peiPlayer != null)
             {

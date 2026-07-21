@@ -86,7 +86,6 @@ namespace UnturnedGodot
             if (!IsPowered) return;   // an unpowered sentry is inert -- no scan, aim, fire, or sweep (source Requires_Power)
 
             AcquireOrKeepTarget();
-            if (_target == null) foreach (var dn in GetTree().GetNodesInGroup("zombies")) if (dn is ZombieController dz && GodotObject.IsInstanceValid(dz) && !dz.Dead) { GD.Print($"[SENTRYDBG] no target; live zombie dist {dz.GlobalPosition.DistanceTo(GlobalPosition):0.0} los {LineOfSightClear(dz)} muzzle {(_muzzle != null ? _muzzle.GlobalPosition : Vector3.Zero)}"); break; }
             if (_target != null && GodotObject.IsInstanceValid(_target))
             {
                 AimAt(_target.GlobalPosition + Vector3.Up * 1.0f, dt);
