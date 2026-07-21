@@ -168,6 +168,15 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = UnturnedGodot.GasPump.PortLocal, Watts = UnturnedGodot.GasPump.Watts } },
         };
 
+        // Oil pump / derrick (source InteractableOil, id1219): a placed FIXTURE that regenerates a server-owned fuel
+        // reservoir you siphon from. Fixture=OilPump -> the client materializes a VIEW-ONLY UnturnedGodot.OilPump node
+        // that mirrors entity.Fuel (the server runs regen/siphon). Health 450 (shootable), Fuel = Fuel_Capacity 2500.
+        public static readonly DeployableDef OilPump = new()
+        {
+            Id = 1219, Name = "Oil Pump", Fixture = FixtureKind.OilPump,
+            Size = new Vector3(1.1f, 1.7f, 1.1f), Offset = 0f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 2500f,
+        };
+
         // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
         //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
         //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
@@ -194,9 +203,10 @@ namespace UnturnedGodot
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump };
         public static DeployableDef ById(ushort id) => id switch
         {
+            1219 => OilPump,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

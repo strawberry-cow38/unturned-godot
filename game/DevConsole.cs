@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "oilpump", "sentry", "trap", "beacon", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -239,6 +239,14 @@ namespace UnturnedGodot
                 if (Player == null) { Log("no player"); return; }
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
+            }
+            else if (verb == "oilpump" || verb == "oil")
+            {
+                // oilpump  -- place an oil pump (renewable fuel reservoir) where you're aiming. SP+MP: routed through the
+                // REAL PlaceDeployable intent (defId 1219), so the server owns it + a joined client sees it via the
+                // FixtureKind.OilPump ReplicaView -- NOT a direct/console spawn (which a remote client would never see).
+                if (Player == null) { Log("no player"); return; }
+                Log(Player.RequestPlaceDeployable(1219, at, 0f) ? "placing an oil pump (server-authoritative)" : "place failed (no net seam?)");
             }
             else if (verb == "sentry")
             {
