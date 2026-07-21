@@ -21,6 +21,8 @@ namespace UnturnedGodot
         public int Rewards = 7;         // reward drops on completion (id1194)
         public float Health = 80f;      // beacon hp -- destroy it to cancel the horde early (Beacon.dat Health 80)
         public Node3D Defender;         // what the horde converges on (the player / a sentry)
+        public uint NetId;              // MP: the server entity this view mirrors (0 = the SP/host authoritative node)
+        public bool IsReplica;          // MP: a client-side VIEW-ONLY replica -- renders the obelisk only; the SERVER (ServerBeacon) owns the horde spawn/track/reward (its zombies replicate via the normal ZombieReplication)
 
         // stand-in for Reward_ID's spawn table: eaglefire/maplestrike/ace/augewehr/avenger/nykorev/grizzly/zubeknakov
         static readonly int[] RewardPool = { 4, 363, 107, 1362, 1021, 126, 297, 122 };
@@ -34,11 +36,21 @@ namespace UnturnedGodot
 
         public override void _Ready() => BuildVisual();
 
+        // MP: the client's DeployableReplicaView calls this for a FixtureKind.Beacon entity -> a VIEW-ONLY obelisk. The
+        // SERVER (ServerBeacon) owns Activate/horde/reward; the summoned zombies replicate through the normal
+        // ZombieReplication (rendered as puppets), so the replica needs no horde logic. Mirrors OilPump.Materialize.
+        public static Beacon Materialize(Node parent, Vector3 pos, float yawDegrees, uint netId)
+        {
+            var b = new Beacon { Position = pos, RotationDegrees = new Vector3(0f, yawDegrees, 0f), NetId = netId, IsReplica = true };
+            parent.AddChild(b);
+            return b;
+        }
+
         // Shoot the beacon to cancel the horde early (source: the beacon is a Health-80 barricade; BarricadeManager.damage
         // -> ManualOnDestroy self-destructs it and despawns the horde with NO loot). Bullets route here via StepBullets.
         public void TakeDamage(float amount)
         {
-            if (_done) return;
+            if (IsReplica || _done) return;   // a replica's beacon HP is server-owned -- shooting routes to the server (like a zombie), never a local cancel
             Health -= amount;
             if (Health <= 0f)
             {
@@ -50,7 +62,7 @@ namespace UnturnedGodot
 
         public void Activate(Node3D defender)
         {
-            if (_active) return;
+            if (IsReplica || _active) return;   // the horde is server-authoritative -- ServerBeacon activates it, never a client replica
             Defender = defender;
             _remaining = Wave;
             _active = true;
@@ -71,6 +83,7 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
+            if (IsReplica) return;   // a client REPLICA only renders the obelisk -- ServerBeacon owns the horde spawn/track/reward; removal comes from the ReplicaView when the server retires the entity
             if (_done) { _freeT -= delta; if (_freeT <= 0.0) QueueFree(); return; }   // brief "cleared" beat, then self-destruct
             if (!_active) return;
 

@@ -210,6 +210,13 @@ namespace UnturnedGodot
         public static readonly DeployableDef TrapLandmine = new()
         { Id = 1101, Name = "Landmine", Fixture = FixtureKind.Trap, ProcBox = true, Size = new Vector3(0.4f, 0.12f, 0.4f), Radius = 0.5f, Range = 4f, Health = 1f };
 
+        // HORDE BEACON (source InteractableBeacon, Beacon.dat id1194): a placed barricade that summons a bounded zombie
+        // wave. Fixture=Beacon -> the client materializes a VIEW-ONLY UnturnedGodot.Beacon obelisk; the server-side
+        // ServerBeacon owns the Activate/horde-spawn/reward (its zombies replicate through the normal ZombieReplication).
+        // ProcBox: the obelisk is built procedurally in Beacon.BuildVisual (no .obj). Health 80 (shoot it to cancel).
+        public static readonly DeployableDef Beacon = new()
+        { Id = 1194, Name = "Horde Beacon", Fixture = FixtureKind.Beacon, ProcBox = true, Size = new Vector3(0.7f, 1.6f, 0.7f), Radius = 0.5f, Range = 4f, Health = 80f };
+
         // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
         //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
         //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
@@ -236,7 +243,7 @@ namespace UnturnedGodot
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump, Sentry, TrapSpike, TrapBarbedwire, TrapCaltrop, TrapLandmine };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump, Sentry, TrapSpike, TrapBarbedwire, TrapCaltrop, TrapLandmine, Beacon };
         public static DeployableDef ById(ushort id) => id switch
         {
             1219 => OilPump,
@@ -245,6 +252,7 @@ namespace UnturnedGodot
             386 => TrapBarbedwire,
             382 => TrapCaltrop,
             1101 => TrapLandmine,
+            1194 => Beacon,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

@@ -276,16 +276,13 @@ namespace UnturnedGodot
             }
             else if (verb == "beacon")
             {
-                // beacon  -- plant a horde beacon where you're aiming + activate it. It summons a bounded zombie wave
-                // (Beacon id1194 = Wave 100) that converges on you; clear the whole wave and it self-destructs + drops
-                // rewards. Set up sentries + traps first, then pop it to siege your base. Source InteractableBeacon.
+                // beacon  -- plant + activate a horde beacon where you're aiming. SP+MP: routed through the REAL
+                // PlaceDeployable intent (id1194), so the server owns the horde (ServerBeacon spawns + tracks the wave,
+                // its zombies replicating via ZombieReplication) + a joined client sees the obelisk via the
+                // FixtureKind.Beacon ReplicaView. Summons a bounded wave; clear it -> self-destructs + drops rewards.
                 if (Player == null) { Log("no player"); return; }
-                Node parent = Player.GetParent() ?? GetTree().Root;
-                var b = new Beacon();
-                parent.AddChild(b);
-                b.GlobalPosition = at;
-                b.Activate(Player);
-                Log($"horde beacon ACTIVATED -- wave {b.Wave} inbound, defend it! clear it -> self-destructs + drops {b.Rewards} rewards");
+                float byaw = Mathf.RadToDeg(Mathf.Atan2(Player.GlobalTransform.Basis.Z.X, Player.GlobalTransform.Basis.Z.Z));
+                Log(Player.RequestPlaceDeployable(1194, at, byaw) ? "placing a horde beacon (server-authoritative) -- defend it!" : "place failed (no net seam?)");
             }
             else if (verb == "unarmed")
             {
