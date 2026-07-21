@@ -263,6 +263,22 @@ namespace UnturnedGodot
                 gen.TogglePower(); PowerNet.Recompute(GetTree());
                 Log($"planted a {gname} sentry + wired generator -- it'll acquire + shred zombies within 48 m (unpowered = inert)");
             }
+            else if (verb == "trap")
+            {
+                // trap [spike|barbedwire|caltrop|landmine]  -- plant a trap where you're aiming. It arms after 0.25 s,
+                // then bites whatever steps into it: spikes chip damage + wear the trap down per pass, a landmine
+                // one-shots + detonates an 8 m blast. Source InteractableTrap (Zombie/Player damage from the real .dat).
+                if (Player == null) { Log("no player"); return; }
+                string a = arg.Trim().ToLowerInvariant().Replace(" ", "");
+                Node parent = Player.GetParent() ?? GetTree().Root;
+                Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
+                float yawDeg = Mathf.RadToDeg(Mathf.Atan2(-fwd.X, -fwd.Z));
+                Trap t = a.StartsWith("land") ? Trap.SpawnLandmine(parent, at, yawDeg)
+                       : (a.StartsWith("barb") || a.StartsWith("wire")) ? Trap.SpawnBarbedwire(parent, at, yawDeg)
+                       : a.StartsWith("calt") ? Trap.SpawnCaltrop(parent, at, yawDeg)
+                       : Trap.SpawnSpike(parent, at, yawDeg);
+                Log($"planted a {t.Kind} trap -- arms in 0.25 s, then bites anything that steps on it");
+            }
             else if (verb == "unarmed")
             {
                 // unarmed  -- go to the bare-fists state (LMB weak / RMB strong punch)

@@ -50,6 +50,7 @@ namespace UnturnedGodot
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
         bool _sentryTest; Sentry _stSentry; ZombieController _stZombie; int _stFrame;   // --sentrytest: the auto-turret core harness
+        bool _trapTest, _ttLandmine; Trap _ttTrap; ZombieController _ttZombie; int _ttFrame; double _ttClock; Vector3 _ttTrapPos, _ttOffPos;   // --traptest: drive a zombie on/off a trap to verify triggers
         bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
@@ -58,11 +59,11 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, trapKind = "spike";
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, sentryTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, sentryTest = false, editorMode = false, trapTest = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -74,6 +75,7 @@ namespace UnturnedGodot
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--sentrytest") sentryTest = true;   // verify the auto-turret: a stationary zombie 10m off -> the sentry acquires + shreds it (logs HP -> DEAD, --shot=OUT for a frame)
+                else if (arg == "--traptest" || arg.StartsWith("--traptest=")) { trapTest = true; if (arg.Contains('=')) trapKind = arg.Split('=')[1]; }   // verify a trap: a zombie steps onto it -> spikes chip it down over passes / a landmine one-shots it (--traptest=landmine)
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
@@ -182,6 +184,15 @@ namespace UnturnedGodot
                 _sentryTest = true;
                 _shotPath = shot;
                 BuildSentryTest(gun);
+                return;
+            }
+
+            if (trapTest)   // trap core: a zombie steps onto a trap -> spikes chip it (per pass) / a landmine one-shots + self-destructs
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _trapTest = true;
+                _shotPath = shot;
+                BuildTrapTest(trapKind);
                 return;
             }
 
@@ -1218,6 +1229,39 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.LookAt(new Vector3(0f, 1.2f, -5f), Vector3.Up);
             GD.Print($"[SENTRYTEST] sentry@origin + stationary zombie 10 m -Z; gun={gun ?? "eaglefire"} zdmg={gunDef.ZombieDamage:0} firerate={gunDef.Firerate} power={(noPower ? "NONE (expect inert)" : $"wired gen -> IsPowered {_stSentry.IsPowered}")} -- expect the turret to acquire + shred it");
+        }
+
+        // --traptest [spike|landmine]: a trap at origin + a zombie that steps ON/OFF it. Spikes chip the zombie each fresh
+        // step-on (edge-triggered) and wear the trap down; a landmine detonates on the first contact, one-shotting the
+        // zombie and self-destructing. Logs the zombie HP + the trap state; --shot=OUT captures a frame.
+        void BuildTrapTest(string kind)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.58f, 0.6f, 0.62f), AmbientLightEnergy = 0.7f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.2f, ShadowEnabled = true });
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            ground.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(240, 240) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) } });
+            AddChild(ground);
+            CharacterModel.LoadBundled();
+
+            _ttLandmine = kind != null && kind.ToLowerInvariant().StartsWith("land");
+            _ttTrapPos = Vector3.Zero;
+            _ttOffPos = new Vector3(0f, 0f, 2.4f);   // a step off the trap, outside the trigger radius
+            _ttTrap = _ttLandmine ? Trap.SpawnLandmine(this, _ttTrapPos, 0f) : Trap.SpawnSpike(this, _ttTrapPos, 0f);
+
+            _ttZombie = new ZombieController { Speciality = ZombieController.ESpeciality.NORMAL };   // Target null -> it stays where we place it
+            AddChild(_ttZombie);
+            _ttZombie.GlobalPosition = _ttOffPos;
+
+            var cam = new Camera3D { Current = true, Fov = 60f, Position = new Vector3(3.2f, 2.0f, 3.4f) };
+            AddChild(cam);
+            cam.LookAt(new Vector3(0f, 0.4f, 0.4f), Vector3.Up);
+            GD.Print($"[TRAPTEST] {(_ttLandmine ? "LANDMINE" : "SPIKE")} at origin + a zombie stepping onto it -- expect {(_ttLandmine ? "a one-shot detonation (zombie DEAD + trap gone)" : "the spikes to chip it down over passes")}");
         }
 
         // --craftui: open the crafting menu over a player with a stocked inventory so the recipe list renders.
@@ -2980,6 +3024,25 @@ namespace UnturnedGodot
                 }
                 else if (killed) { GD.Print("[SENTRYTEST] PASS -- turret acquired, tracked + shredded the zombie"); if (_shotPath == null) GetTree().Quit(); }
                 else if (_stFrame > 400) { GD.Print("[SENTRYTEST] TIMEOUT -- zombie still alive (sentry not firing?)"); GetTree().Quit(); }
+            }
+            if (_trapTest && _ttZombie != null && IsInstanceValid(_ttZombie))   // trap core: drive the zombie ON/OFF the trap (own clock, time-based so it's frame-rate independent)
+            {
+                _ttFrame++; _ttClock += delta;
+                // keep OFF until 0.5 s (past the 0.25 s Trap_Setup_Delay), then alternate ON/OFF every 0.3 s. Each fresh
+                // step-ON is an outside->inside transition -> one edge trigger (a spike hit / the landmine detonation).
+                bool onPhase = _ttClock > 0.5 && ((int)((_ttClock - 0.5) / 0.3)) % 2 == 0;
+                _ttZombie.GlobalPosition = onPhase ? _ttTrapPos + Vector3.Up * 0.1f : _ttOffPos;
+                bool zdead = _ttZombie.Dead;
+                bool trapGone = _ttTrap == null || !IsInstanceValid(_ttTrap);
+                if (_ttFrame % 15 == 0 || zdead)
+                    GD.Print($"[TRAPTEST] t{_ttClock:0.0}s: zombie {(zdead ? "DEAD" : $"HP {_ttZombie.Health:0}")}{(onPhase ? " [on trap]" : "")}{(trapGone ? " | trap GONE" : "")}");
+                if (_ttLandmine)
+                {
+                    if (zdead && trapGone) { GD.Print("[TRAPTEST] PASS -- landmine detonated: zombie one-shot + trap self-destructed"); if (_shotPath == null) GetTree().Quit(); }
+                    else if (_ttClock > 4.0) { GD.Print("[TRAPTEST] TIMEOUT -- landmine did not detonate"); GetTree().Quit(); }
+                }
+                else if (zdead) { GD.Print("[TRAPTEST] PASS -- spikes shredded the zombie over repeated passes (+ wore the trap down)"); if (_shotPath == null) GetTree().Quit(); }
+                else if (_ttClock > 12.0) { GD.Print($"[TRAPTEST] TIMEOUT -- zombie still alive (HP {_ttZombie.Health:0})"); GetTree().Quit(); }
             }
             if (_peiPlay && _peiPlayer != null)
             {
