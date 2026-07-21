@@ -31,7 +31,10 @@ namespace UnturnedGodot.Net
     /// DeployableDef.Fixture mirrors these values 1:1 (bridged in DeployableNetSchema); the enum lives here
     /// because the server choke point (ServerTransactions.RunConsole's grid mains toggle) filters fixtures by
     /// kind and core cannot see the game assembly.</summary>
-    public enum FixtureKind : byte { None = 0, GridSource = 1, GasPump = 2 }
+    // Append-only (never renumber -- these cross the def table + gate the client ReplicaView dispatch). 3-7 are the
+    // new deployable-type fixtures (sentry/trap/beacon/charge/oil pump): each is a server-auth sim on the host + a
+    // VIEW-ONLY client replica the ReplicaView Materializes (see CLAUDE.md "definition of done").
+    public enum FixtureKind : byte { None = 0, GridSource = 1, GasPump = 2, Sentry = 3, Trap = 4, Beacon = 5, Charge = 6, OilPump = 7 }
 
     /// <summary>The def-derived half of the solver's inputs. Both sides register the SAME defs (game code
     /// registers DeployableDef.All on server and client; L0 tests register fixtures) -- the content hash
