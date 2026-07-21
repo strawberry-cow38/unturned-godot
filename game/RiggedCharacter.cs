@@ -256,8 +256,12 @@ namespace UnturnedGodot
         void ApplyAimAdditive()
         {
             if (_aimDR == null || AimBlend <= 0.0001f || Skeleton == null) return;
+            // PRE-multiply: the baked delta is R_end * R_frame0^-1 (a parent-frame delta), so it must LEFT-multiply the
+            // base pose (delta * current) to reach R_end. Post-multiplying (current * delta) CONJUGATES the delta by the
+            // base pose instead -- ~fine for a near-single-axis aim (rifle) but it corrupts a large multi-axis one
+            // (a pistol's two-handed raise rotates 7 bones incl. the gun bone) -> the barrel drooped in ADS.
             foreach (var kv in _aimDR)
-                Skeleton.SetBonePoseRotation(kv.Key, Skeleton.GetBonePoseRotation(kv.Key) * Quaternion.Identity.Slerp(kv.Value, AimBlend));
+                Skeleton.SetBonePoseRotation(kv.Key, Quaternion.Identity.Slerp(kv.Value, AimBlend) * Skeleton.GetBonePoseRotation(kv.Key));
             foreach (var kv in _aimDP)
                 Skeleton.SetBonePosePosition(kv.Key, Skeleton.GetBonePosePosition(kv.Key) + kv.Value * AimBlend);
         }
