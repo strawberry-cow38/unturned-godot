@@ -785,47 +785,19 @@ namespace UnturnedGodot
             }
             else if (_gun != null && _gun.GetParent() is Node3D att)
             {
-              if (System.Environment.GetEnvironmentVariable("UG_BONEHOLD") == "1")
-                // PROPER (source-accurate): the gun rides the ANIMATED hand-bone HOLD pose (per-gun <Gun>_Equip clip) x the
-                // source held-model Euler(0,0,90), exactly like the melee path -- so each gun sits however its own hold
-                // anim holds it (pistols get their pistol grip, no barrel-forward shortcut, no magic pitch).
-                _gun.GlobalTransform = new Transform3D(att.GlobalTransform.Basis * Basis.FromEuler(new Vector3(0f, 0f, Mathf.DegToRad(90f))), att.GlobalPosition);
-              else {
-                Vector3 aim = -_cam.GlobalTransform.Basis.Z;   // viewmodel-forward
-                Vector3 x = Vector3.Up.Cross(aim);
-                if (x.LengthSquared() < 1e-5f) x = Vector3.Right;
-                x = x.Normalized();
-                var basis = new Basis(x, aim, x.Cross(aim).Normalized());   // barrel (+Y) -> aim
-                basis = basis.Rotated(aim, Mathf.DegToRad(_gunRoll));
-                float _pitchDeg = (PitchOverride ?? _holdPitch) + (float.TryParse(System.Environment.GetEnvironmentVariable("UG_GUNPITCH"), out var _gpV) ? _gpV : 0f);   // live `vmpitch` console override (master tuning) falls back to the baked per-gun pitch
-                if (_pitchDeg != 0f) basis = basis * Basis.FromEuler(new Vector3(Mathf.DegToRad(_pitchDeg), 0f, 0f));   // mesh-LOCAL pitch (right-mult) so the aim-hook rotates with it -> levels pistols whose Model_0 is authored tilted, ADS stays consistent
-                // per-shot recoil tilt (source recoilViewmodelCameraRotation, spring-decayed): pitch up about the
-                // camera-right axis (same climb sign as the old muzzle-rise), yaw about camera-up, roll about the barrel.
-                Vector3 rr = _recoilRotSpring.CurrentPosition;   // (pitch, yaw, roll) degrees
+                // PROPER (source-accurate): the gun rides the ANIMATED hand-bone HOLD pose (per-gun <Gun>_Equip / _Inspect /
+                // _Reload clips pose the Right_Hook bone) x the source held-model localRotation Euler(0,0,90)
+                // (PlayerEquipment.firstModel), exactly like the melee/consumable path. So each gun sits + animates however
+                // ITS OWN anim holds it -- pistols get their grip, rifles their stance, and inspect / reload / rack move it
+                // FOR FREE (the gun follows the bone, so no bone-delta compensation, no barrel-forward shortcut, no magic
+                // per-gun pitch). Only the per-shot recoil spring is layered on top, in camera space.
+                Basis basis = att.GlobalTransform.Basis * Basis.FromEuler(new Vector3(0f, 0f, Mathf.DegToRad(90f)));
+                Vector3 rr = _recoilRotSpring.CurrentPosition;   // (pitch, yaw, roll) degrees -- muzzle climb, spring-decayed
                 Basis cb = _cam.GlobalTransform.Basis;
-                basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))    // pitch -> muzzle climb
-                             .Rotated(cb.Y, Mathf.DegToRad(rr.Y))    // yaw
-                             .Rotated(aim,  Mathf.DegToRad(rr.Z));   // roll
-                // inspect (source-accurate): the source animates the gun via the Inspect clip, so follow the hand
-                // bone's rotation delta since inspect start -- the gun tilts/turns with the gesture instead of the
-                // camera-lock pinning the barrel forward. bone.now * (bone.start.inv) == the animation's rotation.
-                if (_inspecting)
-                {
-                    if (_inspectCapture) { _inspectBoneStart = att.GlobalTransform.Basis; _inspectCapture = false; }
-                    basis = (att.GlobalTransform.Basis * _inspectBoneStart.Inverse()) * basis;
-                }
-                if (_attachView)   // hold the attach-view presented pose (same bone-delta layering as inspect)
-                {
-                    if (_attachCapture) { _attachBoneStart = att.GlobalTransform.Basis; _attachCapture = false; }
-                    basis = (att.GlobalTransform.Basis * _attachBoneStart.Inverse()) * basis;
-                }
-                if (_hammering)   // the rack ROTATES the gun: follow the hand bone's rotation delta since the rack began (like inspect), so it isn't barrel-locked
-                {
-                    if (_hammerCapture) { _hammerBoneStart = att.GlobalTransform.Basis; _hammerCapture = false; }
-                    basis = (att.GlobalTransform.Basis * _hammerBoneStart.Inverse()) * basis;
-                }
+                basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))     // pitch -> muzzle climb
+                             .Rotated(cb.Y, Mathf.DegToRad(rr.Y))     // yaw
+                             .Rotated(-cb.Z, Mathf.DegToRad(rr.Z));   // roll about the view axis
                 _gun.GlobalTransform = new Transform3D(basis, att.GlobalPosition);
-              }
             }
 
             // integrate ejected casings: gravity + tumble in the viewport world, despawn after ~1.3s
