@@ -780,7 +780,7 @@ namespace UnturnedGodot
                 x = x.Normalized();
                 var basis = new Basis(x, aim, x.Cross(aim).Normalized());   // barrel (+Y) -> aim
                 basis = basis.Rotated(aim, Mathf.DegToRad(_gunRoll));
-                if (System.Environment.GetEnvironmentVariable("UG_GUNPITCH") is string _gpS && float.TryParse(_gpS, out var _gpV)) basis = basis.Rotated(_cam.GlobalTransform.Basis.X, Mathf.DegToRad(_gpV));   // DEBUG: level pistols whose mesh +Y isn't the barrel (negative = muzzle down)
+                if (System.Environment.GetEnvironmentVariable("UG_GUNPITCH") is string _gpS && float.TryParse(_gpS, out var _gpV)) basis = basis * Basis.FromEuler(new Vector3(Mathf.DegToRad(_gpV), 0f, 0f));   // DEBUG: mesh-LOCAL pitch (right-mult) so the aim-hook rotates with it -> levels a mesh whose +Y isn't the barrel, ADS stays consistent
                 // per-shot recoil tilt (source recoilViewmodelCameraRotation, spring-decayed): pitch up about the
                 // camera-right axis (same climb sign as the old muzzle-rise), yaw about camera-up, roll about the barrel.
                 Vector3 rr = _recoilRotSpring.CurrentPosition;   // (pitch, yaw, roll) degrees
