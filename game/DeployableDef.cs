@@ -196,6 +196,20 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = UnturnedGodot.Sentry.PortLocal, Watts = UnturnedGodot.Sentry.Watts } },   // Requires_Power: a 50 W consumer the local wire-solve gates on (mirrors the Sentry node's own port)
         };
 
+        // TRAPS (source InteractableTrap, Bundles/Items/Barricades/*): placed barricades that damage whatever steps on
+        // them. Fixture=Trap -> the client materializes a VIEW-ONLY UnturnedGodot.Trap node (renders the archetype by
+        // DefId, no local trigger); the server-side ServerTraps owns the arm/trigger/damage. ProcBox: the spikes/mine
+        // are built procedurally in Trap.BuildVisual (no .obj), so the placement ghost is a Size-box. Health = the trap's
+        // own hp (worn down per trigger); a landmine (hp 1) is one-shot. All four share FixtureKind.Trap, keyed by id.
+        public static readonly DeployableDef TrapSpike = new()
+        { Id = 383, Name = "Spike Trap", Fixture = FixtureKind.Trap, ProcBox = true, Size = new Vector3(0.7f, 0.5f, 0.5f), Radius = 0.5f, Range = 4f, Health = 35f };
+        public static readonly DeployableDef TrapBarbedwire = new()
+        { Id = 386, Name = "Barbed Wire", Fixture = FixtureKind.Trap, ProcBox = true, Size = new Vector3(0.7f, 0.5f, 0.5f), Radius = 0.5f, Range = 4f, Health = 70f };
+        public static readonly DeployableDef TrapCaltrop = new()
+        { Id = 382, Name = "Caltrops", Fixture = FixtureKind.Trap, ProcBox = true, Size = new Vector3(0.7f, 0.2f, 0.5f), Radius = 0.5f, Range = 4f, Health = 15f };
+        public static readonly DeployableDef TrapLandmine = new()
+        { Id = 1101, Name = "Landmine", Fixture = FixtureKind.Trap, ProcBox = true, Size = new Vector3(0.4f, 0.12f, 0.4f), Radius = 0.5f, Range = 4f, Health = 1f };
+
         // --- Battery (custom): a car battery you place + wire. The IN terminal (one end) CHARGES the stored Energy while
         //     powered; the OUT terminal (opposite end) DISCHARGES to whatever's wired to it while it has charge (produces
         //     up to its rating). Daisy-chain OUT->IN to pool capacity into a bigger reserve (master). Real Battery_0 model. ---
@@ -222,11 +236,15 @@ namespace UnturnedGodot
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump, Sentry };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump, OilPump, Sentry, TrapSpike, TrapBarbedwire, TrapCaltrop, TrapLandmine };
         public static DeployableDef ById(ushort id) => id switch
         {
             1219 => OilPump,
             1244 => Sentry,
+            383 => TrapSpike,
+            386 => TrapBarbedwire,
+            382 => TrapCaltrop,
+            1101 => TrapLandmine,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

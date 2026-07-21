@@ -29,6 +29,8 @@ namespace UnturnedGodot
         public float SetupDelay = 0.25f;       // Trap_Setup_Delay: arm time after placement
         public float Cooldown = 0f;            // Trap_Cooldown between triggers (0 = fires on every fresh enter)
         public float TriggerRadius = 0.85f;    // footprint the trigger volume covers (adapted from the barricade collider)
+        public uint NetId;                     // MP: the server entity this view mirrors (0 = the SP/host authoritative node)
+        public bool IsReplica;                 // MP: a client-side VIEW-ONLY replica -- renders the trap only; the SERVER (ServerTraps) owns the trigger + damage
 
         double _age, _lastTriggered = -999.0;
         bool _spent;                           // a landmine (or a worn-out trap) is done -- stop scanning
@@ -41,23 +43,39 @@ namespace UnturnedGodot
             parent.AddChild(t);
             return t;
         }
-        // per-archetype factories from the retail .dat values (Bundles/Items/Barricades/*)
-        public static Trap SpawnSpike(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, new Trap {
-            Kind = ETrapKind.Spike, ZombieDamage = 60f, PlayerDamage = 30f, AnimalDamage = 60f, Health = 35f });
-        public static Trap SpawnBarbedwire(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, new Trap {
-            Kind = ETrapKind.Barbedwire, ZombieDamage = 80f, PlayerDamage = 40f, AnimalDamage = 80f, Health = 70f });
-        public static Trap SpawnCaltrop(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, new Trap {
-            Kind = ETrapKind.Caltrop, ZombieDamage = 40f, PlayerDamage = 20f, AnimalDamage = 0f, Health = 15f });   // Caltrop.dat: also Damage_Tires (no wheel-HP model here)
-        public static Trap SpawnLandmine(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, new Trap {
-            Kind = ETrapKind.Landmine, IsExplosive = true, Range2 = 8f, ZombieDamage = 175f, PlayerDamage = 91f,
-            AnimalDamage = 175f, VehicleDamage = 175f, BarricadeDamage = 75f, StructureDamage = 75f,
-            ResourceDamage = 625f, ObjectDamage = 100f, Health = 1f, TriggerRadius = 0.5f });
+        // per-archetype config from the retail .dat values (Bundles/Items/Barricades/*), keyed by item id -- the SINGLE
+        // source used by the Spawn* factories, the item-routed place path, AND the client replica's Materialize.
+        public static Trap ForDefId(ushort defId) => defId switch
+        {
+            386 => new Trap { Kind = ETrapKind.Barbedwire, ZombieDamage = 80f, PlayerDamage = 40f, AnimalDamage = 80f, Health = 70f },
+            382 => new Trap { Kind = ETrapKind.Caltrop, ZombieDamage = 40f, PlayerDamage = 20f, AnimalDamage = 0f, Health = 15f },   // Caltrop.dat: also Damage_Tires (no wheel-HP model here)
+            1101 => new Trap { Kind = ETrapKind.Landmine, IsExplosive = true, Range2 = 8f, ZombieDamage = 175f, PlayerDamage = 91f,
+                AnimalDamage = 175f, VehicleDamage = 175f, BarricadeDamage = 75f, StructureDamage = 75f,
+                ResourceDamage = 625f, ObjectDamage = 100f, Health = 1f, TriggerRadius = 0.5f },
+            _ => new Trap { Kind = ETrapKind.Spike, ZombieDamage = 60f, PlayerDamage = 30f, AnimalDamage = 60f, Health = 35f },   // 383
+        };
+        // per-archetype factories (item id per the .dat: Spikes 383 / Barbedwire 386 / Caltrop 382 / Landmine 1101)
+        public static Trap SpawnSpike(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, ForDefId(383));
+        public static Trap SpawnBarbedwire(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, ForDefId(386));
+        public static Trap SpawnCaltrop(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, ForDefId(382));
+        public static Trap SpawnLandmine(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, ForDefId(1101));
+
+        // MP: the client's DeployableReplicaView calls this for a FixtureKind.Trap entity -> a VIEW-ONLY trap that just
+        // RENDERS the archetype (picked from the entity DefId); the SERVER (ServerTraps) owns the arm/trigger/damage,
+        // so a replica runs NO trigger logic (_Process is gated off). Unlike the single-archetype oil pump/sentry
+        // Materialize, this takes defId to select the archetype. Mirrors OilPump.Materialize otherwise.
+        public static Trap Materialize(Node parent, Vector3 pos, float yawDegrees, uint netId, ushort defId)
+        {
+            var t = ForDefId(defId);
+            t.IsReplica = true; t.NetId = netId;
+            return Spawn(parent, pos, yawDegrees, t);
+        }
 
         public override void _Ready() => BuildVisual();
 
         public override void _Process(double delta)
         {
-            if (_spent) return;
+            if (IsReplica || _spent) return;   // a client REPLICA only renders -- the server owns the trigger + damage (no local scan/trigger/explode)
             _age += delta;
             if (_age < SetupDelay) return;   // still arming -- inert
             if (!_armed)   // first armed frame: seed _inside with anything ALREADY standing in the footprint so it isn't hit

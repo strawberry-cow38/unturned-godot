@@ -261,19 +261,18 @@ namespace UnturnedGodot
             }
             else if (verb == "trap")
             {
-                // trap [spike|barbedwire|caltrop|landmine]  -- plant a trap where you're aiming. It arms after 0.25 s,
-                // then bites whatever steps into it: spikes chip damage + wear the trap down per pass, a landmine
-                // one-shots + detonates an 8 m blast. Source InteractableTrap (Zombie/Player damage from the real .dat).
+                // trap [spike|barbedwire|caltrop|landmine]  -- plant a trap where you're aiming. SP+MP: routed through the
+                // REAL PlaceDeployable intent (item id per archetype), so the server owns the arm/trigger/damage
+                // (ServerTraps) + a joined client sees it via the FixtureKind.Trap ReplicaView. It arms after 0.25 s, then
+                // bites whatever steps into it; a landmine one-shots + detonates an 8 m blast. Source InteractableTrap.
                 if (Player == null) { Log("no player"); return; }
                 string a = arg.Trim().ToLowerInvariant().Replace(" ", "");
-                Node parent = Player.GetParent() ?? GetTree().Root;
-                Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
-                float yawDeg = Mathf.RadToDeg(Mathf.Atan2(-fwd.X, -fwd.Z));
-                Trap t = a.StartsWith("land") ? Trap.SpawnLandmine(parent, at, yawDeg)
-                       : (a.StartsWith("barb") || a.StartsWith("wire")) ? Trap.SpawnBarbedwire(parent, at, yawDeg)
-                       : a.StartsWith("calt") ? Trap.SpawnCaltrop(parent, at, yawDeg)
-                       : Trap.SpawnSpike(parent, at, yawDeg);
-                Log($"planted a {t.Kind} trap -- arms in 0.25 s, then bites anything that steps on it");
+                ushort defId = a.StartsWith("land") ? (ushort)1101
+                             : (a.StartsWith("barb") || a.StartsWith("wire")) ? (ushort)386
+                             : a.StartsWith("calt") ? (ushort)382
+                             : (ushort)383;
+                float tyaw = Mathf.RadToDeg(Mathf.Atan2(Player.GlobalTransform.Basis.Z.X, Player.GlobalTransform.Basis.Z.Z));
+                Log(Player.RequestPlaceDeployable(defId, at, tyaw) ? $"placing a {a} trap (server-authoritative)" : "place failed (no net seam?)");
             }
             else if (verb == "beacon")
             {
