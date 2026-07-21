@@ -1258,9 +1258,9 @@ namespace UnturnedGodot
             AddChild(_ttZombie);
             _ttZombie.GlobalPosition = _ttOffPos;
 
-            var cam = new Camera3D { Current = true, Fov = 60f, Position = new Vector3(3.2f, 2.0f, 3.4f) };
+            var cam = new Camera3D { Current = true, Fov = 55f, Position = new Vector3(1.7f, 0.55f, 2.15f) };   // low + close so the 0.5 m spikes read around the victim's legs
             AddChild(cam);
-            cam.LookAt(new Vector3(0f, 0.4f, 0.4f), Vector3.Up);
+            cam.LookAt(new Vector3(0f, 0.35f, 0f), Vector3.Up);
             GD.Print($"[TRAPTEST] {(_ttLandmine ? "LANDMINE" : "SPIKE")} at origin + a zombie stepping onto it -- expect {(_ttLandmine ? "a one-shot detonation (zombie DEAD + trap gone)" : "the spikes to chip it down over passes")}");
         }
 
