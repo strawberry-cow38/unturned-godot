@@ -7,7 +7,7 @@ namespace UnturnedGodot
     // TRAP -- source InteractableTrap + ItemTrapAsset. A placed barricade with a trigger volume: when a solid entity
     // ENTERS (edge-triggered, after the 0.25 s Trap_Setup_Delay arm time -- so the placer isn't caught by their own trap),
     // it fires. Two families, both modelled here from the real .dat values:
-    //   * non-explosive (Spikes id383 / Barbedwire id386 / Caltrop id387): direct damage to the entity that entered
+    //   * non-explosive (Spikes id383 / Barbedwire id386 / Caltrop id382): direct damage to the entity that entered
     //     (Zombie/Player/Animal_Damage). A "Broken" trap (the Snare bear-trap) breaks the victim's legs. Each trigger
     //     wears the trap's OWN Health down by 5; at 0 the trap breaks and is removed (so a spike wall degrades with use).
     //   * explosive (Landmine id1101): ONE-SHOT -- it self-destructs and detonates an AoE blast of radius Range2, hitting
@@ -46,7 +46,7 @@ namespace UnturnedGodot
         public static Trap SpawnBarbedwire(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, new Trap {
             Kind = ETrapKind.Barbedwire, ZombieDamage = 80f, PlayerDamage = 40f, AnimalDamage = 80f, Health = 70f });
         public static Trap SpawnCaltrop(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, new Trap {
-            Kind = ETrapKind.Caltrop, ZombieDamage = 20f, PlayerDamage = 15f, AnimalDamage = 20f, Health = 15f });
+            Kind = ETrapKind.Caltrop, ZombieDamage = 40f, PlayerDamage = 20f, AnimalDamage = 0f, Health = 15f });   // Caltrop.dat: also Damage_Tires (no wheel-HP model here)
         public static Trap SpawnLandmine(Node p, Vector3 pos, float yaw) => Spawn(p, pos, yaw, new Trap {
             Kind = ETrapKind.Landmine, IsExplosive = true, Range2 = 8f, ZombieDamage = 175f, PlayerDamage = 91f,
             AnimalDamage = 175f, VehicleDamage = 175f, BarricadeDamage = 75f, StructureDamage = 75f,
