@@ -208,6 +208,24 @@ namespace UnturnedGodot.Net
         public void DamagePlayerExternal(ushort victimPlayerId, float damage, ushort attackerPlayerId = 0)
             => _externalDamageQueue.Add((victimPlayerId, damage, attackerPlayerId));
 
+        /// <summary>Environment damages a zombie -- a SENTRY turret firing, a landmine/blast, a trap. Applies
+        /// server-authoritative damage through the SAME ZombieHost seam player bullets use, and on a KILL marks it
+        /// dead in replication + broadcasts the ZombieDiedEvent so every client renders the death (attacker 0 =
+        /// environment, no kill credit). Mirrors the grenade Explode kill path; the reusable entry for any server
+        /// system that damages a zombie without a shooter. Returns true if this hit killed it.</summary>
+        public bool DamageZombieExternal(uint zombieNetId, float damage, Vector3 point, Vector3 dir, long tick)
+        {
+            if (ZombieHost == null) return false;
+            bool killed = ZombieHost.DamageZombie(zombieNetId, damage, point, dir, 0, false);
+            if (killed)
+            {
+                _zombies.ServerSetAnim(new NetId(zombieNetId), ZombieNetAnim.Dead, tick);
+                var died = new ZombieDiedEvent { NetId = zombieNetId, Killer = 0 };
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventZombieDied, died.Write));
+            }
+            return killed;
+        }
+
         /// <summary>Test seam (P3a): queue a unit of server-authoritative player damage to land at the NEXT
         /// combat Step, so it runs INSIDE the server tick with the LIVE tick -- exactly like the real bullet/
         /// grenade/melee path funnels through ApplyPlayerDamage. Now a thin alias over DamagePlayerExternal

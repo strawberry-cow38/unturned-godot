@@ -23,6 +23,7 @@ namespace UnturnedGodot
         readonly Dictionary<uint, GridPowerSource> _grids = new();   // A3: server-placed grid-power SOURCE fixtures (a GridPowerSource node, not a Deployable body)
         readonly Dictionary<uint, GasPump> _gaspumps = new();        // A2: server-placed gas-pump fixtures (a GasPump node, not a Deployable body)
         readonly Dictionary<uint, OilPump> _oilpumps = new();        // oil pump/derrick fixtures (a view-only OilPump node; server owns the Fuel reservoir)
+        readonly Dictionary<uint, Sentry> _sentries = new();         // auto-turret fixtures (a view-only Sentry node; the server-side ServerSentries owns scan/fire/kill)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
@@ -33,6 +34,8 @@ namespace UnturnedGodot
         public bool TryGetGasPump(uint netId, out GasPump pump) => _gaspumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
         public int OilPumpCount => _oilpumps.Count;   // how many oil-pump fixtures have materialized
         public bool TryGetOilPump(uint netId, out OilPump pump) => _oilpumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
+        public int SentryCount => _sentries.Count;   // how many sentry fixtures have materialized
+        public bool TryGetSentry(uint netId, out Sentry sentry) => _sentries.TryGetValue(netId, out sentry) && IsInstanceValid(sentry);
 
         public override void _PhysicsProcess(double delta)
         {
@@ -88,6 +91,18 @@ namespace UnturnedGodot
                     opump.Fuel = e.Fuel;   // server-owned reservoir level, mirrored onto the view
                     continue;
                 }
+                if (def.Fixture == FixtureKind.Sentry)
+                {
+                    // an auto-turret -- a VIEW-ONLY Sentry node. It renders + aims off the already-replicated zombies
+                    // (Fire draws a tracer, NEVER DamageHit); the server-side ServerSentries owns the authoritative
+                    // scan/fire/kill. Nothing to mirror per-tick beyond existence (Health drives no view state yet).
+                    if (!_sentries.TryGetValue(e.NetIdValue, out var sentry) || !IsInstanceValid(sentry))
+                    {
+                        sentry = Sentry.Materialize(parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees, e.NetIdValue);
+                        _sentries[e.NetIdValue] = sentry;
+                    }
+                    continue;
+                }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
@@ -102,6 +117,7 @@ namespace UnturnedGodot
             RetireMissing(_grids, seen, grid => { if (IsInstanceValid(grid)) grid.QueueFree(); PowerNet.MarkDirty(); });
             RetireMissing(_gaspumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); PowerNet.MarkDirty(); });
             RetireMissing(_oilpumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); });
+            RetireMissing(_sentries, seen, sentry => { if (IsInstanceValid(sentry)) sentry.QueueFree(); });
 
             // wires: create between the mapped ports (port index = def port order, the §2.6 sub-address).
             // Endpoints may be a Deployable body OR a GridPowerSource fixture (A3), so resolve ports from both.
