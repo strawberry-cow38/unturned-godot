@@ -254,9 +254,14 @@ if RAGDOLL_JSON and os.path.exists(RAGDOLL_JSON):
     print('  ragdoll bones:', len(rag))
 
 # ---- arms-only mesh for the 1P viewmodel: keep only verts skinned to the arm bones ----
-# BONE_ORDER indices 1..8 = Left/Right {Shoulder,Arm,Hand,Hook}. Drops head/torso/legs so the
-# first-person camera sees just the arms holding the gun (no body to occlude).
-ARM_BONES = set(range(1, 9))
+# The final `bones` list order is [Skeleton(0), Spine(1), Skull(2), Left_Shoulder(3), Left_Arm(4),
+# Left_Hand(5), Left_Hook(6), Right_Shoulder(7), Right_Arm(8), Right_Hand(9), Right_Hook(10), legs...].
+# The arm bones are 3..10 (Left/Right {Shoulder,Arm,Hand,Hook}). Drops head/torso/legs so the
+# first-person camera sees just the arms holding the gun (no body to occlude). NOTE: this indexes the
+# `bones` list, NOT BONE_ORDER (the bind list, which puts Spine first). The old range(1,9) was off by
+# two -- it counted Spine(1)+Skull(2) as arms and dropped Right_Hand(9)/Right_Hook(10), deleting the
+# entire right-hand cluster (~half the arm mesh) and leaking a stray Skull face-quad into the viewmodel.
+ARM_BONES = set(range(3, 11))
 keep = [i for i in range(VCOUNT) if sk_idx[i][0] in ARM_BONES]
 remap = {old: new for new, old in enumerate(keep)}
 arms_faces = []
