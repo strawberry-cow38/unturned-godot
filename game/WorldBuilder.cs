@@ -318,7 +318,10 @@ namespace UnturnedGodot
                         var ab = mesh.GetAabb();
                         float maxDim = Mathf.Max(ab.Size.X * sx, Mathf.Max(ab.Size.Y * sy, ab.Size.Z * sz));
                         bool losBlocker = maxDim >= 5f && MatFor(name).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
-                        var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
+                        // Small props go on the see-through layer 6 (bullets/LOS pass through) PLUS bit8 = "solid to vehicles"
+                        // so a car can't phase through a fence/hydrant/barrel (bit8 is NOT the trailer-ghost bit6, so towing
+                        // still works). Large structures on layer 0 already stop vehicles via the base bit0 mask. (strawberry)
+                        var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : (1u << 6) | (1u << 8) };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
                         // A2: the gas pump's interaction collider is now the fixture node's OWN gaspump-meta box
                         // (GasPump.AddInteractionCollider), not this world-mesh collider -- so no tag here.

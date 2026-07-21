@@ -87,6 +87,7 @@ namespace UnturnedGodot
             // and props never broke in SP (the ServerDestructibles break path only ran in real MP, where fire IS routed).
             // Unconditional (not under ConsumeDeployables): the server owns destructibles in every loopback mode.
             Player.NetDamageObject = (idx, dmg) => Server.DestructibleHost.DamageObject(idx, dmg, Server.Session.CurrentTick);
+            Vehicle.NetDamageObject = (idx, dmg) => Server.DestructibleHost.DamageObject(idx, dmg, Server.Session.CurrentTick);   // vehicle crashes break destructibles through the same server seam
 
             // SP/MP-unify P1 (--spconsume): route the LOCAL player's deployable/power actions through the
             // loopback server and consume the results as replicas, instead of the direct SP path. The schema
