@@ -328,6 +328,7 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ResourceSync.Tick(), "net.resources.sync"));
             DestructibleSync = new DestructibleNetSync(Server, Destructibles);   // seed health/respawn + mirror rubble alive-bits
             Driver.Sim.Add(new DelegateSimStep((t, dt) => DestructibleSync.Tick(), "net.destructibles.sync"));
+            if (Destructibles != null) Client.ObjectDestroyed += e => Destructibles.PlayBreakEffect(e.Index);   // break VFX (debris + dust) on a LIVE break broadcast -- the sync above hides the mesh, this shows the shatter
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }

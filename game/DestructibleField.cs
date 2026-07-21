@@ -82,6 +82,79 @@ namespace UnturnedGodot
             if (r.Body != null && GodotObject.IsInstanceValid(r.Body)) r.Body.CollisionLayer = alive ? r.BodyLayer : 0u;
         }
 
+        /// <summary>Play the one-shot break VFX for a prop that just shattered: a burst of tumbling debris chunks
+        /// textured with the prop's OWN material (so a metal billboard sheds metal-looking bits, a wood fence wood
+        /// ones) plus a dust poof, both sized to the prop's mesh. Retail plays a per-prop Rubble_Effect (Metal_5,
+        /// Wheat_0, ...); we can't load those Unity particle prefabs, so this reproduces the debris+dust READ of the
+        /// break, keyed to the actual prop appearance. Wired to Client.ObjectDestroyed (a LIVE break broadcast) so it
+        /// only fires when a prop breaks in front of you -- NOT on the join-sync of props broken before you arrived.
+        /// The field isn't a Node, so it spawns via the (tree-parented) mesh's scene.</summary>
+        public void PlayBreakEffect(int index)
+        {
+            if (index < 0 || index >= _recs.Length) return;
+            var r = _recs[index];
+            if (r == null || r.Meshes == null || r.Meshes.Length == 0) return;
+            var mesh = r.Meshes[0];
+            if (mesh == null || !GodotObject.IsInstanceValid(mesh)) return;
+            var tree = mesh.GetTree();
+            var scene = tree?.CurrentScene;
+            if (scene == null) return;
+
+            // prop bounds -> burst centre + radius (drives count/scale); clamp so a huge billboard or a tiny sign both read
+            var aabb = mesh.Mesh?.GetAabb() ?? new Aabb(Vector3.Zero, Vector3.One);
+            Vector3 gscale = mesh.GlobalTransform.Basis.Scale;
+            Vector3 worldSize = (aabb.Size * gscale).Abs();
+            float radius = Mathf.Clamp(worldSize.Length() * 0.35f, 0.5f, 6f);
+            // emit debris/dust ACROSS the prop's whole volume (a box matching its footprint), so a big barn crumbles
+            // over its 15 m footprint instead of puffing at one point, while a small sign stays tight.
+            Vector3 halfExt = new Vector3(Mathf.Clamp(worldSize.X * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Y * 0.5f, 0.2f, 8f), Mathf.Clamp(worldSize.Z * 0.5f, 0.2f, 8f));
+            Vector3 centre = mesh.GlobalTransform * (aabb.Position + aabb.Size * 0.5f);
+
+            // DEBRIS: tumbling cubes wearing the prop's own material (falls under gravity, ~1.6 s). Reusing the shared
+            // material reference is cheap + makes the chunks look like the thing that broke.
+            var propMat = mesh.MaterialOverride as StandardMaterial3D;
+            Material debrisMat = propMat ?? new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.5f, 0.44f) };
+            int n = Mathf.Clamp(Mathf.RoundToInt(radius * 14f), 12, 48);
+            var debris = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Amount = n, Lifetime = 1.6f, Explosiveness = 1f, Randomness = 0.4f,
+                Direction = Vector3.Up, Spread = 90f, InitialVelocityMin = 1.5f, InitialVelocityMax = 4.5f,
+                Gravity = new Vector3(0f, -9.8f, 0f),
+                ScaleAmountMin = radius * 0.07f, ScaleAmountMax = radius * 0.18f,
+                AngleMin = -180f, AngleMax = 180f, AngularVelocityMin = -420f, AngularVelocityMax = 420f,
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
+                Mesh = new BoxMesh { Size = Vector3.One, Material = debrisMat },
+            };
+            scene.AddChild(debris);
+            debris.GlobalPosition = centre;
+
+            // DUST poof: a SOFT smoke sprite (veh_smoke_0.png) so it reads as a dust cloud, not hard squares. Mipmaps
+            // are essential -- a runtime-loaded texture has none, so minified/dense particles sample BLACK without them
+            // (the vehicle-smoke black-cluster bug). Tinted toward the prop albedo; a one-shot puff that drifts + fades.
+            Color tint = propMat != null ? propMat.AlbedoColor : new Color(0.62f, 0.58f, 0.52f);
+            var dustMat = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles, VertexColorUseAsAlbedo = true,
+                AlbedoColor = new Color(Mathf.Lerp(tint.R, 0.85f, 0.65f), Mathf.Lerp(tint.G, 0.82f, 0.65f), Mathf.Lerp(tint.B, 0.76f, 0.65f), 0.55f),
+            };
+            string sp = ProjectSettings.GlobalizePath("res://content/veh_smoke_1.png");   // the LIGHTER smoke sprite -> reads as dust, not heavy smoke
+            if (File.Exists(sp)) { var simg = Image.LoadFromFile(sp); if (simg != null) { simg.GenerateMipmaps(); dustMat.AlbedoTexture = ImageTexture.CreateFromImage(simg); } }
+            var dust = new CpuParticles3D
+            {
+                Emitting = true, OneShot = true, Amount = Mathf.Clamp(n / 2, 8, 24), Lifetime = 1.15f, Explosiveness = 0.85f, Randomness = 0.5f,
+                Direction = Vector3.Up, Spread = 70f, InitialVelocityMin = 0.4f, InitialVelocityMax = 1.4f,
+                Gravity = new Vector3(0f, 0.3f, 0f), ScaleAmountMin = radius * 0.5f, ScaleAmountMax = radius * 1.1f,
+                EmissionShape = CpuParticles3D.EmissionShapeEnum.Box, EmissionBoxExtents = halfExt,
+                Mesh = new QuadMesh { Size = Vector2.One, Material = dustMat },
+            };
+            scene.AddChild(dust);
+            dust.GlobalPosition = centre + Vector3.Up * radius * 0.3f;
+
+            var t = tree.CreateTimer(2.4);
+            t.Timeout += () => { if (GodotObject.IsInstanceValid(debris)) debris.QueueFree(); if (GodotObject.IsInstanceValid(dust)) dust.QueueFree(); };
+        }
+
         // ---- catalog: guid -> rubble scalars, parsed from content/objects/rubble.txt ----
         // one line: "<guid> <health> <reset> <mode> <ndrops> <dropId>..." (tools/extract_rubble.py)
 

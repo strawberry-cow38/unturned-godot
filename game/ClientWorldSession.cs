@@ -171,6 +171,7 @@ namespace UnturnedGodot
             AddChild(_resourceView);
             _destructibleView = new DestructibleAliveView { Client = Client, Field = Destructibles };
             AddChild(_destructibleView);
+            if (Destructibles != null) Client.ObjectDestroyed += e => Destructibles.PlayBreakEffect(e.Index);   // break VFX (debris + dust) on a LIVE break broadcast (the view above hides the mesh)
             AddChild(new ProjectileReplicaView { Client = Client });   // D1: server-flown grenades render while fused
 
             // D1 combat facts -> render consumers (PEI_COMBAT_PLAN §3 D1). All read-only fx/HUD -- nothing
