@@ -2952,6 +2952,15 @@ namespace UnturnedGodot
                 GD.Print($"[perf] fps={Engine.GetFramesPerSecond()} zombies={zc} physicsMs={physMs:0.0} processMs={procMs:0.0} draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)}");
             }
             if (_fireTest && _ftPlayer != null) { _ftFrame++; if (_ftFrame >= 60 && _ftFrame % 15 == 0) _ftPlayer.Fire(); }   // own counter -- the _frame demo loop below is gated on _rigDir
+            if (_sentryTest && _stSentry != null)   // auto-turret core: watch the sentry acquire + kill the stationary zombie (own counter, OUTSIDE the _rigDir demo gate)
+            {
+                _stFrame++;
+                bool killed = _stZombie == null || !IsInstanceValid(_stZombie) || _stZombie.Dead;
+                if (_stFrame % 20 == 0 || killed)
+                    GD.Print($"[SENTRYTEST] f{_stFrame}: zombie {(killed ? "DEAD" : $"HP {_stZombie.Health:0}")}");
+                if (killed) { GD.Print("[SENTRYTEST] PASS -- turret acquired, tracked + shredded the zombie"); if (_shotPath == null) GetTree().Quit(); }
+                else if (_stFrame > 400) { GD.Print("[SENTRYTEST] TIMEOUT -- zombie still alive (sentry not firing?)"); GetTree().Quit(); }
+            }
             if (_peiPlay && _peiPlayer != null)
             {
                 _peiFrame++;
@@ -2985,15 +2994,6 @@ namespace UnturnedGodot
                     if (_frame == 100) _vm.SetReloading(true);
                     if (_frame == 150) _vm.SetReloading(false);
                     if (System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1" && _frame == 50) _vm.PlayHammer();   // verify the rack rotates the gun (bone-follow)
-                }
-                if (_sentryTest && _stSentry != null)   // auto-turret core: watch the sentry acquire + kill the stationary zombie
-                {
-                    _stFrame++;
-                    bool killed = _stZombie == null || !IsInstanceValid(_stZombie) || _stZombie.Dead;
-                    if (_stFrame % 20 == 0 || killed)
-                        GD.Print($"[SENTRYTEST] f{_stFrame}: zombie {(killed ? "DEAD" : $"HP {_stZombie.Health:0}")}");
-                    if (killed) { GD.Print("[SENTRYTEST] PASS -- turret acquired, tracked + shredded the zombie"); if (_shotPath == null) GetTree().Quit(); }
-                    else if (_stFrame > 400) { GD.Print("[SENTRYTEST] TIMEOUT -- zombie still alive (sentry not firing?)"); GetTree().Quit(); }
                 }
                 if (_pivots)   // --pivots: pin the arrows to the live coupling points; no driving
                 {
