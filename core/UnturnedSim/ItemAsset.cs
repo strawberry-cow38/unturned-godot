@@ -7,7 +7,7 @@ using System.Collections.Generic;
 namespace SDG.Unturned
 {
     // subset of EItemType -- the clothing types drive which page a worn item resizes, the rest are generic
-    public enum EItemType { HAT, PANTS, SHIRT, MASK, BACKPACK, VEST, GLASSES, GUN, MAGAZINE, MELEE, FOOD, WATER, MEDICAL, SUPPLY, GENERIC }
+    public enum EItemType { HAT, PANTS, SHIRT, MASK, BACKPACK, VEST, GLASSES, GUN, MAGAZINE, MELEE, FOOD, WATER, MEDICAL, SUPPLY, GENERIC, FISHER }
 
     // ItemTool rarity -> the tile's colour in the UI (getRarityColorUI)
     public enum EItemRarity { COMMON, UNCOMMON, RARE, EPIC, LEGENDARY, MYTHICAL }
