@@ -24,6 +24,7 @@ namespace UnturnedGodot
         readonly Dictionary<uint, GasPump> _gaspumps = new();        // A2: server-placed gas-pump fixtures (a GasPump node, not a Deployable body)
         readonly Dictionary<uint, OilPump> _oilpumps = new();        // oil pump/derrick fixtures (a view-only OilPump node; server owns the Fuel reservoir)
         readonly Dictionary<uint, Sentry> _sentries = new();         // auto-turret fixtures (a view-only Sentry node; the server-side ServerSentries owns scan/fire/kill)
+        readonly Dictionary<uint, Trap> _traps = new();              // trap fixtures (a view-only Trap node rendering the archetype; the server-side ServerTraps owns trigger/damage)
         readonly Dictionary<uint, Wire> _wires = new();
 
         public int NodeCount => _nodes.Count;
@@ -36,6 +37,8 @@ namespace UnturnedGodot
         public bool TryGetOilPump(uint netId, out OilPump pump) => _oilpumps.TryGetValue(netId, out pump) && IsInstanceValid(pump);
         public int SentryCount => _sentries.Count;   // how many sentry fixtures have materialized
         public bool TryGetSentry(uint netId, out Sentry sentry) => _sentries.TryGetValue(netId, out sentry) && IsInstanceValid(sentry);
+        public int TrapCount => _traps.Count;   // how many trap fixtures have materialized
+        public bool TryGetTrap(uint netId, out Trap trap) => _traps.TryGetValue(netId, out trap) && IsInstanceValid(trap);
 
         public override void _PhysicsProcess(double delta)
         {
@@ -103,6 +106,18 @@ namespace UnturnedGodot
                     }
                     continue;
                 }
+                if (def.Fixture == FixtureKind.Trap)
+                {
+                    // a trap -- a VIEW-ONLY Trap node rendering the archetype (picked from the entity DefId); the
+                    // server-side ServerTraps owns the edge-trigger/bite/landmine. Static visual: nothing to mirror
+                    // per-tick beyond existence (a worn-down/spent trap vanishes when the server retires the entity).
+                    if (!_traps.TryGetValue(e.NetIdValue, out var trap) || !IsInstanceValid(trap))
+                    {
+                        trap = Trap.Materialize(parent, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees, e.NetIdValue, e.DefId);
+                        _traps[e.NetIdValue] = trap;
+                    }
+                    continue;
+                }
                 if (!_nodes.TryGetValue(e.NetIdValue, out var node) || !IsInstanceValid(node))
                 {
                     node = Deployable.Spawn(parent, def, new Vector3(e.Pos.x, e.Pos.y, e.Pos.z), e.YawDegrees);
@@ -118,6 +133,7 @@ namespace UnturnedGodot
             RetireMissing(_gaspumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); PowerNet.MarkDirty(); });
             RetireMissing(_oilpumps, seen, pump => { if (IsInstanceValid(pump)) pump.QueueFree(); });
             RetireMissing(_sentries, seen, sentry => { if (IsInstanceValid(sentry)) sentry.QueueFree(); });
+            RetireMissing(_traps, seen, trap => { if (IsInstanceValid(trap)) trap.QueueFree(); });
 
             // wires: create between the mapped ports (port index = def port order, the §2.6 sub-address).
             // Endpoints may be a Deployable body OR a GridPowerSource fixture (A3), so resolve ports from both.

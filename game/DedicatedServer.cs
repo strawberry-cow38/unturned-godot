@@ -29,6 +29,7 @@ namespace UnturnedGodot
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Godot.Vector3 pos, float yaw)> Containers;   // A1: world-build container manifest -> ContainerNetSync registers each as a server-owned fixture + stocks its grid
         public GasStationServer GasStation { get; private set; }          // A2: authoritative per-station fuel tanks (built from the placed gas-pump fixtures; the ExtractFuel choke drains them)
         public ServerSentries Sentries { get; private set; }              // sentry fixtures: the server-authoritative scan/fire/kill (the view-only replica just renders)
+        public ServerTraps Traps { get; private set; }                    // trap fixtures: the server-authoritative edge-trigger/bite/landmine (the view-only replica just renders)
 
         public NetWorldServer Server { get; private set; }
         public PlayerNetSync PlayerSync { get; private set; }
@@ -164,6 +165,9 @@ namespace UnturnedGodot
             // (ZombieNetSync, set above) applies the kill. Runs AFTER the zombie publish so it sees the live state.
             Sentries = new ServerSentries(Server.Zombies, Server.Deployables, Server.Combat);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Sentries.Tick(tick, (float)dt), "net.sentries.tick"));
+            // trap fixtures edge-trigger server-authoritatively against the just-published zombies (same ZombieHost seam).
+            Traps = new ServerTraps(Server.Zombies, Server.Deployables, Server.Combat);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => Traps.Tick(tick, (float)dt), "net.traps.tick"));
             AnimalSync = new AnimalNetSync(Server, this);   // A5: publish wildlife brains (currently a no-op on dedicated -- see the AnimalField note above)
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => AnimalSync.Tick(), "net.animals.publish"));
             AppearanceSync = new PlayerAppearanceNetSync(Server);   // B10: publish each connected player's worn clothing + stance into the combat block
