@@ -160,6 +160,19 @@ client SEES the result, with teeth (fails without the wiring). (6) verify the VI
 just green tests. Never re-create the deleted two-body machinery (predict/reconcile/rewind, ack-band,
 DeterministicGround) — the owner has ONE body.
 
+> **DEFINITION OF DONE (entity features) — a feature is NOT done until a second, JOINED client sees it.**
+> Server-authoritative sim logic runs in SP *and* on the MP host, so it FEELS finished — but that's only half the
+> feature. The replication half is what a joined client needs, and its absence is invisible until someone actually
+> joins. **The anti-pattern that keeps happening:** a new thing (sentry / trap / beacon / charge / …) is built as a
+> standalone console-spawned `Node3D` with its own logic — works great in SP and on the host, and is **invisible to
+> every joined client**. That is half a feature, not a done one. The gate, before you call an entity feature done:
+> (1) it's a replicated entity / `FixtureKind` + a def (never a bare console-spawned node); (2) a `ReplicaView`
+> branch `Materialize`s it on the client, mirroring only replicated scalars (Health/Fuel/ToggledOn) and deriving the
+> rest LOCALLY (aim, fx, power-solve) — never running server-auth logic (damage/spawn/detonate) client-side; (3)
+> server-place routes through the real Place path (`NetPlaceDeployable`), not a direct/console spawn; (4) an L1
+> `net.shell_*` test **with teeth** proves a *joined* client materializes it (a passing SP/host run proves nothing
+> about replication). If you can't point at that net test, it isn't done.
+
 ## Multiplayer (MP) — the underlying net stack
 
 `docs/MP_PLAN.md` is the architecture doc (§7 = status + security posture). The unified-paradigm section above is
