@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "vmpitch", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -123,18 +123,6 @@ namespace UnturnedGodot
                                      : f == "off" || f == "0" || f == "false" ? false
                                      : !Vehicle.InfiniteFuel;
                 Log($"infFuel {(Vehicle.InfiniteFuel ? "ON -- cars won't burn fuel" : "OFF -- fuel drains normally")}");
-                return;
-            }
-
-            // vmpitch <deg>|off  -- live-tune the held-gun HOLD PITCH (degrees). Overrides the baked per-gun pitch on ALL
-            // guns so you can dial a pistol level; `vmpitch off` clears it back to the baked values. Above the arg guard
-            // so bare `vmpitch` reports the current value.
-            if (verb == "vmpitch")
-            {
-                string a = arg.Trim().ToLowerInvariant();
-                if (a == "off" || a == "clear") { Viewmodel.PitchOverride = null; Log("vmpitch cleared -> baked per-gun pitch"); }
-                else if (float.TryParse(a, out var deg)) { Viewmodel.PitchOverride = deg; Log($"vmpitch = {deg}° (all held guns; re-equip if it doesn't refresh; `vmpitch off` to clear)"); }
-                else Log($"vmpitch = {(Viewmodel.PitchOverride.HasValue ? Viewmodel.PitchOverride.Value + "°" : "baked (pistols 12°)")}; usage: vmpitch <deg>|off");
                 return;
             }
 
