@@ -57,7 +57,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -73,6 +73,7 @@ namespace UnturnedGodot
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--assettest=")) assetTest = arg["--assettest=".Length..];   // load an Asset Factory .assetbundle via AssetBundleLoader -> spawn it + 3/4 cam shot (verify format+loader pipeline)
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
@@ -261,6 +262,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildPropTest(proptest);
+                return;
+            }
+
+            if (assetTest != null)   // Asset Factory: load a .assetbundle via AssetBundleLoader -> render it (proves the format+loader+spawn pipeline)
+            {
+                GetWindow().Size = new Vector2I(900, 900);
+                _shotPath = shot;
+                BuildAssetTest(assetTest);
                 return;
             }
 
@@ -1235,6 +1244,55 @@ namespace UnturnedGodot
             cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
             cam.LookAt(c, Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --assettest=PATH : load an Asset Factory .assetbundle through the real AssetBundleLoader and
+        // frame it with a 3/4 cam. Proves the format -> loader -> spawn pipeline (parts render, colliders
+        // build, points/volumes attach) before any editor UI exists.
+        void BuildAssetTest(string path)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.32f, 0.36f, 0.44f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+            var root = AssetBundleLoader.Load(path);
+            if (root == null) { GD.Print($"[ASSETTEST] failed to load {path}"); GetTree().Quit(1); return; }
+            AddChild(root);
+            // combined world-space AABB over every part mesh, to auto-frame the camera
+            Aabb aabb = default; bool has = false;
+            foreach (var mi in FindMeshInstances(root))
+            {
+                if (mi.Mesh == null) continue;
+                var lb = mi.Mesh.GetAabb(); var xf = mi.GlobalTransform;
+                for (int i = 0; i < 8; i++)
+                {
+                    var corner = lb.Position + new Vector3((i & 1) * lb.Size.X, ((i >> 1) & 1) * lb.Size.Y, ((i >> 2) & 1) * lb.Size.Z);
+                    var wp = xf * corner;
+                    if (!has) { aabb = new Aabb(wp, Vector3.Zero); has = true; } else aabb = aabb.Expand(wp);
+                }
+            }
+            var ctr = has ? aabb.GetCenter() : Vector3.Zero;
+            float r = has ? Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z)) : 2f;
+            if (r < 0.01f) r = 2f;
+            foreach (var (ax, col) in new[] { (Vector3.Right, new Color(1f, 0.15f, 0.15f)), (Vector3.Up, new Color(0.15f, 1f, 0.15f)), (Vector3.Back, new Color(0.2f, 0.4f, 1f)) })
+                AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, 0.05f) * r + ax.Abs() * r * 1.1f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = col }, Position = ctr + ax * r * 0.6f });
+            var cam = new Camera3D { Current = true, Fov = 50f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = ctr + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
+            cam.LookAt(ctr, Vector3.Up);
+            GD.Print($"[ASSETTEST] loaded {path}: aabb={aabb.Size} center={ctr} r={r}");
+        }
+
+        static System.Collections.Generic.IEnumerable<MeshInstance3D> FindMeshInstances(Node n)
+        {
+            if (n is MeshInstance3D mi) yield return mi;
+            foreach (var c in n.GetChildren())
+                foreach (var m in FindMeshInstances(c)) yield return m;
         }
 
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
