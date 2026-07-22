@@ -195,6 +195,13 @@ namespace UnturnedGodot
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump };
+
+        // Asset Factory: build the placed body from a composed .assetbundle (Deployable.BuildMesh branches on this)
+        // instead of a single Model .obj. Authored UPRIGHT in the editor, so factory deploy defs set Upright=true.
+        public string FactoryBundle;
+        static readonly System.Collections.Generic.Dictionary<ushort, DeployableDef> _factory = new();   // dynamic 60000+ factory deployable defs
+        public static void RegisterFactory(DeployableDef def) { if (def != null && def.Id != 0) _factory[def.Id] = def; }
+
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -208,7 +215,7 @@ namespace UnturnedGodot
             9106 => WindTurbine,
             9200 => GridSource,
             9201 => GasPump,
-            _ => null,
+            _ => _factory.TryGetValue(id, out var d) ? d : null,   // Asset Factory deployables (ids 60000+)
         };
 
         // The mesh + a nearest-filtered palette material (the src uses tiny 2x2 palette textures sampled by UV,

@@ -106,6 +106,7 @@ namespace UnturnedGodot
         public static MeshInstance3D BuildMesh(DeployableDef def, out Aabb localAabb)
         {
             if (def.IsWindTurbine) return BuildTurbine(def, out localAabb);   // procedural tower + nacelle + spinning blade hub
+            if (def.FactoryBundle != null) return AssetBundleLoader.BuildComposite(AssetCatalog.Get(def.FactoryBundle), out localAabb);   // Asset Factory: composed multi-part body (textured, authored-upright)
             Mesh mesh = def.ProcBox ? new BoxMesh { Size = def.Size } : def.LoadMesh();   // splitter = a plain gray box, no .obj
             var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = def.MakeMaterial() };
             Basis mrot = def.MeshBasis();   // per-def model orientation fixup (battery's ripped mesh stands up upside-down + 180 off); identity for the rest

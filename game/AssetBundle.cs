@@ -101,10 +101,10 @@ namespace UnturnedGodot
         public static string ResolveAlbedo(string meshFile)
         {
             if (string.IsNullOrEmpty(meshFile)) return null;
-            string b = meshFile.EndsWith(".txt") ? meshFile[..^4] : meshFile;
+            string b = (meshFile.EndsWith(".txt") || meshFile.EndsWith(".obj")) ? meshFile[..^4] : meshFile;   // strip .txt / .obj (objects/*.obj deployable meshes)
             string stripped = b;
             foreach (var suf in new[] { "_gun", "_body", "_0", "_1" }) if (b.EndsWith(suf)) { stripped = b[..^suf.Length]; break; }
-            foreach (var cand in new[] { b + "_albedo.png", b + ".png", stripped + "_albedo.png", stripped + "_palette.png", b + "_palette.png" })
+            foreach (var cand in new[] { b + "_albedo.png", b + ".png", b + "_tex.png", stripped + "_albedo.png", stripped + "_palette.png", b + "_palette.png", stripped + "_tex.png" })   // _tex.png = the objects/ palette naming (Gas_Pump_0_tex.png)
                 if (System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + cand))) return cand;
             return null;
         }

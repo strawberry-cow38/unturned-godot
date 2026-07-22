@@ -68,17 +68,45 @@ namespace UnturnedGodot
             foreach (var name in names)
             {
                 var b = _byName[name];
-                if (b.Type != "gun") continue;   // guns first; deployables join here next
-                SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset
+                if (b.Type == "gun")
                 {
-                    id = id, itemName = PrettyName(name), type = SDG.Unturned.EItemType.GUN,
-                    rarity = SDG.Unturned.EItemRarity.RARE, size_x = 4, size_y = 2,
-                    gunName = name, description = "An Asset Factory creation.",
-                });
+                    SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset
+                    {
+                        id = id, itemName = PrettyName(name), type = SDG.Unturned.EItemType.GUN,
+                        rarity = SDG.Unturned.EItemRarity.RARE, size_x = 4, size_y = 2,
+                        gunName = name, description = "An Asset Factory creation.",
+                    });
+                }
+                else if (b.Type == "deployable")
+                {
+                    // placement is keyed on DeployableDef.ById(id) (NOT the item type), so a plain GENERIC item + a
+                    // factory DeployableDef under the SAME id -> holding the item auto-routes to the placement ghost
+                    // (PlayerController:965 EquipHeldDeployable), LMB plants the composed body + consumes one.
+                    SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset
+                    {
+                        id = id, itemName = PrettyName(name), type = SDG.Unturned.EItemType.GENERIC,
+                        rarity = SDG.Unturned.EItemRarity.RARE, size_x = 2, size_y = 2,
+                        description = "An Asset Factory deployable.",
+                    });
+                    DeployableDef.RegisterFactory(BuildDeployableDef(id, name, b));
+                }
+                else continue;   // props/vehicles aren't inventory items (props = map-editor palette; vehicles = spawn by name)
                 _factoryItemName[id] = name;
                 id++;
             }
             if (_factoryItemName.Count > 0) GD.Print($"[assetcatalog] {_factoryItemName.Count} factory item(s) registered as real items (id {FactoryItemIdBase}+)");
+        }
+
+        // A DeployableDef for a factory deployable bundle: SAME id as its item (so holding the item -> EquipHeldDeployable),
+        // body built from the composed bundle (FactoryBundle -> Deployable.BuildMesh), authored UPRIGHT. Size is a fallback
+        // footprint only -- the placed collider hugs the real composed-mesh AABB. HoldMesh null = ghost-only carry for now.
+        static DeployableDef BuildDeployableDef(ushort id, string name, AssetBundle b)
+        {
+            return new DeployableDef
+            {
+                Id = id, Name = PrettyName(name), FactoryBundle = name,
+                Size = new Vector3(1f, 2f, 1f), Health = 200f, Offset = 0f, Radius = 0.5f, Range = 6f, Upright = true,
+            };
         }
 
         // Reverse map for the inventory icon loader: a factory item id -> its bundle name (icons are name-keyed

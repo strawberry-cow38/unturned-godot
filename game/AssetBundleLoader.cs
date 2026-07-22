@@ -86,6 +86,38 @@ namespace UnturnedGodot
             };
         }
 
+        // Build a bundle's whole composed model into ONE container node (all parts as textured, transformed children)
+        // and return its combined local AABB. Used by the deployable binder (Deployable.BuildMesh) + icon bake.
+        public static MeshInstance3D BuildComposite(AssetBundle b, out Aabb aabb)
+        {
+            var root = new MeshInstance3D();   // container (no mesh of its own); parts are children
+            aabb = default; bool first = true;
+            if (b != null)
+                foreach (var p in b.Parts)
+                {
+                    var part = BuildPart(p);
+                    if (part?.Mesh == null) continue;
+                    root.AddChild(part);
+                    var mb = CompositeAabb(part.Transform, part.Mesh.GetAabb());
+                    aabb = first ? mb : aabb.Merge(mb); first = false;
+                }
+            if (first) aabb = new Aabb(Vector3.Zero, Vector3.One);   // empty bundle -> unit box (never a zero collider)
+            return root;
+        }
+
+        // World-space AABB of a local AABB under a transform (8-corner transform; no Transform3D*Aabb operator in use).
+        static Aabb CompositeAabb(Transform3D t, Aabb a)
+        {
+            Vector3 mn = new(float.MaxValue, float.MaxValue, float.MaxValue), mx = new(float.MinValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 w = t * (a.Position + new Vector3((i & 1) != 0 ? a.Size.X : 0f, (i & 2) != 0 ? a.Size.Y : 0f, (i & 4) != 0 ? a.Size.Z : 0f));
+                mn.X = Mathf.Min(mn.X, w.X); mn.Y = Mathf.Min(mn.Y, w.Y); mn.Z = Mathf.Min(mn.Z, w.Z);
+                mx.X = Mathf.Max(mx.X, w.X); mx.Y = Mathf.Max(mx.Y, w.Y); mx.Z = Mathf.Max(mx.Z, w.Z);
+            }
+            return new Aabb(mn, mx - mn);
+        }
+
         // Behaviours layer (master's vision — declare a behaviour, the loader wires it to the existing system).
         // impact-fx here; power ports (ConnectionPort/IPowerDevice) + destructible (DestructibleField) + powered-gate
         // roll on the same rails. (Fluid containers = tinyclaw's fluid-IO system, wired in when it lands.)
