@@ -35,6 +35,7 @@ namespace UnturnedGodot
         readonly List<MeshInstance3D> _markers = new();                // one yellow outline per selected object
         readonly List<(string guid, Transform3D x)> _copies = new();   // source EditorObjects.copies (Ctrl+C / Ctrl+V)
         EditorGizmo _gizmo;
+        Node3D _pivot;   // virtual gizmo pivot at the selection centroid (source SelectionTool: handle at the average center)
         float _placeYaw;
         Node3D Primary => _selection.Count > 0 ? _selection[_selection.Count - 1] : null;   // gizmo target = most-recent selected
         bool _boxDragging;         // source: drag over empty ground = marquee box-select
@@ -53,7 +54,7 @@ namespace UnturnedGodot
         void RestoreTransforms(List<(Node3D n, Transform3D x)> cap)
         {
             foreach (var (n, x) in cap) if (IsInstanceValid(n)) n.GlobalTransform = x;
-            if (Primary != null) { _gizmo.Attach(Primary); PositionMarkers(); }
+            AttachGizmo(); PositionMarkers();
         }
         void RemoveProp(Node3D n)   // fully detach a placed prop (used by delete + place/paste undo)
         {
@@ -61,7 +62,7 @@ namespace UnturnedGodot
             _placed.Remove(n); _selection.Remove(n);
             foreach (var kv in new List<KeyValuePair<Rid, Node3D>>(_pickToObj)) if (kv.Value == n) _pickToObj.Remove(kv.Key);
             if (IsInstanceValid(n)) n.QueueFree();
-            _gizmo.Attach(Primary); RefreshMarkers();
+            AttachGizmo(); RefreshMarkers();
         }
         Node3D RePlace(string guid, Transform3D x) => _guidToName.TryGetValue(guid, out var nm) ? Place(nm, x.Origin, x.Basis) : null;
 
@@ -69,6 +70,7 @@ namespace UnturnedGodot
         {
             _editor = editor; _world = world; _cam = cam; _flyCam = cam;
             _gizmo = new EditorGizmo(cam); AddChild(_gizmo);   // the source TransformHandles translate gizmo, shown on the selection
+            _pivot = new Node3D(); AddChild(_pivot);            // the gizmo attaches HERE (selection centroid), not to any single object
             var cl = new CanvasLayer { Layer = 55 };            // marquee overlay for box drag-select
             _marquee = new MarqueeOverlay { Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
             _marquee.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -389,7 +391,7 @@ namespace UnturnedGodot
                 var cap = CaptureSelection();
                 var delta = pt - Primary.GlobalPosition;
                 foreach (var s in _selection) s.GlobalPosition += delta;
-                _gizmo.Attach(Primary); PositionMarkers();
+                AttachGizmo(); PositionMarkers();
                 _editor.PushUndo("move", () => RestoreTransforms(cap));
             }
             else if (PlaceName != null)   // E with only a list type -> summon one (stays unselected so E keeps placing)
@@ -417,7 +419,7 @@ namespace UnturnedGodot
             if (obj == null) { if (!additive) _selection.Clear(); }
             else if (additive) { if (!_selection.Remove(obj)) _selection.Add(obj); }
             else { _selection.Clear(); _selection.Add(obj); }
-            _gizmo.Attach(Primary);
+            AttachGizmo();
             RefreshMarkers();
         }
 
@@ -465,7 +467,7 @@ namespace UnturnedGodot
             {
                 _selection.Clear();
                 foreach (var (g, x) in cap) { var nn = RePlace(g, x); if (nn != null) _selection.Add(nn); }
-                _gizmo.Attach(Primary); RefreshMarkers();
+                AttachGizmo(); RefreshMarkers();
             });
         }
 
@@ -489,7 +491,7 @@ namespace UnturnedGodot
             var pasted = new List<Node3D>();
             foreach (var (g, x) in _copies)
                 if (_guidToName.TryGetValue(g, out var name)) { var nn = Place(name, x.Origin, x.Basis); if (nn != null) { _selection.Add(nn); pasted.Add(nn); } }
-            _gizmo.Attach(Primary); RefreshMarkers();
+            AttachGizmo(); RefreshMarkers();
             if (pasted.Count > 0) _editor.PushUndo("paste", () => { foreach (var n in pasted) RemoveProp(n); });
             GD.Print($"[editor] pasted {_selection.Count} prop(s)");
         }
@@ -515,23 +517,37 @@ namespace UnturnedGodot
                 if (_cam.IsPositionBehind(prop.GlobalPosition)) continue;
                 if (rect.HasPoint(_cam.UnprojectPosition(prop.GlobalPosition)) && !_selection.Contains(prop)) _selection.Add(prop);
             }
-            _gizmo.Attach(Primary); RefreshMarkers();
+            AttachGizmo(); RefreshMarkers();
             GD.Print($"[editor] box-select: {_selection.Count} selected");
         }
 
         // group-gizmo: the gizmo drives Primary; the rest of the multi-selection rigidly follows its transform delta
-        void BeginGroupDrag()
+        // gizmo pivot = the selection's centroid (source SelectionTool: handle at the average center). The gizmo drives the
+        // virtual _pivot; the whole selection rides it rigidly. Basis follows the local/global toggle (local = the most-recent
+        // selected's rotation, the source's first-selection rule). Single-select degenerates cleanly (centroid = that object).
+        void AttachGizmo()
+        {
+            if (_selection.Count == 0) { _gizmo.Attach(null); return; }
+            Vector3 c = Vector3.Zero;
+            foreach (var s in _selection) c += s.GlobalPosition;
+            c /= _selection.Count;
+            var basis = _gizmo.LocalSpace ? _selection[_selection.Count - 1].GlobalTransform.Basis.Orthonormalized() : Basis.Identity;
+            _pivot.GlobalTransform = new Transform3D(basis, c);
+            _gizmo.Attach(_pivot);
+        }
+
+        void BeginGroupDrag()   // capture every selected object's transform relative to the centroid pivot
         {
             _groupRel.Clear();
-            if (_selection.Count <= 1 || Primary == null) return;
-            var inv = Primary.GlobalTransform.AffineInverse();
+            if (_selection.Count == 0) return;
+            var inv = _pivot.GlobalTransform.AffineInverse();
             foreach (var s in _selection) _groupRel.Add(inv * s.GlobalTransform);
         }
-        void ApplyGroupDrag()
+        void ApplyGroupDrag()   // the gizmo moved/rotated/scaled _pivot -> carry the whole selection rigidly around the centroid
         {
-            if (_groupRel.Count != _selection.Count || Primary == null) return;
-            var px = Primary.GlobalTransform;
-            for (int i = 0; i < _selection.Count; i++) if (_selection[i] != Primary) _selection[i].GlobalTransform = px * _groupRel[i];
+            if (_groupRel.Count != _selection.Count) return;
+            var px = _pivot.GlobalTransform;
+            for (int i = 0; i < _selection.Count; i++) _selection[i].GlobalTransform = px * _groupRel[i];
         }
 
         public override void _Process(double delta)   // hover readout: name the object under the cursor (source EditorObjects hover hint)
@@ -556,7 +572,7 @@ namespace UnturnedGodot
                     if (_gizmo.TryBeginDrag(mp)) { BeginGroupDrag(); _dragCapture = CaptureSelection(); return; }   // gizmo grab -> drag (+ capture for undo)
                     if (!TrySelect(mp)) { _boxDragging = true; _boxStart = mp; }            // click selects a prop; empty ground -> arm a box drag-select
                 }
-                else if (_gizmo.Dragging) { _gizmo.EndDrag(); PositionMarkers(); if (_dragCapture != null) { var c = _dragCapture; _dragCapture = null; _editor.PushUndo("move", () => RestoreTransforms(c)); } }
+                else if (_gizmo.Dragging) { _gizmo.EndDrag(); AttachGizmo(); PositionMarkers(); if (_dragCapture != null) { var c = _dragCapture; _dragCapture = null; _editor.PushUndo("move", () => RestoreTransforms(c)); } }
                 else if (_boxDragging) { FinishBoxSelect(mp); _boxDragging = false; _marquee.Visible = false; }
             }
             else if (ev is InputEventMouseMotion)
@@ -575,7 +591,7 @@ namespace UnturnedGodot
                 else if (ctrl && k.Keycode == Key.Z) _editor.Undo();                      // Ctrl+Z undo (source EditorInteract)
                 else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
-                else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
+                else if (k.Keycode == Key.G) { _gizmo.LocalSpace = !_gizmo.LocalSpace; AttachGizmo(); }    // G = toggle gizmo local/global space (re-orient the centroid pivot)
                 else if (k.Keycode == Key.Period) _gizmo.CycleSnap();                   // . = cycle snap preset (1/0.5/0.25u, 15/10/5°); hold Ctrl while dragging to snap
                 else if (k.Keycode == Key.F) FocusSelection();                          // F = focus camera on the selection (source ControlsSettings.focus)
                 // ESC is the editor pause menu (EditorDashboard); deselect via a click on empty ground (FinishBoxSelect)
@@ -791,7 +807,7 @@ namespace UnturnedGodot
                 var delta = _copyPos - Primary.GlobalPosition;
                 foreach (var s in _selection) s.GlobalPosition += delta;
             }
-            _gizmo.Attach(Primary); PositionMarkers();
+            AttachGizmo(); PositionMarkers();
             GD.Print($"[editor] pasted transform ({(_copyFull ? "full" : "position")}) to {_selection.Count}");
         }
 
@@ -830,7 +846,7 @@ namespace UnturnedGodot
                 {
                     Select(_placed[2], false); Select(_placed[3], true);
                     var os = _placed[2].GlobalPosition; BeginGroupDrag();
-                    Primary.GlobalPosition += new Vector3(10f, 0f, 0f); ApplyGroupDrag();
+                    _pivot.GlobalPosition += new Vector3(10f, 0f, 0f); ApplyGroupDrag();   // drive the centroid pivot; the whole selection follows
                     GD.Print($"[editordemo] group-drag: other followed {(_placed[2].GlobalPosition - os).Length():0.#} (expect ~10)");
                 }
                 Select(pr, false);   // single-select the transformed prop for a clean outline in the render
