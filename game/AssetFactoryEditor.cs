@@ -31,6 +31,7 @@ namespace UnturnedGodot
 
         VBoxContainer _listBox;
         Panel _picker;
+        Panel _openPanel; VBoxContainer _openList;   // open a saved .assetbundle to edit
         LineEdit _nameEdit;
         OptionButton _typeOpt, _hookOpt;
         Label _status;
@@ -76,6 +77,7 @@ namespace UnturnedGodot
                 TogglePicker(true);
                 SetPickerMesh(System.Array.IndexOf(_meshNames, "axe_fire.txt") >= 0 ? "axe_fire.txt" : (_meshNames.Length > 0 ? _meshNames[0] : null));
             }
+            if (System.Environment.GetEnvironmentVariable("UG_AFOPEN") == "1") { RefreshOpenList(); if (_openPanel != null) _openPanel.Visible = true; }   // render hook: show the open-bundle list
         }
 
         // ---- live nodes <-> bundle ------------------------------------------
@@ -310,13 +312,56 @@ namespace UnturnedGodot
             col.AddChild(scroll);
 
             var delBtn = new Button { Text = "🗑 Delete Selected" }; delBtn.Pressed += DeleteSelected; col.AddChild(delBtn);
+            var openBtn = new Button { Text = "📂 Open" }; openBtn.Pressed += () => { TogglePicker(false); RefreshOpenList(); if (_openPanel != null) _openPanel.Visible = true; }; col.AddChild(openBtn);
             var saveBtn = new Button { Text = "💾 Save" }; saveBtn.Pressed += Save; col.AddChild(saveBtn);
             var exitBtn = new Button { Text = "Exit" }; exitBtn.Pressed += () => OnExit?.Invoke(); col.AddChild(exitBtn);
             _status = new Label { Text = "" }; col.AddChild(_status);
             col.AddChild(new Label { Text = "select an item → drag gizmo · T mode · G space · Del" });
 
             BuildPicker(layer);
+            BuildOpenPanel(layer);
             RefreshList();
+        }
+
+        void BuildOpenPanel(CanvasLayer layer)
+        {
+            _openPanel = new Panel { Position = new Vector2(324, 12), CustomMinimumSize = new Vector2(300, 400), Visible = false };
+            layer.AddChild(_openPanel);
+            var col = new VBoxContainer { CustomMinimumSize = new Vector2(300, 400) };
+            _openPanel.AddChild(col);
+            col.AddChild(new Label { Text = "open a saved .assetbundle to edit" });
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(288, 340) };
+            _openList = new VBoxContainer();
+            scroll.AddChild(_openList);
+            col.AddChild(scroll);
+            var close = new Button { Text = "close" }; close.Pressed += () => { if (_openPanel != null) _openPanel.Visible = false; }; col.AddChild(close);
+        }
+
+        void RefreshOpenList()
+        {
+            if (_openList == null) return;
+            foreach (var c in _openList.GetChildren()) c.QueueFree();
+            foreach (var f in DirAccess.GetFilesAt(AssetCatalog.Dir))
+            {
+                if (!f.EndsWith(".assetbundle")) continue;
+                string path = AssetCatalog.Dir + f;
+                var b = new Button { Text = f, Alignment = HorizontalAlignment.Left };
+                b.Pressed += () => { LoadBundle(path); if (_openPanel != null) _openPanel.Visible = false; };
+                _openList.AddChild(b);
+            }
+        }
+
+        void LoadBundle(string path)
+        {
+            var b = AssetBundle.Load(path);
+            if (b == null) { Status($"failed to open {path}"); return; }
+            _bundle = b; _savePath = path;
+            if (_nameEdit != null) _nameEdit.Text = _bundle.Name;
+            if (_typeOpt != null) for (int i = 0; i < _typeOpt.ItemCount; i++) if (_typeOpt.GetItemText(i) == _bundle.Type) _typeOpt.Selected = i;
+            RepopulateHooks();
+            RebuildAll();
+            Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
+            Status($"opened {System.IO.Path.GetFileNameWithoutExtension(path)} ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
         }
 
         void RepopulateHooks()
@@ -426,7 +471,7 @@ namespace UnturnedGodot
             if (_previewPivot != null && _picker != null && _picker.Visible) _previewPivot.RotateY((float)delta * 0.9f);
         }
 
-        void TogglePicker(bool on) { if (_picker != null) _picker.Visible = on; }
+        void TogglePicker(bool on) { if (_picker != null) _picker.Visible = on; if (on && _openPanel != null) _openPanel.Visible = false; }
         void Status(string s) { if (_status != null) _status.Text = s; GD.Print($"[assetfactory] {s}"); }
 
         // ---- viz builders ---------------------------------------------------
