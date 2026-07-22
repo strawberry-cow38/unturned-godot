@@ -35,6 +35,9 @@ namespace UnturnedGodot
         OptionButton _typeOpt, _hookOpt;
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
+        Kind _clipKind; object _clipObj;    // copy/paste clipboard (a cloned item)
+        string _pickerName;                 // the mesh highlighted in the picker (E places it)
+        SubViewport _previewVp; Node3D _previewPivot; MeshInstance3D _previewMesh;   // 3D spinning preview of the highlighted mesh
 
         public void Setup(string loadPath = null)
         {
@@ -68,6 +71,11 @@ namespace UnturnedGodot
             GD.Print($"[assetfactory] editor up: {_bundle.Name} [{_bundle.Type}] — {_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt, {_meshNames.Length} meshes");
 
             if (System.Environment.GetEnvironmentVariable("UG_AFSELFTEST") == "1") SelfTest();
+            if (System.Environment.GetEnvironmentVariable("UG_AFPICKER") == "1")   // render hook: open the picker + preview a mesh
+            {
+                TogglePicker(true);
+                SetPickerMesh(System.Array.IndexOf(_meshNames, "axe_fire.txt") >= 0 ? "axe_fire.txt" : (_meshNames.Length > 0 ? _meshNames[0] : null));
+            }
         }
 
         // ---- live nodes <-> bundle ------------------------------------------
@@ -154,6 +162,39 @@ namespace UnturnedGodot
             RebuildAll(); Select(Kind.Point, _bundle.Points.Count - 1); Status($"added point {nm}");
         }
 
+        void CopySelected()
+        {
+            if (_selIdx < 0) return;
+            object clone = _selKind switch
+            {
+                Kind.Part => ClonePart(_bundle.Parts[_selIdx]),
+                Kind.Collider => CloneCollider(_bundle.Colliders[_selIdx]),
+                Kind.Volume => CloneVolume(_bundle.Volumes[_selIdx]),
+                Kind.Point => ClonePoint(_bundle.Points[_selIdx]),
+                _ => null,
+            };
+            if (clone != null) { _clipKind = _selKind; _clipObj = clone; Status($"copied {_selKind}"); }
+        }
+
+        void PasteClipboard()
+        {
+            if (_clipObj == null) return;
+            switch (_clipKind)
+            {
+                case Kind.Part: { var p = ClonePart((AssetBundle.Part)_clipObj); Nudge(p.Pos); _bundle.Parts.Add(p); RebuildAll(); Select(Kind.Part, _bundle.Parts.Count - 1); break; }
+                case Kind.Collider: { var c = CloneCollider((AssetBundle.Collider)_clipObj); Nudge(c.Pos); _bundle.Colliders.Add(c); RebuildAll(); Select(Kind.Collider, _bundle.Colliders.Count - 1); break; }
+                case Kind.Volume: { var v = CloneVolume((AssetBundle.Volume)_clipObj); Nudge(v.Pos); _bundle.Volumes.Add(v); RebuildAll(); Select(Kind.Volume, _bundle.Volumes.Count - 1); break; }
+                case Kind.Point: { var t = ClonePoint((AssetBundle.Point)_clipObj); Nudge(t.Pos); _bundle.Points.Add(t); RebuildAll(); Select(Kind.Point, _bundle.Points.Count - 1); break; }
+            }
+            Status("pasted");
+        }
+
+        static void Nudge(float[] pos) { if (pos != null && pos.Length >= 3) { pos[0] += 0.5f; pos[2] += 0.5f; } }
+        static AssetBundle.Part ClonePart(AssetBundle.Part p) => new() { Mesh = p.Mesh, Albedo = p.Albedo, Color = (float[])p.Color?.Clone(), Pos = (float[])p.Pos.Clone(), Rot = (float[])p.Rot.Clone(), Scale = (float[])p.Scale.Clone() };
+        static AssetBundle.Collider CloneCollider(AssetBundle.Collider c) => new() { Shape = c.Shape, Pos = (float[])c.Pos.Clone(), Rot = (float[])c.Rot.Clone(), Size = (float[])c.Size.Clone() };
+        static AssetBundle.Volume CloneVolume(AssetBundle.Volume v) => new() { Name = v.Name, Pos = (float[])v.Pos.Clone(), Rot = (float[])v.Rot.Clone(), Size = (float[])v.Size.Clone() };
+        static AssetBundle.Point ClonePoint(AssetBundle.Point p) => new() { Name = p.Name, Pos = (float[])p.Pos.Clone(), Rot = (float[])p.Rot.Clone() };
+
         void DeleteSelected()
         {
             if (_selIdx < 0) return;
@@ -212,8 +253,13 @@ namespace UnturnedGodot
                 _gizmo.DragTo(mm.Position, Input.IsKeyPressed(Key.Ctrl));
             else if (ev is InputEventKey k && k.Pressed && !k.Echo)
             {
-                if (k.Keycode == Key.T) { _gizmo.CycleMode(); Status($"gizmo: {GizmoMode()}"); }
+                if (k.CtrlPressed && k.Keycode == Key.C) CopySelected();
+                else if (k.CtrlPressed && k.Keycode == Key.V) PasteClipboard();
+                else if (k.Keycode == Key.T) { _gizmo.CycleMode(); Status($"gizmo: {GizmoMode()}"); }
                 else if (k.Keycode == Key.G) { _gizmo.LocalSpace = !_gizmo.LocalSpace; Status(_gizmo.LocalSpace ? "local space" : "global space"); }
+                else if (k.Keycode == Key.B) { _gizmo.LocalSpace = false; Status("global space"); }   // B = global transform space
+                else if (k.Keycode == Key.N) { _gizmo.LocalSpace = true; Status("local space"); }      // N = local transform space
+                else if (k.Keycode == Key.E) { if (_pickerName != null) AddPart(_pickerName); }         // E = place the highlighted picker mesh
                 else if (k.Keycode == Key.Delete) DeleteSelected();
             }
         }
@@ -317,12 +363,32 @@ namespace UnturnedGodot
 
         void BuildPicker(CanvasLayer layer)
         {
-            _picker = new Panel { Position = new Vector2(324, 12), CustomMinimumSize = new Vector2(300, 460), Visible = false };
+            _picker = new Panel { Position = new Vector2(324, 12), CustomMinimumSize = new Vector2(320, 580), Visible = false };
             layer.AddChild(_picker);
-            var col = new VBoxContainer { CustomMinimumSize = new Vector2(300, 460) };
+            var col = new VBoxContainer { CustomMinimumSize = new Vector2(320, 580) };
             _picker.AddChild(col);
-            col.AddChild(new Label { Text = "pick a mesh to add" });
-            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(288, 400) };
+            col.AddChild(new Label { Text = "click a mesh to preview  •  E (or Add) to place" });
+
+            // 3D spinning preview (own-world SubViewport so it renders JUST the mesh, not the editor)
+            _previewVp = new SubViewport { Size = new Vector2I(300, 210), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = true };
+            var pcam = new Camera3D { Position = new Vector3(0f, 0.55f, 2.3f), Current = true };
+            pcam.LookAt(Vector3.Zero, Vector3.Up);
+            _previewVp.AddChild(pcam);
+            _previewVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-42f, -32f, 0f), LightEnergy = 1.2f });
+            _previewVp.AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.18f, 0.2f, 0.24f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.8f, 0.8f, 0.82f), AmbientLightEnergy = 0.8f } });
+            _previewPivot = new Node3D();
+            _previewVp.AddChild(_previewPivot);
+            _previewMesh = new MeshInstance3D();
+            _previewPivot.AddChild(_previewMesh);
+            var vpc = new SubViewportContainer { Stretch = true, CustomMinimumSize = new Vector2(300, 210) };
+            vpc.AddChild(_previewVp);
+            col.AddChild(vpc);
+
+            var addBtn = new Button { Text = "Add (E)" };
+            addBtn.Pressed += () => { if (_pickerName != null) AddPart(_pickerName); };
+            col.AddChild(addBtn);
+
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(300, 260) };
             var box = new VBoxContainer();
             scroll.AddChild(box);
             col.AddChild(scroll);
@@ -330,10 +396,31 @@ namespace UnturnedGodot
             {
                 string mm = m;
                 var b = new Button { Text = m, Alignment = HorizontalAlignment.Left };
-                b.Pressed += () => { AddPart(mm); TogglePicker(false); };
+                b.Pressed += () => SetPickerMesh(mm);
                 box.AddChild(b);
             }
             var close = new Button { Text = "close" }; close.Pressed += () => TogglePicker(false); col.AddChild(close);
+        }
+
+        void SetPickerMesh(string name)
+        {
+            _pickerName = name;
+            if (_previewMesh == null) return;
+            var mesh = ContentProvider.ParseObj($"res://content/{name}");
+            if (mesh == null) { Status($"no mesh {name}"); return; }
+            _previewMesh.Mesh = mesh;
+            _previewMesh.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.72f, 0.74f, 0.8f), Roughness = 0.9f };
+            var aabb = mesh.GetAabb();
+            float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
+            float sc = r > 0.001f ? 1.5f / r : 1f;
+            _previewMesh.Scale = Vector3.One * sc;
+            _previewMesh.Position = -aabb.GetCenter() * sc;
+            Status($"preview: {name} — E to place");
+        }
+
+        public override void _Process(double delta)
+        {
+            if (_previewPivot != null && _picker != null && _picker.Visible) _previewPivot.RotateY((float)delta * 0.9f);
         }
 
         void TogglePicker(bool on) { if (_picker != null) _picker.Visible = on; }
