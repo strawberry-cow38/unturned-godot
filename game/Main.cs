@@ -285,6 +285,10 @@ namespace UnturnedGodot
                     var b = AssetCatalog.Get(n);
                     GD.Print($"[catalog] {n} [{b.Type}] {b.Parts.Count}p/{b.Colliders.Count}c/{b.Volumes.Count}v/{b.Points.Count}pt");
                 }
+                SDG.Unturned.ItemCatalog.RegisterAll();   // populate Assets (real items + factory items at the end) -> prove give-ability
+                foreach (var a in SDG.Unturned.Assets.all())
+                    if (a.id >= AssetCatalog.FactoryItemIdBase)
+                        GD.Print($"[item] id={a.id} name=\"{a.itemName}\" type={a.type} gun={a.gunName}  -> `give {a.itemName}` gives a real inventory item that equips");
                 GetTree().Quit();
                 return;
             }
