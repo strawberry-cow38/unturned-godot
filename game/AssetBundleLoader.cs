@@ -20,8 +20,11 @@ namespace UnturnedGodot
         public static Node3D Build(AssetBundle b)
         {
             if (b.Type == "vehicle") return Vehicle.BuildFromBundle(b);   // vehicles get the full drivable Vehicle rig, not the generic tree
-            // everything else -> a StaticBody3D that renders + collides. (deployable placement + gun viewmodel binders land next.)
-            Node3D root = new StaticBody3D { Name = b.Name, CollisionLayer = 1 << 0 };
+            // everything else -> a StaticBody3D that renders + collides (or a FactoryPowerDevice if it declares power).
+            string powerKind = b.ParamString("power_kind");
+            Node3D root = !string.IsNullOrEmpty(powerKind)
+                ? new FactoryPowerDevice { Name = b.Name, CollisionLayer = 1 << 0, IsSource = powerKind.ToLowerInvariant() == "output" }
+                : new StaticBody3D { Name = b.Name, CollisionLayer = 1 << 0 };
 
             var partsHolder = new Node3D { Name = "Parts" };
             root.AddChild(partsHolder);
@@ -95,6 +98,27 @@ namespace UnturnedGodot
             {
                 sb.SetMeta(PlayerController.SurfMeta, (int)s);
                 GD.Print($"[assetbundle] {b.Name}: impact surface = {s}");
+            }
+
+            // power in/out: bolt a ConnectionPort onto the grid (root is a FactoryPowerDevice, see Build)
+            if (root is FactoryPowerDevice fpd)
+            {
+                var kind = (b.ParamString("power_kind") ?? "").ToLowerInvariant() switch
+                {
+                    "output" => DeployableDef.PortKind.Output,
+                    "consumer" => DeployableDef.PortKind.Consumer,
+                    "passthrough" => DeployableDef.PortKind.Passthrough,
+                    _ => (DeployableDef.PortKind?)null,
+                };
+                if (kind.HasValue)
+                {
+                    var pt = b.FindPoint("Power");   // author-placed port position, else a default just above the base
+                    var port = new DeployableDef.Port { Kind = kind.Value, Pos = pt != null ? AssetBundle.V3(pt.Pos) : new Vector3(0f, 0.5f, 0f), Watts = b.ParamFloat("power_watts", 0f) };
+                    string label = b.ParamString("power_label") ?? b.Name;
+                    fpd.AddPort(ConnectionPort.Create(fpd, port, label));
+                    fpd.AddToGroup("deployables");   // PowerNet scans this group
+                    GD.Print($"[assetbundle] {b.Name}: power {kind} {port.Watts}w ('{label}')");
+                }
             }
         }
 

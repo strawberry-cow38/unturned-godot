@@ -33,7 +33,8 @@ namespace UnturnedGodot
         Panel _picker;
         Panel _openPanel; VBoxContainer _openList;   // open a saved .assetbundle to edit
         LineEdit _nameEdit;
-        OptionButton _typeOpt, _hookOpt, _surfOpt;   // _surfOpt = behaviours: impact surface
+        OptionButton _typeOpt, _hookOpt, _surfOpt, _powerKind;   // behaviours: impact surface, power in/out
+        LineEdit _powerWatts, _powerLabel;
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
         Kind _clipKind; object _clipObj;    // copy/paste clipboard (a cloned item)
@@ -302,6 +303,21 @@ namespace UnturnedGodot
             bRow.AddChild(_surfOpt);
             col.AddChild(bRow);
 
+            var pRow = new HBoxContainer();
+            pRow.AddChild(new Label { Text = "power" });
+            _powerKind = new OptionButton();
+            foreach (var k in new[] { "none", "output", "consumer", "passthrough" }) _powerKind.AddItem(k);
+            _powerKind.ItemSelected += _ => WritePower();
+            pRow.AddChild(_powerKind);
+            _powerWatts = new LineEdit { PlaceholderText = "watts", CustomMinimumSize = new Vector2(64, 0) };
+            _powerWatts.TextChanged += _ => WritePower();
+            pRow.AddChild(_powerWatts);
+            col.AddChild(pRow);
+            _powerLabel = new LineEdit { PlaceholderText = "port label (renameable)", CustomMinimumSize = new Vector2(276, 0) };
+            _powerLabel.TextChanged += _ => WritePower();
+            col.AddChild(_powerLabel);
+            SyncPowerUI();
+
             var addRow = new HBoxContainer();
             var addPart = new Button { Text = "＋Part" }; addPart.Pressed += () => TogglePicker(true); addRow.AddChild(addPart);
             var addCol = new Button { Text = "＋Box" }; addCol.Pressed += AddCollider; addRow.AddChild(addCol);
@@ -370,6 +386,7 @@ namespace UnturnedGodot
             if (_typeOpt != null) for (int i = 0; i < _typeOpt.ItemCount; i++) if (_typeOpt.GetItemText(i) == _bundle.Type) _typeOpt.Selected = i;
             RepopulateHooks();
             SyncSurfUI();
+            SyncPowerUI();
             RebuildAll();
             Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
             Status($"opened {System.IO.Path.GetFileNameWithoutExtension(path)} ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
@@ -390,6 +407,32 @@ namespace UnturnedGodot
             string cur = _bundle.ParamString("surface") ?? "none";
             for (int i = 0; i < _surfOpt.ItemCount; i++) if (_surfOpt.GetItemText(i) == cur) { _surfOpt.Selected = i; return; }
             _surfOpt.Selected = 0;
+        }
+
+        void WritePower()
+        {
+            if (_powerKind == null) return;
+            string k = _powerKind.GetItemText(_powerKind.Selected);
+            if (k == "none") { _bundle.SetParam("power_kind", ""); _bundle.SetParam("power_watts", 0f); _bundle.SetParam("power_label", ""); }
+            else
+            {
+                _bundle.SetParam("power_kind", k);
+                _bundle.SetParam("power_watts", float.TryParse(_powerWatts?.Text, out var w) ? w : 0f);
+                _bundle.SetParam("power_label", _powerLabel?.Text ?? "");
+            }
+            Status($"power: {k}");
+        }
+
+        void SyncPowerUI()
+        {
+            if (_powerKind == null) return;
+            string k = _bundle.ParamString("power_kind") ?? "none";
+            int idx = 0;
+            for (int i = 0; i < _powerKind.ItemCount; i++) if (_powerKind.GetItemText(i) == k) { idx = i; break; }
+            _powerKind.Selected = idx;
+            float w = _bundle.ParamFloat("power_watts", 0f);
+            if (_powerWatts != null) _powerWatts.Text = w > 0f ? w.ToString("0") : "";
+            if (_powerLabel != null) _powerLabel.Text = _bundle.ParamString("power_label") ?? "";
         }
 
         static string[] HooksFor(string type) => type switch
@@ -578,11 +621,12 @@ namespace UnturnedGodot
             Select(Kind.Collider, 0);
             AddPoint();
             _bundle.SetParam("surface", "wood");   // behaviour: impact-fx surface
+            _bundle.SetParam("power_kind", "output"); _bundle.SetParam("power_watts", 1500f); _bundle.SetParam("power_label", "Main Output");   // behaviour: power out
             _nameEdit.Text = "selftest_asset";
             Save();
             var r = AssetBundle.Load(_savePath);
             GD.Print(r != null
-                ? $"[assetfactory] SELFTEST OK: {r.Name} type={r.Type} p={r.Parts.Count} c={r.Colliders.Count} v={r.Volumes.Count} pt={r.Points.Count} col0.size=({r.Colliders[0].Size[0]},{r.Colliders[0].Size[1]},{r.Colliders[0].Size[2]}) pt0={r.Points[0].Name} surface={r.ParamString("surface")}"
+                ? $"[assetfactory] SELFTEST OK: {r.Name} type={r.Type} p={r.Parts.Count} c={r.Colliders.Count} v={r.Volumes.Count} pt={r.Points.Count} col0.size=({r.Colliders[0].Size[0]},{r.Colliders[0].Size[1]},{r.Colliders[0].Size[2]}) pt0={r.Points[0].Name} surface={r.ParamString("surface")} power={r.ParamString("power_kind")}/{r.ParamFloat("power_watts")}w"
                 : "[assetfactory] SELFTEST FAIL");
         }
     }
