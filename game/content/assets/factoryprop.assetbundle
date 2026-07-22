@@ -1,0 +1,10 @@
+{
+  "name": "factoryprop",
+  "type": "prop",
+  "parts": [
+    { "mesh": "objects/Crate_0.obj", "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+  ],
+  "colliders": [
+    { "shape": "box", "pos": [0, 0.5, 0], "rot": [0, 0, 0], "size": [1, 1, 1] }
+  ]
+}

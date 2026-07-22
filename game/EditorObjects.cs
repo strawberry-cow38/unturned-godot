@@ -575,6 +575,7 @@ namespace UnturnedGodot
             SaveStoreShelves();
             SaveGridPower();
             SaveGasPump();
+            SaveFactoryProps();
             GD.Print($"[editor] saved {n} placed props -> {SavePath}");
             return n;
         }
@@ -606,6 +607,7 @@ namespace UnturnedGodot
             LoadStoreShelves();
             LoadGridPower();
             LoadGasPump();
+            LoadFactoryProps();
             if (!System.IO.File.Exists(SavePath)) return;
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(SavePath))
@@ -638,6 +640,45 @@ namespace UnturnedGodot
                 n++;
             }
             if (n > 0) GD.Print($"[editor] loaded {n} loot crates");
+        }
+
+        // Asset Factory props have no retail guid, so the main guid-based placement save skips them -- persist them by
+        // BUNDLE NAME in a companion file (mirrors loot crates / gas pumps), same transform format as the guid props.
+        string FactoryPropsPath => Dir + $"editor_{_editor.MapName}_factory.txt";
+
+        void SaveFactoryProps()
+        {
+            var fps = _placed.FindAll(p => IsInstanceValid(p) && p.HasMeta("factory_asset"));
+            using var fw = new System.IO.StreamWriter(FactoryPropsPath, false);
+            foreach (var p in fps)
+            {
+                string name = (string)p.GetMeta("factory_asset");
+                var gp = p.GlobalPosition;
+                var b = p.GlobalTransform.Basis;
+                var (ex, ey, ez) = DecomposeEuler(b.Orthonormalized());
+                var sc = b.Scale;
+                fw.WriteLine($"{name} {gp.X:0.###} {gp.Y:0.###} {(-gp.Z):0.###} {ex:0.###} {ey:0.###} {ez:0.###} {sc.X:0.###} {sc.Y:0.###} {sc.Z:0.###}");
+            }
+            if (fps.Count > 0) GD.Print($"[editor] saved {fps.Count} factory props -> {FactoryPropsPath}");
+        }
+
+        void LoadFactoryProps()   // restore placed Asset Factory props on open (re-spawn via AssetCatalog by bundle name)
+        {
+            if (!System.IO.File.Exists(FactoryPropsPath)) return;
+            int n = 0;
+            foreach (var line in System.IO.File.ReadLines(FactoryPropsPath))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 10) continue;
+                string name = p[0];
+                if (!float.TryParse(p[1], out var px) || !float.TryParse(p[2], out var py) || !float.TryParse(p[3], out var pz)
+                    || !float.TryParse(p[4], out var ex) || !float.TryParse(p[5], out var ey) || !float.TryParse(p[6], out var ez)) continue;
+                float sx = 1f, sy = 1f, sz = 1f;
+                float.TryParse(p[7], out sx); float.TryParse(p[8], out sy); float.TryParse(p[9], out sz);
+                if (sx == 0f) sx = 1f; if (sy == 0f) sy = 1f; if (sz == 0f) sz = 1f;
+                if (PlaceFactoryAsset(name, FactoryPrefix + name, new Vector3(px, py, -pz), FromEuler(ex, ey, ez) * Basis.FromScale(new Vector3(sx, sy, sz))) != null) n++;
+            }
+            if (n > 0) GD.Print($"[editor] loaded {n} factory props");
         }
 
         string ShelvesPath => Dir + $"editor_{_editor.MapName}_shelves.txt";   // per-map store-shelf placements (table + world pos + yaw)
