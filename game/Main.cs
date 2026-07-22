@@ -504,7 +504,10 @@ namespace UnturnedGodot
                 _rigDir = vm;                                   // reuse the frame-strip capture
                 System.IO.Directory.CreateDirectory(_rigDir);   // the frame writer needs the dir to exist
                 bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan";   // settled-hold frame capture (no ADS/fire)
-                _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
+                string vmFrames = System.Environment.GetEnvironmentVariable("UG_VMFRAMES");   // e.g. "30,40,50" to grab specific frames (hip window etc.)
+                _rigCaptureFrames = !string.IsNullOrEmpty(vmFrames)
+                    ? System.Array.ConvertAll(vmFrames.Split(',', System.StringSplitOptions.RemoveEmptyEntries), int.Parse)
+                    : System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
                     ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
                     : deployVm
                     ? new[] { 20, 25, 30, 40, 50, 60 }          // deployable: Deploy_Equip raise settles by ~f14 -> capture the neutral carry hold
@@ -3296,7 +3299,7 @@ namespace UnturnedGodot
                     // --attach: once equipped, hold the T attachment menu open (no aim/fire) so the render shows the slot icons
                     if (_am != null && _vm.IsEquipComplete && !_am.IsOpen && ++_vmSettle >= 8) _am.Open();
                 }
-                else if (_vmTest && _vm != null && !_vmMelee)   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings)
+                else if (_vmTest && _vm != null && !_vmMelee && System.Environment.GetEnvironmentVariable("UG_NOADS") != "1")   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; UG_NOADS=1 keeps it at the hip equip-hold (verify authored orientation)
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
                     { _vm.SetAiming(true); _vmAimed = true; _vmAimStart = _frame; }
