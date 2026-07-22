@@ -68,8 +68,11 @@ namespace UnturnedGodot
             {
                 case FluidRole.Source:
                     AddPort(FluidPortKind.Source, FlowRate, PortLocalPos); break;
-                case FluidRole.Storage:
-                case FluidRole.Consumer:
+                case FluidRole.Storage:    // a buffer TANK: a Consumer INPUT (fill, left face, Ports[0]) + a Source OUTPUT (draw, right face)
+                    AddPort(FluidPortKind.Consumer, FlowRate, new Vector3(-0.5f, 0.7f, 0f));
+                    AddPort(FluidPortKind.Source, FlowRate, new Vector3(0.5f, 0.7f, 0f));
+                    break;
+                case FluidRole.Consumer:   // a pure sink: one Consumer input (deletes)
                     AddPort(FluidPortKind.Consumer, FlowRate, PortLocalPos); break;
                 case FluidRole.Splitter:   // 0-rate relay input (left) + N passthrough outputs (right)
                     AddPort(FluidPortKind.Consumer, 0f, new Vector3(-0.5f, 0.6f, 0f));

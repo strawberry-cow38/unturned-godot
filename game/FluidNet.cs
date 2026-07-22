@@ -39,18 +39,20 @@ namespace UnturnedGodot
                 {
                     allC.Add(c);
                     bool hasTank = c.Tank != null;   // a fitting (splitter/combiner/pump/transformer) is tankless -> no clamp/move
-                    // a source supplies only while it has fluid; a TRANSFORMER supplies its output only while its input flowed
-                    // last tick (1-tick lag, TransformActive); a valve/broken container blocks (F5+).
+                    // a source supplies while it has fluid; a STORAGE TANK also supplies from its OUTPUT while it has fluid
+                    // (it's a buffer: fills from its input, feeds from its output); a TRANSFORMER supplies only while its
+                    // input flowed last tick (1-tick lag); a valve/broken container blocks.
+                    bool hasFluid = hasTank && c.Tank.Amount > 0.001f;
                     bool supplying = c.Role == FluidRole.Transformer ? c.TransformActive
-                                   : (hasTank && c.Role == FluidRole.Source && c.Tank.Amount > 0.001f);
+                                   : ((c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && hasFluid);
                     var dev = new FluidDevice { Supplying = supplying, Blocked = c.Blocked };
                     foreach (var p in c.Ports)
                     {
                         float rate = p.Rate;
-                        // clamp a source's supply by what's left (so a near-empty source supplies less; empties cleanly)
-                        if (hasTank && c.Role == FluidRole.Source && p.Kind == FluidPortKind.Source)
+                        // a source/tank OUTPUT can't push more than the tank holds (near-empty pushes less; empties cleanly)
+                        if (hasTank && (c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source)
                             rate = Mathf.Min(rate, c.Tank.Amount * inv);
-                        // a storage can't take more than fits (near-full draws less; full -> 0 -> stops flowing)
+                        // a storage INPUT can't take more than fits (near-full draws less; full -> 0 -> stops flowing)
                         else if (hasTank && c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer)
                             rate = Mathf.Min(rate, c.Tank.Space * inv);
                         portMap[p] = dev.AddPort(p.Kind, rate);
@@ -111,12 +113,14 @@ namespace UnturnedGodot
             foreach (var c in containers)
                 foreach (var p in c.Ports)
                 {
-                    if (c.Role == FluidRole.Source && p.Kind == FluidPortKind.Source && p.Load > 0f)
+                    // a source OR a tank's OUTPUT drains the tank by the load it feeds downstream
+                    if ((c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source && p.Load > 0f)
                         c.Tank.Drain(p.Load * dt);
+                    // a tank's INPUT fills it by what it accepts (its demand, not the offered Flow)
                     else if (c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer && p.Flowing)
                         c.Tank.Fill(p.SolveRate * dt);
                     // FluidRole.Consumer: the fluid is deleted (nothing accumulates).
-                    c.LastFlow = p.Flowing ? p.SolveRate : 0f;
+                    if (p.Flowing || p.Load > 0f) c.LastFlow = p.Kind == FluidPortKind.Source ? p.Load : p.SolveRate;
                 }
 
             // TRANSFORMERS (refinery/sluice): tankless, so no amount is moved — the input fluid is DELETED and the output
