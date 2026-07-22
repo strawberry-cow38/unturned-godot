@@ -502,6 +502,7 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
+                System.IO.Directory.CreateDirectory(_rigDir);   // the frame writer needs the dir to exist
                 bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan";   // settled-hold frame capture (no ADS/fire)
                 _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
                     ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
