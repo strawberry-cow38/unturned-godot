@@ -49,9 +49,8 @@ Power reference: `game/ConnectionPort.cs` + `Wire.cs` + `PowerNet.cs` (Godot ada
   3. **Type-lock reject** = `CanCompleteHose(src, dst)`: opposite kinds, different container, dst unhosed, AND fluid types compatible (either tank None/empty → adopts, else equal). Mismatch → red HoseBad highlight + "cannot mix fluids" HUD. Extract the pure type-lock predicate so it's L0-testable without a session.
   4. On complete: `new Hose{Source,Consumer}`, AddChild, and if a tank was empty it adopts the other's type.
   - **In-game PLACEMENT:** mirror `DeployablePlacer` to place Source/Storage containers (later a real fluid item + DeployableDef entry; for now a debug spawn is fine to exercise the tool).
-- **F4:** splitters + combiners.
-- **F5:** electric pumps (power↔fluid bridge: head lift + flow-rate boost) + transformer consumers (refinery/sluice);
-  rain barrels when weather lands.
+- **F4 DONE (0b5d3ea9):** splitters + combiners as tankless FITTINGS (FluidContainer Splitter/Combiner roles, multi-port; FluidNet relays them; HosePort cyan passthrough; hose tool IsSourceSide handles Passthrough). **Conservation fix**: FluidNet was filling storage by the OFFERED Flow (a splitter re-exports full supply to every branch) instead of the ACCEPTED demand (SolveRate) → a splitter fabricated fluid. Now fills by SolveRate. Verified L0 (93) + headless fan-out/combine (conserved) + UG_FLUIDSPLIT render + `fluid split`/`fluid combine` console rigs.
+- **F5 (next):** electric pumps (power↔fluid bridge: consume power → head lift = gravity-gate OVERRIDE for uphill + flow-rate boost; `pumped` stub already in FluidNet's gravity gate) + transformer consumers (refinery oil→gas, sluice water→dirty: a Consumer that also OUTPUTS a different fluid via a Source/Passthrough port) + rain barrels (Storage that fills from weather) when weather lands.
 
 ## Testing — GO EASY, test each PHASE when done (strawberry 2026-07-22)
 Not every chunk/commit. Build as I go; verify at phase boundaries only, and keep it light:
