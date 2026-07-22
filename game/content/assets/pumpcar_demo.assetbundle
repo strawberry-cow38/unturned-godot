@@ -3,11 +3,11 @@
   "type": "vehicle",
   "parts": [
     { "mesh": "ambulance_body.txt",   "color": [0.55, 0.12, 0.12], "pos": [0, 0, 0],     "rot": [0, 0, 0], "scale": [1, 1, 1] },
-    { "mesh": "ambulance_siren0.txt", "color": [0.15, 0.35, 0.95], "pos": [0, 1.6, 0.3], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+    { "mesh": "ambulance_siren0.txt", "color": [0.15, 0.35, 0.95], "pos": [0, 3.9, 0.3], "rot": [0, 0, 0], "scale": [1.4, 1.4, 1.4] }
   ],
   "colliders": [
     { "shape": "box", "pos": [0, 0.8, 0],   "size": [2.0, 1.5, 4.6], "rot": [0, 0, 0] },
-    { "shape": "box", "pos": [0, 1.6, 0.3], "size": [0.6, 0.4, 0.6], "rot": [0, 0, 0] }
+    { "shape": "box", "pos": [0, 3.9, 0.3], "size": [0.8, 0.5, 0.8], "rot": [0, 0, 0] }
   ],
   "volumes": [
     { "name": "cabin", "pos": [0, 1.0, 0.2], "size": [1.6, 0.9, 1.8], "rot": [0, 0, 0] }
