@@ -2270,6 +2270,23 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case H: oil={oilSrc.Tank.Amount:0} gasTank={gasTank.Tank.Amount:0} · ports oil-in/gas-out={typedPorts} · refineryActive={refinery.TransformActive}");
             if (!(oilSrc.Tank.Amount < 600f && gasTank.Tank.Amount > 400f && typedPorts)) ok = false;   // oil consumed + gas produced + ports carry in/out types
 
+            // --- Case I (F5): pump lift PROPAGATES through a splitter — a reachable high tank fills, a too-high one blocks ---
+            var srcI = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpI = FluidPump.Make(6f); pumpI.DebugForcePower = true;   // ceiling = pumpY(0) + 6 = 6
+            var splitI = FluidContainer.MakeFitting(FluidRole.Splitter, 2);
+            var lowI = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);    // Y=4, within ceiling 6 -> fills
+            var highI = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);   // Y=8, ABOVE ceiling 6 -> blocked
+            srcI.Position = new Vector3(-6f, 0f, 64f); pumpI.Position = new Vector3(-2f, 0f, 64f); splitI.Position = new Vector3(2f, 0f, 64f);
+            lowI.Position = new Vector3(6f, 4f, 62f); highI.Position = new Vector3(6f, 8f, 66f);
+            AddChild(srcI); AddChild(pumpI); AddChild(splitI); AddChild(lowI); AddChild(highI);
+            AddChild(new Hose { Source = srcI.Ports[0], Consumer = pumpI.Ports[0] });    // source -> pump
+            AddChild(new Hose { Source = pumpI.Ports[1], Consumer = splitI.Ports[0] });  // pump -> splitter (lift carries THROUGH)
+            AddChild(new Hose { Source = splitI.Ports[1], Consumer = lowI.Ports[0] });   // splitter -> low high-tank (Y4)
+            AddChild(new Hose { Source = splitI.Ports[2], Consumer = highI.Ports[0] });  // splitter -> too-high tank (Y8)
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case I: low(Y4)={lowI.Tank.Amount:0} high(Y8)={highI.Tank.Amount:0} (want low filled via lift-through-splitter, high blocked by ceiling 6)");
+            if (!(lowI.Tank.Amount > 400f && highI.Tank.Amount < 1f)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }

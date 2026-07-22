@@ -32,10 +32,12 @@ namespace UnturnedGodot
             var portMap = new System.Collections.Generic.Dictionary<FluidPortNode, FluidPort>();
             var containers = new System.Collections.Generic.List<FluidContainer>();
             var transformers = new System.Collections.Generic.List<FluidContainer>();
+            var allC = new System.Collections.Generic.List<FluidContainer>();   // every device (incl. fittings) for pump-lift propagation
 
             foreach (var n in tree.GetNodesInGroup("fluid_devices"))
                 if (n is FluidContainer c && GodotObject.IsInstanceValid(c))
                 {
+                    allC.Add(c);
                     bool hasTank = c.Tank != null;   // a fitting (splitter/combiner/pump/transformer) is tankless -> no clamp/move
                     // a source supplies only while it has fluid; a TRANSFORMER supplies its output only while its input flowed
                     // last tick (1-tick lag, TransformActive); a valve/broken container blocks (F5+).
@@ -58,25 +60,43 @@ namespace UnturnedGodot
                     if (c.Role == FluidRole.Transformer) transformers.Add(c);
                 }
 
-            // GRAVITY GATE (strawberry 2026-07-22, all fluids): a hose conducts passively only DOWNHILL — the consumer
-            // end must sit below the source end. Level or uphill = the hose stays connected but carries 0 flow UNLESS an
-            // electric pump adjacent to the hose is POWERED, giving head lift: the hose may then rise up to the pump's
-            // HeadLift metres (F5). We gate here (not in the type-agnostic solver) since elevation is a world concept; a
-            // non-conducting hose is left out of the solver graph -> both its ports read Flow=0 ("needs a pump" in HUD).
+            // GRAVITY GATE + PUMP LIFT (strawberry 2026-07-22): a hose conducts passively only DOWNHILL (consumer below
+            // source). Uphill/level needs a powered PUMP's head lift. A pump's head sets a pressure CEILING = its world-Y +
+            // HeadLift, and that ceiling carries THROUGH relay fittings (splitter/combiner/pump) to the whole connected
+            // chain, but STOPS at a tank or a transformer ("up to a source/consumer, not through it"). So a hose conducts
+            // uphill if its consumer end sits at/below the best ceiling reachable at either of its ends. Gated here (not in
+            // the type-agnostic solver) since elevation is a world concept; a blocked hose is left out -> its ports read 0.
             const float HeadEps = 0.05f;   // ignore sub-5cm height noise (same-level tanks don't dribble)
+
+            // relax the pump pressure ceiling across the hose graph, propagating only OUT OF relay-fitting nodes
+            var ceiling = new System.Collections.Generic.Dictionary<FluidContainer, float>();
+            foreach (var c in allC) ceiling[c] = (c is FluidPump p && p.IsPowered) ? c.GlobalPosition.Y + p.HeadLift : float.NegativeInfinity;
+            var rawHoses = new System.Collections.Generic.List<(FluidContainer A, FluidContainer B)>();
+            foreach (var n in tree.GetNodesInGroup("hoses"))
+                if (n is Hose h && h.Source?.Owner is FluidContainer a && h.Consumer?.Owner is FluidContainer b)
+                    rawHoses.Add((a, b));
+            for (int pass = 0; pass <= rawHoses.Count; pass++)
+            {
+                bool changed = false;
+                foreach (var (a, b) in rawHoses)
+                {
+                    if (a.IsFlowRelay && ceiling[a] > ceiling[b]) { ceiling[b] = ceiling[a]; changed = true; }   // ceiling passes THROUGH a
+                    if (b.IsFlowRelay && ceiling[b] > ceiling[a]) { ceiling[a] = ceiling[b]; changed = true; }   // ...and through b
+                }
+                if (!changed) break;
+            }
+
             var hoses = new System.Collections.Generic.List<FluidHose>();
             foreach (var n in tree.GetNodesInGroup("hoses"))
                 if (n is Hose h && h.Source != null && h.Consumer != null
                     && portMap.TryGetValue(h.Source, out var s) && portMap.TryGetValue(h.Consumer, out var cons))
                 {
-                    float srcY = h.Source.Owner != null ? h.Source.Owner.GlobalPosition.Y : 0f;
-                    float consY = h.Consumer.Owner != null ? h.Consumer.Owner.GlobalPosition.Y : 0f;
-                    // a POWERED pump on EITHER end lifts this hose: suction (pump is the consumer end) + push (pump is the
-                    // source end) both work, so a pump can pull from a low source AND shove up to a high tank.
-                    float lift = 0f;
-                    if (h.Source.Owner is FluidPump ps && ps.IsPowered) lift = Mathf.Max(lift, ps.HeadLift);
-                    if (h.Consumer.Owner is FluidPump pc && pc.IsPowered) lift = Mathf.Max(lift, pc.HeadLift);
-                    if (consY < srcY + lift - HeadEps) hoses.Add(new FluidHose(s, cons));   // downhill, or within a powered pump's lift
+                    var aO = h.Source.Owner; var bO = h.Consumer.Owner;
+                    float srcY = aO != null ? aO.GlobalPosition.Y : 0f;
+                    float consY = bO != null ? bO.GlobalPosition.Y : 0f;
+                    float reach = Mathf.Max(aO != null && ceiling.TryGetValue(aO, out var ra) ? ra : float.NegativeInfinity,
+                                            bO != null && ceiling.TryGetValue(bO, out var rb) ? rb : float.NegativeInfinity);
+                    if (consY < srcY - HeadEps || consY < reach - HeadEps) hoses.Add(new FluidHose(s, cons));   // downhill, or within a powered pump's reach
                 }
 
             FluidSolver.Solve(devices, hoses);

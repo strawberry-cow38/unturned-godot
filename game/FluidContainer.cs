@@ -32,6 +32,11 @@ namespace UnturnedGodot
 
         public bool IsFitting => Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump || Role == FluidRole.Transformer;
 
+        // A relay fitting conducts a powered pump's pressure CEILING THROUGH itself, so a pump can lift a whole chain of
+        // fittings (splitter/combiner/pump) up to its head. A TANK (source/storage/consumer) or a TRANSFORMER (a fluid
+        // boundary) stops it — "up to a source/consumer, not through it" (strawberry). Blocked/closed = doesn't conduct.
+        public bool IsFlowRelay => !Blocked && (Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump);
+
         public static FluidContainer Make(FluidRole role, FluidTank tank, float flowRate = 50f)
             => new FluidContainer { Role = role, Tank = tank, FlowRate = flowRate };
 
