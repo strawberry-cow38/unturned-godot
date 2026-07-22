@@ -1425,8 +1425,14 @@ namespace UnturnedGodot
                     }
                     break;
                 case "deployable":
-                    { var def = DeployableDef.ById(fid); if (def != null) Deployable.Spawn(root, def, new Vector3(0f, 0f, 0f), 0f); }   // one PLACED standing in front so you SEE the asset
-                    if (fid != 0) player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1));   // + one in your bag to plop more (equip from inventory -> aim down -> LMB)
+                    { var def = DeployableDef.ById(fid);
+                      if (def != null)
+                      {
+                          Deployable.Spawn(root, def, new Vector3(-2.4f, 0f, -1f), 20f);   // one PLACED off to the side so you SEE the finished asset
+                          if (fid != 0) { player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1)); player.EquipHeldDeployable(def); }   // + hold one -> the blue placement ghost
+                      }
+                    }
+                    player.SetLookPitch(-24f);   // aim down so the ghost lands on the ground (valid = blue)
                     break;
                 case "vehicle":
                     { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f); }   // walk over + E to enter/drive

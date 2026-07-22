@@ -22,6 +22,7 @@ namespace UnturnedGodot
         BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
+        public void SetLookPitch(float deg) => _pitchDeg = deg;   // AF preview: aim the spawn look down/up (e.g. to land a placement ghost on the ground)
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a

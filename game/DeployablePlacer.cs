@@ -34,7 +34,7 @@ namespace UnturnedGodot
             Def = def;
             _ghost?.QueueFree();
             _ghost = Deployable.BuildMesh(def, out _localAabb);
-            _ghost.MaterialOverride = InvalidMat;
+            SetGhostMat(InvalidMat);
             AddChild(_ghost);
             _arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowRed);   // in/out arrows on the ghost's ports (stand up with it)
             foreach (var p in def.Ports)
@@ -42,6 +42,16 @@ namespace UnturnedGodot
         }
 
         public void SetGhostVisible(bool v) { if (_ghost != null) _ghost.Visible = v; }
+
+        // Tint the ghost blue/red. A factory deployable's ghost is a CONTAINER whose textured parts are children,
+        // so the override must reach every descendant MeshInstance3D (a native single-mesh ghost just tints the root).
+        void SetGhostMat(Material m)
+        {
+            if (_ghost == null) return;
+            _ghost.MaterialOverride = m;
+            foreach (var n in _ghost.FindChildren("*", "MeshInstance3D", true, false))
+                if (n is MeshInstance3D mi) mi.MaterialOverride = m;
+        }
 
         // Run the aim -> point/valid check for this frame and move the ghost to match. Returns Valid.
         public bool Aim(Camera3D cam)
@@ -84,7 +94,7 @@ namespace UnturnedGodot
             bool up = Def != null && Def.Upright;   // upright models (wind turbine) skip the flat->stand-up
             _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(Yaw)) : DeployableDef.StandBasis(Yaw),
                 Point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));   // base sits on the surface point
-            _ghost.MaterialOverride = Valid ? ValidMat : InvalidMat;
+            SetGhostMat(Valid ? ValidMat : InvalidMat);
             if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
 
@@ -97,7 +107,7 @@ namespace UnturnedGodot
             bool up = Def != null && Def.Upright;
             _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(yaw)) : DeployableDef.StandBasis(yaw),
                 point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));
-            _ghost.MaterialOverride = ValidMat;
+            SetGhostMat(ValidMat);
             if (_arrowMat != null) { var c = ConnectionPort.ArrowBlue; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
     }
