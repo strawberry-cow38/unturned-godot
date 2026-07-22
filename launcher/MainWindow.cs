@@ -22,7 +22,7 @@ public class MainWindow : Window
     // Self-update: this launcher's own version. Bump on every launcher change + upload the matching launcher.version
     // (a bare integer) + the new exe to the GitHub release. On startup we fetch launcher.version; if it's higher, we
     // download the new exe, hand off to a swap-helper, and relaunch -- so the launcher updates itself, no manual grab.
-    const int LauncherVersion = 9;   // v9: branch-select dropdown + hardened branch-switch git (explicit-refspec fetch so origin/<branch> always exists, offline branch fallback, fetch-failure guard)
+    const int LauncherVersion = 10;   // v10: on branch-list refresh, prune local refs (remote-tracking + local branches) for branches deleted on the remote -- guarded so an unreachable remote never wipes refs
     const string VersionUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/launcher.version";
     const string ExeUrl = "https://github.com/strawberry-cow38/unturned-godot/releases/download/launcher/UnturnedGodotLauncher-win-x64.exe";
     // Godot 4.6 mono (win64) — matches the project's Godot.NET.Sdk/4.6.2; auto-downloaded if Godot isn't found.
@@ -251,13 +251,18 @@ public class MainWindow : Window
     {
         var branches = new List<string>();
         string outp = await Capture(_git, new[] { "ls-remote", "--heads", "origin" });
-        if (!string.IsNullOrWhiteSpace(outp))
+        bool remoteReached = !string.IsNullOrWhiteSpace(outp);
+        if (remoteReached)
             foreach (var line in outp.Split('\n'))
             {
                 const string mark = "refs/heads/";
                 int i = line.IndexOf(mark);
                 if (i >= 0) branches.Add(line.Substring(i + mark.Length).Trim());
             }
+        // prune local refs for branches deleted on the remote. GUARD: only when ls-remote actually reached origin --
+        // an unreachable remote returns an EMPTY list, and pruning against that would wipe every local ref on a blip.
+        if (remoteReached)
+            await PruneDeletedBranchesAsync(new HashSet<string>(branches.Where(b => !string.IsNullOrWhiteSpace(b)), StringComparer.Ordinal));
         if (!branches.Contains(DefaultBranch)) branches.Add(DefaultBranch);   // always offer main
         if (!branches.Contains(_branch)) branches.Add(_branch);               // keep a saved (maybe deleted) branch selectable
         branches = branches.Where(b => !string.IsNullOrWhiteSpace(b)).Distinct()
@@ -269,6 +274,35 @@ public class MainWindow : Window
             _branchBox.SelectedItem = branches.Contains(_branch) ? _branch : DefaultBranch;
             _branchBox.SelectionChanged += OnBranchChanged;
         });
+    }
+
+    // Clean out local refs for branches that no longer exist on the remote (e.g. a merged PR's branch was deleted).
+    // `live` = the branch names ls-remote just returned. Deletes stale remote-tracking refs (origin/<x>) and any local
+    // branch whose remote is gone -- but NEVER the currently checked-out branch or main, and only when the remote was
+    // actually reached (the caller guards on that, so a network failure can't nuke everything). Best-effort + logged.
+    async Task PruneDeletedBranchesAsync(HashSet<string> live)
+    {
+        string cur = (await Capture(_git, new[] { "rev-parse", "--abbrev-ref", "HEAD" }))?.Trim() ?? "";
+
+        // stale remote-tracking refs: refs/remotes/origin/<x> where <x> isn't a live remote branch
+        string rt = await Capture(_git, new[] { "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin" });
+        foreach (var raw in (rt ?? "").Split('\n'))
+        {
+            string r = raw.Trim();                                  // e.g. "origin/feature-x"
+            if (r.Length == 0 || r == "origin" || r.EndsWith("/HEAD")) continue;
+            string name = r.StartsWith("origin/") ? r.Substring("origin/".Length) : r;
+            if (name.Length == 0 || live.Contains(name)) continue;
+            if (await RunAsync(_git, new[] { "branch", "-rd", r }, _srcDir) == 0) Log($"pruned deleted remote branch {r}");
+        }
+
+        // local branches whose upstream is gone -- never the current branch or main (safety)
+        string lb = await Capture(_git, new[] { "for-each-ref", "--format=%(refname:short)", "refs/heads" });
+        foreach (var raw in (lb ?? "").Split('\n'))
+        {
+            string b = raw.Trim();
+            if (b.Length == 0 || b == cur || b == DefaultBranch || live.Contains(b)) continue;
+            if (await RunAsync(_git, new[] { "branch", "-D", b }, _srcDir) == 0) Log($"pruned local branch {b} (deleted on remote)");
+        }
     }
 
     async void OnBranchChanged(object sender, SelectionChangedEventArgs e)
