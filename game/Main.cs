@@ -61,6 +61,7 @@ namespace UnturnedGodot
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
+            bool fluidTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -71,6 +72,7 @@ namespace UnturnedGodot
                 else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
+                else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
@@ -241,6 +243,8 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_NEWMAP") == "1") BuildEditorNew(); else BuildEditor();
                 return;
             }
+
+            if (fluidTest) { RunFluidTest(); return; }   // F2: spawn source->hose->storage, tick the fluid net, log the fill, quit
 
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
@@ -2017,6 +2021,29 @@ namespace UnturnedGodot
         // edit target (Aerial = world, no player, no colliders), drop in the free-fly EditorCamera + the mode-tab
         // dashboard + the Editor controller. Fly + view + switch modes now; the per-mode sub-editors (Objects/
         // Terrain/Spawns/...) + .level save land in the later phases.
+        // F2 fluid-IO verify (--fluidtest): a full Source -> Hose -> empty Storage. Tick the net; the storage should
+        // fill + the source drain, conserving the total. Headless log check (go easy); visuals/bars are F3.
+        void RunFluidTest()
+        {
+            var src = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);   // full, supplies 50/s
+            var sto = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Fuel, 1000f, 0f), 50f);     // empty, intake 50/s
+            AddChild(src); AddChild(sto);   // _Ready builds their ports + registers them in "fluid_devices"
+            var hose = new Hose { Source = src.Ports[0], Consumer = sto.Ports[0] };
+            AddChild(hose);                 // registers in "hoses"
+            GD.Print($"[fluidtest] start: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0}");
+            const float dt = 0.1f;
+            for (int i = 0; i < 100; i++)   // 10 s of 0.1 s ticks -> ~500 units moved (50/s), conserved to 1000
+            {
+                FluidNet.Tick(GetTree(), dt);
+                if (i == 9 || i == 49 || i == 99)
+                    GD.Print($"[fluidtest] t={(i + 1) * dt:0.0}s: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0} flow={sto.Ports[0].Flow:0} flowing={sto.Ports[0].Flowing}");
+            }
+            float total = src.Tank.Amount + sto.Tank.Amount;
+            bool ok = sto.Tank.Amount > 400f && src.Tank.Amount < 600f && Mathf.Abs(total - 1000f) < 0.5f;
+            GD.Print($"[fluidtest] RESULT {(ok ? "PASS" : "FAIL")}: storage {sto.Tank.Amount:0}, source {src.Tank.Amount:0}, conserved total {total:0}/1000");
+            GetTree().Quit();
+        }
+
         async void BuildEditor()
         {
             _worldBuild = true;
