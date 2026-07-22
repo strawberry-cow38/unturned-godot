@@ -22,6 +22,10 @@ namespace UnturnedGodot
         public static Def Get(FluidType id) => _defs.TryGetValue(id, out var d) ? d : _defs[FluidType.None];
         public static string Name(FluidType id) => Get(id).Name;
         public static Color Color(FluidType id) => Get(id).Color;
+
+        // Display a volume in litres (1 unit = 1 mL, strawberry 2026-07-22). Sub-litre reads in mL so a near-empty can
+        // isn't just "0.0 L"; >= 1 L shows one decimal. e.g. 20000 -> "20.0 L", 450 -> "450 mL".
+        public static string Litres(float mL) => mL < 1000f ? $"{mL:0} mL" : $"{mL / 1000f:0.0} L";
     }
 
     // A quantity of fluid a prop can hold (master's fluids system). A gas pump is a Fuel tank; the concept is general

@@ -1130,7 +1130,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true };   // the ripped 1P gas-can model held with BOTH HANDS (NaturalHold -> plays the can's own two-handed Fuel_Equip carry anim, source animations.prefab); HoldingDeployable stays false (no _deployable) so RMB still extracts
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[fuel] holding {asset?.itemName} -- {(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f):0}/{asset?.fuelCapacity:0} fuel (RMB a powered pump to fill)");
+            GD.Print($"[fuel] holding {asset?.itemName} -- {FluidDef.Litres(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f)}/{FluidDef.Litres(asset?.fuelCapacity ?? 0f)} (RMB a powered pump to fill)");
         }
 
         // RMB with a gas can in hand + looking at a POWERED pump: fill the can as much as possible = min(its free space,
@@ -1160,14 +1160,14 @@ namespace UnturnedGodot
                 if (_focusGasPump.NetId != 0) { NetExtractFuel?.Invoke(_focusGasPump.NetId); return; }
                 if (!_focusGasPump.IsPowered) { GD.Print("[fuel] that pump has no power"); return; }
                 float pulled = _focusGasPump.Extract(space);   // drains the pump's shared station tank, capped at what's left
-                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GD.Print($"[fuel] +{pulled:0} from pump -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}"); }
+                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GD.Print($"[fuel] +{FluidDef.Litres(pulled)} from pump -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}"); }
             }
             else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)   // siphon fuel out of a car
             {
                 float pulled = Mathf.Min(space, _focusVehicle.Fuel);
                 if (pulled <= 0.01f) { GD.Print("[fuel] that vehicle is empty"); return; }
                 _focusVehicle.Fuel -= pulled; _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh();
-                GD.Print($"[fuel] siphoned {pulled:0} from {_focusVehicle.DisplayName} -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}");
+                GD.Print($"[fuel] siphoned {FluidDef.Litres(pulled)} from {_focusVehicle.DisplayName} -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}");
             }
         }
 
@@ -1190,7 +1190,7 @@ namespace UnturnedGodot
                 float poured = Mathf.Min(canFuel, space);
                 _focusDeployable.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
                 PowerNet.MarkDirty();   // a dry gen just got fuel back -> re-evaluate the net (still needs a manual restart)
-                GD.Print($"[fuel] poured {poured:0} -> {_focusDeployable.Def?.Name} {_focusDeployable.Fuel:0}/{_focusDeployable.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+                GD.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusDeployable.Def?.Name} {FluidDef.Litres(_focusDeployable.Fuel)}/{FluidDef.Litres(_focusDeployable.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
             else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)
             {
@@ -1198,7 +1198,7 @@ namespace UnturnedGodot
                 if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
                 float poured = Mathf.Min(canFuel, space);
                 _focusVehicle.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
-                GD.Print($"[fuel] poured {poured:0} -> {_focusVehicle.DisplayName} {_focusVehicle.Fuel:0}/{_focusVehicle.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+                GD.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusVehicle.DisplayName} {FluidDef.Litres(_focusVehicle.Fuel)}/{FluidDef.Litres(_focusVehicle.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
         }
 
