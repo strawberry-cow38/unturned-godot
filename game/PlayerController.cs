@@ -2537,7 +2537,7 @@ namespace UnturnedGodot
             // through this normal path (EquipHeldGun(asset.gunName)) -- give -> inventory -> hold -> fire, no console hack.
             bool factory = AssetCatalog.Get(gunName)?.Type == "gun";
             LoadGun($"res://content/{(factory ? "eaglefire" : gunName)}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
-            if (factory) _gunName = gunName;
+            if (factory) { _gunName = gunName; ApplyFactoryGunStats(AssetCatalog.Get(gunName)); }   // override borrowed eaglefire stats with the bundle's authored ones
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
             _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
@@ -2547,6 +2547,25 @@ namespace UnturnedGodot
             RelinkViewmodelLighting();   // a re-equipped viewmodel must re-take the world lighting, else it renders fullbright (master: Drive PEI)
             if (backingItem != null && backingItem.gunAttach >= 0) _viewmodel.ApplyAttachMask(backingItem.gunAttach);   // restore the gun's saved attachments (e.g. a detached suppressor stays off) -- master
             GD.Print($"[gun] holding {_gunName}");
+        }
+
+        // Asset Factory gun stats: a factory gun borrows eaglefire's GunDef, then overrides the fields the bundle
+        // authors in params (so each factory gun shoots like its own thing). Absent params keep the eaglefire value.
+        //   gun_damage (player+zombie), gun_range, gun_rpm (rounds/min), gun_ammo (mag size), gun_caliber, gun_auto.
+        void ApplyFactoryGunStats(AssetBundle b)
+        {
+            if (b == null || Gun == null) return;
+            float dmg = b.ParamFloat("gun_damage", 0f);
+            if (dmg > 0f) { Gun.PlayerDamage = dmg; Gun.ZombieDamage = dmg; }
+            Gun.Range = b.ParamFloat("gun_range", Gun.Range);
+            float rpm = b.ParamFloat("gun_rpm", 0f);
+            if (rpm > 0f) Gun.Firerate = Mathf.Max(1, Mathf.RoundToInt(3000f / rpm));   // 50 sim-ticks/s: rounds/s = 50/Firerate -> Firerate = 3000/rpm
+            int ammo = Mathf.RoundToInt(b.ParamFloat("gun_ammo", 0f));
+            if (ammo > 0) { Gun.AmmoMax = ammo; Ammo = ammo; }
+            int cal = Mathf.RoundToInt(b.ParamFloat("gun_caliber", 0f));
+            if (cal > 0) Gun.Caliber = cal;
+            if (b.ParamBool("gun_auto", false)) { Gun.HasAuto = true; }   // opt-in full-auto
+            GD.Print($"[gun] factory stats {_gunName}: dmg={Gun.PlayerDamage} range={Gun.Range} firerate={Gun.Firerate} ammo={Gun.AmmoMax} cal={Gun.Caliber} auto={Gun.HasAuto}");
         }
 
         // Console `holdgun`: hold an Asset Factory gun with no inventory item behind it. EquipHeldGun now

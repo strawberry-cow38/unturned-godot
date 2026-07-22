@@ -8,5 +8,12 @@
     { "name": "Muzzle", "pos": [0, 0.78, -0.079], "rot": [0, 0, 0] },
     { "name": "View",   "pos": [0, -0.4688, -0.2098], "rot": [0, 0, 0] },
     { "name": "Eject",  "pos": [0.06, 0.0275, -0.0814], "rot": [0, 0, 0] }
-  ]
+  ],
+  "params": {
+    "gun_damage": 75,
+    "gun_rpm": 200,
+    "gun_ammo": 12,
+    "gun_range": 150,
+    "gun_auto": false
+  }
 }
