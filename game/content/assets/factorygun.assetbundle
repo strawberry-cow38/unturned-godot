@@ -1,0 +1,11 @@
+{
+  "name": "factorygun",
+  "type": "gun",
+  "parts": [
+    { "mesh": "eaglefire_gun.txt", "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+  ],
+  "points": [
+    { "name": "Muzzle", "pos": [0, 0.78, -0.079], "rot": [0, 0, 0] },
+    { "name": "View",   "pos": [0, -0.4688, -0.2098], "rot": [0, 0, 0] }
+  ]
+}

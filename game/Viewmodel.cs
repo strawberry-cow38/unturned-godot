@@ -152,6 +152,26 @@ namespace UnturnedGodot
                     if (c.Length >= 4) { var rgb = V3(c[3]); gv.SightColor = new Color(rgb.X, rgb.Y, rgb.Z); }   // real per-gun sight _Color
                     d[c[0]] = gv;
                 }
+
+            // Asset Factory guns (bundles of type "gun") -> GunVisuals, so a COMPOSED gun mounts in the viewmodel like
+            // any arsenal gun. Gun mesh = part[0]; Muzzle/View points = the muzzle-flash + ADS eye hooks; generic sounds.
+            foreach (var gname in AssetCatalog.OfType("gun"))
+            {
+                var ab = AssetCatalog.Get(gname);
+                if (ab == null || ab.Parts.Count == 0 || string.IsNullOrEmpty(ab.Parts[0].Mesh)) continue;
+                var view = ab.FindPoint("View") ?? ab.FindPoint("Sight");
+                var muzzle = ab.FindPoint("Muzzle");
+                d[gname] = new GunVisual
+                {
+                    Gun = ab.Parts[0].Mesh,
+                    Albedo = ab.Parts[0].Albedo ?? AssetBundle.ResolveAlbedo(ab.Parts[0].Mesh),
+                    Sight = null, Mag = null,
+                    Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", Hammer = "eaglefire_hammer.ogg",
+                    MuzzleHook = muzzle != null ? AssetBundle.V3(muzzle.Pos) : new Vector3(0f, 0.7f, -0.05f),
+                    AimHook = view != null ? AssetBundle.V3(view.Pos) : new Vector3(0f, -0.45f, -0.2f),
+                    ViewOffset = Vector3.Zero, AlbedoTint = new Color(1f, 1f, 1f), Ejects = true,
+                };
+            }
             return d;
         }
         static Vector3 V3(string s)
