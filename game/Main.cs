@@ -2322,6 +2322,20 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case K: allRolesOk={itemsOk} · placed WaterSource->FluidTank fills to {wtank.Tank.Amount:0} (want >400)");
             if (!(itemsOk && wtank.Tank.Amount > 400f)) ok = false;
 
+            // --- Case L (items by name): `give <name>` resolves each fluid item to the right id (exact-match branch) ---
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var byNameChecks = new (string name, ushort id)[] {
+                ("Fluid Tank", 9110), ("Water Source", 9111), ("Fluid Splitter", 9112), ("Fluid Combiner", 9113),
+                ("Fluid Pump", 9114), ("Fluid Valve", 9115), ("Refinery", 9116), ("Sluice", 9117), ("Hose Tool", 9118) };
+            bool byName = true;
+            foreach (var (nm, id) in byNameChecks)
+            {
+                var a = System.Linq.Enumerable.FirstOrDefault(SDG.Unturned.Assets.all(), x => string.Equals(x.itemName, nm, System.StringComparison.OrdinalIgnoreCase));
+                if (a == null || a.id != id) { byName = false; GD.Print($"[hosetool] name '{nm}' -> {(a?.id.ToString() ?? "MISSING")} (want {id})"); }
+            }
+            GD.Print($"[hosetool] case L: all fluid items resolve by name = {byName}");
+            if (!byName) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
