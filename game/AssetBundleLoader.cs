@@ -59,6 +59,7 @@ namespace UnturnedGodot
                     Transform = new Transform3D(AssetBundle.EulerDegBasis(pt.Rot), AssetBundle.V3(pt.Pos)),
                 });
 
+            WireBehaviors(root, b);
             root.SetMeta("assetType", b.Type);
             root.SetMeta("assetName", b.Name);
             return root;
@@ -80,6 +81,21 @@ namespace UnturnedGodot
                     AssetBundle.EulerDegBasis(p.Rot).Scaled(AssetBundle.V3(p.Scale, Vector3.One)),
                     AssetBundle.V3(p.Pos)),
             };
+        }
+
+        // Behaviours layer (master's vision — declare a behaviour, the loader wires it to the existing system).
+        // impact-fx here; power ports (ConnectionPort/IPowerDevice) + destructible (DestructibleField) + powered-gate
+        // roll on the same rails. (Fluid containers = tinyclaw's fluid-IO system, wired in when it lands.)
+        static void WireBehaviors(Node3D root, AssetBundle b)
+        {
+            // impact-fx: tag the surface so bullet hits play the right impact effect/sound (PlayerController.Surf)
+            string surf = b.ParamString("surface");
+            if (!string.IsNullOrEmpty(surf) && root is StaticBody3D sb
+                && System.Enum.TryParse<PlayerController.Surf>(surf, true, out var s))
+            {
+                sb.SetMeta(PlayerController.SurfMeta, (int)s);
+                GD.Print($"[assetbundle] {b.Name}: impact surface = {s}");
+            }
         }
 
         static StandardMaterial3D PartMaterial(AssetBundle.Part p)

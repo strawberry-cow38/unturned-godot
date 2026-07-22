@@ -115,5 +115,10 @@ namespace UnturnedGodot
             => Params != null && Params.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : def;
         public bool ParamBool(string key, bool def = false)
             => Params != null && Params.TryGetValue(key, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : def;
+
+        // editor-side setters (the behaviours panel writes params); passing an empty string removes the key
+        public void SetParam(string key, float v) { Params ??= new(); Params[key] = JsonSerializer.SerializeToElement(v); }
+        public void SetParam(string key, bool v) { Params ??= new(); Params[key] = JsonSerializer.SerializeToElement(v); }
+        public void SetParam(string key, string v) { Params ??= new(); if (string.IsNullOrEmpty(v)) Params.Remove(key); else Params[key] = JsonSerializer.SerializeToElement(v); }
     }
 }

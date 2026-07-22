@@ -33,7 +33,7 @@ namespace UnturnedGodot
         Panel _picker;
         Panel _openPanel; VBoxContainer _openList;   // open a saved .assetbundle to edit
         LineEdit _nameEdit;
-        OptionButton _typeOpt, _hookOpt;
+        OptionButton _typeOpt, _hookOpt, _surfOpt;   // _surfOpt = behaviours: impact surface
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
         Kind _clipKind; object _clipObj;    // copy/paste clipboard (a cloned item)
@@ -292,6 +292,16 @@ namespace UnturnedGodot
             _typeOpt.ItemSelected += _ => RepopulateHooks();
             col.AddChild(_typeOpt);
 
+            col.AddChild(new Label { Text = "— behaviours —" });
+            var bRow = new HBoxContainer();
+            bRow.AddChild(new Label { Text = "impact surface" });
+            _surfOpt = new OptionButton();
+            foreach (var sName in new[] { "none", "concrete", "grass", "dirt", "metal", "wood", "sand", "water" }) _surfOpt.AddItem(sName);
+            SyncSurfUI();
+            _surfOpt.ItemSelected += _ => { var v = _surfOpt.GetItemText(_surfOpt.Selected); _bundle.SetParam("surface", v == "none" ? "" : v); Status($"impact surface: {v}"); };
+            bRow.AddChild(_surfOpt);
+            col.AddChild(bRow);
+
             var addRow = new HBoxContainer();
             var addPart = new Button { Text = "＋Part" }; addPart.Pressed += () => TogglePicker(true); addRow.AddChild(addPart);
             var addCol = new Button { Text = "＋Box" }; addCol.Pressed += AddCollider; addRow.AddChild(addCol);
@@ -359,6 +369,7 @@ namespace UnturnedGodot
             if (_nameEdit != null) _nameEdit.Text = _bundle.Name;
             if (_typeOpt != null) for (int i = 0; i < _typeOpt.ItemCount; i++) if (_typeOpt.GetItemText(i) == _bundle.Type) _typeOpt.Selected = i;
             RepopulateHooks();
+            SyncSurfUI();
             RebuildAll();
             Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
             Status($"opened {System.IO.Path.GetFileNameWithoutExtension(path)} ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
@@ -371,6 +382,14 @@ namespace UnturnedGodot
             string type = (_typeOpt != null && _typeOpt.Selected >= 0) ? _typeOpt.GetItemText(_typeOpt.Selected) : _bundle.Type;
             foreach (var h in HooksFor(type)) _hookOpt.AddItem(h);
             if (_hookOpt.ItemCount > 0) _hookOpt.Selected = 0;
+        }
+
+        void SyncSurfUI()
+        {
+            if (_surfOpt == null) return;
+            string cur = _bundle.ParamString("surface") ?? "none";
+            for (int i = 0; i < _surfOpt.ItemCount; i++) if (_surfOpt.GetItemText(i) == cur) { _surfOpt.Selected = i; return; }
+            _surfOpt.Selected = 0;
         }
 
         static string[] HooksFor(string type) => type switch
@@ -558,11 +577,12 @@ namespace UnturnedGodot
             if (_colNodes.Count > 0) _colNodes[0].Scale = new Vector3(2f, 1f, 3f);
             Select(Kind.Collider, 0);
             AddPoint();
+            _bundle.SetParam("surface", "wood");   // behaviour: impact-fx surface
             _nameEdit.Text = "selftest_asset";
             Save();
             var r = AssetBundle.Load(_savePath);
             GD.Print(r != null
-                ? $"[assetfactory] SELFTEST OK: {r.Name} type={r.Type} p={r.Parts.Count} c={r.Colliders.Count} v={r.Volumes.Count} pt={r.Points.Count} col0.size=({r.Colliders[0].Size[0]},{r.Colliders[0].Size[1]},{r.Colliders[0].Size[2]}) pt0={r.Points[0].Name}"
+                ? $"[assetfactory] SELFTEST OK: {r.Name} type={r.Type} p={r.Parts.Count} c={r.Colliders.Count} v={r.Volumes.Count} pt={r.Points.Count} col0.size=({r.Colliders[0].Size[0]},{r.Colliders[0].Size[1]},{r.Colliders[0].Size[2]}) pt0={r.Points[0].Name} surface={r.ParamString("surface")}"
                 : "[assetfactory] SELFTEST FAIL");
         }
     }
