@@ -2028,7 +2028,10 @@ namespace UnturnedGodot
         {
             var src = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);   // full, supplies 50/s
             var sto = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Fuel, 1000f, 0f), 50f);     // empty, intake 50/s
-            src.Position = new Vector3(-2.5f, 0f, 0f); sto.Position = new Vector3(2.5f, 0f, 0f);
+            // source raised ABOVE storage so the gravity gate (strawberry: passive flow only downhill) lets it flow;
+            // UG_FLUIDLEVEL=1 puts the storage level with the source to prove the gate then blocks flow (0 in, needs a pump).
+            float stoY = System.Environment.GetEnvironmentVariable("UG_FLUIDLEVEL") == "1" ? 1.2f : 0f;
+            src.Position = new Vector3(-2.5f, 1.2f, 0f); sto.Position = new Vector3(2.5f, stoY, 0f);
             src.PortLocalPos = new Vector3(0.55f, 0.9f, 0f); sto.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);   // port cubes face each other along the hose
             AddChild(src); AddChild(sto);   // _Ready builds their ports + visuals + registers them in "fluid_devices"
             var hose = new Hose { Source = src.Ports[0], Consumer = sto.Ports[0] };

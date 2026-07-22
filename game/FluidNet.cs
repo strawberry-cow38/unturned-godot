@@ -52,11 +52,23 @@ namespace UnturnedGodot
                     devices.Add(dev);
                 }
 
+            // GRAVITY GATE (strawberry 2026-07-22, all fluids): a hose conducts passively only DOWNHILL — the consumer
+            // end must sit below the source end. Level or uphill = the hose stays connected but carries 0 flow until an
+            // electric pump on the line gives it head lift (F5). We gate here (not in the type-agnostic solver) since
+            // elevation is a world concept; a non-conducting hose is simply left out of the solver graph -> both its
+            // ports read Flow=0, which the HUD surfaces as "needs a pump".
+            const float HeadEps = 0.05f;   // ignore sub-5cm height noise (same-level tanks don't dribble)
             var hoses = new System.Collections.Generic.List<FluidHose>();
             foreach (var n in tree.GetNodesInGroup("hoses"))
                 if (n is Hose h && h.Source != null && h.Consumer != null
                     && portMap.TryGetValue(h.Source, out var s) && portMap.TryGetValue(h.Consumer, out var cons))
-                    hoses.Add(new FluidHose(s, cons));
+                {
+                    float srcY = h.Source.Owner != null ? h.Source.Owner.GlobalPosition.Y : 0f;
+                    float consY = h.Consumer.Owner != null ? h.Consumer.Owner.GlobalPosition.Y : 0f;
+                    bool downhill = consY < srcY - HeadEps;
+                    bool pumped = false;   // F5: an electric pump on the line overrides gravity (head lift)
+                    if (downhill || pumped) hoses.Add(new FluidHose(s, cons));
+                }
 
             FluidSolver.Solve(devices, hoses);
 
