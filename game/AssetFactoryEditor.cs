@@ -371,8 +371,7 @@ namespace UnturnedGodot
 
             // 3D spinning preview (own-world SubViewport so it renders JUST the mesh, not the editor)
             _previewVp = new SubViewport { Size = new Vector2I(300, 210), RenderTargetUpdateMode = SubViewport.UpdateMode.Always, OwnWorld3D = true };
-            var pcam = new Camera3D { Position = new Vector3(0f, 0.55f, 2.3f), Current = true };
-            pcam.LookAt(Vector3.Zero, Vector3.Up);
+            var pcam = new Camera3D { Position = new Vector3(0f, 0.55f, 2.3f), RotationDegrees = new Vector3(-13.4f, 0f, 0f), Current = true };   // aimed at origin (no LookAt — not in tree yet)
             _previewVp.AddChild(pcam);
             _previewVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-42f, -32f, 0f), LightEnergy = 1.2f });
             _previewVp.AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.18f, 0.2f, 0.24f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.8f, 0.8f, 0.82f), AmbientLightEnergy = 0.8f } });
