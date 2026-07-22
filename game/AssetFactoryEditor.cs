@@ -35,6 +35,7 @@ namespace UnturnedGodot
         LineEdit _nameEdit;
         OptionButton _typeOpt, _hookOpt, _surfOpt, _powerKind;   // behaviours: impact surface, power in/out
         LineEdit _powerWatts, _powerLabel;
+        CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
         Kind _clipKind; object _clipObj;    // copy/paste clipboard (a cloned item)
@@ -316,6 +317,9 @@ namespace UnturnedGodot
             _powerLabel = new LineEdit { PlaceholderText = "port label (renameable)", CustomMinimumSize = new Vector2(276, 0) };
             _powerLabel.TextChanged += _ => WritePower();
             col.AddChild(_powerLabel);
+            _poweredLight = new CheckBox { Text = "powered light (on when powered)" };
+            _poweredLight.Toggled += _ => WritePower();
+            col.AddChild(_poweredLight);
             SyncPowerUI();
 
             var addRow = new HBoxContainer();
@@ -413,12 +417,13 @@ namespace UnturnedGodot
         {
             if (_powerKind == null) return;
             string k = _powerKind.GetItemText(_powerKind.Selected);
-            if (k == "none") { _bundle.SetParam("power_kind", ""); _bundle.SetParam("power_watts", 0f); _bundle.SetParam("power_label", ""); }
+            if (k == "none") { _bundle.SetParam("power_kind", ""); _bundle.SetParam("power_watts", 0f); _bundle.SetParam("power_label", ""); _bundle.SetParam("powered_light", false); }
             else
             {
                 _bundle.SetParam("power_kind", k);
                 _bundle.SetParam("power_watts", float.TryParse(_powerWatts?.Text, out var w) ? w : 0f);
                 _bundle.SetParam("power_label", _powerLabel?.Text ?? "");
+                _bundle.SetParam("powered_light", _poweredLight?.ButtonPressed ?? false);
             }
             Status($"power: {k}");
         }
@@ -433,6 +438,7 @@ namespace UnturnedGodot
             float w = _bundle.ParamFloat("power_watts", 0f);
             if (_powerWatts != null) _powerWatts.Text = w > 0f ? w.ToString("0") : "";
             if (_powerLabel != null) _powerLabel.Text = _bundle.ParamString("power_label") ?? "";
+            if (_poweredLight != null) _poweredLight.ButtonPressed = _bundle.ParamBool("powered_light");
         }
 
         static string[] HooksFor(string type) => type switch
@@ -622,6 +628,7 @@ namespace UnturnedGodot
             AddPoint();
             _bundle.SetParam("surface", "wood");   // behaviour: impact-fx surface
             _bundle.SetParam("power_kind", "output"); _bundle.SetParam("power_watts", 1500f); _bundle.SetParam("power_label", "Main Output");   // behaviour: power out
+            _bundle.SetParam("powered_light", true);   // behaviour: powered flag (light gated by power)
             _nameEdit.Text = "selftest_asset";
             Save();
             var r = AssetBundle.Load(_savePath);

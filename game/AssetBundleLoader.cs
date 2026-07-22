@@ -118,6 +118,11 @@ namespace UnturnedGodot
                     fpd.AddPort(ConnectionPort.Create(fpd, port, label));
                     fpd.AddToGroup("deployables");   // PowerNet scans this group
                     GD.Print($"[assetbundle] {b.Name}: power {kind} {port.Watts}w ('{label}')");
+                    if (b.ParamBool("powered_light"))   // powered-flag behaviour: a light gated by this device's power
+                    {
+                        fpd.AddPoweredLight(b.ParamFloat("light_energy", 4f), new Color(1f, 0.95f, 0.8f), b.ParamFloat("light_range", 6f));
+                        GD.Print($"[assetbundle] {b.Name}: powered light (on when powered)");
+                    }
                 }
             }
         }
