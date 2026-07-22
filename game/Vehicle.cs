@@ -189,7 +189,7 @@ namespace UnturnedGodot
 
         struct Spec
         {
-            public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
+            public string Body, Wheel, WheelTex, Palette, BodyTex;   // Palette = paintable palette; WheelTex = wheel albedo; BodyTex = plain body albedo (factory bodies -> textured, no paint)
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
@@ -961,6 +961,7 @@ namespace UnturnedGodot
 
             // body = first part; the rest = welded detail parts (the pump on the roof, etc.)
             if (b.Parts.Count > 0 && !string.IsNullOrEmpty(b.Parts[0].Mesh)) s.Body = b.Parts[0].Mesh;
+            s.BodyTex = AssetBundle.ResolveAlbedo(s.Body);   // texture the body with its own albedo (else flat paint)
             var extra = new System.Collections.Generic.List<(string, Color)>();
             for (int i = 1; i < b.Parts.Count; i++)
             {
@@ -1122,7 +1123,9 @@ namespace UnturnedGodot
             v.AddChild(v._info);
 
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
-            Material bodyMat = s.Palette != null
+            Material bodyMat = s.BodyTex != null
+                ? new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.BodyTex}"))), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }   // factory body: its own texture (opaque -> paintable-region alpha ignored)
+                : s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;

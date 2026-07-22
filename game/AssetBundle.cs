@@ -95,6 +95,20 @@ namespace UnturnedGodot
 
         public Point FindPoint(string name) => Points.Find(p => p.Name == name);
 
+        // Best-matching albedo texture for a mesh file so composed parts render TEXTURED by default.
+        // Content naming varies: "adrenaline.txt"->"adrenaline_albedo.png"; "ace_gun.txt"->"ace_albedo.png";
+        // "jeep_body.txt"->"jeep_palette.png". Returns the content-relative png name, or null (flat fallback).
+        public static string ResolveAlbedo(string meshFile)
+        {
+            if (string.IsNullOrEmpty(meshFile)) return null;
+            string b = meshFile.EndsWith(".txt") ? meshFile[..^4] : meshFile;
+            string stripped = b;
+            foreach (var suf in new[] { "_gun", "_body", "_0", "_1" }) if (b.EndsWith(suf)) { stripped = b[..^suf.Length]; break; }
+            foreach (var cand in new[] { b + "_albedo.png", b + ".png", stripped + "_albedo.png", stripped + "_palette.png", b + "_palette.png" })
+                if (System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/" + cand))) return cand;
+            return null;
+        }
+
         public float ParamFloat(string key, float def = 0f)
             => Params != null && Params.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Number ? (float)v.GetDouble() : def;
         public string ParamString(string key, string def = null)

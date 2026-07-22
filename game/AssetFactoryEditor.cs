@@ -136,7 +136,7 @@ namespace UnturnedGodot
         void AddPart(string mesh)
         {
             WriteBack();
-            _bundle.Parts.Add(new AssetBundle.Part { Mesh = mesh, Pos = new[] { 0f, 1f, 0f }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { 1f, 1f, 1f } });
+            _bundle.Parts.Add(new AssetBundle.Part { Mesh = mesh, Albedo = AssetBundle.ResolveAlbedo(mesh), Pos = new[] { 0f, 1f, 0f }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { 1f, 1f, 1f } });
             RebuildAll(); Select(Kind.Part, _bundle.Parts.Count - 1); Status($"added part {mesh}");
         }
 
@@ -408,7 +408,11 @@ namespace UnturnedGodot
             var mesh = ContentProvider.ParseObj($"res://content/{name}");
             if (mesh == null) { Status($"no mesh {name}"); return; }
             _previewMesh.Mesh = mesh;
-            _previewMesh.MaterialOverride = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = new Color(0.72f, 0.74f, 0.8f), Roughness = 0.9f };
+            var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Roughness = 0.9f };
+            var alb = AssetBundle.ResolveAlbedo(name);
+            var tex = alb != null ? LoadTex($"res://content/{alb}") : null;
+            if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = new Color(0.72f, 0.74f, 0.8f);
+            _previewMesh.MaterialOverride = mat;
             var aabb = mesh.GetAabb();
             float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
             float sc = r > 0.001f ? 1.5f / r : 1f;
@@ -457,6 +461,13 @@ namespace UnturnedGodot
             MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0f, 1f) },
             Transform = new Transform3D(AssetBundle.EulerDegBasis(p.Rot).Scaled(AssetBundle.V3(p.Scale, Vector3.One)), AssetBundle.V3(p.Pos)),
         };
+
+        static Texture2D LoadTex(string res)
+        {
+            string p = ProjectSettings.GlobalizePath(res);
+            if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) return ImageTexture.CreateFromImage(img); }
+            return null;
+        }
 
         static string[] ScanMeshes()
         {

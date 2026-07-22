@@ -91,6 +91,7 @@ namespace UnturnedGodot
                 Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f,
             };
             Texture2D tex = p.Albedo != null ? LoadTex(ContentDir + p.Albedo) : null;
+            if (tex == null) { var res = AssetBundle.ResolveAlbedo(p.Mesh); if (res != null) tex = LoadTex(ContentDir + res); }   // auto-texture from the mesh name
             if (tex != null) mat.AlbedoTexture = tex;
             else if (p.Color != null && p.Color.Length >= 3)
                 mat.AlbedoColor = new Color(p.Color[0], p.Color[1], p.Color[2], p.Color.Length >= 4 ? p.Color[3] : 1f);
