@@ -13,6 +13,7 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath;
+        bool _bakeKey;   // --bakeasset: key the magenta bg to transparent before saving the icon PNG
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
@@ -58,7 +59,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -85,6 +86,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
+                else if (arg.StartsWith("--bakeasset=")) bakeAsset = arg["--bakeasset=".Length..];   // Asset Factory bundle NAME -> composed inventory icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--clothtest=")) clothtest = arg["--clothtest=".Length..];   // dress a RiggedCharacter with shirt,pants item ids -> UV-atlas render gate (P3a); frames land in --shot=DIR
                 else if (arg == "--clothtest") clothtest = "";                                        // bare flag -> default outfit (shirt 3 + pants 2)
@@ -423,6 +425,14 @@ namespace UnturnedGodot
                 GetWindow().Size = System.Environment.GetEnvironmentVariable("UG_ISO") == "1" ? new Vector2I(640, 640) : new Vector2I(256, 256);
                 BuildBakeIcon(bakeIcon);
                 return; // capture happens a few frames later in _Process
+            }
+
+            if (bakeAsset != null)   // Asset Factory: render a bundle's composed model to an inventory icon -> --shot=OUT
+            {
+                _shotPath = shot; _bakeKey = true;
+                GetWindow().Size = new Vector2I(256, 256);
+                BuildBakeAsset(bakeAsset);
+                return;
             }
 
             if (shot != null)
@@ -2437,6 +2447,75 @@ namespace UnturnedGodot
         // Orient by the model's AABB -- camera along the SHORTEST extent, up = the MIDDLE extent, so the LONGEST lies
         // horizontal (guns end up side-on, as in the real inventory). Magenta bg -> keyed to alpha after capture.
         // spec = "MODEL.txt" or "MODEL.txt:ALBEDO.png".
+        // Key the magenta bake background (and its anti-aliased fringe) to transparent so a factory icon drops
+        // cleanly onto the rarity-tinted inventory tile. The gun is dark metal/wood, so a loose magenta test
+        // (high R+B, low G) never eats the model itself.
+        static void KeyMagenta(Image img)
+        {
+            if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+            int w = img.GetWidth(), h = img.GetHeight();
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    var c = img.GetPixel(x, y);
+                    if (c.R > 0.6f && c.B > 0.6f && c.G < 0.4f) img.SetPixel(x, y, new Color(0f, 0f, 0f, 0f));
+                }
+        }
+
+        // World-space AABB of a local AABB under a transform (transform the 8 corners; the codebase has no
+        // Transform3D*Aabb operator in use, so do it by hand).
+        static Aabb TransformAabb(Transform3D t, Aabb a)
+        {
+            Vector3 mn = new(float.MaxValue, float.MaxValue, float.MaxValue), mx = new(float.MinValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 w = t * (a.Position + new Vector3((i & 1) != 0 ? a.Size.X : 0f, (i & 2) != 0 ? a.Size.Y : 0f, (i & 4) != 0 ? a.Size.Z : 0f));
+                mn.X = Mathf.Min(mn.X, w.X); mn.Y = Mathf.Min(mn.Y, w.Y); mn.Z = Mathf.Min(mn.Z, w.Z);
+                mx.X = Mathf.Max(mx.X, w.X); mx.Y = Mathf.Max(mx.Y, w.Y); mx.Z = Mathf.Max(mx.Z, w.Z);
+            }
+            return new Aabb(mn, mx - mn);
+        }
+
+        // Render an Asset Factory bundle's COMPOSED model (all parts, textured + transformed via BuildPart) to a flat
+        // inventory icon -- magenta key bg -> keyed to alpha after capture (bake_alpha step). --bakeasset=NAME --shot=OUT.
+        void BuildBakeAsset(string name)
+        {
+            GetViewport().Msaa3D = Viewport.Msaa.Disabled;   // hard edges -> the magenta key leaves no pink fringe
+            var b = AssetCatalog.Get(name) ?? AssetBundle.Load($"res://content/assets/{name}.assetbundle");
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(1f, 0f, 1f),   // magenta key colour
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = Colors.White, AmbientLightEnergy = 1f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f });   // key from +X (camera side)
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f });    // soft fill
+
+            Aabb aabb = default; bool first = true;
+            if (b != null)
+                foreach (var p in b.Parts)
+                {
+                    var mi = AssetBundleLoader.BuildPart(p);
+                    if (mi?.Mesh == null) continue;
+                    AddChild(mi);
+                    var mb = TransformAabb(mi.Transform, mi.Mesh.GetAabb());
+                    aabb = first ? mb : aabb.Merge(mb); first = false;
+                }
+            if (first) { GD.PrintErr($"[BAKEASSET] {name}: no drawable parts"); GetTree().Quit(); return; }
+
+            Vector3 c = aabb.Position + aabb.Size * 0.5f, s = aabb.Size;
+            var ax = new (float e, Vector3 dir)[] { (s.X, Vector3.Right), (s.Y, Vector3.Up), (s.Z, Vector3.Back) };
+            System.Array.Sort(ax, (x, y) => x.e.CompareTo(y.e));   // [0]=shortest (view down it) [2]=longest
+            var cam = new Camera3D { Projection = Camera3D.ProjectionType.Orthogonal, Size = ax[2].e * 1.18f };
+            AddChild(cam);
+            cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
+            cam.LookAt(c, -ax[1].dir);   // -middle axis = up
+            cam.Current = true;
+            GD.Print($"[BAKEASSET] {name} framed aabb={s} orthoSize={cam.Size:F2}");
+        }
+
         void BuildBakeIcon(string spec)
         {
             string modelsStr = spec, albedo = null;
@@ -2531,6 +2610,14 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            // Asset Factory: drop a factory gun into the bag so the render shows it as a REAL item tile (UG_FACTORYITEM=<bundle>)
+            if (System.Environment.GetEnvironmentVariable("UG_FACTORYITEM") is string ufn && ufn.Length > 0)
+            {
+                ushort fid = 0;
+                foreach (var a in SDG.Unturned.Assets.all()) if (a.gunName == ufn && a.id >= AssetCatalog.FactoryItemIdBase) { fid = a.id; break; }
+                if (fid != 0) { player.Inventory.tryAddItem(new SDG.Unturned.Item(fid, 1)); GD.Print($"[INV] gave factory item {ufn} id={fid}"); }
+                else GD.PrintErr($"[INV] no factory item registered for '{ufn}'");
+            }
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();
@@ -3151,6 +3238,7 @@ namespace UnturnedGodot
             if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             var img = GetViewport().GetTexture().GetImage();
             if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(); return; }
+            if (_bakeKey) KeyMagenta(img);   // --bakeasset: magenta bg -> transparent
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();

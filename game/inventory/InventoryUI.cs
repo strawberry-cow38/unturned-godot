@@ -738,7 +738,10 @@ namespace UnturnedGodot
         {
             if (_iconCache.TryGetValue(id, out var t)) return t;
             t = null;
-            var p = ProjectSettings.GlobalizePath($"res://content/items/icons/{id}.png");
+            // Asset Factory items (id 60000+) key their icon by BUNDLE NAME (factory_<name>.png), so re-indexing
+            // the numeric ids never orphans a baked icon; real items load by id (<id>.png).
+            string fname = id >= UnturnedGodot.AssetCatalog.FactoryItemIdBase ? UnturnedGodot.AssetCatalog.FactoryItemName((ushort)id) : null;
+            var p = ProjectSettings.GlobalizePath(fname != null ? $"res://content/items/icons/factory_{fname}.png" : $"res://content/items/icons/{id}.png");
             if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) t = ImageTexture.CreateFromImage(img); }
             _iconCache[id] = t;
             return t;
