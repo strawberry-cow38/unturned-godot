@@ -1370,6 +1370,7 @@ namespace UnturnedGodot
         Node3D _previewRoot;            // the whole AF preview scene (one-shot teardown back to the editor)
         string _previewReturnPath;      // the bundle the editor was on -> reopen it on preview exit
         bool _prevPreviewExitKey;
+        PlayerController _previewPlayer; float _previewPitch; int _previewSettleFrames;   // hold the initial gaze for a few frames (the spawn reset wipes it), then release for free-look
 
         // AF Preview/Play (master): drop into a small interactive test scene tailored to the asset TYPE --
         // gun -> item in your bag, auto-equipped to fire (+ targets); deployable -> item, auto-held to place;
@@ -1405,6 +1406,7 @@ namespace UnturnedGodot
             root.AddChild(player);
             player.GlobalPosition = new Vector3(0f, 1.0f, 4f);
             { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
+            _previewPlayer = player; _previewPitch = 0f; _previewSettleFrames = 0;
 
             ushort fid = 0;
             foreach (var a in SDG.Unturned.Assets.all())
@@ -1432,7 +1434,7 @@ namespace UnturnedGodot
                           if (fid != 0) { player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1)); player.EquipHeldDeployable(def); }   // + hold one -> the blue placement ghost
                       }
                     }
-                    player.SetLookPitch(-24f);   // aim down so the ghost lands on the ground (valid = blue)
+                    _previewPitch = -40f; _previewSettleFrames = 16;   // start looking DOWN so the ghost lands on the ground (valid = blue); released after settle for free-look
                     break;
                 case "vehicle":
                     { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f); }   // walk over + E to enter/drive
@@ -3228,6 +3230,7 @@ namespace UnturnedGodot
         {
             if (_previewRoot != null && IsInstanceValid(_previewRoot))   // AF preview: F10 tears it down + reopens the editor
             {
+                if (_previewSettleFrames > 0 && _previewPlayer != null && IsInstanceValid(_previewPlayer)) { _previewPlayer.SetLookPitch(_previewPitch); _previewSettleFrames--; }   // hold the initial gaze through the spawn reset
                 bool ek = Input.IsKeyPressed(Key.F10);
                 if (ek && !_prevPreviewExitKey) { var p = _previewReturnPath; _previewRoot.QueueFree(); _previewRoot = null; _prevPreviewExitKey = true; BuildAssetFactory(p); return; }
                 _prevPreviewExitKey = ek;
