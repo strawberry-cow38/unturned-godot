@@ -33,6 +33,16 @@ namespace UnturnedGodot
         float _scaleInitDist;
         float _viewScale = 2f;      // ring/handle world radius (rotate + scale distance scale)
 
+        // snap presets (source ETransformSnapPreset ONE/HALF/QUARTER + ERotateSnapPreset FIFTEEN/TEN/FIVE), cycled by a key;
+        // applied only while the snap modifier (Ctrl) is held during a drag. Replaces the old hardcoded 1u / 15deg.
+        static readonly float[] SnapT = { 1f, 0.5f, 0.25f };
+        static readonly float[] SnapR = { 15f, 10f, 5f };
+        int _snapIdx;
+        public float SnapTranslate => SnapT[_snapIdx];
+        public float SnapRotate => SnapR[_snapIdx];
+        public string SnapLabel => $"{SnapTranslate:0.##}u/{SnapRotate:0}°";
+        public void CycleSnap() { _snapIdx = (_snapIdx + 1) % SnapT.Length; }
+
         readonly Rid[] _arrowRids = new Rid[3];
         readonly Node3D[] _arrows = new Node3D[3];
         readonly Node3D[] _rings = new Node3D[3];
@@ -168,19 +178,19 @@ namespace UnturnedGodot
             {
                 float delta = ProjectRayOntoRay(from, dir, _startPos, _dragDir) - _startDist;
                 var pos = _startPos + _dragDir * delta;
-                if (snap) pos = pos.Snapped(Vector3.One);
+                if (snap) pos = pos.Snapped(Vector3.One * SnapTranslate);
                 _target.GlobalPosition = pos; GlobalPosition = pos;
             }
             else if (_rotAxis >= 0)
             {
                 float ang = ProjectRayOntoRay(from, dir, _rotEdge, _rotTangent) * 90f / _viewScale;   // source: dist*90/viewScale
-                if (snap) ang = Mathf.Round(ang / 15f) * 15f;                                          // snapRotationIntervalDegrees 15
+                if (snap) ang = Mathf.Round(ang / SnapRotate) * SnapRotate;                            // snapRotationIntervalDegrees preset
                 _target.GlobalTransform = new Transform3D(_startBasis.Rotated(_rotAxisWorld, Mathf.DegToRad(ang)), _target.GlobalPosition);
             }
             else if (_scaleIdx >= 0)
             {
                 float dist = (ProjectRayOntoRay(from, dir, _target.GlobalPosition, _scaleWorldDir) - _scaleInitDist) / _viewScale;   // source :509-510
-                if (snap) dist = Mathf.Round(dist);
+                if (snap) { float st = SnapTranslate; dist = Mathf.Round(dist / st) * st; }
                 if (Mathf.Abs(dist + 1f) < 0.001f) return;   // source: don't let a scale axis hit 0
                 var f = Vector3.One + _scaleLocalDir * dist;
                 var ns = new Vector3(Mathf.Max(0.01f, _scaleStart.X * f.X), Mathf.Max(0.01f, _scaleStart.Y * f.Y), Mathf.Max(0.01f, _scaleStart.Z * f.Z));

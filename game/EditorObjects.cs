@@ -25,6 +25,7 @@ namespace UnturnedGodot
         public string PlaceName;   // the prop to place on click; null = select mode
         public bool GizmoLocalSpace => _gizmo?.LocalSpace ?? false;   // dashboard readout
         public string GizmoModeText => (_gizmo?.Mode ?? EditorGizmo.EMode.Translate) switch { EditorGizmo.EMode.Rotate => "rotate", EditorGizmo.EMode.Scale => "scale", _ => "move" };
+        public string GizmoSnapLabel => _gizmo?.SnapLabel ?? "1u/15°";   // dashboard readout
 
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
         readonly List<Node3D> _placed = new();
@@ -397,6 +398,14 @@ namespace UnturnedGodot
             }
         }
 
+        // source ControlsSettings.focus: frame the selection -- move the camera so the pivot sits 15u ahead along its
+        // current view axis (keeps the look direction, just repositions). No-op while flying (the fly loop owns position).
+        void FocusSelection()
+        {
+            if (Primary == null || _flyCam.Flying) return;
+            _flyCam.GlobalPosition = Primary.GlobalPosition + _flyCam.GlobalTransform.Basis.Z * 15f;
+        }
+
         // browser list-click: arm this prop type for E-placement + clear any instance selection (so E summons, not moves)
         public void SetPlaceType(string name) { PlaceName = name; Select(null); }
         public void ClearPlaceType() { PlaceName = null; }   // "select/move only" button
@@ -556,6 +565,8 @@ namespace UnturnedGodot
                 else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
+                else if (k.Keycode == Key.Period) _gizmo.CycleSnap();                   // . = cycle snap preset (1/0.5/0.25u, 15/10/5°); hold Ctrl while dragging to snap
+                else if (k.Keycode == Key.F) FocusSelection();                          // F = focus camera on the selection (source ControlsSettings.focus)
                 // ESC is the editor pause menu (EditorDashboard); deselect via a click on empty ground (FinishBoxSelect)
             }
         }
