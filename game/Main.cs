@@ -47,6 +47,7 @@ namespace UnturnedGodot
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
+        Vehicle _assetVeh;   // --assettest: a factory VEHICLE bundle -> let it settle on the ground before the shot
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
         bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
@@ -1284,8 +1285,13 @@ namespace UnturnedGodot
             };
             AddChild(new WorldEnvironment { Environment = env });
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+            var ground = new StaticBody3D();   // so a factory vehicle / physics body rests on something
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(80f, 1f, 80f) }, Position = new Vector3(0f, -0.5f, 0f) });
+            ground.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(80f, 1f, 80f) }, Position = new Vector3(0f, -0.5f, 0f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.5f, 0.42f) } });
+            AddChild(ground);
             var root = AssetBundleLoader.Load(path);
             if (root == null) { GD.Print($"[ASSETTEST] failed to load {path}"); GetTree().Quit(1); return; }
+            if (root is Vehicle rv) { root.Position = new Vector3(0f, 1.2f, 0f); _assetVeh = rv; }   // drop onto its wheels + settle before the shot
             AddChild(root);
             // combined world-space AABB over every part mesh, to auto-frame the camera
             Aabb aabb = default; bool has = false;
@@ -3136,6 +3142,7 @@ namespace UnturnedGodot
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state
+            else if (_assetVeh != null) { if (++_frame < 55) return; }   // factory vehicle: drop + settle on its wheels first
             else if (++_frame < 6) return; // let the renderer settle
             if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             var img = GetViewport().GetTexture().GetImage();

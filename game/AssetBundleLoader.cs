@@ -19,9 +19,8 @@ namespace UnturnedGodot
 
         public static Node3D Build(AssetBundle b)
         {
-            // Phase 1: every type builds a StaticBody3D root so a bundle always renders +
-            // collides. Phase 4 binders specialize this (vehicle->VehicleBody3D reading Wheel_*/
-            // Seat_*, deployable->placement + storage volume, gun->viewmodel hooks).
+            if (b.Type == "vehicle") return Vehicle.BuildFromBundle(b);   // vehicles get the full drivable Vehicle rig, not the generic tree
+            // everything else -> a StaticBody3D that renders + collides. (deployable placement + gun viewmodel binders land next.)
             Node3D root = new StaticBody3D { Name = b.Name, CollisionLayer = 1 << 0 };
 
             var partsHolder = new Node3D { Name = "Parts" };

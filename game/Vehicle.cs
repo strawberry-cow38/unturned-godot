@@ -946,6 +946,52 @@ namespace UnturnedGodot
         public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant, "roadster");
         public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant, "ambulance");
         public static Vehicle BuildFiretruck(int variant = 0) => Build(_firetruck, variant, "firetruck");
+
+        // Build a full drivable Vehicle from an Asset Factory bundle (master: reuse the real rig, not a
+        // parallel one). Base on the jeep spec so every field we DON'T author inherits a sane value
+        // (wheel mesh, engine sound, gears, brakes), then override the composed bits: body + welded
+        // detail parts, wheels off the Wheel_* points, hull from the box collider, name + params.
+        public static Vehicle BuildFromBundle(AssetBundle b)
+        {
+            var s = _jeep;   // struct copy: safe defaults for everything below we leave alone
+            s.Name = string.IsNullOrEmpty(b.Name) ? "Factory Vehicle" : b.Name;
+            s.Palette = null;                                   // a composed body isn't a paintable palette -> flat paint
+            s.SpotPos = null; s.TailPos = null; s.TaillightMesh = null;   // jeep light positions won't fit a custom body
+            s.SteerModel = null; s.SeatModelFile = null;
+
+            // body = first part; the rest = welded detail parts (the pump on the roof, etc.)
+            if (b.Parts.Count > 0 && !string.IsNullOrEmpty(b.Parts[0].Mesh)) s.Body = b.Parts[0].Mesh;
+            var extra = new System.Collections.Generic.List<(string, Color)>();
+            for (int i = 1; i < b.Parts.Count; i++)
+            {
+                var p = b.Parts[i];
+                if (string.IsNullOrEmpty(p.Mesh)) continue;
+                Color col = (p.Color != null && p.Color.Length >= 3) ? new Color(p.Color[0], p.Color[1], p.Color[2]) : new Color(0.6f, 0.6f, 0.62f);
+                extra.Add((p.Mesh, col));
+            }
+            s.Parts = extra.Count > 0 ? extra.ToArray() : null;
+
+            // wheels from the Wheel_* points (name containing _F = front = steered)
+            var wheels = new System.Collections.Generic.List<(float, float, float, bool)>();
+            foreach (var pt in b.Points)
+            {
+                if (pt.Name == null || !pt.Name.StartsWith("Wheel_")) continue;
+                var pos = AssetBundle.V3(pt.Pos);
+                wheels.Add((pos.X, pos.Y, pos.Z, pt.Name.ToUpperInvariant().Contains("_F")));
+            }
+            if (wheels.Count > 0) { s.Wheels = wheels.ToArray(); s.WheelRadii = null; }   // else keep the jeep's 4
+
+            // hull from the first box collider (else keep the jeep's box)
+            var box = b.Colliders.Find(c => (c.Shape ?? "box") == "box");
+            if (box != null) { s.BoxSize = AssetBundle.V3(box.Size, Vector3.One); s.BoxCenter = AssetBundle.V3(box.Pos); }
+
+            s.WheelRadius = b.ParamFloat("wheel_radius", s.WheelRadius);
+            s.Engine = b.ParamFloat("engine", s.Engine);
+            s.SpeedMax = b.ParamFloat("speed_max", s.SpeedMax);
+            s.Health = b.ParamFloat("health", s.Health);
+
+            return Build(s, 0, "factory:" + s.Name);
+        }
         public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant, "tractor");
         public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant, "ural");
         public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant, "police");

@@ -2,19 +2,21 @@
   "name": "pumpcar_demo",
   "type": "vehicle",
   "parts": [
-    { "mesh": "ambulance_body.txt",   "color": [0.55, 0.12, 0.12], "pos": [0, 0, 0],     "rot": [0, 0, 0], "scale": [1, 1, 1] },
-    { "mesh": "ambulance_siren0.txt", "color": [0.15, 0.35, 0.95], "pos": [0, 3.9, 0.3], "rot": [0, 0, 0], "scale": [1.4, 1.4, 1.4] }
+    { "mesh": "jeep_body.txt",        "color": [0.35, 0.40, 0.50], "pos": [0, 0, 0],      "rot": [0, 0, 0], "scale": [1, 1, 1] },
+    { "mesh": "ambulance_siren0.txt", "color": [0.15, 0.35, 0.95], "pos": [0, 1.35, -0.4], "rot": [0, 0, 0], "scale": [1, 1, 1] }
   ],
   "colliders": [
-    { "shape": "box", "pos": [0, 0.8, 0],   "size": [2.0, 1.5, 4.6], "rot": [0, 0, 0] },
-    { "shape": "box", "pos": [0, 3.9, 0.3], "size": [0.8, 0.5, 0.8], "rot": [0, 0, 0] }
+    { "shape": "box", "pos": [0, 0.612, 0.029], "size": [2.5, 1.046, 4.522], "rot": [0, 0, 0] }
   ],
   "volumes": [
-    { "name": "cabin", "pos": [0, 1.0, 0.2], "size": [1.6, 0.9, 1.8], "rot": [0, 0, 0] }
+    { "name": "cabin", "pos": [0, 0.9, 0], "size": [1.6, 0.9, 1.8], "rot": [0, 0, 0] }
   ],
   "points": [
-    { "name": "Seat_0",   "pos": [0.4, 0.7, 0.4], "rot": [0, 0, 0] },
-    { "name": "Wheel_FL", "pos": [0.9, 0.2, 1.5], "rot": [0, 0, 0] }
+    { "name": "Wheel_FL", "pos": [-1.30, 0.25, -1.40], "rot": [0, 0, 0] },
+    { "name": "Wheel_FR", "pos": [1.30, 0.25, -1.40],  "rot": [0, 0, 0] },
+    { "name": "Wheel_RL", "pos": [-1.30, 0.25, 1.40],  "rot": [0, 0, 0] },
+    { "name": "Wheel_RR", "pos": [1.30, 0.25, 1.40],   "rot": [0, 0, 0] },
+    { "name": "Seat_0",   "pos": [0.40, 0.90, 0.40],   "rot": [0, 0, 0] }
   ],
-  "params": { "health": 300 }
+  "params": { "wheel_radius": 0.6, "health": 400 }
 }
