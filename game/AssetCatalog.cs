@@ -105,7 +105,7 @@ namespace UnturnedGodot
             return new DeployableDef
             {
                 Id = id, Name = PrettyName(name), FactoryBundle = name,
-                Size = new Vector3(1f, 2f, 1f), Health = 200f, Offset = 0f, Radius = 0.5f, Range = 6f, Upright = true,
+                Size = new Vector3(1f, 2f, 1f), Health = 200f, Offset = 0.75f, Radius = 0.5f, Range = 6f, Upright = true,   // Offset lifts the placer's clearance sphere off the ground (else it overlaps the ground -> always invalid/red)
             };
         }
 
