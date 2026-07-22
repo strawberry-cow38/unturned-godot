@@ -3,7 +3,7 @@
   "type": "vehicle",
   "parts": [
     { "mesh": "jeep_body.txt",        "color": [0.35, 0.40, 0.50], "pos": [0, 0, 0],      "rot": [0, 0, 0], "scale": [1, 1, 1] },
-    { "mesh": "ambulance_siren0.txt", "color": [0.15, 0.35, 0.95], "pos": [0, 1.35, -0.4], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+    { "mesh": "ambulance_siren0.txt", "color": [0.15, 0.35, 0.95], "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": [1, 1, 1] }
   ],
   "colliders": [
     { "shape": "box", "pos": [0, 0.612, 0.029], "size": [2.5, 1.046, 4.522], "rot": [0, 0, 0] }
