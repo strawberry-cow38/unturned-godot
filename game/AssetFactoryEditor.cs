@@ -13,6 +13,7 @@ namespace UnturnedGodot
     public partial class AssetFactoryEditor : Node3D
     {
         public System.Action OnExit;
+        public System.Action<string> OnPlay;   // ▶ Play: save + drop into a per-type preview scene (passes the bundle name)
 
         enum Kind { Part, Collider, Volume, Point }
 
@@ -344,6 +345,7 @@ namespace UnturnedGodot
             var delBtn = new Button { Text = "🗑 Delete Selected" }; delBtn.Pressed += DeleteSelected; col.AddChild(delBtn);
             var openBtn = new Button { Text = "📂 Open" }; openBtn.Pressed += () => { TogglePicker(false); RefreshOpenList(); if (_openPanel != null) _openPanel.Visible = true; }; col.AddChild(openBtn);
             var saveBtn = new Button { Text = "💾 Save" }; saveBtn.Pressed += Save; col.AddChild(saveBtn);
+            var playBtn = new Button { Text = "▶ Play / Preview" }; playBtn.Pressed += () => { Save(); OnPlay?.Invoke(_bundle.Name); }; col.AddChild(playBtn);   // save + drop into a per-type test scene
             var exitBtn = new Button { Text = "Exit" }; exitBtn.Pressed += () => OnExit?.Invoke(); col.AddChild(exitBtn);
             _status = new Label { Text = "" }; col.AddChild(_status);
             col.AddChild(new Label { Text = "select an item → drag gizmo · T mode · G space · Del" });

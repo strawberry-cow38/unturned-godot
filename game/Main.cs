@@ -59,7 +59,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null, assetDeployTest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null, assetDeployTest = null, assetPreview = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -88,6 +88,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--bakeasset=")) bakeAsset = arg["--bakeasset=".Length..];   // Asset Factory bundle NAME -> composed inventory icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--assetdeploytest=")) assetDeployTest = arg["--assetdeploytest=".Length..];   // place a factory DEPLOYABLE via Deployable.Spawn on a ground plane + shot (verify item->def->place->stand-up)
+                else if (arg.StartsWith("--assetpreview=")) assetPreview = arg["--assetpreview=".Length..];   // AF preview/play scene for a bundle NAME (per-type: gun/deployable/vehicle/prop) -> --shot to verify the scene builds
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--clothtest=")) clothtest = arg["--clothtest=".Length..];   // dress a RiggedCharacter with shirt,pants item ids -> UV-atlas render gate (P3a); frames land in --shot=DIR
                 else if (arg == "--clothtest") clothtest = "";                                        // bare flag -> default outfit (shirt 3 + pants 2)
@@ -441,6 +442,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildAssetDeployTest(assetDeployTest);
+                return;
+            }
+
+            if (assetPreview != null)   // Asset Factory: the per-type preview/play scene for a bundle -> --shot verifies it builds
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildAssetPreview(assetPreview);
                 return;
             }
 
@@ -1353,8 +1362,82 @@ namespace UnturnedGodot
         void BuildAssetFactory(string path)
         {
             var ed = new AssetFactoryEditor { OnExit = ReturnToMenu };
+            ed.OnPlay = name => { ed.QueueFree(); _previewReturnPath = $"res://content/assets/{name}.assetbundle"; BuildAssetPreview(name); };   // ▶ Play -> per-type preview
             AddChild(ed);
             ed.Setup(path);
+        }
+
+        Node3D _previewRoot;            // the whole AF preview scene (one-shot teardown back to the editor)
+        string _previewReturnPath;      // the bundle the editor was on -> reopen it on preview exit
+        bool _prevPreviewExitKey;
+
+        // AF Preview/Play (master): drop into a small interactive test scene tailored to the asset TYPE --
+        // gun -> item in your bag, auto-equipped to fire (+ targets); deployable -> item, auto-held to place;
+        // vehicle -> spawned drivable next to you; prop -> placed in front. F10 returns to the editor.
+        void BuildAssetPreview(string name)
+        {
+            AssetCatalog.Refresh();   // pick up the just-saved bundle
+            var b = AssetCatalog.Get(name);
+            if (b == null) { GD.PrintErr($"[preview] no bundle '{name}'"); BuildAssetFactory(_previewReturnPath); return; }
+
+            var root = new Node3D();
+            AddChild(root);
+            _previewRoot = root;
+
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f), AmbientLightEnergy = 0.7f,
+            };
+            root.AddChild(new WorldEnvironment { Environment = env });
+            root.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) } };
+            ground.AddChild(gmesh);
+            root.AddChild(ground);
+
+            SDG.Unturned.ItemCatalog.RegisterAll();   // registers factory items + their DeployableDefs
+            var player = new PlayerController();
+            root.AddChild(player);
+            player.GlobalPosition = new Vector3(0f, 1.0f, 4f);
+            { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
+
+            ushort fid = 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+                if (a.id >= AssetCatalog.FactoryItemIdBase && AssetCatalog.FactoryItemName(a.id) == name) { fid = a.id; break; }
+
+            switch (b.Type)
+            {
+                case "gun":
+                    if (fid != 0) player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1));
+                    player.EquipHeldGun(name);   // in-hand + ready to fire
+                    for (int i = 0; i < 3; i++)   // a few targets downrange
+                    {
+                        var t = new StaticBody3D { CollisionLayer = 1 << 0 };
+                        t.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1f, 2f, 0.3f) } });
+                        t.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1f, 2f, 0.3f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.7f, 0.5f, 0.3f) } });
+                        t.Position = new Vector3((i - 1) * 2.2f, 1f, -8f);
+                        root.AddChild(t);
+                    }
+                    break;
+                case "deployable":
+                    if (fid != 0) { player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1)); var def = DeployableDef.ById(fid); if (def != null) player.EquipHeldDeployable(def); }   // held -> aim -> LMB to place
+                    break;
+                case "vehicle":
+                    { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f); }   // walk over + E to enter/drive
+                    break;
+                default:   // prop
+                    { var p = AssetBundleLoader.Build(b); if (p != null) { root.AddChild(p); p.GlobalPosition = new Vector3(0f, 0f, -2f); } }
+                    break;
+            }
+
+            var cl = new CanvasLayer(); root.AddChild(cl);
+            cl.AddChild(new Label { Text = $"  PREVIEW: {name} [{b.Type}]     F10 = back to editor", Position = new Vector2(16, 12) });
+            GD.Print($"[preview] {b.Type} preview for {name} (item id {fid})");
         }
 
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
@@ -3136,6 +3219,12 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_previewRoot != null && IsInstanceValid(_previewRoot))   // AF preview: F10 tears it down + reopens the editor
+            {
+                bool ek = Input.IsKeyPressed(Key.F10);
+                if (ek && !_prevPreviewExitKey) { var p = _previewReturnPath; _previewRoot.QueueFree(); _previewRoot = null; _prevPreviewExitKey = true; BuildAssetFactory(p); return; }
+                _prevPreviewExitKey = ek;
+            }
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
                 _frame++;
