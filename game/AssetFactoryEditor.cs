@@ -36,6 +36,7 @@ namespace UnturnedGodot
         LineEdit _nameEdit;
         OptionButton _typeOpt, _hookOpt, _surfOpt, _powerKind;   // behaviours: impact surface, power in/out
         LineEdit _powerWatts, _powerLabel;
+        LineEdit _gunDamage, _gunRpm, _gunAmmo, _gunRange;   // gun-type stats authored per bundle (ApplyFactoryGunStats reads these)
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
@@ -323,6 +324,15 @@ namespace UnturnedGodot
             col.AddChild(_poweredLight);
             SyncPowerUI();
 
+            var gRow = new HBoxContainer();   // gun stats (type=gun): each factory gun shoots its own numbers
+            gRow.AddChild(new Label { Text = "gun stats" });
+            _gunDamage = NumField("dmg"); gRow.AddChild(_gunDamage);
+            _gunRpm = NumField("rpm"); gRow.AddChild(_gunRpm);
+            _gunAmmo = NumField("mag"); gRow.AddChild(_gunAmmo);
+            _gunRange = NumField("range"); gRow.AddChild(_gunRange);
+            col.AddChild(gRow);
+            SyncGunUI();
+
             var addRow = new HBoxContainer();
             var addPart = new Button { Text = "＋Part" }; addPart.Pressed += () => TogglePicker(true); addRow.AddChild(addPart);
             var addCol = new Button { Text = "＋Box" }; addCol.Pressed += AddCollider; addRow.AddChild(addCol);
@@ -393,6 +403,7 @@ namespace UnturnedGodot
             RepopulateHooks();
             SyncSurfUI();
             SyncPowerUI();
+            SyncGunUI();
             RebuildAll();
             Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
             Status($"opened {System.IO.Path.GetFileNameWithoutExtension(path)} ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
@@ -442,6 +453,27 @@ namespace UnturnedGodot
             if (_powerLabel != null) _powerLabel.Text = _bundle.ParamString("power_label") ?? "";
             if (_poweredLight != null) _poweredLight.ButtonPressed = _bundle.ParamBool("powered_light");
         }
+
+        LineEdit NumField(string ph) { var e = new LineEdit { PlaceholderText = ph, CustomMinimumSize = new Vector2(58, 0) }; e.TextChanged += _ => WriteGunStats(); return e; }
+
+        void WriteGunStats()
+        {
+            SetNumParam("gun_damage", _gunDamage?.Text);
+            SetNumParam("gun_rpm", _gunRpm?.Text);
+            SetNumParam("gun_ammo", _gunAmmo?.Text);
+            SetNumParam("gun_range", _gunRange?.Text);
+        }
+
+        void SetNumParam(string key, string text) { if (float.TryParse(text, out var v) && v > 0f) _bundle.SetParam(key, v); }
+
+        void SyncGunUI()
+        {
+            if (_gunDamage == null) return;
+            _gunDamage.Text = ParamNumStr("gun_damage"); _gunRpm.Text = ParamNumStr("gun_rpm");
+            _gunAmmo.Text = ParamNumStr("gun_ammo"); _gunRange.Text = ParamNumStr("gun_range");
+        }
+
+        string ParamNumStr(string key) { float v = _bundle.ParamFloat(key, 0f); return v > 0f ? v.ToString("0.###") : ""; }
 
         static string[] HooksFor(string type) => type switch
         {
