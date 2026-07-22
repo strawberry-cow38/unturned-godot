@@ -57,7 +57,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -74,6 +74,8 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--assettest=")) assetTest = arg["--assettest=".Length..];   // load an Asset Factory .assetbundle via AssetBundleLoader -> spawn it + 3/4 cam shot (verify format+loader pipeline)
+                else if (arg == "--assetfactory") assetFactory = "";   // open the standalone Asset Factory editor (new empty asset)
+                else if (arg.StartsWith("--assetfactory=")) assetFactory = arg["--assetfactory=".Length..];   // ...opening a bundle to edit
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
@@ -270,6 +272,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildAssetTest(assetTest);
+                return;
+            }
+
+            if (assetFactory != null)   // standalone Asset Factory editor (main-menu tool); --assetfactory[=PATH] --shot renders a loaded frame
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildAssetFactory(assetFactory.Length > 0 ? assetFactory : null);
                 return;
             }
 
@@ -501,6 +511,7 @@ namespace UnturnedGodot
                 menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // in-game MP-test entry (replaces the launcher checkbox): same path as --connect=claw.bitvox.me
                 menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
                 menu.OnNewMap = () => { menu.QueueFree(); BuildEditorNew(); };   // Workshop -> a fresh blank map
+            menu.OnAssetFactory = () => { menu.QueueFree(); BuildAssetFactory(null); };   // standalone Asset Factory tool -> compose new assets
                 AddChild(menu);
                 return;
             }
@@ -1293,6 +1304,15 @@ namespace UnturnedGodot
             if (n is MeshInstance3D mi) yield return mi;
             foreach (var c in n.GetChildren())
                 foreach (var m in FindMeshInstances(c)) yield return m;
+        }
+
+        // Standalone Asset Factory editor (main-menu tool): compose meshes into a new asset with
+        // hand-placed colliders/volumes/points -> save a .assetbundle. path=null starts a new asset.
+        void BuildAssetFactory(string path)
+        {
+            var ed = new AssetFactoryEditor { OnExit = ReturnToMenu };
+            AddChild(ed);
+            ed.Setup(path);
         }
 
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
