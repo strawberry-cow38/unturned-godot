@@ -962,15 +962,7 @@ namespace UnturnedGodot
             // body = first part; the rest = welded detail parts (the pump on the roof, etc.)
             if (b.Parts.Count > 0 && !string.IsNullOrEmpty(b.Parts[0].Mesh)) s.Body = b.Parts[0].Mesh;
             s.BodyTex = AssetBundle.ResolveAlbedo(s.Body);   // texture the body with its own albedo (else flat paint)
-            var extra = new System.Collections.Generic.List<(string, Color)>();
-            for (int i = 1; i < b.Parts.Count; i++)
-            {
-                var p = b.Parts[i];
-                if (string.IsNullOrEmpty(p.Mesh)) continue;
-                Color col = (p.Color != null && p.Color.Length >= 3) ? new Color(p.Color[0], p.Color[1], p.Color[2]) : new Color(0.6f, 0.6f, 0.62f);
-                extra.Add((p.Mesh, col));
-            }
-            s.Parts = extra.Count > 0 ? extra.ToArray() : null;
+            s.Parts = null;   // welded detail parts are added as TEXTURED children after Build (below), NOT via the flat-colour rig loop (which real vehicles use)
 
             // wheels from the Wheel_* points (name containing _F = front = steered)
             var wheels = new System.Collections.Generic.List<(float, float, float, bool)>();
@@ -991,7 +983,13 @@ namespace UnturnedGodot
             s.SpeedMax = b.ParamFloat("speed_max", s.SpeedMax);
             s.Health = b.ParamFloat("health", s.Health);
 
-            return Build(s, 0, "factory:" + s.Name);
+            var v = Build(s, 0, "factory:" + s.Name);
+            for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
+            {
+                var mi = AssetBundleLoader.BuildPart(b.Parts[i]);
+                if (mi != null) v.AddChild(mi);
+            }
+            return v;
         }
         public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant, "tractor");
         public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant, "ural");
