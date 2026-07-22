@@ -2,7 +2,7 @@
   "name": "factorygun",
   "type": "gun",
   "parts": [
-    { "mesh": "eaglefire_gun.txt", "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+    { "mesh": "eaglefire_gun.txt", "pos": [0, 0, 0], "rot": [0, 0, 20], "scale": [1, 1, 1] }
   ],
   "points": [
     { "name": "Muzzle", "pos": [0, 0.78, -0.079], "rot": [0, 0, 0] },
@@ -14,7 +14,6 @@
     "gun_rpm": 200,
     "gun_ammo": 12,
     "gun_range": 150,
-    "gun_auto": false,
-    "hold_rz": 25
+    "gun_auto": false
   }
 }
