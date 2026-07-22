@@ -3,30 +3,36 @@ using Godot;
 
 namespace UnturnedGodot
 {
-    // The standalone Asset Factory editor (main-menu tool). Compose meshes into one asset,
-    // grab each part with the gizmo to place/rotate/scale it, then Save a self-contained
-    // .assetbundle the game auto-loads. Reuses EditorCamera (fly) + EditorGizmo (transform).
+    // The standalone Asset Factory editor (main-menu tool). Compose meshes into one asset and
+    // HAND-PLACE its colliders / volumes / named hook-points with the gizmo — no more guessing
+    // mounts from bundle math — then Save a self-contained .assetbundle the game auto-loads.
+    // Reuses EditorCamera (fly) + EditorGizmo (transform).
     //
-    // Phase 2b (here): add-part (mesh picker) + list-select + gizmo manipulate + delete + save
-    // (auto-fits a box collider so the saved asset is solid). Phase 3 adds volumes / named
-    // points / hook dropdowns; Phase 4 the per-type binders.
+    // Phase 2: parts (add/select/gizmo/delete/save).  Phase 3 (here): colliders + volumes + named
+    // points as gizmo-selectable items, with per-type hook-name presets.  Phase 4: per-type binders.
     public partial class AssetFactoryEditor : Node3D
     {
         public System.Action OnExit;
 
+        enum Kind { Part, Collider, Volume, Point }
+
         AssetBundle _bundle = new() { Name = "new_asset", Type = "prop" };
         string _savePath;
-        Node3D _composeRoot;                          // holds the live editable part nodes
+        Node3D _composeRoot;
         readonly List<MeshInstance3D> _partNodes = new();
-        int _sel = -1;
+        readonly List<Node3D> _colNodes = new();
+        readonly List<Node3D> _volNodes = new();
+        readonly List<Node3D> _ptNodes = new();
+        Kind _selKind = Kind.Part;
+        int _selIdx = -1;
 
         EditorCamera _cam;
         EditorGizmo _gizmo;
 
-        VBoxContainer _partsBox;
+        VBoxContainer _listBox;
         Panel _picker;
         LineEdit _nameEdit;
-        OptionButton _typeOpt;
+        OptionButton _typeOpt, _hookOpt;
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
 
@@ -56,72 +62,111 @@ namespace UnturnedGodot
                 else GD.Print($"[assetfactory] could not load {loadPath} — starting empty");
             }
             _meshNames = ScanMeshes();
-            RebuildParts();
+            RebuildAll();
             BuildUI();
-            Select(_bundle.Parts.Count > 0 ? 0 : -1);
-            GD.Print($"[assetfactory] editor up: {_bundle.Name} [{_bundle.Type}] — {_bundle.Parts.Count} parts, {_meshNames.Length} meshes available");
+            Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
+            GD.Print($"[assetfactory] editor up: {_bundle.Name} [{_bundle.Type}] — {_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt, {_meshNames.Length} meshes");
 
             if (System.Environment.GetEnvironmentVariable("UG_AFSELFTEST") == "1") SelfTest();
         }
 
-        // ---- part model <-> live nodes -------------------------------------
-        void RebuildParts()
+        // ---- live nodes <-> bundle ------------------------------------------
+        void RebuildAll()
         {
-            foreach (var n in _partNodes) if (IsInstanceValid(n)) n.QueueFree();
-            _partNodes.Clear();
-            foreach (var p in _bundle.Parts)
+            foreach (var n in AllNodes()) if (IsInstanceValid(n)) n.QueueFree();
+            _partNodes.Clear(); _colNodes.Clear(); _volNodes.Clear(); _ptNodes.Clear();
+            foreach (var p in _bundle.Parts) { var mi = AssetBundleLoader.BuildPart(p) ?? Placeholder(p); _composeRoot.AddChild(mi); _partNodes.Add(mi); }
+            foreach (var c in _bundle.Colliders) { var n = BoxViz(new Color(1f, 0.85f, 0.1f, 0.28f), c.Pos, c.Rot, c.Size); _composeRoot.AddChild(n); _colNodes.Add(n); }
+            foreach (var v in _bundle.Volumes) { var n = BoxViz(new Color(0.1f, 0.85f, 1f, 0.24f), v.Pos, v.Rot, v.Size); _composeRoot.AddChild(n); _volNodes.Add(n); }
+            foreach (var pt in _bundle.Points) { var n = PointViz(pt.Pos, pt.Rot); _composeRoot.AddChild(n); _ptNodes.Add(n); }
+        }
+
+        IEnumerable<Node3D> AllNodes()
+        {
+            foreach (var n in _partNodes) yield return n;
+            foreach (var n in _colNodes) yield return n;
+            foreach (var n in _volNodes) yield return n;
+            foreach (var n in _ptNodes) yield return n;
+        }
+
+        Node3D SelNode() => _selKind switch
+        {
+            Kind.Part => Valid(_partNodes, _selIdx) ? _partNodes[_selIdx] : null,
+            Kind.Collider => Valid(_colNodes, _selIdx) ? _colNodes[_selIdx] : null,
+            Kind.Volume => Valid(_volNodes, _selIdx) ? _volNodes[_selIdx] : null,
+            Kind.Point => Valid(_ptNodes, _selIdx) ? _ptNodes[_selIdx] : null,
+            _ => null,
+        };
+        static bool Valid<T>(List<T> l, int i) => i >= 0 && i < l.Count;
+
+        void WriteBack()
+        {
+            var n = SelNode(); if (n == null) return;
+            var pos = new[] { n.Position.X, n.Position.Y, n.Position.Z };
+            var rot = new[] { n.RotationDegrees.X, n.RotationDegrees.Y, n.RotationDegrees.Z };
+            var scl = new[] { n.Scale.X, n.Scale.Y, n.Scale.Z };
+            switch (_selKind)
             {
-                var mi = AssetBundleLoader.BuildPart(p) ?? Placeholder(p);
-                _composeRoot.AddChild(mi);
-                _partNodes.Add(mi);
+                case Kind.Part: { var p = _bundle.Parts[_selIdx]; p.Pos = pos; p.Rot = rot; p.Scale = scl; break; }
+                case Kind.Collider: { var c = _bundle.Colliders[_selIdx]; c.Pos = pos; c.Rot = rot; if (c.Shape == "box") c.Size = scl; break; }
+                case Kind.Volume: { var v = _bundle.Volumes[_selIdx]; v.Pos = pos; v.Rot = rot; v.Size = scl; break; }
+                case Kind.Point: { var t = _bundle.Points[_selIdx]; t.Pos = pos; t.Rot = rot; break; }
             }
         }
 
-        static MeshInstance3D Placeholder(AssetBundle.Part p)   // bad/missing mesh -> a magenta cube you can still place
-        {
-            return new MeshInstance3D
-            {
-                Name = "(missing)",
-                Mesh = new BoxMesh { Size = Vector3.One * 0.4f },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0f, 1f) },
-                Transform = new Transform3D(AssetBundle.EulerDegBasis(p.Rot).Scaled(AssetBundle.V3(p.Scale, Vector3.One)), AssetBundle.V3(p.Pos)),
-            };
-        }
-
-        void WriteBack()   // capture the selected part node's live transform into the bundle
-        {
-            if (_sel < 0 || _sel >= _partNodes.Count || _sel >= _bundle.Parts.Count) return;
-            var n = _partNodes[_sel]; var p = _bundle.Parts[_sel];
-            p.Pos = new[] { n.Position.X, n.Position.Y, n.Position.Z };
-            p.Rot = new[] { n.RotationDegrees.X, n.RotationDegrees.Y, n.RotationDegrees.Z };
-            p.Scale = new[] { n.Scale.X, n.Scale.Y, n.Scale.Z };
-        }
-
-        void Select(int i)
+        void Select(Kind k, int i)
         {
             WriteBack();
-            _sel = (i >= 0 && i < _partNodes.Count) ? i : -1;
-            _gizmo.Attach(_sel >= 0 ? _partNodes[_sel] : null);
-            RefreshPartsList();
+            _selKind = k;
+            int count = k switch { Kind.Part => _partNodes.Count, Kind.Collider => _colNodes.Count, Kind.Volume => _volNodes.Count, Kind.Point => _ptNodes.Count, _ => 0 };
+            _selIdx = (i >= 0 && i < count) ? i : -1;
+            _gizmo.Attach(SelNode());
+            RefreshList();
         }
 
+        // ---- add / delete ---------------------------------------------------
         void AddPart(string mesh)
         {
             WriteBack();
             _bundle.Parts.Add(new AssetBundle.Part { Mesh = mesh, Pos = new[] { 0f, 1f, 0f }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { 1f, 1f, 1f } });
-            RebuildParts();
-            Select(_bundle.Parts.Count - 1);
-            Status($"added {mesh}");
+            RebuildAll(); Select(Kind.Part, _bundle.Parts.Count - 1); Status($"added part {mesh}");
+        }
+
+        void AddCollider()
+        {
+            WriteBack();
+            _bundle.Colliders.Add(new AssetBundle.Collider { Shape = "box", Pos = new[] { 0f, 1f, 0f }, Rot = new[] { 0f, 0f, 0f }, Size = new[] { 1f, 1f, 1f } });
+            RebuildAll(); Select(Kind.Collider, _bundle.Colliders.Count - 1); Status("added box collider");
+        }
+
+        void AddVolume()
+        {
+            WriteBack();
+            _bundle.Volumes.Add(new AssetBundle.Volume { Name = "volume", Pos = new[] { 0f, 1f, 0f }, Rot = new[] { 0f, 0f, 0f }, Size = new[] { 1f, 1f, 1f } });
+            RebuildAll(); Select(Kind.Volume, _bundle.Volumes.Count - 1); Status("added volume");
+        }
+
+        void AddPoint()
+        {
+            WriteBack();
+            string nm = (_hookOpt != null && _hookOpt.Selected >= 0) ? _hookOpt.GetItemText(_hookOpt.Selected) : "Point_0";
+            _bundle.Points.Add(new AssetBundle.Point { Name = nm, Pos = new[] { 0f, 1f, 0f }, Rot = new[] { 0f, 0f, 0f } });
+            RebuildAll(); Select(Kind.Point, _bundle.Points.Count - 1); Status($"added point {nm}");
         }
 
         void DeleteSelected()
         {
-            if (_sel < 0 || _sel >= _bundle.Parts.Count) return;
-            string nm = _bundle.Parts[_sel].Mesh;
-            _bundle.Parts.RemoveAt(_sel);
-            RebuildParts();
-            Select(Mathf.Min(_sel, _bundle.Parts.Count - 1));
-            Status($"deleted {nm}");
+            if (_selIdx < 0) return;
+            switch (_selKind)
+            {
+                case Kind.Part: if (Valid(_bundle.Parts, _selIdx)) _bundle.Parts.RemoveAt(_selIdx); break;
+                case Kind.Collider: if (Valid(_bundle.Colliders, _selIdx)) _bundle.Colliders.RemoveAt(_selIdx); break;
+                case Kind.Volume: if (Valid(_bundle.Volumes, _selIdx)) _bundle.Volumes.RemoveAt(_selIdx); break;
+                case Kind.Point: if (Valid(_bundle.Points, _selIdx)) _bundle.Points.RemoveAt(_selIdx); break;
+            }
+            RebuildAll();
+            Select(_selKind, -1);
+            Status("deleted");
         }
 
         void Save()
@@ -131,13 +176,10 @@ namespace UnturnedGodot
             if (_typeOpt != null && _typeOpt.Selected >= 0) _bundle.Type = _typeOpt.GetItemText(_typeOpt.Selected);
             AutoFitColliderIfNone();
             string path = _savePath ?? $"res://content/assets/{_bundle.Name}.assetbundle";
-            _bundle.Save(path);
-            _savePath = path;
-            Status($"saved {_bundle.Name}.assetbundle ({_bundle.Parts.Count} parts)");
+            _bundle.Save(path); _savePath = path;
+            Status($"saved {_bundle.Name}.assetbundle ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
         }
 
-        // If the author hasn't placed any collider, fit one box around all parts so the saved
-        // asset is SOLID out of the box (Phase 3 lets them hand-author the real colliders).
         void AutoFitColliderIfNone()
         {
             if (_bundle.Colliders.Count > 0 || _partNodes.Count == 0) return;
@@ -167,9 +209,7 @@ namespace UnturnedGodot
                 else if (_gizmo.Dragging) { _gizmo.EndDrag(); WriteBack(); }
             }
             else if (ev is InputEventMouseMotion mm && _gizmo.Dragging)
-            {
                 _gizmo.DragTo(mm.Position, Input.IsKeyPressed(Key.Ctrl));
-            }
             else if (ev is InputEventKey k && k.Pressed && !k.Echo)
             {
                 if (k.Keycode == Key.T) { _gizmo.CycleMode(); Status($"gizmo: {GizmoMode()}"); }
@@ -185,7 +225,6 @@ namespace UnturnedGodot
         {
             var layer = new CanvasLayer();
             AddChild(layer);
-
             var panel = new PanelContainer { Position = new Vector2(12, 12), CustomMinimumSize = new Vector2(300, 0) };
             layer.AddChild(panel);
             var col = new VBoxContainer();
@@ -198,51 +237,81 @@ namespace UnturnedGodot
             col.AddChild(new Label { Text = "name" });
             _nameEdit = new LineEdit { Text = _bundle.Name, CustomMinimumSize = new Vector2(276, 0) };
             col.AddChild(_nameEdit);
-
             col.AddChild(new Label { Text = "type" });
             _typeOpt = new OptionButton();
             foreach (var t in new[] { "prop", "deployable", "vehicle", "gun" }) _typeOpt.AddItem(t);
             for (int i = 0; i < _typeOpt.ItemCount; i++) if (_typeOpt.GetItemText(i) == _bundle.Type) _typeOpt.Selected = i;
+            _typeOpt.ItemSelected += _ => RepopulateHooks();
             col.AddChild(_typeOpt);
 
-            var addBtn = new Button { Text = "＋ Add Part" };
-            addBtn.Pressed += () => TogglePicker(true);
-            col.AddChild(addBtn);
+            var addRow = new HBoxContainer();
+            var addPart = new Button { Text = "＋Part" }; addPart.Pressed += () => TogglePicker(true); addRow.AddChild(addPart);
+            var addCol = new Button { Text = "＋Box" }; addCol.Pressed += AddCollider; addRow.AddChild(addCol);
+            var addVol = new Button { Text = "＋Vol" }; addVol.Pressed += AddVolume; addRow.AddChild(addVol);
+            col.AddChild(addRow);
 
-            col.AddChild(new Label { Text = "parts:" });
-            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(276, 220) };
-            _partsBox = new VBoxContainer();
-            scroll.AddChild(_partsBox);
+            var ptRow = new HBoxContainer();
+            _hookOpt = new OptionButton { CustomMinimumSize = new Vector2(180, 0) };
+            col.AddChild(new Label { Text = "hook point:" });
+            RepopulateHooks();
+            ptRow.AddChild(_hookOpt);
+            var addPt = new Button { Text = "＋Point" }; addPt.Pressed += AddPoint; ptRow.AddChild(addPt);
+            col.AddChild(ptRow);
+
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(276, 240) };
+            _listBox = new VBoxContainer();
+            scroll.AddChild(_listBox);
             col.AddChild(scroll);
 
-            var delBtn = new Button { Text = "🗑 Delete Selected" };
-            delBtn.Pressed += DeleteSelected;
-            col.AddChild(delBtn);
-            var saveBtn = new Button { Text = "💾 Save" };
-            saveBtn.Pressed += Save;
-            col.AddChild(saveBtn);
-            var exitBtn = new Button { Text = "Exit" };
-            exitBtn.Pressed += () => OnExit?.Invoke();
-            col.AddChild(exitBtn);
-
-            _status = new Label { Text = "" };
-            col.AddChild(_status);
-            col.AddChild(new Label { Text = "select a part → drag gizmo · T mode · G space · Del remove" });
+            var delBtn = new Button { Text = "🗑 Delete Selected" }; delBtn.Pressed += DeleteSelected; col.AddChild(delBtn);
+            var saveBtn = new Button { Text = "💾 Save" }; saveBtn.Pressed += Save; col.AddChild(saveBtn);
+            var exitBtn = new Button { Text = "Exit" }; exitBtn.Pressed += () => OnExit?.Invoke(); col.AddChild(exitBtn);
+            _status = new Label { Text = "" }; col.AddChild(_status);
+            col.AddChild(new Label { Text = "select an item → drag gizmo · T mode · G space · Del" });
 
             BuildPicker(layer);
-            RefreshPartsList();
+            RefreshList();
         }
 
-        void RefreshPartsList()
+        void RepopulateHooks()
         {
-            if (_partsBox == null) return;
-            foreach (var c in _partsBox.GetChildren()) c.QueueFree();
-            for (int i = 0; i < _bundle.Parts.Count; i++)
+            if (_hookOpt == null) return;
+            _hookOpt.Clear();
+            string type = (_typeOpt != null && _typeOpt.Selected >= 0) ? _typeOpt.GetItemText(_typeOpt.Selected) : _bundle.Type;
+            foreach (var h in HooksFor(type)) _hookOpt.AddItem(h);
+            if (_hookOpt.ItemCount > 0) _hookOpt.Selected = 0;
+        }
+
+        static string[] HooksFor(string type) => type switch
+        {
+            "vehicle" => new[] { "Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR", "Seat_0", "Seat_1", "Steer", "Exit_0", "Exhaust", "Headlight_0", "Headlight_1", "Light_0" },
+            "gun" => new[] { "Muzzle", "Sight", "Magazine", "Eject", "View", "Barrel", "Grip", "Tactical", "Aim" },
+            "deployable" => new[] { "Storage", "Anchor", "Light_0", "Point_0" },
+            _ => new[] { "Point_0", "Point_1", "Anchor" },
+        };
+
+        void RefreshList()
+        {
+            if (_listBox == null) return;
+            foreach (var c in _listBox.GetChildren()) c.QueueFree();
+            AddSection("PARTS", Kind.Part, System.Linq.Enumerable.Select(_bundle.Parts, p => p.Mesh ?? "?"));
+            AddSection("COLLIDERS", Kind.Collider, System.Linq.Enumerable.Select(_bundle.Colliders, c => c.Shape));
+            AddSection("VOLUMES", Kind.Volume, System.Linq.Enumerable.Select(_bundle.Volumes, v => v.Name));
+            AddSection("POINTS", Kind.Point, System.Linq.Enumerable.Select(_bundle.Points, p => p.Name));
+        }
+
+        void AddSection(string head, Kind kind, IEnumerable<string> labels)
+        {
+            var list = new List<string>(labels);
+            if (list.Count == 0) return;
+            var h = new Label { Text = head }; h.AddThemeColorOverride("font_color", new Color(0.7f, 0.8f, 1f)); _listBox.AddChild(h);
+            for (int i = 0; i < list.Count; i++)
             {
-                int idx = i;
-                var b = new Button { Text = (i == _sel ? "▶ " : "   ") + (_bundle.Parts[i].Mesh ?? "?"), Alignment = HorizontalAlignment.Left };
-                b.Pressed += () => Select(idx);
-                _partsBox.AddChild(b);
+                int idx = i; Kind k = kind;
+                bool selected = _selKind == kind && _selIdx == i;
+                var b = new Button { Text = (selected ? "▶ " : "   ") + list[i], Alignment = HorizontalAlignment.Left };
+                b.Pressed += () => Select(k, idx);
+                _listBox.AddChild(b);
             }
         }
 
@@ -264,19 +333,49 @@ namespace UnturnedGodot
                 b.Pressed += () => { AddPart(mm); TogglePicker(false); };
                 box.AddChild(b);
             }
-            var close = new Button { Text = "close" };
-            close.Pressed += () => TogglePicker(false);
-            col.AddChild(close);
+            var close = new Button { Text = "close" }; close.Pressed += () => TogglePicker(false); col.AddChild(close);
         }
 
         void TogglePicker(bool on) { if (_picker != null) _picker.Visible = on; }
         void Status(string s) { if (_status != null) _status.Text = s; GD.Print($"[assetfactory] {s}"); }
 
+        // ---- viz builders ---------------------------------------------------
+        static Node3D BoxViz(Color c, float[] pos, float[] rot, float[] size)
+        {
+            var mat = new StandardMaterial3D
+            {
+                AlbedoColor = c, Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            };
+            return new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = Vector3.One }, MaterialOverride = mat,
+                Position = AssetBundle.V3(pos), RotationDegrees = AssetBundle.V3(rot), Scale = AssetBundle.V3(size, Vector3.One),
+            };
+        }
+
+        static Node3D PointViz(float[] pos, float[] rot)
+        {
+            var mat = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.55f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
+            return new MeshInstance3D
+            {
+                Mesh = new BoxMesh { Size = Vector3.One * 0.18f }, MaterialOverride = mat,
+                Position = AssetBundle.V3(pos), RotationDegrees = AssetBundle.V3(rot),
+            };
+        }
+
+        static MeshInstance3D Placeholder(AssetBundle.Part p) => new()
+        {
+            Name = "(missing)",
+            Mesh = new BoxMesh { Size = Vector3.One * 0.4f },
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0f, 1f) },
+            Transform = new Transform3D(AssetBundle.EulerDegBasis(p.Rot).Scaled(AssetBundle.V3(p.Scale, Vector3.One)), AssetBundle.V3(p.Pos)),
+        };
+
         static string[] ScanMeshes()
         {
             var list = new List<string>();
-            foreach (var f in DirAccess.GetFilesAt("res://content/"))
-                if (f.EndsWith(".txt")) list.Add(f);
+            foreach (var f in DirAccess.GetFilesAt("res://content/")) if (f.EndsWith(".txt")) list.Add(f);
             list.Sort();
             return list.ToArray();
         }
@@ -306,19 +405,23 @@ namespace UnturnedGodot
             return holder;
         }
 
-        // Headless smoke test (UG_AFSELFTEST=1): add a part, nudge it, save -> verify the round-trip.
         void SelfTest()
         {
             string mesh = System.Array.IndexOf(_meshNames, "axe_fire.txt") >= 0 ? "axe_fire.txt" : (_meshNames.Length > 0 ? _meshNames[0] : null);
             if (mesh == null) { GD.Print("[assetfactory] SELFTEST: no meshes"); return; }
             AddPart(mesh);
-            if (_partNodes.Count > 0) { _partNodes[_sel].Position = new Vector3(1.2f, 0.5f, -0.3f); _partNodes[_sel].RotationDegrees = new Vector3(0, 45, 0); }
+            if (_partNodes.Count > 0) { _partNodes[0].Position = new Vector3(1.2f, 0.5f, -0.3f); _partNodes[0].RotationDegrees = new Vector3(0, 45, 0); }
+            Select(Kind.Part, 0);
+            AddCollider();
+            if (_colNodes.Count > 0) _colNodes[0].Scale = new Vector3(2f, 1f, 3f);
+            Select(Kind.Collider, 0);
+            AddPoint();
             _nameEdit.Text = "selftest_asset";
             Save();
-            var reload = AssetBundle.Load(_savePath);
-            GD.Print(reload != null
-                ? $"[assetfactory] SELFTEST OK: reloaded {reload.Name} type={reload.Type} parts={reload.Parts.Count} colliders={reload.Colliders.Count} p0.pos=({reload.Parts[0].Pos[0]},{reload.Parts[0].Pos[1]},{reload.Parts[0].Pos[2]})"
-                : "[assetfactory] SELFTEST FAIL: reload null");
+            var r = AssetBundle.Load(_savePath);
+            GD.Print(r != null
+                ? $"[assetfactory] SELFTEST OK: {r.Name} type={r.Type} p={r.Parts.Count} c={r.Colliders.Count} v={r.Volumes.Count} pt={r.Points.Count} col0.size=({r.Colliders[0].Size[0]},{r.Colliders[0].Size[1]},{r.Colliders[0].Size[2]}) pt0={r.Points[0].Name}"
+                : "[assetfactory] SELFTEST FAIL");
         }
     }
 }
