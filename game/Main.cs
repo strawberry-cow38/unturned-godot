@@ -2462,6 +2462,23 @@ namespace UnturnedGodot
                 }
         }
 
+        // Crop a keyed icon to its opaque bounding box (+ a tiny margin) so the model FILLS its inventory slot instead
+        // of floating small inside the bake's framing margin (master: "scale up the icon png to fill inv slot").
+        static Image CropToOpaque(Image img)
+        {
+            if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+            int w = img.GetWidth(), h = img.GetHeight();
+            int minX = w, minY = h, maxX = -1, maxY = -1;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    if (img.GetPixel(x, y).A > 0.02f) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+            if (maxX < minX) return img;   // fully transparent -> leave as-is
+            int m = 2;   // a couple px of breathing room so the edge isn't flush-clipped
+            minX = Mathf.Max(0, minX - m); minY = Mathf.Max(0, minY - m);
+            maxX = Mathf.Min(w - 1, maxX + m); maxY = Mathf.Min(h - 1, maxY + m);
+            return img.GetRegion(new Rect2I(minX, minY, maxX - minX + 1, maxY - minY + 1));
+        }
+
         // World-space AABB of a local AABB under a transform (transform the 8 corners; the codebase has no
         // Transform3D*Aabb operator in use, so do it by hand).
         static Aabb TransformAabb(Transform3D t, Aabb a)
@@ -3238,7 +3255,7 @@ namespace UnturnedGodot
             if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             var img = GetViewport().GetTexture().GetImage();
             if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(); return; }
-            if (_bakeKey) KeyMagenta(img);   // --bakeasset: magenta bg -> transparent
+            if (_bakeKey) { KeyMagenta(img); img = CropToOpaque(img); }   // --bakeasset: magenta bg -> transparent, then crop tight so the icon FILLS its inventory slot (master)
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();
