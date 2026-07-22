@@ -61,7 +61,7 @@ namespace UnturnedGodot
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false, assetList = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -74,6 +74,7 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--assettest=")) assetTest = arg["--assettest=".Length..];   // load an Asset Factory .assetbundle via AssetBundleLoader -> spawn it + 3/4 cam shot (verify format+loader pipeline)
+                else if (arg == "--assetlist") assetList = true;   // print the auto-registered Asset Factory catalog + quit (verify auto-registration)
                 else if (arg == "--assetfactory") assetFactory = "";   // open the standalone Asset Factory editor (new empty asset)
                 else if (arg.StartsWith("--assetfactory=")) assetFactory = arg["--assetfactory=".Length..];   // ...opening a bundle to edit
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
@@ -272,6 +273,18 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(900, 900);
                 _shotPath = shot;
                 BuildAssetTest(assetTest);
+                return;
+            }
+
+            if (assetList)   // verify auto-registration: print the factory-bundle catalog + quit
+            {
+                AssetCatalog.EnsureScanned();
+                foreach (var n in AssetCatalog.All())
+                {
+                    var b = AssetCatalog.Get(n);
+                    GD.Print($"[catalog] {n} [{b.Type}] {b.Parts.Count}p/{b.Colliders.Count}c/{b.Volumes.Count}v/{b.Points.Count}pt");
+                }
+                GetTree().Quit();
                 return;
             }
 
