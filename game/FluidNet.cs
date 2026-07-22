@@ -55,10 +55,10 @@ namespace UnturnedGodot
                 }
 
             // GRAVITY GATE (strawberry 2026-07-22, all fluids): a hose conducts passively only DOWNHILL — the consumer
-            // end must sit below the source end. Level or uphill = the hose stays connected but carries 0 flow until an
-            // electric pump on the line gives it head lift (F5). We gate here (not in the type-agnostic solver) since
-            // elevation is a world concept; a non-conducting hose is simply left out of the solver graph -> both its
-            // ports read Flow=0, which the HUD surfaces as "needs a pump".
+            // end must sit below the source end. Level or uphill = the hose stays connected but carries 0 flow UNLESS an
+            // electric pump adjacent to the hose is POWERED, giving head lift: the hose may then rise up to the pump's
+            // HeadLift metres (F5). We gate here (not in the type-agnostic solver) since elevation is a world concept; a
+            // non-conducting hose is left out of the solver graph -> both its ports read Flow=0 ("needs a pump" in HUD).
             const float HeadEps = 0.05f;   // ignore sub-5cm height noise (same-level tanks don't dribble)
             var hoses = new System.Collections.Generic.List<FluidHose>();
             foreach (var n in tree.GetNodesInGroup("hoses"))
@@ -67,9 +67,12 @@ namespace UnturnedGodot
                 {
                     float srcY = h.Source.Owner != null ? h.Source.Owner.GlobalPosition.Y : 0f;
                     float consY = h.Consumer.Owner != null ? h.Consumer.Owner.GlobalPosition.Y : 0f;
-                    bool downhill = consY < srcY - HeadEps;
-                    bool pumped = false;   // F5: an electric pump on the line overrides gravity (head lift)
-                    if (downhill || pumped) hoses.Add(new FluidHose(s, cons));
+                    // a POWERED pump on EITHER end lifts this hose: suction (pump is the consumer end) + push (pump is the
+                    // source end) both work, so a pump can pull from a low source AND shove up to a high tank.
+                    float lift = 0f;
+                    if (h.Source.Owner is FluidPump ps && ps.IsPowered) lift = Mathf.Max(lift, ps.HeadLift);
+                    if (h.Consumer.Owner is FluidPump pc && pc.IsPowered) lift = Mathf.Max(lift, pc.HeadLift);
+                    if (consY < srcY + lift - HeadEps) hoses.Add(new FluidHose(s, cons));   // downhill, or within a powered pump's lift
                 }
 
             FluidSolver.Solve(devices, hoses);

@@ -260,7 +260,25 @@ namespace UnturnedGodot
                 Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
                 Vector3 right = Player.GlobalTransform.Basis.X; right.Y = 0f; right = right.Normalized();
                 string fa = arg.Trim().ToLowerInvariant();
-                if (fa.StartsWith("split") || fa.StartsWith("combine"))
+                if (fa.StartsWith("pump"))
+                {
+                    // pump rig (WORLD X): a low SOURCE + an electric PUMP + a HIGH tank + a generator wired to the pump.
+                    // Once the generator spins up the pump lifts fluid UPHILL to the high tank. Hose src->pump, pump->tank.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var pump = FluidPump.Make(6f); pump.Position = c; world.AddChild(pump);
+                    SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f, c);             // source WEST, low
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + Vector3.Up * 3f, c);   // tank EAST, HIGH (3m up)
+                    var gen = Deployable.Spawn(world, DeployableDef.Generator, c + Vector3.Back * 3f, 0f);      // a generator to power the pump
+                    var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                    if (genOut != null && pump.PowerPorts.Count > 0)
+                    {
+                        var wr = new Wire(); world.AddChild(wr); wr.Source = genOut; wr.Consumer = pump.PowerPorts[0]; wr.AddToGroup("wires");
+                        wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, pump.PowerPorts[0].GlobalPosition }, valid: true);
+                    }
+                    gen.TogglePower(); PowerNet.Recompute(GetTree());
+                    Log("pump rig (WORLD X): low fuel SOURCE (west) + an electric PUMP + a HIGH empty tank (east, 3m up) + a wired generator. once the gen spins up (~1s) the pump lifts fluid UPHILL. hose source->pump input, then pump output->the high tank.");
+                }
+                else if (fa.StartsWith("split") || fa.StartsWith("combine"))
                 {
                     // fittings have fixed local ±X port faces (input -X / output +X), so lay the rig along WORLD X near
                     // the player: source(s) WEST + high, fitting centre, storage(s) EAST + low. Look west/east to aim.

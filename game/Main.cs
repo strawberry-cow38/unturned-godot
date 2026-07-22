@@ -2038,6 +2038,34 @@ namespace UnturnedGodot
             var hose = new Hose { Source = src.Ports[0], Consumer = sto.Ports[0] };
             AddChild(hose);                 // registers in "hoses"
 
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDPUMP") == "1")
+            {   // F5 render verify: a low source -> a POWERED pump -> a HIGH tank (fluid lifted uphill past gravity)
+                src.QueueFree(); sto.QueueFree(); hose.QueueFree();
+                AddChild(new FluidManager());
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) } });
+                var s = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+                s.Position = new Vector3(-4f, 0f, 0f); s.PortLocalPos = new Vector3(0.55f, 0.9f, 0f);
+                var pump = FluidPump.Make(6f); pump.Position = new Vector3(0f, 0f, 0f);
+                var hi = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+                hi.Position = new Vector3(4f, 3f, 0f); hi.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);   // 3m UP
+                AddChild(s); AddChild(pump); AddChild(hi);
+                void HoseUp(FluidPortNode a, HosePort an, FluidPortNode b, HosePort bn)
+                { var hh = new Hose { Source = a, Consumer = b }; AddChild(hh); hh.SetPoints(new System.Collections.Generic.List<Vector3> { an.GlobalPosition, bn.GlobalPosition }, valid: true); }
+                HoseUp(s.Ports[0], s.PortNodes[0], pump.Ports[0], pump.PortNodes[0]);   // source -> pump input
+                HoseUp(pump.Ports[1], pump.PortNodes[1], hi.Ports[0], hi.PortNodes[0]); // pump -> HIGH tank (uphill)
+                Deployable.InstantRampForTests = true;   // no PowerManager in this scene -> instant-ramp the gen + one Recompute keeps the pump powered
+                var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(0f, 0f, -3f), 0f);
+                var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = pump.PowerPorts[0]; wr.AddToGroup("wires");
+                wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, pump.PowerPorts[0].GlobalPosition }, valid: true);
+                gen.TogglePower(); PowerNet.Recompute(GetTree());
+                AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
+                AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
+                AddChild(new Camera3D { Position = new Vector3(0f, 3.6f, 10f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
+                GD.Print("[fluidtest] pump render scene up — low source -> powered pump -> HIGH tank (uphill)");
+                return;
+            }
+
             if (System.Environment.GetEnvironmentVariable("UG_FLUIDSPLIT") == "1")
             {   // F4 render verify: one source fans through a SPLITTER to two storages (each leg downhill)
                 src.QueueFree(); sto.QueueFree(); hose.QueueFree();   // drop the simple scene; build the fan-out fresh
@@ -2161,6 +2189,51 @@ namespace UnturnedGodot
             float totalD = srcD0.Tank.Amount + srcD1.Tank.Amount + stoD.Tank.Amount;
             GD.Print($"[hosetool] case D: storage={stoD.Tank.Amount:0} src0={srcD0.Tank.Amount:0} src1={srcD1.Tank.Amount:0} total={totalD:0}/10000 (want storage filled + conserved)");
             if (!(stoD.Tank.Amount > 4000f && Mathf.Abs(totalD - 10000f) < 1f)) ok = false;
+
+            // --- Case E (F5): a POWERED pump LIFTS fluid uphill (source low -> pump -> HIGH tank, past the gravity gate) ---
+            var srcE = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpE = FluidPump.Make(6f); pumpE.DebugForcePower = true;   // powered -> 6m head lift (no PowerNet in the fluid test)
+            var hiE = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcE.Position = new Vector3(-4f, 0f, 32f); pumpE.Position = new Vector3(0f, 0f, 32f); hiE.Position = new Vector3(4f, 3f, 32f);   // tank 3m UP
+            AddChild(srcE); AddChild(pumpE); AddChild(hiE);
+            AddChild(new Hose { Source = srcE.Ports[0], Consumer = pumpE.Ports[0] });   // source -> pump relay input
+            AddChild(new Hose { Source = pumpE.Ports[1], Consumer = hiE.Ports[0] });    // pump passthrough -> HIGH tank (uphill)
+            bool pumpIsConsumer = pumpE.PowerPorts.Count == 1 && pumpE.PowerPorts[0].Kind == DeployableDef.PortKind.Consumer && pumpE.IsInGroup("deployables");
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case E: hiTank={hiE.Tank.Amount:0} (want filled — powered pump lifted it up) · powerConsumer={pumpIsConsumer}");
+            if (!(hiE.Tank.Amount > 400f && pumpIsConsumer)) ok = false;
+
+            // --- Case F (F5): an UNPOWERED pump can't lift — the high tank stays empty (gravity gate holds) ---
+            var srcF = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpF = FluidPump.Make(6f);   // NOT powered
+            var hiF = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcF.Position = new Vector3(-4f, 0f, 40f); pumpF.Position = new Vector3(0f, 0f, 40f); hiF.Position = new Vector3(4f, 3f, 40f);
+            AddChild(srcF); AddChild(pumpF); AddChild(hiF);
+            AddChild(new Hose { Source = srcF.Ports[0], Consumer = pumpF.Ports[0] });
+            AddChild(new Hose { Source = pumpF.Ports[1], Consumer = hiF.Ports[0] });
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case F: hiTank={hiF.Tank.Amount:0} (want ~0 — unpowered pump can't lift uphill)");
+            if (hiF.Tank.Amount > 1f) ok = false;
+
+            // --- Case G (F5): the REAL power bridge — a wired generator powers the pump (no debug flag), which then lifts ---
+            var srcG = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpG = FluidPump.Make(6f);   // powered ONLY by the wired generator below
+            var hiG = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcG.Position = new Vector3(-4f, 0f, 48f); pumpG.Position = new Vector3(0f, 0f, 48f); hiG.Position = new Vector3(4f, 3f, 48f);
+            AddChild(srcG); AddChild(pumpG); AddChild(hiG);
+            AddChild(new Hose { Source = srcG.Ports[0], Consumer = pumpG.Ports[0] });
+            AddChild(new Hose { Source = pumpG.Ports[1], Consumer = hiG.Ports[0] });
+            Deployable.InstantRampForTests = true;   // skip the engine spin-up ramp so the generator produces on the first solve (headless)
+            var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(0f, 0f, 46f), 0f);   // a power source
+            var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+            var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = pumpG.PowerPorts[0]; wr.AddToGroup("wires");
+            wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, pumpG.PowerPorts[0].GlobalPosition }, valid: true);
+            gen.TogglePower();                 // generator ON (instant ramp)
+            PowerNet.Recompute(GetTree());     // solve the power net -> the pump's consumer port lights Powered
+            bool poweredReal = pumpG.IsPowered;
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case G: pump powered by wire={poweredReal} · hiTank={hiG.Tank.Amount:0} (want powered + filled)");
+            if (!(poweredReal && hiG.Tank.Amount > 400f)) ok = false;
 
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
