@@ -29,6 +29,15 @@ namespace UnturnedGodot
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
         public FixtureKind Fixture = FixtureKind.None;   // A3/A2: a server-placed WORLD fixture (GridSource mains / GasPump) vs a normal player-placeable deployable. Bridged to DeployableNetDef.FixtureKind in DeployableNetSchema.
+
+        // FLUID device marker (strawberry 2026-07-22): a non-null Fluid means this "deployable" places a FluidContainer
+        // (the fluid IO system), NOT a power Deployable. The placement ghost still uses Size/Offset/Radius/Range; the real
+        // fluid mesh + HosePorts are built by FluidContainer on spawn (see FluidDeploy.SpawnFor). Rides catboy's item/
+        // placement rail with EXPLICIT ById cases (item ids 9110+, below the asset-factory's 60000+ block).
+        public FluidRole? Fluid = null;
+        public FluidType FluidType = FluidType.None, FluidOut = FluidType.None;   // source/transformer input + transformer output fluid
+        public int FluidWays = 2;                    // splitter outputs / combiner inputs
+        public float FluidCapacity = 20000f, FluidRate = 125f;   // tank capacity (mL) + base flow/intake (mL/s, garden-hose gravity)
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
@@ -192,9 +201,31 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Output, Pos = new Vector3(0.16f, 0.12f, 0f), Watts = 2500f } },   // rated 2.5kW at full wind; the output CAP ramps 0..2x with wind x height (PowerScale)
         };
 
+        // --- FLUID devices (strawberry 2026-07-22): placeable items that spawn FluidContainers, not power Deployables
+        //     (Fluid marker set). The ghost is a gray box of Size; the real fluid mesh + HosePorts build on spawn. ---
+        static DeployableDef MakeFluid(ushort id, string name, FluidRole role, System.Action<DeployableDef> tweak = null)
+        {
+            var d = new DeployableDef
+            {
+                Id = id, Name = name, ProcBox = true, PlaceSound = "metalplacement", Fluid = role,
+                Size = new Vector3(1f, 1.4f, 1f), Offset = 0.7f, Radius = 0.5f, Range = 4.5f, Health = 200f, Fuel = 0f,
+            };
+            tweak?.Invoke(d);
+            return d;
+        }
+        public static readonly DeployableDef FluidTank    = MakeFluid(9110, "Fluid Tank",    FluidRole.Storage);   // empty; adopts what's piped in
+        public static readonly DeployableDef WaterSource  = MakeFluid(9111, "Water Source",  FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidCapacity = 200000f; });   // a filled water tank (200 L)
+        public static readonly DeployableDef FluidSplitter = MakeFluid(9112, "Fluid Splitter", FluidRole.Splitter);
+        public static readonly DeployableDef FluidCombiner = MakeFluid(9113, "Fluid Combiner", FluidRole.Combiner);
+        public static readonly DeployableDef FluidPumpDef  = MakeFluid(9114, "Fluid Pump",     FluidRole.Pump);      // draws power; head lift
+        public static readonly DeployableDef FluidValve    = MakeFluid(9115, "Fluid Valve",    FluidRole.Valve);
+        public static readonly DeployableDef Refinery      = MakeFluid(9116, "Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas
+        public static readonly DeployableDef Sluice        = MakeFluid(9117, "Sluice",         FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.DirtyWater; });   // water -> dirty water
+
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -206,6 +237,14 @@ namespace UnturnedGodot
             9105 => Switch,
             1450 => Battery,
             9106 => WindTurbine,
+            9110 => FluidTank,
+            9111 => WaterSource,
+            9112 => FluidSplitter,
+            9113 => FluidCombiner,
+            9114 => FluidPumpDef,
+            9115 => FluidValve,
+            9116 => Refinery,
+            9117 => Sluice,
             9200 => GridSource,
             9201 => GasPump,
             _ => null,

@@ -2303,6 +2303,25 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case J: openFill={openFill:0} afterClose={afterClose:0} (want ~250 while open, unchanged after closing)");
             if (!(openFill > 200f && Mathf.Abs(afterClose - openFill) < 1f)) ok = false;
 
+            // --- Case K (items): each fluid DeployableDef places a working FluidContainer via the item/placement rail ---
+            var fdefs = new[] { DeployableDef.FluidTank, DeployableDef.WaterSource, DeployableDef.FluidSplitter, DeployableDef.FluidCombiner, DeployableDef.FluidPumpDef, DeployableDef.FluidValve, DeployableDef.Refinery, DeployableDef.Sluice };
+            var wantRoles = new[] { FluidRole.Storage, FluidRole.Source, FluidRole.Splitter, FluidRole.Combiner, FluidRole.Pump, FluidRole.Valve, FluidRole.Transformer, FluidRole.Transformer };
+            bool itemsOk = true;
+            for (int k = 0; k < fdefs.Length; k++)
+            {
+                var placed = FluidDeploy.SpawnFor(fdefs[k], this, new Vector3(k * 2f, 0f, 96f), 0f) as FluidContainer;
+                bool roleOk = placed != null && placed.Role == wantRoles[k] && DeployableDef.ById(fdefs[k].Id) == fdefs[k];
+                if (fdefs[k].Fluid == FluidRole.Pump && placed is not FluidPump) roleOk = false;
+                if (!roleOk) { itemsOk = false; GD.Print($"[hosetool] item {fdefs[k].Name} FAILED (role {placed?.Role})"); }
+            }
+            // end-to-end: place a Water Source (high) + a Fluid Tank (low) via the rail, hose, tick -> tank fills
+            var wsrc = FluidDeploy.SpawnFor(DeployableDef.WaterSource, this, new Vector3(-4f, 2f, 104f), 0f) as FluidContainer;
+            var wtank = FluidDeploy.SpawnFor(DeployableDef.FluidTank, this, new Vector3(4f, 0f, 104f), 0f) as FluidContainer;
+            AddChild(new Hose { Source = wsrc.Ports[0], Consumer = wtank.Ports[0] });
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case K: allRolesOk={itemsOk} · placed WaterSource->FluidTank fills to {wtank.Tank.Amount:0} (want >400)");
+            if (!(itemsOk && wtank.Tank.Amount > 400f)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }

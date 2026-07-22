@@ -1231,7 +1231,7 @@ namespace UnturnedGodot
             if (_deployable != null) return _deployable.Id == asset.id;
             if (HoldingWireTool) return asset.id == 65;
             if (HoldingRopeTool) return asset.id == 64;
-            if (HoldingHoseTool) return asset.id == 66;
+            if (HoldingHoseTool) return asset.id == 9118;
             return false;
         }
 
@@ -1428,6 +1428,20 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
+                    if (_deployable.Fluid != null)   // FLUID device: spawn a FluidContainer locally (rides the ghost/place flow; MP replication = fast-follow)
+                    {
+                        FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        PlayPlaceSound(_deployable.PlaceSound, _placePoint);
+                        GD.Print($"[fluid] placed {_deployable.Name} at {_placePoint}");
+                        if (_deployItem != null && Inventory != null)
+                        {
+                            ushort id = _deployItem.id;
+                            Inventory.removeItemAmount(id, 1);
+                            if (Inventory.getItemCount(id) <= 0) { (_revertEquip ?? EquipUnarmed)(); return; }
+                        }
+                        _viewmodel?.PlayDeployHold();
+                        return;
+                    }
                     if (NetPlaceDeployable != null)
                     {
                         // MP: the placement is a REQUEST -- the server validates spot + supplies, spends
