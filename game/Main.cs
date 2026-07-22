@@ -59,7 +59,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null, assetDeployTest = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -87,6 +87,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--bakeasset=")) bakeAsset = arg["--bakeasset=".Length..];   // Asset Factory bundle NAME -> composed inventory icon PNG (needs --shot=OUT)
+                else if (arg.StartsWith("--assetdeploytest=")) assetDeployTest = arg["--assetdeploytest=".Length..];   // place a factory DEPLOYABLE via Deployable.Spawn on a ground plane + shot (verify item->def->place->stand-up)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--clothtest=")) clothtest = arg["--clothtest=".Length..];   // dress a RiggedCharacter with shirt,pants item ids -> UV-atlas render gate (P3a); frames land in --shot=DIR
                 else if (arg == "--clothtest") clothtest = "";                                        // bare flag -> default outfit (shirt 3 + pants 2)
@@ -432,6 +433,14 @@ namespace UnturnedGodot
                 _shotPath = shot; _bakeKey = true;
                 GetWindow().Size = new Vector2I(256, 256);
                 BuildBakeAsset(bakeAsset);
+                return;
+            }
+
+            if (assetDeployTest != null)   // Asset Factory: place a factory deployable via Deployable.Spawn -> --shot=OUT
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildAssetDeployTest(assetDeployTest);
                 return;
             }
 
@@ -2491,6 +2500,42 @@ namespace UnturnedGodot
                 mx.X = Mathf.Max(mx.X, w.X); mx.Y = Mathf.Max(mx.Y, w.Y); mx.Z = Mathf.Max(mx.Z, w.Z);
             }
             return new Aabb(mn, mx - mn);
+        }
+
+        // Place a factory DEPLOYABLE via the real Deployable.Spawn (item->DeployableDef->composed body + stand-up) on a
+        // ground plane + a 3/4 camera, for a --shot. Verifies the whole deployable pipeline end-to-end.
+        void BuildAssetDeployTest(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f), AmbientLightEnergy = 0.7f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40, 40) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            SDG.Unturned.ItemCatalog.RegisterAll();   // registers factory items + their DeployableDefs
+            ushort id = 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+                if (a.id >= AssetCatalog.FactoryItemIdBase && AssetCatalog.FactoryItemName(a.id) == name) { id = a.id; break; }
+            var def = DeployableDef.ById(id);
+            if (def != null) { Deployable.Spawn(this, def, Vector3.Zero, 0f); GD.Print($"[assetdeploy] placed {name} id={id}"); }
+            else GD.PrintErr($"[assetdeploy] no deployable def for '{name}'");
+
+            var cam = new Camera3D();
+            AddChild(cam);
+            cam.GlobalPosition = new Vector3(3.4f, 2.6f, 3.4f);
+            cam.LookAt(new Vector3(0f, 1.1f, 0f), Vector3.Up);
+            cam.Current = true;
         }
 
         // Render an Asset Factory bundle's COMPOSED model (all parts, textured + transformed via BuildPart) to a flat

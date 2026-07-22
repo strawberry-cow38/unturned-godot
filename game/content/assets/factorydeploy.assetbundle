@@ -2,9 +2,9 @@
   "name": "factorydeploy",
   "type": "deployable",
   "parts": [
-    { "mesh": "objects/Gas_Pump_0.obj", "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+    { "mesh": "objects/Gas_Pump_0.obj", "pos": [0, 0, 0], "rot": [-90, 0, 0], "scale": [1, 1, 1] }
   ],
   "colliders": [
-    { "shape": "box", "pos": [0, 1.2, 0], "rot": [0, 0, 0], "size": [0.8, 2.4, 0.8] }
+    { "shape": "box", "pos": [0, 1.2, 0], "rot": [0, 0, 0], "size": [1.33, 2.4, 0.75] }
   ]
 }
