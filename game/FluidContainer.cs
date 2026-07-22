@@ -9,7 +9,8 @@ namespace UnturnedGodot
     // Pump = a tankless inline fitting (1 relay + 1 passthrough) that ALSO draws power (FluidPump) and, when powered,
     // provides head lift overriding the gravity gate. Transformer (refinery oil->gas, sluice water->dirty) = a tankless
     // device that DELETES its input fluid and PRODUCES a different output fluid (a Consumer input + a Source output).
-    public enum FluidRole { Source, Storage, Consumer, Splitter, Combiner, Pump, Transformer }
+    // Valve = a tankless inline fitting that's just a SWITCH for a hose: open = passes flow, closed (Blocked) = stops it.
+    public enum FluidRole { Source, Storage, Consumer, Splitter, Combiner, Pump, Transformer, Valve }
 
     // A fluid device on the hose graph (the fluid analog of a power deployable). A tanked container (Source/Storage/
     // Consumer) holds a FluidTank + one port + a fill bar; a tankless FITTING (Splitter/Combiner) is a pure relay with
@@ -29,13 +30,14 @@ namespace UnturnedGodot
         public Vector3 PortLocalPos = new Vector3(0f, 0.7f, 0.55f);   // where a single-port tank's cube sits (front face); placement sets it per-face
         public float LastFlow;             // debug / fill-bar readout
         InfoBillboard _info;
+        StandardMaterial3D _valveHandleMat;   // valve: the handle wheel material (green open / red closed)
 
-        public bool IsFitting => Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump || Role == FluidRole.Transformer;
+        public bool IsFitting => Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump || Role == FluidRole.Transformer || Role == FluidRole.Valve;
 
         // A relay fitting conducts a powered pump's pressure CEILING THROUGH itself, so a pump can lift a whole chain of
-        // fittings (splitter/combiner/pump) up to its head. A TANK (source/storage/consumer) or a TRANSFORMER (a fluid
-        // boundary) stops it — "up to a source/consumer, not through it" (strawberry). Blocked/closed = doesn't conduct.
-        public bool IsFlowRelay => !Blocked && (Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump);
+        // fittings (splitter/combiner/pump/OPEN valve) up to its head. A TANK (source/storage/consumer) or a TRANSFORMER
+        // (a fluid boundary) stops it — "up to a source/consumer, not through it" (strawberry). Blocked/CLOSED = doesn't conduct.
+        public bool IsFlowRelay => !Blocked && (Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump || Role == FluidRole.Valve);
 
         public static FluidContainer Make(FluidRole role, FluidTank tank, float flowRate = 50f)
             => new FluidContainer { Role = role, Tank = tank, FlowRate = flowRate };
@@ -46,6 +48,9 @@ namespace UnturnedGodot
         // A transformer (refinery/sluice): deletes `inp`, produces `outp` at `flowRate` (input) * `ratio` (output/input).
         public static FluidContainer MakeTransformer(FluidType inp, FluidType outp, float flowRate = 50f, float ratio = 1f)
             => new FluidContainer { Role = FluidRole.Transformer, Tank = null, FlowRate = flowRate, TransformIn = inp, TransformOut = outp, TransformRatio = ratio };
+
+        // A valve — an inline switch for a hose. Starts OPEN; ToggleValve() closes it (Blocked -> stops flow + pump lift).
+        public static FluidContainer MakeValve() => new FluidContainer { Role = FluidRole.Valve, Tank = null };
 
         public override void _Ready()
         {
@@ -82,6 +87,10 @@ namespace UnturnedGodot
                     AddPort(FluidPortKind.Consumer, FlowRate, new Vector3(-0.5f, 0.6f, 0f), TransformIn);
                     AddPort(FluidPortKind.Source, FlowRate * TransformRatio, new Vector3(0.5f, 0.6f, 0f), TransformOut);
                     break;
+                case FluidRole.Valve:      // inline switch: a 0-rate relay input + one passthrough output (dead when Blocked/closed)
+                    AddPort(FluidPortKind.Consumer, 0f, new Vector3(-0.5f, 0.6f, 0f));
+                    AddPort(FluidPortKind.Passthrough, 0f, new Vector3(0.5f, 0.6f, 0f));
+                    break;
             }
         }
 
@@ -100,12 +109,18 @@ namespace UnturnedGodot
         {
             if (IsFitting)   // a small metal box, no fill bar (no tank)
             {
-                var fcol = Role switch { FluidRole.Splitter => new Color(0.56f, 0.60f, 0.68f), FluidRole.Combiner => new Color(0.62f, 0.56f, 0.66f), FluidRole.Transformer => new Color(0.60f, 0.42f, 0.28f), _ => new Color(0.30f, 0.42f, 0.62f) };   // pump = electric blue / transformer = copper
+                var fcol = Role switch { FluidRole.Splitter => new Color(0.56f, 0.60f, 0.68f), FluidRole.Combiner => new Color(0.62f, 0.56f, 0.66f), FluidRole.Transformer => new Color(0.60f, 0.42f, 0.28f), FluidRole.Valve => new Color(0.48f, 0.52f, 0.58f), _ => new Color(0.30f, 0.42f, 0.62f) };   // pump = electric blue / transformer = copper / valve = steel
                 AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.9f, 1.05f, 0.9f) }, Position = new Vector3(0, 0.55f, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = fcol, Metallic = 0.35f, Roughness = 0.45f } });
                 if (Role == FluidRole.Pump)   // a little motor drum on top so a pump reads distinct from a splitter box
                     AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.28f, BottomRadius = 0.28f, Height = 0.4f }, Position = new Vector3(0, 1.25f, 0), RotationDegrees = new Vector3(90, 0, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.72f, 0.20f), Metallic = 0.4f, Roughness = 0.4f } });
                 if (Role == FluidRole.Transformer)   // a chimney stack so a refinery reads distinct
                     AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.14f, BottomRadius = 0.16f, Height = 0.7f }, Position = new Vector3(0.2f, 1.4f, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.3f, 0.3f, 0.32f), Metallic = 0.3f, Roughness = 0.6f } });
+                if (Role == FluidRole.Valve)   // a handle wheel on top — GREEN open / RED closed (Blocked)
+                {
+                    _valveHandleMat = new StandardMaterial3D { AlbedoColor = new Color(0.3f, 0.85f, 0.4f), Metallic = 0.3f, Roughness = 0.5f };
+                    AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.3f, BottomRadius = 0.3f, Height = 0.12f }, Position = new Vector3(0, 1.2f, 0), MaterialOverride = _valveHandleMat });
+                    RefreshValveVisual();
+                }
                 return;
             }
             // tank body — a cylinder tinted by role (green source / blue storage / orange consumer)
@@ -119,6 +134,18 @@ namespace UnturnedGodot
                 AddChild(_info);
                 _info.SetActive(true);
             }
+        }
+
+        // Flip a valve open/closed (Blocked). Closed = stops flow through it + stops a pump's lift propagating past it.
+        public void ToggleValve()
+        {
+            if (Role != FluidRole.Valve) return;
+            Blocked = !Blocked;
+            RefreshValveVisual();
+        }
+        void RefreshValveVisual()
+        {
+            if (_valveHandleMat != null) _valveHandleMat.AlbedoColor = Blocked ? new Color(0.9f, 0.2f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);   // red closed / green open
         }
 
         public override void _Process(double delta)

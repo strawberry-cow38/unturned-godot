@@ -2287,6 +2287,22 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case I: low(Y4)={lowI.Tank.Amount:0} high(Y8)={highI.Tank.Amount:0} (want low filled via lift-through-splitter, high blocked by ceiling 6)");
             if (!(lowI.Tank.Amount > 400f && highI.Tank.Amount < 1f)) ok = false;
 
+            // --- Case J (F5): a VALVE is a switch for a hose — open flows, closed stops ---
+            var srcJ = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);
+            var valveJ = FluidContainer.MakeValve();
+            var stoJ = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcJ.Position = new Vector3(-4f, 2f, 72f); valveJ.Position = new Vector3(0f, 1f, 72f); stoJ.Position = new Vector3(4f, 0f, 72f);   // downhill, gravity feeds
+            AddChild(srcJ); AddChild(valveJ); AddChild(stoJ);
+            AddChild(new Hose { Source = srcJ.Ports[0], Consumer = valveJ.Ports[0] });   // source -> valve input
+            AddChild(new Hose { Source = valveJ.Ports[1], Consumer = stoJ.Ports[0] });   // valve output -> tank
+            for (int i = 0; i < 50; i++) FluidNet.Tick(GetTree(), 0.1f);   // valve OPEN -> fills
+            float openFill = stoJ.Tank.Amount;
+            valveJ.ToggleValve();   // CLOSE it
+            for (int i = 0; i < 50; i++) FluidNet.Tick(GetTree(), 0.1f);   // valve CLOSED -> no more flow
+            float afterClose = stoJ.Tank.Amount;
+            GD.Print($"[hosetool] case J: openFill={openFill:0} afterClose={afterClose:0} (want ~250 while open, unchanged after closing)");
+            if (!(openFill > 200f && Mathf.Abs(afterClose - openFill) < 1f)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }

@@ -260,7 +260,17 @@ namespace UnturnedGodot
                 Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
                 Vector3 right = Player.GlobalTransform.Basis.X; right.Y = 0f; right = right.Normalized();
                 string fa = arg.Trim().ToLowerInvariant();
-                if (fa.StartsWith("refine") || fa.StartsWith("sluice"))
+                if (fa.StartsWith("valve"))
+                {
+                    // valve rig (WORLD X): a high SOURCE + a VALVE + a low tank. Gravity feeds it; hose source->valve->tank,
+                    // then RMB the valve's port (with the hose tool out) to open/close it — the handle goes green/red.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var valve = FluidContainer.MakeValve(); valve.Position = c + Vector3.Up * 1.0f; world.AddChild(valve);
+                    SpawnFluidRig(world, FluidRole.Source, FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 1.6f, valve.Position);   // source WEST, high
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None, 0f, c + wx * 4f, valve.Position);   // tank EAST, low
+                    Log("valve rig (WORLD X): a high fuel SOURCE + a VALVE + a low empty tank. hose source->the valve's LEFT (orange) input, then its RIGHT (cyan) output->the tank. RMB the valve's port to open/close it (handle = green open / red closed).");
+                }
+                else if (fa.StartsWith("refine") || fa.StartsWith("sluice"))
                 {
                     // transformer rig (WORLD X): a high source of the INPUT fluid + a refinery/sluice + a low output tank.
                     // refine = oil->gas; sluice = water->dirty water. Hose source->transformer input, then output->the tank.
