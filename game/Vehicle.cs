@@ -230,6 +230,14 @@ namespace UnturnedGodot
             return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
                                         LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopEnd = dataSize / (channels * bits / 8) };
         }
+        // Load a res:// image into an ImageTexture, or null if the file is missing/corrupt. LoadFromFile returns null
+        // on failure and CreateFromImage(null) hard-crashes the engine -> guard it so the material renders untextured.
+        static ImageTexture SafeTex(string resPath)
+        {
+            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(resPath));
+            return img != null ? ImageTexture.CreateFromImage(img) : null;
+        }
+
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
 
@@ -1122,7 +1130,7 @@ namespace UnturnedGodot
 
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
             Material bodyMat = s.BodyTex != null
-                ? new StandardMaterial3D { AlbedoTexture = ImageTexture.CreateFromImage(Image.LoadFromFile(ProjectSettings.GlobalizePath($"res://content/{s.BodyTex}"))), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }   // factory body: its own texture (opaque -> paintable-region alpha ignored)
+                ? new StandardMaterial3D { AlbedoTexture = SafeTex($"res://content/{s.BodyTex}"), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }   // factory body: its own texture (opaque -> paintable-region alpha ignored); SafeTex null-guards a missing/corrupt file
                 : s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
