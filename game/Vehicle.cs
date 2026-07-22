@@ -2032,7 +2032,7 @@ namespace UnturnedGodot
                     if (_alarmTimer <= 0f) { SetHeadlights(false); SetTaillights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, never alarms again (master)
                 }
             }
-            if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.
+            if (_sirenMat0 != null && _sirenMat1 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck. (both lenses required — a factory car welding only one siren mesh must not NRE here)
             {
                 if (_sirenOn && !_exploded)
                 {
