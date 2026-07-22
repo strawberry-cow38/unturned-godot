@@ -28,18 +28,8 @@ namespace UnturnedGodot
             root.AddChild(partsHolder);
             foreach (var p in b.Parts)
             {
-                if (string.IsNullOrEmpty(p.Mesh)) continue;
-                var mesh = ContentProvider.ParseObj(ContentDir + p.Mesh);
-                if (mesh == null) { GD.PushWarning($"[AssetBundle] part mesh missing: {p.Mesh}"); continue; }
-                partsHolder.AddChild(new MeshInstance3D
-                {
-                    Name = System.IO.Path.GetFileNameWithoutExtension(p.Mesh),
-                    Mesh = mesh,
-                    MaterialOverride = PartMaterial(p),
-                    Transform = new Transform3D(
-                        AssetBundle.EulerDegBasis(p.Rot).Scaled(AssetBundle.V3(p.Scale, Vector3.One)),
-                        AssetBundle.V3(p.Pos)),
-                });
+                var mi = BuildPart(p);
+                if (mi != null) partsHolder.AddChild(mi);
             }
 
             foreach (var c in b.Colliders)
@@ -73,6 +63,24 @@ namespace UnturnedGodot
             root.SetMeta("assetType", b.Type);
             root.SetMeta("assetName", b.Name);
             return root;
+        }
+
+        // Build one part's MeshInstance3D (mesh + material + transform). Shared by the runtime
+        // loader (above) and the Asset Factory editor, so both compose parts identically.
+        public static MeshInstance3D BuildPart(AssetBundle.Part p)
+        {
+            if (p == null || string.IsNullOrEmpty(p.Mesh)) return null;
+            var mesh = ContentProvider.ParseObj(ContentDir + p.Mesh);
+            if (mesh == null) { GD.PushWarning($"[AssetBundle] part mesh missing: {p.Mesh}"); return null; }
+            return new MeshInstance3D
+            {
+                Name = System.IO.Path.GetFileNameWithoutExtension(p.Mesh),
+                Mesh = mesh,
+                MaterialOverride = PartMaterial(p),
+                Transform = new Transform3D(
+                    AssetBundle.EulerDegBasis(p.Rot).Scaled(AssetBundle.V3(p.Scale, Vector3.One)),
+                    AssetBundle.V3(p.Pos)),
+            };
         }
 
         static StandardMaterial3D PartMaterial(AssetBundle.Part p)
