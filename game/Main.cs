@@ -3287,7 +3287,6 @@ namespace UnturnedGodot
             if (_rigDir != null)
             {
                 _frame++;
-                if (_vmTest && _frame <= 15) GD.Print($"[RIGDBG] f={_frame} rigShot={_rigShot} caps=[{string.Join(",", _rigCaptureFrames)}] vm={_vm != null} melee={_vmMelee}");
                 if (_ragTest && _frame == 4) _rc?.RagdollStart(new Vector3(3.5f, 5f, 1.5f)); // knock him over
                 if (_ragTest && _frame == 46) _rc?.ApplyImpact(_rc.GlobalPosition + new Vector3(0f, 0.4f, 0f), new Vector3(8f, 4f, 0f)); // simulate a corpse shot
                 // --vm ADS demo: the equip pull-out plays first (source gates aiming until it finishes), then a
