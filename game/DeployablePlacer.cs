@@ -15,6 +15,7 @@ namespace UnturnedGodot
         public float YawOffset;   // R adds 90 deg here; the ghost yaw = aim yaw + this (src rotate_y)
 
         MeshInstance3D _ghost;
+        readonly System.Collections.Generic.List<MeshInstance3D> _ghostMeshes = new();   // the ghost's own mesh nodes (NOT the port arrows) -> only these get the blue/red tint
         Aabb _localAabb;
         StandardMaterial3D _arrowMat;   // shared by the ghost's in/out port arrows; recoloured blue/red with validity
 
@@ -34,23 +35,24 @@ namespace UnturnedGodot
             Def = def;
             _ghost?.QueueFree();
             _ghost = Deployable.BuildMesh(def, out _localAabb);
+            _ghostMeshes.Clear();   // capture the ghost's mesh nodes NOW, before the port arrows are added below
+            _ghostMeshes.Add(_ghost);
+            foreach (var n in _ghost.FindChildren("*", "MeshInstance3D", true, false)) if (n is MeshInstance3D mi) _ghostMeshes.Add(mi);
             SetGhostMat(InvalidMat);
             AddChild(_ghost);
             _arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowRed);   // in/out arrows on the ghost's ports (stand up with it)
             foreach (var p in def.Ports)
-                _ghost.AddChild(ConnectionPort.MakeArrow(p, _arrowMat, p.Pos));
+                _ghost.AddChild(ConnectionPort.MakeArrow(p, _arrowMat, p.Pos));   // added AFTER the capture -> arrows keep their port colours, not the ghost tint
         }
 
         public void SetGhostVisible(bool v) { if (_ghost != null) _ghost.Visible = v; }
 
-        // Tint the ghost blue/red. A factory deployable's ghost is a CONTAINER whose textured parts are children,
-        // so the override must reach every descendant MeshInstance3D (a native single-mesh ghost just tints the root).
+        // Tint the ghost blue/red. A factory deployable's ghost is a CONTAINER whose textured parts are children, so
+        // the override must reach every mesh node -- but NOT the port arrows (they keep their own orange/cyan colours,
+        // recoloured separately in Apply). _ghostMeshes is captured in SetDef before the arrows are added.
         void SetGhostMat(Material m)
         {
-            if (_ghost == null) return;
-            _ghost.MaterialOverride = m;
-            foreach (var n in _ghost.FindChildren("*", "MeshInstance3D", true, false))
-                if (n is MeshInstance3D mi) mi.MaterialOverride = m;
+            foreach (var mi in _ghostMeshes) if (Godot.GodotObject.IsInstanceValid(mi)) mi.MaterialOverride = m;
         }
 
         // Run the aim -> point/valid check for this frame and move the ghost to match. Returns Valid.

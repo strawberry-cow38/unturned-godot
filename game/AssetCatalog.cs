@@ -27,11 +27,12 @@ namespace UnturnedGodot
                     var b = AssetBundle.Load(path);
                     if (b == null) continue;
                     string key = string.IsNullOrEmpty(b.Name) ? System.IO.Path.GetFileNameWithoutExtension(f) : b.Name;
+                    if (_byName.ContainsKey(key)) GD.PushWarning($"[assetcatalog] duplicate bundle name '{key}' ({f}) -- overwriting the earlier one");
                     _byName[key] = b; _pathByName[key] = path;
                 }
                 GD.Print($"[assetcatalog] registered {_byName.Count} factory bundle(s)");
             }
-            catch (System.Exception e) { GD.PushWarning($"[assetcatalog] scan failed: {e.Message}"); }
+            catch (System.Exception e) { GD.PushWarning($"[assetcatalog] scan failed: {e.Message}"); _scanned = false; }   // a transient failure (dir missing on a fresh install) must not permanently silence the catalog
         }
 
         public static IReadOnlyCollection<string> All() { EnsureScanned(); return _byName.Keys; }
@@ -68,6 +69,7 @@ namespace UnturnedGodot
             foreach (var name in names)
             {
                 var b = _byName[name];
+                if (id >= ushort.MaxValue - 4) { GD.PushError($"[assetcatalog] too many factory items -- stopping at {_factoryItemName.Count} (id near ushort max)"); break; }
                 if (b.Type == "gun")
                 {
                     SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset

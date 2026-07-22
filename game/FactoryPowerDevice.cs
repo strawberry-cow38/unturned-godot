@@ -29,6 +29,10 @@ namespace UnturnedGodot
             SetProcess(true);
         }
 
+        // Only tick _Process for devices that actually have a powered light (AddPoweredLight runs during Build,
+        // before _Ready) -- a plain power device shouldn't pay a per-frame no-op dispatch.
+        public override void _Ready() => SetProcess(_light != null);
+
         public override void _Process(double delta)
         {
             if (_light == null) return;
