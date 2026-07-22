@@ -2026,6 +2026,7 @@ namespace UnturnedGodot
         // harness can capture the bars filling (F3 visual verify); else the fast headless log-check (go easy).
         void RunFluidTest()
         {
+            if (System.Environment.GetEnvironmentVariable("UG_HOSETOOL") == "1") { RunHoseToolTest(); return; }
             var src = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);   // full, supplies 50/s
             var sto = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Fuel, 1000f, 0f), 50f);     // empty, intake 50/s
             // source raised ABOVE storage so the gravity gate (strawberry: passive flow only downhill) lets it flow;
@@ -2060,6 +2061,47 @@ namespace UnturnedGodot
             float total = src.Tank.Amount + sto.Tank.Amount;
             bool ok = sto.Tank.Amount > 400f && src.Tank.Amount < 600f && Mathf.Abs(total - 1000f) < 0.5f;
             GD.Print($"[fluidtest] RESULT {(ok ? "PASS" : "FAIL")}: storage {sto.Tank.Amount:0}, source {src.Tank.Amount:0}, conserved total {total:0}/1000");
+            GetTree().Quit();
+        }
+
+        // Headless F3.5c hose-tool integration check (UG_HOSETOOL=1): exercise the REAL type-lock rule (FluidHoseRule)
+        // + the connect/adopt/flow path the tool uses, without a mouse. Case A: an EMPTY storage + a Fuel source ->
+        // Ok, adopts Fuel, flows downhill. Case B: a Fuel source + a WATER storage -> Mismatch, refused. (The ray-pick,
+        // highlight, and HUD are visual/session-only — verified in-game later; this locks the logic.)
+        void RunHoseToolTest()
+        {
+            bool ok = true;
+
+            // --- Case A: empty storage adopts + flows ---
+            var srcA = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);
+            var stoA = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);   // EMPTY -> None type
+            srcA.Position = new Vector3(-2.5f, 1.2f, 0f); stoA.Position = new Vector3(2.5f, 0f, 0f);   // source above -> gravity lets it flow
+            AddChild(srcA); AddChild(stoA);
+            var spA = srcA.PortNodes[0]; var cpA = stoA.PortNodes[0];
+            var vA = FluidHoseRule.Completion(spA.Kind, cpA.Kind,
+                srcA.Tank.Type == FluidType.None, stoA.Tank.Type == FluidType.None, srcA.Tank.Type == stoA.Tank.Type, false, false);
+            GD.Print($"[hosetool] case A verdict={vA} (want Ok)");
+            if (vA != HoseVerdict.Ok) ok = false;
+            else
+            {   // connect exactly as CompleteHose does: order by kind, empty adopts, build + register the hose
+                if (stoA.Tank.Type == FluidType.None) stoA.Tank.Type = srcA.Tank.Type;   // adopt
+                var hA = new Hose { Source = spA.Node, Consumer = cpA.Node }; AddChild(hA);
+                for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+                GD.Print($"[hosetool] case A: storage={stoA.Tank.Amount:0} type={FluidDef.Name(stoA.Tank.Type)}");
+                if (!(stoA.Tank.Amount > 400f && stoA.Tank.Type == FluidType.Fuel)) ok = false;   // filled + adopted Fuel
+            }
+
+            // --- Case B: mismatched fluids refused ---
+            var srcB = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);
+            var stoB = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 1000f, 100f), 50f);   // holds WATER
+            srcB.Position = new Vector3(-2.5f, 1.2f, 6f); stoB.Position = new Vector3(2.5f, 0f, 6f);
+            AddChild(srcB); AddChild(stoB);
+            var vB = FluidHoseRule.Completion(srcB.PortNodes[0].Kind, stoB.PortNodes[0].Kind,
+                srcB.Tank.Type == FluidType.None, stoB.Tank.Type == FluidType.None, srcB.Tank.Type == stoB.Tank.Type, false, false);
+            GD.Print($"[hosetool] case B verdict={vB} (want Mismatch)");
+            if (vB != HoseVerdict.Mismatch) ok = false;
+
+            GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
 
