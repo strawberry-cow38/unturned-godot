@@ -742,7 +742,7 @@ namespace UnturnedGodot
         void CompleteHose(HosePort target)
         {
             if (_hosePreview == null || !IsInstanceValid(_hoseSrc)) { CancelHose(); return; }
-            var (srcPort, consPort) = _hoseSrc.Kind == FluidPortKind.Source ? (_hoseSrc, target) : (target, _hoseSrc);
+            var (srcPort, consPort) = FluidHoseRule.IsSourceSide(_hoseSrc.Kind) ? (_hoseSrc, target) : (target, _hoseSrc);
             AdoptFluidType(srcPort.Owner, consPort.Owner);   // an empty tank adopts the other's fluid (strawberry)
             _hosePreview.Source = srcPort.Node; _hosePreview.Consumer = consPort.Node;
             _hosePreview.SetPoints(new System.Collections.Generic.List<Vector3> { srcPort.GlobalPosition, consPort.GlobalPosition }, valid: true);

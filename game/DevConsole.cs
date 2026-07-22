@@ -249,8 +249,9 @@ namespace UnturnedGodot
             }
             else if (verb == "fluid")
             {
-                // fluid  -- debug fluid-IO rig: spawn a raised Fuel SOURCE + an empty STORAGE (adopts+flows) + a Water
-                // STORAGE (mismatch), then equip the hose tool. Aim a green port -> LMB -> aim an orange port -> LMB.
+                // fluid [split|combine]  -- debug fluid-IO rigs, then equip the hose tool. Aim a green/cyan port -> LMB ->
+                // aim an orange port -> LMB. Bare = source + empty + water tanks; split = source->splitter->2 tanks;
+                // combine = 2 sources->combiner->1 tank. Fittings sit between (source ABOVE fitting ABOVE tanks, gravity).
                 if (Player == null) { Log("no player"); return; }
                 var world = Player.GetParent();
                 if (world == null) { Log("no world"); return; }
@@ -258,11 +259,38 @@ namespace UnturnedGodot
                 Vector3 p = Player.GlobalPosition;
                 Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
                 Vector3 right = Player.GlobalTransform.Basis.X; right.Y = 0f; right = right.Normalized();
-                SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel,  1000f, p + fwd * 4f + Vector3.Up * 1.6f, p);   // raised so gravity feeds
-                SpawnFluidRig(world, FluidRole.Storage, FluidType.None,     0f, p + fwd * 4f + right * 2f, p);          // empty -> adopts + fills
-                SpawnFluidRig(world, FluidRole.Storage, FluidType.Water,  200f, p + fwd * 4f - right * 2f, p);          // water -> "cannot mix fluids"
+                string fa = arg.Trim().ToLowerInvariant();
+                if (fa.StartsWith("split") || fa.StartsWith("combine"))
+                {
+                    // fittings have fixed local ±X port faces (input -X / output +X), so lay the rig along WORLD X near
+                    // the player: source(s) WEST + high, fitting centre, storage(s) EAST + low. Look west/east to aim.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right, wz = Vector3.Back;
+                    Vector3 fit = c + Vector3.Up * 1.0f;
+                    if (fa.StartsWith("split"))
+                    {
+                        SpawnFluidFitting(world, FluidRole.Splitter, 2, fit);
+                        SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f, fit);
+                        SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + wz * -1.5f, fit);
+                        SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + wz *  1.5f, fit);
+                        Log("split rig (laid along WORLD X): fuel SOURCE (west, high) + a SPLITTER (cyan outputs) + two empty STORAGES (east, low). hose source->splitter input, then each cyan output->a tank.");
+                    }
+                    else
+                    {
+                        SpawnFluidFitting(world, FluidRole.Combiner, 2, fit);
+                        SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f + wz * -1.5f, fit);
+                        SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f + wz *  1.5f, fit);
+                        SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f, fit);
+                        Log("combine rig (laid along WORLD X): two fuel SOURCES (west, high) + a COMBINER + an empty STORAGE (east, low). hose each source->a combiner input, then the cyan output->the tank.");
+                    }
+                }
+                else
+                {
+                    SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel,  1000f, p + fwd * 4f + Vector3.Up * 1.6f, p);   // raised so gravity feeds
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,     0f, p + fwd * 4f + right * 2f, p);          // empty -> adopts + fills
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.Water,  200f, p + fwd * 4f - right * 2f, p);          // water -> "cannot mix fluids"
+                    Log("fluid rig: raised fuel SOURCE + empty STORAGE + water STORAGE. hose tool equipped -> LMB a green port then an orange port (water tank rejects: 'cannot mix fluids').");
+                }
                 Player.EquipHoseTool();
-                Log("fluid rig: raised fuel SOURCE + empty STORAGE + water STORAGE. hose tool equipped -> LMB a green port then an orange port (water tank rejects: 'cannot mix fluids').");
             }
             else if (verb == "survival" || verb == "hunger")
             {
@@ -311,10 +339,18 @@ namespace UnturnedGodot
         // Spawn one debug fluid container at `pos`, its hose port cube on the face toward `facePlayer` so it's aimable.
         void SpawnFluidRig(Node world, FluidRole role, FluidType type, float amount, Vector3 pos, Vector3 facePlayer)
         {
-            var c = FluidContainer.Make(role, new FluidTank(type, 1000f, amount), 50f);
+            var c = FluidContainer.Make(role, new FluidTank(type, 2000f, amount), 50f);
             c.Position = pos;
             Vector3 toP = facePlayer - pos; toP.Y = 0f;
             if (toP.LengthSquared() > 1e-4f) { toP = toP.Normalized(); c.PortLocalPos = new Vector3(toP.X * 0.55f, 0.9f, toP.Z * 0.55f); }
+            world.AddChild(c);
+        }
+
+        // Spawn a tankless FITTING (splitter/combiner) at `pos`, unrotated — its input(-X)/output(+X) faces align to world X.
+        void SpawnFluidFitting(Node world, FluidRole role, int ways, Vector3 pos)
+        {
+            var c = FluidContainer.MakeFitting(role, ways);
+            c.Position = pos;
             world.AddChild(c);
         }
 

@@ -8,19 +8,23 @@ namespace SDG.Unturned
     // uphill; whether it FLOWS is FluidNet's elevation gate.
     public static class FluidHoseRule
     {
+        // A hose runs from a SOURCE-SIDE port (pushes fluid out: a container Source or a fitting Passthrough) to a
+        // CONSUMER-SIDE port (draws fluid in: a Consumer / relay input). Mirror of the wire tool's IsSourcePort.
+        public static bool IsSourceSide(FluidPortKind k) => k == FluidPortKind.Source || k == FluidPortKind.Passthrough;
+
         // Ok/None/Mismatch for completing a hose started at one port onto a target port.
         //   startEmpty/targetEmpty: is that container's tank fluid None (empty adopts the other's type on connect)?
         //   typesEqual: do the two tanks carry the same fluid type? (only consulted when both are non-empty)
-        // None  = not a legal target (same container, same role, or already hosed) -> no feedback.
+        // None  = not a legal target (same container, same side, or already hosed) -> no feedback.
         // Mismatch = both ends hold DIFFERENT set fluids -> "cannot mix fluids".
-        // Ok    = opposite roles, different container, target free, and fluids compatible (an empty end adopts).
+        // Ok    = one source-side + one consumer-side, different container, target free, and fluids compatible (empty adopts).
         public static HoseVerdict Completion(FluidPortKind startKind, FluidPortKind targetKind,
                                              bool startEmpty, bool targetEmpty, bool typesEqual,
                                              bool sameOwner, bool targetHosed)
         {
-            if (sameOwner) return HoseVerdict.None;                 // can't hose a container to itself
-            if (startKind == targetKind) return HoseVerdict.None;   // need opposite roles (source <-> consumer)
-            if (targetHosed) return HoseVerdict.None;               // one hose per port (lean pass)
+            if (sameOwner) return HoseVerdict.None;                              // can't hose a container to itself
+            if (IsSourceSide(startKind) == IsSourceSide(targetKind)) return HoseVerdict.None;   // need one source-side + one consumer-side
+            if (targetHosed) return HoseVerdict.None;                           // one hose per port (lean pass)
             if (!startEmpty && !targetEmpty && !typesEqual) return HoseVerdict.Mismatch;
             return HoseVerdict.Ok;
         }

@@ -12,9 +12,10 @@ namespace UnturnedGodot
         public float Rate;             // source: base supply rate; consumer/storage: intake rate (units/s)
         public FluidContainer Owner;
         // solver results:
-        public float Flow;             // source = supplied now, consumer = received, passthrough = exported
+        public float Flow;             // source = supplied now, consumer = received (available), passthrough = exported
         public bool Flowing;           // consumer: getting at least its intake?
         public float Load;             // source only: total flow drawn down its chain
+        public float SolveRate;        // the clamped demand/supply the solver used this tick (a consumer ACCEPTS this, not Flow)
     }
 
     // Fluid propagation over the hose graph — the thin Godot adapter over the engine-free FluidSolver (mirror of
@@ -32,24 +33,25 @@ namespace UnturnedGodot
             var containers = new System.Collections.Generic.List<FluidContainer>();
 
             foreach (var n in tree.GetNodesInGroup("fluid_devices"))
-                if (n is FluidContainer c && GodotObject.IsInstanceValid(c) && c.Tank != null)
+                if (n is FluidContainer c && GodotObject.IsInstanceValid(c))
                 {
-                    containers.Add(c);
+                    bool hasTank = c.Tank != null;   // a fitting (splitter/combiner) is tankless -> pure relay, no supply/clamp/move
                     // a source supplies only while it has fluid; a valve/broken container blocks (F5+).
-                    bool supplying = c.Role == FluidRole.Source && c.Tank.Amount > 0.001f;
+                    bool supplying = hasTank && c.Role == FluidRole.Source && c.Tank.Amount > 0.001f;
                     var dev = new FluidDevice { Supplying = supplying, Blocked = c.Blocked };
                     foreach (var p in c.Ports)
                     {
                         float rate = p.Rate;
                         // clamp a source's supply by what's left (so a near-empty source supplies less; empties cleanly)
-                        if (c.Role == FluidRole.Source && p.Kind == FluidPortKind.Source)
+                        if (hasTank && c.Role == FluidRole.Source && p.Kind == FluidPortKind.Source)
                             rate = Mathf.Min(rate, c.Tank.Amount * inv);
                         // a storage can't take more than fits (near-full draws less; full -> 0 -> stops flowing)
-                        else if (c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer)
+                        else if (hasTank && c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer)
                             rate = Mathf.Min(rate, c.Tank.Space * inv);
                         portMap[p] = dev.AddPort(p.Kind, rate);
                     }
                     devices.Add(dev);
+                    if (hasTank) containers.Add(c);   // only tanked containers move fluid (fittings just relay)
                 }
 
             // GRAVITY GATE (strawberry 2026-07-22, all fluids): a hose conducts passively only DOWNHILL — the consumer
@@ -72,19 +74,22 @@ namespace UnturnedGodot
 
             FluidSolver.Solve(devices, hoses);
 
-            foreach (var kv in portMap) { kv.Key.Flow = kv.Value.Flow; kv.Key.Flowing = kv.Value.Flowing; kv.Key.Load = kv.Value.Load; }
+            foreach (var kv in portMap) { kv.Key.Flow = kv.Value.Flow; kv.Key.Flowing = kv.Value.Flowing; kv.Key.Load = kv.Value.Load; kv.Key.SolveRate = kv.Value.Rate; }
 
-            // move the actual fluid this tick. Single-chain conservation: a source drains by the total load it feeds
-            // (already capped by its amount above), each storage fills by what it received, consumers delete their draw.
+            // move the actual fluid this tick. Conservation: a source drains by the total LOAD it feeds (= sum of the
+            // downstream demands it charges); each storage fills by what it ACCEPTS = its demand (SolveRate), NOT the
+            // Flow it RECEIVES. Flow is the amount OFFERED down the hose — a splitter re-exports the full supply to every
+            // branch, so a storage sees far more available than it draws; filling by Flow would fabricate fluid (the
+            // source only drained by the demand). SolveRate is the clamped intake the solver charged the source for.
             foreach (var c in containers)
                 foreach (var p in c.Ports)
                 {
                     if (c.Role == FluidRole.Source && p.Kind == FluidPortKind.Source && p.Load > 0f)
                         c.Tank.Drain(p.Load * dt);
                     else if (c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer && p.Flowing)
-                        c.Tank.Fill(p.Flow * dt);
+                        c.Tank.Fill(p.SolveRate * dt);
                     // FluidRole.Consumer: the fluid is deleted (nothing accumulates) — transformer output is F5.
-                    c.LastFlow = p.Flow;
+                    c.LastFlow = p.Flowing ? p.SolveRate : 0f;
                 }
         }
     }

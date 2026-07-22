@@ -21,10 +21,13 @@ namespace UnturnedGodot
         MeshInstance3D _cube;
         StandardMaterial3D _mat;
 
-        // source = green (pushes fluid out), consumer/storage = orange (draws fluid in) — mirrors the power port palette
-        static Color BaseColor(FluidPortKind k) => k == FluidPortKind.Source
-            ? new Color(0.25f, 0.85f, 0.30f)
-            : new Color(0.95f, 0.55f, 0.15f);
+        // source = green (pushes out), consumer = orange (draws in), passthrough = cyan (a fitting relays it) — power palette
+        static Color BaseColor(FluidPortKind k) => k switch
+        {
+            FluidPortKind.Source => new Color(0.25f, 0.85f, 0.30f),
+            FluidPortKind.Passthrough => new Color(0.30f, 0.75f, 0.95f),
+            _ => new Color(0.95f, 0.55f, 0.15f),
+        };
 
         public static HosePort Create(FluidContainer owner, FluidPortNode node, Vector3 localPos)
         {
@@ -46,9 +49,12 @@ namespace UnturnedGodot
         public string InfoLine()
         {
             string fluid = FluidDef.Name(Owner != null && Owner.Tank != null ? Owner.Tank.Type : FluidType.None);
-            return Kind == FluidPortKind.Source
-                ? $"{Owner?.Role} ({fluid}) — {Node.Rate:0}/s out · {Node.Load:0}/s drawn"
-                : $"{Owner?.Role} ({fluid}) — intake {(Node.Flowing ? $"{Node.Flow:0}/s in" : "idle")}";
+            return Kind switch
+            {
+                FluidPortKind.Source => $"{Owner?.Role} ({fluid}) — {Node.Rate:0}/s out · {Node.Load:0}/s drawn",
+                FluidPortKind.Passthrough => $"{Owner?.Role} — {Node.Flow:0}/s out",
+                _ => $"{Owner?.Role} ({fluid}) — intake {(Node.Flowing ? $"{Node.Flow:0}/s in" : "idle")}",
+            };
         }
 
         // Hose-tool highlight: None = base green/orange; Focus = brighter on look-at; HoseOk/HoseBad = green/red while

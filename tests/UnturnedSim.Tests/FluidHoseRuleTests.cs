@@ -77,9 +77,40 @@ namespace UnturnedSim.Tests
         [Test]
         public void Mismatch_Outranks_Role_Ok_Only_When_Opposite()
         {
-            // a mismatch is only reported for a legal opposite-role target; same-role short-circuits to None first
+            // a mismatch is only reported for a legal opposite-side target; same-side short-circuits to None first
             Assert.That(V(FluidPortKind.Source, FluidPortKind.Source, startEmpty: false, targetEmpty: false, typesEqual: false),
                         Is.EqualTo(HoseVerdict.None));
+        }
+
+        [Test]
+        public void Passthrough_To_Consumer_Ok()
+        {
+            // a fitting's Passthrough (source-side) -> a storage Consumer completes (splitter output feeds a tank)
+            Assert.That(V(FluidPortKind.Passthrough, FluidPortKind.Consumer, startEmpty: true, targetEmpty: false, typesEqual: false),
+                        Is.EqualTo(HoseVerdict.Ok));
+        }
+
+        [Test]
+        public void Consumer_To_Passthrough_Ok()
+        {
+            Assert.That(V(FluidPortKind.Consumer, FluidPortKind.Passthrough, startEmpty: false, targetEmpty: true, typesEqual: false),
+                        Is.EqualTo(HoseVerdict.Ok));
+        }
+
+        [Test]
+        public void Passthrough_To_Source_None()
+        {
+            // both are source-side (push out) -> not a legal pair
+            Assert.That(V(FluidPortKind.Passthrough, FluidPortKind.Source, startEmpty: true, targetEmpty: false, typesEqual: false),
+                        Is.EqualTo(HoseVerdict.None));
+        }
+
+        [Test]
+        public void Source_Side_Test_Helper()
+        {
+            Assert.That(FluidHoseRule.IsSourceSide(FluidPortKind.Source), Is.True);
+            Assert.That(FluidHoseRule.IsSourceSide(FluidPortKind.Passthrough), Is.True);
+            Assert.That(FluidHoseRule.IsSourceSide(FluidPortKind.Consumer), Is.False);
         }
     }
 }
