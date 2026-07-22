@@ -51,6 +51,47 @@ namespace UnturnedGodot
             return b == null ? null : AssetBundleLoader.Build(b);
         }
 
+        // --- Asset Factory items: register gun/deployable bundles as REAL ItemAssets ---
+        // Called at the END of ItemCatalog.RegisterAll (after the real items + Assets.clear()) so a factory asset
+        // `give`s, sits in the inventory, and equips through the normal item path -- no console hack. Ids sit at
+        // 60000+ (well above the retail range), assigned by SORTED bundle name = stable within a folder state.
+        public const ushort FactoryItemIdBase = 60000;
+        static readonly Dictionary<ushort, string> _factoryItemName = new();   // factory item id -> bundle name (icons are name-keyed)
+
+        public static void RegisterFactoryItems()
+        {
+            EnsureScanned();
+            _factoryItemName.Clear();
+            var names = new List<string>(_byName.Keys);
+            names.Sort(System.StringComparer.Ordinal);   // stable id assignment
+            ushort id = FactoryItemIdBase;
+            foreach (var name in names)
+            {
+                var b = _byName[name];
+                if (b.Type != "gun") continue;   // guns first; deployables join here next
+                SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset
+                {
+                    id = id, itemName = PrettyName(name), type = SDG.Unturned.EItemType.GUN,
+                    rarity = SDG.Unturned.EItemRarity.RARE, size_x = 4, size_y = 2,
+                    gunName = name, description = "An Asset Factory creation.",
+                });
+                _factoryItemName[id] = name;
+                id++;
+            }
+            if (_factoryItemName.Count > 0) GD.Print($"[assetcatalog] {_factoryItemName.Count} factory item(s) registered as real items (id {FactoryItemIdBase}+)");
+        }
+
+        // Reverse map for the inventory icon loader: a factory item id -> its bundle name (icons are name-keyed
+        // so re-indexing the ids never orphans a baked icon). null for a non-factory / unknown id.
+        public static string FactoryItemName(ushort id) => _factoryItemName.TryGetValue(id, out var n) ? n : null;
+
+        static string PrettyName(string key)
+        {
+            var parts = key.Replace('_', ' ').Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < parts.Length; i++) parts[i] = char.ToUpper(parts[i][0]) + parts[i][1..];
+            return parts.Length == 0 ? key : string.Join(' ', parts);
+        }
+
         public static void Refresh() { _scanned = false; _byName.Clear(); _pathByName.Clear(); EnsureScanned(); }
     }
 }

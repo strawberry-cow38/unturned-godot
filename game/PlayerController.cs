@@ -2531,7 +2531,12 @@ namespace UnturnedGodot
         public void EquipHeldGun(string gunName, SDG.Unturned.Item backingItem = null)
         {
             SaveGunState();   // stash the OUTGOING gun's live state onto its item before we swap away
-            LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
+            // A factory gun (Asset Factory bundle) has no .dat -> borrow fire stats from a stand-in real gun, but keep
+            // _gunName = the bundle so the viewmodel builds the COMPOSED factory visual. Lets a factory gun ITEM equip
+            // through this normal path (EquipHeldGun(asset.gunName)) -- give -> inventory -> hold -> fire, no console hack.
+            bool factory = AssetCatalog.Get(gunName)?.Type == "gun";
+            LoadGun($"res://content/{(factory ? "eaglefire" : gunName)}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
+            if (factory) _gunName = gunName;
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
             _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
@@ -2543,21 +2548,10 @@ namespace UnturnedGodot
             GD.Print($"[gun] holding {_gunName}");
         }
 
-        // Hold an Asset Factory gun (no .dat / item): borrow fire STATS from a real gun for now (params-driven
-        // stats are a follow-up), but SHOW the composed factory viewmodel. Lets a factory gun be held + fired in-game.
-        public void EquipFactoryGun(string bundleName, string statsGun = "eaglefire")
-        {
-            SaveGunState();
-            LoadGun($"res://content/{statsGun}.dat");   // Gun (GunDef stats) + Ammo from a stand-in real gun
-            _gunName = bundleName;                      // ...but the viewmodel builds the FACTORY gun's visual
-            _heldItem = null;
-            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();
-            _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { GunName = _gunName };
-            AddChild(_viewmodel);
-            RelinkViewmodelLighting();
-            GD.Print($"[gun] holding factory gun {bundleName} (stats: {statsGun})");
-        }
+        // Console `holdgun`: hold an Asset Factory gun with no inventory item behind it. EquipHeldGun now
+        // auto-detects a factory gun (borrows stats from a stand-in real gun, shows the composed visual), so
+        // this just routes through it. (statsGun kept for the console signature; EquipHeldGun uses eaglefire.)
+        public void EquipFactoryGun(string bundleName, string statsGun = "eaglefire") => EquipHeldGun(bundleName);
 
         // Every player is queryable through PlayerRegistry (nearest-player / iterate-players -- the
         // replacement for the old Local static). _ExitTree fires on QueueFree, so teardown self-cleans.
