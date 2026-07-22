@@ -19,6 +19,7 @@ namespace UnturnedGodot
         Label _toast; double _toastT;                       // transient centered message (source EditorUI.message / EEditorMessage)
         Control _pause;                                     // ESC pause overlay (source EditorPauseUI, slim: Resume/Save/Exit)
         bool _visObjects = true, _visRoads = true, _visFoliage = true;   // F1/F2/F3 level-visibility toggles (source EditorLevelVisibilityUI)
+        Label _hover;                                       // object-under-cursor readout (source EditorObjects hover hint)
 
         public override void _Ready()
         {
@@ -76,6 +77,16 @@ namespace UnturnedGodot
                 CallDeferred(nameof(ShowMenuForShot));
             if (System.Environment.GetEnvironmentVariable("UG_EDITOR_HIDETEST") == "1")   // headless verify hook: hide the F1/F2/F3 layers for the --shot
                 CallDeferred(nameof(HideLayersForShot));
+
+            _hover = new Label { HorizontalAlignment = HorizontalAlignment.Center, Visible = false };
+            _hover.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+            _hover.Position = new Vector2(-160f, 98f);
+            _hover.CustomMinimumSize = new Vector2(320f, 0f);
+            _hover.AddThemeFontSizeOverride("font_size", 15);
+            _hover.AddThemeColorOverride("font_color", new Color(0.8f, 0.92f, 1f));
+            _hover.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _hover.AddThemeConstantOverride("outline_size", 3);
+            AddChild(_hover);
 
             if (Editor?.Objects != null) { _browser = new EditorObjectBrowser(Editor.Objects); AddChild(_browser); }
             if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
@@ -145,6 +156,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (_toast != null && _toast.Visible) { _toastT -= delta; if (_toastT <= 0.0) _toast.Visible = false; }   // expire the message toast
+            if (_hover != null) { var hn = Editor?.Objects?.HoverName; _hover.Visible = !string.IsNullOrEmpty(hn); _hover.Text = hn; }   // object-under-cursor readout
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
             string space = Editor.Objects != null && Editor.Objects.GizmoLocalSpace ? "local" : "global";

@@ -26,6 +26,7 @@ namespace UnturnedGodot
         public bool GizmoLocalSpace => _gizmo?.LocalSpace ?? false;   // dashboard readout
         public string GizmoModeText => (_gizmo?.Mode ?? EditorGizmo.EMode.Translate) switch { EditorGizmo.EMode.Rotate => "rotate", EditorGizmo.EMode.Scale => "scale", _ => "move" };
         public string GizmoSnapLabel => _gizmo?.SnapLabel ?? "1u/15°";   // dashboard readout
+        public string HoverName { get; private set; }                    // object under the cursor (dashboard hover readout)
 
         readonly Dictionary<string, ArrayMesh> _meshCache = new();
         readonly List<Node3D> _placed = new();
@@ -531,6 +532,16 @@ namespace UnturnedGodot
             if (_groupRel.Count != _selection.Count || Primary == null) return;
             var px = Primary.GlobalTransform;
             for (int i = 0; i < _selection.Count; i++) if (_selection[i] != Primary) _selection[i].GlobalTransform = px * _groupRel[i];
+        }
+
+        public override void _Process(double delta)   // hover readout: name the object under the cursor (source EditorObjects hover hint)
+        {
+            if (_editor.Mode != EEditorMode.Level || _flyCam.Flying || Editor.PointerOverUI(this)) { HoverName = null; return; }
+            if (Raycast(GetViewport().GetMousePosition(), EditorPickLayer, out _, out var rid) && _pickToObj.TryGetValue(rid, out var obj))
+                HoverName = obj.HasMeta("obj_name") ? (string)obj.GetMeta("obj_name")
+                    : obj.HasMeta("loot_crate") ? "Loot Crate" : obj.HasMeta("store_shelf") ? "Store Shelf"
+                    : obj.HasMeta("grid_power") ? "Grid Power" : obj.HasMeta("gas_pump_edit") ? "Gas Pump" : "object";
+            else HoverName = null;
         }
 
         public override void _UnhandledInput(InputEvent ev)
