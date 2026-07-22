@@ -708,7 +708,13 @@ namespace UnturnedGodot
             else
             {
                 if (IsInstanceValid(_hosePort)) _hosePort.SetHighlight(HosePort.PortHi.Focus);
-                HoseHudSet(_hosePort == null ? null : _hosePort.InfoLine());
+                string hint = "";
+                if (IsInstanceValid(_hosePort))
+                {
+                    if (_hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) hint = "   ([RMB] open/close)";
+                    else if (PortHosed(_hosePort)) hint = "   ([RMB] remove hose)";
+                }
+                HoseHudSet(_hosePort == null ? null : _hosePort.InfoLine() + hint);
             }
         }
 
@@ -757,6 +763,20 @@ namespace UnturnedGodot
             _hosePreview?.QueueFree(); _hosePreview = null;
             if (IsInstanceValid(_hoseSrc)) _hoseSrc.SetHighlight(HosePort.PortHi.None);
             _hosing = false; _hoseSrc = null;
+        }
+
+        // RMB a hosed port (not a valve) to REMOVE the hose attached to it -- frees both ends for re-hosing.
+        void RemoveHose(HosePort p)
+        {
+            if (p?.Node == null) return;
+            foreach (var n in GetTree().GetNodesInGroup("hoses"))
+                if (n is Hose h && GodotObject.IsInstanceValid(h) && (h.Source == p.Node || h.Consumer == p.Node))
+                {
+                    GD.Print($"[hose] removed hose at {p.InfoLine()}");
+                    h.RemoveFromGroup("hoses");   // stop it conducting THIS tick (QueueFree is deferred to frame end)
+                    h.QueueFree();
+                    return;
+                }
         }
 
         // an empty (None) tank adopts the fluid at the OTHER end of the hose on connect (uses port EffectiveType, so a
@@ -2844,7 +2864,7 @@ namespace UnturnedGodot
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
-                else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) CancelHose(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); } }   // hose tool: cancel a route; else RMB a valve port to open/close it
+                else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) CancelHose(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else if (IsInstanceValid(_hosePort) && PortHosed(_hosePort)) RemoveHose(_hosePort); } }   // hose tool: cancel a route; RMB a valve port to toggle it; RMB another hosed port to remove its hose
                 else if (HoldingRopeTool) { if (rmb.Pressed) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)

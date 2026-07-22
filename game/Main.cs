@@ -2371,6 +2371,19 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case N: inlet pumpOff tank={inletOff:0} (want ~0) pumpOn tank={tankN.Tank.Amount:0} (want filled) inlet={inlet.Tank.Amount:0} (want 1000 infinite) · outlet drained src {1000 - srcO.Tank.Amount:0}, stored {outlet.Tank.Amount:0} (want >0 drained, 0 stored)");
             if (!(inletOff < 1f && tankN.Tank.Amount > 400f && inlet.Tank.Amount > 999f && srcO.Tank.Amount < 600f && outlet.Tank.Amount < 1f)) ok = false;
 
+            // --- Case O (hose removal): removing a hose (leaves the "hoses" group) stops its flow immediately ---
+            var srcP = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 1000f, 1000f), 125f);
+            var tankP = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 125f);
+            srcP.Position = new Vector3(-4f, 2f, 136f); tankP.Position = new Vector3(4f, 0f, 136f);   // downhill
+            AddChild(srcP); AddChild(tankP);
+            var hP = new Hose { Source = srcP.Ports[0], Consumer = tankP.Ports[0] }; AddChild(hP);
+            for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);   // hose present -> fills
+            float beforeRemove = tankP.Tank.Amount;
+            hP.RemoveFromGroup("hoses");   // what RemoveHose does (then QueueFree) -> stop conducting this tick
+            for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);   // hose gone -> no more flow
+            GD.Print($"[hosetool] case O: beforeRemove={beforeRemove:0} afterRemove={tankP.Tank.Amount:0} (want filled then UNCHANGED after removing the hose)");
+            if (!(beforeRemove > 100f && Mathf.Abs(tankP.Tank.Amount - beforeRemove) < 1f)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
