@@ -16,6 +16,8 @@ namespace UnturnedGodot
         public bool Blocked;              // a clogged/closed-valve container stops conducting (F5)
         public float FlowRate = 50f;      // base supply (source) / intake (storage/consumer), units/s
         public readonly System.Collections.Generic.List<FluidPortNode> Ports = new();
+        public readonly System.Collections.Generic.List<HosePort> PortNodes = new();   // the physical hose-tool cubes for each Port
+        public Vector3 PortLocalPos = new Vector3(0f, 0.7f, 0.55f);   // where the hose port cube sits on the tank (front face, mid height); placement sets it per-face
         public float LastFlow;            // debug / fill-bar readout
         InfoBillboard _info;
 
@@ -26,7 +28,10 @@ namespace UnturnedGodot
         {
             AddToGroup("fluid_devices");
             var kind = Role == FluidRole.Source ? FluidPortKind.Source : FluidPortKind.Consumer;
-            Ports.Add(new FluidPortNode { Kind = kind, Rate = FlowRate, Owner = this });
+            var node = new FluidPortNode { Kind = kind, Rate = FlowRate, Owner = this };
+            Ports.Add(node);
+            var fp = HosePort.Create(this, node, PortLocalPos);   // the physical hose-tool cube on the tank face
+            PortNodes.Add(fp); AddChild(fp);
             BuildVisuals();
         }
 

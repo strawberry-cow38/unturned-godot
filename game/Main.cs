@@ -2029,6 +2029,7 @@ namespace UnturnedGodot
             var src = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);   // full, supplies 50/s
             var sto = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Fuel, 1000f, 0f), 50f);     // empty, intake 50/s
             src.Position = new Vector3(-2.5f, 0f, 0f); sto.Position = new Vector3(2.5f, 0f, 0f);
+            src.PortLocalPos = new Vector3(0.55f, 0.9f, 0f); sto.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);   // port cubes face each other along the hose
             AddChild(src); AddChild(sto);   // _Ready builds their ports + visuals + registers them in "fluid_devices"
             var hose = new Hose { Source = src.Ports[0], Consumer = sto.Ports[0] };
             AddChild(hose);                 // registers in "hoses"
