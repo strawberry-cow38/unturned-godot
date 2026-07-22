@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "spawnasset", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnasset", "holdgun", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -178,6 +178,15 @@ namespace UnturnedGodot
                 (Player?.GetParent() ?? GetTree().Root).AddChild(node);
                 node.GlobalPosition = at + Vector3.Up * 1.5f;
                 Log($"spawned factory asset {name} [{AssetCatalog.Get(name)?.Type}]");
+            }
+            else if (verb == "holdgun")
+            {
+                // holdgun <name>  -- equip an Asset Factory gun (type "gun") in first person; borrows stats from a real gun for now
+                string name = AssetCatalog.OfType("gun").FirstOrDefault(n => n.Equals(arg, System.StringComparison.OrdinalIgnoreCase))
+                           ?? AssetCatalog.OfType("gun").FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
+                if (name == null) { Log($"no factory gun '{arg}' (have: {string.Join(", ", AssetCatalog.OfType("gun"))})"); return; }
+                Player?.EquipFactoryGun(name);
+                Log($"holding factory gun {name} — LMB to fire");
             }
             else if (verb == "teleport" || verb == "tp")
             {

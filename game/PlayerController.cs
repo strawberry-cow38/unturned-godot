@@ -2543,6 +2543,22 @@ namespace UnturnedGodot
             GD.Print($"[gun] holding {_gunName}");
         }
 
+        // Hold an Asset Factory gun (no .dat / item): borrow fire STATS from a real gun for now (params-driven
+        // stats are a follow-up), but SHOW the composed factory viewmodel. Lets a factory gun be held + fired in-game.
+        public void EquipFactoryGun(string bundleName, string statsGun = "eaglefire")
+        {
+            SaveGunState();
+            LoadGun($"res://content/{statsGun}.dat");   // Gun (GunDef stats) + Ammo from a stand-in real gun
+            _gunName = bundleName;                      // ...but the viewmodel builds the FACTORY gun's visual
+            _heldItem = null;
+            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { GunName = _gunName };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[gun] holding factory gun {bundleName} (stats: {statsGun})");
+        }
+
         // Every player is queryable through PlayerRegistry (nearest-player / iterate-players -- the
         // replacement for the old Local static). _ExitTree fires on QueueFree, so teardown self-cleans.
         public override void _EnterTree() => PlayerRegistry.Register(this);
