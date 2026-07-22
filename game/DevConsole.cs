@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "spawnasset", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -165,6 +165,19 @@ namespace UnturnedGodot
                 (Player?.GetParent() ?? GetTree().Root).AddChild(v);
                 v.GlobalPosition = at + Vector3.Up * 1.5f;
                 Log($"spawned {name}");
+            }
+            else if (verb == "spawnasset" || verb == "asset")
+            {
+                // spawnasset <name>  -- spawn a factory-made asset (Asset Factory .assetbundle) by name at the look point.
+                // vehicle-type -> a real drivable Vehicle; prop/etc -> a static body. The catalog auto-registers them.
+                string name = AssetCatalog.All().FirstOrDefault(n => n.Equals(arg, System.StringComparison.OrdinalIgnoreCase))
+                           ?? AssetCatalog.All().FirstOrDefault(n => n.StartsWith(arg, System.StringComparison.OrdinalIgnoreCase));
+                if (name == null) { Log($"no factory asset '{arg}' (have: {string.Join(", ", AssetCatalog.All())})"); return; }
+                var node = AssetCatalog.Spawn(name);
+                if (node == null) { Log($"failed to build '{name}'"); return; }
+                (Player?.GetParent() ?? GetTree().Root).AddChild(node);
+                node.GlobalPosition = at + Vector3.Up * 1.5f;
+                Log($"spawned factory asset {name} [{AssetCatalog.Get(name)?.Type}]");
             }
             else if (verb == "teleport" || verb == "tp")
             {

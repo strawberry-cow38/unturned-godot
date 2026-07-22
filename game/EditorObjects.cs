@@ -94,6 +94,7 @@ namespace UnturnedGodot
             _catalog.Insert(1, StoreShelfName);  // store shelf right below it
             _catalog.Insert(2, GridPowerName);   // grid power box below that
             _catalog.Insert(3, GasPumpName);     // gas pump (station-id configurable) below that
+            foreach (var n in AssetCatalog.OfType("prop")) _catalog.Add(FactoryPrefix + n);   // Asset Factory props -> placeable in the palette (auto-registered)
         }
 
         ArrayMesh MeshFor(string name)
@@ -143,12 +144,14 @@ namespace UnturnedGodot
         // Build + add a prop at a world position with a rotation basis. Returns its root Node3D. The gizmo then rotates
         // it freely; Save decomposes the live basis back to PEI euler so any orientation round-trips.
         public const string LootCrateName = "★ Loot Crate";   // a placeable loot CONTAINER (not a mesh prop) -- rolls a PEI table in SP
+        public const string FactoryPrefix = "🏭 ";   // Asset Factory props in the palette: "🏭 <bundleName>" -> spawned via AssetCatalog
         public const string StoreShelfName = "🛒 Store Shelf";   // the real Shelf_1 gondola AS a loot container -- rolls a PEI table + shows items on its tiers in SP
         public const string GridPowerName = "⚡ Grid Power";   // the Circuit_0 breaker box AS a configurable mains SOURCE -- name + wattage (custom or preset) set in the editor, spawns a GridPowerSource in SP
         public const string GasPumpName = "⛽ Gas Pump";   // a Gas_Pump_0 fuel pump with an editable STATION ID -- pumps sharing an id share one underground tank (master); spawns a GasPump in SP
 
         public Node3D Place(string name, Vector3 pos, Basis rot)
         {
+            if (name.StartsWith(FactoryPrefix)) return PlaceFactoryAsset(name[FactoryPrefix.Length..], name, pos, rot);
             if (name == LootCrateName) return PlaceLootCrate(pos, rot);
             if (name == StoreShelfName) return PlaceStoreShelf(pos, rot);
             if (name == GridPowerName) return PlaceGridPower(pos, rot);
@@ -171,6 +174,22 @@ namespace UnturnedGodot
             else _world.AddChild(root);
             _placed.Add(root);
             return root;
+        }
+
+        // Place an Asset Factory prop (from the auto-registered catalog) into the editor: spawn it via
+        // AssetCatalog, make it pickable/selectable on the editor layer. (Persisting factory props in the
+        // .level save is a follow-up — the placement format is guid-based; these carry a factory_asset tag.)
+        Node3D PlaceFactoryAsset(string assetName, string catalogName, Vector3 pos, Basis rot)
+        {
+            var node = AssetCatalog.Spawn(assetName);
+            if (node == null) return null;
+            node.Transform = new Transform3D(rot, pos);
+            node.SetMeta("obj_name", catalogName);
+            node.SetMeta("factory_asset", assetName);
+            if (node is StaticBody3D sb) { sb.CollisionLayer = EditorPickLayer; sb.CollisionMask = 0; _world.AddChild(node); _pickToObj[sb.GetRid()] = node; }
+            else _world.AddChild(node);
+            _placed.Add(node);
+            return node;
         }
 
         // a placeable loot CONTAINER marker (box) tagged with its PEI table; the SP loader spawns a real LootCrate here.
