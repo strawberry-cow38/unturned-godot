@@ -1425,7 +1425,8 @@ namespace UnturnedGodot
                     }
                     break;
                 case "deployable":
-                    if (fid != 0) { player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1)); var def = DeployableDef.ById(fid); if (def != null) player.EquipHeldDeployable(def); }   // held -> aim -> LMB to place
+                    { var def = DeployableDef.ById(fid); if (def != null) Deployable.Spawn(root, def, new Vector3(0f, 0f, 0f), 0f); }   // one PLACED standing in front so you SEE the asset
+                    if (fid != 0) player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1));   // + one in your bag to plop more (equip from inventory -> aim down -> LMB)
                     break;
                 case "vehicle":
                     { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f); }   // walk over + E to enter/drive
@@ -3385,6 +3386,7 @@ namespace UnturnedGodot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state
             else if (_assetVeh != null) { if (++_frame < 55) return; }   // factory vehicle: drop + settle on its wheels first
+            else if (_previewRoot != null) { if (++_frame < 24) return; }   // AF preview: let the viewmodel/ghost + placed body settle before the shot
             else if (++_frame < 6) return; // let the renderer settle
             if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             var img = GetViewport().GetTexture().GetImage();
