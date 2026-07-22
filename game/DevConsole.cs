@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -247,6 +247,23 @@ namespace UnturnedGodot
                 Player.EquipUnarmed();
                 Log("unarmed -> fists (LMB/RMB to punch)");
             }
+            else if (verb == "fluid")
+            {
+                // fluid  -- debug fluid-IO rig: spawn a raised Fuel SOURCE + an empty STORAGE (adopts+flows) + a Water
+                // STORAGE (mismatch), then equip the hose tool. Aim a green port -> LMB -> aim an orange port -> LMB.
+                if (Player == null) { Log("no player"); return; }
+                var world = Player.GetParent();
+                if (world == null) { Log("no world"); return; }
+                if (GetTree().GetNodesInGroup("fluid_managers").Count == 0) world.AddChild(new FluidManager());
+                Vector3 p = Player.GlobalPosition;
+                Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
+                Vector3 right = Player.GlobalTransform.Basis.X; right.Y = 0f; right = right.Normalized();
+                SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel,  1000f, p + fwd * 4f + Vector3.Up * 1.6f, p);   // raised so gravity feeds
+                SpawnFluidRig(world, FluidRole.Storage, FluidType.None,     0f, p + fwd * 4f + right * 2f, p);          // empty -> adopts + fills
+                SpawnFluidRig(world, FluidRole.Storage, FluidType.Water,  200f, p + fwd * 4f - right * 2f, p);          // water -> "cannot mix fluids"
+                Player.EquipHoseTool();
+                Log("fluid rig: raised fuel SOURCE + empty STORAGE + water STORAGE. hose tool equipped -> LMB a green port then an orange port (water tank rejects: 'cannot mix fluids').");
+            }
             else if (verb == "survival" || verb == "hunger")
             {
                 // survival [on|off]  -- toggle hunger/thirst drain (OFF by default). Bare `survival` flips it.
@@ -289,6 +306,16 @@ namespace UnturnedGodot
             locationName = m[0].Name;
             serverCmd = string.Format(System.Globalization.CultureInfo.InvariantCulture, "teleport {0:0.##} {1:0.##} {2:0.##}", pos.X, pos.Y, pos.Z);
             return true;
+        }
+
+        // Spawn one debug fluid container at `pos`, its hose port cube on the face toward `facePlayer` so it's aimable.
+        void SpawnFluidRig(Node world, FluidRole role, FluidType type, float amount, Vector3 pos, Vector3 facePlayer)
+        {
+            var c = FluidContainer.Make(role, new FluidTank(type, 1000f, amount), 50f);
+            c.Position = pos;
+            Vector3 toP = facePlayer - pos; toP.Y = 0f;
+            if (toP.LengthSquared() > 1e-4f) { toP = toP.Normalized(); c.PortLocalPos = new Vector3(toP.X * 0.55f, 0.9f, toP.Z * 0.55f); }
+            world.AddChild(c);
         }
 
         static ItemAsset ResolveItem(string arg)

@@ -89,9 +89,11 @@ namespace UnturnedGodot
         }
     }
 
-    // Ticks the fluid net once a frame (mirror of PowerManager). One instance, created lazily by the first container.
+    // Ticks the fluid net once a frame (mirror of PowerManager). One instance — joins group "fluid_managers" so
+    // spawners can avoid creating a second (two managers = double-ticked flow).
     public partial class FluidManager : Node
     {
+        public override void _Ready() => AddToGroup("fluid_managers");
         public override void _Process(double delta) => FluidNet.Tick(GetTree(), (float)delta);
     }
 }
