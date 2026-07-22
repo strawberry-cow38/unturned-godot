@@ -104,7 +104,7 @@ namespace UnturnedGodot
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos, EjectHook; public Color AlbedoTint, SightColor; public bool Ejects; }
         static GunVisual Visual(string name) => name switch
         {
             "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
@@ -161,6 +161,7 @@ namespace UnturnedGodot
                 if (ab == null || ab.Parts.Count == 0 || string.IsNullOrEmpty(ab.Parts[0].Mesh)) continue;
                 var view = ab.FindPoint("View") ?? ab.FindPoint("Sight");
                 var muzzle = ab.FindPoint("Muzzle");
+                var eject = ab.FindPoint("Eject");
                 d[gname] = new GunVisual
                 {
                     Gun = ab.Parts[0].Mesh,
@@ -169,6 +170,7 @@ namespace UnturnedGodot
                     Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", Hammer = "eaglefire_hammer.ogg",
                     MuzzleHook = muzzle != null ? AssetBundle.V3(muzzle.Pos) : new Vector3(0f, 0.7f, -0.05f),
                     AimHook = view != null ? AssetBundle.V3(view.Pos) : new Vector3(0f, -0.45f, -0.2f),
+                    EjectHook = eject != null ? AssetBundle.V3(eject.Pos) : Vector3.Zero,   // author-placed Eject hook (else the tuned default)
                     ViewOffset = Vector3.Zero, AlbedoTint = new Color(1f, 1f, 1f), Ejects = true,
                 };
             }
@@ -384,7 +386,7 @@ namespace UnturnedGodot
                     // material. The source Casing effect's Model_0 IS a plain box (24 verts, square section, ~3.3:1) with a
                     // flat brass _Color (0.904,0.768,0.007) -- so the box replicates the real asset; sized to master's +50%.
                     // (Shotguns' red Shell casing _Color (0.588,0.190,0.190) is extracted too, pending per-gun action wiring.)
-                    _ejectHook = new Node3D { Name = "EjectHook", Position = new Vector3(0f, 0.0275f, -0.0814f) };
+                    _ejectHook = new Node3D { Name = "EjectHook", Position = gv.EjectHook != Vector3.Zero ? gv.EjectHook : new Vector3(0f, 0.0275f, -0.0814f) };   // per-gun Eject hook (factory guns place it; others keep the tuned default)
                     mi.AddChild(_ejectHook);
                     _casingMesh = new BoxMesh { Size = new Vector3(0.0135f, 0.0135f, 0.042f) };   // source square section @ master's +50% length
                     _casingMat = new StandardMaterial3D { AlbedoColor = new Color(0.904f, 0.768f, 0.007f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };   // exact source brass _Color
