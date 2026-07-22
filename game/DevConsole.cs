@@ -260,7 +260,20 @@ namespace UnturnedGodot
                 Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
                 Vector3 right = Player.GlobalTransform.Basis.X; right.Y = 0f; right = right.Normalized();
                 string fa = arg.Trim().ToLowerInvariant();
-                if (fa.StartsWith("pump"))
+                if (fa.StartsWith("refine") || fa.StartsWith("sluice"))
+                {
+                    // transformer rig (WORLD X): a high source of the INPUT fluid + a refinery/sluice + a low output tank.
+                    // refine = oil->gas; sluice = water->dirty water. Hose source->transformer input, then output->the tank.
+                    bool sl = fa.StartsWith("sluice");
+                    var inT = sl ? FluidType.Water : FluidType.Oil;
+                    var outT = sl ? FluidType.DirtyWater : FluidType.Gas;
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var xf = FluidContainer.MakeTransformer(inT, outT, 50f, 1f); xf.Position = c + Vector3.Up * 1.0f; world.AddChild(xf);
+                    SpawnFluidRig(world, FluidRole.Source,  inT,          2000f, c - wx * 4f + Vector3.Up * 2.4f, xf.Position);   // input source WEST, high
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,  0f, c + wx * 4f, xf.Position);                       // output tank EAST, low (adopts out fluid)
+                    Log($"{(sl ? "sluice" : "refine")} rig (WORLD X): a {FluidDef.Name(inT)} SOURCE (west, high) + a TRANSFORMER + an empty tank (east, low). hose source->the transformer's LEFT (orange) input, then its RIGHT (green) output->the tank. it deletes {FluidDef.Name(inT)} and makes {FluidDef.Name(outT)}.");
+                }
+                else if (fa.StartsWith("pump"))
                 {
                     // pump rig (WORLD X): a low SOURCE + an electric PUMP + a HIGH tank + a generator wired to the pump.
                     // Once the generator spins up the pump lifts fluid UPHILL to the high tank. Hose src->pump, pump->tank.

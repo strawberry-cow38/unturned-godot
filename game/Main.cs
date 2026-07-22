@@ -2038,6 +2038,28 @@ namespace UnturnedGodot
             var hose = new Hose { Source = src.Ports[0], Consumer = sto.Ports[0] };
             AddChild(hose);                 // registers in "hoses"
 
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDREFINE") == "1")
+            {   // F5b render verify: an oil source -> a REFINERY (oil->gas) -> a gas tank (fluid TYPE changes through it)
+                src.QueueFree(); sto.QueueFree(); hose.QueueFree();
+                AddChild(new FluidManager());
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) } });
+                var oil = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Oil, 2000f, 2000f), 50f);
+                oil.Position = new Vector3(-4f, 2.4f, 0f); oil.PortLocalPos = new Vector3(0.55f, 0.9f, 0f);
+                var refn = FluidContainer.MakeTransformer(FluidType.Oil, FluidType.Gas, 50f, 1f); refn.Position = new Vector3(0f, 1.0f, 0f);
+                var gas = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Gas, 1000f, 0f), 50f);
+                gas.Position = new Vector3(4f, 0f, 0f); gas.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);
+                AddChild(oil); AddChild(refn); AddChild(gas);
+                void HoseUp(FluidPortNode a, HosePort an, FluidPortNode b, HosePort bn)
+                { var hh = new Hose { Source = a, Consumer = b }; AddChild(hh); hh.SetPoints(new System.Collections.Generic.List<Vector3> { an.GlobalPosition, bn.GlobalPosition }, valid: true); }
+                HoseUp(oil.Ports[0], oil.PortNodes[0], refn.Ports[0], refn.PortNodes[0]);   // oil -> refinery input
+                HoseUp(refn.Ports[1], refn.PortNodes[1], gas.Ports[0], gas.PortNodes[0]);   // refinery output (gas) -> tank
+                AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
+                AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
+                AddChild(new Camera3D { Position = new Vector3(0f, 3.6f, 10f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
+                GD.Print("[fluidtest] refine render scene up — oil source -> refinery -> gas tank");
+                return;
+            }
+
             if (System.Environment.GetEnvironmentVariable("UG_FLUIDPUMP") == "1")
             {   // F5 render verify: a low source -> a POWERED pump -> a HIGH tank (fluid lifted uphill past gravity)
                 src.QueueFree(); sto.QueueFree(); hose.QueueFree();
@@ -2234,6 +2256,19 @@ namespace UnturnedGodot
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
             GD.Print($"[hosetool] case G: pump powered by wire={poweredReal} · hiTank={hiG.Tank.Amount:0} (want powered + filled)");
             if (!(poweredReal && hiG.Tank.Amount > 400f)) ok = false;
+
+            // --- Case H (F5b): a REFINERY transforms oil -> gas (deletes oil input, produces gas output into a tank) ---
+            var oilSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Oil, 1000f, 1000f), 50f);
+            var refinery = FluidContainer.MakeTransformer(FluidType.Oil, FluidType.Gas, 50f, 1f);
+            var gasTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);   // empty; would adopt Gas on a real connect
+            oilSrc.Position = new Vector3(-4f, 3f, 56f); refinery.Position = new Vector3(0f, 1.5f, 56f); gasTank.Position = new Vector3(4f, 0f, 56f);
+            AddChild(oilSrc); AddChild(refinery); AddChild(gasTank);
+            AddChild(new Hose { Source = oilSrc.Ports[0], Consumer = refinery.Ports[0] });   // oil -> refinery input (Consumer)
+            AddChild(new Hose { Source = refinery.Ports[1], Consumer = gasTank.Ports[0] });   // refinery output (Source, Gas) -> tank
+            bool typedPorts = refinery.PortNodes[0].EffectiveType == FluidType.Oil && refinery.PortNodes[1].EffectiveType == FluidType.Gas;
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case H: oil={oilSrc.Tank.Amount:0} gasTank={gasTank.Tank.Amount:0} · ports oil-in/gas-out={typedPorts} · refineryActive={refinery.TransformActive}");
+            if (!(oilSrc.Tank.Amount < 600f && gasTank.Tank.Amount > 400f && typedPorts)) ok = false;   // oil consumed + gas produced + ports carry in/out types
 
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();

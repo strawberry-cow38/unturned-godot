@@ -31,13 +31,16 @@ namespace UnturnedGodot
             var devices = new System.Collections.Generic.List<FluidDevice>();
             var portMap = new System.Collections.Generic.Dictionary<FluidPortNode, FluidPort>();
             var containers = new System.Collections.Generic.List<FluidContainer>();
+            var transformers = new System.Collections.Generic.List<FluidContainer>();
 
             foreach (var n in tree.GetNodesInGroup("fluid_devices"))
                 if (n is FluidContainer c && GodotObject.IsInstanceValid(c))
                 {
-                    bool hasTank = c.Tank != null;   // a fitting (splitter/combiner) is tankless -> pure relay, no supply/clamp/move
-                    // a source supplies only while it has fluid; a valve/broken container blocks (F5+).
-                    bool supplying = hasTank && c.Role == FluidRole.Source && c.Tank.Amount > 0.001f;
+                    bool hasTank = c.Tank != null;   // a fitting (splitter/combiner/pump/transformer) is tankless -> no clamp/move
+                    // a source supplies only while it has fluid; a TRANSFORMER supplies its output only while its input flowed
+                    // last tick (1-tick lag, TransformActive); a valve/broken container blocks (F5+).
+                    bool supplying = c.Role == FluidRole.Transformer ? c.TransformActive
+                                   : (hasTank && c.Role == FluidRole.Source && c.Tank.Amount > 0.001f);
                     var dev = new FluidDevice { Supplying = supplying, Blocked = c.Blocked };
                     foreach (var p in c.Ports)
                     {
@@ -52,6 +55,7 @@ namespace UnturnedGodot
                     }
                     devices.Add(dev);
                     if (hasTank) containers.Add(c);   // only tanked containers move fluid (fittings just relay)
+                    if (c.Role == FluidRole.Transformer) transformers.Add(c);
                 }
 
             // GRAVITY GATE (strawberry 2026-07-22, all fluids): a hose conducts passively only DOWNHILL — the consumer
@@ -91,9 +95,15 @@ namespace UnturnedGodot
                         c.Tank.Drain(p.Load * dt);
                     else if (c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer && p.Flowing)
                         c.Tank.Fill(p.SolveRate * dt);
-                    // FluidRole.Consumer: the fluid is deleted (nothing accumulates) — transformer output is F5.
+                    // FluidRole.Consumer: the fluid is deleted (nothing accumulates).
                     c.LastFlow = p.Flowing ? p.SolveRate : 0f;
                 }
+
+            // TRANSFORMERS (refinery/sluice): tankless, so no amount is moved — the input fluid is DELETED and the output
+            // fluid is CREATED (intentionally not conserved). Latch whether the input received flow THIS tick; that gates
+            // whether the output SUPPLIES next tick (a 1-tick startup lag). Ports[0]=Consumer input, Ports[1]=Source output.
+            foreach (var t in transformers)
+                t.TransformActive = t.Ports.Count > 0 && t.Ports[0].Flowing;
         }
     }
 

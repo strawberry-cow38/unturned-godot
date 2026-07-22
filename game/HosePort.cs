@@ -16,7 +16,11 @@ namespace UnturnedGodot
         public FluidContainer Owner;      // the container this port sits on
         public FluidPortNode Node;        // the data port the FluidSolver/FluidNet drive (Flow/Flowing/Load written here)
         public FluidPortKind Kind;
+        public FluidType TypeOverride = FluidType.None;   // a TRANSFORMER's ports carry a fixed fluid (in!=out) independent of the (null) tank
         public bool Usable => GodotObject.IsInstanceValid(Owner) && !Owner.Blocked;   // a clogged/valve-off container can't start or accept a hose
+
+        // the fluid this port carries for the type-lock: an explicit override (transformer in/out) else the tank's fluid
+        public FluidType EffectiveType => TypeOverride != FluidType.None ? TypeOverride : (Owner != null && Owner.Tank != null ? Owner.Tank.Type : FluidType.None);
 
         MeshInstance3D _cube;
         StandardMaterial3D _mat;
@@ -48,7 +52,7 @@ namespace UnturnedGodot
         // Look-at HUD line — reflects the live flow through this port + the fluid it carries.
         public string InfoLine()
         {
-            string fluid = FluidDef.Name(Owner != null && Owner.Tank != null ? Owner.Tank.Type : FluidType.None);
+            string fluid = FluidDef.Name(EffectiveType);
             return Kind switch
             {
                 FluidPortKind.Source => $"{Owner?.Role} ({fluid}) — {Node.Rate:0}/s out · {Node.Load:0}/s drawn",

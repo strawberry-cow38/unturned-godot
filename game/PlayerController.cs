@@ -655,8 +655,7 @@ namespace UnturnedGodot
         HoseVerdict CompletionVerdict(HosePort start, HosePort target)
         {
             if (!IsInstanceValid(start) || !IsInstanceValid(target) || !target.Usable) return HoseVerdict.None;
-            var st = start.Owner?.Tank != null ? start.Owner.Tank.Type : FluidType.None;
-            var tt = target.Owner?.Tank != null ? target.Owner.Tank.Type : FluidType.None;
+            var st = start.EffectiveType; var tt = target.EffectiveType;   // a transformer's ports carry a fixed in/out fluid
             return FluidHoseRule.Completion(start.Kind, target.Kind,
                 st == FluidType.None, tt == FluidType.None, st == tt,
                 ReferenceEquals(start.Owner, target.Owner), PortHosed(target));
@@ -743,7 +742,7 @@ namespace UnturnedGodot
         {
             if (_hosePreview == null || !IsInstanceValid(_hoseSrc)) { CancelHose(); return; }
             var (srcPort, consPort) = FluidHoseRule.IsSourceSide(_hoseSrc.Kind) ? (_hoseSrc, target) : (target, _hoseSrc);
-            AdoptFluidType(srcPort.Owner, consPort.Owner);   // an empty tank adopts the other's fluid (strawberry)
+            AdoptFluidType(srcPort, consPort);   // an empty tank adopts the fluid flowing in (strawberry) — port EffectiveType handles transformers
             _hosePreview.Source = srcPort.Node; _hosePreview.Consumer = consPort.Node;
             _hosePreview.SetPoints(new System.Collections.Generic.List<Vector3> { srcPort.GlobalPosition, consPort.GlobalPosition }, valid: true);
             if (!_hosePreview.IsInGroup("hoses")) _hosePreview.AddToGroup("hoses");
@@ -760,12 +759,13 @@ namespace UnturnedGodot
             _hosing = false; _hoseSrc = null;
         }
 
-        // an empty (None) container adopts the other end's fluid type on connect; two set types were already type-locked equal
-        static void AdoptFluidType(FluidContainer a, FluidContainer b)
+        // an empty (None) tank adopts the fluid at the OTHER end of the hose on connect (uses port EffectiveType, so a
+        // transformer's OutputType propagates to the tank it feeds). Two set types were already type-locked equal.
+        static void AdoptFluidType(HosePort src, HosePort cons)
         {
-            if (a?.Tank == null || b?.Tank == null) return;
-            if (a.Tank.Type == FluidType.None && b.Tank.Type != FluidType.None) a.Tank.Type = b.Tank.Type;
-            else if (b.Tank.Type == FluidType.None && a.Tank.Type != FluidType.None) b.Tank.Type = a.Tank.Type;
+            var srcType = src.EffectiveType; var consType = cons.EffectiveType;
+            if (cons.Owner?.Tank != null && cons.Owner.Tank.Type == FluidType.None && srcType != FluidType.None) cons.Owner.Tank.Type = srcType;
+            else if (src.Owner?.Tank != null && src.Owner.Tank.Type == FluidType.None && consType != FluidType.None) src.Owner.Tank.Type = consType;
         }
 
         void HoseHudSet(string text)
