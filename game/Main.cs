@@ -2021,15 +2021,31 @@ namespace UnturnedGodot
         // edit target (Aerial = world, no player, no colliders), drop in the free-fly EditorCamera + the mode-tab
         // dashboard + the Editor controller. Fly + view + switch modes now; the per-mode sub-editors (Objects/
         // Terrain/Spawns/...) + .level save land in the later phases.
-        // F2 fluid-IO verify (--fluidtest): a full Source -> Hose -> empty Storage. Tick the net; the storage should
-        // fill + the source drain, conserving the total. Headless log check (go easy); visuals/bars are F3.
+        // Fluid-IO verify (--fluidtest): a full Source -> Hose -> empty Storage. Tick the net; the storage should
+        // fill + the source drain, conserving the total. UG_FLUIDRENDER=1 = a lit scene ticking live so the movie
+        // harness can capture the bars filling (F3 visual verify); else the fast headless log-check (go easy).
         void RunFluidTest()
         {
             var src = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);   // full, supplies 50/s
             var sto = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Fuel, 1000f, 0f), 50f);     // empty, intake 50/s
-            AddChild(src); AddChild(sto);   // _Ready builds their ports + registers them in "fluid_devices"
+            src.Position = new Vector3(-2.5f, 0f, 0f); sto.Position = new Vector3(2.5f, 0f, 0f);
+            AddChild(src); AddChild(sto);   // _Ready builds their ports + visuals + registers them in "fluid_devices"
             var hose = new Hose { Source = src.Ports[0], Consumer = sto.Ports[0] };
             AddChild(hose);                 // registers in "hoses"
+
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDRENDER") == "1")
+            {   // F3 render verify: a lit scene ticking live; the movie harness captures the storage bar filling
+                AddChild(new FluidManager());
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(30f, 30f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) } });
+                var line = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.05f, Height = 5f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.10f, 0.10f, 0.12f) }, Position = new Vector3(0f, 0.9f, 0f), RotationDegrees = new Vector3(0f, 0f, 90f) };
+                AddChild(line);   // a simple hose line spanning the two tanks
+                AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
+                AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
+                AddChild(new Camera3D { Position = new Vector3(0f, 3.2f, 8f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
+                GD.Print("[fluidtest] render scene up — source full, storage filling live");
+                return;   // no quit; the movie harness's --quit-after ends it
+            }
+
             GD.Print($"[fluidtest] start: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0}");
             const float dt = 0.1f;
             for (int i = 0; i < 100; i++)   // 10 s of 0.1 s ticks -> ~500 units moved (50/s), conserved to 1000
