@@ -101,6 +101,10 @@ namespace UnturnedGodot
             if (n > 0) GD.Print($"[editor] ingested {n} loaded map objects (selectable/movable/deletable)");
         }
 
+        // level-visibility toggles (source EditorLevelVisibilityUI): F1 objects, F3 foliage (F2 roads lives on EditorRoads)
+        public void SetVisible(bool v) { foreach (var p in _placed) if (IsInstanceValid(p)) p.Visible = v; }
+        public void SetFoliageVisible(bool v) { foreach (var c in _world.GetChildren()) if (c is FoliageField ff) ff.Visible = v; }
+
         void LoadCatalog()
         {
             string gm = Dir + "guid_mesh.txt";   // "<guid> <meshName>" -- the unique mesh names are the placeable catalog

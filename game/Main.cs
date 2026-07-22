@@ -2050,6 +2050,8 @@ namespace UnturnedGodot
             var editor = new Editor();
             AddChild(editor);
             var cam = new EditorCamera { Position = new Vector3(0f, 140f, 160f), RotationDegrees = new Vector3(-32f, 0f, 0f) };
+            var camEnv = System.Environment.GetEnvironmentVariable("UG_EDITOR_CAM");   // "x,y,z,pitch" headless verify override (e.g. aim at a town cluster)
+            if (camEnv != null) { var q = camEnv.Split(','); if (q.Length >= 4 && float.TryParse(q[0], out var cx) && float.TryParse(q[1], out var cy) && float.TryParse(q[2], out var cz) && float.TryParse(q[3], out var cp)) { cam.Position = new Vector3(cx, cy, cz); cam.RotationDegrees = new Vector3(cp, 0f, 0f); } }
             editor.AddChild(cam);
             editor.Setup("PEI", null, cam);
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // so loot-crate tables can be named/picked in the editor

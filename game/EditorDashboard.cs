@@ -18,6 +18,7 @@ namespace UnturnedGodot
         readonly Dictionary<EEditorMode, Button> _tabs = new();
         Label _toast; double _toastT;                       // transient centered message (source EditorUI.message / EEditorMessage)
         Control _pause;                                     // ESC pause overlay (source EditorPauseUI, slim: Resume/Save/Exit)
+        bool _visObjects = true, _visRoads = true, _visFoliage = true;   // F1/F2/F3 level-visibility toggles (source EditorLevelVisibilityUI)
 
         public override void _Ready()
         {
@@ -73,6 +74,8 @@ namespace UnturnedGodot
             AddChild(_toast);   // added AFTER the pause so notifications render on top of the dim
             if (System.Environment.GetEnvironmentVariable("UG_EDITOR_SHOWMENU") == "1")   // headless verify hook: show the pause menu + a toast for the --shot
                 CallDeferred(nameof(ShowMenuForShot));
+            if (System.Environment.GetEnvironmentVariable("UG_EDITOR_HIDETEST") == "1")   // headless verify hook: hide the F1/F2/F3 layers for the --shot
+                CallDeferred(nameof(HideLayersForShot));
 
             if (Editor?.Objects != null) { _browser = new EditorObjectBrowser(Editor.Objects); AddChild(_browser); }
             if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
@@ -99,6 +102,7 @@ namespace UnturnedGodot
 
         void TogglePause(bool? on = null) { if (_pause != null) _pause.Visible = on ?? !_pause.Visible; }
         void ShowMenuForShot() { ShowMessage("Saved 'PEI'  ·  42 props", 999.0); TogglePause(true); }   // UG_EDITOR_SHOWMENU verify hook
+        void HideLayersForShot() { Editor?.Objects?.SetVisible(false); Editor?.RoadsEd?.SetVisible(false); Editor?.Objects?.SetFoliageVisible(false); ShowMessage("layers hidden: objects · roads · foliage", 999.0); }   // UG_EDITOR_HIDETEST verify hook
 
         // slim EditorPauseUI: dim + Resume / Save / Exit (Options/Display/etc submenus land later)
         Control BuildPauseOverlay()
@@ -133,6 +137,9 @@ namespace UnturnedGodot
             {
                 TogglePause(); GetViewport().SetInputAsHandled();
             }
+            else if (k.Keycode == Key.F1) { _visObjects = !_visObjects; Editor?.Objects?.SetVisible(_visObjects); ShowMessage($"Objects: {(_visObjects ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }   // level-visibility toggles (source EditorLevelVisibilityUI F1-F9)
+            else if (k.Keycode == Key.F2) { _visRoads = !_visRoads; Editor?.RoadsEd?.SetVisible(_visRoads); ShowMessage($"Roads: {(_visRoads ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }
+            else if (k.Keycode == Key.F3) { _visFoliage = !_visFoliage; Editor?.Objects?.SetFoliageVisible(_visFoliage); ShowMessage($"Foliage: {(_visFoliage ? "shown" : "hidden")}"); GetViewport().SetInputAsHandled(); }
         }
 
         public override void _Process(double delta)
@@ -146,7 +153,7 @@ namespace UnturnedGodot
             string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
             string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadsEd != null ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}" : "";
             string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
-            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{spawn}{envs}{terr}   ·   Ctrl+S save · ESC menu   ·   map: {Editor.MapName}";
+            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{spawn}{envs}{terr}   ·   Ctrl+S save · ESC menu · F1-3 layers   ·   map: {Editor.MapName}";
         }
     }
 }

@@ -46,6 +46,8 @@ namespace UnturnedGodot
             return 0;
         }
 
+        public void SetVisible(bool v) { if (_roads != null) _roads.Visible = v; }   // F2 level-visibility: the road strips (source EditorLevelVisibilityUI)
+
         public EditorRoads(Editor editor, Camera3D cam, RoadField roads)
         {
             _editor = editor; _cam = cam; _flyCam = cam as EditorCamera; _roads = roads;
