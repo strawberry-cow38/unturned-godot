@@ -45,6 +45,8 @@ namespace SDG.Unturned
             Add(9115, "Fluid Valve",    2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "An inline switch for a hose. RMB its port with the hose tool to open (green) or close (red) -- closed stops the flow.");
             Add(9116, "Refinery",       2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "Refines oil into gasoline. Hose oil into its input; hose its output into a tank to collect the gas.");
             Add(9117, "Sluice",         2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Runs water through and turns it into dirty water. Hose water into its input; hose its output into a tank.");
+            Add(9119, "Submersible Inlet", 2, 2, EItemType.GENERIC, EItemRarity.RARE,   0, 0, "An infinite water inlet -- but only placeable submerged in water (a valid depth band; the ghost turns blue only there). It has no pressure of its own, so you MUST run a powered pump on its line to draw water up out of it.");
+            Add(9120, "Outlet Drain",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A drain that deletes whatever fluid is piped into it. Place it anywhere and hose your overflow / waste line into it.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

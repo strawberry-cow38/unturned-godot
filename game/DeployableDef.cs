@@ -38,6 +38,9 @@ namespace UnturnedGodot
         public FluidType FluidType = FluidType.None, FluidOut = FluidType.None;   // source/transformer input + transformer output fluid
         public int FluidWays = 2;                    // splitter outputs / combiner inputs
         public float FluidCapacity = 20000f, FluidRate = 125f;   // tank capacity (mL) + base flow/intake (mL/s, garden-hose gravity)
+        public bool FluidInfinite, FluidNoHead;      // submersible INLET: an infinite source with no head pressure (pump-only draw)
+        public float WaterDepthMin = -1f, WaterDepthMax = -1f;   // placement must be SUBMERGED in this water-depth band (-1 = no water requirement)
+        public const float SeaLevel = 25.6f;         // PEI water plane world-Y (Lighting.dat seaLevel 0.1 x 256; = Deployable.WindSeaLevel)
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
@@ -221,11 +224,15 @@ namespace UnturnedGodot
         public static readonly DeployableDef FluidValve    = MakeFluid(9115, "Fluid Valve",    FluidRole.Valve);
         public static readonly DeployableDef Refinery      = MakeFluid(9116, "Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas
         public static readonly DeployableDef Sluice        = MakeFluid(9117, "Sluice",         FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.DirtyWater; });   // water -> dirty water
+        // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
+        // 0.6-5 m water-depth band. OUTLET (9120): a drain (Consumer) that deletes whatever's piped in; placeable anywhere.
+        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Submersible Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });
+        public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Outlet Drain",      FluidRole.Consumer);
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -245,6 +252,8 @@ namespace UnturnedGodot
             9115 => FluidValve,
             9116 => Refinery,
             9117 => Sluice,
+            9119 => WaterInlet,
+            9120 => WaterOutlet,
             9200 => GridSource,
             9201 => GasPump,
             _ => null,

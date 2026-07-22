@@ -61,6 +61,12 @@ namespace UnturnedGodot
             bool wall = n.Y < 0.01f;                      // vertical wall / ceiling -> blocked
             Point = hp;                                   // the surface contact; the base sits here (ghost is lifted in Apply)
             Valid = !wall && !Overlap(space, hp + Vector3.Up * Def.Offset, Def.Radius);   // clearance sphere at the src offset height
+            // a submersible device (inlet) is valid ONLY on submerged seabed within its water-depth band
+            if (Valid && Def.WaterDepthMin >= 0f)
+            {
+                float depth = DeployableDef.SeaLevel - hp.Y;   // how far below the water plane the seabed sits here
+                Valid = depth >= Def.WaterDepthMin && depth <= Def.WaterDepthMax;
+            }
             Apply();
             return Valid;
         }

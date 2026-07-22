@@ -24,6 +24,8 @@ namespace UnturnedGodot
                 FluidRole.Transformer => FluidContainer.MakeTransformer(def.FluidType, def.FluidOut, def.FluidRate, 1f),
                 _                     => FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, def.FluidCapacity, 0f), def.FluidRate),
             };
+            c.Infinite = def.FluidInfinite;   // a submersible inlet: never depletes
+            c.NoHead = def.FluidNoHead;       // ...and has no head -> its output needs a pump
             c.Position = pos;
             c.RotationDegrees = new Vector3(0f, yawDeg, 0f);
             parent.AddChild(c);

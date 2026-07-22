@@ -49,8 +49,9 @@ namespace UnturnedGodot
                     foreach (var p in c.Ports)
                     {
                         float rate = p.Rate;
-                        // a source/tank OUTPUT can't push more than the tank holds (near-empty pushes less; empties cleanly)
-                        if (hasTank && (c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source)
+                        // a source/tank OUTPUT can't push more than the tank holds (near-empty pushes less; empties cleanly).
+                        // an INFINITE inlet skips the clamp -> it never runs dry.
+                        if (hasTank && !c.Infinite && (c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source)
                             rate = Mathf.Min(rate, c.Tank.Amount * inv);
                         // a storage INPUT can't take more than fits (near-full draws less; full -> 0 -> stops flowing)
                         else if (hasTank && c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer)
@@ -98,7 +99,10 @@ namespace UnturnedGodot
                     float consY = bO != null ? bO.GlobalPosition.Y : 0f;
                     float reach = Mathf.Max(aO != null && ceiling.TryGetValue(aO, out var ra) ? ra : float.NegativeInfinity,
                                             bO != null && ceiling.TryGetValue(bO, out var rb) ? rb : float.NegativeInfinity);
-                    if (consY < srcY - HeadEps || consY < reach - HeadEps) hoses.Add(new FluidHose(s, cons));   // downhill, or within a powered pump's reach
+                    // a NO-HEAD source (submersible inlet) has no pressure of its own -> its output NEVER flows by gravity;
+                    // only a powered pump can draw from it. So skip the downhill path when this hose leaves a no-head source.
+                    bool noHeadSrc = aO != null && aO.NoHead && h.Source.Kind == FluidPortKind.Source;
+                    if ((!noHeadSrc && consY < srcY - HeadEps) || consY < reach - HeadEps) hoses.Add(new FluidHose(s, cons));   // downhill (unless no-head), or within a pump's reach
                 }
 
             FluidSolver.Solve(devices, hoses);
@@ -113,8 +117,8 @@ namespace UnturnedGodot
             foreach (var c in containers)
                 foreach (var p in c.Ports)
                 {
-                    // a source OR a tank's OUTPUT drains the tank by the load it feeds downstream
-                    if ((c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source && p.Load > 0f)
+                    // a source OR a tank's OUTPUT drains the tank by the load it feeds downstream (an INFINITE inlet never depletes)
+                    if (!c.Infinite && (c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source && p.Load > 0f)
                         c.Tank.Drain(p.Load * dt);
                     // a tank's INPUT fills it by what it accepts (its demand, not the offered Flow)
                     else if (c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer && p.Flowing)

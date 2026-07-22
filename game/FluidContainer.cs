@@ -20,6 +20,8 @@ namespace UnturnedGodot
         public FluidTank Tank;             // null for a fitting (splitter/combiner)
         public FluidRole Role;
         public bool Blocked;               // a clogged/closed-valve container stops conducting (F5)
+        public bool Infinite;              // a submersible INLET: an infinite source (never depletes)
+        public bool NoHead;                // no head pressure: its output won't flow passively (gravity) — needs a PUMP to draw from it
         public float FlowRate = 50f;       // base supply (source) / intake (storage/consumer), units/s
         public int Ways = 2;               // splitter outputs / combiner inputs
         public FluidType TransformIn = FluidType.None, TransformOut = FluidType.None;   // transformer: input fluid -> output fluid
