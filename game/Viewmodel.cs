@@ -312,6 +312,15 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+                    // Asset Factory: authored HOLD orientation -- rotate/offset the whole gun assembly (mesh + hooks
+                    // ride along) so a factory gun's in-hand pose is set BY EYE in AF ("rotate it + be done"), no code.
+                    // No-op for real guns (not in the catalog) or identity params.
+                    var holdB = AssetCatalog.Get(GunName);
+                    if (holdB != null)
+                    {
+                        mi.Position += new Vector3(holdB.ParamFloat("hold_px"), holdB.ParamFloat("hold_py"), holdB.ParamFloat("hold_pz"));
+                        mi.RotationDegrees += new Vector3(holdB.ParamFloat("hold_rx"), holdB.ParamFloat("hold_ry"), holdB.ParamFloat("hold_rz"));
+                    }
                     // Real Eaglefire_Iron_Sights model (item 5) — sight.prefab from core.masterbundle, extracted via
                     // UnityPy and converted to the port gun frame (x,y,z)->(-x,y,-z), same pipeline as the gun body.
                     // Mounted exactly as Attachments.cs does: Instantiate(sightAsset.sight) parented to the Sight hook
