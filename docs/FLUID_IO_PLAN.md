@@ -38,11 +38,17 @@ Power reference: `game/ConnectionPort.cs` + `Wire.cs` + `PowerNet.cs` (Godot ada
   Amount/Capacity/Fill/Drain — reuse) gains the fluid id. `StationFuel` shared tanks stay for gas pumps.
 
 ## Phasing
-- **F1 (foundational, engine-free + testable):** FluidDef registry + FluidTank id; `FluidSolver` (mirror PowerSolver);
-  L0 unit tests for FluidSolver (like the PowerSolver tests). NO Godot deps → fast, verifiable.
-- **F2:** `FluidNet` adapter + `Hose` + fluid ports + the Source/Storage/Consumer container deployables (DeployableDef),
-  placement, a working source→hose→storage flow in-world.
-- **F3:** fill bars + the type-lock "cannot mix fluids" tooltip on a bad hose.
+- **F1 DONE (847b6f95):** FluidDef registry + FluidTank id; `FluidSolver` (mirror PowerSolver) + 7 L0 tests. No Godot deps.
+- **F2 DONE (bf3bd685):** `FluidNet` adapter + `Hose` + `FluidContainer` (Source/Storage/Consumer) + `--fluidtest` headless flow (source→hose→storage fills, conserved).
+- **F3 DONE (b7bd4938):** container tank mesh + InfoBillboard fill bar (name / bar colored by fluid / amount prompt); `UG_FLUIDRENDER=1` movie path. Render-verified bars fill/drain.
+- **F3.5a DONE (f945e262):** `HosePort` physical port cube (StaticBody3D, own layer 1<<11) on each container; group `fluid_ports`.
+- **F3.5b DONE (cf16b42f):** `Hose` polyline visual (mirror Wire.SetPoints, thicker); render draws the hose port-to-port.
+- **F3.5c NEXT — the interactive HOSE TOOL + placement (the big one, needs an in-game session to verify):**
+  1. Generalize `ToolDef.IsRope` (bool) → a `Kind {Wire, Rope, Hose}` enum; add a `ToolDef.Hose` entry (item id + held mesh — reuse wire_hold.obj tinted). Add `Viewmodel.IsHoseTool`/`IsHoseViewmodel`, `PlayerController.HoldingHoseTool`.
+  2. `UpdateHoseLook` / `HoseLmb` / `HoseRmb` mirroring the wire tool but LEANER first pass: look at a HosePort (highlight + HUD via InfoLine), LMB a source→start, LMB a consumer→complete a straight hose (node routing/clear-hold = fast-follow), RMB cancel. Ray on `HosePort.PortLayer`.
+  3. **Type-lock reject** = `CanCompleteHose(src, dst)`: opposite kinds, different container, dst unhosed, AND fluid types compatible (either tank None/empty → adopts, else equal). Mismatch → red HoseBad highlight + "cannot mix fluids" HUD. Extract the pure type-lock predicate so it's L0-testable without a session.
+  4. On complete: `new Hose{Source,Consumer}`, AddChild, and if a tank was empty it adopts the other's type.
+  - **In-game PLACEMENT:** mirror `DeployablePlacer` to place Source/Storage containers (later a real fluid item + DeployableDef entry; for now a debug spawn is fine to exercise the tool).
 - **F4:** splitters + combiners.
 - **F5:** electric pumps (power↔fluid bridge: head lift + flow-rate boost) + transformer consumers (refinery/sluice);
   rain barrels when weather lands.
