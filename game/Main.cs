@@ -2000,7 +2000,7 @@ namespace UnturnedGodot
             editor.AddChild(cam);
             editor.Setup("NewMap", null, cam);
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // new maps use PEI's loot tables as the pool (for loot crates)
-            var objs = new EditorObjects(editor, this, cam); editor.AddChild(objs); editor.Objects = objs;
+            var objs = new EditorObjects(editor, this, cam, objectsPreloaded: false); editor.AddChild(objs); editor.Objects = objs;   // blank map: no WorldBuilder objects -> load session placements from the sidecar
             var spawns = new EditorSpawns(editor, cam, MapDir("NewMap")); editor.AddChild(spawns); editor.Spawns = spawns;   // dir doesn't exist -> starts empty
             var envEd = new EditorEnvironment(editor, dayNight, SetCleanEditorLighting); editor.AddChild(envEd); editor.Environment = envEd;
             var terrainEd = new EditorTerrain(editor, cam, terr); editor.AddChild(terrainEd); editor.TerrainEd = terrainEd;
@@ -2020,7 +2020,12 @@ namespace UnturnedGodot
         async void BuildEditor()
         {
             _worldBuild = true;
-            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, _mapPlace, noZombies: true,
+            // EDITOR object source: once a prior editor Save has materialized editor_PEI.txt (the our-format map),
+            // load objects from THAT instead of the retail placements -- so edits persist and the first open converts
+            // retail->ours one-way (the retail placements file is never written). Same 10-field format either way.
+            string editorObjFile = "editor_PEI.txt";
+            string objPlace = System.IO.File.Exists(ProjectSettings.GlobalizePath("res://content/objects/") + editorObjFile) ? editorObjFile : _mapPlace;
+            var res = await WorldBuilder.BuildFullWorld(this, WorldMode.Editor, _mapRoot, objPlace, noZombies: true,
                                                         syncLoad: false, bakeNav: false, ActiveHoliday());
             // Clean, legible editor lighting. The DayNightCycle re-applies a warm-tan ambient + fog + glow EVERY
             // frame (source-faithful sky, but it reads as thick haze from the aerial editor cam), so freeze its
@@ -2048,7 +2053,7 @@ namespace UnturnedGodot
             editor.AddChild(cam);
             editor.Setup("PEI", null, cam);
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");   // so loot-crate tables can be named/picked in the editor
-            var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
+            var objs = new EditorObjects(editor, this, cam, objectsPreloaded: true);   // Phase 1a: WorldBuilder wrapped the loaded map objects as editable; ingest them, don't re-load the main object sidecar (avoids double-load)
             editor.AddChild(objs);
             editor.Objects = objs;
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)

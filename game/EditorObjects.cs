@@ -63,7 +63,7 @@ namespace UnturnedGodot
         }
         Node3D RePlace(string guid, Transform3D x) => _guidToName.TryGetValue(guid, out var nm) ? Place(nm, x.Origin, x.Basis) : null;
 
-        public EditorObjects(Editor editor, Node world, EditorCamera cam)
+        public EditorObjects(Editor editor, Node world, EditorCamera cam, bool objectsPreloaded = false)
         {
             _editor = editor; _world = world; _cam = cam; _flyCam = cam;
             _gizmo = new EditorGizmo(cam); AddChild(_gizmo);   // the source TransformHandles translate gizmo, shown on the selection
@@ -72,8 +72,33 @@ namespace UnturnedGodot
             _marquee.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             cl.AddChild(_marquee); AddChild(cl);
             LoadCatalog();
-            LoadSaved();   // restore any previously-saved editor placements
+            if (objectsPreloaded)
+            {
+                // Phase 1a: WorldBuilder (WorldMode.Editor) already built + wrapped every map object as editable ->
+                // ingest those. Load ONLY the custom-placeable sidecars; loading the main object sidecar too would
+                // double every object (WorldBuilder now sources from editor_<map>.txt whenever it exists).
+                IngestLoadedObjects();
+                LoadCustomPlaceables();
+            }
+            else LoadSaved();   // blank map: restore session placements (main objects + custom placeables) from the sidecars
             if (_catalog.Count > 0) PlaceName = _catalog[0];   // default to placing the first prop
+        }
+
+        // Phase 1a: the editor world wraps each loaded map object in a Node3D tagged "editor_loaded_object" (WorldBuilder).
+        // Register them into _placed + _pickToObj so the existing select/gizmo/marker/delete/copy/Save path operates on the
+        // whole loaded map, not just session-placed props. Save then writes the unified set (loaded + placed) = our-format map.
+        void IngestLoadedObjects()
+        {
+            int n = 0;
+            foreach (var child in _world.GetChildren())
+            {
+                if (child is not Node3D wrap || !wrap.IsInGroup("editor_loaded_object")) continue;
+                _placed.Add(wrap);
+                foreach (var c in wrap.GetChildren())
+                    if (c is StaticBody3D sb) { _pickToObj[sb.GetRid()] = wrap; break; }   // its collider -> the wrapper root, for click-picking
+                n++;
+            }
+            if (n > 0) GD.Print($"[editor] ingested {n} loaded map objects (selectable/movable/deletable)");
         }
 
         void LoadCatalog()
@@ -581,12 +606,17 @@ namespace UnturnedGodot
             return (Mathf.RadToDeg(e.X), 180f - Mathf.RadToDeg(e.Y), -Mathf.RadToDeg(e.Z));
         }
 
-        void LoadSaved()   // restore previously-saved editor placements on open
+        void LoadCustomPlaceables()   // the non-mesh placeables (loot crates / store shelves / grid power / gas pumps) -- their own sidecar files
         {
             LoadLootCrates();
             LoadStoreShelves();
             LoadGridPower();
             LoadGasPump();
+        }
+
+        void LoadSaved()   // restore previously-saved editor placements on open (custom placeables + main mesh objects from the sidecar)
+        {
+            LoadCustomPlaceables();
             if (!System.IO.File.Exists(SavePath)) return;
             int n = 0;
             foreach (var line in System.IO.File.ReadLines(SavePath))
