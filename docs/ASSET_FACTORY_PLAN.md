@@ -100,3 +100,54 @@ fill), a type params panel, and a type-correct live preview.
   with references; revisit if bundles need to be portable.
 - `params` schema per type — grow as each type editor lands.
 - Whether prop/deployable bundles auto-appear in the map editor's object browser (likely yes).
+
+---
+
+## Built — final state (2026-07-22)
+
+Everything in the plan is built + verified, plus the follow-ups below. Branch `asset-factory`, merge-ready.
+
+### The `params{}` bag — behaviours the loader bolts on (`AssetBundleLoader.WireBehaviors`)
+
+| param / convention | type | effect |
+|---|---|---|
+| `surface` | string | bullet-hit impact FX/sound (concrete/grass/dirt/metal/wood/sand/water) |
+| `power_kind` | string | single power port: `output` \| `consumer` \| `passthrough` (position from a `Power` point) |
+| points named `PowerOut*` / `PowerIn*` / `PowerThru*` | — | **MULTI-PORT**: each becomes a port → a device can be a relay / splitter / battery (in AND out) |
+| `power_watts`, `power_label` | number, string | wattage + renameable label for the port(s) |
+| `powered_light` (+ `light_energy`, `light_range`) | bool | an OmniLight gated on the device's power |
+| `gun_damage`, `gun_rpm`, `gun_ammo`, `gun_range`, `gun_caliber` | number | per-gun fire stats (rpm → Firerate, clamped); authored in the editor's gun-stats row |
+| `gun_auto` | bool | full-auto |
+
+**Orientation is authored by the part transform** — rotate a part in the editor and that's how it holds (gun in-hand) / stands (deployable). The same transform drives the inventory icon, so they can't disagree.
+
+### Real items (gun + deployable)
+A `gun`/`deployable` bundle registers a real `ItemAsset` (id **60000+**, by sorted name) at the end of `ItemCatalog.RegisterAll`:
+- **gun** → `give <Name>` gives a real gun item; equips + fires through the normal path (borrows eaglefire's GunDef, overrides with `gun_*` params).
+- **deployable** → `give <Name>` → hold → placement ghost → LMB plants the composed body (a factory `DeployableDef` under the same id; `Deployable.BuildMesh` builds the bundle; ghost tints blue/red).
+- **inventory icon** baked from the composed model (`--bakeasset`, magenta-keyed → transparent, autocropped to fill the slot), name-keyed at `content/items/icons/factory_<name>.png`.
+
+### Map-editor props + persistence
+`prop` bundles show in the map-editor palette as `🏭 <name>` (placeable/pickable). Placed factory props **persist** across save/reload — companion file `editor_<map>_factory.txt`, by bundle name.
+
+### ▶ Play / Preview (in the editor)
+Saves + drops into a per-type test scene: **gun** = item in your bag, equipped + targets; **deployable** = held to place; **vehicle** = spawned drivable; **prop** = placed. `F10` returns to the editor.
+
+### Verify / render flags (run godot from `game/`; game args go AFTER `--`)
+- `--assettest=res://…/X.assetbundle --shot=OUT` — spawn a bundle + 3/4 shot (loader pipeline).
+- `--assetpreview=NAME --shot=OUT` — the per-type preview scene.
+- `--assetdeploytest=NAME --shot=OUT` — place a factory deployable (item→def→body→stand-up).
+- `--bakeasset=NAME --shot=OUT` — bake the inventory icon from the composed model.
+- `--assetlist` — print the catalog + registered factory items.
+- `--vm=DIR --gun=NAME` — first-person viewmodel frame strip (`UG_VMFRAMES=45,55` picks frames, `UG_NOADS=1` holds at hip).
+- `--assetfactory[=PATH] --shot=OUT` — the editor itself.
+- `UG_FACTORYPERSIST=place|check` (with `--editor`) — the .level-persistence round-trip self-test.
+
+### Demo bundles (`content/assets/`)
+`factorygun` (gun, custom stats + 20° authored hold), `factorydeploy` (Gas_Pump_0 deployable, upright), `pumpcar_demo` (drivable vehicle), `factoryprop` (Crate_0 prop), `multiport` (relay — PowerIn + PowerOut).
+
+### Remaining follow-ups
+- Deployable in-hand carry-model (polish — the placement ghost already shows what you place).
+- MP replication of placed factory deployables (SP-local now; tinyclaw's net lane).
+- Per-port watts tuning for multi-port devices (uniform `power_watts` for now).
+- Pre-existing latent Vehicle.cs texture-null / div-by-zero guards (noted, out of factory scope).
