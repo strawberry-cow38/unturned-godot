@@ -33,8 +33,8 @@ namespace UnturnedGodot
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
         // generator fuel drained per SECOND at FULL load while running (master: realistic, not PZ's "days on 20L"). Scaled
-        // by load (idle ~20%). 60-unit tank: ~25min real at full load, ~2h idle. Tunable via UG_GENBURN.
-        public static float GenFuelBurnPerSec = float.TryParse(System.Environment.GetEnvironmentVariable("UG_GENBURN"), out var gb) ? gb : 0.04f;
+        // by load (idle ~20%). 150 L tank: ~25min real at full load, ~2h idle. Tunable via UG_GENBURN. (metric 1u=1mL: was 0.04 units/s x2500)
+        public static float GenFuelBurnPerSec = float.TryParse(System.Environment.GetEnvironmentVariable("UG_GENBURN"), out var gb) ? gb : 100f;
 
         // --- power connection points (nodes). A wire runs OUTPUT -> ... -> CONSUMER; a CONSUMER may also have a
         //     PASSTHROUGH that re-exports (input - usage). Pos is in the flat authored mesh frame (stands up with the model). ---
@@ -55,7 +55,7 @@ namespace UnturnedGodot
         {
             Id = 458, Name = "Generator", Model = "Generator_0",
             HoldMesh = "generator_hold.obj", HoldAlbedo = "generator_hold_tex.png", PlaceSound = "metalplacement",   // src Generator_Small.dat PlacementAudioClip Sounds/MetalPlacement.mp3
-            Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 60f,   // PZ-scale fuel (master): ~7 portable cans; burned by LOAD while running (GenFuelBurnPerSec). src Capacity was 2000
+            Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 150_000f,   // 150 L tank (metric 1u=1mL): ~7 jerrycans; burned by LOAD while running (GenFuelBurnPerSec). was PZ 60 units x2500
             Ports = new[] {
                 new Port { Kind = PortKind.Output, Pos = new Vector3(0.4f, 0.6f, 0.05f), Watts = 4000f },   // output on the gray-face mid-right (flat frame; tuned visually)
                 new Port { Kind = PortKind.Consumer, Role = SwitchRole.TurnOn, Pos = new Vector3(-0.5f, 0.4f, -0.2f), Watts = 0f },   // remote START (green): a >=1w sense (0w draw) spins the engine UP. UG_GTON tunes.

@@ -47,10 +47,12 @@ namespace SDG.Unturned
         // (Maple/Birch/Pine 1114-1116) default to 500 (2x2, like the portable).
         static void WireFuelCans()
         {
-            // PZ-scale fuel economy (master): a PZ gas can = 8 units. Portable/jerrycans = 8, Industrial = 20 (bigger).
+            // METRIC fuel economy (strawberry 2026-07-22: 1 unit = 1 mL). A portable jerrycan = 20 L = 20,000 mL; the
+            // Industrial can is 2.5x (50 L). These were the old PZ-scale 8 / 20 units -> x2500 so gameplay is identical,
+            // just in millilitres (a jerrycan tops off ~1/7 of a generator tank, as before). See StationFuel / DeployableDef.
             void Cap(ushort id, float cap) { var a = Assets.find(id); if (a != null) a.fuelCapacity = cap; }
-            Cap(28, 8f); Cap(1440, 20f);
-            Cap(1114, 8f); Cap(1115, 8f); Cap(1116, 8f);
+            Cap(28, 20000f); Cap(1440, 50000f);   // Portable 20 L, Industrial 50 L
+            Cap(1114, 20000f); Cap(1115, 20000f); Cap(1116, 20000f);   // jerrycans 20 L
         }
 
         // Real Unturned shotgun shells as stackable loose ammo (master: new ammo types, stack to 32 per slot). These items
