@@ -552,7 +552,7 @@ namespace UnturnedGodot
                 else if (k.Keycode == Key.E) PlaceOrMoveAtCursor();                     // E = source tool_2: move the selection to the cursor, or summon the list-selected prop
                 else if (k.Keycode == Key.T) _gizmo.CycleMode();                        // T = cycle translate/rotate/scale gizmo (source TransformHandles EMode)
                 else if (k.Keycode == Key.G) _gizmo.LocalSpace = !_gizmo.LocalSpace;    // G = toggle gizmo local/global space
-                else if (k.Keycode == Key.Escape) Select(null);
+                // ESC is the editor pause menu (EditorDashboard); deselect via a click on empty ground (FinishBoxSelect)
             }
         }
 

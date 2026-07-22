@@ -16,6 +16,8 @@ namespace UnturnedGodot
         EditorTerrainPanel _terrainPanel;   // the Terrain-tab tool buttons (shown only in Terrain mode)
         EditorSpawnsPanel _spawnsPanel;     // the Spawns-tab tool buttons (shown only in Spawns mode)
         readonly Dictionary<EEditorMode, Button> _tabs = new();
+        Label _toast; double _toastT;                       // transient centered message (source EditorUI.message / EEditorMessage)
+        Control _pause;                                     // ESC pause overlay (source EditorPauseUI, slim: Resume/Save/Exit)
 
         public override void _Ready()
         {
@@ -57,6 +59,21 @@ namespace UnturnedGodot
             _status.AddThemeConstantOverride("outline_size", 3);
             AddChild(_status);
 
+            // centered transient message toast (source EditorUI.message): save confirmations + tool notices
+            _toast = new Label { HorizontalAlignment = HorizontalAlignment.Center, Visible = false };
+            _toast.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+            _toast.Position = new Vector2(-220f, 64f);
+            _toast.CustomMinimumSize = new Vector2(440f, 0f);
+            _toast.AddThemeFontSizeOverride("font_size", 20);
+            _toast.AddThemeColorOverride("font_color", new Color(1f, 0.95f, 0.72f));
+            _toast.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _toast.AddThemeConstantOverride("outline_size", 4);
+            _pause = BuildPauseOverlay();   // ESC pause menu (hidden until toggled)
+            AddChild(_pause);
+            AddChild(_toast);   // added AFTER the pause so notifications render on top of the dim
+            if (System.Environment.GetEnvironmentVariable("UG_EDITOR_SHOWMENU") == "1")   // headless verify hook: show the pause menu + a toast for the --shot
+                CallDeferred(nameof(ShowMenuForShot));
+
             if (Editor?.Objects != null) { _browser = new EditorObjectBrowser(Editor.Objects); AddChild(_browser); }
             if (Editor?.TerrainEd != null) { _terrainPanel = new EditorTerrainPanel(Editor.TerrainEd); AddChild(_terrainPanel); }
             if (Editor?.Spawns != null) { _spawnsPanel = new EditorSpawnsPanel(Editor.Spawns); AddChild(_spawnsPanel); }
@@ -73,8 +90,54 @@ namespace UnturnedGodot
             if (_spawnsPanel != null) _spawnsPanel.Visible = active == EEditorMode.Spawns;       // spawns tool buttons under the Spawns tab
         }
 
+        // transient centered notice (source EditorUI.message): e.g. save confirmation
+        public void ShowMessage(string msg, double dur = 2.5)
+        {
+            if (_toast == null) return;
+            _toast.Text = msg; _toast.Visible = true; _toastT = dur;
+        }
+
+        void TogglePause(bool? on = null) { if (_pause != null) _pause.Visible = on ?? !_pause.Visible; }
+        void ShowMenuForShot() { ShowMessage("Saved 'PEI'  ·  42 props", 999.0); TogglePause(true); }   // UG_EDITOR_SHOWMENU verify hook
+
+        // slim EditorPauseUI: dim + Resume / Save / Exit (Options/Display/etc submenus land later)
+        Control BuildPauseOverlay()
+        {
+            var root = new Control { Visible = false, MouseFilter = Control.MouseFilterEnum.Stop };
+            root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            var dim = new ColorRect { Color = new Color(0f, 0f, 0f, 0.6f) };
+            dim.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            root.AddChild(dim);
+            var box = new VBoxContainer { Position = new Vector2(-90f, -80f) };
+            box.SetAnchorsPreset(Control.LayoutPreset.Center);
+            box.AddThemeConstantOverride("separation", 10);
+            root.AddChild(box);
+            var title = new Label { Text = "PAUSED", HorizontalAlignment = HorizontalAlignment.Center, CustomMinimumSize = new Vector2(180f, 0f) };
+            title.AddThemeFontSizeOverride("font_size", 26);
+            box.AddChild(title);
+            void Btn(string t, System.Action onPress) { var b = new Button { Text = t, CustomMinimumSize = new Vector2(180f, 42f) }; b.Pressed += onPress; box.AddChild(b); }
+            Btn("Resume", () => TogglePause(false));
+            Btn("Save", () => { Editor?.Save(); ShowMessage($"Saved '{Editor?.MapName}'"); });
+            Btn("Exit to Menu", () => OnExit?.Invoke());
+            return root;
+        }
+
+        public override void _UnhandledInput(InputEvent ev)
+        {
+            if (ev is not InputEventKey { Pressed: true, Echo: false } k) return;
+            if (k.Keycode == Key.S && Input.IsKeyPressed(Key.Ctrl))   // Ctrl+S: save the whole level (source EditorInteract)
+            {
+                Editor?.Save(); ShowMessage($"Saved '{Editor?.MapName}'"); GetViewport().SetInputAsHandled();
+            }
+            else if (k.Keycode == Key.Escape)                          // ESC: toggle the pause menu (source EditorUI)
+            {
+                TogglePause(); GetViewport().SetInputAsHandled();
+            }
+        }
+
         public override void _Process(double delta)
         {
+            if (_toast != null && _toast.Visible) { _toastT -= delta; if (_toastT <= 0.0) _toast.Visible = false; }   // expire the message toast
             if (Editor == null || _status == null) return;
             float spd = Editor.Camera?.Speed ?? 0f;
             string space = Editor.Objects != null && Editor.Objects.GizmoLocalSpace ? "local" : "global";
@@ -83,7 +146,7 @@ namespace UnturnedGodot
             string spawn = Editor.Mode == EEditorMode.Spawns && Editor.Spawns != null ? $"   ·   Tab category · 1=add 2=remove · {Editor.Spawns.ModeText} · ,/. rot · [/] radius · V alt · T type · {Editor.Spawns.Count} spawns" : "";
             string envs = Editor.Mode == EEditorMode.Environment && Editor.Environment != null ? $"   ·   ,/. time · O overcast · {Editor.Environment.ModeText}{(Editor.RoadsEd != null ? $"   ·   {Editor.RoadsEd.ModeText}" : "")}" : "";
             string terr = Editor.Mode == EEditorMode.Terrain && Editor.TerrainEd != null ? $"   ·   LMB raise · Shift+LMB lower · [/] radius · ,/. strength · {Editor.TerrainEd.ModeText}" : "";
-            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{spawn}{envs}{terr}   ·   map: {Editor.MapName}";
+            _status.Text = $"{Editor.Mode}   ·   RMB fly · WASD · E/Q up-down · scroll = speed (×{spd:0}){obj}{spawn}{envs}{terr}   ·   Ctrl+S save · ESC menu   ·   map: {Editor.MapName}";
         }
     }
 }
