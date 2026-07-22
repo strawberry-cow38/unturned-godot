@@ -22,8 +22,10 @@ namespace UnturnedGodot
             if (b.Type == "vehicle") return Vehicle.BuildFromBundle(b);   // vehicles get the full drivable Vehicle rig, not the generic tree
             // everything else -> a StaticBody3D that renders + collides (or a FactoryPowerDevice if it declares power).
             string powerKind = b.ParamString("power_kind");
-            Node3D root = !string.IsNullOrEmpty(powerKind)
-                ? new FactoryPowerDevice { Name = b.Name, CollisionLayer = 1 << 0, IsSource = powerKind.ToLowerInvariant() == "output" }
+            bool isPowered = !string.IsNullOrEmpty(powerKind);
+            if (!isPowered) foreach (var pt in b.Points) if (PortKindFromName(pt.Name) != null) { isPowered = true; break; }   // multi-port: named Power* points make it a power device too
+            Node3D root = isPowered
+                ? new FactoryPowerDevice { Name = b.Name, CollisionLayer = 1 << 0, IsSource = powerKind?.ToLowerInvariant() == "output" }   // WireBehaviors re-sets IsSource from the actual ports
                 : new StaticBody3D { Name = b.Name, CollisionLayer = 1 << 0 };
 
             var partsHolder = new Node3D { Name = "Parts" };
@@ -132,24 +134,44 @@ namespace UnturnedGodot
                 GD.Print($"[assetbundle] {b.Name}: impact surface = {s}");
             }
 
-            // power in/out: bolt a ConnectionPort onto the grid (root is a FactoryPowerDevice, see Build)
+            // power in/OUTS: bolt ConnectionPort(s) onto the grid (root is a FactoryPowerDevice, see Build). MULTI-PORT:
+            // each point named PowerOut*/PowerIn*/PowerThru* becomes a port at its position -> a factory device can be a
+            // relay/battery/splitter (in AND out). Falls back to the single power_kind + "Power" point if no such points.
             if (root is FactoryPowerDevice fpd)
             {
-                var kind = (b.ParamString("power_kind") ?? "").ToLowerInvariant() switch
+                float watts = b.ParamFloat("power_watts", 0f);
+                string plabel = b.ParamString("power_label") ?? b.Name;
+                bool hasOutput = false; int made = 0;
+                foreach (var pt in b.Points)
                 {
-                    "output" => DeployableDef.PortKind.Output,
-                    "consumer" => DeployableDef.PortKind.Consumer,
-                    "passthrough" => DeployableDef.PortKind.Passthrough,
-                    _ => (DeployableDef.PortKind?)null,
-                };
-                if (kind.HasValue)
+                    var k = PortKindFromName(pt.Name);
+                    if (k == null) continue;
+                    fpd.AddPort(ConnectionPort.Create(fpd, new DeployableDef.Port { Kind = k.Value, Pos = AssetBundle.V3(pt.Pos), Watts = watts }, $"{plabel}:{pt.Name}"));
+                    if (k.Value == DeployableDef.PortKind.Output) hasOutput = true;
+                    made++;
+                }
+                if (made == 0)   // no named power points -> single power_kind (backward compat)
                 {
-                    var pt = b.FindPoint("Power");   // author-placed port position, else a default just above the base
-                    var port = new DeployableDef.Port { Kind = kind.Value, Pos = pt != null ? AssetBundle.V3(pt.Pos) : new Vector3(0f, 0.5f, 0f), Watts = b.ParamFloat("power_watts", 0f) };
-                    string label = b.ParamString("power_label") ?? b.Name;
-                    fpd.AddPort(ConnectionPort.Create(fpd, port, label));
+                    var kind = (b.ParamString("power_kind") ?? "").ToLowerInvariant() switch
+                    {
+                        "output" => DeployableDef.PortKind.Output,
+                        "consumer" => DeployableDef.PortKind.Consumer,
+                        "passthrough" => DeployableDef.PortKind.Passthrough,
+                        _ => (DeployableDef.PortKind?)null,
+                    };
+                    if (kind.HasValue)
+                    {
+                        var pt = b.FindPoint("Power");   // author-placed port position, else a default just above the base
+                        fpd.AddPort(ConnectionPort.Create(fpd, new DeployableDef.Port { Kind = kind.Value, Pos = pt != null ? AssetBundle.V3(pt.Pos) : new Vector3(0f, 0.5f, 0f), Watts = watts }, plabel));
+                        if (kind.Value == DeployableDef.PortKind.Output) hasOutput = true;
+                        made = 1;
+                    }
+                }
+                if (made > 0)
+                {
+                    fpd.IsSource = hasOutput;        // a device with any Output port produces
                     fpd.AddToGroup("deployables");   // PowerNet scans this group
-                    GD.Print($"[assetbundle] {b.Name}: power {kind} {port.Watts}w ('{label}')");
+                    GD.Print($"[assetbundle] {b.Name}: {made} power port(s) {watts}w, source={fpd.IsSource}");
                     if (b.ParamBool("powered_light"))   // powered-flag behaviour: a light gated by this device's power
                     {
                         fpd.AddPoweredLight(b.ParamFloat("light_energy", 4f), new Color(1f, 0.95f, 0.8f), b.ParamFloat("light_range", 6f));
@@ -157,6 +179,16 @@ namespace UnturnedGodot
                     }
                 }
             }
+        }
+
+        // A power point's name -> its port kind (multi-port authoring): PowerOut*/PowerIn*(or PowerConsumer)/PowerThru*(or PowerPass).
+        static DeployableDef.PortKind? PortKindFromName(string n)
+        {
+            n = (n ?? "").ToLowerInvariant();
+            if (n.StartsWith("powerout")) return DeployableDef.PortKind.Output;
+            if (n.StartsWith("powerin") || n.StartsWith("powercon")) return DeployableDef.PortKind.Consumer;
+            if (n.StartsWith("powerthru") || n.StartsWith("powerpass")) return DeployableDef.PortKind.Passthrough;
+            return null;
         }
 
         static StandardMaterial3D PartMaterial(AssetBundle.Part p)
