@@ -2264,6 +2264,17 @@ namespace UnturnedGodot
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
+            switch (System.Environment.GetEnvironmentVariable("UG_FACTORYPERSIST"))   // .level-persistence round-trip self-test
+            {
+                case "place":   // run 1: place a factory prop + save so a fresh run can reload it
+                    objs.Place(EditorObjects.FactoryPrefix + "factoryprop", new Vector3(20f, 0f, 20f), Basis.Identity);
+                    editor.Save();
+                    GD.Print("[factorypersist] placed + saved a factory prop");
+                    GetTree().Quit(); return;
+                case "check":   // run 2: LoadSaved already ran in the ctor above -> its "[editor] loaded N factory props" log is the proof
+                    GD.Print("[factorypersist] editor reopened (see the load log above)");
+                    GetTree().Quit(); return;
+            }
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
