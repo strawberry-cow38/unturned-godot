@@ -169,7 +169,11 @@ namespace UnturnedGodot
                 var m1 = ContentProvider.ParseObj("res://content/police_siren1.txt");
                 if (m0 != null && m1 != null)
                 {
-                    var pos = AssetBundle.V3(lightbarPt.Pos) - m0.GetAabb().Merge(m1.GetAabb()).GetCenter();
+                    var lbAabb = m0.GetAabb().Merge(m1.GetAabb());
+                    var hookPos = AssetBundle.V3(lightbarPt.Pos);
+                    var pos = hookPos - lbAabb.GetCenter();
+                    var housing = new MeshInstance3D { Mesh = new BoxMesh { Size = lbAabb.Size * new Vector3(1.02f, 0.8f, 0.8f) }, Position = hookPos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.05f, 0.05f, 0.06f), CullMode = BaseMaterial3D.CullModeEnum.Disabled } };   // dark middle housing (master)
+                    _composeRoot.AddChild(housing); _vehPreview.Add(housing);
                     var l0 = new MeshInstance3D { Mesh = m0, Position = pos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
                     var l1 = new MeshInstance3D { Mesh = m1, Position = pos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.3f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
                     _composeRoot.AddChild(l0); _vehPreview.Add(l0);

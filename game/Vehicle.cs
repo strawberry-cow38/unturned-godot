@@ -1088,7 +1088,13 @@ namespace UnturnedGodot
                 var m1 = ContentProvider.ParseObj("res://content/police_siren1.txt");
                 if (m0 != null && m1 != null)
                 {
-                    var pos = t0inv * AssetBundle.V3(lightbarHook.Pos) - m0.GetAabb().Merge(m1.GetAabb()).GetCenter();   // land the lightbar's centre on the hook, keep L/R
+                    var lbAabb = m0.GetAabb().Merge(m1.GetAabb());
+                    var hookPos = t0inv * AssetBundle.V3(lightbarHook.Pos);
+                    var pos = hookPos - lbAabb.GetCenter();   // land the lightbar's centre on the hook, keep L/R
+                    // middle HOUSING: the police lightbar's base/middle is baked into the police BODY (not the ripped lens
+                    // meshes), so add a dark bar spanning the lightbar to seat the red+blue lenses (master "the middle part?")
+                    var housing = new MeshInstance3D { Name = "LightbarBase", Mesh = new BoxMesh { Size = lbAabb.Size * new Vector3(1.02f, 0.8f, 0.8f) }, MaterialOverride = SolidMat(new Color(0.05f, 0.05f, 0.06f)), Position = hookPos };
+                    housing.SetMeta("no_outline", true); v.AddChild(housing);
                     var mat0 = new StandardMaterial3D { AlbedoColor = new Color(0.5f, 0.08f, 0.08f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // red lens
                     var mat1 = new StandardMaterial3D { AlbedoColor = new Color(0.08f, 0.12f, 0.5f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // blue lens
                     var mi0 = new MeshInstance3D { Name = "Lightbar0", Mesh = m0, MaterialOverride = mat0, Position = pos };
