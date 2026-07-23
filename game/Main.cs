@@ -2539,6 +2539,18 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case X: all beverages drinkable={allDrink} · fuel notDrinkable={fuelNotDrink} · OJ sip {sx:0}mL (+{hydx:0.00})");
             if (!(allDrink && fuelNotDrink && ojSip)) ok = false;
 
+            // --- Case Y (water tower): a map WATER TOWER is an INFINITE, TAINTED water source with head -> hose it downhill
+            // into a tank; the tank fills with TAINTED water and the tower never depletes (strawberry). ---
+            var tower = WaterTowerSource.Make();
+            var towerTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 5000f, 0f, WaterQuality.Clean), 125f);
+            tower.Position = new Vector3(-6f, 3f, 248f); towerTank.Position = new Vector3(2f, 0f, 248f);   // tower high, tank low (gravity, no pump)
+            AddChild(tower); AddChild(towerTank);
+            AddChild(new Hose { Source = tower.Ports[0], Consumer = towerTank.Ports[0] });   // tower output (Ports[0]=Source) -> tank
+            for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool towerOk = towerTank.Tank.Amount > 400f && towerTank.Tank.Quality == WaterQuality.Tainted && tower.Tank.Amount > 199999f;   // filled + tainted; tower infinite (undepleted)
+            GD.Print($"[hosetool] case Y: tank={towerTank.Tank.Amount:0} q={towerTank.Tank.Quality} (want >400/Tainted) · tower={tower.Tank.Amount:0} (want ~200000 infinite)");
+            if (!towerOk) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }
