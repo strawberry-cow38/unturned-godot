@@ -974,7 +974,28 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[0],   // NO wheels -- a boat floats on buoyancy
         };
         public static Vehicle BuildRunabout(int variant = 0) => Build(_runabout, variant, "runabout");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), _ => BuildJeep(variant) };
+        // APC -- 8-wheeled AMPHIBIOUS armored car (source vehicles/apc). WaterMode.Amphibious: drives on land via the
+        // wheels AND floats + water-drives when its hull is in the sea. Wheels approximated (4/side) from the hull box.
+        static readonly Spec _apc = new()
+        {
+            Body = "apc_body.txt", Water = WaterMode.Amphibious,
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.55f,   // jeep wheel mesh reused (APC wheel not ripped yet)
+            DefaultPaints = new[] { "#5a6650" },   // military olive
+            Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = 6f, Brake = 35f,
+            BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
+            ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
+            Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.8f, IdleVolume = 0.8f, MaxVolume = 1.0f,
+            Fuel = 1500f, Health = 800f, Name = "APC",
+            Wheels = new (float, float, float, bool)[]
+            {
+                (-1.7f, 0.25f, -2.5f, true),   (1.7f, 0.25f, -2.5f, true),    // front axle (steers)
+                (-1.7f, 0.25f, -0.83f, false), (1.7f, 0.25f, -0.83f, false),
+                (-1.7f, 0.25f, 0.83f, false),  (1.7f, 0.25f, 0.83f, false),
+                (-1.7f, 0.25f, 2.5f, false),   (1.7f, 0.25f, 2.5f, false),    // rear
+            },
+        };
+        public static Vehicle BuildAPC(int variant = 0) => Build(_apc, variant, "apc");
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), "apc" => BuildAPC(variant), _ => BuildJeep(variant) };
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
