@@ -985,7 +985,7 @@ namespace UnturnedGodot
         static readonly Spec _apc = new()
         {
             Body = "apc_body.txt", Water = WaterMode.Amphibious,
-            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.55f,   // jeep wheel mesh reused (APC wheel not ripped yet)
+            Wheel = "apc_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.74f,   // REAL APC wheel (Wheel_LOD0 ripped): radius 0.74 (was a too-small 0.55 jeep wheel); tire albedo reused
             Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
             Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = 6f, Brake = 35f,
             BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
@@ -994,12 +994,12 @@ namespace UnturnedGodot
             Fuel = 1500f, Health = 800f, Name = "APC",
             SpotPos = new[] { new Vector3(-1.03f, 0.78f, -4.0f), new Vector3(1.03f, 0.78f, -4.0f) }, OmniPos = Vector3.Zero,   // headlight beams at the 2 lens clusters (real Headlights mesh: front z-4.06, y0.78, x-groups ±1.03)
             TailPos = new[] { new Vector3(-1.4f, 0.72f, 3.5f), new Vector3(1.4f, 0.72f, 3.5f) },   // taillight red glow at the rear lenses (real Taillights mesh: z+3.5, x±1.4)
-            Wheels = new (float, float, float, bool)[]
+            Wheels = new (float, float, float, bool)[]   // REAL Wheel_0..7 positions from the prefab: X±2.0, Y0.1, 4 axles (was guessed X±1.7 Y0.25)
             {
-                (-1.7f, 0.25f, -2.5f, true),   (1.7f, 0.25f, -2.5f, true),    // front axle (steers)
-                (-1.7f, 0.25f, -0.83f, false), (1.7f, 0.25f, -0.83f, false),
-                (-1.7f, 0.25f, 0.83f, false),  (1.7f, 0.25f, 0.83f, false),
-                (-1.7f, 0.25f, 2.5f, false),   (1.7f, 0.25f, 2.5f, false),    // rear
+                (-2.0f, 0.1f, -2.4f, true),   (2.0f, 0.1f, -2.4f, true),    // front axle (steers)
+                (-2.0f, 0.1f, -0.75f, false), (2.0f, 0.1f, -0.75f, false),
+                (-2.0f, 0.1f, 0.9f, false),   (2.0f, 0.1f, 0.9f, false),
+                (-2.0f, 0.1f, 2.55f, false),  (2.0f, 0.1f, 2.55f, false),    // rear
             },
             Parts = new (string, Color)[]
             {
@@ -2134,7 +2134,7 @@ namespace UnturnedGodot
             if (_water != WaterMode.Car) ApplyWaterPhysics((float)delta);   // BOAT/AMPHIBIOUS: buoyancy float + water propulsion (overrides wheel drive while afloat)
         }
 
-        const float BoatThrust = 6f, BoatTurn = 2.2f, BoatDrag = 0.9f;   // water propulsion / rudder yaw / extra horizontal drag (controllable top speed atop the source voxel damping)
+        const float BoatThrust = 15f, BoatTurn = 2.2f, BoatDrag = 0.5f;   // water propulsion / rudder yaw / extra horizontal drag. Thrust 6->15 + drag 0.9->0.5: the source voxel damping now adds its own per-voxel water drag, so the old values left the boat sluggish (~4 m/s); these hit a proper speedboat pace (strawberry)
         const float WaterDensity = 1000f, HullDensity = 500f;            // source Buoyancy.cs: rho_water, and density=500 (a vehicle floats at ~half-submersion)
 
         // BOAT / AMPHIBIOUS water physics. Buoyancy is a faithful port of the source Buoyancy.cs voxel-Archimedes model:
