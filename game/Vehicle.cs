@@ -1004,9 +1004,13 @@ namespace UnturnedGodot
             s.Brake = b.ParamFloat("veh_brake", s.Brake);       // braking force
             s.SteerMax = b.ParamFloat("veh_steer", s.SteerMax); // max steer angle (deg) -> turn radius
             s.Fuel = b.ParamFloat("veh_fuel", s.Fuel);          // tank size (HUD gauge)
+            var vw = b.ParamString("veh_wheel", null);          // swap the wheel ASSET (master); else the preset's wheel mesh
+            if (!string.IsNullOrEmpty(vw)) { s.Wheel = vw; s.WheelTex = AssetBundle.ResolveAlbedo(vw); }
 
-            GD.Print($"[factoryvehicle] {s.Name} preset={preset ?? "jeep"} engine={s.Engine} speed={s.SpeedMax} steer={s.SteerMax} brake={s.Brake} fuel={s.Fuel} health={s.Health}");
+            GD.Print($"[factoryvehicle] {s.Name} preset={preset ?? "jeep"} engine={s.Engine} speed={s.SpeedMax} steer={s.SteerMax} brake={s.Brake} fuel={s.Fuel} health={s.Health} wheel={s.Wheel}");
             var v = Build(s, 0, "factory:" + s.Name);
+            float susp = b.ParamFloat("veh_suspension", 0f);   // wheel travel (master): higher = softer/off-road, lower = stiff. 0 = the spec default (0.25)
+            if (susp > 0f && v._wNodes != null) foreach (var w in v._wNodes) w.SuspensionTravel = susp;
             for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
             {
                 var mi = AssetBundleLoader.BuildPart(b.Parts[i]);
@@ -1040,6 +1044,16 @@ namespace UnturnedGodot
             b.SetParam("veh_steer", s.SteerMax);
             b.SetParam("veh_fuel", s.Fuel);
             GD.Print($"[vehpreset] {preset} -> engine {s.Engine} speed {s.SpeedMax} steer {s.SteerMax} brake {s.Brake} fuel {s.Fuel}");
+        }
+
+        // The wheel MESH the editor should draw (matches what BuildFromBundle uses): explicit veh_wheel, else the
+        // chosen preset's wheel, else the jeep default. + its albedo so the editor can texture it like the game.
+        public static string WheelMeshFor(AssetBundle b)
+        {
+            var vw = b.ParamString("veh_wheel", null);
+            if (!string.IsNullOrEmpty(vw)) return vw;
+            var preset = b.ParamString("veh_preset", null);
+            return SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").Wheel;
         }
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated

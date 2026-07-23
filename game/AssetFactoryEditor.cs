@@ -40,8 +40,8 @@ namespace UnturnedGodot
         OptionButton _gunPreset;   // pick any real weapon -> load its full stats as a starting point
         LineEdit _depHealth, _depFuel, _depEnergy, _depCharge;   // deployable DEVICE stats (BuildDeployableDef reads deploy_*)
         CheckBox _depBattery, _depSwitch, _depTurbine, _depShatter;   // deployable device behaviour toggles
-        LineEdit _vehEngine, _vehSpeed, _vehSteer, _vehBrake, _vehFuel, _vehHealth;   // vehicle drive stats (BuildFromBundle reads these)
-        OptionButton _vehPreset;   // pick any real vehicle -> load its full driving feel as a base
+        LineEdit _vehEngine, _vehSpeed, _vehSteer, _vehBrake, _vehFuel, _vehHealth, _vehSusp;   // vehicle drive stats (BuildFromBundle reads these)
+        OptionButton _vehPreset, _vehWheel;   // preset = full driving feel base; wheel = swap the wheel mesh asset
         VBoxContainer _gunPanel, _devicePanel, _vehiclePanel;   // type-gated panels: gun on gun, device on deployable, vehicle on vehicle
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
@@ -101,6 +101,28 @@ namespace UnturnedGodot
             foreach (var c in _bundle.Colliders) { var n = BoxViz(new Color(1f, 0.85f, 0.1f, 0.28f), c.Pos, c.Rot, c.Size); _composeRoot.AddChild(n); _colNodes.Add(n); }
             foreach (var v in _bundle.Volumes) { var n = BoxViz(new Color(0.1f, 0.85f, 1f, 0.24f), v.Pos, v.Rot, v.Size); _composeRoot.AddChild(n); _volNodes.Add(n); }
             foreach (var pt in _bundle.Points) { var n = PointViz(pt.Pos, pt.Rot); _composeRoot.AddChild(n); _ptNodes.Add(n); }
+            RebuildWheelPreview();   // vehicle: draw the REAL wheel meshes at the Wheel_* points (master "show how it'll look")
+        }
+
+        readonly List<MeshInstance3D> _wheelPreview = new();
+        void RebuildWheelPreview()
+        {
+            foreach (var w in _wheelPreview) if (IsInstanceValid(w)) w.QueueFree();
+            _wheelPreview.Clear();
+            if (_bundle.Type != "vehicle") return;
+            var wheelName = Vehicle.WheelMeshFor(_bundle);
+            if (string.IsNullOrEmpty(wheelName)) return;
+            foreach (var pt in _bundle.Points)
+            {
+                if (pt.Name == null || !pt.Name.StartsWith("Wheel_")) continue;
+                var p = AssetBundle.V3(pt.Pos);
+                // reuse BuildPart (textured): left wheels (x<0) mirror so the tread faces out, same as the runtime rig
+                var wp = new AssetBundle.Part { Mesh = wheelName, Albedo = AssetBundle.ResolveAlbedo(wheelName), Pos = new[] { p.X, p.Y, p.Z }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { p.X < 0 ? -1f : 1f, 1f, 1f } };
+                var mi = AssetBundleLoader.BuildPart(wp);
+                if (mi == null) continue;
+                _composeRoot.AddChild(mi);
+                _wheelPreview.Add(mi);
+            }
         }
 
         IEnumerable<Node3D> AllNodes()
@@ -402,7 +424,7 @@ namespace UnturnedGodot
             _vehPreset = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
             _vehPreset.AddItem("— none (jeep) —");
             foreach (var n in Vehicle.SpecNames) _vehPreset.AddItem(n);
-            _vehPreset.ItemSelected += i => { if (i > 0) { var nm = _vehPreset.GetItemText((int)i); Vehicle.WritePresetParams(_bundle, nm); SyncVehicleUI(); Status($"vehicle preset: {nm}"); } else { _bundle.SetParam("veh_preset", ""); Status("vehicle preset: none (jeep)"); } };
+            _vehPreset.ItemSelected += i => { if (i > 0) { var nm = _vehPreset.GetItemText((int)i); Vehicle.WritePresetParams(_bundle, nm); SyncVehicleUI(); RebuildWheelPreview(); Status($"vehicle preset: {nm}"); } else { _bundle.SetParam("veh_preset", ""); SyncVehicleUI(); RebuildWheelPreview(); Status("vehicle preset: none (jeep)"); } };
             vpRow.AddChild(_vehPreset);
             _vehiclePanel.AddChild(vpRow);
             var vRow = new HBoxContainer();
@@ -414,6 +436,16 @@ namespace UnturnedGodot
             _vehFuel = NumFieldV("fuel"); vRow.AddChild(_vehFuel);
             _vehHealth = NumFieldV("health"); vRow.AddChild(_vehHealth);
             _vehiclePanel.AddChild(vRow);
+            var vRow2 = new HBoxContainer();   // wheel asset + suspension (master: swap wheels + adjust suspension)
+            vRow2.AddChild(new Label { Text = "wheel" });
+            _vehWheel = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
+            _vehWheel.AddItem("— preset's —");
+            foreach (var w in WheelAssets) _vehWheel.AddItem(w);
+            _vehWheel.ItemSelected += i => { _bundle.SetParam("veh_wheel", i > 0 ? _vehWheel.GetItemText((int)i) : ""); RebuildWheelPreview(); Status(i > 0 ? $"wheel: {_vehWheel.GetItemText((int)i)}" : "wheel: preset's"); };
+            vRow2.AddChild(_vehWheel);
+            vRow2.AddChild(new Label { Text = "susp" });
+            _vehSusp = NumFieldV("travel"); vRow2.AddChild(_vehSusp);
+            _vehiclePanel.AddChild(vRow2);
             SyncVehicleUI();
             UpdatePanelVis();
 
@@ -618,7 +650,11 @@ namespace UnturnedGodot
             SetNumParam("veh_brake", _vehBrake?.Text);
             SetNumParam("veh_fuel", _vehFuel?.Text);
             SetNumParam("health", _vehHealth?.Text);
+            SetNumParam("veh_suspension", _vehSusp?.Text);
         }
+
+        // The distinct real wheel meshes (from the vehicle Specs) offered by the wheel picker.
+        static readonly string[] WheelAssets = { "jeep_wheel.txt", "quad_wheel.txt", "bus_wheel.txt", "sedan_wheel.txt", "hatchback_wheel.txt", "humvee_wheel.txt", "roadster_wheel.txt", "tractor_wheel_front.txt" };
 
         void SyncVehicleUI()
         {
@@ -626,8 +662,11 @@ namespace UnturnedGodot
             _vehEngine.Text = ParamNumStr("engine"); _vehSpeed.Text = ParamNumStr("speed_max");
             _vehSteer.Text = ParamNumStr("veh_steer"); _vehBrake.Text = ParamNumStr("veh_brake");
             _vehFuel.Text = ParamNumStr("veh_fuel"); _vehHealth.Text = ParamNumStr("health");
+            _vehSusp.Text = ParamNumStr("veh_suspension");
             var p = _bundle.ParamString("veh_preset", "");   // reflect the loaded preset in the dropdown (setting Selected doesn't re-fire ItemSelected)
             if (_vehPreset != null) { int idx = 0; for (int i = 1; i < _vehPreset.ItemCount; i++) if (_vehPreset.GetItemText(i) == p) { idx = i; break; } _vehPreset.Selected = idx; }
+            var wm = _bundle.ParamString("veh_wheel", "");   // reflect the chosen wheel asset
+            if (_vehWheel != null) { int idx = 0; for (int i = 1; i < _vehWheel.ItemCount; i++) if (_vehWheel.GetItemText(i) == wm) { idx = i; break; } _vehWheel.Selected = idx; }
         }
 
         static string[] HooksFor(string type) => type switch
