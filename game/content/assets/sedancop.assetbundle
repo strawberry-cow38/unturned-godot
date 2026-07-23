@@ -1,0 +1,13 @@
+{
+  "name": "sedancop",
+  "type": "vehicle",
+  "parts": [
+    { "mesh": "sedan_body.txt", "color": [0.85, 0.15, 0.15], "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+  ],
+  "points": [
+    { "name": "Lightbar", "pos": [0, 1.45, 0], "rot": [0, 0, 0] }
+  ],
+  "params": {
+    "veh_preset": "sedan"
+  }
+}
