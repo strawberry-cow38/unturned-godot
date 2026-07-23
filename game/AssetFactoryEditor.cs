@@ -98,7 +98,7 @@ namespace UnturnedGodot
             foreach (var n in AllNodes()) if (IsInstanceValid(n)) n.QueueFree();
             _partNodes.Clear(); _colNodes.Clear(); _volNodes.Clear(); _ptNodes.Clear();
             foreach (var p in _bundle.Parts) { var mi = AssetBundleLoader.BuildPart(p) ?? Placeholder(p); _composeRoot.AddChild(mi); _partNodes.Add(mi); }
-            foreach (var c in _bundle.Colliders) { var n = BoxViz(new Color(1f, 0.85f, 0.1f, 0.28f), c.Pos, c.Rot, c.Size); _composeRoot.AddChild(n); _colNodes.Add(n); }
+            foreach (var c in _bundle.Colliders) { var n = BoxViz(new Color(1f, 0.85f, 0.1f, 0.12f), c.Pos, c.Rot, c.Size); _composeRoot.AddChild(n); _colNodes.Add(n); }   // faint fill: a body-hugging vehicle collider at 0.28 tinted the whole painted body olive
             foreach (var v in _bundle.Volumes) { var n = BoxViz(new Color(0.1f, 0.85f, 1f, 0.24f), v.Pos, v.Rot, v.Size); _composeRoot.AddChild(n); _volNodes.Add(n); }
             foreach (var pt in _bundle.Points) { var n = PointViz(pt.Pos, pt.Rot); _composeRoot.AddChild(n); _ptNodes.Add(n); }
             RebuildVehiclePreview();   // vehicle: draw the REAL wheel meshes at the Wheel_* points (master "show how it'll look")
@@ -110,7 +110,7 @@ namespace UnturnedGodot
             foreach (var w in _vehPreview) if (IsInstanceValid(w)) w.QueueFree();
             _vehPreview.Clear();
             if (_bundle.Type != "vehicle") return;
-            if (_partNodes.Count > 0) { var bp = Vehicle.BodyPaintFor(_bundle); GD.Print($"[bodypaint] bp={(bp==null?"NULL":bp.GetType().Name)} part0={_partNodes[0].GetType().Name} surfaces={(_partNodes[0] as MeshInstance3D)?.Mesh?.GetSurfaceCount()}"); if (System.Environment.GetEnvironmentVariable("UG_PAINTPLAIN")=="1") _partNodes[0].MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f,0.37f,0.51f) }; else if (bp != null) _partNodes[0].MaterialOverride = bp; }   // paint the body like the runtime (else it keeps its flat BuildPart albedo)
+            if (_partNodes.Count > 0) { var bp = Vehicle.BodyPaintFor(_bundle); if (bp != null) _partNodes[0].MaterialOverride = bp; }   // paint the body like the runtime (the yellow collider-viz box overlays it in-editor, tinting it olive -- true colour shows in --assetpreview)
             var bodyPart = _bundle.Parts.Count > 0 ? _bundle.Parts[0] : null;
             var bodyMeshName = bodyPart?.Mesh ?? "";
             var bBase = bodyMeshName.EndsWith("_body.txt") ? bodyMeshName[..^9] : bodyMeshName.EndsWith(".txt") ? bodyMeshName[..^4] : bodyMeshName;
