@@ -29,8 +29,8 @@ def trs(pos, q, s):
     M = np.eye(4); M[:3, :3] = R @ np.diag([s["x"], s["y"], s["z"]]); M[:3, 3] = [pos["x"], pos["y"], pos["z"]]
     return M
 
-out = sys.argv[1]
-prefab = next(o for p, o in env.container.items() if p.lower().endswith("vehicles/police/vehicle.prefab") and o.type.name == "GameObject")
+name = sys.argv[1]; out = sys.argv[2]   # <vehicle-name> <out.txt> -- e.g. police / ambulance / firetruck
+prefab = next(o for p, o in env.container.items() if p.lower().endswith(f"vehicles/{name}/vehicle.prefab") and o.type.name == "GameObject")
 root_trt = comp_of(prefab.read_typetree(), ("Transform",)).read_typetree()
 root_inv = np.linalg.inv(trs(root_trt["m_LocalPosition"], root_trt["m_LocalRotation"], root_trt["m_LocalScale"]))
 
