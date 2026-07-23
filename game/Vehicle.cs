@@ -1066,6 +1066,24 @@ namespace UnturnedGodot
             return SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").WheelTex;
         }
 
+        // Interior detail models the editor should draw at the Steer / Seat hooks + BuildFromBundle attaches.
+        // Preset's model if it ships one (roadster_seats, semi_steer, …); else a sensible default / null.
+        public static string SteerMeshFor(AssetBundle b)
+        {
+            var v = b.ParamString("veh_steer_model", null);
+            if (!string.IsNullOrEmpty(v)) return v;
+            var preset = b.ParamString("veh_preset", null);
+            var sm = SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").SteerModel;
+            return string.IsNullOrEmpty(sm) ? "jeep_steer.txt" : sm;   // default wheel if the preset bakes it into the body
+        }
+        public static string SeatMeshFor(AssetBundle b)
+        {
+            var v = b.ParamString("veh_seat_model", null);
+            if (!string.IsNullOrEmpty(v)) return v;
+            var preset = b.ParamString("veh_preset", null);
+            return SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").SeatModelFile;   // may be null (seats vary; no blanket default)
+        }
+
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
         static Spec SpecFor(string name) => name switch

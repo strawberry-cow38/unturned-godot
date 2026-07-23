@@ -101,28 +101,47 @@ namespace UnturnedGodot
             foreach (var c in _bundle.Colliders) { var n = BoxViz(new Color(1f, 0.85f, 0.1f, 0.28f), c.Pos, c.Rot, c.Size); _composeRoot.AddChild(n); _colNodes.Add(n); }
             foreach (var v in _bundle.Volumes) { var n = BoxViz(new Color(0.1f, 0.85f, 1f, 0.24f), v.Pos, v.Rot, v.Size); _composeRoot.AddChild(n); _volNodes.Add(n); }
             foreach (var pt in _bundle.Points) { var n = PointViz(pt.Pos, pt.Rot); _composeRoot.AddChild(n); _ptNodes.Add(n); }
-            RebuildWheelPreview();   // vehicle: draw the REAL wheel meshes at the Wheel_* points (master "show how it'll look")
+            RebuildVehiclePreview();   // vehicle: draw the REAL wheel meshes at the Wheel_* points (master "show how it'll look")
         }
 
-        readonly List<MeshInstance3D> _wheelPreview = new();
-        void RebuildWheelPreview()
+        readonly List<Node3D> _vehPreview = new();   // wheel/steer/seat meshes + headlight markers & lights (editor preview)
+        void RebuildVehiclePreview()
         {
-            foreach (var w in _wheelPreview) if (IsInstanceValid(w)) w.QueueFree();
-            _wheelPreview.Clear();
+            foreach (var w in _vehPreview) if (IsInstanceValid(w)) w.QueueFree();
+            _vehPreview.Clear();
             if (_bundle.Type != "vehicle") return;
-            var wheelName = Vehicle.WheelMeshFor(_bundle);
-            if (string.IsNullOrEmpty(wheelName)) return;
+            // wheels at each Wheel_* hook (left wheels mirrored so the tread faces out, like the runtime rig)
+            var wheelName = Vehicle.WheelMeshFor(_bundle); var wheelTex = Vehicle.WheelTexFor(_bundle);
             foreach (var pt in _bundle.Points)
             {
                 if (pt.Name == null || !pt.Name.StartsWith("Wheel_")) continue;
                 var p = AssetBundle.V3(pt.Pos);
-                // reuse BuildPart (textured): left wheels (x<0) mirror so the tread faces out, same as the runtime rig
-                var wp = new AssetBundle.Part { Mesh = wheelName, Albedo = Vehicle.WheelTexFor(_bundle), Pos = new[] { p.X, p.Y, p.Z }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { p.X < 0 ? -1f : 1f, 1f, 1f } };
-                var mi = AssetBundleLoader.BuildPart(wp);
-                if (mi == null) continue;
-                _composeRoot.AddChild(mi);
-                _wheelPreview.Add(mi);
+                AddDetailMesh(wheelName, wheelTex, p, new Vector3(p.X < 0 ? -1f : 1f, 1f, 1f));
             }
+            // steering wheel at the Steer hook; seat model at the first Seat_* hook (one ripped mesh covers the row)
+            var steerPt = _bundle.Points.Find(pt => pt.Name == "Steer");
+            if (steerPt != null) AddDetailMesh(Vehicle.SteerMeshFor(_bundle), null, AssetBundle.V3(steerPt.Pos), Vector3.One);
+            var seatPt = _bundle.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
+            if (seatPt != null) AddDetailMesh(Vehicle.SeatMeshFor(_bundle), null, AssetBundle.V3(seatPt.Pos), Vector3.One);
+            // headlight emission points: a bright emissive marker + a forward (-Z) spotlight at each Headlight hook
+            foreach (var pt in _bundle.Points)
+            {
+                if (pt.Name == null || !pt.Name.StartsWith("Headlight")) continue;
+                var hp = AssetBundle.V3(pt.Pos);
+                var marker = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.1f, Height = 0.2f }, Position = hp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.96f, 0.7f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
+                _composeRoot.AddChild(marker); _vehPreview.Add(marker);
+                var beam = new SpotLight3D { Position = hp, SpotRange = 8f, SpotAngle = 32f, LightColor = new Color(1f, 0.95f, 0.75f), LightEnergy = 3f };   // fires local -Z = the vehicle's forward
+                _composeRoot.AddChild(beam); _vehPreview.Add(beam);
+            }
+        }
+
+        void AddDetailMesh(string mesh, string albedo, Vector3 pos, Vector3 scale)
+        {
+            if (string.IsNullOrEmpty(mesh)) return;
+            var part = new AssetBundle.Part { Mesh = mesh, Albedo = albedo ?? AssetBundle.ResolveAlbedo(mesh), Pos = new[] { pos.X, pos.Y, pos.Z }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { scale.X, scale.Y, scale.Z } };
+            var mi = AssetBundleLoader.BuildPart(part);
+            if (mi == null) return;
+            _composeRoot.AddChild(mi); _vehPreview.Add(mi);
         }
 
         IEnumerable<Node3D> AllNodes()
@@ -424,7 +443,7 @@ namespace UnturnedGodot
             _vehPreset = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
             _vehPreset.AddItem("— none (jeep) —");
             foreach (var n in Vehicle.SpecNames) _vehPreset.AddItem(n);
-            _vehPreset.ItemSelected += i => { if (i > 0) { var nm = _vehPreset.GetItemText((int)i); Vehicle.WritePresetParams(_bundle, nm); SyncVehicleUI(); RebuildWheelPreview(); Status($"vehicle preset: {nm}"); } else { _bundle.SetParam("veh_preset", ""); SyncVehicleUI(); RebuildWheelPreview(); Status("vehicle preset: none (jeep)"); } };
+            _vehPreset.ItemSelected += i => { if (i > 0) { var nm = _vehPreset.GetItemText((int)i); Vehicle.WritePresetParams(_bundle, nm); SyncVehicleUI(); RebuildVehiclePreview(); Status($"vehicle preset: {nm}"); } else { _bundle.SetParam("veh_preset", ""); SyncVehicleUI(); RebuildVehiclePreview(); Status("vehicle preset: none (jeep)"); } };
             vpRow.AddChild(_vehPreset);
             _vehiclePanel.AddChild(vpRow);
             var vRow = new HBoxContainer();
@@ -441,7 +460,7 @@ namespace UnturnedGodot
             _vehWheel = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
             _vehWheel.AddItem("— preset's —");
             foreach (var w in WheelAssets) _vehWheel.AddItem(w);
-            _vehWheel.ItemSelected += i => { _bundle.SetParam("veh_wheel", i > 0 ? _vehWheel.GetItemText((int)i) : ""); RebuildWheelPreview(); Status(i > 0 ? $"wheel: {_vehWheel.GetItemText((int)i)}" : "wheel: preset's"); };
+            _vehWheel.ItemSelected += i => { _bundle.SetParam("veh_wheel", i > 0 ? _vehWheel.GetItemText((int)i) : ""); RebuildVehiclePreview(); Status(i > 0 ? $"wheel: {_vehWheel.GetItemText((int)i)}" : "wheel: preset's"); };
             vRow2.AddChild(_vehWheel);
             vRow2.AddChild(new Label { Text = "susp" });
             _vehSusp = NumFieldV("travel"); vRow2.AddChild(_vehSusp);

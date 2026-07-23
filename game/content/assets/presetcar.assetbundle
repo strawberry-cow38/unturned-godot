@@ -9,7 +9,10 @@
     { "name": "Wheel_FR", "pos": [1.30, 0.25, -1.40],  "rot": [0, 0, 0] },
     { "name": "Wheel_RL", "pos": [-1.30, 0.25, 1.40],  "rot": [0, 0, 0] },
     { "name": "Wheel_RR", "pos": [1.30, 0.25, 1.40],   "rot": [0, 0, 0] },
-    { "name": "Seat_0",   "pos": [0.40, 0.90, 0.40],   "rot": [0, 0, 0] }
+    { "name": "Seat_0",   "pos": [0.40, 0.90, 0.40],   "rot": [0, 0, 0] },
+    { "name": "Steer",       "pos": [-0.5, 1.0, -0.9], "rot": [0, 0, 0] },
+    { "name": "Headlight_0", "pos": [-0.8, 0.6, -2.2], "rot": [0, 0, 0] },
+    { "name": "Headlight_1", "pos": [0.8, 0.6, -2.2],  "rot": [0, 0, 0] }
   ],
   "params": {
     "veh_preset": "roadster",
