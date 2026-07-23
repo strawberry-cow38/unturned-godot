@@ -116,44 +116,19 @@ namespace UnturnedGodot
             var transformers = new System.Collections.Generic.List<FluidContainer>();
             var allC = new System.Collections.Generic.List<FluidContainer>();   // every device (incl. fittings) for pump-lift propagation
 
+            // 1) collect every device FIRST -- the pump-lift ceiling (below) has to be known BEFORE we set port rates, so a
+            //    pumped-line device can flow at the BOOSTED rate (strawberry).
             foreach (var n in tree.GetNodesInGroup("fluid_devices"))
-                if (n is FluidContainer c && GodotObject.IsInstanceValid(c))
-                {
-                    allC.Add(c);
-                    bool hasTank = c.Tank != null;   // a fitting (splitter/combiner/pump/transformer) is tankless -> no clamp/move
-                    // a source supplies while it has fluid; a STORAGE TANK also supplies from its OUTPUT while it has fluid
-                    // (it's a buffer: fills from its input, feeds from its output); a TRANSFORMER supplies only while its
-                    // input flowed last tick (1-tick lag); a valve/broken container blocks.
-                    bool hasFluid = hasTank && c.Tank.Amount > 0.001f;
-                    bool supplying = c.Role == FluidRole.Transformer ? c.TransformActive
-                                   : ((c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && hasFluid);
-                    var dev = new FluidDevice { Supplying = supplying, Blocked = c.Blocked };
-                    foreach (var p in c.Ports)
-                    {
-                        float rate = p.Rate;
-                        // a source/tank OUTPUT can't push more than the tank holds (near-empty pushes less; empties cleanly).
-                        // an INFINITE inlet skips the clamp -> it never runs dry.
-                        if (hasTank && !c.Infinite && (c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source)
-                            rate = Mathf.Min(rate, c.Tank.Amount * inv);
-                        // a storage INPUT can't take more than fits (near-full draws less; full -> 0 -> stops flowing)
-                        else if (hasTank && c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer)
-                            rate = Mathf.Min(rate, c.Tank.Space * inv);
-                        portMap[p] = dev.AddPort(p.Kind, rate);
-                    }
-                    devices.Add(dev);
-                    if (hasTank) containers.Add(c);   // only tanked containers move fluid (fittings just relay)
-                    if (c.Role == FluidRole.Transformer) transformers.Add(c);
-                }
+                if (n is FluidContainer c0 && GodotObject.IsInstanceValid(c0)) allC.Add(c0);
 
-            // GRAVITY GATE + PUMP LIFT (strawberry 2026-07-22): a hose conducts passively only DOWNHILL (consumer below
-            // source). Uphill/level needs a powered PUMP's head lift. A pump's head sets a pressure CEILING = its world-Y +
-            // HeadLift, and that ceiling carries THROUGH relay fittings (splitter/combiner/pump) to the whole connected
-            // chain, but STOPS at a tank or a transformer ("up to a source/consumer, not through it"). So a hose conducts
-            // uphill if its consumer end sits at/below the best ceiling reachable at either of its ends. Gated here (not in
-            // the type-agnostic solver) since elevation is a world concept; a blocked hose is left out -> its ports read 0.
+            // 2) GRAVITY GATE + PUMP LIFT + FLOW BOOST: a powered pump sets a pressure CEILING = its world-Y + HeadLift that
+            //    relaxes across the hose graph THROUGH relay fittings (splitter/combiner/pump/open-valve), stopping at a tank
+            //    or transformer ("up to a source/consumer, not through it"). A hose conducts uphill if its consumer end sits
+            //    at/below the best ceiling reachable at either end. A device WITHIN a powered pump's reach (ceiling > -inf) is
+            //    on a PUMPED LINE -> it flows at PumpBoost x the garden-hose gravity rate (strawberry: 125 -> 625 ml/s).
+            //    Gated here (not in the type-agnostic solver) since elevation is a world concept.
             const float HeadEps = 0.05f;   // ignore sub-5cm height noise (same-level tanks don't dribble)
-
-            // relax the pump pressure ceiling across the hose graph, propagating only OUT OF relay-fitting nodes
+            const float PumpBoost = 5f;    // a powered pump runs its connected line at 5x the gravity rate
             var ceiling = new System.Collections.Generic.Dictionary<FluidContainer, float>();
             foreach (var c in allC) ceiling[c] = (c is FluidPump p && p.IsPowered) ? c.GlobalPosition.Y + p.HeadLift : float.NegativeInfinity;
             var rawHoses = new System.Collections.Generic.List<(FluidContainer A, FluidContainer B)>();
@@ -170,6 +145,66 @@ namespace UnturnedGodot
                 }
                 if (!changed) break;
             }
+
+            // 3) build the solver devices/ports. A pumped-line device's base rate is boosted BEFORE the amount/space clamp,
+            //    so the clamp still empties a near-dry source (and fills a near-full tank) cleanly at the boosted pace.
+            foreach (var c in allC)
+                {
+                    bool hasTank = c.Tank != null;   // a fitting (splitter/combiner/pump/transformer) is tankless -> no clamp/move
+                    // a source supplies while it has fluid; a STORAGE TANK also supplies from its OUTPUT while it has fluid
+                    // (it's a buffer: fills from its input, feeds from its output); a TRANSFORMER supplies only while its
+                    // input flowed last tick (1-tick lag); a valve/broken container blocks.
+                    bool hasFluid = hasTank && c.Tank.Amount > 0.001f;
+                    bool supplying = c.Role == FluidRole.Transformer ? c.TransformActive
+                                   : ((c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && hasFluid);
+                    float boost = (ceiling.TryGetValue(c, out var cl) && cl > float.NegativeInfinity) ? PumpBoost : 1f;   // on a powered pump's line -> 5x
+                    var dev = new FluidDevice { Supplying = supplying, Blocked = c.Blocked };
+                    foreach (var p in c.Ports)
+                    {
+                        float rate = p.Rate * boost;
+                        // a source/tank OUTPUT can't push more than the tank holds (near-empty pushes less; empties cleanly).
+                        // an INFINITE inlet skips the clamp -> it never runs dry.
+                        if (hasTank && !c.Infinite && (c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source)
+                            rate = Mathf.Min(rate, c.Tank.Amount * inv);
+                        // a storage INPUT can't take more than fits (near-full draws less; full -> 0 -> stops flowing)
+                        else if (hasTank && c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer)
+                            rate = Mathf.Min(rate, c.Tank.Space * inv);
+                        portMap[p] = dev.AddPort(p.Kind, rate);
+                    }
+                    devices.Add(dev);
+                    if (hasTank) containers.Add(c);   // only tanked containers move fluid (fittings just relay)
+                    if (c.Role == FluidRole.Transformer) transformers.Add(c);
+                }
+
+            // 4) AUTO-SHUTOFF (strawberry): a pump idles -- draws 0w + provides no lift -- when its connected line has NO
+            //    supplying source OR NO demanding sink (target full / source dry). Gated on tank STATE, not live flow, so an
+            //    uphill pump can't shut its own lift off and deadlock: when the target drains (space returns), work resumes.
+            var adj = new System.Collections.Generic.Dictionary<FluidContainer, System.Collections.Generic.List<FluidContainer>>();
+            foreach (var (a, b) in rawHoses)
+            {
+                if (!adj.TryGetValue(a, out var la)) { la = new(); adj[a] = la; } la.Add(b);
+                if (!adj.TryGetValue(b, out var lb)) { lb = new(); adj[b] = lb; } lb.Add(a);
+            }
+            foreach (var c in allC)
+                if (c is FluidPump pump)
+                {
+                    var seen = new System.Collections.Generic.HashSet<FluidContainer> { pump };
+                    var stack = new System.Collections.Generic.Stack<FluidContainer>(); stack.Push(pump);
+                    bool supply = false, demand = false;
+                    while (stack.Count > 0)
+                    {
+                        var d = stack.Pop();
+                        // a supplying source/tank/active-transformer/inlet feeds the line; a Consumer, a Storage-with-space,
+                        // or a Transformer takes from it. The pump has work only if the line has BOTH.
+                        if ((d.Role == FluidRole.Source || d.Role == FluidRole.Storage) && d.Tank != null && d.Tank.Amount > 0.001f) supply = true;
+                        if (d.Role == FluidRole.Transformer && d.TransformActive) supply = true;
+                        if (d.Infinite) supply = true;
+                        if (d.Role == FluidRole.Consumer || d.Role == FluidRole.Transformer) demand = true;
+                        if (d.Role == FluidRole.Storage && d.Tank != null && d.Tank.Space > 0.001f) demand = true;
+                        if (adj.TryGetValue(d, out var nbrs)) foreach (var nb in nbrs) if (seen.Add(nb)) stack.Push(nb);
+                    }
+                    pump.SetHasWork(supply && demand);
+                }
 
             var hoses = new System.Collections.Generic.List<FluidHose>();
             foreach (var n in tree.GetNodesInGroup("hoses"))

@@ -2399,6 +2399,48 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case P: pump resolves to {FluidDef.Name(pumpType)} (want Fuel) · pump->water verdict={vQ} (want Mismatch)");
             if (!(pumpType == FluidType.Fuel && vQ == HoseVerdict.Mismatch)) ok = false;
 
+            // --- Case Q (flow boost): a POWERED pump runs its line at 5x the gravity rate (125 -> 625). A plain downhill
+            // gravity line and a downhill pumped line, ticked the same short time: the pumped one moves ~5x as much. ---
+            var qGsrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 9000f, 9000f), 125f);
+            var qGtank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 9000f, 0f), 125f);
+            qGsrc.Position = new Vector3(-4f, 2f, 160f); qGtank.Position = new Vector3(4f, 0f, 160f);   // downhill, NO pump
+            AddChild(qGsrc); AddChild(qGtank);
+            AddChild(new Hose { Source = qGsrc.Ports[0], Consumer = qGtank.Ports[0] });
+            var qBsrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 9000f, 9000f), 125f);
+            var qBpump = FluidPump.Make(); qBpump.DebugForcePower = true;   // powered -> boosts its whole line
+            var qBtank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 9000f, 0f), 125f);
+            qBsrc.Position = new Vector3(-4f, 2f, 168f); qBpump.Position = new Vector3(0f, 1f, 168f); qBtank.Position = new Vector3(4f, 0f, 168f);   // downhill THROUGH the pump
+            AddChild(qBsrc); AddChild(qBpump); AddChild(qBtank);
+            AddChild(new Hose { Source = qBsrc.Ports[0], Consumer = qBpump.Ports[0] });
+            AddChild(new Hose { Source = qBpump.Ports[1], Consumer = qBtank.Ports[0] });
+            for (int i = 0; i < 5; i++) FluidNet.Tick(GetTree(), 0.1f);   // 0.5s: gravity ~62, pumped ~312
+            float qRatio = qGtank.Tank.Amount > 1f ? qBtank.Tank.Amount / qGtank.Tank.Amount : 0f;
+            GD.Print($"[hosetool] case Q: gravity={qGtank.Tank.Amount:0} pumped={qBtank.Tank.Amount:0} ratio={qRatio:0.0} (want ~5x)");
+            if (!(qRatio > 4f && qRatio < 6f)) ok = false;
+
+            // --- Case R (auto-shutoff): a powered pump idles (hasWork false, 0w draw) when the line has no downstream demand
+            // (target FULL) or no upstream supply (source DRY) -- gated on tank STATE, so it can't deadlock an uphill line. ---
+            var rSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 2000f, 2000f), 125f);
+            var rPump = FluidPump.Make(); rPump.DebugForcePower = true;
+            var rFull = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 500f, 500f), 125f);   // target ALREADY FULL
+            rSrc.Position = new Vector3(-4f, 1f, 180f); rPump.Position = new Vector3(0f, 1f, 180f); rFull.Position = new Vector3(4f, 0f, 180f);
+            AddChild(rSrc); AddChild(rPump); AddChild(rFull);
+            AddChild(new Hose { Source = rSrc.Ports[0], Consumer = rPump.Ports[0] });
+            AddChild(new Hose { Source = rPump.Ports[1], Consumer = rFull.Ports[0] });
+            for (int i = 0; i < 10; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool fullShut = !rPump.DebugHasWork && rPump.DebugInputWatts < 1f;
+            var rDry = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 2000f, 0f), 125f);   // EMPTY source (dry)
+            var rPump2 = FluidPump.Make(); rPump2.DebugForcePower = true;
+            var rTank2 = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 2000f, 0f), 125f);
+            rDry.Position = new Vector3(-4f, 1f, 192f); rPump2.Position = new Vector3(0f, 1f, 192f); rTank2.Position = new Vector3(4f, 0f, 192f);
+            AddChild(rDry); AddChild(rPump2); AddChild(rTank2);
+            AddChild(new Hose { Source = rDry.Ports[0], Consumer = rPump2.Ports[0] });
+            AddChild(new Hose { Source = rPump2.Ports[1], Consumer = rTank2.Ports[0] });
+            for (int i = 0; i < 10; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool dryShut = !rPump2.DebugHasWork && rPump2.DebugInputWatts < 1f;
+            GD.Print($"[hosetool] case R: full-target shutoff={fullShut} (hasWork={rPump.DebugHasWork} watts={rPump.DebugInputWatts:0}) · dry-source shutoff={dryShut} · fullTank unchanged={Mathf.Abs(rFull.Tank.Amount - 500f) < 1f}");
+            if (!(fullShut && dryShut && Mathf.Abs(rFull.Tank.Amount - 500f) < 1f)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }

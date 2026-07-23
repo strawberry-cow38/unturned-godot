@@ -19,6 +19,20 @@ namespace UnturnedGodot
         readonly List<ConnectionPort> _powerPorts = new();
         ConnectionPort _powerInput, _onTrigger, _offTrigger;
         bool _remoteOn = true;   // electrical remote enable (default ON); a wired TurnOff trigger disables the pump, TurnOn re-enables it
+        bool _hasWork = true;    // AUTO-SHUTOFF: the line has both supply + demand (set each fluid tick by FluidNet); default ON so tick 1 doesn't stall
+
+        // FluidNet's auto-shutoff sets this each tick: does the pump's connected line have both a supplying source AND a
+        // demanding sink? If not (target full / source dry), the pump idles -> no lift, 0w draw. Tick-driven (not _Process)
+        // so the draw is authoritative even in headless tests, which call FluidNet.Tick directly.
+        public void SetHasWork(bool w)
+        {
+            _hasWork = w;
+            float wantWatts = (_remoteOn && _hasWork) ? PumpWatts : 0f;   // draw PumpWatts only while remote-enabled AND with work
+            if (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Watts != wantWatts) { _powerInput.Watts = wantWatts; PowerNet.MarkDirty(); }
+        }
+
+        internal bool DebugHasWork => _hasWork;                                                                     // L1 probe
+        internal float DebugInputWatts => _powerInput != null && GodotObject.IsInstanceValid(_powerInput) ? _powerInput.Watts : -1f;   // L1 probe
 
         public static FluidPump Make(float headLift = 6f)
             => new FluidPump { Role = FluidRole.Pump, Tank = null, HeadLift = headLift };
@@ -43,14 +57,12 @@ namespace UnturnedGodot
             // a wired >=1w sense on a trigger remotely enables/disables the pump (mirror of the generator's remote start/stop)
             if (_onTrigger != null && GodotObject.IsInstanceValid(_onTrigger) && _onTrigger.Live >= 1f) _remoteOn = true;
             else if (_offTrigger != null && GodotObject.IsInstanceValid(_offTrigger) && _offTrigger.Live >= 1f) _remoteOn = false;
-            // a remote-OFF pump draws NOTHING off the power net (a real "off", and the foundation for the auto-shutoff pass)
-            float wantWatts = _remoteOn ? PumpWatts : 0f;
-            if (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Watts != wantWatts) { _powerInput.Watts = wantWatts; PowerNet.MarkDirty(); }
+            // the actual power draw (0w when remote-off / idle) is set tick-driven in SetHasWork, so it holds in headless tests too
         }
 
-        // powered when REMOTE-ENABLED and its power input is getting its watts (set by PowerNet each solve), or forced on
-        // for a headless test. A remote-OFF pump provides no head lift (like an unpowered one).
-        public bool IsPowered => _remoteOn && (DebugForcePower || (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Powered));
+        // powered when REMOTE-ENABLED, has WORK to do, and its power input is getting its watts (set by PowerNet each solve),
+        // or forced on for a headless test. A remote-off / idle pump provides no head lift (like an unpowered one).
+        public bool IsPowered => _remoteOn && _hasWork && (DebugForcePower || (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Powered));
 
         // the motor drum vibrates only when the pump is BOTH powered AND actually moving fluid (strawberry) — a powered
         // pump on a dead/empty line sits still. Flow shows on the passthrough output; Flowing on the consumer relay.
