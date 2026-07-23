@@ -974,8 +974,8 @@ namespace UnturnedGodot
             Wheels = new (float, float, float, bool)[0],   // NO wheels -- a boat floats on buoyancy
             Parts = new (string, Color)[]
             {
-                ("runabout_seats.txt", new Color(0.78f, 0.76f, 0.72f)),   // 4 real cockpit seats (Objects/Seat_0..3 meshes): off-white to match the deck
-                ("runabout_steer.txt", new Color(0.2f, 0.2f, 0.2f)),      // real steering console/wheel (Objects/Steer mesh), driver's side (left, x-0.5)
+                ("runabout_seats.txt", new Color(0.25f, 0.25f, 0.25f)),   // 4 real cockpit seats (Objects/Seat_0..3): real material _Color = dark grey (no texture, flat -- same as jeep seats)
+                ("runabout_steer.txt", new Color(0.28f, 0.23f, 0.14f)),   // real steering console/wheel (Objects/Steer): real material _Color = dark brown (matches jeep steer)
             },
         };
         public static Vehicle BuildRunabout(int variant = 0) => Build(_runabout, variant, "runabout");
