@@ -133,6 +133,7 @@ namespace UnturnedGodot
                 var beam = new SpotLight3D { Position = hp, SpotRange = 8f, SpotAngle = 32f, LightColor = new Color(1f, 0.95f, 0.75f), LightEnergy = 3f };   // fires local -Z = the vehicle's forward
                 _composeRoot.AddChild(beam); _vehPreview.Add(beam);
             }
+            GD.Print($"[vehpreview] {_vehPreview.Count} detail nodes (steer={_bundle.Points.Exists(pt => pt.Name == \"Steer\")} seat={_bundle.Points.Exists(pt => pt.Name != null && pt.Name.StartsWith(\"Seat_\"))} headlights={_bundle.Points.FindAll(pt => pt.Name != null && pt.Name.StartsWith(\"Headlight\")).Count})");
         }
 
         void AddDetailMesh(string mesh, string albedo, Vector3 pos, Vector3 scale)
