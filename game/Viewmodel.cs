@@ -104,7 +104,7 @@ namespace UnturnedGodot
         // guns mount at their Model_0 origin, and the maple/shotgun models sit higher than the (reference) eaglefire.
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
-        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
+        struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos, EjectHook; public Color AlbedoTint, SightColor; public bool Ejects; }
         static GunVisual Visual(string name) => name switch
         {
             "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
@@ -117,6 +117,9 @@ namespace UnturnedGodot
         // Line: name \t muzzle(x,y,z) \t aim(x,y,z) \t ejects(1|0). Sight/Mag null + real _MainTex albedo (white tint)
         // as the first pass -- per-gun ADS/mag/sight tuning is polish.
         static System.Collections.Generic.Dictionary<string, GunVisual> _extraVisuals;
+        // Drop the cached table so a factory gun authored/edited AFTER first build (e.g. Play-preview a new gun) gets its
+        // own composed visual instead of the stale eaglefire fallback. Called by AssetCatalog.Refresh().
+        public static void InvalidateVisuals() => _extraVisuals = null;
         static GunVisual ExtraVisual(string name)
         {
             _extraVisuals ??= LoadExtraVisuals();
@@ -152,6 +155,28 @@ namespace UnturnedGodot
                     if (c.Length >= 4) { var rgb = V3(c[3]); gv.SightColor = new Color(rgb.X, rgb.Y, rgb.Z); }   // real per-gun sight _Color
                     d[c[0]] = gv;
                 }
+
+            // Asset Factory guns (bundles of type "gun") -> GunVisuals, so a COMPOSED gun mounts in the viewmodel like
+            // any arsenal gun. Gun mesh = part[0]; Muzzle/View points = the muzzle-flash + ADS eye hooks; generic sounds.
+            foreach (var gname in AssetCatalog.OfType("gun"))
+            {
+                var ab = AssetCatalog.Get(gname);
+                if (ab == null || ab.Parts.Count == 0 || string.IsNullOrEmpty(ab.Parts[0].Mesh)) continue;
+                var view = ab.FindPoint("View") ?? ab.FindPoint("Sight");
+                var muzzle = ab.FindPoint("Muzzle");
+                var eject = ab.FindPoint("Eject");
+                d[gname] = new GunVisual
+                {
+                    Gun = ab.Parts[0].Mesh,
+                    Albedo = ab.Parts[0].Albedo ?? AssetBundle.ResolveAlbedo(ab.Parts[0].Mesh),
+                    Sight = null, Mag = null,
+                    Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", Hammer = "eaglefire_hammer.ogg",
+                    MuzzleHook = muzzle != null ? AssetBundle.V3(muzzle.Pos) : new Vector3(0f, 0.7f, -0.05f),
+                    AimHook = view != null ? AssetBundle.V3(view.Pos) : new Vector3(0f, -0.45f, -0.2f),
+                    EjectHook = eject != null ? AssetBundle.V3(eject.Pos) : Vector3.Zero,   // author-placed Eject hook (else the tuned default)
+                    ViewOffset = Vector3.Zero, AlbedoTint = new Color(1f, 1f, 1f), Ejects = true,
+                };
+            }
             return d;
         }
         static Vector3 V3(string s)
@@ -290,6 +315,22 @@ namespace UnturnedGodot
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+                    // Asset Factory: the in-hand pose IS part[0]'s authored transform -- rotate the gun with the gizmo
+                    // in AF and it holds that way ("rotate it + be done"), same orientation the inventory icon bakes.
+                    // No-op for real guns (not in the catalog) or an identity part transform.
+                    // holdInv un-does that transform for the HOOKS below: muzzle/aim/eject are authored in bundle space
+                    // (WYSIWYG on the already-rotated gun), so parenting them raw under a rotated mi would apply part[0]
+                    // TWICE. Pre-multiplying by holdInv lands each hook back at its authored world spot exactly once.
+                    var holdInv = Transform3D.Identity;
+                    var holdB = AssetCatalog.Get(GunName);
+                    if (holdB != null && holdB.Parts.Count > 0)
+                    {
+                        var p0 = holdB.Parts[0];
+                        mi.Transform = new Transform3D(
+                            AssetBundle.EulerDegBasis(p0.Rot).Scaled(AssetBundle.V3(p0.Scale, Vector3.One)),
+                            AssetBundle.V3(p0.Pos)) * mi.Transform;
+                        holdInv = mi.Transform.AffineInverse();
+                    }
                     // Real Eaglefire_Iron_Sights model (item 5) — sight.prefab from core.masterbundle, extracted via
                     // UnityPy and converted to the port gun frame (x,y,z)->(-x,y,-z), same pipeline as the gun body.
                     // Mounted exactly as Attachments.cs does: Instantiate(sightAsset.sight) parented to the Sight hook
@@ -324,7 +365,7 @@ namespace UnturnedGodot
                     // lands on the camera axis, i.e. you look straight through the aperture.
                     _sight = new Node3D { Name = "AimHook" };
                     mi.AddChild(_sight);
-                    _sight.Position = gv.AimHook;
+                    _sight.Position = holdInv * gv.AimHook;   // holdInv = identity for non-factory guns; cancels part[0] for factory guns (hook authored in bundle space)
                     if (System.Environment.GetEnvironmentVariable("UG_AIMHOOK") is string _ah && _ah.Split(',').Length == 3)   // tuning: override the per-gun ADS aim hook (find the value that centers iron sights, then bake it)
                     { var _p = _ah.Split(','); _sight.Position = new Vector3(float.Parse(_p[0]), float.Parse(_p[1]), float.Parse(_p[2])); }
 
@@ -334,7 +375,7 @@ namespace UnturnedGodot
                     // texture, size ~0.5 per startSize, additive), flashed ~0.05s on fire.
                     // sits on the barrel BORE axis just past the muzzle tip: gun model muzzle is at Y=0.731, bore
                     // centre at (X=0, Z=-0.079) — the old Z=-0.04 was 0.039 off-axis, which read as the flash sitting low.
-                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = gv.MuzzleHook, Visible = false };
+                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = holdInv * gv.MuzzleHook, Visible = false };   // holdInv cancels part[0] for factory guns (see AimHook)
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
                     // shader billboard so the star can ROLL per shot (master); a StandardMaterial billboard cancels rotation
                     _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
@@ -364,7 +405,7 @@ namespace UnturnedGodot
                     // material. The source Casing effect's Model_0 IS a plain box (24 verts, square section, ~3.3:1) with a
                     // flat brass _Color (0.904,0.768,0.007) -- so the box replicates the real asset; sized to master's +50%.
                     // (Shotguns' red Shell casing _Color (0.588,0.190,0.190) is extracted too, pending per-gun action wiring.)
-                    _ejectHook = new Node3D { Name = "EjectHook", Position = new Vector3(0f, 0.0275f, -0.0814f) };
+                    _ejectHook = new Node3D { Name = "EjectHook", Position = holdInv * (gv.EjectHook != Vector3.Zero ? gv.EjectHook : new Vector3(0f, 0.0275f, -0.0814f)) };   // per-gun Eject hook; holdInv cancels part[0] for factory guns (else casings double-transform)
                     mi.AddChild(_ejectHook);
                     _casingMesh = new BoxMesh { Size = new Vector3(0.0135f, 0.0135f, 0.042f) };   // source square section @ master's +50% length
                     _casingMat = new StandardMaterial3D { AlbedoColor = new Color(0.904f, 0.768f, 0.007f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };   // exact source brass _Color

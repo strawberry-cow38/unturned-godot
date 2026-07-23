@@ -22,6 +22,7 @@ namespace UnturnedGodot
         BuildTool _build;                   // B = build mode (grid-snapped structures)
         string _gunName = "eaglefire";   // gun folder name (eaglefire | maplestrike), derived from the .dat path
         float _pitchDeg;
+        public void SetLookPitch(float deg) => _pitchDeg = deg;   // AF preview: aim the spawn look down/up (e.g. to land a placement ghost on the ground)
         Vehicle _driving; bool _fp = true;   // vehicle being driven + camera mode: true = 1st person (spawn default, strawberry), false = 3rd; H toggles (on foot + driving)
         float _driveCamYaw, _driveCamPitch = 15f;   // 3rd-person driving orbit: mouse yaws/pitches the chase cam around the car (master)
         // FP RIDE free-look (#37, MP only): mouse yaw/pitch of the view in VEHICLE-LOCAL space while seated on a
@@ -2531,7 +2532,13 @@ namespace UnturnedGodot
         public void EquipHeldGun(string gunName, SDG.Unturned.Item backingItem = null)
         {
             SaveGunState();   // stash the OUTGOING gun's live state onto its item before we swap away
-            LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
+            // A factory gun (Asset Factory bundle) has no .dat -> borrow fire stats from a stand-in real gun, but keep
+            // _gunName = the bundle so the viewmodel builds the COMPOSED factory visual. Lets a factory gun ITEM equip
+            // through this normal path (EquipHeldGun(asset.gunName)) -- give -> inventory -> hold -> fire, no console hack.
+            var factoryB = AssetCatalog.Get(gunName);
+            bool factory = factoryB?.Type == "gun";
+            LoadGun($"res://content/{(factory ? "eaglefire" : gunName)}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
+            if (factory) { _gunName = gunName; ApplyFactoryGunStats(factoryB); }   // override borrowed eaglefire stats with the bundle's authored ones
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
             _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
@@ -2542,6 +2549,30 @@ namespace UnturnedGodot
             if (backingItem != null && backingItem.gunAttach >= 0) _viewmodel.ApplyAttachMask(backingItem.gunAttach);   // restore the gun's saved attachments (e.g. a detached suppressor stays off) -- master
             GD.Print($"[gun] holding {_gunName}");
         }
+
+        // Asset Factory gun stats: a factory gun borrows eaglefire's GunDef, then overrides the fields the bundle
+        // authors in params (so each factory gun shoots like its own thing). Absent params keep the eaglefire value.
+        //   gun_damage (player+zombie), gun_range, gun_rpm (rounds/min), gun_ammo (mag size), gun_caliber, gun_auto.
+        void ApplyFactoryGunStats(AssetBundle b)
+        {
+            if (b == null || Gun == null) return;
+            float dmg = b.ParamFloat("gun_damage", 0f);
+            if (dmg > 0f) { Gun.PlayerDamage = dmg; Gun.ZombieDamage = dmg; }
+            Gun.Range = b.ParamFloat("gun_range", Gun.Range);
+            float rpm = b.ParamFloat("gun_rpm", 0f);
+            if (rpm > 0f) Gun.Firerate = Mathf.Clamp(Mathf.RoundToInt(3000f / rpm), 1, 3000);   // 50 sim-ticks/s: rounds/s = 50/Firerate -> Firerate = 3000/rpm; clamp so a tiny rpm can't make it effectively never fire
+            int ammo = Mathf.RoundToInt(b.ParamFloat("gun_ammo", 0f));
+            if (ammo > 0) { Gun.AmmoMax = ammo; Ammo = ammo; }
+            int cal = Mathf.RoundToInt(b.ParamFloat("gun_caliber", 0f));
+            if (cal > 0) Gun.Caliber = cal;
+            if (b.ParamBool("gun_auto", false)) { Gun.HasAuto = true; }   // opt-in full-auto
+            GD.Print($"[gun] factory stats {_gunName}: dmg={Gun.PlayerDamage} range={Gun.Range} firerate={Gun.Firerate} ammo={Gun.AmmoMax} cal={Gun.Caliber} auto={Gun.HasAuto}");
+        }
+
+        // Console `holdgun`: hold an Asset Factory gun with no inventory item behind it. EquipHeldGun now
+        // auto-detects a factory gun (borrows stats from a stand-in real gun, shows the composed visual), so
+        // this just routes through it. (statsGun kept for the console signature; EquipHeldGun uses eaglefire.)
+        public void EquipFactoryGun(string bundleName, string statsGun = "eaglefire") => EquipHeldGun(bundleName);
 
         // Every player is queryable through PlayerRegistry (nearest-player / iterate-players -- the
         // replacement for the old Local static). _ExitTree fires on QueueFree, so teardown self-cleans.

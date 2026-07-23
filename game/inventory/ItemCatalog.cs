@@ -40,6 +40,7 @@ namespace SDG.Unturned
             WireConsumableStats();
             WireShotgunShells();
             WireFuelCans();
+            UnturnedGodot.AssetCatalog.RegisterFactoryItems();   // Asset Factory guns/deployables -> real give-able items (after real items + Assets.clear)
         }
 
         // Fuel containers (gas cans/jerrycans) carry a fuelCapacity from the retail .dat "Fuel" field, so a right-click on

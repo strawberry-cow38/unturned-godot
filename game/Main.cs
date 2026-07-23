@@ -13,6 +13,7 @@ namespace UnturnedGodot
         const string GateGuid = "fb9428c7b8df82e4eb9642dacfaf9567"; // Aprix_Mask_0, ripped from core.masterbundle
 
         string _shotPath;
+        bool _bakeKey;   // --bakeasset: key the magenta bg to transparent before saving the icon PNG
         Deployable _spotDbg;    // UG_WIRETEST: spotlight, probed for lamp-lit state at the shot frame
         Vector3 _vAim; bool _vHave;   // first real (Police/Fire/Ambulance) vehicle, for the demo cam
         bool _noZombies;   // --nozombies: a quiet test environment (skip the horde spawner)
@@ -47,6 +48,7 @@ namespace UnturnedGodot
         bool _peiPlayable;   // menu "Drive PEI": BuildObjectsTest spawns a player+jeep with REAL controls instead of the aerial cam
         bool _worldBuild, _worldReady;   // BuildObjectsTest (objects/peidrive) async load -> the --shot harness waits for _worldReady before capturing
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
+        Vehicle _assetVeh;   // --assettest: a factory VEHICLE bundle -> let it settle on the ground before the shot
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
         bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
@@ -57,11 +59,11 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null, assetDeployTest = null, assetPreview = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false, assetList = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -73,6 +75,10 @@ namespace UnturnedGodot
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
+                else if (arg.StartsWith("--assettest=")) assetTest = arg["--assettest=".Length..];   // load an Asset Factory .assetbundle via AssetBundleLoader -> spawn it + 3/4 cam shot (verify format+loader pipeline)
+                else if (arg == "--assetlist") assetList = true;   // print the auto-registered Asset Factory catalog + quit (verify auto-registration)
+                else if (arg == "--assetfactory") assetFactory = "";   // open the standalone Asset Factory editor (new empty asset)
+                else if (arg.StartsWith("--assetfactory=")) assetFactory = arg["--assetfactory=".Length..];   // ...opening a bundle to edit
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
@@ -80,6 +86,9 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--animrig=")) animrig = arg["--animrig=".Length..];   // build a rigged animal (content/NAME_rig.json) at rest + 3/4 cam -> validate the static pose stands
                 else if (arg.StartsWith("--rottest=")) rottest = arg["--rottest=".Length..];   // place ONE prop with the placement euler (UG_EULER) under a rotation convention (UG_ROTCONV) -> hunt the upside-down
                 else if (arg.StartsWith("--bakeicon=")) bakeIcon = arg["--bakeicon=".Length..];   // MODEL[:ALBEDO] -> icon PNG (needs --shot=OUT)
+                else if (arg.StartsWith("--bakeasset=")) bakeAsset = arg["--bakeasset=".Length..];   // Asset Factory bundle NAME -> composed inventory icon PNG (needs --shot=OUT)
+                else if (arg.StartsWith("--assetdeploytest=")) assetDeployTest = arg["--assetdeploytest=".Length..];   // place a factory DEPLOYABLE via Deployable.Spawn on a ground plane + shot (verify item->def->place->stand-up)
+                else if (arg.StartsWith("--assetpreview=")) assetPreview = arg["--assetpreview=".Length..];   // AF preview/play scene for a bundle NAME (per-type: gun/deployable/vehicle/prop) -> --shot to verify the scene builds
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--clothtest=")) clothtest = arg["--clothtest=".Length..];   // dress a RiggedCharacter with shirt,pants item ids -> UV-atlas render gate (P3a); frames land in --shot=DIR
                 else if (arg == "--clothtest") clothtest = "";                                        // bare flag -> default outfit (shirt 3 + pants 2)
@@ -264,6 +273,38 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (assetTest != null)   // Asset Factory: load a .assetbundle via AssetBundleLoader -> render it (proves the format+loader+spawn pipeline)
+            {
+                GetWindow().Size = new Vector2I(900, 900);
+                _shotPath = shot;
+                BuildAssetTest(assetTest);
+                return;
+            }
+
+            if (assetList)   // verify auto-registration: print the factory-bundle catalog + quit
+            {
+                AssetCatalog.EnsureScanned();
+                foreach (var n in AssetCatalog.All())
+                {
+                    var b = AssetCatalog.Get(n);
+                    GD.Print($"[catalog] {n} [{b.Type}] {b.Parts.Count}p/{b.Colliders.Count}c/{b.Volumes.Count}v/{b.Points.Count}pt");
+                }
+                SDG.Unturned.ItemCatalog.RegisterAll();   // populate Assets (real items + factory items at the end) -> prove give-ability
+                foreach (var a in SDG.Unturned.Assets.all())
+                    if (a.id >= AssetCatalog.FactoryItemIdBase)
+                        GD.Print($"[item] id={a.id} name=\"{a.itemName}\" type={a.type} gun={a.gunName}  -> `give {a.itemName}` gives a real inventory item that equips");
+                GetTree().Quit();
+                return;
+            }
+
+            if (assetFactory != null)   // standalone Asset Factory editor (main-menu tool); --assetfactory[=PATH] --shot renders a loaded frame
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildAssetFactory(assetFactory.Length > 0 ? assetFactory : null);
+                return;
+            }
+
             if (deployTest)   // deployables showcase: both placed on a ground plane + a valid(blue)/invalid(red) ghost
             {
                 GetWindow().Size = new Vector2I(1280, 720);
@@ -388,6 +429,30 @@ namespace UnturnedGodot
                 return; // capture happens a few frames later in _Process
             }
 
+            if (bakeAsset != null)   // Asset Factory: render a bundle's composed model to an inventory icon -> --shot=OUT
+            {
+                _shotPath = shot; _bakeKey = true;
+                GetWindow().Size = new Vector2I(256, 256);
+                BuildBakeAsset(bakeAsset);
+                return;
+            }
+
+            if (assetDeployTest != null)   // Asset Factory: place a factory deployable via Deployable.Spawn -> --shot=OUT
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildAssetDeployTest(assetDeployTest);
+                return;
+            }
+
+            if (assetPreview != null)   // Asset Factory: the per-type preview/play scene for a bundle -> --shot verifies it builds
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildAssetPreview(assetPreview);
+                return;
+            }
+
             if (shot != null)
             {
                 _shotPath = shot;
@@ -437,8 +502,12 @@ namespace UnturnedGodot
             if (vm != null)
             {
                 _rigDir = vm;                                   // reuse the frame-strip capture
+                System.IO.Directory.CreateDirectory(_rigDir);   // the frame writer needs the dir to exist
                 bool deployVm = gun == "generator" || gun == "spot" || gun == "spotlight" || gun == "wire" || gun == "gascan";   // settled-hold frame capture (no ADS/fire)
-                _rigCaptureFrames = System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
+                string vmFrames = System.Environment.GetEnvironmentVariable("UG_VMFRAMES");   // e.g. "30,40,50" to grab specific frames (hip window etc.)
+                _rigCaptureFrames = !string.IsNullOrEmpty(vmFrames)
+                    ? System.Array.ConvertAll(vmFrames.Split(',', System.StringSplitOptions.RemoveEmptyEntries), int.Parse)
+                    : System.Environment.GetEnvironmentVariable("UG_HAMMER") == "1"
                     ? new[] { 52, 56, 60, 64, 68, 72 }          // UG_HAMMER: the rack window (PlayHammer at f50) -> verify the gun ROTATES through the charge
                     : deployVm
                     ? new[] { 20, 25, 30, 40, 50, 60 }          // deployable: Deploy_Equip raise settles by ~f14 -> capture the neutral carry hold
@@ -492,6 +561,7 @@ namespace UnturnedGodot
                 menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // in-game MP-test entry (replaces the launcher checkbox): same path as --connect=claw.bitvox.me
                 menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
                 menu.OnNewMap = () => { menu.QueueFree(); BuildEditorNew(); };   // Workshop -> a fresh blank map
+            menu.OnAssetFactory = () => { menu.QueueFree(); BuildAssetFactory(null); };   // standalone Asset Factory tool -> compose new assets
                 AddChild(menu);
                 return;
             }
@@ -1235,6 +1305,152 @@ namespace UnturnedGodot
             cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
             cam.LookAt(c, Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --assettest=PATH : load an Asset Factory .assetbundle through the real AssetBundleLoader and
+        // frame it with a 3/4 cam. Proves the format -> loader -> spawn pipeline (parts render, colliders
+        // build, points/volumes attach) before any editor UI exists.
+        void BuildAssetTest(string path)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.32f, 0.36f, 0.44f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+            var ground = new StaticBody3D();   // so a factory vehicle / physics body rests on something
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(80f, 1f, 80f) }, Position = new Vector3(0f, -0.5f, 0f) });
+            ground.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(80f, 1f, 80f) }, Position = new Vector3(0f, -0.5f, 0f), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.5f, 0.42f) } });
+            AddChild(ground);
+            var root = AssetBundleLoader.Load(path);
+            if (root == null) { GD.Print($"[ASSETTEST] failed to load {path}"); GetTree().Quit(1); return; }
+            if (root is Vehicle rv) { root.Position = new Vector3(0f, 1.2f, 0f); _assetVeh = rv; }   // drop onto its wheels + settle before the shot
+            AddChild(root);
+            // combined world-space AABB over every part mesh, to auto-frame the camera
+            Aabb aabb = default; bool has = false;
+            foreach (var mi in FindMeshInstances(root))
+            {
+                if (mi.Mesh == null) continue;
+                var lb = mi.Mesh.GetAabb(); var xf = mi.GlobalTransform;
+                for (int i = 0; i < 8; i++)
+                {
+                    var corner = lb.Position + new Vector3((i & 1) * lb.Size.X, ((i >> 1) & 1) * lb.Size.Y, ((i >> 2) & 1) * lb.Size.Z);
+                    var wp = xf * corner;
+                    if (!has) { aabb = new Aabb(wp, Vector3.Zero); has = true; } else aabb = aabb.Expand(wp);
+                }
+            }
+            var ctr = has ? aabb.GetCenter() : Vector3.Zero;
+            float r = has ? Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z)) : 2f;
+            if (r < 0.01f) r = 2f;
+            foreach (var (ax, col) in new[] { (Vector3.Right, new Color(1f, 0.15f, 0.15f)), (Vector3.Up, new Color(0.15f, 1f, 0.15f)), (Vector3.Back, new Color(0.2f, 0.4f, 1f)) })
+                AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, 0.05f) * r + ax.Abs() * r * 1.1f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = col }, Position = ctr + ax * r * 0.6f });
+            var cam = new Camera3D { Current = true, Fov = 50f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = ctr + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
+            cam.LookAt(ctr, Vector3.Up);
+            GD.Print($"[ASSETTEST] loaded {path}: aabb={aabb.Size} center={ctr} r={r}");
+        }
+
+        static System.Collections.Generic.IEnumerable<MeshInstance3D> FindMeshInstances(Node n)
+        {
+            if (n is MeshInstance3D mi) yield return mi;
+            foreach (var c in n.GetChildren())
+                foreach (var m in FindMeshInstances(c)) yield return m;
+        }
+
+        // Standalone Asset Factory editor (main-menu tool): compose meshes into a new asset with
+        // hand-placed colliders/volumes/points -> save a .assetbundle. path=null starts a new asset.
+        void BuildAssetFactory(string path)
+        {
+            var ed = new AssetFactoryEditor { OnExit = ReturnToMenu };
+            ed.OnPlay = name => { ed.QueueFree(); _previewReturnPath = $"res://content/assets/{name}.assetbundle"; BuildAssetPreview(name); };   // ▶ Play -> per-type preview
+            AddChild(ed);
+            ed.Setup(path);
+        }
+
+        Node3D _previewRoot;            // the whole AF preview scene (one-shot teardown back to the editor)
+        string _previewReturnPath;      // the bundle the editor was on -> reopen it on preview exit
+        bool _prevPreviewExitKey;
+        PlayerController _previewPlayer; float _previewPitch; int _previewSettleFrames;   // hold the initial gaze for a few frames (the spawn reset wipes it), then release for free-look
+
+        // AF Preview/Play (master): drop into a small interactive test scene tailored to the asset TYPE --
+        // gun -> item in your bag, auto-equipped to fire (+ targets); deployable -> item, auto-held to place;
+        // vehicle -> spawned drivable next to you; prop -> placed in front. F10 returns to the editor.
+        void BuildAssetPreview(string name)
+        {
+            AssetCatalog.Refresh();   // pick up the just-saved bundle
+            var b = AssetCatalog.Get(name);
+            if (b == null) { GD.PrintErr($"[preview] no bundle '{name}'"); BuildAssetFactory(_previewReturnPath); return; }
+
+            var root = new Node3D();
+            AddChild(root);
+            _previewRoot = root;
+
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f), AmbientLightEnergy = 0.7f,
+            };
+            root.AddChild(new WorldEnvironment { Environment = env });
+            root.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) } };
+            ground.AddChild(gmesh);
+            root.AddChild(ground);
+
+            SDG.Unturned.ItemCatalog.RegisterAll();   // registers factory items + their DeployableDefs
+            var player = new PlayerController();
+            root.AddChild(player);
+            player.GlobalPosition = new Vector3(0f, 1.0f, 4f);
+            { var hud = new HUD { Player = player }; root.AddChild(hud); player.Hud = hud; }
+            _previewPlayer = player; _previewPitch = 0f; _previewSettleFrames = 0;
+
+            ushort fid = 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+                if (a.id >= AssetCatalog.FactoryItemIdBase && AssetCatalog.FactoryItemName(a.id) == name) { fid = a.id; break; }
+
+            switch (b.Type)
+            {
+                case "gun":
+                    if (fid != 0) player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1));
+                    player.EquipHeldGun(name);   // in-hand + ready to fire
+                    for (int i = 0; i < 3; i++)   // a few targets downrange
+                    {
+                        var t = new StaticBody3D { CollisionLayer = 1 << 0 };
+                        t.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(1f, 2f, 0.3f) } });
+                        t.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(1f, 2f, 0.3f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.7f, 0.5f, 0.3f) } });
+                        t.Position = new Vector3((i - 1) * 2.2f, 1f, -8f);
+                        root.AddChild(t);
+                    }
+                    break;
+                case "deployable":
+                    { var def = DeployableDef.ById(fid);
+                      if (def != null)
+                      {
+                          Deployable.Spawn(root, def, new Vector3(-2.4f, 0f, -1f), 20f);   // one PLACED off to the side so you SEE the finished asset
+                          if (fid != 0) { player.Inventory?.tryAddItem(new SDG.Unturned.Item(fid, 1)); player.EquipHeldDeployable(def); }   // + hold one -> the blue placement ghost
+                      }
+                    }
+                    _previewPitch = -40f; _previewSettleFrames = 16;   // start looking DOWN so the ghost lands on the ground (valid = blue); released after settle for free-look
+                    break;
+                case "vehicle":
+                    { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f); }   // walk over + E to enter/drive
+                    break;
+                default:   // prop
+                    { var p = AssetBundleLoader.Build(b); if (p != null) { root.AddChild(p); p.GlobalPosition = new Vector3(0f, 0f, -2f); } }
+                    break;
+            }
+
+            var cl = new CanvasLayer(); root.AddChild(cl);
+            cl.AddChild(new Label { Text = $"  PREVIEW: {name} [{b.Type}]     F10 = back to editor", Position = new Vector2(16, 12) });
+            GD.Print($"[preview] {b.Type} preview for {name} (item id {fid})");
         }
 
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
@@ -2051,6 +2267,17 @@ namespace UnturnedGodot
             var objs = new EditorObjects(editor, this, cam);   // Phase 2: place/select/delete props (picks the WorldMode.Editor colliders)
             editor.AddChild(objs);
             editor.Objects = objs;
+            switch (System.Environment.GetEnvironmentVariable("UG_FACTORYPERSIST"))   // .level-persistence round-trip self-test
+            {
+                case "place":   // run 1: place a factory prop + save so a fresh run can reload it
+                    objs.Place(EditorObjects.FactoryPrefix + "factoryprop", new Vector3(20f, 0f, 20f), Basis.Identity);
+                    editor.Save();
+                    GD.Print("[factorypersist] placed + saved a factory prop");
+                    GetTree().Quit(); return;
+                case "check":   // run 2: LoadSaved already ran in the ctor above -> its "[editor] loaded N factory props" log is the proof
+                    GD.Print("[factorypersist] editor reopened (see the load log above)");
+                    GetTree().Quit(); return;
+            }
             var spawns = new EditorSpawns(editor, cam, _mapRoot);   // Phase 3: visualize/edit spawn points (Spawns tab)
             editor.AddChild(spawns);
             editor.Spawns = spawns;
@@ -2336,6 +2563,128 @@ namespace UnturnedGodot
         // Orient by the model's AABB -- camera along the SHORTEST extent, up = the MIDDLE extent, so the LONGEST lies
         // horizontal (guns end up side-on, as in the real inventory). Magenta bg -> keyed to alpha after capture.
         // spec = "MODEL.txt" or "MODEL.txt:ALBEDO.png".
+        // Key the magenta bake background (and its anti-aliased fringe) to transparent so a factory icon drops
+        // cleanly onto the rarity-tinted inventory tile. The gun is dark metal/wood, so a loose magenta test
+        // (high R+B, low G) never eats the model itself.
+        static void KeyMagenta(Image img)
+        {
+            if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+            int w = img.GetWidth(), h = img.GetHeight();
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    var c = img.GetPixel(x, y);
+                    if (c.R > 0.6f && c.B > 0.6f && c.G < 0.4f) img.SetPixel(x, y, new Color(0f, 0f, 0f, 0f));
+                }
+        }
+
+        // Crop a keyed icon to its opaque bounding box (+ a tiny margin) so the model FILLS its inventory slot instead
+        // of floating small inside the bake's framing margin (master: "scale up the icon png to fill inv slot").
+        static Image CropToOpaque(Image img)
+        {
+            if (img.GetFormat() != Image.Format.Rgba8) img.Convert(Image.Format.Rgba8);
+            int w = img.GetWidth(), h = img.GetHeight();
+            int minX = w, minY = h, maxX = -1, maxY = -1;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    if (img.GetPixel(x, y).A > 0.02f) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+            if (maxX < minX) return img;   // fully transparent -> leave as-is
+            int m = 2;   // a couple px of breathing room so the edge isn't flush-clipped
+            minX = Mathf.Max(0, minX - m); minY = Mathf.Max(0, minY - m);
+            maxX = Mathf.Min(w - 1, maxX + m); maxY = Mathf.Min(h - 1, maxY + m);
+            return img.GetRegion(new Rect2I(minX, minY, maxX - minX + 1, maxY - minY + 1));
+        }
+
+        // World-space AABB of a local AABB under a transform (transform the 8 corners; the codebase has no
+        // Transform3D*Aabb operator in use, so do it by hand).
+        static Aabb TransformAabb(Transform3D t, Aabb a)
+        {
+            Vector3 mn = new(float.MaxValue, float.MaxValue, float.MaxValue), mx = new(float.MinValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 w = t * (a.Position + new Vector3((i & 1) != 0 ? a.Size.X : 0f, (i & 2) != 0 ? a.Size.Y : 0f, (i & 4) != 0 ? a.Size.Z : 0f));
+                mn.X = Mathf.Min(mn.X, w.X); mn.Y = Mathf.Min(mn.Y, w.Y); mn.Z = Mathf.Min(mn.Z, w.Z);
+                mx.X = Mathf.Max(mx.X, w.X); mx.Y = Mathf.Max(mx.Y, w.Y); mx.Z = Mathf.Max(mx.Z, w.Z);
+            }
+            return new Aabb(mn, mx - mn);
+        }
+
+        // Place a factory DEPLOYABLE via the real Deployable.Spawn (item->DeployableDef->composed body + stand-up) on a
+        // ground plane + a 3/4 camera, for a --shot. Verifies the whole deployable pipeline end-to-end.
+        void BuildAssetDeployTest(string name)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f), AmbientLightEnergy = 0.7f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+
+            var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40, 40) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.34f, 0.28f) };
+            ground.AddChild(gmesh);
+            AddChild(ground);
+
+            SDG.Unturned.ItemCatalog.RegisterAll();   // registers factory items + their DeployableDefs
+            ushort id = 0;
+            foreach (var a in SDG.Unturned.Assets.all())
+                if (a.id >= AssetCatalog.FactoryItemIdBase && AssetCatalog.FactoryItemName(a.id) == name) { id = a.id; break; }
+            var def = DeployableDef.ById(id);
+            if (def != null) { Deployable.Spawn(this, def, Vector3.Zero, 0f); GD.Print($"[assetdeploy] placed {name} id={id}"); }
+            else GD.PrintErr($"[assetdeploy] no deployable def for '{name}'");
+
+            var cam = new Camera3D();
+            AddChild(cam);
+            cam.GlobalPosition = new Vector3(3.4f, 2.6f, 3.4f);
+            cam.LookAt(new Vector3(0f, 1.1f, 0f), Vector3.Up);
+            cam.Current = true;
+        }
+
+        // Render an Asset Factory bundle's COMPOSED model (all parts, textured + transformed via BuildPart) to a flat
+        // inventory icon -- magenta key bg -> keyed to alpha after capture (bake_alpha step). --bakeasset=NAME --shot=OUT.
+        void BuildBakeAsset(string name)
+        {
+            GetViewport().Msaa3D = Viewport.Msaa.Disabled;   // hard edges -> the magenta key leaves no pink fringe
+            var b = AssetCatalog.Get(name) ?? AssetBundle.Load($"res://content/assets/{name}.assetbundle");
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(1f, 0f, 1f),   // magenta key colour
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = Colors.White, AmbientLightEnergy = 1f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 90f, 0f), LightEnergy = 1.7f });   // key from +X (camera side)
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(25f, 70f, 0f), LightEnergy = 0.7f });    // soft fill
+
+            Aabb aabb = default; bool first = true;
+            if (b != null)
+                foreach (var p in b.Parts)
+                {
+                    var mi = AssetBundleLoader.BuildPart(p);
+                    if (mi?.Mesh == null) continue;
+                    AddChild(mi);
+                    var mb = TransformAabb(mi.Transform, mi.Mesh.GetAabb());
+                    aabb = first ? mb : aabb.Merge(mb); first = false;
+                }
+            if (first) { GD.PrintErr($"[BAKEASSET] {name}: no drawable parts"); GetTree().Quit(); return; }
+
+            Vector3 c = aabb.Position + aabb.Size * 0.5f, s = aabb.Size;
+            var ax = new (float e, Vector3 dir)[] { (s.X, Vector3.Right), (s.Y, Vector3.Up), (s.Z, Vector3.Back) };
+            System.Array.Sort(ax, (x, y) => x.e.CompareTo(y.e));   // [0]=shortest (view down it) [2]=longest
+            var cam = new Camera3D { Projection = Camera3D.ProjectionType.Orthogonal, Size = ax[2].e * 1.18f };
+            AddChild(cam);
+            cam.GlobalPosition = c + ax[0].dir * (s.Length() + 2f);
+            cam.LookAt(c, -ax[1].dir);   // -middle axis = up
+            cam.Current = true;
+            GD.Print($"[BAKEASSET] {name} framed aabb={s} orthoSize={cam.Size:F2}");
+        }
+
         void BuildBakeIcon(string spec)
         {
             string modelsStr = spec, albedo = null;
@@ -2430,6 +2779,14 @@ namespace UnturnedGodot
             AddChild(player);                    // _Ready builds + populates the inventory and its dashboard
             player.GlobalPosition = new Vector3(0, 1.0f, 0);
             { var hud = new HUD { Player = player }; AddChild(hud); player.Hud = hud; }
+            // Asset Factory: drop a factory gun into the bag so the render shows it as a REAL item tile (UG_FACTORYITEM=<bundle>)
+            if (System.Environment.GetEnvironmentVariable("UG_FACTORYITEM") is string ufn && ufn.Length > 0)
+            {
+                ushort fid = 0;
+                foreach (var a in SDG.Unturned.Assets.all()) if (a.gunName == ufn && a.id >= AssetCatalog.FactoryItemIdBase) { fid = a.id; break; }
+                if (fid != 0) { player.Inventory.tryAddItem(new SDG.Unturned.Item(fid, 1)); GD.Print($"[INV] gave factory item {ufn} id={fid}"); }
+                else GD.PrintErr($"[INV] no factory item registered for '{ufn}'");
+            }
             if (equipDemo) { player.OpenInventory(); player.DemoEquip(1, 0, 0); }   // equip the SECONDARY Maplestrike -> held
             else if (selectDemo) player.DemoSelect(2, 0, 0);   // pop the selection panel for the Medkit in pockets
             else player.OpenInventory();
@@ -2886,6 +3243,13 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_previewRoot != null && IsInstanceValid(_previewRoot))   // AF preview: F10 tears it down + reopens the editor
+            {
+                if (_previewSettleFrames > 0 && _previewPlayer != null && IsInstanceValid(_previewPlayer)) { _previewPlayer.SetLookPitch(_previewPitch); _previewSettleFrames--; }   // hold the initial gaze through the spawn reset
+                bool ek = Input.IsKeyPressed(Key.F10);
+                if (ek && !_prevPreviewExitKey) { var p = _previewReturnPath; _previewRoot.QueueFree(); _previewRoot = null; _prevPreviewExitKey = true; BuildAssetFactory(p); return; }
+                _prevPreviewExitKey = ek;
+            }
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
                 _frame++;
@@ -2935,7 +3299,7 @@ namespace UnturnedGodot
                     // --attach: once equipped, hold the T attachment menu open (no aim/fire) so the render shows the slot icons
                     if (_am != null && _vm.IsEquipComplete && !_am.IsOpen && ++_vmSettle >= 8) _am.Open();
                 }
-                else if (_vmTest && _vm != null && !_vmMelee)   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; a melee never fires/aims/reloads, so skip it (its MeleeSwingDriver drives the swings)
+                else if (_vmTest && _vm != null && !_vmMelee && System.Environment.GetEnvironmentVariable("UG_NOADS") != "1")   // gun scripted sequence: ADS -> hip-fire (Kick) -> reload; UG_NOADS=1 keeps it at the hip equip-hold (verify authored orientation)
                 {
                     if (!_vmAimed && _vm.IsEquipComplete && ++_vmSettle >= 8)
                     { _vm.SetAiming(true); _vmAimed = true; _vmAimStart = _frame; }
@@ -3045,10 +3409,13 @@ namespace UnturnedGodot
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
             else if (System.Environment.GetEnvironmentVariable("UG_WIRETEST") == "1") { if (++_frame < 50) return; }   // wire test: let the lamp warmup envelope settle (past the flicker ramp) before capturing steady state
+            else if (_assetVeh != null) { if (++_frame < 55) return; }   // factory vehicle: drop + settle on its wheels first
+            else if (_previewRoot != null) { if (++_frame < 24) return; }   // AF preview: let the viewmodel/ghost + placed body settle before the shot
             else if (++_frame < 6) return; // let the renderer settle
             if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             var img = GetViewport().GetTexture().GetImage();
             if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(); return; }
+            if (_bakeKey) { KeyMagenta(img); img = CropToOpaque(img); }   // --bakeasset: magenta bg -> transparent, then crop tight so the icon FILLS its inventory slot (master)
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();

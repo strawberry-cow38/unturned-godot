@@ -20,6 +20,7 @@ namespace UnturnedGodot
         public System.Action OnMultiplayer;       // top-level "Multiplayer": connect to the MP test server (VoX: always our test server for now; server browser later)
         public System.Action OnEditor;            // Workshop -> the singleplayer map editor (PEI)
         public System.Action OnNewMap;            // Workshop -> a fresh blank map in the editor
+        public System.Action OnAssetFactory;      // standalone Asset Factory -> compose new bundled assets
 
         // --- camera anchors (framings of the barn). Tuned against the render; index 0 = Title (idle). ---
         // pos + look-at, world space. Title is a pulled-back 3/4 hero shot; each tab reframes the barn.
@@ -265,6 +266,7 @@ namespace UnturnedGodot
             box.AddChild(head);
             box.AddChild(SubButton("Editor — Prince Edward Island", () => OnEditor?.Invoke()));
             box.AddChild(SubButton("Create New Map", () => OnNewMap?.Invoke()));
+            box.AddChild(SubButton("Asset Factory", () => OnAssetFactory?.Invoke()));
             layer.AddChild(_workshopPanel);
         }
 

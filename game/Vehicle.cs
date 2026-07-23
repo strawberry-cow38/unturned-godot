@@ -189,7 +189,7 @@ namespace UnturnedGodot
 
         struct Spec
         {
-            public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
+            public string Body, Wheel, WheelTex, Palette, BodyTex;   // Palette = paintable palette; WheelTex = wheel albedo; BodyTex = plain body albedo (factory bodies -> textured, no paint)
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
@@ -230,6 +230,14 @@ namespace UnturnedGodot
             return new AudioStreamWav { Data = pcm, Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = channels == 2,
                                         LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopEnd = dataSize / (channels * bits / 8) };
         }
+        // Load a res:// image into an ImageTexture, or null if the file is missing/corrupt. LoadFromFile returns null
+        // on failure and CreateFromImage(null) hard-crashes the engine -> guard it so the material renders untextured.
+        static ImageTexture SafeTex(string resPath)
+        {
+            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(resPath));
+            return img != null ? ImageTexture.CreateFromImage(img) : null;
+        }
+
         static StandardMaterial3D SolidMat(Color c) =>
             new() { AlbedoColor = c, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
 
@@ -946,6 +954,59 @@ namespace UnturnedGodot
         public static Vehicle BuildRoadster(int variant = 0) => Build(_roadster, variant, "roadster");
         public static Vehicle BuildAmbulance(int variant = 0) => Build(_ambulance, variant, "ambulance");
         public static Vehicle BuildFiretruck(int variant = 0) => Build(_firetruck, variant, "firetruck");
+
+        // Build a full drivable Vehicle from an Asset Factory bundle (master: reuse the real rig, not a
+        // parallel one). Base on the jeep spec so every field we DON'T author inherits a sane value
+        // (wheel mesh, engine sound, gears, brakes), then override the composed bits: body + welded
+        // detail parts, wheels off the Wheel_* points, hull from the box collider, name + params.
+        public static Vehicle BuildFromBundle(AssetBundle b)
+        {
+            var s = _jeep;   // struct copy: safe defaults for everything below we leave alone
+            s.Name = string.IsNullOrEmpty(b.Name) ? "Factory Vehicle" : b.Name;
+            s.Palette = null;                                   // a composed body isn't a paintable palette -> flat paint
+            s.SpotPos = null; s.TailPos = null; s.TaillightMesh = null;   // jeep light positions won't fit a custom body
+            s.SteerModel = null; s.SeatModelFile = null;
+
+            // body = first part; the rest = welded detail parts (the pump on the roof, etc.)
+            if (b.Parts.Count > 0 && !string.IsNullOrEmpty(b.Parts[0].Mesh)) s.Body = b.Parts[0].Mesh;
+            s.BodyTex = AssetBundle.ResolveAlbedo(s.Body);   // texture the body with its own albedo (else flat paint)
+            s.Parts = null;   // welded detail parts are added as TEXTURED children after Build (below), NOT via the flat-colour rig loop (which real vehicles use)
+
+            // Build() plants the body mesh at the vehicle ORIGIN, dropping part[0]'s authored transform. Wheels/collider/welds
+            // are authored in BUNDLE space around that body, so rebase them by part[0]^-1 -> body at origin, the rest lines up
+            // with it (fixes editor-default vehicles where part[0] isn't identity). Identity part[0] -> t0inv is a no-op.
+            var t0 = b.Parts.Count > 0
+                ? new Transform3D(AssetBundle.EulerDegBasis(b.Parts[0].Rot).Scaled(AssetBundle.V3(b.Parts[0].Scale, Vector3.One)), AssetBundle.V3(b.Parts[0].Pos))
+                : Transform3D.Identity;
+            var t0inv = t0.AffineInverse();
+
+            // wheels from the Wheel_* points (name containing _F = front = steered)
+            var wheels = new System.Collections.Generic.List<(float, float, float, bool)>();
+            foreach (var pt in b.Points)
+            {
+                if (pt.Name == null || !pt.Name.StartsWith("Wheel_")) continue;
+                var pos = t0inv * AssetBundle.V3(pt.Pos);
+                wheels.Add((pos.X, pos.Y, pos.Z, pt.Name.ToUpperInvariant().Contains("_F")));
+            }
+            if (wheels.Count > 0) { s.Wheels = wheels.ToArray(); s.WheelRadii = null; }   // else keep the jeep's 4
+
+            // hull from the first box collider (else keep the jeep's box)
+            var box = b.Colliders.Find(c => (c.Shape ?? "box") == "box");
+            if (box != null) { s.BoxSize = AssetBundle.V3(box.Size, Vector3.One); s.BoxCenter = t0inv * AssetBundle.V3(box.Pos); }
+
+            s.WheelRadius = b.ParamFloat("wheel_radius", s.WheelRadius);
+            s.Engine = b.ParamFloat("engine", s.Engine);
+            s.SpeedMax = b.ParamFloat("speed_max", s.SpeedMax);
+            s.Health = b.ParamFloat("health", s.Health);
+
+            var v = Build(s, 0, "factory:" + s.Name);
+            for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
+            {
+                var mi = AssetBundleLoader.BuildPart(b.Parts[i]);
+                if (mi != null) { mi.Transform = t0inv * mi.Transform; v.AddChild(mi); }   // rebase weld into body-at-origin space too
+            }
+            return v;
+        }
         public static Vehicle BuildTractor(int variant = 0) => Build(_tractor, variant, "tractor");
         public static Vehicle BuildUral(int variant = 0) => Build(_ural, variant, "ural");
         public static Vehicle BuildPolice(int variant = 0) => Build(_police, variant, "police");
@@ -1076,7 +1137,9 @@ namespace UnturnedGodot
             v.AddChild(v._info);
 
             var paint = SpawnPaint(s, variant);   // the source spawn paint by variant: default-list / curated car colour / white
-            Material bodyMat = s.Palette != null
+            Material bodyMat = s.BodyTex != null
+                ? new StandardMaterial3D { AlbedoTexture = SafeTex($"res://content/{s.BodyTex}"), TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled }   // factory body: its own texture (opaque -> paintable-region alpha ignored); SafeTex null-guards a missing/corrupt file
+                : s.Palette != null
                 ? PaintMat(s.Palette, paint)
                 : new StandardMaterial3D { AlbedoColor = paint, Metallic = 0f, Roughness = 0.9f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
             ArrayMesh bodyMesh; ArrayMesh legMesh = null, hlMesh = null, tlMesh = null;
@@ -1986,7 +2049,7 @@ namespace UnturnedGodot
                     if (_alarmTimer <= 0f) { SetHeadlights(false); SetTaillights(false); _alarmLit = false; _alarmed = false; }   // alarm done -> killed for good, never alarms again (master)
                 }
             }
-            if (_sirenMat0 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck.
+            if (_sirenMat0 != null && _sirenMat1 != null)   // emergency lightbar: alternate the red + blue lenses while the siren's on (master: ctrl toggles). Dead on a wreck. (both lenses required — a factory car welding only one siren mesh must not NRE here)
             {
                 if (_sirenOn && !_exploded)
                 {

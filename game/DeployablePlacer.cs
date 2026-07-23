@@ -15,6 +15,7 @@ namespace UnturnedGodot
         public float YawOffset;   // R adds 90 deg here; the ghost yaw = aim yaw + this (src rotate_y)
 
         MeshInstance3D _ghost;
+        readonly System.Collections.Generic.List<MeshInstance3D> _ghostMeshes = new();   // the ghost's own mesh nodes (NOT the port arrows) -> only these get the blue/red tint
         Aabb _localAabb;
         StandardMaterial3D _arrowMat;   // shared by the ghost's in/out port arrows; recoloured blue/red with validity
 
@@ -34,14 +35,25 @@ namespace UnturnedGodot
             Def = def;
             _ghost?.QueueFree();
             _ghost = Deployable.BuildMesh(def, out _localAabb);
-            _ghost.MaterialOverride = InvalidMat;
+            _ghostMeshes.Clear();   // capture the ghost's mesh nodes NOW, before the port arrows are added below
+            _ghostMeshes.Add(_ghost);
+            foreach (var n in _ghost.FindChildren("*", "MeshInstance3D", true, false)) if (n is MeshInstance3D mi) _ghostMeshes.Add(mi);
+            SetGhostMat(InvalidMat);
             AddChild(_ghost);
             _arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowRed);   // in/out arrows on the ghost's ports (stand up with it)
             foreach (var p in def.Ports)
-                _ghost.AddChild(ConnectionPort.MakeArrow(p, _arrowMat, p.Pos));
+                _ghost.AddChild(ConnectionPort.MakeArrow(p, _arrowMat, p.Pos));   // added AFTER the capture -> arrows keep their port colours, not the ghost tint
         }
 
         public void SetGhostVisible(bool v) { if (_ghost != null) _ghost.Visible = v; }
+
+        // Tint the ghost blue/red. A factory deployable's ghost is a CONTAINER whose textured parts are children, so
+        // the override must reach every mesh node -- but NOT the port arrows (they keep their own orange/cyan colours,
+        // recoloured separately in Apply). _ghostMeshes is captured in SetDef before the arrows are added.
+        void SetGhostMat(Material m)
+        {
+            foreach (var mi in _ghostMeshes) if (Godot.GodotObject.IsInstanceValid(mi)) mi.MaterialOverride = m;
+        }
 
         // Run the aim -> point/valid check for this frame and move the ghost to match. Returns Valid.
         public bool Aim(Camera3D cam)
@@ -84,7 +96,7 @@ namespace UnturnedGodot
             bool up = Def != null && Def.Upright;   // upright models (wind turbine) skip the flat->stand-up
             _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(Yaw)) : DeployableDef.StandBasis(Yaw),
                 Point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));   // base sits on the surface point
-            _ghost.MaterialOverride = Valid ? ValidMat : InvalidMat;
+            SetGhostMat(Valid ? ValidMat : InvalidMat);
             if (_arrowMat != null) { var c = Valid ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
 
@@ -97,7 +109,7 @@ namespace UnturnedGodot
             bool up = Def != null && Def.Upright;
             _ghost.GlobalTransform = new Transform3D(up ? new Basis(Vector3.Up, Mathf.DegToRad(yaw)) : DeployableDef.StandBasis(yaw),
                 point + Vector3.Up * (up ? -_localAabb.Position.Y : DeployableDef.GroundLift(_localAabb)));
-            _ghost.MaterialOverride = ValidMat;
+            SetGhostMat(ValidMat);
             if (_arrowMat != null) { var c = ConnectionPort.ArrowBlue; c.A = 0.92f; _arrowMat.AlbedoColor = c; }
         }
     }
