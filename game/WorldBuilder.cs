@@ -494,7 +494,7 @@ namespace UnturnedGodot
                         }
                     }
                 }
-                GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; golf command-only; air/water/tank skipped)");
+                GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; Runabout=real boat at the coast; golf command-only; other air/water/tank Jetski/Police_Boat/Tank/Huey/Otter skipped)");
             }
 
             if (mode == WorldMode.Playable)
