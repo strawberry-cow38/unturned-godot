@@ -961,7 +961,10 @@ namespace UnturnedGodot
         // detail parts, wheels off the Wheel_* points, hull from the box collider, name + params.
         public static Vehicle BuildFromBundle(AssetBundle b)
         {
-            var s = _jeep;   // struct copy: safe defaults for everything below we leave alone
+            // base spec = a chosen PRESET vehicle (inheriting its full handling/gears/sound/brake feel) or the jeep
+            // default (master 2026-07-23 "presets for all existing vehicles"). Then swap the mesh/wheels + tune params.
+            var preset = b.ParamString("veh_preset", null);
+            var s = !string.IsNullOrEmpty(preset) ? SpecFor(preset) : _jeep;   // struct copy: safe defaults for everything below we leave alone
             s.Name = string.IsNullOrEmpty(b.Name) ? "Factory Vehicle" : b.Name;
             s.Palette = null;                                   // a composed body isn't a paintable palette -> flat paint
             s.SpotPos = null; s.TailPos = null; s.TaillightMesh = null;   // jeep light positions won't fit a custom body
@@ -998,7 +1001,11 @@ namespace UnturnedGodot
             s.Engine = b.ParamFloat("engine", s.Engine);
             s.SpeedMax = b.ParamFloat("speed_max", s.SpeedMax);
             s.Health = b.ParamFloat("health", s.Health);
+            s.Brake = b.ParamFloat("veh_brake", s.Brake);       // braking force
+            s.SteerMax = b.ParamFloat("veh_steer", s.SteerMax); // max steer angle (deg) -> turn radius
+            s.Fuel = b.ParamFloat("veh_fuel", s.Fuel);          // tank size (HUD gauge)
 
+            GD.Print($"[factoryvehicle] {s.Name} preset={preset ?? "jeep"} engine={s.Engine} speed={s.SpeedMax} steer={s.SteerMax} brake={s.Brake} fuel={s.Fuel} health={s.Health}");
             var v = Build(s, 0, "factory:" + s.Name);
             for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
             {

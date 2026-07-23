@@ -1,0 +1,20 @@
+{
+  "name": "presetcar",
+  "type": "vehicle",
+  "parts": [
+    { "mesh": "jeep_body.txt", "color": [0.85, 0.15, 0.15], "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": [1, 1, 1] }
+  ],
+  "points": [
+    { "name": "Wheel_FL", "pos": [-1.30, 0.25, -1.40], "rot": [0, 0, 0] },
+    { "name": "Wheel_FR", "pos": [1.30, 0.25, -1.40],  "rot": [0, 0, 0] },
+    { "name": "Wheel_RL", "pos": [-1.30, 0.25, 1.40],  "rot": [0, 0, 0] },
+    { "name": "Wheel_RR", "pos": [1.30, 0.25, 1.40],   "rot": [0, 0, 0] },
+    { "name": "Seat_0",   "pos": [0.40, 0.90, 0.40],   "rot": [0, 0, 0] }
+  ],
+  "params": {
+    "veh_preset": "roadster",
+    "veh_steer": 35,
+    "veh_fuel": 80,
+    "wheel_radius": 0.5
+  }
+}
