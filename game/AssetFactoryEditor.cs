@@ -117,7 +117,7 @@ namespace UnturnedGodot
                 if (pt.Name == null || !pt.Name.StartsWith("Wheel_")) continue;
                 var p = AssetBundle.V3(pt.Pos);
                 // reuse BuildPart (textured): left wheels (x<0) mirror so the tread faces out, same as the runtime rig
-                var wp = new AssetBundle.Part { Mesh = wheelName, Albedo = AssetBundle.ResolveAlbedo(wheelName), Pos = new[] { p.X, p.Y, p.Z }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { p.X < 0 ? -1f : 1f, 1f, 1f } };
+                var wp = new AssetBundle.Part { Mesh = wheelName, Albedo = Vehicle.WheelTexFor(_bundle), Pos = new[] { p.X, p.Y, p.Z }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { p.X < 0 ? -1f : 1f, 1f, 1f } };
                 var mi = AssetBundleLoader.BuildPart(wp);
                 if (mi == null) continue;
                 _composeRoot.AddChild(mi);

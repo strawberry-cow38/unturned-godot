@@ -1056,6 +1056,16 @@ namespace UnturnedGodot
             return SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").Wheel;
         }
 
+        // The wheel ALBEDO the editor should texture with. The wheels SHARE jeep_wheel_albedo.png (per-Spec WheelTex),
+        // so ResolveAlbedo(wheel) would miss (roadster_wheel_albedo.png doesn't exist) -> use the real Spec WheelTex.
+        public static string WheelTexFor(AssetBundle b)
+        {
+            var vw = b.ParamString("veh_wheel", null);
+            if (!string.IsNullOrEmpty(vw)) return AssetBundle.ResolveAlbedo(vw);   // a custom wheel mesh -> its own albedo
+            var preset = b.ParamString("veh_preset", null);
+            return SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").WheelTex;
+        }
+
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
         static Spec SpecFor(string name) => name switch
