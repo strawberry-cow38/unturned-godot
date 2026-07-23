@@ -41,7 +41,7 @@ namespace UnturnedGodot
         LineEdit _depHealth, _depFuel, _depEnergy, _depCharge;   // deployable DEVICE stats (BuildDeployableDef reads deploy_*)
         CheckBox _depBattery, _depSwitch, _depTurbine, _depShatter;   // deployable device behaviour toggles
         LineEdit _vehEngine, _vehSpeed, _vehSteer, _vehBrake, _vehFuel, _vehHealth, _vehSusp;   // vehicle drive stats (BuildFromBundle reads these)
-        OptionButton _vehPreset, _vehWheel, _vehSteerModel, _vehSeatModel;   // preset = full driving feel base; wheel/steer/seat = swap the mesh asset
+        OptionButton _vehPreset, _vehWheel, _vehSteerModel, _vehSeatModel, _vehLightbar;   // preset = full driving feel base; wheel/steer/seat = swap the mesh asset; lightbar = emergency bar type
         VBoxContainer _gunPanel, _devicePanel, _vehiclePanel;   // type-gated panels: gun on gun, device on deployable, vehicle on vehicle
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
@@ -554,6 +554,14 @@ namespace UnturnedGodot
             _vehSeatModel.ItemSelected += i => { _bundle.SetParam("veh_seat_model", i > 0 ? _vehSeatModel.GetItemText((int)i) : ""); RebuildVehiclePreview(); Status(i > 0 ? $"seat model: {_vehSeatModel.GetItemText((int)i)}" : "seat model: preset's"); };
             vRow3.AddChild(_vehSeatModel);
             _vehiclePanel.AddChild(vRow3);
+            var vRow4 = new HBoxContainer();   // emergency lightbar type mounted at the Lightbar hook (master 2026-07-23)
+            vRow4.AddChild(new Label { Text = "lightbar" });
+            _vehLightbar = new OptionButton { CustomMinimumSize = new Vector2(130, 0) };
+            foreach (var lbt in new[] { "police", "ambulance", "firetruck" }) _vehLightbar.AddItem(lbt);
+            _vehLightbar.ItemSelected += i => { _bundle.SetParam("lightbar", _vehLightbar.GetItemText((int)i)); RebuildVehiclePreview(); Status($"lightbar: {_vehLightbar.GetItemText((int)i)}"); };
+            vRow4.AddChild(_vehLightbar);
+            vRow4.AddChild(new Label { Text = "(add a Lightbar hook to mount)" });
+            _vehiclePanel.AddChild(vRow4);
             SyncVehicleUI();
             UpdatePanelVis();
 
@@ -781,6 +789,8 @@ namespace UnturnedGodot
             if (_vehSteerModel != null) { int idx = 0; for (int i = 1; i < _vehSteerModel.ItemCount; i++) if (_vehSteerModel.GetItemText(i) == stm) { idx = i; break; } _vehSteerModel.Selected = idx; }
             var sem = _bundle.ParamString("veh_seat_model", "");   // reflect the chosen seat model
             if (_vehSeatModel != null) { int idx = 0; for (int i = 1; i < _vehSeatModel.ItemCount; i++) if (_vehSeatModel.GetItemText(i) == sem) { idx = i; break; } _vehSeatModel.Selected = idx; }
+            var lbv = _bundle.ParamString("lightbar", "police");   // reflect the emergency lightbar type
+            if (_vehLightbar != null) { for (int i = 0; i < _vehLightbar.ItemCount; i++) if (_vehLightbar.GetItemText(i) == lbv) { _vehLightbar.Selected = i; break; } }
         }
 
         static string[] HooksFor(string type) => type switch
