@@ -446,8 +446,18 @@ namespace UnturnedGodot
                         byte type = U8();
                         float px = F32(); vp += 4; float pz = F32();   // point.x, skip point.y, point.z
                         float ang = U8() * 2f;
-                        if (type > 5) continue;          // skip air/boat/tank (6-11) until those models exist
                         float gz = -pz;                  // Unity Z -> port negate-Z
+                        if (type == 8)                   // table [8] Runabout (water): spawn the real runabout floating at the sea surface (the buoyancy settles it); the PEI map has 3 of these along the coast
+                        {
+                            var boat = Vehicle.BuildByName("runabout", i);
+                            root.AddChild(boat);
+                            boat.GlobalPosition = new Vector3(px, Terrain.SeaLevelY + 0.5f, gz);   // just above the waterline -> gentle settle (NOT terr.SampleHeight = the seabed)
+                            boat.RotationDegrees = new Vector3(0f, -ang, 0f);
+                            GD.Print($"[pei-boat] runabout at ({px:F0}, {(Terrain.SeaLevelY + 0.5f):F1}, {gz:F0})  seaLevelY={Terrain.SeaLevelY:F1}");
+                            nv++;
+                            continue;
+                        }
+                        if (type > 5) continue;          // skip the other air/water/tank tables (Huey/Otter/Jetski/Police_Boat/Tank) until those models exist
                         var vpos = new Vector3(px, terr.SampleHeight(px, gz) + 1.2f, gz);
                         var vyaw = new Basis(Vector3.Up, Mathf.DegToRad(-ang));   // spawn yaw (negate for negate-Z)
                         string vn = null;   // all PEI service vehicles (Police / Fire / Medic) are drivable now, no static meshes
