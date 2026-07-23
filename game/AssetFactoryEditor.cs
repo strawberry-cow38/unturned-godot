@@ -118,12 +118,15 @@ namespace UnturnedGodot
             bool eRealTl = bBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bBase}_taillights.txt");
             // wheels at each Wheel_* hook (left wheels mirrored so the tread faces out, like the runtime rig)
             var wheelName = Vehicle.WheelMeshFor(_bundle); var wheelTex = Vehicle.WheelTexFor(_bundle);
+            bool anyWheel = false;
             foreach (var pt in _bundle.Points)
             {
                 if (pt.Name == null || !pt.Name.StartsWith("Wheel_")) continue;
                 var p = AssetBundle.V3(pt.Pos);
                 AddDetailMesh(wheelName, wheelTex, p, new Vector3(p.X < 0 ? -1f : 1f, 1f, 1f));
+                anyWheel = true;
             }
+            if (!anyWheel) { var pw = Vehicle.PresetWheelPositions(_bundle); if (pw != null) foreach (var p in pw) AddDetailMesh(wheelName, wheelTex, p, new Vector3(p.X < 0 ? -1f : 1f, 1f, 1f)); }   // real-body vehicle w/o Wheel_* hooks -> draw the preset's wheels (runtime keeps them)
             // seats + steering wheel: a real vehicle body uses its OWN ripped set at the body transform (jeep body -> the
             // jeep's 4 seats, master "does jeep not have 4 seats usually?"); a custom body uses the author-placed hooks
             // (ripped meshes are baked at source coords -> AABB-centre them on the hook, like Build() at runtime).

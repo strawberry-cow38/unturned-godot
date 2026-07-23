@@ -1170,6 +1170,18 @@ namespace UnturnedGodot
             return SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").WheelTex;
         }
 
+        // The preset's wheel POSITIONS (Godot space) so the editor can draw wheels when a real-body vehicle has no Wheel_*
+        // hooks (it keeps the preset's wheels at runtime; the editor draws them here so the preview isn't wheel-less).
+        public static Vector3[] PresetWheelPositions(AssetBundle b)
+        {
+            var preset = b.ParamString("veh_preset", null);
+            var s = SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep");
+            if (s.Wheels == null) return null;
+            var arr = new Vector3[s.Wheels.Length];
+            for (int i = 0; i < arr.Length; i++) arr[i] = new Vector3(s.Wheels[i].Item1, s.Wheels[i].Item2, s.Wheels[i].Item3);
+            return arr;
+        }
+
         // Interior detail models the editor should draw at the Steer / Seat hooks + BuildFromBundle attaches.
         // Preset's model if it ships one (roadster_seats, semi_steer, …); else a sensible default / null.
         public static string SteerMeshFor(AssetBundle b)
