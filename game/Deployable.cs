@@ -231,6 +231,8 @@ namespace UnturnedGodot
             d._info = new InfoBillboard { TopLevel = true };
             d.AddChild(d._info);
             parent.AddChild(d);
+            if (def.Fuel > 0f && !def.IsBattery)   // a fuel generator gets a fluid FUEL hose input -> plumb a fuel line to it instead of hand-carrying cans (strawberry)
+                d.AddChild(FluidFuelInlet.Make(d));
             foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
             if (d.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole power net
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }

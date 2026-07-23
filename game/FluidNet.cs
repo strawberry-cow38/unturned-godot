@@ -249,6 +249,9 @@ namespace UnturnedGodot
             // whether the output SUPPLIES next tick (a 1-tick startup lag). Ports[0]=Consumer input, Ports[1]=Source output.
             foreach (var t in transformers)
                 t.TransformActive = t.Ports.Count > 0 && t.Ports[0].Flowing;
+
+            // post-tick hooks (e.g. a FluidFuelInlet empties its buffer into the generator's fuel tank) -- tick-driven
+            foreach (var c in allC) c.OnPostTick(dt);
         }
     }
 

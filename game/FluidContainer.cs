@@ -72,7 +72,11 @@ namespace UnturnedGodot
 
         protected virtual void OnReadyExtra() { }
 
-        void BuildPorts()
+        // Called by FluidNet after each tick's fluid move (a subclass hook; FluidFuelInlet empties its buffer into a
+        // generator's fuel tank here). Tick-driven, not _Process, so it's authoritative even in headless tests.
+        public virtual void OnPostTick(float dt) { }
+
+        protected virtual void BuildPorts()
         {
             switch (Role)
             {
@@ -107,7 +111,7 @@ namespace UnturnedGodot
             }
         }
 
-        void AddPort(FluidPortKind kind, float rate, Vector3 local, FluidType typeOverride = FluidType.None)
+        protected void AddPort(FluidPortKind kind, float rate, Vector3 local, FluidType typeOverride = FluidType.None)
         {
             var node = new FluidPortNode { Kind = kind, Rate = rate, Owner = this };
             Ports.Add(node);
@@ -118,7 +122,7 @@ namespace UnturnedGodot
 
         static float Fan(int i, int n) => n <= 1 ? 0f : Mathf.Lerp(-0.32f, 0.32f, i / (float)(n - 1));   // spread ports across a face
 
-        void BuildVisuals()
+        protected virtual void BuildVisuals()
         {
             if (IsFitting)   // a small metal box, no fill bar (no tank)
             {
