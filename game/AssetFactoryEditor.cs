@@ -110,6 +110,12 @@ namespace UnturnedGodot
             foreach (var w in _vehPreview) if (IsInstanceValid(w)) w.QueueFree();
             _vehPreview.Clear();
             if (_bundle.Type != "vehicle") return;
+            if (_partNodes.Count > 0) { var bp = Vehicle.BodyPaintFor(_bundle); if (bp != null) _partNodes[0].MaterialOverride = bp; }   // paint the body like the runtime (else it keeps its flat BuildPart albedo)
+            var bodyPart = _bundle.Parts.Count > 0 ? _bundle.Parts[0] : null;
+            var bodyMeshName = bodyPart?.Mesh ?? "";
+            var bBase = bodyMeshName.EndsWith("_body.txt") ? bodyMeshName[..^9] : bodyMeshName.EndsWith(".txt") ? bodyMeshName[..^4] : bodyMeshName;
+            bool eRealHl = bBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bBase}_headlights.txt");   // ships ripped lights == a real vehicle body
+            bool eRealTl = bBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bBase}_taillights.txt");
             // wheels at each Wheel_* hook (left wheels mirrored so the tread faces out, like the runtime rig)
             var wheelName = Vehicle.WheelMeshFor(_bundle); var wheelTex = Vehicle.WheelTexFor(_bundle);
             foreach (var pt in _bundle.Points)
@@ -118,21 +124,24 @@ namespace UnturnedGodot
                 var p = AssetBundle.V3(pt.Pos);
                 AddDetailMesh(wheelName, wheelTex, p, new Vector3(p.X < 0 ? -1f : 1f, 1f, 1f));
             }
-            // steering wheel at the Steer hook; seat model at the first Seat_* hook (one ripped mesh covers the row).
-            // These ripped interior meshes are baked at their SOURCE-vehicle coords (not origin), so AABB-centre them on
-            // the hook exactly like Build() does at runtime (raw-placing them floats them off into the sky).
-            var steerPt = _bundle.Points.Find(pt => pt.Name == "Steer");
-            if (steerPt != null) AddCenteredDetail(Vehicle.SteerMeshFor(_bundle), new Color(0.13f, 0.11f, 0.08f), AssetBundle.V3(steerPt.Pos));
-            var seatPt = _bundle.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
-            if (seatPt != null) AddCenteredDetail(Vehicle.SeatMeshFor(_bundle), new Color(0.22f, 0.22f, 0.24f), AssetBundle.V3(seatPt.Pos));
+            // seats + steering wheel: a real vehicle body uses its OWN ripped set at the body transform (jeep body -> the
+            // jeep's 4 seats, master "does jeep not have 4 seats usually?"); a custom body uses the author-placed hooks
+            // (ripped meshes are baked at source coords -> AABB-centre them on the hook, like Build() at runtime).
+            if (eRealHl)
+            {
+                if (Godot.FileAccess.FileExists($"res://content/{bBase}_seats.txt")) AddLightMesh($"{bBase}_seats.txt", new Color(0.25f, 0.25f, 0.25f), bodyPart, false);
+                if (Godot.FileAccess.FileExists($"res://content/{bBase}_steer.txt")) AddLightMesh($"{bBase}_steer.txt", new Color(0.28f, 0.23f, 0.14f), bodyPart, false);
+            }
+            else
+            {
+                var steerPt = _bundle.Points.Find(pt => pt.Name == "Steer");
+                if (steerPt != null) AddCenteredDetail(Vehicle.SteerMeshFor(_bundle), new Color(0.13f, 0.11f, 0.08f), AssetBundle.V3(steerPt.Pos));
+                var seatPt = _bundle.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
+                if (seatPt != null) AddCenteredDetail(Vehicle.SeatMeshFor(_bundle), new Color(0.22f, 0.22f, 0.24f), AssetBundle.V3(seatPt.Pos));
+            }
             // headlight + taillight LENS geometry (master "the actual headlight parts... are missing"): the REAL ripped
-            // {base}_headlights/taillights mesh if the body is a vehicle body (at the body part's transform, like the
-            // runtime), else a cream/red lens box at each hook. + a forward spotlight per Headlight hook as a light cue.
-            var bodyPart = _bundle.Parts.Count > 0 ? _bundle.Parts[0] : null;
-            var bodyMeshName = bodyPart?.Mesh ?? "";
-            var bBase = bodyMeshName.EndsWith("_body.txt") ? bodyMeshName[..^9] : bodyMeshName.EndsWith(".txt") ? bodyMeshName[..^4] : bodyMeshName;
-            bool eRealHl = bBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bBase}_headlights.txt");
-            bool eRealTl = bBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bBase}_taillights.txt");
+            // {base}_headlights/taillights mesh at the body transform if a vehicle body, else a cream/red lens box at each
+            // hook. + a forward spotlight per Headlight hook as a light cue.
             if (eRealHl) AddLightMesh($"{bBase}_headlights.txt", new Color(1f, 0.96f, 0.72f), bodyPart);
             if (eRealTl) AddLightMesh($"{bBase}_taillights.txt", new Color(1f, 0.2f, 0.2f), bodyPart);
             foreach (var pt in _bundle.Points)
@@ -177,13 +186,15 @@ namespace UnturnedGodot
 
         // real ripped headlight/taillight LENS mesh at the BODY part's transform (baked in body space), unshaded glow so
         // it reads as a lit lens in the editor -- mirrors BuildFromBundle loading {base}_headlights/taillights.txt.
-        void AddLightMesh(string mesh, Color glow, AssetBundle.Part bodyPart)
+        void AddLightMesh(string mesh, Color col, AssetBundle.Part bodyPart, bool unshaded = true)
         {
             if (bodyPart == null) return;
             var m = ContentProvider.ParseObj($"res://content/{mesh}");
             if (m == null) return;
             var basis = AssetBundle.EulerDegBasis(bodyPart.Rot).Scaled(AssetBundle.V3(bodyPart.Scale, Vector3.One));
-            var mi = new MeshInstance3D { Mesh = m, Transform = new Transform3D(basis, AssetBundle.V3(bodyPart.Pos)), MaterialOverride = new StandardMaterial3D { AlbedoColor = glow, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+            var mat = new StandardMaterial3D { AlbedoColor = col, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+            if (unshaded) mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;   // lights glow; seats/steer stay shaded
+            var mi = new MeshInstance3D { Mesh = m, Transform = new Transform3D(basis, AssetBundle.V3(bodyPart.Pos)), MaterialOverride = mat };
             _composeRoot.AddChild(mi); _vehPreview.Add(mi);
         }
 

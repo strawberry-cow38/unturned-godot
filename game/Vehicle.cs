@@ -1010,10 +1010,13 @@ namespace UnturnedGodot
             // headlight light spot emission points?"): a composed body has no built-in wheel/seats/lamps, so drive the
             // runtime's proven steer/seat/headlight placement (Build() below) off the bundle's Steer / Seat_* / Headlight_*
             // points, rebased into body-at-origin space like the wheels. No hook -> stays off (older factory cars unaffected).
-            var steerHook = b.Points.Find(pt => pt.Name == "Steer");
-            if (steerHook != null) { s.SteerModel = SteerMeshFor(b); s.SteerPivot = t0inv * AssetBundle.V3(steerHook.Pos); if (s.SteerAxis == Vector3.Zero) s.SteerAxis = new Vector3(0f, 0.259f, 0.966f); }
-            var seatHook = b.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
-            if (seatHook != null) { var seatMesh = SeatMeshFor(b); if (!string.IsNullOrEmpty(seatMesh)) { s.SeatModelFile = seatMesh; s.SeatModel = t0inv * AssetBundle.V3(seatHook.Pos); } }
+            if (!realHl)   // custom body: author-placed seat/steer at the hooks (a real vehicle body uses its OWN baked interior below)
+            {
+                var steerHook = b.Points.Find(pt => pt.Name == "Steer");
+                if (steerHook != null) { s.SteerModel = SteerMeshFor(b); s.SteerPivot = t0inv * AssetBundle.V3(steerHook.Pos); if (s.SteerAxis == Vector3.Zero) s.SteerAxis = new Vector3(0f, 0.259f, 0.966f); }
+                var seatHook = b.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
+                if (seatHook != null) { var seatMesh = SeatMeshFor(b); if (!string.IsNullOrEmpty(seatMesh)) { s.SeatModelFile = seatMesh; s.SeatModel = t0inv * AssetBundle.V3(seatHook.Pos); } }
+            }
             var spots = new System.Collections.Generic.List<Vector3>();
             foreach (var pt in b.Points) if (pt.Name != null && pt.Name.StartsWith("Headlight")) spots.Add(t0inv * AssetBundle.V3(pt.Pos));
             var tails = new System.Collections.Generic.List<Vector3>();
@@ -1063,6 +1066,16 @@ namespace UnturnedGodot
                 if (realTl) v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = ContentProvider.ParseObj($"res://content/{bodyBase}_taillights.txt"), MaterialOverride = tlMat });
                 else foreach (var p in tails) v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = new BoxMesh { Size = new Vector3(0.24f, 0.16f, 0.08f) }, MaterialOverride = tlMat, Position = p });
                 v._taillightMat = tlMat;
+            }
+            // real vehicle body -> its OWN ripped seats (ALL of them -- jeep = 4) + steering wheel at their baked positions,
+            // like the real car's Parts (master 2026-07-23 "does jeep not have 4 seats usually?" -- the composed car was
+            // grabbing the PRESET's seats). Custom bodies use the hook-placed seat/steer above.
+            if (realHl)
+            {
+                if (Godot.FileAccess.FileExists($"res://content/{bodyBase}_seats.txt"))
+                    v.AddChild(new MeshInstance3D { Name = "Seats", Mesh = ContentProvider.ParseObj($"res://content/{bodyBase}_seats.txt"), MaterialOverride = SolidMat(new Color(0.25f, 0.25f, 0.25f)) });
+                if (Godot.FileAccess.FileExists($"res://content/{bodyBase}_steer.txt"))
+                    v.AddChild(new MeshInstance3D { Name = "SteerModel", Mesh = ContentProvider.ParseObj($"res://content/{bodyBase}_steer.txt"), MaterialOverride = SolidMat(new Color(0.28f, 0.23f, 0.14f)) });
             }
 
             for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
@@ -1143,6 +1156,22 @@ namespace UnturnedGodot
             if (!string.IsNullOrEmpty(sm)) return sm;                                                   // spec ships explicit seats (semi)
             if (Godot.FileAccess.FileExists($"res://content/{key}_seats.txt")) return $"{key}_seats.txt";   // else the preset's OWN ripped seats
             return "jeep_seats.txt";   // default so a COMPOSED body always seats a driver (real bodies bake seats into the body; composed don't)
+        }
+
+        // The paint material the RUNTIME gives a composed body (BuildFromBundle), exposed so the editor preview can MATCH
+        // it (master: the editor drew the body unpainted while the drivable car painted). Null if the body isn't a real
+        // vehicle body (a custom body keeps its own albedo/flat).
+        public static Material BodyPaintFor(AssetBundle b)
+        {
+            if (b == null || b.Parts.Count == 0) return null;
+            var body = b.Parts[0].Mesh ?? "";
+            var bbase = body.EndsWith("_body.txt") ? body[..^9] : body.EndsWith(".txt") ? body[..^4] : body;
+            if (bbase.Length == 0 || !Godot.FileAccess.FileExists($"res://content/{bbase}_headlights.txt")) return null;   // ships ripped lights == a real vehicle body
+            var bs = SpecFor(bbase);
+            if (bs.Palette == null) return null;
+            var paintHex = b.ParamString("veh_paint", null);
+            var paint = !string.IsNullOrEmpty(paintHex) ? new Color(paintHex) : SpawnPaint(bs, 0);
+            return PaintMat(bs.Palette, paint);
         }
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
