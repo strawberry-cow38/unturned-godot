@@ -36,7 +36,8 @@ namespace UnturnedGodot
         LineEdit _nameEdit;
         OptionButton _typeOpt, _hookOpt, _surfOpt, _powerKind;   // behaviours: impact surface, power in/out
         LineEdit _powerWatts, _powerLabel;
-        LineEdit _gunDamage, _gunRpm, _gunAmmo, _gunRange;   // gun-type stats authored per bundle (ApplyFactoryGunStats reads these)
+        LineEdit _gunDamage, _gunRpm, _gunAmmo, _gunRange, _gunVehDmg, _gunSpread, _gunPellets, _gunRecoil, _gunVel;   // gun-type stats authored per bundle (ApplyFactoryGunStats reads these)
+        OptionButton _gunPreset;   // pick any real weapon -> load its full stats as a starting point
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
@@ -324,13 +325,32 @@ namespace UnturnedGodot
             col.AddChild(_poweredLight);
             SyncPowerUI();
 
+            // preset dropdown (master 2026-07-23): pick any of the 31 real weapons -> load its FULL stats as the
+            // starting point, then tweak the fields below. "— none —" leaves the bundle's own params.
+            var pRow = new HBoxContainer();
+            pRow.AddChild(new Label { Text = "preset" });
+            _gunPreset = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
+            _gunPreset.AddItem("— none —");
+            foreach (var n in GunPresets.Names()) _gunPreset.AddItem(n);
+            _gunPreset.ItemSelected += i => { if (i > 0) { var nm = _gunPreset.GetItemText((int)i); GunPresets.WriteToBundle(_bundle, nm); SyncGunUI(); Status($"loaded weapon preset: {nm}"); } };
+            pRow.AddChild(_gunPreset);
+            col.AddChild(pRow);
+
             var gRow = new HBoxContainer();   // gun stats (type=gun): each factory gun shoots its own numbers
             gRow.AddChild(new Label { Text = "gun stats" });
             _gunDamage = NumField("dmg"); gRow.AddChild(_gunDamage);
             _gunRpm = NumField("rpm"); gRow.AddChild(_gunRpm);
             _gunAmmo = NumField("mag"); gRow.AddChild(_gunAmmo);
             _gunRange = NumField("range"); gRow.AddChild(_gunRange);
+            _gunVehDmg = NumField("veh dmg"); gRow.AddChild(_gunVehDmg);
             col.AddChild(gRow);
+            var gRow2 = new HBoxContainer();   // FEEL: the recoil/spread/pellets/velocity master asked for
+            gRow2.AddChild(new Label { Text = "feel" });
+            _gunSpread = NumField("spread"); gRow2.AddChild(_gunSpread);
+            _gunPellets = NumField("pellets"); gRow2.AddChild(_gunPellets);
+            _gunRecoil = NumField("recoil"); gRow2.AddChild(_gunRecoil);
+            _gunVel = NumField("velocity"); gRow2.AddChild(_gunVel);
+            col.AddChild(gRow2);
             SyncGunUI();
 
             var addRow = new HBoxContainer();
@@ -462,6 +482,12 @@ namespace UnturnedGodot
             SetNumParam("gun_rpm", _gunRpm?.Text);
             SetNumParam("gun_ammo", _gunAmmo?.Text);
             SetNumParam("gun_range", _gunRange?.Text);
+            SetNumParam("gun_vehicle_damage", _gunVehDmg?.Text);
+            SetNumParam("gun_spread", _gunSpread?.Text);
+            SetNumParam("gun_pellets", _gunPellets?.Text);
+            SetNumParam("gun_muzzle_velocity", _gunVel?.Text);
+            // "recoil" = the vertical-kick knob -> drives both min/max Y (a slight min<max range reads natural, not fixed)
+            if (float.TryParse(_gunRecoil?.Text, out var rc) && rc > 0f) { _bundle.SetParam("gun_recoil_min_y", rc * 0.8f); _bundle.SetParam("gun_recoil_max_y", rc); }
         }
 
         void SetNumParam(string key, string text) { if (float.TryParse(text, out var v) && v > 0f) _bundle.SetParam(key, v); }
@@ -471,6 +497,9 @@ namespace UnturnedGodot
             if (_gunDamage == null) return;
             _gunDamage.Text = ParamNumStr("gun_damage"); _gunRpm.Text = ParamNumStr("gun_rpm");
             _gunAmmo.Text = ParamNumStr("gun_ammo"); _gunRange.Text = ParamNumStr("gun_range");
+            _gunVehDmg.Text = ParamNumStr("gun_vehicle_damage");
+            _gunSpread.Text = ParamNumStr("gun_spread"); _gunPellets.Text = ParamNumStr("gun_pellets");
+            _gunRecoil.Text = ParamNumStr("gun_recoil_max_y"); _gunVel.Text = ParamNumStr("gun_muzzle_velocity");
         }
 
         string ParamNumStr(string key) { float v = _bundle.ParamFloat(key, 0f); return v > 0f ? v.ToString("0.###") : ""; }
