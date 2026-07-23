@@ -125,17 +125,27 @@ namespace UnturnedGodot
             if (steerPt != null) AddCenteredDetail(Vehicle.SteerMeshFor(_bundle), new Color(0.13f, 0.11f, 0.08f), AssetBundle.V3(steerPt.Pos));
             var seatPt = _bundle.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
             if (seatPt != null) AddCenteredDetail(Vehicle.SeatMeshFor(_bundle), new Color(0.22f, 0.22f, 0.24f), AssetBundle.V3(seatPt.Pos));
-            // headlight emission points: a bright emissive marker + a forward (-Z) spotlight at each Headlight hook
+            // headlight + taillight LENS models at their hooks (master "missing from the model"): a cream lens box + a
+            // forward (-Z) spotlight per Headlight, a red lens box per Taillight -- mirrors what BuildFromBundle bakes on.
             foreach (var pt in _bundle.Points)
             {
-                if (pt.Name == null || !pt.Name.StartsWith("Headlight")) continue;
-                var hp = AssetBundle.V3(pt.Pos);
-                var marker = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.1f, Height = 0.2f }, Position = hp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.96f, 0.7f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
-                _composeRoot.AddChild(marker); _vehPreview.Add(marker);
-                var beam = new SpotLight3D { Position = hp, SpotRange = 8f, SpotAngle = 32f, LightColor = new Color(1f, 0.95f, 0.75f), LightEnergy = 3f };   // fires local -Z = the vehicle's forward
-                _composeRoot.AddChild(beam); _vehPreview.Add(beam);
+                if (pt.Name == null) continue;
+                if (pt.Name.StartsWith("Headlight"))
+                {
+                    var hp = AssetBundle.V3(pt.Pos);
+                    var lens = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.26f, 0.20f, 0.10f) }, Position = hp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.96f, 0.72f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
+                    _composeRoot.AddChild(lens); _vehPreview.Add(lens);
+                    var beam = new SpotLight3D { Position = hp, SpotRange = 8f, SpotAngle = 32f, LightColor = new Color(1f, 0.95f, 0.75f), LightEnergy = 3f };   // fires local -Z = the vehicle's forward
+                    _composeRoot.AddChild(beam); _vehPreview.Add(beam);
+                }
+                else if (pt.Name.StartsWith("Taillight"))
+                {
+                    var tp = AssetBundle.V3(pt.Pos);
+                    var lens = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.24f, 0.16f, 0.08f) }, Position = tp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.15f, 0.15f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
+                    _composeRoot.AddChild(lens); _vehPreview.Add(lens);
+                }
             }
-            GD.Print($"[vehpreview] rendered {_vehPreview.Count} detail nodes (wheels + steer + seat + headlights at their hooks)");
+            GD.Print($"[vehpreview] rendered {_vehPreview.Count} detail nodes (wheels + steer + seat + head/tail light lenses at their hooks)");
         }
 
         void AddDetailMesh(string mesh, string albedo, Vector3 pos, Vector3 scale)
@@ -154,7 +164,7 @@ namespace UnturnedGodot
             if (string.IsNullOrEmpty(mesh)) return;
             var m = ContentProvider.ParseObj($"res://content/{mesh}");
             if (m == null) return;
-            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = new StandardMaterial3D { AlbedoColor = mat }, Position = hook - m.GetAabb().GetCenter() };
+            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = new StandardMaterial3D { AlbedoColor = mat, CullMode = BaseMaterial3D.CullModeEnum.Disabled }, Position = hook - m.GetAabb().GetCenter() };   // double-sided: ripped seat/steer front-faces would otherwise cull -> "inside out" (master)
             _composeRoot.AddChild(mi); _vehPreview.Add(mi);
         }
 
@@ -724,7 +734,7 @@ namespace UnturnedGodot
 
         static string[] HooksFor(string type) => type switch
         {
-            "vehicle" => new[] { "Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR", "Seat_0", "Seat_1", "Steer", "Exit_0", "Exhaust", "Headlight_0", "Headlight_1", "Light_0" },
+            "vehicle" => new[] { "Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR", "Seat_0", "Seat_1", "Steer", "Exit_0", "Exhaust", "Headlight_0", "Headlight_1", "Taillight_0", "Taillight_1", "Light_0" },
             "gun" => new[] { "Muzzle", "Sight", "Magazine", "Eject", "View", "Barrel", "Grip", "Tactical", "Aim" },
             "deployable" => new[] { "Storage", "Anchor", "Light_0", "Point_0" },
             _ => new[] { "Point_0", "Point_1", "Anchor" },

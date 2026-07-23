@@ -12,7 +12,9 @@
     { "name": "Seat_0",   "pos": [0.40, 0.90, 0.40],   "rot": [0, 0, 0] },
     { "name": "Steer",       "pos": [-0.5, 1.0, -0.9], "rot": [0, 0, 0] },
     { "name": "Headlight_0", "pos": [-0.8, 0.6, -2.2], "rot": [0, 0, 0] },
-    { "name": "Headlight_1", "pos": [0.8, 0.6, -2.2],  "rot": [0, 0, 0] }
+    { "name": "Headlight_1", "pos": [0.8, 0.6, -2.2],  "rot": [0, 0, 0] },
+    { "name": "Taillight_0", "pos": [-0.8, 0.7, 2.05], "rot": [0, 0, 0] },
+    { "name": "Taillight_1", "pos": [0.8, 0.7, 2.05],  "rot": [0, 0, 0] }
   ],
   "params": {
     "veh_preset": "roadster",

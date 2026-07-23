@@ -1026,6 +1026,26 @@ namespace UnturnedGodot
             var v = Build(s, 0, "factory:" + s.Name);
             float susp = b.ParamFloat("veh_suspension", 0f);   // wheel travel (master): higher = softer/off-road, lower = stiff. 0 = the spec default (0.25)
             if (susp > 0f && v._wNodes != null) foreach (var w in v._wNodes) w.SuspensionTravel = susp;
+
+            // headlight/taillight LENS MODELS (master 2026-07-23 "headlights / tail lights are missing from the model"):
+            // a real body bakes glowing lens tris in (split via HeadlightZone); a COMPOSED body doesn't, so plant a small
+            // emissive lens box at each Headlight/Taillight hook, SHARING the vehicle's _headlightMat/_taillightMat so the
+            // existing SetHeadlights('L') / SetTaillights(driving) glow them exactly like a real car's lenses.
+            if (spots.Count > 0 && v._headlightMat == null)
+            {
+                var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                var hlMesh = new BoxMesh { Size = new Vector3(0.26f, 0.20f, 0.10f) };   // a lens pad on the front face
+                foreach (var p in spots) v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat, Position = p });
+                v._headlightMat = hlMat;
+            }
+            if (tails.Count > 0 && v._taillightMat == null)
+            {
+                var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                var tlMesh = new BoxMesh { Size = new Vector3(0.24f, 0.16f, 0.08f) };
+                foreach (var p in tails) v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = tlMesh, MaterialOverride = tlMat, Position = p });
+                v._taillightMat = tlMat;
+            }
+
             for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
             {
                 var mi = AssetBundleLoader.BuildPart(b.Parts[i]);
@@ -1807,6 +1827,7 @@ namespace UnturnedGodot
         void TriggerAlarm() { if (_alarmed && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master)
 
         public void ToggleHeadlights() { if (_alarmTimer > 0f) return; SetHeadlights(!_headlightsOn); }   // source tellHeadlights; blocked while the alarm owns the lights (master)
+        public void PreviewLightsOn() { SetHeadlights(true); SetTaillights(true); }   // showcase/preview: force both lamp sets lit so the lens models glow in a static shot
         void SetHeadlights(bool on)
         {
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights

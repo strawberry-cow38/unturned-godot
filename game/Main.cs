@@ -1459,7 +1459,7 @@ namespace UnturnedGodot
                     { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f);   // walk over + E to enter/drive
                       if (System.Environment.GetEnvironmentVariable("UG_VEHSHOT") == "1")   // clean product shot: an orbit cam framing the car + lamps lit, to verify steer/seat/headlights at a glance
                       {
-                          v.ToggleHeadlights();   // lamps on so the headlight beams show (off by default until 'L' in-game)
+                          v.PreviewLightsOn();   // both lamp sets lit so the head + tail lens models glow (off by default until 'L' / driving in-game)
                           var vcam = new Camera3D { Current = true, Fov = 46f, Far = 2000f };
                           root.AddChild(vcam);
                           vcam.Position = new Vector3(-0.6f, 3.4f, -5.8f);   // front-left-above the car (it faces -Z) -> headlights + the open cab (steer+seat) both in frame
