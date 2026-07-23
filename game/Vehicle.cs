@@ -1088,15 +1088,22 @@ namespace UnturnedGodot
             var v = b.ParamString("veh_steer_model", null);
             if (!string.IsNullOrEmpty(v)) return v;
             var preset = b.ParamString("veh_preset", null);
-            var sm = SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").SteerModel;
-            return string.IsNullOrEmpty(sm) ? "jeep_steer.txt" : sm;   // default wheel if the preset bakes it into the body
+            var key = !string.IsNullOrEmpty(preset) ? preset : "jeep";
+            var sm = SpecFor(key).SteerModel;
+            if (!string.IsNullOrEmpty(sm)) return sm;                                                   // spec ships explicit steer (semi)
+            if (Godot.FileAccess.FileExists($"res://content/{key}_steer.txt")) return $"{key}_steer.txt";   // else the preset's OWN wheel
+            return "jeep_steer.txt";   // default wheel (real bodies bake one into the body mesh; a COMPOSED body has none)
         }
         public static string SeatMeshFor(AssetBundle b)
         {
             var v = b.ParamString("veh_seat_model", null);
             if (!string.IsNullOrEmpty(v)) return v;
             var preset = b.ParamString("veh_preset", null);
-            return SpecFor(!string.IsNullOrEmpty(preset) ? preset : "jeep").SeatModelFile;   // may be null (seats vary; no blanket default)
+            var key = !string.IsNullOrEmpty(preset) ? preset : "jeep";
+            var sm = SpecFor(key).SeatModelFile;
+            if (!string.IsNullOrEmpty(sm)) return sm;                                                   // spec ships explicit seats (semi)
+            if (Godot.FileAccess.FileExists($"res://content/{key}_seats.txt")) return $"{key}_seats.txt";   // else the preset's OWN ripped seats
+            return "jeep_seats.txt";   // default so a COMPOSED body always seats a driver (real bodies bake seats into the body; composed don't)
         }
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated

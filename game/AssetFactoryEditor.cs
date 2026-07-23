@@ -41,7 +41,7 @@ namespace UnturnedGodot
         LineEdit _depHealth, _depFuel, _depEnergy, _depCharge;   // deployable DEVICE stats (BuildDeployableDef reads deploy_*)
         CheckBox _depBattery, _depSwitch, _depTurbine, _depShatter;   // deployable device behaviour toggles
         LineEdit _vehEngine, _vehSpeed, _vehSteer, _vehBrake, _vehFuel, _vehHealth, _vehSusp;   // vehicle drive stats (BuildFromBundle reads these)
-        OptionButton _vehPreset, _vehWheel;   // preset = full driving feel base; wheel = swap the wheel mesh asset
+        OptionButton _vehPreset, _vehWheel, _vehSteerModel, _vehSeatModel;   // preset = full driving feel base; wheel/steer/seat = swap the mesh asset
         VBoxContainer _gunPanel, _devicePanel, _vehiclePanel;   // type-gated panels: gun on gun, device on deployable, vehicle on vehicle
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
@@ -479,6 +479,20 @@ namespace UnturnedGodot
             vRow2.AddChild(new Label { Text = "susp" });
             _vehSusp = NumFieldV("travel"); vRow2.AddChild(_vehSusp);
             _vehiclePanel.AddChild(vRow2);
+            var vRow3 = new HBoxContainer();   // steering-wheel + seat model pickers (master "steering wheel model, seat positions and models?")
+            vRow3.AddChild(new Label { Text = "steer" });
+            _vehSteerModel = new OptionButton { CustomMinimumSize = new Vector2(140, 0) };
+            _vehSteerModel.AddItem("— preset's —");
+            foreach (var sMesh in SteerAssets) _vehSteerModel.AddItem(sMesh);
+            _vehSteerModel.ItemSelected += i => { _bundle.SetParam("veh_steer_model", i > 0 ? _vehSteerModel.GetItemText((int)i) : ""); RebuildVehiclePreview(); Status(i > 0 ? $"steer model: {_vehSteerModel.GetItemText((int)i)}" : "steer model: preset's"); };
+            vRow3.AddChild(_vehSteerModel);
+            vRow3.AddChild(new Label { Text = "seat" });
+            _vehSeatModel = new OptionButton { CustomMinimumSize = new Vector2(140, 0) };
+            _vehSeatModel.AddItem("— preset's —");
+            foreach (var sMesh in SeatAssets) _vehSeatModel.AddItem(sMesh);
+            _vehSeatModel.ItemSelected += i => { _bundle.SetParam("veh_seat_model", i > 0 ? _vehSeatModel.GetItemText((int)i) : ""); RebuildVehiclePreview(); Status(i > 0 ? $"seat model: {_vehSeatModel.GetItemText((int)i)}" : "seat model: preset's"); };
+            vRow3.AddChild(_vehSeatModel);
+            _vehiclePanel.AddChild(vRow3);
             SyncVehicleUI();
             UpdatePanelVis();
 
@@ -688,6 +702,8 @@ namespace UnturnedGodot
 
         // The distinct real wheel meshes (from the vehicle Specs) offered by the wheel picker.
         static readonly string[] WheelAssets = { "jeep_wheel.txt", "quad_wheel.txt", "bus_wheel.txt", "sedan_wheel.txt", "hatchback_wheel.txt", "humvee_wheel.txt", "roadster_wheel.txt", "tractor_wheel_front.txt" };
+        static readonly string[] SteerAssets = { "jeep_steer.txt", "roadster_steer.txt", "sedan_steer.txt", "hatchback_steer.txt", "humvee_steer.txt", "offroad_steer.txt", "quad_steer.txt", "golf_steer.txt", "van_steer.txt", "truck_steer.txt", "bus_steer.txt", "ambulance_steer.txt", "firetruck_steer.txt", "police_steer.txt", "tractor_steer.txt", "ural_steer.txt" };
+        static readonly string[] SeatAssets = { "jeep_seats.txt", "roadster_seats.txt", "sedan_seats.txt", "hatchback_seats.txt", "humvee_seats.txt", "offroad_seats.txt", "golf_seats.txt", "bus_seats.txt", "ambulance_seats.txt", "firetruck_seats.txt" };
 
         void SyncVehicleUI()
         {
@@ -700,6 +716,10 @@ namespace UnturnedGodot
             if (_vehPreset != null) { int idx = 0; for (int i = 1; i < _vehPreset.ItemCount; i++) if (_vehPreset.GetItemText(i) == p) { idx = i; break; } _vehPreset.Selected = idx; }
             var wm = _bundle.ParamString("veh_wheel", "");   // reflect the chosen wheel asset
             if (_vehWheel != null) { int idx = 0; for (int i = 1; i < _vehWheel.ItemCount; i++) if (_vehWheel.GetItemText(i) == wm) { idx = i; break; } _vehWheel.Selected = idx; }
+            var stm = _bundle.ParamString("veh_steer_model", "");   // reflect the chosen steering-wheel model
+            if (_vehSteerModel != null) { int idx = 0; for (int i = 1; i < _vehSteerModel.ItemCount; i++) if (_vehSteerModel.GetItemText(i) == stm) { idx = i; break; } _vehSteerModel.Selected = idx; }
+            var sem = _bundle.ParamString("veh_seat_model", "");   // reflect the chosen seat model
+            if (_vehSeatModel != null) { int idx = 0; for (int i = 1; i < _vehSeatModel.ItemCount; i++) if (_vehSeatModel.GetItemText(i) == sem) { idx = i; break; } _vehSeatModel.Selected = idx; }
         }
 
         static string[] HooksFor(string type) => type switch
