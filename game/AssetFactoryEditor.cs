@@ -40,7 +40,9 @@ namespace UnturnedGodot
         OptionButton _gunPreset;   // pick any real weapon -> load its full stats as a starting point
         LineEdit _depHealth, _depFuel, _depEnergy, _depCharge;   // deployable DEVICE stats (BuildDeployableDef reads deploy_*)
         CheckBox _depBattery, _depSwitch, _depTurbine, _depShatter;   // deployable device behaviour toggles
-        VBoxContainer _gunPanel, _devicePanel;   // type-gated panels: gun stats only on gun, device only on deployable
+        LineEdit _vehEngine, _vehSpeed, _vehSteer, _vehBrake, _vehFuel, _vehHealth;   // vehicle drive stats (BuildFromBundle reads these)
+        OptionButton _vehPreset;   // pick any real vehicle -> load its full driving feel as a base
+        VBoxContainer _gunPanel, _devicePanel, _vehiclePanel;   // type-gated panels: gun on gun, device on deployable, vehicle on vehicle
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
@@ -391,6 +393,28 @@ namespace UnturnedGodot
             _depShatter = DevCheck("shatter"); dRow2.AddChild(_depShatter);
             _devicePanel.AddChild(dRow2);
             SyncDeviceUI();
+
+            // VEHICLE panel (gated to type=vehicle): preset dropdown of all 18 real vehicles + drive-stat overrides.
+            _vehiclePanel = new VBoxContainer();
+            col.AddChild(_vehiclePanel);
+            var vpRow = new HBoxContainer();
+            vpRow.AddChild(new Label { Text = "preset" });
+            _vehPreset = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
+            _vehPreset.AddItem("— none (jeep) —");
+            foreach (var n in Vehicle.SpecNames) _vehPreset.AddItem(n);
+            _vehPreset.ItemSelected += i => { if (i > 0) { var nm = _vehPreset.GetItemText((int)i); Vehicle.WritePresetParams(_bundle, nm); SyncVehicleUI(); Status($"vehicle preset: {nm}"); } else { _bundle.SetParam("veh_preset", ""); Status("vehicle preset: none (jeep)"); } };
+            vpRow.AddChild(_vehPreset);
+            _vehiclePanel.AddChild(vpRow);
+            var vRow = new HBoxContainer();
+            vRow.AddChild(new Label { Text = "drive" });
+            _vehEngine = NumFieldV("engine"); vRow.AddChild(_vehEngine);
+            _vehSpeed = NumFieldV("speed"); vRow.AddChild(_vehSpeed);
+            _vehSteer = NumFieldV("steer"); vRow.AddChild(_vehSteer);
+            _vehBrake = NumFieldV("brake"); vRow.AddChild(_vehBrake);
+            _vehFuel = NumFieldV("fuel"); vRow.AddChild(_vehFuel);
+            _vehHealth = NumFieldV("health"); vRow.AddChild(_vehHealth);
+            _vehiclePanel.AddChild(vRow);
+            SyncVehicleUI();
             UpdatePanelVis();
 
             var addRow = new HBoxContainer();
@@ -465,6 +489,7 @@ namespace UnturnedGodot
             SyncPowerUI();
             SyncGunUI();
             SyncDeviceUI();
+            SyncVehicleUI();
             UpdatePanelVis();
             RebuildAll();
             Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
@@ -579,6 +604,30 @@ namespace UnturnedGodot
             string t = (_typeOpt != null && _typeOpt.Selected >= 0) ? _typeOpt.GetItemText(_typeOpt.Selected) : _bundle.Type;
             if (_gunPanel != null) _gunPanel.Visible = t == "gun";
             if (_devicePanel != null) _devicePanel.Visible = t == "deployable";
+            if (_vehiclePanel != null) _vehiclePanel.Visible = t == "vehicle";
+        }
+
+        // --- vehicle DRIVE panel (author a factory vehicle: preset base + engine/speed/steer/brake/fuel/health) ---
+        LineEdit NumFieldV(string ph) { var e = new LineEdit { PlaceholderText = ph, CustomMinimumSize = new Vector2(58, 0) }; e.TextChanged += _ => WriteVehicleStats(); return e; }
+
+        void WriteVehicleStats()
+        {
+            SetNumParam("engine", _vehEngine?.Text);
+            SetNumParam("speed_max", _vehSpeed?.Text);
+            SetNumParam("veh_steer", _vehSteer?.Text);
+            SetNumParam("veh_brake", _vehBrake?.Text);
+            SetNumParam("veh_fuel", _vehFuel?.Text);
+            SetNumParam("health", _vehHealth?.Text);
+        }
+
+        void SyncVehicleUI()
+        {
+            if (_vehEngine == null) return;
+            _vehEngine.Text = ParamNumStr("engine"); _vehSpeed.Text = ParamNumStr("speed_max");
+            _vehSteer.Text = ParamNumStr("veh_steer"); _vehBrake.Text = ParamNumStr("veh_brake");
+            _vehFuel.Text = ParamNumStr("veh_fuel"); _vehHealth.Text = ParamNumStr("health");
+            var p = _bundle.ParamString("veh_preset", "");   // reflect the loaded preset in the dropdown (setting Selected doesn't re-fire ItemSelected)
+            if (_vehPreset != null) { int idx = 0; for (int i = 1; i < _vehPreset.ItemCount; i++) if (_vehPreset.GetItemText(i) == p) { idx = i; break; } _vehPreset.Selected = idx; }
         }
 
         static string[] HooksFor(string type) => type switch

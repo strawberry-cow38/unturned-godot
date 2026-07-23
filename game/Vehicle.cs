@@ -1024,6 +1024,24 @@ namespace UnturnedGodot
         public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), _ => BuildJeep(variant) };
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn)
 
+        // Editor preset (master 2026-07-23 "presets for all existing vehicles"): write a preset vehicle's stats into the
+        // bundle params. veh_preset carries the FULL base spec (gears/sound/lights the fields don't expose); the exposed
+        // stats are also written so the editor fields show + can tweak them.
+        public static void WritePresetParams(AssetBundle b, string preset)
+        {
+            if (b == null || string.IsNullOrEmpty(preset)) return;
+            var s = SpecFor(preset);
+            b.SetParam("veh_preset", preset);
+            b.SetParam("engine", s.Engine);
+            b.SetParam("speed_max", s.SpeedMax);
+            b.SetParam("health", s.Health);
+            b.SetParam("wheel_radius", s.WheelRadius);
+            b.SetParam("veh_brake", s.Brake);
+            b.SetParam("veh_steer", s.SteerMax);
+            b.SetParam("veh_fuel", s.Fuel);
+            GD.Print($"[vehpreset] {preset} -> engine {s.Engine} speed {s.SpeedMax} steer {s.SteerMax} brake {s.Brake} fuel {s.Fuel}");
+        }
+
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
         // TypeIds through this so client replicas rebuild the exact meshes/palette the server spawned
         static Spec SpecFor(string name) => name switch
