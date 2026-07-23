@@ -966,13 +966,26 @@ namespace UnturnedGodot
             var preset = b.ParamString("veh_preset", null);
             var s = !string.IsNullOrEmpty(preset) ? SpecFor(preset) : _jeep;   // struct copy: safe defaults for everything below we leave alone
             s.Name = string.IsNullOrEmpty(b.Name) ? "Factory Vehicle" : b.Name;
-            s.Palette = null;                                   // a composed body isn't a paintable palette -> flat paint
-            s.SpotPos = null; s.TailPos = null; s.TaillightMesh = null;   // jeep light positions won't fit a custom body
+            s.SpotPos = null; s.TailPos = null; s.TaillightMesh = null;   // re-derived from the body-vehicle / hooks below
             s.SteerModel = null; s.SeatModelFile = null;
 
             // body = first part; the rest = welded detail parts (the pump on the roof, etc.)
             if (b.Parts.Count > 0 && !string.IsNullOrEmpty(b.Parts[0].Mesh)) s.Body = b.Parts[0].Mesh;
-            s.BodyTex = AssetBundle.ResolveAlbedo(s.Body);   // texture the body with its own albedo (else flat paint)
+            // a real vehicle BODY (jeep_body.txt) ships ripped lights + a paint palette (detect via its lights mesh);
+            // inherit that vehicle's palette + faction paints so the composed body renders PAINTED like the real car
+            // (master's jeep body was flat gray -- the palette-as-albedo read wrong). A custom body -> its own albedo/flat.
+            var bodyBase = s.Body != null && s.Body.EndsWith("_body.txt") ? s.Body[..^9]
+                         : s.Body != null && s.Body.EndsWith(".txt") ? s.Body[..^4] : (s.Body ?? "");
+            var realHl = bodyBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bodyBase}_headlights.txt");
+            var realTl = bodyBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bodyBase}_taillights.txt");
+            var bodySpec = realHl || realTl ? SpecFor(bodyBase) : s;
+            if (realHl || realTl)
+            {
+                s.Palette = bodySpec.Palette; s.DefaultPaints = bodySpec.DefaultPaints; s.RandomHueGray = bodySpec.RandomHueGray; s.BodyTex = null;   // paint like the real vehicle
+                var paintHex = b.ParamString("veh_paint", null);   // optional author paint override (hex, e.g. "#c0392b")
+                if (!string.IsNullOrEmpty(paintHex)) { s.DefaultPaints = new[] { paintHex }; s.RandomHueGray = false; }
+            }
+            else { s.Palette = null; s.BodyTex = AssetBundle.ResolveAlbedo(s.Body); }   // custom body: its own albedo, else flat paint
             s.Parts = null;   // welded detail parts are added as TEXTURED children after Build (below), NOT via the flat-colour rig loop (which real vehicles use)
 
             // Build() plants the body mesh at the vehicle ORIGIN, dropping part[0]'s authored transform. Wheels/collider/welds
@@ -1007,13 +1020,8 @@ namespace UnturnedGodot
             foreach (var pt in b.Points) if (pt.Name != null && pt.Name.StartsWith("Taillight")) tails.Add(t0inv * AssetBundle.V3(pt.Pos));
             // a real vehicle BODY (jeep_body.txt) ships its own ripped headlight/taillight lens MESHES (loaded post-Build,
             // master 2026-07-23 "the actual headlight parts of the vehicle models are missing"); baked in body space, so
-            // use THAT vehicle's own spot/tail light positions too (beams line up with the lenses). A fully-custom body
-            // falls back to the authored Headlight/Taillight hooks.
-            var bodyBase = s.Body != null && s.Body.EndsWith("_body.txt") ? s.Body[..^9]
-                         : s.Body != null && s.Body.EndsWith(".txt") ? s.Body[..^4] : (s.Body ?? "");
-            var realHl = bodyBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bodyBase}_headlights.txt");
-            var realTl = bodyBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bodyBase}_taillights.txt");
-            var bodySpec = realHl || realTl ? SpecFor(bodyBase) : s;
+            // use THAT vehicle's own spot/tail light positions too (beams line up w/ the lenses). bodyBase/realHl/realTl/
+            // bodySpec computed above (the paint block). A fully-custom body falls back to the authored hooks.
             if (realHl && bodySpec.SpotPos != null) { s.SpotPos = bodySpec.SpotPos; s.OmniPos = bodySpec.OmniPos; }
             else if (spots.Count > 0) { s.SpotPos = spots.ToArray(); s.OmniPos = Vector3.Zero; }   // composed body: spot beams only, no center omni fill
             if (realTl && bodySpec.TailPos != null) s.TailPos = bodySpec.TailPos;
