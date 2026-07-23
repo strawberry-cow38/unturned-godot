@@ -301,6 +301,24 @@ namespace UnturnedGodot
                     gen.TogglePower(); PowerNet.Recompute(GetTree());
                     Log("pump rig (WORLD X): low fuel SOURCE (west) + an electric PUMP + a HIGH empty tank (east, 3m up) + a wired generator. once the gen spins up (~1s) the pump lifts fluid UPHILL. hose source->pump input, then pump output->the high tank.");
                 }
+                else if (fa.StartsWith("purif"))
+                {
+                    // purify rig (WORLD X): a TAINTED water SOURCE (west) + a powered PURIFIER + an empty tank (east) + a
+                    // wired generator. Once the gen powers the purifier, tainted water in -> CLEAN water out. Hose src->purifier, purifier->tank.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var purifier = FluidPurifier.Make(); purifier.Position = c + Vector3.Up * 1.0f; world.AddChild(purifier);
+                    SpawnFluidRig(world, FluidRole.Source,  FluidType.Water, 2000f, c - wx * 4f + Vector3.Up * 2.0f, purifier.Position, WaterQuality.Tainted);   // TAINTED source WEST, high
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,     0f, c + wx * 4f, purifier.Position);   // clean tank EAST, low
+                    var gen = Deployable.Spawn(world, DeployableDef.Generator, c + Vector3.Back * 3f, 0f);
+                    var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                    if (genOut != null && purifier.PowerPorts.Count > 0)
+                    {
+                        var wr = new Wire(); world.AddChild(wr); wr.Source = genOut; wr.Consumer = purifier.PowerPorts[0]; wr.AddToGroup("wires");
+                        wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, purifier.PowerPorts[0].GlobalPosition }, valid: true);
+                    }
+                    gen.TogglePower(); PowerNet.Recompute(GetTree());
+                    Log("purify rig (WORLD X): a TAINTED water SOURCE (west) + a powered PURIFIER + an empty tank (east) + a wired generator. hose source->the purifier's LEFT (orange) input, then its RIGHT (green) output->the tank -> CLEAN water. cut the gen's power and it stops cleaning.");
+                }
                 else if (fa.StartsWith("split") || fa.StartsWith("combine"))
                 {
                     // fittings have fixed local ±X port faces (input -X / output +X), so lay the rig along WORLD X near
@@ -378,9 +396,9 @@ namespace UnturnedGodot
         }
 
         // Spawn one debug fluid container at `pos`, its hose port cube on the face toward `facePlayer` so it's aimable.
-        void SpawnFluidRig(Node world, FluidRole role, FluidType type, float amount, Vector3 pos, Vector3 facePlayer)
+        void SpawnFluidRig(Node world, FluidRole role, FluidType type, float amount, Vector3 pos, Vector3 facePlayer, WaterQuality quality = WaterQuality.Clean)
         {
-            var c = FluidContainer.Make(role, new FluidTank(type, 2000f, amount), 50f);
+            var c = FluidContainer.Make(role, new FluidTank(type, 2000f, amount, quality), 50f);
             c.Position = pos;
             Vector3 toP = facePlayer - pos; toP.Y = 0f;
             if (toP.LengthSquared() > 1e-4f) { toP = toP.Normalized(); c.PortLocalPos = new Vector3(toP.X * 0.55f, 0.9f, toP.Z * 0.55f); }

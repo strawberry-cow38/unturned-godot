@@ -21,7 +21,8 @@ namespace UnturnedGodot
                 FluidRole.Combiner    => FluidContainer.MakeFitting(FluidRole.Combiner, def.FluidWays),
                 FluidRole.Pump        => FluidPump.Make(),
                 FluidRole.Valve       => FluidValve.Make(),   // the placed valve gets electrical turn-on/off triggers (strawberry)
-                FluidRole.Transformer => FluidContainer.MakeTransformer(def.FluidType, def.FluidOut, def.FluidRate, 1f),
+                FluidRole.Transformer => def.FluidPurifies ? FluidPurifier.Make()   // the powered water purifier (cleans water; dead without power)
+                                                           : FluidContainer.MakeTransformer(def.FluidType, def.FluidOut, def.FluidRate, 1f),
                 _                     => FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, def.FluidCapacity, 0f), def.FluidRate),
             };
             c.Infinite = def.FluidInfinite;   // a submersible inlet: never depletes

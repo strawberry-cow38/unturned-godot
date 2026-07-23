@@ -183,6 +183,9 @@ namespace UnturnedGodot
                     foreach (var p in c.Ports)
                     {
                         float rate = p.Rate * boost;
+                        // an UNPOWERED purifier (a transformer whose TransformEnabled is gated on power) is inert: zero BOTH
+                        // its input demand and its output supply, so it neither eats water nor fabricates clean water (strawberry)
+                        if (c.Role == FluidRole.Transformer && !c.TransformEnabled) rate = 0f;
                         // a source/tank OUTPUT can't push more than the tank holds (near-empty pushes less; empties cleanly).
                         // an INFINITE inlet skips the clamp -> it never runs dry.
                         if (hasTank && !c.Infinite && (c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && p.Kind == FluidPortKind.Source)
@@ -277,7 +280,7 @@ namespace UnturnedGodot
             // fluid is CREATED (intentionally not conserved). Latch whether the input received flow THIS tick; that gates
             // whether the output SUPPLIES next tick (a 1-tick startup lag). Ports[0]=Consumer input, Ports[1]=Source output.
             foreach (var t in transformers)
-                t.TransformActive = t.Ports.Count > 0 && t.Ports[0].Flowing;
+                t.TransformActive = t.TransformEnabled && t.Ports.Count > 0 && t.Ports[0].Flowing;   // a powered-gated purifier only stays active while it has power
 
             // post-tick hooks (e.g. a FluidFuelInlet empties its buffer into the generator's fuel tank) -- tick-driven
             foreach (var c in allC) c.OnPostTick(dt);

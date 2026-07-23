@@ -41,6 +41,7 @@ namespace UnturnedGodot
         public bool FluidInfinite, FluidNoHead;      // submersible INLET: an infinite source with no head pressure (pump-only draw)
         public WaterQuality FluidQuality = WaterQuality.Clean;   // water this source spawns with (natural = tainted; a filled reservoir = tainted; bottled = clean)
         public bool FluidDirties;                    // a transformer that DIRTIES water (the sluice) -> its output resolves to dirty
+        public bool FluidPurifies;                   // a POWERED transformer that CLEANS water (the purifier) -> FluidDeploy spawns a FluidPurifier (needs power to run)
         public float WaterDepthMin = -1f, WaterDepthMax = -1f;   // placement must be SUBMERGED in this water-depth band (-1 = no water requirement)
         public const float SeaLevel = 25.6f;         // PEI water plane world-Y (Lighting.dat seaLevel 0.1 x 256; = Deployable.WindSeaLevel)
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
@@ -226,6 +227,7 @@ namespace UnturnedGodot
         public static readonly DeployableDef FluidValve    = MakeFluid(9115, "Fluid Valve",    FluidRole.Valve);
         public static readonly DeployableDef Refinery      = MakeFluid(9116, "Fluid Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas
         public static readonly DeployableDef Sluice        = MakeFluid(9117, "Fluid Sluice",         FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidDirties = true; });   // runs water through -> DIRTY-flagged water (not its own type anymore)
+        public static readonly DeployableDef Purifier      = MakeFluid(9121, "Fluid Purifier",       FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidPurifies = true; });   // tainted/dirty water + POWER -> clean water (dead without power)
         // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
         // 0.6-5 m water-depth band. OUTLET (9120): a drain (Consumer) that deletes whatever's piped in; placeable anywhere.
         public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // river/ocean water = TAINTED
@@ -234,7 +236,7 @@ namespace UnturnedGodot
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -256,6 +258,7 @@ namespace UnturnedGodot
             9117 => Sluice,
             9119 => WaterInlet,
             9120 => WaterOutlet,
+            9121 => Purifier,
             9200 => GridSource,
             9201 => GasPump,
             _ => null,

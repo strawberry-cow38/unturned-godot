@@ -43,6 +43,11 @@ namespace UnturnedGodot
         // Base = never; FluidPump overrides it with IsPowered && a port is flowing. Drives the motor-drum shake.
         public virtual bool DriveActive => false;
 
+        // A transformer runs its conversion only while this is true. Base = always (refinery/sluice transform whenever their
+        // input flows); the POWERED purifier overrides it with IsPowered, so an unpowered purifier neither consumes its
+        // input nor produces output (FluidNet zeroes its port rates + never latches TransformActive). Ignored by non-transformers.
+        public virtual bool TransformEnabled => true;
+
         public bool IsFitting => Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump || Role == FluidRole.Transformer || Role == FluidRole.Valve;
 
         // A relay fitting conducts a powered pump's pressure CEILING THROUGH itself, so a pump can lift a whole chain of

@@ -2304,14 +2304,15 @@ namespace UnturnedGodot
             if (!(openFill > 200f && Mathf.Abs(afterClose - openFill) < 1f)) ok = false;
 
             // --- Case K (items): each fluid DeployableDef places a working FluidContainer via the item/placement rail ---
-            var fdefs = new[] { DeployableDef.FluidTank, DeployableDef.WaterSource, DeployableDef.FluidSplitter, DeployableDef.FluidCombiner, DeployableDef.FluidPumpDef, DeployableDef.FluidValve, DeployableDef.Refinery, DeployableDef.Sluice };
-            var wantRoles = new[] { FluidRole.Storage, FluidRole.Source, FluidRole.Splitter, FluidRole.Combiner, FluidRole.Pump, FluidRole.Valve, FluidRole.Transformer, FluidRole.Transformer };
+            var fdefs = new[] { DeployableDef.FluidTank, DeployableDef.WaterSource, DeployableDef.FluidSplitter, DeployableDef.FluidCombiner, DeployableDef.FluidPumpDef, DeployableDef.FluidValve, DeployableDef.Refinery, DeployableDef.Sluice, DeployableDef.Purifier };
+            var wantRoles = new[] { FluidRole.Storage, FluidRole.Source, FluidRole.Splitter, FluidRole.Combiner, FluidRole.Pump, FluidRole.Valve, FluidRole.Transformer, FluidRole.Transformer, FluidRole.Transformer };
             bool itemsOk = true;
             for (int k = 0; k < fdefs.Length; k++)
             {
                 var placed = FluidDeploy.SpawnFor(fdefs[k], this, new Vector3(k * 2f, 0f, 96f), 0f) as FluidContainer;
                 bool roleOk = placed != null && placed.Role == wantRoles[k] && DeployableDef.ById(fdefs[k].Id) == fdefs[k];
                 if (fdefs[k].Fluid == FluidRole.Pump && placed is not FluidPump) roleOk = false;
+                if (fdefs[k] == DeployableDef.Purifier && placed is not FluidPurifier) roleOk = false;   // the purifier def must spawn the powered subclass
                 if (!roleOk) { itemsOk = false; GD.Print($"[hosetool] item {fdefs[k].Name} FAILED (role {placed?.Role})"); }
             }
             // end-to-end: place a Water Source (high) + a Fluid Tank (low) via the rail, hose, tick -> tank fills
@@ -2326,7 +2327,7 @@ namespace UnturnedGodot
             SDG.Unturned.ItemCatalog.RegisterAll();
             var byNameChecks = new (string name, ushort id)[] {
                 ("Fluid Tank", 9110), ("Fluid Water Source", 9111), ("Fluid Splitter", 9112), ("Fluid Combiner", 9113),
-                ("Fluid Pump", 9114), ("Fluid Valve", 9115), ("Fluid Refinery", 9116), ("Fluid Sluice", 9117), ("Hose Tool", 9118) };
+                ("Fluid Pump", 9114), ("Fluid Valve", 9115), ("Fluid Refinery", 9116), ("Fluid Sluice", 9117), ("Hose Tool", 9118), ("Fluid Purifier", 9121) };
             bool byName = true;
             foreach (var (nm, id) in byNameChecks)
             {
@@ -2505,6 +2506,25 @@ namespace UnturnedGodot
             bool vRefuse = s2 <= 0f && hyd2 <= 0f;
             GD.Print($"[hosetool] case V: sip {s1:0}mL (+{hyd1:0.00}) left={vAmt:0} · dirty refused={s2 <= 0f} (\"{vMsg}\")");
             if (!(vSip && vRefuse)) ok = false;
+
+            // --- Case W (purifier): tainted water + POWER -> CLEAN water; DEAD without power (strawberry). A tainted source
+            // feeds a purifier feeds a clean tank. UNPOWERED the purifier is inert (draws nothing, produces nothing) -> tank
+            // stays empty + source undrained. POWERED it consumes tainted + outputs CLEAN -> tank fills with clean water. ---
+            var pSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 5000f, 5000f, WaterQuality.Tainted), 300f);
+            var purifier = FluidPurifier.Make();
+            var pTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 5000f, 0f, WaterQuality.Clean), 125f);
+            pSrc.Position = new Vector3(-6f, 3f, 240f); purifier.Position = new Vector3(0f, 2f, 240f); pTank.Position = new Vector3(6f, 1f, 240f);   // downhill
+            AddChild(pSrc); AddChild(purifier); AddChild(pTank);
+            AddChild(new Hose { Source = pSrc.Ports[0], Consumer = purifier.Ports[0] });    // tainted water -> purifier INPUT (Ports[0]=Consumer)
+            AddChild(new Hose { Source = purifier.Ports[1], Consumer = pTank.Ports[0] });   // purifier OUTPUT (clean) -> tank
+            for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);                    // UNPOWERED: inert
+            float offTank = pTank.Tank.Amount, offSrc = pSrc.Tank.Amount;                   // snapshot the off-phase state for an honest readout
+            bool offInert = offTank < 0.5f && offSrc > 4999f;
+            purifier.DebugForcePower = true;                                                 // wire power
+            for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool onClean = pTank.Tank.Amount > 400f && pTank.Tank.Quality == WaterQuality.Clean && pSrc.Tank.Amount < 5000f;
+            GD.Print($"[hosetool] case W: OFF tank={offTank:0} src={offSrc:0} (want 0/5000) · ON tank={pTank.Tank.Amount:0} q={pTank.Tank.Quality} src={pSrc.Tank.Amount:0} (want >400/Clean/<5000)");
+            if (!(offInert && onClean)) ok = false;
 
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
