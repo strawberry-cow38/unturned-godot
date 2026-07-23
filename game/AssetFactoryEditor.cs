@@ -110,7 +110,7 @@ namespace UnturnedGodot
             foreach (var w in _vehPreview) if (IsInstanceValid(w)) w.QueueFree();
             _vehPreview.Clear();
             if (_bundle.Type != "vehicle") return;
-            if (_partNodes.Count > 0) { var bp = Vehicle.BodyPaintFor(_bundle); if (bp != null) _partNodes[0].MaterialOverride = bp; }   // paint the body like the runtime (else it keeps its flat BuildPart albedo)
+            if (_partNodes.Count > 0) { var bp = Vehicle.BodyPaintFor(_bundle); GD.Print($"[bodypaint] bp={(bp==null?"NULL":bp.GetType().Name)} part0={_partNodes[0].GetType().Name} surfaces={(_partNodes[0] as MeshInstance3D)?.Mesh?.GetSurfaceCount()}"); if (System.Environment.GetEnvironmentVariable("UG_PAINTPLAIN")=="1") _partNodes[0].MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.28f,0.37f,0.51f) }; else if (bp != null) _partNodes[0].MaterialOverride = bp; }   // paint the body like the runtime (else it keeps its flat BuildPart albedo)
             var bodyPart = _bundle.Parts.Count > 0 ? _bundle.Parts[0] : null;
             var bodyMeshName = bodyPart?.Mesh ?? "";
             var bBase = bodyMeshName.EndsWith("_body.txt") ? bodyMeshName[..^9] : bodyMeshName.EndsWith(".txt") ? bodyMeshName[..^4] : bodyMeshName;
