@@ -2325,8 +2325,8 @@ namespace UnturnedGodot
             // --- Case L (items by name): `give <name>` resolves each fluid item to the right id (exact-match branch) ---
             SDG.Unturned.ItemCatalog.RegisterAll();
             var byNameChecks = new (string name, ushort id)[] {
-                ("Fluid Tank", 9110), ("Water Source", 9111), ("Fluid Splitter", 9112), ("Fluid Combiner", 9113),
-                ("Fluid Pump", 9114), ("Fluid Valve", 9115), ("Refinery", 9116), ("Sluice", 9117), ("Hose Tool", 9118) };
+                ("Fluid Tank", 9110), ("Fluid Water Source", 9111), ("Fluid Splitter", 9112), ("Fluid Combiner", 9113),
+                ("Fluid Pump", 9114), ("Fluid Valve", 9115), ("Fluid Refinery", 9116), ("Fluid Sluice", 9117), ("Hose Tool", 9118) };
             bool byName = true;
             foreach (var (nm, id) in byNameChecks)
             {

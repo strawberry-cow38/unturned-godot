@@ -35,6 +35,10 @@ namespace UnturnedGodot
         // powered when its power input is getting its watts (set by PowerNet each solve), or forced on for a headless test
         public bool IsPowered => DebugForcePower || (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Powered);
 
+        // the motor drum vibrates only when the pump is BOTH powered AND actually moving fluid (strawberry) — a powered
+        // pump on a dead/empty line sits still. Flow shows on the passthrough output; Flowing on the consumer relay.
+        public override bool DriveActive => IsPowered && Ports.Exists(p => p != null && (p.Flowing || Mathf.Abs(p.Flow) > 0.01f));
+
         // IPowerDevice — a pure consumer (mirror of GasPump)
         public bool PowerProducing => false;
         public bool PowerOnFire => false;

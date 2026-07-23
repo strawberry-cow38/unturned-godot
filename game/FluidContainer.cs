@@ -15,7 +15,9 @@ namespace UnturnedGodot
     // A fluid device on the hose graph (the fluid analog of a power deployable). A tanked container (Source/Storage/
     // Consumer) holds a FluidTank + one port + a fill bar; a tankless FITTING (Splitter/Combiner) is a pure relay with
     // several ports and no bar. Each port gets a physical HosePort cube the hose tool can connect.
-    public partial class FluidContainer : Node3D
+    // A StaticBody3D (like Deployable) so the device body is SOLID — a world collider on layer 1 the player can't walk
+    // through and the interaction/pickup ray can hit (mirrors a power deployable; the port cubes stay on PortLayer).
+    public partial class FluidContainer : StaticBody3D
     {
         public FluidTank Tank;             // null for a fitting (splitter/combiner)
         public FluidRole Role;
@@ -33,6 +35,11 @@ namespace UnturnedGodot
         public float LastFlow;             // debug / fill-bar readout
         InfoBillboard _info;
         StandardMaterial3D _valveHandleMat;   // valve: the handle wheel material (green open / red closed)
+        MeshInstance3D _pumpDrum; Vector3 _pumpDrumBase; float _vibePhase;   // pump motor drum: vibrates when the pump is DRIVING (powered + fluid flowing)
+
+        // True when the device is actively working and should animate (a powered pump with fluid moving through it).
+        // Base = never; FluidPump overrides it with IsPowered && a port is flowing. Drives the motor-drum shake.
+        public virtual bool DriveActive => false;
 
         public bool IsFitting => Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump || Role == FluidRole.Transformer || Role == FluidRole.Valve;
 
@@ -116,8 +123,13 @@ namespace UnturnedGodot
             {
                 var fcol = Role switch { FluidRole.Splitter => new Color(0.56f, 0.60f, 0.68f), FluidRole.Combiner => new Color(0.62f, 0.56f, 0.66f), FluidRole.Transformer => new Color(0.60f, 0.42f, 0.28f), FluidRole.Valve => new Color(0.48f, 0.52f, 0.58f), _ => new Color(0.30f, 0.42f, 0.62f) };   // pump = electric blue / transformer = copper / valve = steel
                 AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.9f, 1.05f, 0.9f) }, Position = new Vector3(0, 0.55f, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = fcol, Metallic = 0.35f, Roughness = 0.45f } });
+                AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(0.9f, 1.05f, 0.9f) }, Position = new Vector3(0, 0.55f, 0) });   // solid body (layer 1) — no walk-through, ray-hittable
                 if (Role == FluidRole.Pump)   // a little motor drum on top so a pump reads distinct from a splitter box
-                    AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.28f, BottomRadius = 0.28f, Height = 0.4f }, Position = new Vector3(0, 1.25f, 0), RotationDegrees = new Vector3(90, 0, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.72f, 0.20f), Metallic = 0.4f, Roughness = 0.4f } });
+                {
+                    _pumpDrumBase = new Vector3(0, 1.25f, 0);
+                    _pumpDrum = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.28f, BottomRadius = 0.28f, Height = 0.4f }, Position = _pumpDrumBase, RotationDegrees = new Vector3(90, 0, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.85f, 0.72f, 0.20f), Metallic = 0.4f, Roughness = 0.4f } };
+                    AddChild(_pumpDrum);
+                }
                 if (Role == FluidRole.Transformer)   // a chimney stack so a refinery reads distinct
                     AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.14f, BottomRadius = 0.16f, Height = 0.7f }, Position = new Vector3(0.2f, 1.4f, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.3f, 0.3f, 0.32f), Metallic = 0.3f, Roughness = 0.6f } });
                 if (Role == FluidRole.Valve)   // a handle wheel on top — GREEN open / RED closed (Blocked)
@@ -131,6 +143,7 @@ namespace UnturnedGodot
             // tank body — a cylinder tinted by role (green source / blue storage / orange consumer)
             var roleCol = Role switch { FluidRole.Source => new Color(0.35f, 0.70f, 0.42f), FluidRole.Storage => new Color(0.42f, 0.55f, 0.78f), _ => new Color(0.78f, 0.46f, 0.30f) };
             AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.5f, BottomRadius = 0.5f, Height = 1.4f }, Position = new Vector3(0, 0.7f, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = roleCol, Metallic = 0.25f, Roughness = 0.5f } });
+            AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f, Height = 1.4f }, Position = new Vector3(0, 0.7f, 0) });   // solid body (layer 1) — no walk-through, ray-hittable
             // the fill bar + name — reuse the deployable InfoBillboard (name line + a value bar + a prompt line).
             // Skip it under --headless (the viewport-backed billboard is pointless there; the log-check stays clean).
             if (DisplayServer.GetName() != "headless")
@@ -153,13 +166,34 @@ namespace UnturnedGodot
             if (_valveHandleMat != null) _valveHandleMat.AlbedoColor = Blocked ? new Color(0.9f, 0.2f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);   // red closed / green open
         }
 
+        // A clean, "Fluid"-prefixed label for the billboard (strawberry: everything fluid reads "Fluid ..."). Only tanks
+        // show a billboard, so this only needs the tanked roles; a fitting falls back to "Fluid <role>".
+        string RoleLabel() => Role switch
+        {
+            FluidRole.Source => "Fluid Source",
+            FluidRole.Storage => "Fluid Tank",
+            FluidRole.Consumer => "Fluid Drain",
+            _ => $"Fluid {Role}",
+        };
+
         public override void _Process(double delta)
         {
+            // a powered pump with fluid moving through it VIBRATES its motor drum (strawberry: powered AND flowing, not
+            // just powered). Idle / unpowered / dry -> the drum sits still at its base position.
+            if (_pumpDrum != null && GodotObject.IsInstanceValid(_pumpDrum))
+            {
+                if (DriveActive)
+                {
+                    _vibePhase += (float)delta * 42f;
+                    _pumpDrum.Position = _pumpDrumBase + new Vector3(Mathf.Sin(_vibePhase * 1.3f), Mathf.Sin(_vibePhase), Mathf.Sin(_vibePhase * 0.7f)) * 0.01f;
+                }
+                else if (_pumpDrum.Position != _pumpDrumBase) _pumpDrum.Position = _pumpDrumBase;
+            }
             if (Tank == null || _info == null) return;   // fittings have no tank/bar
             _info.GlobalPosition = GlobalPosition + new Vector3(0, 2.2f, 0);   // hover the bar above the tank (TopLevel node)
             float frac = Tank.Capacity > 0f ? Mathf.Clamp(Tank.Amount / Tank.Capacity, 0f, 1f) : 0f;
             var col = FluidDef.Color(Tank.Type);
-            _info.SetName($"{Role} — {FluidDef.Name(Tank.Type)}", col);
+            _info.SetName($"{RoleLabel()} — {FluidDef.Name(Tank.Type)}", col);
             _info.SetBar(0, frac, col);
             _info.SetPrompt($"{Tank.Amount:0} / {Tank.Capacity:0}", new Color(0.9f, 0.92f, 0.95f));
         }

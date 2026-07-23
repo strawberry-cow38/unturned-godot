@@ -217,17 +217,17 @@ namespace UnturnedGodot
             return d;
         }
         public static readonly DeployableDef FluidTank    = MakeFluid(9110, "Fluid Tank",    FluidRole.Storage);   // empty; adopts what's piped in
-        public static readonly DeployableDef WaterSource  = MakeFluid(9111, "Water Source",  FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidCapacity = 200000f; });   // a filled water tank (200 L)
+        public static readonly DeployableDef WaterSource  = MakeFluid(9111, "Fluid Water Source",  FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidCapacity = 200000f; });   // a filled water tank (200 L)
         public static readonly DeployableDef FluidSplitter = MakeFluid(9112, "Fluid Splitter", FluidRole.Splitter);
         public static readonly DeployableDef FluidCombiner = MakeFluid(9113, "Fluid Combiner", FluidRole.Combiner);
         public static readonly DeployableDef FluidPumpDef  = MakeFluid(9114, "Fluid Pump",     FluidRole.Pump);      // draws power; head lift
         public static readonly DeployableDef FluidValve    = MakeFluid(9115, "Fluid Valve",    FluidRole.Valve);
-        public static readonly DeployableDef Refinery      = MakeFluid(9116, "Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas
-        public static readonly DeployableDef Sluice        = MakeFluid(9117, "Sluice",         FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.DirtyWater; });   // water -> dirty water
+        public static readonly DeployableDef Refinery      = MakeFluid(9116, "Fluid Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas
+        public static readonly DeployableDef Sluice        = MakeFluid(9117, "Fluid Sluice",         FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.DirtyWater; });   // water -> dirty water
         // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
         // 0.6-5 m water-depth band. OUTLET (9120): a drain (Consumer) that deletes whatever's piped in; placeable anywhere.
-        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Submersible Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });
-        public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Outlet Drain",      FluidRole.Consumer);
+        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });
+        public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Fluid Drain",      FluidRole.Consumer);
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).

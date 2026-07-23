@@ -38,15 +38,15 @@ namespace SDG.Unturned
             // Hose Tool (9118) equips via ToolDef.ById -> hose mode. All hold + place on the same rail as the power gear.
             Add(9118, "Hose Tool",      1, 1, EItemType.GENERIC, EItemRarity.COMMON,   0, 0, "The fluid hose tool. Look at a green source port and left-click, then a matching consumer port to run a hose. RMB a valve's port to open/close it. Fluid flows downhill, or uphill through a powered pump.");
             Add(9110, "Fluid Tank",     2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A fluid storage tank. Starts empty and takes on whatever fluid you first pipe into it; a fill bar shows its level. Feed it with a hose from a source, pump, or another tank.");
-            Add(9111, "Water Source",   2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A water reservoir that feeds the network -- hose its output into tanks or machines downhill (or uphill through a pump).");
+            Add(9111, "Fluid Water Source",   2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A water reservoir that feeds the network -- hose its output into tanks or machines downhill (or uphill through a pump).");
             Add(9112, "Fluid Splitter", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Splits one hose into two. Each output carries the full flow; consumers draw only what they need.");
             Add(9113, "Fluid Combiner", 2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Merges two hoses into one output -- their flows add together, and the load splits back across the sources.");
             Add(9114, "Fluid Pump",     2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "An electric pump. Wire it to power, and it gives head lift -- fluid can climb uphill through it (and everything downstream) up to its lift. Unpowered it's just a passive relay.");
             Add(9115, "Fluid Valve",    2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "An inline switch for a hose. RMB its port with the hose tool to open (green) or close (red) -- closed stops the flow.");
-            Add(9116, "Refinery",       2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "Refines oil into gasoline. Hose oil into its input; hose its output into a tank to collect the gas.");
-            Add(9117, "Sluice",         2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Runs water through and turns it into dirty water. Hose water into its input; hose its output into a tank.");
-            Add(9119, "Submersible Inlet", 2, 2, EItemType.GENERIC, EItemRarity.RARE,   0, 0, "An infinite water inlet -- but only placeable submerged in water (a valid depth band; the ghost turns blue only there). It has no pressure of its own, so you MUST run a powered pump on its line to draw water up out of it.");
-            Add(9120, "Outlet Drain",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A drain that deletes whatever fluid is piped into it. Place it anywhere and hose your overflow / waste line into it.");
+            Add(9116, "Fluid Refinery",       2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "Refines oil into gasoline. Hose oil into its input; hose its output into a tank to collect the gas.");
+            Add(9117, "Fluid Sluice",         2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Runs water through and turns it into dirty water. Hose water into its input; hose its output into a tank.");
+            Add(9119, "Fluid Inlet", 2, 2, EItemType.GENERIC, EItemRarity.RARE,   0, 0, "An infinite water inlet -- but only placeable submerged in water (a valid depth band; the ghost turns blue only there). It has no pressure of its own, so you MUST run a powered pump on its line to draw water up out of it.");
+            Add(9120, "Fluid Drain",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A drain that deletes whatever fluid is piped into it. Place it anywhere and hose your overflow / waste line into it.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();
