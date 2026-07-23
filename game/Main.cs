@@ -1403,15 +1403,16 @@ namespace UnturnedGodot
             AddChild(root);
             _previewRoot = root;
 
+            bool vehNight = b.Type == "vehicle" && System.Environment.GetEnvironmentVariable("UG_VEHNIGHT") == "1";   // dusk so the lit headlight beams read (emission-point demo)
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
-                BackgroundColor = new Color(0.42f, 0.55f, 0.72f),
+                BackgroundColor = vehNight ? new Color(0.05f, 0.06f, 0.09f) : new Color(0.42f, 0.55f, 0.72f),
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
-                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f), AmbientLightEnergy = 0.7f,
+                AmbientLightColor = new Color(0.6f, 0.62f, 0.65f), AmbientLightEnergy = vehNight ? 0.12f : 0.7f,
             };
             root.AddChild(new WorldEnvironment { Environment = env });
-            root.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+            root.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -46f, 0f), LightEnergy = vehNight ? 0.15f : 1.3f, ShadowEnabled = true });
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
