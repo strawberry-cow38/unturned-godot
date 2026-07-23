@@ -902,13 +902,16 @@ namespace UnturnedGodot
             bool show = HoldingHoseTool && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
             if (!show)
             {
-                if (_hoseArrowsOn) { foreach (var n in GetTree().GetNodesInGroup("fluid_ports")) if (n is HosePort p && IsInstanceValid(p)) p.SetArrowState(false, false); _hoseArrowsOn = false; }
+                if (_hoseArrowsOn) { foreach (var n in GetTree().GetNodesInGroup("fluid_ports")) if (n is HosePort p && IsInstanceValid(p)) { p.Visible = false; p.SetArrowState(false, false); } _hoseArrowsOn = false; }
                 return;
             }
             _hoseArrowsOn = true;
             foreach (var n in GetTree().GetNodesInGroup("fluid_ports"))
                 if (n is HosePort p && IsInstanceValid(p))
+                {   // the fluid IO cubes + arrows only show while the hose tool is out (strawberry) -- the collider stays live so the look-ray still finds them
+                    p.Visible = true;
                     p.SetArrowState(true, p.Usable && !PortHosed(p));
+                }
         }
 
         // an empty (None) tank adopts the fluid at the OTHER end of the hose on connect. Resolves the type THROUGH relay

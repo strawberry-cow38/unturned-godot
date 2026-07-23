@@ -210,9 +210,12 @@ namespace UnturnedGodot
             _info.GlobalPosition = GlobalPosition + new Vector3(0, 2.2f, 0);   // hover the bar above the tank (TopLevel node)
             float frac = Tank.Capacity > 0f ? Mathf.Clamp(Tank.Amount / Tank.Capacity, 0f, 1f) : 0f;
             var col = FluidDef.Color(Tank.Type);
-            _info.SetName($"{RoleLabel()} — {FluidDef.Name(Tank.Type)}", col);
+            // an un-adopted tank has FluidType.None -> reads "(empty)" (a STATE), not "— Empty" as if Empty were a fluid
+            // (strawberry: "20L of EMPTY"). Amounts show in L, not raw mL.
+            string label = Tank.Type == FluidType.None ? $"{RoleLabel()} (empty)" : $"{RoleLabel()} — {FluidDef.Name(Tank.Type)}";
+            _info.SetName(label, col);
             _info.SetBar(0, frac, col);
-            _info.SetPrompt($"{Tank.Amount:0} / {Tank.Capacity:0}", new Color(0.9f, 0.92f, 0.95f));
+            _info.SetPrompt($"{FluidDef.Litres(Tank.Amount)} / {FluidDef.Litres(Tank.Capacity)}", new Color(0.9f, 0.92f, 0.95f));
         }
     }
 }

@@ -40,6 +40,7 @@ namespace UnturnedGodot
             {
                 Owner = owner, Node = node, Kind = node.Kind, Position = localPos,
                 CollisionLayer = PortLayer, CollisionMask = 0,   // detectable, but collides with nothing
+                Visible = false,   // fluid IO only shows while the hose tool is out (strawberry); the collider stays live for the look-ray
             };
             fp._mat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.PerPixel, Metallic = 0f, Roughness = 0.55f };
             fp._cube = new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * CubeSize }, MaterialOverride = fp._mat };
