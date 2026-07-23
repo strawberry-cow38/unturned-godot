@@ -1899,7 +1899,7 @@ namespace UnturnedGodot
         void TriggerAlarm() { if (_alarmed && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master)
 
         public void ToggleHeadlights() { if (_alarmTimer > 0f) return; SetHeadlights(!_headlightsOn); }   // source tellHeadlights; blocked while the alarm owns the lights (master)
-        public void PreviewLightsOn() { SetHeadlights(true); SetTaillights(true); if (HasSiren) _sirenOn = true; }   // showcase/preview: force lamps + lightbar lit so the lens models glow in a static shot
+        public void PreviewLightsOn(bool siren = true) { SetHeadlights(true); SetTaillights(true); if (siren && HasSiren) _sirenOn = true; }   // showcase/preview: force lamps (+ lightbar siren) lit for a static shot
         void SetHeadlights(bool on)
         {
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights
