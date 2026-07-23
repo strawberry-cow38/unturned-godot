@@ -114,6 +114,8 @@ namespace UnturnedNet.Tests
         public const ushort GridSourceId = 9200;   // A3: the grid-power mains SOURCE fixture (a 10kW Output, FixtureKind.GridSource)
         public const ushort GasPumpId = 9201;       // A2: the gas-station PUMP fixture (a 750W Consumer, FixtureKind.GasPump)
         public const ushort GasCanId = 28;          // A2: a Portable Gas Can -- a fuel container (IsFuelContainer) the extract fills
+        public const ushort WaterBottleId = 14;     // a fluid CONTAINER (spawns full of clean water) -- contents ride the wire
+        public const ushort CanteenId = 337;        // a fluid CONTAINER that spawns EMPTY (default type None)
         public const ushort ScrapId = 67;
         public const ushort BeansId = 13;
         public const ushort RifleId = 4;
@@ -133,7 +135,9 @@ namespace UnturnedNet.Tests
             Assets.add(new ItemAsset { id = LogId, itemName = "Log", size_x = 1, size_y = 1, guid = "fixture-log" });
             Assets.add(new ItemAsset { id = PlankId, itemName = "Plank", size_x = 1, size_y = 1, guid = "fixture-plank" });
             Assets.add(new ItemAsset { id = GasCanId, itemName = "Portable Gas Can", size_x = 2, size_y = 2, fuelCapacity = 100f });   // A2: a fuel container the pump fills
-
+            // fluid containers -- fluidDefaultType 2 = Water (matches the UnturnedGodot.FluidType enum's int value)
+            Assets.add(new ItemAsset { id = WaterBottleId, itemName = "Bottled Water", size_x = 1, size_y = 1, fluidCapacity = 1000f, fluidDefaultType = 2, fluidDefaultQuality = 0 });
+            Assets.add(new ItemAsset { id = CanteenId, itemName = "Canteen", size_x = 1, size_y = 1, fluidCapacity = 500f, fluidDefaultType = 0, fluidDefaultQuality = 0 });
         }
 
         /// <summary>The PowerSolverTests devices as net defs: a 4000 W generator (one Output) and a 250 W

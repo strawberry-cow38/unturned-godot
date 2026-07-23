@@ -382,6 +382,14 @@ namespace UnturnedGodot.Net
             // client ("can won't fill", the unified-SP regression from the old local-fill path). -1 (non-fuel /
             // fresh) clamps to 0; only fuel containers ever read it back (Mathf.Max(0) on use).
             w.WriteClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), 12, 2);
+            // fluid-CONTAINER contents (water bottle / canteen / soda / …): type + mL + quality, server-owned exactly like
+            // fuelLevel. MUST ride the wire — the consuming loopback re-adopts the owner inventory through this schema, so
+            // if the contents didn't travel, a drunk-empty bottle would round-trip to fluidAmount -1 and lazily REFILL to
+            // full every sync (infinite drinking) / a filled canteen would reset to empty. -1 (fresh) round-trips faithfully
+            // (WriteClampedFloat is signed) so the lazy-init sentinel is preserved; 20 int bits covers any container mL.
+            w.WriteUInt8(j.item?.fluidType ?? 0);
+            w.WriteClampedFloat(j.item?.fluidAmount ?? -1f, 20, 1);
+            w.WriteUInt8(j.item?.fluidQuality ?? 0);
         }
 
         static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
@@ -397,7 +405,11 @@ namespace UnturnedGodot.Net
             if (!r.ReadInt32(out int gunMagId)) return false;
             if (!r.ReadInt32(out int gunAttach)) return false;
             if (!r.ReadClampedFloat(12, 2, out float fuelLevel)) return false;   // gas-can fuel level (server-filled)
-            item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel };
+            if (!r.ReadUInt8(out byte fluidType)) return false;                  // fluid-container contents (server-owned)
+            if (!r.ReadClampedFloat(20, 1, out float fluidAmount)) return false;
+            if (!r.ReadUInt8(out byte fluidQuality)) return false;
+            item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel,
+                                                   fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality };
             return true;
         }
 
@@ -460,6 +472,9 @@ namespace UnturnedGodot.Net
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunMagId ?? -1));
                     h = NetHash.MixUInt64(h, (ulong)(long)(j.item?.gunAttach ?? -1));
                     h = NetHash.MixFloat(h, NetQuantization.QuantizeClampedFloat(Mathf.Max(0f, j.item?.fuelLevel ?? 0f), 12, 2));   // gas-can fuel level, quantized to the wire value so both sides mix the same
+                    h = NetHash.MixByte(h, j.item?.fluidType ?? (byte)0);   // fluid-container contents ride the parity hash too (quantized to the wire values)
+                    h = NetHash.MixFloat(h, NetQuantization.QuantizeClampedFloat(j.item?.fluidAmount ?? -1f, 20, 1));
+                    h = NetHash.MixByte(h, j.item?.fluidQuality ?? (byte)0);
                 }
             }
             foreach (var worn in new[] { e.Inventory.wornHat, e.Inventory.wornGlasses, e.Inventory.wornMask,

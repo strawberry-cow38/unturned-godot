@@ -22,6 +22,63 @@ namespace UnturnedNet.Tests
             return c.Inventories.StateHash();
         }
 
+        // The pen-test regression (strawberry: "pen test potential fluid exploits"): a fluid CONTAINER's contents
+        // (type + mL + quality) MUST ride the inventory wire. The SP game runs under a consuming loopback that re-adopts
+        // the owner inventory through this schema; pre-fix WriteJar dropped the fluid fields, so a bottle drunk to EMPTY
+        // round-tripped to fluidAmount -1 (fresh) and lazily REFILLED to full every sync -> infinite drinking, and a
+        // TAINTED container reset its quality -> a free-clean-water vector. Teeth: pre-fix the client reads -1 / clean.
+        static float ClientFluid(NetWorldClient c, ushort id, out byte type, out byte qual)
+        {
+            type = 0; qual = 0;
+            if (!c.Inventories.TryGet(c.PlayerId, out var e)) return -999f;
+            foreach (var page in e.Inventory.items)
+                foreach (var jar in page.items)
+                    if (jar.item != null && jar.item.id == id) { type = jar.item.fluidType; qual = jar.item.fluidQuality; return jar.item.fluidAmount; }
+            return -999f;
+        }
+
+        [Test]
+        public void fluid_container_contents_survive_replication()
+        {
+            var h = new TransactionalHarness(9099).Connected("a");
+            var a = h.Clients[0];
+            // an EMPTIED water bottle (drunk to 0) + a partially-full TAINTED canteen (type 2 = Water, quality 1 = Tainted)
+            h.Grant(a.PlayerId, new Item(TransactionalFixtures.WaterBottleId) { fluidType = 2, fluidAmount = 0f, fluidQuality = 0 });
+            h.Grant(a.PlayerId, new Item(TransactionalFixtures.CanteenId) { fluidType = 2, fluidAmount = 300f, fluidQuality = 1 });
+            Assert.That(h.StepUntil(() => a.Inventories.TryGet(a.PlayerId, out var e)
+                                       && e.Inventory.getItemCount(TransactionalFixtures.WaterBottleId) == 1
+                                       && e.Inventory.getItemCount(TransactionalFixtures.CanteenId) == 1), Is.True,
+                        $"both containers replicated to the owner (seed={h.Net.Seed})");
+
+            // TEETH 1: the emptied bottle stays EMPTY on the client -- pre-fix it round-tripped to -1 (fresh) and refilled
+            float bAmt = ClientFluid(a, TransactionalFixtures.WaterBottleId, out byte bType, out _);
+            Assert.That(bAmt, Is.EqualTo(0f).Within(0.6f), "the emptied bottle stays empty over the wire (no refill exploit)");
+            Assert.That(bType, Is.EqualTo(2), "the bottle's fluid type survived the wire");
+
+            // TEETH 2: the tainted canteen keeps its AMOUNT and its QUALITY -- pre-fix quality reset to 0 (Clean) = free clean water
+            float cAmt = ClientFluid(a, TransactionalFixtures.CanteenId, out _, out byte cQual);
+            Assert.That(cAmt, Is.EqualTo(300f).Within(0.6f), "the tainted canteen's amount survived");
+            Assert.That(cQual, Is.EqualTo(1), "the tainted canteen's QUALITY survived (Tainted stays Tainted)");
+
+            OwnerParity(h, a);
+        }
+
+        [Test]
+        public void fresh_fluid_container_keeps_its_uninitialized_sentinel()
+        {
+            var h = new TransactionalHarness(9100).Connected("a");
+            var a = h.Clients[0];
+            h.Grant(a.PlayerId, new Item(TransactionalFixtures.WaterBottleId));   // fresh -> fluidAmount -1 (lazy-init on first read)
+            Assert.That(h.StepUntil(() => a.Inventories.TryGet(a.PlayerId, out var e)
+                                       && e.Inventory.getItemCount(TransactionalFixtures.WaterBottleId) == 1), Is.True,
+                        $"fresh bottle replicated (seed={h.Net.Seed})");
+            // the -1 fresh sentinel must ROUND-TRIP faithfully (WriteClampedFloat is signed) -- else a fresh bottle would
+            // read 0 = empty and never lazy-init to its full default. < 0 confirms the sentinel survived.
+            float amt = ClientFluid(a, TransactionalFixtures.WaterBottleId, out _, out _);
+            Assert.That(amt, Is.LessThan(-0.5f), "a fresh container's -1 sentinel survives the wire (still lazy-inits to full)");
+            OwnerParity(h, a);
+        }
+
         [Test]
         public void console_give_lands_in_the_server_grid_and_replicates()
         {
