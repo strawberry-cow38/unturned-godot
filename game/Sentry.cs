@@ -28,7 +28,7 @@ namespace UnturnedGodot
         // IPowerDevice (a pure consumer, mirrors GasPump): the local PowerNet walks the "deployables" group + feeds ports.
         public bool PowerProducing => false;
         public bool PowerOnFire => false;
-        public uint PowerNetId => 0;                        // SP/local
+        public uint PowerNetId => NetId;                    // 0 for a direct SP/local sentry, the server NetId for a replica (Materialize) so an interactive wire routes over the wire -- mirrors GasPump (review H1). Was hardcoded 0 => RequestConnectWire rejects netId 0 -> no wire ever attaches -> every placed sentry stayed unpowered + inert.
         public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => _ports;
         public bool IsPowered => !RequiresPower || (_powerPort != null && GodotObject.IsInstanceValid(_powerPort) && _powerPort.Powered);
         public float DetectionRadius = 48f;                 // ItemSentryAsset.detectionRadius default

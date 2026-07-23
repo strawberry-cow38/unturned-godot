@@ -210,6 +210,12 @@ namespace UnturnedGodot
                 port = gp.PowerPorts[portIndex];
                 return true;
             }
+            if (_sentries.TryGetValue(netId, out var sn) && IsInstanceValid(sn))   // a sentry is a wire-able Consumer endpoint (its power gate) -- was missing, so a server-accepted generator->sentry wire could never materialize client-side
+            {
+                if (portIndex >= sn.PowerPorts.Count) return false;
+                port = sn.PowerPorts[portIndex];
+                return true;
+            }
             return false;
         }
 
