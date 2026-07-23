@@ -3,8 +3,9 @@ using Godot;
 namespace UnturnedGodot
 {
     // The fluid types (the fluidID). None=0 / Fuel=1 kept stable (gas pumps); new fluids APPENDED so ids don't shift.
-    // (DirtyWater is GONE -- dirtiness is now a WaterQuality FLAG on water, not its own type. Soda/Cola act like water.)
-    public enum FluidType { None, Fuel, Water, Oil, Gas, Soda, Cola }
+    // (DirtyWater is GONE -- dirtiness is now a WaterQuality FLAG on water, not its own type.) The DRINK fluids
+    // (Soda/Cola/OrangeJuice/Milk/CoconutWater/EnergyDrink) all act like clean water when drunk -- see FluidDef.IsBeverage.
+    public enum FluidType { None, Fuel, Water, Oil, Gas, Soda, Cola, OrangeJuice, Milk, CoconutWater, EnergyDrink }
 
     // Water QUALITY (strawberry): clean < tainted < dirty. Bottled water = clean; natural water (river/rain/ocean/inlet) =
     // tainted; the sluice makes dirty. A container takes the WORST quality that enters it (one drop of dirty -> all dirty).
@@ -25,6 +26,10 @@ namespace UnturnedGodot
             [FluidType.Gas]        = new Def("Gasoline",    new Color(0.95f, 0.85f, 0.30f)),   // pale yellow
             [FluidType.Soda]       = new Def("Soda",        new Color(0.55f, 0.30f, 0.85f)),   // purple fizz (acts like water)
             [FluidType.Cola]       = new Def("Cola",        new Color(0.28f, 0.16f, 0.10f)),   // dark cola brown
+            [FluidType.OrangeJuice]  = new Def("Orange Juice",  new Color(0.95f, 0.55f, 0.10f)),   // orange
+            [FluidType.Milk]         = new Def("Milk",          new Color(0.96f, 0.95f, 0.90f)),   // cream white
+            [FluidType.CoconutWater] = new Def("Coconut Water", new Color(0.90f, 0.92f, 0.84f)),   // pale cloudy
+            [FluidType.EnergyDrink]  = new Def("Energy Drink",  new Color(0.35f, 0.85f, 0.30f)),   // lurid green
         };
         public static Def Get(FluidType id) => _defs.TryGetValue(id, out var d) ? d : _defs[FluidType.None];
         public static string Name(FluidType id) => Get(id).Name;
@@ -37,7 +42,10 @@ namespace UnturnedGodot
         public static Color WaterColor(FluidType id, WaterQuality q) => id == FluidType.Water
             ? q switch { WaterQuality.Dirty => new Color(0.45f, 0.40f, 0.25f), WaterQuality.Tainted => new Color(0.45f, 0.60f, 0.65f), _ => Color(FluidType.Water) }
             : Color(id);
-        public static bool Drinkable(FluidType id, WaterQuality q) => id == FluidType.Water ? q == WaterQuality.Clean : (id == FluidType.Soda || id == FluidType.Cola);   // only CLEAN water (or soda/cola) can be drunk
+        // A BEVERAGE fluid (soda/cola/juice/milk/etc.) -- always drinkable, no water-quality flag. Fuel/oil/gas/plain water are not.
+        public static bool IsBeverage(FluidType id) => id == FluidType.Soda || id == FluidType.Cola || id == FluidType.OrangeJuice
+                                                    || id == FluidType.Milk || id == FluidType.CoconutWater || id == FluidType.EnergyDrink;
+        public static bool Drinkable(FluidType id, WaterQuality q) => id == FluidType.Water ? q == WaterQuality.Clean : IsBeverage(id);   // only CLEAN water, or a beverage, can be drunk
 
         // Display a volume in litres (1 unit = 1 mL, strawberry 2026-07-22). Sub-litre reads in mL so a near-empty can
         // isn't just "0.0 L"; >= 1 L shows one decimal. e.g. 20000 -> "20.0 L", 450 -> "450 mL".

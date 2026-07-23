@@ -1432,7 +1432,7 @@ namespace UnturnedGodot
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFluidItem = backing;
-            string mesh = asset?.itemName?.ToLowerInvariant().Replace(" ", "_") ?? "bottled_water";
+            string mesh = FluidItem.HeldMesh(asset);   // most match the item name; the OJ/milk cartons map to box_orange/box_milk
             var an = ConsumableRegistry.Anims(mesh);   // reuse the drink archetype's equip/use clips so the bottle equips + a sip animates naturally
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { ConsumableMesh = $"{mesh}.txt", ConsumableAlbedo = $"{mesh}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(mesh) };

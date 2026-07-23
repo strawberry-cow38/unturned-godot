@@ -77,6 +77,11 @@ namespace SDG.Unturned
             Cont(473, 2000f, UnturnedGodot.FluidType.Soda,  2, 1);   // Bottled Soda: 2 L, 2x1
             Cont(472, 2000f, UnturnedGodot.FluidType.Cola,  2, 1);   // Bottled Cola: 2 L, 2x1
             Cont(337,  500f, UnturnedGodot.FluidType.None,  1, 1);   // Canteen: 500 mL, 1 slot, spawns EMPTY
+            // drink fluids (strawberry 2026-07-23) -- each spawns in its own retail bottle/carton, keeps its retail size (0 = don't override)
+            Cont(463, 1000f, UnturnedGodot.FluidType.OrangeJuice,  0, 0);   // Orange Juice: 1 L carton, retail 1x2
+            Cont(462, 1000f, UnturnedGodot.FluidType.Milk,         0, 0);   // Milk Box: 1 L carton, 1x2
+            Cont(94,   500f, UnturnedGodot.FluidType.CoconutWater, 0, 0);   // Bottled Coconut: 500 mL, 1x1
+            Cont(93,   500f, UnturnedGodot.FluidType.EnergyDrink,  0, 0);   // Bottled Energy: 500 mL, 1x1
         }
 
         // Fuel containers (gas cans/jerrycans) carry a fuelCapacity from the retail .dat "Fuel" field, so a right-click on

@@ -2526,6 +2526,19 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case W: OFF tank={offTank:0} src={offSrc:0} (want 0/5000) · ON tank={pTank.Tank.Amount:0} q={pTank.Tank.Quality} src={pSrc.Tank.Amount:0} (want >400/Clean/<5000)");
             if (!(offInert && onClean)) ok = false;
 
+            // --- Case X (drink fluids): the new beverage fluids (soda/cola/OJ/milk/coconut/energy) are ALL drinkable + a
+            // carton container sips them like water; non-beverages (fuel) are not drinkable (strawberry). ---
+            var beverages = new[] { FluidType.Soda, FluidType.Cola, FluidType.OrangeJuice, FluidType.Milk, FluidType.CoconutWater, FluidType.EnergyDrink };
+            bool allDrink = true;
+            foreach (var bev in beverages) if (!FluidDef.Drinkable(bev, WaterQuality.Clean)) allDrink = false;
+            bool fuelNotDrink = !FluidDef.Drinkable(FluidType.Fuel, WaterQuality.Clean);
+            var ojAsset = new SDG.Unturned.ItemAsset { id = 463, itemName = "Orange Juice", fluidCapacity = 1000f, fluidDefaultType = (byte)FluidType.OrangeJuice, fluidDefaultQuality = 0 };
+            var ojItem = new SDG.Unturned.Item(463);   // fresh -> lazily full of OJ
+            float sx = FluidItem.Sip(ojItem, ojAsset, out float hydx, out _);
+            bool ojSip = Mathf.Abs(sx - FluidItem.SipML) < 0.5f && hydx > 0f;
+            GD.Print($"[hosetool] case X: all beverages drinkable={allDrink} · fuel notDrinkable={fuelNotDrink} · OJ sip {sx:0}mL (+{hydx:0.00})");
+            if (!(allDrink && fuelNotDrink && ojSip)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }

@@ -13,6 +13,20 @@ namespace UnturnedGodot
     {
         public static bool IsContainer(ItemAsset a) => a != null && a.IsFluidContainer;
 
+        // The in-hand VIEWMODEL mesh for a held container. Most match the item name (bottled_water, canteen, bottled_soda,
+        // bottled_cola, bottled_coconut, bottled_energy); the two retail CARTONS don't (Orange Juice -> box_orange, Milk
+        // Box -> box_milk), so they're mapped by id here.
+        public static string HeldMesh(ItemAsset a)
+        {
+            if (a == null) return "bottled_water";
+            return a.id switch
+            {
+                463 => "box_orange",   // Orange Juice
+                462 => "box_milk",     // Milk Box
+                _ => a.itemName?.ToLowerInvariant().Replace(" ", "_") ?? "bottled_water",
+            };
+        }
+
         // Read a container's contents, lazily initializing a FRESH item (fluidAmount < 0) from its asset default -> any
         // creation path (loot, `give`, a hand-made Item) reads correct contents without every caller remembering to seed them.
         public static void Read(Item it, ItemAsset a, out FluidType type, out float amount, out WaterQuality q)
