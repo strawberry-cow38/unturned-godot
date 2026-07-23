@@ -57,7 +57,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, boattest = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -88,6 +88,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--vm=")) vm = arg["--vm=".Length..];
                 else if (arg == "--attach") _vmAttach = true;
                 else if (arg.StartsWith("--vehicle=")) veh = arg["--vehicle=".Length..];
+                else if (arg.StartsWith("--boattest=")) boattest = arg["--boattest=".Length..];   // spawn a BOAT on a flat test sea + auto-drive (verify buoyancy + water propulsion)
                 else if (arg.StartsWith("--drivetest=")) drivetest = arg["--drivetest=".Length..];
                 else if (arg.StartsWith("--variant=")) _vehVariant = int.Parse(arg["--variant=".Length..]);
                 else if (arg == "--night") _night = true;   // dark env + headlights on (headlight demo)
@@ -462,6 +463,14 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (boattest != null)
+            {
+                _rigCaptureFrames = new[] { 40, 75, 120, 170, 220 };   // drop+splash -> settle to the waterline -> drive fwd -> right/left turns
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildBoatTest(boattest);
+                return;
+            }
+
             if (drivetest != null)
             {
                 _rigDir = drivetest;
@@ -780,6 +789,38 @@ namespace UnturnedGodot
         }
 
         // --vehicle=DIR : drop the jeep onto a ground plane, chase cam, auto-drive after it settles.
+        // --boattest=NAME: a flat test SEA + a boat dropped onto it, then auto-driven (reuses the vehTest drive/cam loop).
+        // Verifies buoyancy floats the hull to the waterline + the drive input becomes water thrust/rudder.
+        void BuildBoatTest(string type)
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.42f, 0.58f, 0.75f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.62f, 0.64f, 0.68f), AmbientLightEnergy = 0.95f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -42f, 0f), LightEnergy = 1.1f, ShadowEnabled = true });
+
+            Terrain.HasWater = true; Terrain.SeaLevelY = 0f;   // flat test sea at Y=0 -- the boat physics reads these
+            var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, Position = Vector3.Zero,
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.10f, 0.34f, 0.52f, 0.78f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, Metallic = 0.25f, Roughness = 0.12f } };
+            AddChild(water);
+            var seabed = new StaticBody3D { Position = new Vector3(0f, -14f, 0f) };   // deep floor so a swamped boat lands, not falls forever
+            seabed.AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(800f, 800f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.26f, 0.20f) } });
+            seabed.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(seabed);
+
+            _veh = Vehicle.BuildByName(type, 0);
+            _veh.Position = new Vector3(0f, 2.5f, 0f);   // drop from above -> splash + settle to the waterline
+            AddChild(_veh);
+            _veh.EngineOn = true;
+
+            _vehCam = new Camera3D { Current = true, Fov = 58f };
+            _vehCam.CullMask &= ~OutlineOverlay.OutlineLayer;
+            AddChild(_vehCam);
+            _vehTest = true;   // reuse the vehTest auto-drive + chase-cam loop (Drive() -> the boat's water propulsion)
+        }
+
         void BuildVehicleTest(string type)
         {
             var env = new Godot.Environment

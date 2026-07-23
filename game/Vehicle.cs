@@ -12,6 +12,8 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
+        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy points + the last drive input (water propulsion runs in _PhysicsProcess)
+        bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
@@ -186,9 +188,13 @@ namespace UnturnedGodot
             _ => null,
         };
 
+        public enum WaterMode { Car, Boat, Amphibious }   // source VehicleAsset.engine: CAR = land; BOAT = floats + water-drive; amphibious (e.g. APC) = CAR wheels + buoyancy so it swims too
+
         struct Spec
         {
             public string Body, Wheel, WheelTex, Palette;   // Palette = paintable palette; WheelTex = wheel albedo
+            public WaterMode Water;   // Car (default) = land only; Boat = floats+water-drives (no useful wheels); Amphibious = land wheels + float/water-drive when its hull is in the sea
+            public Vector3[] Buoys;   // hull buoyancy points (local space, Godot); null = auto 4 bottom corners of BoxSize. Boats/amphibious float via a spring at each toward SeaLevelY
             public string[] DefaultPaints;   // source .dat DefaultPaintColors (random on spawn); null + !RandomHueGray = unpainted white
             public bool RandomHueGray;       // source RandomHueOrGrayscale mode (quad/sedan/hatchback)
             public float WheelRadius, Engine, SteerMax, SteerMin, SpeedMax, SpeedMin, Brake;
@@ -952,7 +958,22 @@ namespace UnturnedGodot
         public static Vehicle BuildTruck(int variant = 0) => Build(_truck, variant, "truck");
         public static Vehicle BuildVan(int variant = 0) => Build(_van, variant, "van");
         public static Vehicle BuildGolf(int variant = 0) => Build(_golf, variant, "golf");
-        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), _ => BuildJeep(variant) };
+        // Runabout motorboat (source vehicles/runabout: Model_0 hull, NO wheels, a Buoyancy/Pontoon + Rotors). WaterMode.Boat
+        // -> floats on the sea + drives via water thrust/rudder (the wheel drive is inert). First aquatic vehicle.
+        static readonly Spec _runabout = new()
+        {
+            Body = "runabout_body.txt", Water = WaterMode.Boat,
+            Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels) but non-null for safety
+            DefaultPaints = new[] { "#e8e8ea" },   // white-ish fibreglass hull (flat paint -- no palette)
+            Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = 8f, Brake = 0f,   // boat: propulsion is BoatThrust, not wheel EngineForce
+            BoxSize = new Vector3(2.8f, 1.6f, 9.0f), BoxCenter = new Vector3(0f, 0.1f, -0.3f),   // hull box (mesh x±1.5, y-0.85..2.1, z-4.94..4.37)
+            ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
+            Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.7f, MaxVolume = 1.0f,   // outboard motor loop
+            Fuel = 500f, Health = 300f, Name = "Runabout",
+            Wheels = new (float, float, float, bool)[0],   // NO wheels -- a boat floats on buoyancy
+        };
+        public static Vehicle BuildRunabout(int variant = 0) => Build(_runabout, variant, "runabout");
+        public static Vehicle BuildByName(string name, int variant = 0) => name switch { "quad" => BuildQuad(variant), "bus" => BuildBus(variant), "sedan" => BuildSedan(variant), "hatchback" => BuildHatchback(variant), "humvee" => BuildHumvee(variant), "roadster" => BuildRoadster(variant), "ambulance" => BuildAmbulance(variant), "firetruck" => BuildFiretruck(variant), "tractor" => BuildTractor(variant), "ural" => BuildUral(variant), "police" => BuildPolice(variant), "semi" => BuildSemi(variant), "trailer" => BuildTrailer(variant), "offroader" => BuildOffRoader(variant), "off_roader" => BuildOffRoader(variant), "truck" => BuildTruck(variant), "van" => BuildVan(variant), "golf" => BuildGolf(variant), "vw_golf" => BuildGolf(variant), "runabout" => BuildRunabout(variant), _ => BuildJeep(variant) };
         public static readonly string[] SpecNames = { "jeep", "quad", "bus", "sedan", "hatchback", "humvee", "roadster", "ambulance", "firetruck", "tractor", "ural", "police", "semi", "trailer", "offroader", "truck", "van", "golf" };   // F1 dev-console autocomplete + validation ("golf" = VW_Golf, command-only, no natural spawn)
 
         // spec lookup by key (same table as BuildByName) -- the MP puppet builder resolves replicated
@@ -1063,6 +1084,13 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
+            v._water = s.Water;   // BOAT/AMPHIBIOUS: set up hull buoyancy points (default = 4 bottom corners of the collider hull)
+            if (s.Water != WaterMode.Car)
+            {
+                if (s.Buoys != null) v._buoys = s.Buoys;
+                else { float by = s.BoxCenter.Y - s.BoxSize.Y * 0.35f, bx = s.BoxSize.X * 0.42f, bz = s.BoxSize.Z * 0.42f;
+                       v._buoys = new[] { new Vector3(-bx, by, -bz), new Vector3(bx, by, -bz), new Vector3(-bx, by, bz), new Vector3(bx, by, bz) }; }
+            }
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
@@ -1201,7 +1229,9 @@ namespace UnturnedGodot
 
             // Drop the centre of mass to just below the axle line so the car stops rolling on turns and pitching onto its
             // nose under braking (master). Godot's auto COM sat at the body-box centre (~0.6m up) -> top-heavy + tippy.
-            float comY = 0f; foreach (var wl in s.Wheels) comY += wl.y; comY = comY / s.Wheels.Length - 0.2f;
+            float comY;
+            if (s.Wheels.Length > 0) { comY = 0f; foreach (var wl in s.Wheels) comY += wl.y; comY = comY / s.Wheels.Length - 0.2f; }
+            else comY = s.BoxCenter.Y - s.BoxSize.Y * 0.25f;   // BOAT (no wheels): low COM below the hull centre so buoyancy keeps it upright (was a div-by-zero)
             v.CenterOfMassMode = RigidBody3D.CenterOfMassModeEnum.Custom;
             v.CenterOfMass = new Vector3(0f, comY, 0f);
 
@@ -1338,6 +1368,7 @@ namespace UnturnedGodot
         // steering (Steer_Max at rest -> Steer_Min at full speed), so the observable handling matches the game.
         public void Drive(float throttle, float steer, bool handbrake)
         {
+            _inThrottle = throttle; _inSteer = steer;   // remembered for boat/amphibious water propulsion (applied as forces in _PhysicsProcess)
             if (_exploded) { EngineForce = 0f; Steering = 0f; Brake = 0f; return; }   // a wrecked vehicle can't be driven
             _parked = false;
             if (!EngineOn) throttle = 0f;   // dead/off engine (e.g. 0 HP): no drive power, but the car keeps its momentum and can still steer + brake -> coasts to a stop instead of freezing (master)
@@ -2057,6 +2088,45 @@ namespace UnturnedGodot
             _steerAngle = Mathf.MoveToward(_steerAngle, _steerTarget, _steerTurnSpeed * (float)delta);
             Steering = Mathf.DegToRad(_steerAngle);
             if (_steerPivot != null) _steerPivot.Basis = new Basis(_steerAxis, Mathf.DegToRad(_steerAngle));   // steering wheel model turns 1:1 with the steer angle (source line 4020, AnimatedSteeringAngle)
+            if (_water != WaterMode.Car) ApplyWaterPhysics((float)delta);   // BOAT/AMPHIBIOUS: buoyancy float + water propulsion (overrides wheel drive while afloat)
+        }
+
+        const float BuoyStiffness = 45f, BuoyDamp = 6f;                                  // buoyancy spring (up-force per m submerged, per unit mass) + vertical damping
+        const float BoatThrust = 6f, BoatTurn = 2.2f, BoatDrag = 0.9f, BoatAngularDrag = 2.5f;   // water propulsion / rudder yaw / linear + angular water drag
+
+        // BOAT / AMPHIBIOUS water physics (source: InteractableVehicle EEngine.BOAT + the Buoyancy child components). A
+        // spring at each hull buoy toward Terrain.SeaLevelY floats the boat level; while afloat the drive input becomes
+        // forward thrust + rudder yaw, with water drag. Amphibious keeps its wheels for land + gains this only when wet.
+        void ApplyWaterPhysics(float delta)
+        {
+            _afloat = false;
+            if (!Terrain.HasWater || _buoys == null) return;
+            float seaY = Terrain.SeaLevelY;
+            var xf = GlobalTransform;
+            int submerged = 0;
+            foreach (var bp in _buoys)
+            {
+                var wp = xf * bp;                                   // buoy world position
+                float depth = seaY - wp.Y;                          // >0 = below the sea surface
+                if (depth <= 0f) continue;
+                submerged++;
+                float sub = Mathf.Min(depth, 1.2f);                // clamp so a deep plunge doesn't rocket it back up
+                var arm = wp - GlobalPosition;
+                var pv = LinearVelocity + AngularVelocity.Cross(arm);   // this point's velocity (for damping)
+                float up = (sub * BuoyStiffness - pv.Y * BuoyDamp) * Mass / _buoys.Length;   // spring toward the surface + vertical damp
+                ApplyForce(Vector3.Up * Mathf.Max(up, 0f), arm);
+            }
+            _afloat = submerged > 0;
+            if (!_afloat) return;
+            var fwd = -xf.Basis.Z;                                  // boat forward = -Z
+            float thr = EngineOn ? _inThrottle : 0f;
+            ApplyCentralForce(fwd * thr * BoatThrust * Mass);       // propulsion
+            float spd = LinearVelocity.Dot(fwd);
+            float rudder = Mathf.Clamp(Mathf.Abs(spd) * 0.25f + 0.25f, 0.25f, 1f);   // a boat needs some way to turn -> mostly-speed-dependent rudder + a little idle authority
+            ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder);          // rudder yaw
+            ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // horizontal water drag
+            AngularVelocity *= 1f - Mathf.Min(BoatAngularDrag * delta, 1f);          // angular water drag (settle the yaw/roll)
+            if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }          // a pure boat has no useful wheels
         }
     }
 }
