@@ -51,9 +51,11 @@ namespace UnturnedGodot
         public static bool IsBeverage(FluidType id) => id == FluidType.Soda || id == FluidType.Cola || id == FluidType.OrangeJuice
                                                     || id == FluidType.Milk || id == FluidType.CoconutWater || id == FluidType.EnergyDrink
                                                     || id == FluidType.AppleJuice || id == FluidType.GrapeJuice;
-        // Drinkable: CLEAN water, any beverage, or -- per strawberry -- maple syrup + glue (weird, but she said so). NOT chemicals.
-        public static bool Drinkable(FluidType id, WaterQuality q) => id == FluidType.Water ? q == WaterQuality.Clean
-            : (IsBeverage(id) || id == FluidType.MapleSyrup || id == FluidType.Glue);
+        // Drinkable (strawberry's design intent): the ONLY thing the gate blocks is BAD WATER (tainted/dirty) -- so you
+        // can't ACCIDENTALLY chug it. Every other fluid is a player's CHOICE to drink (beverages, syrup, glue, chemicals,
+        // even fuel/oil/gas -- drink the gas if you want, that's on you). Per-fluid drink CONSEQUENCES (fuel hurts you,
+        // energy drink -> stamina, etc.) are a follow-up; right now a sip just hydrates regardless.
+        public static bool Drinkable(FluidType id, WaterQuality q) => !(id == FluidType.Water && q != WaterQuality.Clean);
 
         // Display a volume in litres (1 unit = 1 mL, strawberry 2026-07-22). Sub-litre reads in mL so a near-empty can
         // isn't just "0.0 L"; >= 1 L shows one decimal. e.g. 20000 -> "20.0 L", 450 -> "450 mL".
