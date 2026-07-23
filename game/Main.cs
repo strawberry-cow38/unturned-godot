@@ -2384,6 +2384,21 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case O: beforeRemove={beforeRemove:0} afterRemove={tankP.Tank.Amount:0} (want filled then UNCHANGED after removing the hose)");
             if (!(beforeRemove > 100f && Mathf.Abs(tankP.Tank.Amount - beforeRemove) < 1f)) ok = false;
 
+            // --- Case P (bug-3): the type-lock resolves THROUGH a tankless fitting. A Fuel source feeds a PUMP (no tank of
+            // its own -> raw type None); ResolveNetType must still report Fuel across it, so hosing the pump's OUTPUT to a
+            // WATER tank is a Mismatch. Pre-fix the fitting read as empty and fuel could pipe into the water tank. ---
+            var srcQ = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 125f);
+            var pumpQ = FluidPump.Make();
+            var waterQ = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 1000f, 100f), 125f);   // holds WATER
+            srcQ.Position = new Vector3(-4f, 1f, 148f); pumpQ.Position = new Vector3(0f, 1f, 148f); waterQ.Position = new Vector3(4f, 0f, 148f);
+            AddChild(srcQ); AddChild(pumpQ); AddChild(waterQ);
+            AddChild(new Hose { Source = srcQ.Ports[0], Consumer = pumpQ.Ports[0] });   // fuel source -> pump input (committed)
+            var pumpType = FluidNet.ResolveNetType(GetTree(), pumpQ.PortNodes[1], new System.Collections.Generic.HashSet<FluidContainer>());   // pump OUTPUT resolves through the fitting
+            var vQ = FluidHoseRule.Completion(pumpQ.PortNodes[1].Kind, waterQ.PortNodes[0].Kind,
+                pumpType == FluidType.None, waterQ.Tank.Type == FluidType.None, pumpType == waterQ.Tank.Type, false, false);
+            GD.Print($"[hosetool] case P: pump resolves to {FluidDef.Name(pumpType)} (want Fuel) · pump->water verdict={vQ} (want Mismatch)");
+            if (!(pumpType == FluidType.Fuel && vQ == HoseVerdict.Mismatch)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }

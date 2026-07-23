@@ -655,7 +655,11 @@ namespace UnturnedGodot
         HoseVerdict CompletionVerdict(HosePort start, HosePort target)
         {
             if (!IsInstanceValid(start) || !IsInstanceValid(target) || !target.Usable) return HoseVerdict.None;
-            var st = start.EffectiveType; var tt = target.EffectiveType;   // a transformer's ports carry a fixed in/out fluid
+            // resolve each end's fluid type THROUGH tankless relay fittings (FluidNet.ResolveNetType): a splitter/pump/valve
+            // has no tank of its own, so its raw EffectiveType is None -- but the type-lock must see the fluid its network
+            // actually carries, else fuel would pipe into a water tank across a fitting.
+            var st = FluidNet.ResolveNetType(GetTree(), start, new System.Collections.Generic.HashSet<FluidContainer>());
+            var tt = FluidNet.ResolveNetType(GetTree(), target, new System.Collections.Generic.HashSet<FluidContainer>());
             return FluidHoseRule.Completion(start.Kind, target.Kind,
                 st == FluidType.None, tt == FluidType.None, st == tt,
                 ReferenceEquals(start.Owner, target.Owner), PortHosed(target));
@@ -779,11 +783,13 @@ namespace UnturnedGodot
                 }
         }
 
-        // an empty (None) tank adopts the fluid at the OTHER end of the hose on connect (uses port EffectiveType, so a
-        // transformer's OutputType propagates to the tank it feeds). Two set types were already type-locked equal.
-        static void AdoptFluidType(HosePort src, HosePort cons)
+        // an empty (None) tank adopts the fluid at the OTHER end of the hose on connect. Resolves the type THROUGH relay
+        // fittings (ResolveNetType), so a tank fed via a pump/splitter from a fuel source adopts fuel -- not None -- and a
+        // transformer's OutputType still propagates to the tank it feeds. Two set types were already type-locked equal.
+        void AdoptFluidType(HosePort src, HosePort cons)
         {
-            var srcType = src.EffectiveType; var consType = cons.EffectiveType;
+            var srcType = FluidNet.ResolveNetType(GetTree(), src, new System.Collections.Generic.HashSet<FluidContainer>());
+            var consType = FluidNet.ResolveNetType(GetTree(), cons, new System.Collections.Generic.HashSet<FluidContainer>());
             if (cons.Owner?.Tank != null && cons.Owner.Tank.Type == FluidType.None && srcType != FluidType.None) cons.Owner.Tank.Type = srcType;
             else if (src.Owner?.Tank != null && src.Owner.Tank.Type == FluidType.None && consType != FluidType.None) src.Owner.Tank.Type = consType;
         }

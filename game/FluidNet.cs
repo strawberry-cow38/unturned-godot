@@ -24,6 +24,49 @@ namespace UnturnedGodot
     // rates, then MOVE the actual fluid — source.Drain(load·dt), storage.Fill(received·dt), consumers delete.
     public static class FluidNet
     {
+        // The effective fluid type at a port, resolved THROUGH tankless relay fittings (splitter/combiner/pump/valve): they
+        // have no tank so their own EffectiveType is None, but the hose-tool type-lock must see the fluid their network
+        // actually carries (else fuel pipes into a water tank across a fitting). Walk the committed hose graph out of a
+        // fitting's ports to the nearest typed tank/source. Bounded (small networks); `seen` guards cycles.
+        public static FluidType ResolveNetType(SceneTree tree, HosePort p, System.Collections.Generic.HashSet<FluidContainer> seen)
+        {
+            if (p?.Owner == null) return FluidType.None;
+            var own = p.EffectiveType;
+            if (own != FluidType.None) return own;                     // its own tank / transformer override
+            if (!p.Owner.IsFlowRelay || !seen.Add(p.Owner)) return FluidType.None;
+            foreach (var fp in p.Owner.PortNodes)
+            {
+                var far = FarPort(tree, fp);
+                if (far == null) continue;
+                var t = ResolveNetType(tree, far, seen);
+                if (t != FluidType.None) return t;
+            }
+            return FluidType.None;
+        }
+
+        // The HosePort at the far end of the committed hose attached to `p` (null if unhosed).
+        static HosePort FarPort(SceneTree tree, HosePort p)
+        {
+            if (p?.Node == null) return null;
+            foreach (var n in tree.GetNodesInGroup("hoses"))
+                if (n is Hose h && GodotObject.IsInstanceValid(h))
+                {
+                    var far = h.Source == p.Node ? h.Consumer : h.Consumer == p.Node ? h.Source : null;
+                    if (far != null) return PortFor(tree, far);
+                }
+            return null;
+        }
+
+        // The HosePort wrapping a given data node (reverse of HosePort.Node).
+        static HosePort PortFor(SceneTree tree, FluidPortNode node)
+        {
+            foreach (var d in tree.GetNodesInGroup("fluid_devices"))
+                if (d is FluidContainer c)
+                    foreach (var hp in c.PortNodes)
+                        if (hp.Node == node) return hp;
+            return null;
+        }
+
         public static void Tick(SceneTree tree, float dt)
         {
             if (dt <= 0f) return;
