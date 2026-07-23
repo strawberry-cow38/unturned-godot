@@ -131,6 +131,7 @@ namespace UnturnedGodot
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
+        SDG.Unturned.Item _heldFluidItem; // a fluid CONTAINER (water bottle / soda / cola / canteen) in hand -> RMB a tank to fill it, LMB to sip clean water (strawberry)
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
         const float DeployPickupTime = 1.0f;    // hold F this long over a deployable to pick it back up (wires disconnect)
@@ -1266,7 +1267,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
+            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -1288,7 +1289,7 @@ namespace UnturnedGodot
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _torchAnimOn = false; _pendingMeleeHit = -1f;
@@ -1325,6 +1326,7 @@ namespace UnturnedGodot
             if (asset == null) return false;
             if (asset.gunName != null) { EquipHeldGun(asset.gunName, backing); return true; }
             if (asset.meleeName != null) { EquipHeldMelee(asset.meleeName); return true; }
+            if (asset.IsFluidContainer) { EquipHeldFluidContainer(asset, backing); return true; }   // a water bottle / soda / cola / canteen: held as a CONTAINER (RMB a tank to fill, LMB sip) -- BEFORE the consumable path so it isn't drunk whole
             if (asset.IsConsumable) { EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true; }   // EquipHeldConsumable snapshots the revert target itself
             var deploy = DeployableDef.ById(asset.id);
             if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
@@ -1340,7 +1342,7 @@ namespace UnturnedGodot
         public void EquipHeldFuelCan(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFluidItem = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFuelItem = backing;
@@ -1420,6 +1422,100 @@ namespace UnturnedGodot
             }
         }
 
+        // Equip a fluid CONTAINER (water bottle / soda / cola / canteen) into the hand (strawberry 2026-07-23): RMB a
+        // placed tank to fill it, LMB (aimed away from a tank) to sip clean water for hydration. Held with its real bottle
+        // viewmodel (all four have ripped meshes). Replaces any gun/melee/consumable/fuel-can/deployable in hand.
+        public void EquipHeldFluidContainer(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState(); ClearDeployable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldFluidItem = backing;
+            string mesh = asset?.itemName?.ToLowerInvariant().Replace(" ", "_") ?? "bottled_water";
+            var an = ConsumableRegistry.Anims(mesh);   // reuse the drink archetype's equip/use clips so the bottle equips + a sip animates naturally
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { ConsumableMesh = $"{mesh}.txt", ConsumableAlbedo = $"{mesh}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(mesh) };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[fluid] holding {FluidItem.Label(backing, asset)}  ([LMB] sip · aim a tank + [RMB] to fill)");
+        }
+
+        // Test seams (headless L1): the fill/sip TRANSFER logic itself is pure (FluidItem.Fill/Sip on Item + FluidTank) and
+        // is exercised directly by the fluid self-tests; these let a test drive the controller's focus + hand state if needed.
+        internal void SetHeldFluidContainerForTest(SDG.Unturned.Item backing) => _heldFluidItem = backing;
+        internal void SetFocusFluidForTest(FluidContainer c) => _focusFluid = c;
+
+        // RMB with a fluid container in hand + aimed at a placed tank/source: pull as much as fits into the container
+        // (type-locked, worst-quality-wins). One click, mirrors the gas-can fill.
+        void TryFillContainer()
+        {
+            if (_heldFluidItem == null) return;
+            var asset = _heldFluidItem.GetAsset();
+            if (asset == null || !asset.IsFluidContainer) return;
+            if (_focusFluid == null || !IsInstanceValid(_focusFluid) || _focusFluid.Tank == null) { FluidToast("aim at a tank to fill"); return; }
+            float moved = FluidItem.Fill(_heldFluidItem, asset, _focusFluid.Tank, out string msg);
+            if (moved <= 0f) { FluidToast(msg); return; }
+            _invUI?.Refresh();
+            FluidItem.Read(_heldFluidItem, asset, out var t, out var amt, out var q);
+            FluidToast($"filled {FluidDef.Litres(moved)} {FluidDef.WaterName(t, q)}");
+            GD.Print($"[fluid] filled {asset.itemName} +{FluidDef.Litres(moved)} -> {FluidDef.Litres(amt)} {FluidDef.WaterName(t, q)}");
+        }
+
+        // LMB with a fluid container in hand + NOT aimed at a tank: take a 50 mL sip. Only clean water / soda / cola are
+        // drinkable (tainted/dirty water is refused); a sip restores hydration + plays the drink anim.
+        void TryDrinkContainer()
+        {
+            if (_heldFluidItem == null) return;
+            var asset = _heldFluidItem.GetAsset();
+            if (asset == null || !asset.IsFluidContainer) return;
+            if (_focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null) { FluidToast("aim away from the tank to drink  ([RMB] fills)"); return; }   // spec: drink while NOT looking at a container
+            float sip = FluidItem.Sip(_heldFluidItem, asset, out float hydration, out string msg);
+            if (sip <= 0f) { FluidToast(msg); return; }
+            Water = Mathf.Min(1f, Water + hydration);
+            _invUI?.Refresh();
+            _viewmodel?.PlayConsumeUse();   // sip animation (reuses the drink archetype's Use clip)
+            FluidToast($"sipped {sip:0} mL  (+{hydration * 100f:0}% water)");
+            GD.Print($"[fluid] sip {sip:0} mL from {asset.itemName} -> water {Water:0.00}");
+        }
+
+        // The held-container HUD: a persistent centered line while a fluid container is in hand (its contents + a hint),
+        // briefly overridden by an action toast (filled / sipped / a refusal reason). Ticked each frame after UpdateFluidPickup.
+        float _fluidToastTimer; string _fluidToast;
+        void FluidToast(string msg) { _fluidToast = msg; _fluidToastTimer = 2.2f; }
+        void UpdateFluidContainerHud(float delta)
+        {
+            if (_heldFluidItem == null || _heldFluidItem.GetAsset() is not ItemAsset a || !a.IsFluidContainer)
+            {
+                FluidContainerHudSet(null); _fluidToastTimer = 0f; return;
+            }
+            string text;
+            if (_fluidToastTimer > 0f) { _fluidToastTimer -= delta; text = _fluidToast; }
+            else
+            {
+                bool atTank = _focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null;
+                text = FluidItem.Label(_heldFluidItem, a) + (atTank ? "     [RMB] fill from tank" : "     [LMB] sip");
+            }
+            FluidContainerHudSet(text);
+        }
+        CanvasLayer _fluidContainerLayer; Label _fluidContainerLabel;
+        void FluidContainerHudSet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) { if (_fluidContainerLabel != null) _fluidContainerLabel.Visible = false; return; }
+            if (_fluidContainerLabel == null)
+            {
+                _fluidContainerLayer = new CanvasLayer { Layer = 40 }; AddChild(_fluidContainerLayer);
+                _fluidContainerLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+                _fluidContainerLabel.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+                _fluidContainerLabel.AnchorLeft = 0.5f; _fluidContainerLabel.AnchorRight = 0.5f; _fluidContainerLabel.OffsetTop = 185f; _fluidContainerLabel.OffsetLeft = -360f; _fluidContainerLabel.OffsetRight = 360f;
+                _fluidContainerLabel.AddThemeFontSizeOverride("font_size", 24);
+                _fluidContainerLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 0.9f));
+                _fluidContainerLabel.AddThemeConstantOverride("outline_size", 6);
+                _fluidContainerLayer.AddChild(_fluidContainerLabel);
+            }
+            _fluidContainerLabel.Text = text; _fluidContainerLabel.Visible = true;
+        }
+
         // A closure that re-equips whatever is held RIGHT NOW (used to revert after a consumable stack empties);
         // a gun/melee reverts only if it's still in the bag, else fists.
         System.Action _revertEquip;
@@ -1435,7 +1531,7 @@ namespace UnturnedGodot
         }
 
         // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
-        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && !HoldingHoseTool && _heldFuelItem == null && (_melee == null || _melee.Name == "fists");
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && !HoldingHoseTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
 
         // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
         public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
@@ -1446,6 +1542,7 @@ namespace UnturnedGodot
             if (_melee != null && _melee.Name != "fists") return asset.meleeName != null && asset.meleeName == _heldMeleeName;
             if (_heldConsumable != null) return _heldConsumable.id == asset.id;
             if (_heldFuelItem != null) return item != null ? ReferenceEquals(_heldFuelItem, item) : asset.IsFuelContainer;   // a held gas can -> dropping it goes unarmed (master)
+            if (_heldFluidItem != null) return item != null ? ReferenceEquals(_heldFluidItem, item) : asset.IsFluidContainer;   // a held fluid container (bottle/canteen)
             if (_deployable != null) return _deployable.Id == asset.id;
             if (HoldingWireTool) return asset.id == 65;
             if (HoldingRopeTool) return asset.id == 64;
@@ -1517,7 +1614,7 @@ namespace UnturnedGodot
                 ushort id = _heldConsumable.id;
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
-                _heldConsumable = null; _heldFuelItem = null;             // one use per item: this one leaves the hand + is deleted (master)
+                _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null;             // one use per item: this one leaves the hand + is deleted (master)
                 int left;
                 if (NetConsume != null)
                 {
@@ -1567,7 +1664,7 @@ namespace UnturnedGodot
             if (def == null) return;
             SaveGunState();
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false;
             _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
@@ -1594,7 +1691,7 @@ namespace UnturnedGodot
             SaveGunState();
             bool alreadyThisKind = def.IsRope ? HoldingRopeTool : (def.IsHose ? HoldingHoseTool : HoldingWireTool);
             if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose };
@@ -2930,7 +3027,7 @@ namespace UnturnedGodot
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
-            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
+            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -3063,6 +3160,7 @@ namespace UnturnedGodot
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
+                else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldFuelItem != null) TryDepositFuel();       // holding a gas can: LMB POURS fuel into the generator/vehicle you're aimed at (master)
                 else if (IsRepeatedMelee) { }                          // Repeated tool (blowtorch/chainsaw): LMB is a continuous HOLD driven by the use-tick (UpdateSalvage), never a swing/punch (source UseableMelee.startPrimary: isRepeated -> startSwing)
                 else if (_melee != null) MeleeAttack(false);            // LMB with a normal melee = WEAK swing (source UseableMelee)
@@ -3076,6 +3174,7 @@ namespace UnturnedGodot
                 else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
                 else if (HoldingRopeTool) { if (rmb.Pressed) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
+                else if (_heldFluidItem != null) { if (rmb.Pressed) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
                 else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
@@ -3816,6 +3915,7 @@ namespace UnturnedGodot
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
+            UpdateFluidContainerHud((float)delta);   // held fluid container: show its contents + [LMB] sip / [RMB] fill hint (strawberry)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)

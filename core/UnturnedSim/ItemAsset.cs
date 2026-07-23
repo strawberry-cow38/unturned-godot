@@ -68,6 +68,15 @@ namespace SDG.Unturned
         public bool IsMagazine => magCapacity > 0;
         public float fuelCapacity;              // Fuel-type container (gas can): max fuel it holds (retail .dat "Fuel", e.g. Portable 500). 0 = not a fuel can.
         public bool IsFuelContainer => fuelCapacity > 0f;
+        // Fluid CONTAINER (strawberry 2026-07-23): a held item that stores a fluid you pour into a tank / drink from --
+        // water bottle, soda/cola bottle, canteen. fluidCapacity = max mL (0 = not a container). It spawns holding
+        // fluidDefaultType (0 = None = spawns empty, e.g. a canteen you refill) at fluidDefaultQuality. The fluid
+        // TYPE/QUALITY enums live in the game assembly (UnturnedGodot), which this core lib can't reference -> stored
+        // here as their raw byte values and interpreted game-side by FluidItem.
+        public float fluidCapacity;
+        public byte fluidDefaultType;      // FluidType enum value the container spawns holding (0 = None = spawns empty)
+        public byte fluidDefaultQuality;   // WaterQuality enum value it spawns at (0 = Clean)
+        public bool IsFluidContainer => fluidCapacity > 0f;
         // Loose per-round ammo (shotgun shells): stacks in a slot up to stackSize, matched to a gun by magCaliber (magCapacity 0).
         // A reload consumes shells from the stack rather than swapping a whole magazine. (12/20 Gauge Shells, stack 32.)
         public bool isAmmo;
@@ -100,6 +109,13 @@ namespace SDG.Unturned
         // <-> re-place, and a gas can holds the fuel pumped into it. HP rides on `quality` (0-100 %); fuel is its own
         // float. -1 = fresh -> full (a picked-up gen = its tank; a fresh can = its fuelCapacity).
         public float fuelLevel = -1f;
+        // Fluid CONTENTS carried on a fluid-container item (strawberry 2026-07-23): the bottle/canteen REMEMBERS its
+        // fluid through hands <-> inventory <-> drop. type/quality are the game FluidType/WaterQuality enum BYTE values
+        // (interpreted by FluidItem); amount is mL. amount = -1 = fresh/uninitialized -> FluidItem lazily fills it from
+        // the asset's default on first read (mirrors fuelLevel = -1 = fresh).
+        public byte fluidType;
+        public float fluidAmount = -1f;
+        public byte fluidQuality;
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {
@@ -120,7 +136,19 @@ namespace SDG.Unturned
 
         public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; } }
         // World loot factory: a magazine spawns FULL (Military Magazine = 30 rounds) rather than empty (master). Other items = 1.
-        public static Item makeLoot(ushort id) { var a = find(id); var it = new Item(id, a != null && a.IsMagazine ? (byte)System.Math.Max(1, a.magCapacity) : (byte)1); if (a != null && a.IsFuelContainer) it.fuelLevel = 0f; return it; }   // a fresh gas can starts EMPTY -> fill it at a pump
+        public static Item makeLoot(ushort id)
+        {
+            var a = find(id);
+            var it = new Item(id, a != null && a.IsMagazine ? (byte)System.Math.Max(1, a.magCapacity) : (byte)1);
+            if (a != null && a.IsFuelContainer) it.fuelLevel = 0f;   // a fresh gas can starts EMPTY -> fill it at a pump
+            if (a != null && a.IsFluidContainer)                     // a fluid container spawns holding its default fluid (a bottle = full; a canteen = empty)
+            {
+                it.fluidType = a.fluidDefaultType;
+                it.fluidAmount = a.fluidDefaultType != 0 ? a.fluidCapacity : 0f;
+                it.fluidQuality = a.fluidDefaultQuality;
+            }
+            return it;
+        }
         public static ItemAsset find(ushort id) => _byId.TryGetValue(id, out var a) ? a : null;
         public static ItemAsset findByGuid(string guid) => !string.IsNullOrEmpty(guid) && _byGuid.TryGetValue(guid, out var a) ? a : null;
         public static IEnumerable<ItemAsset> all() => _byId.Values;

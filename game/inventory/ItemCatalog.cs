@@ -53,6 +53,29 @@ namespace SDG.Unturned
             WireConsumableStats();
             WireShotgunShells();
             WireFuelCans();
+            WireFluidContainers();
+        }
+
+        // Fluid CONTAINERS (strawberry 2026-07-23): held items that store a fluid you pour into a tank (RMB) or drink
+        // from (LMB sip). Bottled Water = 1 L clean water, 1x1; the Soda / Cola bottles = 2 L of their own fluid, 2x1;
+        // the Canteen (retail 337, normally 2x2) is shrunk to 1 slot @ 500 mL and spawns EMPTY (you refill it at a tank).
+        // FluidType byte values: None=0, Fuel=1, Water=2, Oil=3, Gas=4, Soda=5, Cola=6 (mirrors the UnturnedGodot enum).
+        static void WireFluidContainers()
+        {
+            void Cont(ushort id, float cap, UnturnedGodot.FluidType defType, byte sx, byte sy)
+            {
+                var a = Assets.find(id);
+                if (a == null) return;
+                a.fluidCapacity = cap;
+                a.fluidDefaultType = (byte)defType;
+                a.fluidDefaultQuality = (byte)UnturnedGodot.WaterQuality.Clean;   // bottled fluid spawns CLEAN (natural water is tainted at the source, not in a bottle)
+                if (sx > 0) a.size_x = sx;
+                if (sy > 0) a.size_y = sy;
+            }
+            Cont(14,  1000f, UnturnedGodot.FluidType.Water, 1, 1);   // Bottled Water: 1 L clean, 1x1 (was a whole-drink consumable -> now a refillable container)
+            Cont(473, 2000f, UnturnedGodot.FluidType.Soda,  2, 1);   // Bottled Soda: 2 L, 2x1
+            Cont(472, 2000f, UnturnedGodot.FluidType.Cola,  2, 1);   // Bottled Cola: 2 L, 2x1
+            Cont(337,  500f, UnturnedGodot.FluidType.None,  1, 1);   // Canteen: 500 mL, 1 slot, spawns EMPTY
         }
 
         // Fuel containers (gas cans/jerrycans) carry a fuelCapacity from the retail .dat "Fuel" field, so a right-click on
