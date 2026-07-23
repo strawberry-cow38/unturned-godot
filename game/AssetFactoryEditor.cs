@@ -165,14 +165,16 @@ namespace UnturnedGodot
             var lightbarPt = _bundle.Points.Find(pt => pt.Name == "Lightbar");
             if (lightbarPt != null)
             {
-                var m0 = ContentProvider.ParseObj("res://content/police_siren0.txt");
-                var m1 = ContentProvider.ParseObj("res://content/police_siren1.txt");
+                var lb = _bundle.ParamString("lightbar", "police");
+                if (lb != "ambulance" && lb != "firetruck") lb = "police";
+                var m0 = ContentProvider.ParseObj($"res://content/{lb}_siren0.txt");
+                var m1 = ContentProvider.ParseObj($"res://content/{lb}_siren1.txt");
                 if (m0 != null && m1 != null)
                 {
                     var lbAabb = m0.GetAabb().Merge(m1.GetAabb());
                     var hookPos = AssetBundle.V3(lightbarPt.Pos);
                     var pos = hookPos - lbAabb.GetCenter();
-                    var housingMesh = ContentProvider.ParseObj("res://content/police_lightbar.txt");   // the REAL housing ripped from the police body (tools/extract_lightbar.py), same space as the lenses -> same `pos`
+                    var housingMesh = ContentProvider.ParseObj($"res://content/{lb}_lightbar.txt");   // the REAL housing ripped from the vehicle body (tools/extract_lightbar.py), same space as the lenses -> same `pos`
                     if (housingMesh != null) { var housing = new MeshInstance3D { Mesh = housingMesh, Position = pos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.07f, 0.07f, 0.08f), CullMode = BaseMaterial3D.CullModeEnum.Disabled } }; _composeRoot.AddChild(housing); _vehPreview.Add(housing); }
                     var l0 = new MeshInstance3D { Mesh = m0, Position = pos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
                     var l1 = new MeshInstance3D { Mesh = m1, Position = pos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.3f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };

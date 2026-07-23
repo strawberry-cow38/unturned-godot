@@ -1084,8 +1084,10 @@ namespace UnturnedGodot
             var lightbarHook = b.Points.Find(pt => pt.Name == "Lightbar");
             if (lightbarHook != null && v._sirenMat0 == null)
             {
-                var m0 = ContentProvider.ParseObj("res://content/police_siren0.txt");
-                var m1 = ContentProvider.ParseObj("res://content/police_siren1.txt");
+                var lb = b.ParamString("lightbar", "police");   // which emergency lightbar: police / ambulance / firetruck (each ships its own siren lenses + ripped housing)
+                if (lb != "ambulance" && lb != "firetruck") lb = "police";
+                var m0 = ContentProvider.ParseObj($"res://content/{lb}_siren0.txt");
+                var m1 = ContentProvider.ParseObj($"res://content/{lb}_siren1.txt");
                 if (m0 != null && m1 != null)
                 {
                     var lbAabb = m0.GetAabb().Merge(m1.GetAabb());
@@ -1094,7 +1096,7 @@ namespace UnturnedGodot
                     // middle HOUSING: the police lightbar's base is baked into the police BODY mesh, not a separate part;
                     // tools/extract_lightbar.py rips that zone -> police_lightbar.txt (master "get the real lightbar part").
                     // Same police-body space as the lenses, so it seats at the same `pos` offset.
-                    var housingMesh = ContentProvider.ParseObj("res://content/police_lightbar.txt");
+                    var housingMesh = ContentProvider.ParseObj($"res://content/{lb}_lightbar.txt");
                     if (housingMesh != null)
                     {
                         var housing = new MeshInstance3D { Name = "LightbarBase", Mesh = housingMesh, MaterialOverride = SolidMat(new Color(0.07f, 0.07f, 0.08f)), Position = pos };

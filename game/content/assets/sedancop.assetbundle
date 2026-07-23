@@ -8,6 +8,7 @@
     { "name": "Lightbar", "pos": [0, 1.45, 0], "rot": [0, 0, 0] }
   ],
   "params": {
-    "veh_preset": "sedan"
+    "veh_preset": "sedan",
+    "lightbar": "firetruck"
   }
 }
