@@ -117,6 +117,9 @@ namespace UnturnedGodot
         // Line: name \t muzzle(x,y,z) \t aim(x,y,z) \t ejects(1|0). Sight/Mag null + real _MainTex albedo (white tint)
         // as the first pass -- per-gun ADS/mag/sight tuning is polish.
         static System.Collections.Generic.Dictionary<string, GunVisual> _extraVisuals;
+        // Drop the cached table so a factory gun authored/edited AFTER first build (e.g. Play-preview a new gun) gets its
+        // own composed visual instead of the stale eaglefire fallback. Called by AssetCatalog.Refresh().
+        public static void InvalidateVisuals() => _extraVisuals = null;
         static GunVisual ExtraVisual(string name)
         {
             _extraVisuals ??= LoadExtraVisuals();
@@ -315,6 +318,10 @@ namespace UnturnedGodot
                     // Asset Factory: the in-hand pose IS part[0]'s authored transform -- rotate the gun with the gizmo
                     // in AF and it holds that way ("rotate it + be done"), same orientation the inventory icon bakes.
                     // No-op for real guns (not in the catalog) or an identity part transform.
+                    // holdInv un-does that transform for the HOOKS below: muzzle/aim/eject are authored in bundle space
+                    // (WYSIWYG on the already-rotated gun), so parenting them raw under a rotated mi would apply part[0]
+                    // TWICE. Pre-multiplying by holdInv lands each hook back at its authored world spot exactly once.
+                    var holdInv = Transform3D.Identity;
                     var holdB = AssetCatalog.Get(GunName);
                     if (holdB != null && holdB.Parts.Count > 0)
                     {
@@ -322,6 +329,7 @@ namespace UnturnedGodot
                         mi.Transform = new Transform3D(
                             AssetBundle.EulerDegBasis(p0.Rot).Scaled(AssetBundle.V3(p0.Scale, Vector3.One)),
                             AssetBundle.V3(p0.Pos)) * mi.Transform;
+                        holdInv = mi.Transform.AffineInverse();
                     }
                     // Real Eaglefire_Iron_Sights model (item 5) — sight.prefab from core.masterbundle, extracted via
                     // UnityPy and converted to the port gun frame (x,y,z)->(-x,y,-z), same pipeline as the gun body.
@@ -357,7 +365,7 @@ namespace UnturnedGodot
                     // lands on the camera axis, i.e. you look straight through the aperture.
                     _sight = new Node3D { Name = "AimHook" };
                     mi.AddChild(_sight);
-                    _sight.Position = gv.AimHook;
+                    _sight.Position = holdInv * gv.AimHook;   // holdInv = identity for non-factory guns; cancels part[0] for factory guns (hook authored in bundle space)
                     if (System.Environment.GetEnvironmentVariable("UG_AIMHOOK") is string _ah && _ah.Split(',').Length == 3)   // tuning: override the per-gun ADS aim hook (find the value that centers iron sights, then bake it)
                     { var _p = _ah.Split(','); _sight.Position = new Vector3(float.Parse(_p[0]), float.Parse(_p[1]), float.Parse(_p[2])); }
 
@@ -367,7 +375,7 @@ namespace UnturnedGodot
                     // texture, size ~0.5 per startSize, additive), flashed ~0.05s on fire.
                     // sits on the barrel BORE axis just past the muzzle tip: gun model muzzle is at Y=0.731, bore
                     // centre at (X=0, Z=-0.079) — the old Z=-0.04 was 0.039 off-axis, which read as the flash sitting low.
-                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = gv.MuzzleHook, Visible = false };
+                    _muzzleFlash = new Node3D { Name = "MuzzleFlash", Position = holdInv * gv.MuzzleHook, Visible = false };   // holdInv cancels part[0] for factory guns (see AimHook)
                     _muzzleFlash.AddChild(new OmniLight3D { OmniRange = 4.0f, LightColor = new Color(0.941f, 0.756f, 0.152f), LightEnergy = 1.4f });
                     // shader billboard so the star can ROLL per shot (master); a StandardMaterial billboard cancels rotation
                     _flashMat = new ShaderMaterial { Shader = GD.Load<Shader>("res://content/muzzleflash.gdshader") };
@@ -397,7 +405,7 @@ namespace UnturnedGodot
                     // material. The source Casing effect's Model_0 IS a plain box (24 verts, square section, ~3.3:1) with a
                     // flat brass _Color (0.904,0.768,0.007) -- so the box replicates the real asset; sized to master's +50%.
                     // (Shotguns' red Shell casing _Color (0.588,0.190,0.190) is extracted too, pending per-gun action wiring.)
-                    _ejectHook = new Node3D { Name = "EjectHook", Position = gv.EjectHook != Vector3.Zero ? gv.EjectHook : new Vector3(0f, 0.0275f, -0.0814f) };   // per-gun Eject hook (factory guns place it; others keep the tuned default)
+                    _ejectHook = new Node3D { Name = "EjectHook", Position = holdInv * (gv.EjectHook != Vector3.Zero ? gv.EjectHook : new Vector3(0f, 0.0275f, -0.0814f)) };   // per-gun Eject hook; holdInv cancels part[0] for factory guns (else casings double-transform)
                     mi.AddChild(_ejectHook);
                     _casingMesh = new BoxMesh { Size = new Vector3(0.0135f, 0.0135f, 0.042f) };   // source square section @ master's +50% length
                     _casingMat = new StandardMaterial3D { AlbedoColor = new Color(0.904f, 0.768f, 0.007f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };   // exact source brass _Color

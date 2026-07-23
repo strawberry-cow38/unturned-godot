@@ -63,13 +63,17 @@ namespace UnturnedGodot
         {
             EnsureScanned();
             _factoryItemName.Clear();
+            var used = new HashSet<ushort>();
             var names = new List<string>(_byName.Keys);
-            names.Sort(System.StringComparer.Ordinal);   // stable id assignment
-            ushort id = FactoryItemIdBase;
+            names.Sort(System.StringComparer.Ordinal);   // deterministic order ONLY for the rare hash-collision probe
             foreach (var name in names)
             {
                 var b = _byName[name];
-                if (id >= ushort.MaxValue - 4) { GD.PushError($"[assetcatalog] too many factory items -- stopping at {_factoryItemName.Count} (id near ushort max)"); break; }
+                // id is a STABLE hash of the NAME (not a running index): adding/removing OTHER bundles never renumbers
+                // an existing item, so an SP save that stored id 6xxxx still resolves to the same item.
+                ushort id = FactoryItemId(name, used);
+                if (id == 0) { GD.PushError($"[assetcatalog] no free id for factory item '{name}'"); continue; }
+                used.Add(id);
                 if (b.Type == "gun")
                 {
                     SDG.Unturned.Assets.add(new SDG.Unturned.ItemAsset
@@ -94,9 +98,25 @@ namespace UnturnedGodot
                 }
                 else continue;   // props/vehicles aren't inventory items (props = map-editor palette; vehicles = spawn by name)
                 _factoryItemName[id] = name;
-                id++;
             }
             if (_factoryItemName.Count > 0) GD.Print($"[assetcatalog] {_factoryItemName.Count} factory item(s) registered as real items (id {FactoryItemIdBase}+)");
+        }
+
+        // Stable per-NAME item id in [FactoryItemIdBase, +Span) via FNV-1a, so an item's id depends ONLY on its own
+        // name -- adding/removing OTHER bundles can never renumber it (which would corrupt SP saves that stored the id).
+        // Linear-probe on the rare hash collision; callers iterate names in sorted order so that probe is deterministic.
+        const ushort FactoryItemIdSpan = 5000;   // 60000..65000, clear of the 65531+ overflow guard
+        static ushort FactoryItemId(string name, HashSet<ushort> used)
+        {
+            uint h = 2166136261u;
+            foreach (char c in name) { h ^= c; h *= 16777619u; }
+            ushort start = (ushort)(h % FactoryItemIdSpan);
+            for (ushort i = 0; i < FactoryItemIdSpan; i++)
+            {
+                ushort id = (ushort)(FactoryItemIdBase + ((start + i) % FactoryItemIdSpan));
+                if (!used.Contains(id)) return id;
+            }
+            return 0;   // span full (would need 5000 factory items) -- caller logs + skips
         }
 
         // A DeployableDef for a factory deployable bundle: SAME id as its item (so holding the item -> EquipHeldDeployable),
@@ -122,6 +142,6 @@ namespace UnturnedGodot
             return parts.Length == 0 ? key : string.Join(' ', parts);
         }
 
-        public static void Refresh() { _scanned = false; _byName.Clear(); _pathByName.Clear(); EnsureScanned(); }
+        public static void Refresh() { _scanned = false; _byName.Clear(); _pathByName.Clear(); EnsureScanned(); Viewmodel.InvalidateVisuals(); }   // rebuild the viewmodel's cached gun-visual table too, else a newly-authored gun mounts as eaglefire
     }
 }

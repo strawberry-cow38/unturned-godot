@@ -80,6 +80,8 @@ namespace UnturnedGodot
         {
             string text = JsonSerializer.Serialize(this, Opts);
             string real = ProjectSettings.GlobalizePath(path);
+            var dir = System.IO.Path.GetDirectoryName(real);   // first-ever save: content/assets/ may not exist yet
+            if (!string.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
             System.IO.File.WriteAllText(real, text);
             GD.Print($"[AssetBundle] saved {path} ({Parts.Count}p/{Colliders.Count}c/{Volumes.Count}v/{Points.Count}pt)");
         }

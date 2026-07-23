@@ -972,19 +972,27 @@ namespace UnturnedGodot
             s.BodyTex = AssetBundle.ResolveAlbedo(s.Body);   // texture the body with its own albedo (else flat paint)
             s.Parts = null;   // welded detail parts are added as TEXTURED children after Build (below), NOT via the flat-colour rig loop (which real vehicles use)
 
+            // Build() plants the body mesh at the vehicle ORIGIN, dropping part[0]'s authored transform. Wheels/collider/welds
+            // are authored in BUNDLE space around that body, so rebase them by part[0]^-1 -> body at origin, the rest lines up
+            // with it (fixes editor-default vehicles where part[0] isn't identity). Identity part[0] -> t0inv is a no-op.
+            var t0 = b.Parts.Count > 0
+                ? new Transform3D(AssetBundle.EulerDegBasis(b.Parts[0].Rot).Scaled(AssetBundle.V3(b.Parts[0].Scale, Vector3.One)), AssetBundle.V3(b.Parts[0].Pos))
+                : Transform3D.Identity;
+            var t0inv = t0.AffineInverse();
+
             // wheels from the Wheel_* points (name containing _F = front = steered)
             var wheels = new System.Collections.Generic.List<(float, float, float, bool)>();
             foreach (var pt in b.Points)
             {
                 if (pt.Name == null || !pt.Name.StartsWith("Wheel_")) continue;
-                var pos = AssetBundle.V3(pt.Pos);
+                var pos = t0inv * AssetBundle.V3(pt.Pos);
                 wheels.Add((pos.X, pos.Y, pos.Z, pt.Name.ToUpperInvariant().Contains("_F")));
             }
             if (wheels.Count > 0) { s.Wheels = wheels.ToArray(); s.WheelRadii = null; }   // else keep the jeep's 4
 
             // hull from the first box collider (else keep the jeep's box)
             var box = b.Colliders.Find(c => (c.Shape ?? "box") == "box");
-            if (box != null) { s.BoxSize = AssetBundle.V3(box.Size, Vector3.One); s.BoxCenter = AssetBundle.V3(box.Pos); }
+            if (box != null) { s.BoxSize = AssetBundle.V3(box.Size, Vector3.One); s.BoxCenter = t0inv * AssetBundle.V3(box.Pos); }
 
             s.WheelRadius = b.ParamFloat("wheel_radius", s.WheelRadius);
             s.Engine = b.ParamFloat("engine", s.Engine);
@@ -995,7 +1003,7 @@ namespace UnturnedGodot
             for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
             {
                 var mi = AssetBundleLoader.BuildPart(b.Parts[i]);
-                if (mi != null) v.AddChild(mi);
+                if (mi != null) { mi.Transform = t0inv * mi.Transform; v.AddChild(mi); }   // rebase weld into body-at-origin space too
             }
             return v;
         }
