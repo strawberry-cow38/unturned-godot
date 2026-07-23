@@ -12,8 +12,9 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
-        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy points + the last drive input (water propulsion runs in _PhysicsProcess)
+        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy points + the last drive input (water propulsion runs in _PhysicsProcess)
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
+        public bool Afloat => _afloat;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
         float _prevSpeed;   // last frame's speed, to detect a sudden drop = a crash (collision/ram damage)
         float _deadTimer = -1f; bool _exploded, _husk; CpuParticles3D _smoke, _smoke0, _fire; OmniLight3D _fireLight;
@@ -2127,6 +2128,7 @@ namespace UnturnedGodot
             ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // horizontal water drag
             AngularVelocity *= 1f - Mathf.Min(BoatAngularDrag * delta, 1f);          // angular water drag (settle the yaw/roll)
             if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }          // a pure boat has no useful wheels
+            if (++_waterFrame % 30 == 0) GD.Print($"[boat] afloat={_afloat} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");
         }
     }
 }
