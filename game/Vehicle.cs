@@ -12,7 +12,8 @@ namespace UnturnedGodot
         float _speedMax = 12.5f, _speedMin = -7f;    // Speed_Max fwd / Speed_Min reverse, m/s -- source .dat (directly usable)
         float _brakeForce = 32f;                     // Brake -- source .dat value
         float _steerTarget, _steerAngle, _steerTurnSpeed = 70f;   // steering smoothing: MoveTowards target at deg/s. LOWERED for a weighty/laggy feel -- the wheels float behind the input, slow to turn AND slow to re-center (master)
-        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy points + the last drive input (water propulsion runs in _PhysicsProcess)
+        WaterMode _water; Vector3[] _buoys; float _inThrottle, _inSteer; int _waterFrame;   // BOAT/AMPHIBIOUS: water mode + hull buoyancy VOXELS + the last drive input (water propulsion runs in _PhysicsProcess)
+        float _voxelHalfHeight, _waterTime, _gravityMag = 9.8f;   // source Buoyancy.cs port: voxel half-height (submersion test), wave-ripple clock, gravity magnitude (Archimedes balance)
         bool _afloat;   // currently floating (any buoy submerged) -- HUD/anim can read it
         public bool Afloat => _afloat;
         bool _parked, _handbraking; float _spawnGrace = 2.5f; Vector3 _velAvg, _angAvg;   // -> STATIC freeze once majority-grounded + the LOW-PASSED velocity/spin are low (jitter-immune, d9588d3); _spawnGrace lets a fresh car DROP to terrain first
@@ -1118,12 +1119,20 @@ namespace UnturnedGodot
             v.ContactMonitor = true; v.MaxContactsReported = 6; v.BodyEntered += v.OnVehicleContact;   // wake a frozen parked car when another vehicle rams it (master)
             v._engineForce = s.Engine; v._steerMax = s.SteerMax; v._steerMin = s.SteerMin;
             v._speedMax = s.SpeedMax; v._speedMin = s.SpeedMin; v._brakeForce = s.Brake;
-            v._water = s.Water;   // BOAT/AMPHIBIOUS: set up hull buoyancy points (default = 4 bottom corners of the collider hull)
+            v._water = s.Water;   // BOAT/AMPHIBIOUS: voxelize the hull box for the source Buoyancy.cs voxel-Archimedes model
             if (s.Water != WaterMode.Car)
             {
-                if (s.Buoys != null) v._buoys = s.Buoys;
-                else { float by = s.BoxCenter.Y - s.BoxSize.Y * 0.35f, bx = s.BoxSize.X * 0.42f, bz = s.BoxSize.Z * 0.42f;
-                       v._buoys = new[] { new Vector3(-bx, by, -bz), new Vector3(bx, by, -bz), new Vector3(-bx, by, bz), new Vector3(bx, by, bz) }; }
+                const int slices = 2;   // source Buoyancy.slicesPerAxis default -> 2x2x2 = 8 voxels
+                Vector3 vsz = s.BoxSize / slices, minExt = s.BoxCenter - s.BoxSize * 0.5f;
+                v._voxelHalfHeight = Mathf.Min(vsz.X, Mathf.Min(vsz.Y, vsz.Z)) * 0.5f;   // a voxel is "submerged enough" when its centre is within this of the surface
+                var vox = new Vector3[slices * slices * slices];
+                int vi = 0;
+                for (int sx = 0; sx < slices; sx++)
+                    for (int sy = 0; sy < slices; sy++)
+                        for (int sz = 0; sz < slices; sz++)
+                            vox[vi++] = new Vector3(minExt.X + vsz.X * (0.5f + sx), minExt.Y + vsz.Y * (0.5f + sy), minExt.Z + vsz.Z * (0.5f + sz));
+                v._buoys = vox;
+                v._gravityMag = Mathf.Abs(ProjectSettings.GetSetting("physics/3d/default_gravity", 9.8f).AsSingle());   // the g the body actually falls under -> Archimedes must balance it
             }
             v.FifthWheelLocal = s.FifthWheel; v.KingpinLocal = s.Kingpin;   // trailer-hitch coupling points (Zero = neither)
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
@@ -2125,43 +2134,47 @@ namespace UnturnedGodot
             if (_water != WaterMode.Car) ApplyWaterPhysics((float)delta);   // BOAT/AMPHIBIOUS: buoyancy float + water propulsion (overrides wheel drive while afloat)
         }
 
-        const float BuoyStiffness = 45f, BuoyDamp = 6f;                                  // buoyancy spring (up-force per m submerged, per unit mass) + vertical damping
-        const float BoatThrust = 6f, BoatTurn = 2.2f, BoatDrag = 0.9f, BoatAngularDrag = 2.5f;   // water propulsion / rudder yaw / linear + angular water drag
+        const float BoatThrust = 6f, BoatTurn = 2.2f, BoatDrag = 0.9f;   // water propulsion / rudder yaw / extra horizontal drag (controllable top speed atop the source voxel damping)
+        const float WaterDensity = 1000f, HullDensity = 500f;            // source Buoyancy.cs: rho_water, and density=500 (a vehicle floats at ~half-submersion)
 
-        // BOAT / AMPHIBIOUS water physics (source: InteractableVehicle EEngine.BOAT + the Buoyancy child components). A
-        // spring at each hull buoy toward Terrain.SeaLevelY floats the boat level; while afloat the drive input becomes
-        // forward thrust + rudder yaw, with water drag. Amphibious keeps its wheels for land + gains this only when wet.
+        // BOAT / AMPHIBIOUS water physics. Buoyancy is a faithful port of the source Buoyancy.cs voxel-Archimedes model:
+        // the hull box is sliced 2x2x2; each SUBMERGED voxel gets an Archimedes up-force (rho_water*g*V, depth-scaled by a
+        // sqrt curve) + point-velocity damping, applied AT the voxel -> the hull floats level, self-rights, and damps sway.
+        // While afloat the drive input becomes forward thrust + rudder yaw (source propels boats via the engine; same feel).
         void ApplyWaterPhysics(float delta)
         {
             _afloat = false;
             if (!Terrain.HasWater || _buoys == null) return;
+            _waterTime += delta;
             float seaY = Terrain.SeaLevelY;
             var xf = GlobalTransform;
+            var comGlobal = ToGlobal(CenterOfMass);
+            float volume = Mass / HullDensity;                                            // source: volume = mass / density
+            var archPerVoxel = new Vector3(0f, WaterDensity * _gravityMag * volume, 0f) / _buoys.Length;   // rho_water * |g| * V, split per voxel
             int submerged = 0;
-            foreach (var bp in _buoys)
+            foreach (var localPoint in _buoys)
             {
-                var wp = xf * bp;                                   // buoy world position
-                float depth = seaY - wp.Y;                          // >0 = below the sea surface
-                if (depth <= 0f) continue;
+                var worldPoint = xf * localPoint;                                         // source: transform.TransformPoint(localPoint)
+                if (worldPoint.Y >= seaY) continue;                                       // WaterUtility: above the flat sea surface -> not underwater
+                float surface = seaY + Mathf.Sin((worldPoint.X + worldPoint.Z) * 8f + _waterTime) * 0.1f;   // source client-side wave ripple
+                if (worldPoint.Y - _voxelHalfHeight >= surface) continue;                 // voxel not yet within voxelHalfHeight of the surface -> no force
                 submerged++;
-                float sub = Mathf.Min(depth, 1.2f);                // clamp so a deep plunge doesn't rocket it back up
-                var arm = wp - GlobalPosition;
-                var pv = LinearVelocity + AngularVelocity.Cross(arm);   // this point's velocity (for damping)
-                float up = (sub * BuoyStiffness - pv.Y * BuoyDamp) * Mass / _buoys.Length;   // spring toward the surface + vertical damp
-                ApplyForce(Vector3.Up * Mathf.Max(up, 0f), arm);
+                var pv = LinearVelocity + AngularVelocity.Cross(worldPoint - comGlobal);  // source: rootRigidbody.GetPointVelocity(worldPoint)
+                var damping = -pv * 0.1f * Mass;                                          // source: -velocity * 0.1 * mass
+                float subFactor = Mathf.Sqrt(Mathf.Clamp((surface - worldPoint.Y) / (2f * _voxelHalfHeight) + 0.5f, 0f, 1f));   // source sqrt depth curve
+                ApplyForce(damping + subFactor * archPerVoxel, worldPoint - GlobalPosition);   // source: AddForceAtPosition(force, worldPoint)
             }
             _afloat = submerged > 0;
             if (!_afloat) return;
-            var fwd = -xf.Basis.Z;                                  // boat forward = -Z
+            var fwd = -xf.Basis.Z;                                                        // boat forward = -Z
             float thr = EngineOn ? _inThrottle : 0f;
-            ApplyCentralForce(fwd * thr * BoatThrust * Mass);       // propulsion
+            ApplyCentralForce(fwd * thr * BoatThrust * Mass);                             // propulsion
             float spd = LinearVelocity.Dot(fwd);
-            float rudder = Mathf.Clamp(Mathf.Abs(spd) * 0.25f + 0.25f, 0.25f, 1f);   // a boat needs some way to turn -> mostly-speed-dependent rudder + a little idle authority
-            ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder);          // rudder yaw
-            ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // horizontal water drag
-            AngularVelocity *= 1f - Mathf.Min(BoatAngularDrag * delta, 1f);          // angular water drag (settle the yaw/roll)
-            if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }          // a pure boat has no useful wheels
-            if (++_waterFrame % 30 == 0) GD.Print($"[boat] afloat={_afloat} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");
+            float rudder = Mathf.Clamp(Mathf.Abs(spd) * 0.25f + 0.25f, 0.25f, 1f);        // speed-dependent rudder + a little idle authority
+            ApplyTorque(Vector3.Up * -_inSteer * BoatTurn * Mass * rudder);               // rudder yaw
+            ApplyCentralForce(new Vector3(-LinearVelocity.X, 0f, -LinearVelocity.Z) * BoatDrag * Mass);   // extra horizontal water drag -> controllable top speed
+            if (_water == WaterMode.Boat) { EngineForce = 0f; Brake = 0f; }               // a pure boat has no useful wheels
+            if (++_waterFrame % 30 == 0) GD.Print($"[boat] afloat={_afloat} sub={submerged}/{_buoys.Length} y={GlobalPosition.Y:F2} spd={LinearVelocity.Length():F1} thr={_inThrottle:F1} str={_inSteer:F1}");
         }
     }
 }
