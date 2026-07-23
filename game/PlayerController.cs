@@ -2556,8 +2556,15 @@ namespace UnturnedGodot
         void ApplyFactoryGunStats(AssetBundle b)
         {
             if (b == null || Gun == null) return;
+            // Full gun-stat model (master: "recoil spread pellets etc + presets"). Every knob defaults to the CURRENT
+            // Gun value, so a factory gun keeps its base/preset stat unless a param overrides it -- author any gun's
+            // feel, or load a preset (Batch 2) and tweak. No longer just an eaglefire reskin.
+            // -- damage model: gun_damage sets player+zombie; vehicle/object are their own knobs (was: inherited eaglefire's
+            //    35/25 regardless of gun_damage, so a 200-dmg factory gun still tickled cars).
             float dmg = b.ParamFloat("gun_damage", 0f);
             if (dmg > 0f) { Gun.PlayerDamage = dmg; Gun.ZombieDamage = dmg; }
+            Gun.VehicleDamage = b.ParamFloat("gun_vehicle_damage", Gun.VehicleDamage);
+            Gun.ObjectDamage  = b.ParamFloat("gun_object_damage",  Gun.ObjectDamage);
             Gun.Range = b.ParamFloat("gun_range", Gun.Range);
             float rpm = b.ParamFloat("gun_rpm", 0f);
             if (rpm > 0f) Gun.Firerate = Mathf.Clamp(Mathf.RoundToInt(3000f / rpm), 1, 3000);   // 50 sim-ticks/s: rounds/s = 50/Firerate -> Firerate = 3000/rpm; clamp so a tiny rpm can't make it effectively never fire
@@ -2565,8 +2572,34 @@ namespace UnturnedGodot
             if (ammo > 0) { Gun.AmmoMax = ammo; Ammo = ammo; }
             int cal = Mathf.RoundToInt(b.ParamFloat("gun_caliber", 0f));
             if (cal > 0) Gun.Caliber = cal;
-            if (b.ParamBool("gun_auto", false)) { Gun.HasAuto = true; }   // opt-in full-auto
-            GD.Print($"[gun] factory stats {_gunName}: dmg={Gun.PlayerDamage} range={Gun.Range} firerate={Gun.Firerate} ammo={Gun.AmmoMax} cal={Gun.Caliber} auto={Gun.HasAuto}");
+            // -- FEEL: spread + pellets + recoil + recover + shake (the eaglefire-reskin vs real-shotgun/sniper difference)
+            Gun.SpreadAngleDegrees = b.ParamFloat("gun_spread",     Gun.SpreadAngleDegrees);   // hip bullet cone (deg)
+            Gun.SpreadAim          = b.ParamFloat("gun_spread_aim", Gun.SpreadAim);            // ADS spread multiplier (eaglefire 0.05)
+            int pel = Mathf.RoundToInt(b.ParamFloat("gun_pellets", 0f));
+            if (pel > 0) Gun.Pellets = pel;   // rays per shot; 8 = a real buckshot shotgun
+            Gun.RecoilMinX = b.ParamFloat("gun_recoil_min_x", Gun.RecoilMinX);
+            Gun.RecoilMaxX = b.ParamFloat("gun_recoil_max_x", Gun.RecoilMaxX);
+            Gun.RecoilMinY = b.ParamFloat("gun_recoil_min_y", Gun.RecoilMinY);   // vertical kick (the big one)
+            Gun.RecoilMaxY = b.ParamFloat("gun_recoil_max_y", Gun.RecoilMaxY);
+            Gun.RecoverX   = b.ParamFloat("gun_recover_x",    Gun.RecoverX);
+            Gun.RecoverY   = b.ParamFloat("gun_recover_y",    Gun.RecoverY);
+            Gun.ShakeMinX = b.ParamFloat("gun_shake_min_x", Gun.ShakeMinX); Gun.ShakeMaxX = b.ParamFloat("gun_shake_max_x", Gun.ShakeMaxX);
+            Gun.ShakeMinY = b.ParamFloat("gun_shake_min_y", Gun.ShakeMinY); Gun.ShakeMaxY = b.ParamFloat("gun_shake_max_y", Gun.ShakeMaxY);
+            Gun.ShakeMinZ = b.ParamFloat("gun_shake_min_z", Gun.ShakeMinZ); Gun.ShakeMaxZ = b.ParamFloat("gun_shake_max_z", Gun.ShakeMaxZ);
+            // -- ballistics: muzzle velocity + drop (a sniper carries far + flat; a pistol lobs + drops)
+            Gun.MuzzleVelocity    = b.ParamFloat("gun_muzzle_velocity", Gun.MuzzleVelocity);
+            Gun.GravityMultiplier = b.ParamFloat("gun_gravity",         Gun.GravityMultiplier);
+            int bsteps = Mathf.RoundToInt(b.ParamFloat("gun_ballistic_steps", 0f));
+            if (bsteps > 0) Gun.BallisticSteps = bsteps;
+            // -- fire modes + action (Trigger/Bolt/Pump/Break -> reload + rechamber behaviour)
+            if (b.ParamBool("gun_auto",   false)) Gun.HasAuto   = true;
+            if (b.ParamBool("gun_semi",   false)) Gun.HasSemi   = true;
+            if (b.ParamBool("gun_safety", false)) Gun.HasSafety = true;
+            int burst = Mathf.RoundToInt(b.ParamFloat("gun_burst", 0f));
+            if (burst > 0) Gun.BurstCount = burst;
+            var action = b.ParamString("gun_action", null);
+            if (!string.IsNullOrEmpty(action)) { Gun.Action = action; if ((action == "Bolt" || action == "Pump") && Gun.RechamberAfterShotCount == 0) Gun.RechamberAfterShotCount = 1; }
+            GD.Print($"[gun] factory stats {_gunName}: dmg={Gun.PlayerDamage}/veh{Gun.VehicleDamage} range={Gun.Range} rate={Gun.Firerate} ammo={Gun.AmmoMax} spread={Gun.SpreadAngleDegrees} pellets={Gun.Pellets} recoilY={Gun.RecoilMinY}..{Gun.RecoilMaxY} vel={Gun.MuzzleVelocity} auto={Gun.HasAuto}");
         }
 
         // Console `holdgun`: hold an Asset Factory gun with no inventory item behind it. EquipHeldGun now
