@@ -1044,7 +1044,7 @@ namespace UnturnedGodot
             var vw = b.ParamString("veh_wheel", null);          // swap the wheel ASSET (master); else the preset's wheel mesh
             if (!string.IsNullOrEmpty(vw)) { s.Wheel = vw; s.WheelTex = AssetBundle.ResolveAlbedo(vw); }
 
-            GD.Print($"[factoryvehicle] {s.Name} preset={preset ?? "jeep"} engine={s.Engine} speed={s.SpeedMax} steer={s.SteerMax} brake={s.Brake} fuel={s.Fuel} health={s.Health} wheel={s.Wheel} steerModel={s.SteerModel ?? "none"} seat={s.SeatModelFile ?? "none"} headlights={s.SpotPos?.Length ?? 0}");
+            GD.Print($"[factoryvehicle] {s.Name} preset={preset ?? "jeep"} body={bodyBase} vehicleBody={realHl} engine={s.Engine} speed={s.SpeedMax} steer={s.SteerMax} fuel={s.Fuel} health={s.Health} wheel={s.Wheel} interior={(realHl ? $"{bodyBase} seats+steer+lights (painted)" : (s.SeatModelFile ?? "none"))} headlights={s.SpotPos?.Length ?? 0}");
             var v = Build(s, 0, "factory:" + s.Name);
             float susp = b.ParamFloat("veh_suspension", 0f);   // wheel travel (master): higher = softer/off-road, lower = stiff. 0 = the spec default (0.25)
             if (susp > 0f && v._wNodes != null) foreach (var w in v._wNodes) w.SuspensionTravel = susp;
