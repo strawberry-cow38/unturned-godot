@@ -140,7 +140,11 @@ namespace UnturnedGodot
             _selKind = k;
             int count = k switch { Kind.Part => _partNodes.Count, Kind.Collider => _colNodes.Count, Kind.Volume => _volNodes.Count, Kind.Point => _ptNodes.Count, _ => 0 };
             _selIdx = (i >= 0 && i < count) ? i : -1;
-            _gizmo.Attach(SelNode());
+            var node = SelNode();
+            // pivot the gizmo at a PART's visual centre (mesh AABB centre), not its node origin, so the gimbal sits
+            // dead-centre on the prop (master). colliders/volumes/points are already centred at their node -> zero.
+            Vector3 pivot = (k == Kind.Part && node is MeshInstance3D mi && mi.Mesh != null) ? mi.Mesh.GetAabb().GetCenter() : Vector3.Zero;
+            _gizmo.Attach(node, pivot);
             RefreshList();
         }
 

@@ -18,6 +18,9 @@ namespace UnturnedGodot
 
         readonly Camera3D _cam;
         Node3D _target;
+        public Vector3 PivotLocal;   // gizmo pivot in the target's LOCAL space (e.g. a mesh's AABB centre) so the gimbal sits at the visual CENTER, not the node origin. Zero = node origin (map-editor default -> unchanged).
+        Vector3 PivotWorld() => _target == null ? GlobalPosition : _target.ToGlobal(PivotLocal);
+        Vector3 _dragPivot;   // pivot captured at drag-begin; rotate/scale keep it fixed while the origin moves around it
         public EMode Mode = EMode.Translate;
         public bool LocalSpace;     // source pivotRotation: local = target axes, global = world
 
@@ -90,12 +93,12 @@ namespace UnturnedGodot
 
         Basis SpaceBasis => LocalSpace && _target != null ? _target.GlobalTransform.Basis.Orthonormalized() : Basis.Identity;
 
-        public void Attach(Node3D t) { _target = t; Visible = t != null; if (t != null) GlobalPosition = t.GlobalPosition; RefreshVis(); }
+        public void Attach(Node3D t, Vector3 pivotLocal = default) { _target = t; PivotLocal = pivotLocal; Visible = t != null; if (t != null) GlobalPosition = t.ToGlobal(pivotLocal); RefreshVis(); }
 
         public override void _Process(double d)
         {
             if (!Visible || _cam == null || _target == null) return;
-            var pos = _target.GlobalPosition;
+            var pos = PivotWorld();
             float s = Mathf.Max(0.3f, pos.DistanceTo(_cam.GlobalPosition) * 0.07f);
             _viewScale = RingR * s;
             GlobalTransform = new Transform3D(SpaceBasis.Scaled(Vector3.One * s), pos);
@@ -106,7 +109,8 @@ namespace UnturnedGodot
             if (_target == null || !Visible) return false;
             var from = _cam.ProjectRayOrigin(screen);
             var dir = _cam.ProjectRayNormal(screen);
-            var pivot = _target.GlobalPosition;
+            var pivot = PivotWorld();
+            _dragPivot = pivot;
             if (Mode == EMode.Translate)
             {
                 int axis = PickCollider(from, dir, _arrowRids);
@@ -169,22 +173,25 @@ namespace UnturnedGodot
                 float delta = ProjectRayOntoRay(from, dir, _startPos, _dragDir) - _startDist;
                 var pos = _startPos + _dragDir * delta;
                 if (snap) pos = pos.Snapped(Vector3.One);
-                _target.GlobalPosition = pos; GlobalPosition = pos;
+                // pos is the new PIVOT position; move the origin by the same delta (origin = pivot - the pivot offset) so the visual centre follows the gizmo
+                _target.GlobalPosition = pos - _target.GlobalTransform.Basis * PivotLocal; GlobalPosition = pos;
             }
             else if (_rotAxis >= 0)
             {
                 float ang = ProjectRayOntoRay(from, dir, _rotEdge, _rotTangent) * 90f / _viewScale;   // source: dist*90/viewScale
                 if (snap) ang = Mathf.Round(ang / 15f) * 15f;                                          // snapRotationIntervalDegrees 15
-                _target.GlobalTransform = new Transform3D(_startBasis.Rotated(_rotAxisWorld, Mathf.DegToRad(ang)), _target.GlobalPosition);
+                var nb = _startBasis.Rotated(_rotAxisWorld, Mathf.DegToRad(ang));
+                _target.GlobalTransform = new Transform3D(nb, _dragPivot - nb * PivotLocal);   // keep the pivot (visual centre) fixed; rotate the prop in place
             }
             else if (_scaleIdx >= 0)
             {
-                float dist = (ProjectRayOntoRay(from, dir, _target.GlobalPosition, _scaleWorldDir) - _scaleInitDist) / _viewScale;   // source :509-510
+                float dist = (ProjectRayOntoRay(from, dir, _dragPivot, _scaleWorldDir) - _scaleInitDist) / _viewScale;   // source :509-510
                 if (snap) dist = Mathf.Round(dist);
                 if (Mathf.Abs(dist + 1f) < 0.001f) return;   // source: don't let a scale axis hit 0
                 var f = Vector3.One + _scaleLocalDir * dist;
                 var ns = new Vector3(Mathf.Max(0.01f, _scaleStart.X * f.X), Mathf.Max(0.01f, _scaleStart.Y * f.Y), Mathf.Max(0.01f, _scaleStart.Z * f.Z));
-                _target.GlobalTransform = new Transform3D(_scaleRotBasis * Basis.FromScale(ns), _target.GlobalPosition);
+                var sb = _scaleRotBasis * Basis.FromScale(ns);
+                _target.GlobalTransform = new Transform3D(sb, _dragPivot - sb * PivotLocal);   // scale about the pivot
             }
         }
 
