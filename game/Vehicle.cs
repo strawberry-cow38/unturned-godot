@@ -980,18 +980,25 @@ namespace UnturnedGodot
         {
             Body = "apc_body.txt", Water = WaterMode.Amphibious,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.55f,   // jeep wheel mesh reused (APC wheel not ripped yet)
-            Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull + fixed grille/headlight/taillight texels via PaintMat
+            Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull. NO grille (strawberry) -- headlights/taillights are the real separate Parts meshes below, not palette texels
             Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = 6f, Brake = 35f,
             BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
             ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_medium.ogg", IdlePitch = 0.9f, MaxPitch = 1.8f, IdleVolume = 0.8f, MaxVolume = 1.0f,
             Fuel = 1500f, Health = 800f, Name = "APC",
+            SpotPos = new[] { new Vector3(-1.03f, 0.78f, -4.0f), new Vector3(1.03f, 0.78f, -4.0f) }, OmniPos = Vector3.Zero,   // headlight beams at the 2 lens clusters (real Headlights mesh: front z-4.06, y0.78, x-groups ±1.03)
+            TailPos = new[] { new Vector3(-1.4f, 0.72f, 3.5f), new Vector3(1.4f, 0.72f, 3.5f) },   // taillight red glow at the rear lenses (real Taillights mesh: z+3.5, x±1.4)
             Wheels = new (float, float, float, bool)[]
             {
                 (-1.7f, 0.25f, -2.5f, true),   (1.7f, 0.25f, -2.5f, true),    // front axle (steers)
                 (-1.7f, 0.25f, -0.83f, false), (1.7f, 0.25f, -0.83f, false),
                 (-1.7f, 0.25f, 0.83f, false),  (1.7f, 0.25f, 0.83f, false),
                 (-1.7f, 0.25f, 2.5f, false),   (1.7f, 0.25f, 2.5f, false),    // rear
+            },
+            Parts = new (string, Color)[]
+            {
+                ("apc_headlights.txt", new Color(0.94f, 0.89f, 0.73f)),   // the 4 real headlights (Headlights_Model mesh): cream lenses. APC has NO grille -- these ARE the front detail (strawberry)
+                ("apc_taillights.txt", new Color(0.56f, 0.13f, 0.13f)),   // real taillights (Taillights_Model mesh): red
             },
         };
         public static Vehicle BuildAPC(int variant = 0) => Build(_apc, variant, "apc");
