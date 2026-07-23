@@ -812,7 +812,7 @@ namespace UnturnedGodot
             AddChild(seabed);
 
             _veh = Vehicle.BuildByName(type, 0);
-            _veh.Position = new Vector3(0f, 2.5f, 0f);   // drop from above -> splash + settle to the waterline
+            _veh.Position = new Vector3(0f, 0.5f, 0f);   // spawn just above the waterline -> gentle settle (a 2.5m drop plunged the voxel-buoyancy hull deep + made it bob)
             AddChild(_veh);
             _veh.EngineOn = true;
             if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")   // AMPHIBIOUS transition: a sandy beach sloping from dry land (+Z) down into the sea (-Z) -> drive off it into the water
