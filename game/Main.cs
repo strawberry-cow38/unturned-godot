@@ -1462,8 +1462,16 @@ namespace UnturnedGodot
                           v.PreviewLightsOn();   // both lamp sets lit so the head + tail lens models glow (off by default until 'L' / driving in-game)
                           var vcam = new Camera3D { Current = true, Fov = 46f, Far = 2000f };
                           root.AddChild(vcam);
-                          vcam.Position = new Vector3(-0.6f, 3.4f, -5.8f);   // front-left-above the car (it faces -Z) -> headlights + the open cab (steer+seat) both in frame
-                          vcam.LookAt(new Vector3(3.4f, 1.1f, 0f), Vector3.Up);
+                          if (System.Environment.GetEnvironmentVariable("UG_VEHREAR") == "1")
+                          {   // behind-right (the car's rear = +Z) -> the red taillight lenses
+                              vcam.Position = new Vector3(2.2f, 3.2f, 6.0f);
+                              vcam.LookAt(new Vector3(3.6f, 1.0f, 0.6f), Vector3.Up);
+                          }
+                          else
+                          {   // front-left-above (it faces -Z) -> headlights + the open cab (steer+seat) both in frame
+                              vcam.Position = new Vector3(-0.6f, 3.4f, -5.8f);
+                              vcam.LookAt(new Vector3(3.4f, 1.1f, 0f), Vector3.Up);
+                          }
                           _previewPlayer = null;   // don't let the FP settle logic re-aim over our showcase cam
                       }
                     }
