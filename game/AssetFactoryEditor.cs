@@ -40,6 +40,7 @@ namespace UnturnedGodot
         OptionButton _gunPreset;   // pick any real weapon -> load its full stats as a starting point
         LineEdit _depHealth, _depFuel, _depEnergy, _depCharge;   // deployable DEVICE stats (BuildDeployableDef reads deploy_*)
         CheckBox _depBattery, _depSwitch, _depTurbine, _depShatter;   // deployable device behaviour toggles
+        VBoxContainer _gunPanel, _devicePanel;   // type-gated panels: gun stats only on gun, device only on deployable
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
@@ -307,7 +308,7 @@ namespace UnturnedGodot
             _typeOpt = new OptionButton();
             foreach (var t in new[] { "prop", "deployable", "vehicle", "gun" }) _typeOpt.AddItem(t);
             for (int i = 0; i < _typeOpt.ItemCount; i++) if (_typeOpt.GetItemText(i) == _bundle.Type) _typeOpt.Selected = i;
-            _typeOpt.ItemSelected += _ => RepopulateHooks();
+            _typeOpt.ItemSelected += _ => { RepopulateHooks(); UpdatePanelVis(); };
             col.AddChild(_typeOpt);
 
             col.AddChild(new Label { Text = "— behaviours —" });
@@ -338,8 +339,10 @@ namespace UnturnedGodot
             col.AddChild(_poweredLight);
             SyncPowerUI();
 
-            // preset dropdown (master 2026-07-23): pick any of the 31 real weapons -> load its FULL stats as the
-            // starting point, then tweak the fields below. "— none —" leaves the bundle's own params.
+            // GUN panel (gated to type=gun by UpdatePanelVis). preset dropdown (master 2026-07-23): pick any of the 31
+            // real weapons -> load its FULL stats as the starting point, then tweak the fields. "— none —" leaves params.
+            _gunPanel = new VBoxContainer();
+            col.AddChild(_gunPanel);
             var presetRow = new HBoxContainer();
             presetRow.AddChild(new Label { Text = "preset" });
             _gunPreset = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
@@ -347,7 +350,7 @@ namespace UnturnedGodot
             foreach (var n in GunPresets.Names()) _gunPreset.AddItem(n);
             _gunPreset.ItemSelected += i => { if (i > 0) { var nm = _gunPreset.GetItemText((int)i); GunPresets.WriteToBundle(_bundle, nm); SyncGunUI(); Status($"loaded weapon preset: {nm}"); } };
             presetRow.AddChild(_gunPreset);
-            col.AddChild(presetRow);
+            _gunPanel.AddChild(presetRow);
 
             var gRow = new HBoxContainer();   // gun stats (type=gun): each factory gun shoots its own numbers
             gRow.AddChild(new Label { Text = "gun stats" });
@@ -356,32 +359,35 @@ namespace UnturnedGodot
             _gunAmmo = NumField("mag"); gRow.AddChild(_gunAmmo);
             _gunRange = NumField("range"); gRow.AddChild(_gunRange);
             _gunVehDmg = NumField("veh dmg"); gRow.AddChild(_gunVehDmg);
-            col.AddChild(gRow);
+            _gunPanel.AddChild(gRow);
             var gRow2 = new HBoxContainer();   // FEEL: the recoil/spread/pellets/velocity master asked for
             gRow2.AddChild(new Label { Text = "feel" });
             _gunSpread = NumField("spread"); gRow2.AddChild(_gunSpread);
             _gunPellets = NumField("pellets"); gRow2.AddChild(_gunPellets);
             _gunRecoil = NumField("recoil"); gRow2.AddChild(_gunRecoil);
             _gunVel = NumField("velocity"); gRow2.AddChild(_gunVel);
-            col.AddChild(gRow2);
+            _gunPanel.AddChild(gRow2);
             SyncGunUI();
 
-            // deployable DEVICE panel (master 2026-07-23): author a factory deployable as a real power device.
-            // ports come from PowerOut/In/Thru named points (add via +Point); these are the behaviour knobs.
+            // deployable DEVICE panel (master 2026-07-23, gated to type=deployable): author a factory deployable as a
+            // real power device. ports come from PowerOut/In/Thru named points (add via +Point); these are the knobs.
+            _devicePanel = new VBoxContainer();
+            col.AddChild(_devicePanel);
             var dRow = new HBoxContainer();
             dRow.AddChild(new Label { Text = "device" });
             _depHealth = NumFieldD("health"); dRow.AddChild(_depHealth);
             _depFuel = NumFieldD("fuel"); dRow.AddChild(_depFuel);
             _depEnergy = NumFieldD("energy"); dRow.AddChild(_depEnergy);
             _depCharge = NumFieldD("chg W"); dRow.AddChild(_depCharge);
-            col.AddChild(dRow);
+            _devicePanel.AddChild(dRow);
             var dRow2 = new HBoxContainer();
             _depBattery = DevCheck("battery"); dRow2.AddChild(_depBattery);
             _depSwitch = DevCheck("switch"); dRow2.AddChild(_depSwitch);
             _depTurbine = DevCheck("turbine"); dRow2.AddChild(_depTurbine);
             _depShatter = DevCheck("shatter"); dRow2.AddChild(_depShatter);
-            col.AddChild(dRow2);
+            _devicePanel.AddChild(dRow2);
             SyncDeviceUI();
+            UpdatePanelVis();
 
             var addRow = new HBoxContainer();
             var addPart = new Button { Text = "＋Part" }; addPart.Pressed += () => TogglePicker(true); addRow.AddChild(addPart);
@@ -455,6 +461,7 @@ namespace UnturnedGodot
             SyncPowerUI();
             SyncGunUI();
             SyncDeviceUI();
+            UpdatePanelVis();
             RebuildAll();
             Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
             Status($"opened {System.IO.Path.GetFileNameWithoutExtension(path)} ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
@@ -560,6 +567,14 @@ namespace UnturnedGodot
             _depSwitch.SetPressedNoSignal(_bundle.ParamBool("deploy_switch"));
             _depTurbine.SetPressedNoSignal(_bundle.ParamBool("deploy_wind_turbine"));
             _depShatter.SetPressedNoSignal(_bundle.ParamBool("deploy_shatter"));
+        }
+
+        // Show only the panel relevant to the current type: gun stats/feel on a gun, device knobs on a deployable.
+        void UpdatePanelVis()
+        {
+            string t = (_typeOpt != null && _typeOpt.Selected >= 0) ? _typeOpt.GetItemText(_typeOpt.Selected) : _bundle.Type;
+            if (_gunPanel != null) _gunPanel.Visible = t == "gun";
+            if (_devicePanel != null) _devicePanel.Visible = t == "deployable";
         }
 
         static string[] HooksFor(string type) => type switch
