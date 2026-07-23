@@ -241,7 +241,7 @@ namespace UnturnedGodot
             // do-nothing on a non-player Target); a NULL Target -- server worlds, where nobody wires one --
             // hunts the nearest registered player avatar instead of idling forever.
             PlayerController player;
-            if (Target != null && Target is not PlayerController)
+            if (Target != null && GodotObject.IsInstanceValid(Target) && Target is not PlayerController)
             {
                 // A non-player Target -- a horde beacon / the objective a beacon sends its horde at. There's no player
                 // to sense, so PATH to the target's position via the point-hunt mover (nav + gravity + step-up + rig),
@@ -254,7 +254,9 @@ namespace UnturnedGodot
                 TickPoint(g, dt);
                 return;
             }
-            if (Target != null) player = (PlayerController)Target;
+            // freed Target (a QueueFree'd sentry/beacon the horde still holds) is non-null but invalid -> treat as null
+            // and hunt the nearest player, instead of dereferencing a disposed object every physics tick.
+            if (Target != null && GodotObject.IsInstanceValid(Target)) player = (PlayerController)Target;
             else { player = PlayerRegistry.Nearest(GlobalPosition); if (player == null) return; }
             _age += delta;
             if (!_homeSet) { _home = GlobalPosition; _homeSet = true; }   // remember the spawn point

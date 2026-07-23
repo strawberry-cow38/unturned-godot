@@ -75,6 +75,7 @@ namespace UnturnedGodot
             _seen.Clear();
             foreach (var e in _deployables.All)
             {
+                if (e == null) continue;   // snapshot-id iterator yields null for an id removed mid-enum (mirror ServerTraps/Beacon/Charge)
                 var def = DeployableDef.ById(e.DefId);
                 if (def == null || def.Fixture != FixtureKind.Sentry) continue;
                 _seen.Add(e.NetIdValue);

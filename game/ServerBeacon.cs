@@ -78,8 +78,9 @@ namespace UnturnedGodot
                 if (st.Remaining > 0 && alive < MaxAlive && st.SpawnCd <= 0.0) { SpawnOne(st, e.Pos); st.SpawnCd = 0.6; }
             }
 
-            // retire gone beacons (salvaged / destroyed) -> despawn their horde with them
-            if (_beacons.Count > _seen.Count)
+            // retire gone beacons (salvaged / destroyed) -> despawn their horde with them. Sweep UNCONDITIONALLY: a
+            // remove+add in the same tick leaves _beacons.Count == _seen.Count, and a count-gate would skip retiring the
+            // destroyed beacon -> a permanent orphan horde (live zombies, leaked state). The dict scan is cheap.
             {
                 List<uint> gone = null;
                 foreach (var kv in _beacons) if (!_seen.Contains(kv.Key)) (gone ??= new List<uint>()).Add(kv.Key);
