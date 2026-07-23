@@ -815,6 +815,14 @@ namespace UnturnedGodot
             _veh.Position = new Vector3(0f, 2.5f, 0f);   // drop from above -> splash + settle to the waterline
             AddChild(_veh);
             _veh.EngineOn = true;
+            if (System.Environment.GetEnvironmentVariable("UG_BEACH") == "1")   // AMPHIBIOUS transition: a sandy beach sloping from dry land (+Z) down into the sea (-Z) -> drive off it into the water
+            {
+                var ramp = new StaticBody3D { Position = new Vector3(0f, -1f, 14f), RotationDegrees = new Vector3(12f, 0f, 0f) };   // +Z end rises above the sea, -Z end dips under
+                ramp.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(40f, 2f, 44f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.66f, 0.58f, 0.42f) } });
+                ramp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(40f, 2f, 44f) } });
+                AddChild(ramp);
+                _veh.Position = new Vector3(0f, 6f, 26f);   // start up on the dry land, facing -Z toward the sea
+            }
 
             _vehCam = new Camera3D { Current = true, Fov = 58f };
             _vehCam.CullMask &= ~OutlineOverlay.OutlineLayer;
