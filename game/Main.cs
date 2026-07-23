@@ -465,9 +465,10 @@ namespace UnturnedGodot
 
             if (boattest != null)
             {
+                _rigDir = boattest;   // output DIR for the frame strip (rig_NN.png), like --vehicle
                 _rigCaptureFrames = new[] { 40, 75, 120, 170, 220 };   // drop+splash -> settle to the waterline -> drive fwd -> right/left turns
                 GetWindow().Size = new Vector2I(1280, 720);
-                BuildBoatTest(boattest);
+                BuildBoatTest(gun ?? "runabout");   // boat type via --gun (default runabout)
                 return;
             }
 
