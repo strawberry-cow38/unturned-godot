@@ -59,7 +59,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
-            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null, assetDeployTest = null, assetPreview = null;
+            string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null, assetTest = null, assetFactory = null, bakeAsset = null, assetDeployTest = null, assetPreview = null, gunPresetTest = null;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -89,6 +89,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--bakeasset=")) bakeAsset = arg["--bakeasset=".Length..];   // Asset Factory bundle NAME -> composed inventory icon PNG (needs --shot=OUT)
                 else if (arg.StartsWith("--assetdeploytest=")) assetDeployTest = arg["--assetdeploytest=".Length..];   // place a factory DEPLOYABLE via Deployable.Spawn on a ground plane + shot (verify item->def->place->stand-up)
                 else if (arg.StartsWith("--assetpreview=")) assetPreview = arg["--assetpreview=".Length..];   // AF preview/play scene for a bundle NAME (per-type: gun/deployable/vehicle/prop) -> --shot to verify the scene builds
+                else if (arg.StartsWith("--gunpresettest=")) gunPresetTest = arg["--gunpresettest=".Length..];   // load a weapon preset into a bundle + print the gun_* params it produced (verify GunPresets)
                 else if (arg.StartsWith("--rig=")) rig = arg["--rig=".Length..];
                 else if (arg.StartsWith("--clothtest=")) clothtest = arg["--clothtest=".Length..];   // dress a RiggedCharacter with shirt,pants item ids -> UV-atlas render gate (P3a); frames land in --shot=DIR
                 else if (arg == "--clothtest") clothtest = "";                                        // bare flag -> default outfit (shirt 3 + pants 2)
@@ -293,6 +294,19 @@ namespace UnturnedGodot
                 foreach (var a in SDG.Unturned.Assets.all())
                     if (a.id >= AssetCatalog.FactoryItemIdBase)
                         GD.Print($"[item] id={a.id} name=\"{a.itemName}\" type={a.type} gun={a.gunName}  -> `give {a.itemName}` gives a real inventory item that equips");
+                GetTree().Quit();
+                return;
+            }
+
+            if (gunPresetTest != null)   // verify GunPresets: load a weapon preset into a bundle + print the gun_* params it produced
+            {
+                var b = new AssetBundle { Name = "presettest", Type = "gun" };
+                GunPresets.WriteToBundle(b, gunPresetTest);
+                GD.Print($"[gunpresettest] '{gunPresetTest}' -> gun params:");
+                foreach (var k in new[] { "gun_damage", "gun_vehicle_damage", "gun_object_damage", "gun_range", "gun_rpm", "gun_ammo", "gun_caliber", "gun_spread", "gun_spread_aim", "gun_pellets", "gun_recoil_min_y", "gun_recoil_max_y", "gun_recover_y", "gun_muzzle_velocity", "gun_gravity", "gun_ballistic_steps", "gun_burst" })
+                    GD.Print($"    {k} = {b.ParamFloat(k, float.NaN)}");
+                GD.Print($"    gun_action = {b.ParamString("gun_action")}  auto={b.ParamBool("gun_auto")} semi={b.ParamBool("gun_semi")}");
+                GD.Print($"[gunpresettest] {GunPresets.Names().Count} presets available: {string.Join(", ", GunPresets.Names())}");
                 GetTree().Quit();
                 return;
             }
