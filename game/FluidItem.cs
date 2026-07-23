@@ -21,9 +21,14 @@ namespace UnturnedGodot
             if (a == null) return "bottled_water";
             return a.id switch
             {
-                463 => "box_orange",   // Orange Juice
-                462 => "box_milk",     // Milk Box
-                _ => a.itemName?.ToLowerInvariant().Replace(" ", "_") ?? "bottled_water",
+                463 => "box_orange",     // Orange Juice
+                462 => "box_milk",       // Milk Box
+                91  => "juice_apple",    // Apple Juice
+                92  => "juice_grape",    // Grape Juice
+                481 => "bottle_maple",   // Maple Bottle
+                482 => "bottle_birch",   // Birch Bottle
+                483 => "bottle_pine",    // Pine Bottle
+                _ => a.itemName?.ToLowerInvariant().Replace(" ", "_") ?? "bottled_water",   // bottled_water/soda/cola/coconut/energy, canteen, canned_cola/soda all match
             };
         }
 

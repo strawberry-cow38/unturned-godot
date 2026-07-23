@@ -2528,7 +2528,7 @@ namespace UnturnedGodot
 
             // --- Case X (drink fluids): the new beverage fluids (soda/cola/OJ/milk/coconut/energy) are ALL drinkable + a
             // carton container sips them like water; non-beverages (fuel) are not drinkable (strawberry). ---
-            var beverages = new[] { FluidType.Soda, FluidType.Cola, FluidType.OrangeJuice, FluidType.Milk, FluidType.CoconutWater, FluidType.EnergyDrink };
+            var beverages = new[] { FluidType.Soda, FluidType.Cola, FluidType.OrangeJuice, FluidType.Milk, FluidType.CoconutWater, FluidType.EnergyDrink, FluidType.AppleJuice, FluidType.GrapeJuice };
             bool allDrink = true;
             foreach (var bev in beverages) if (!FluidDef.Drinkable(bev, WaterQuality.Clean)) allDrink = false;
             bool fuelNotDrink = !FluidDef.Drinkable(FluidType.Fuel, WaterQuality.Clean);
