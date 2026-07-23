@@ -91,6 +91,10 @@ namespace SDG.Unturned
             Cont(481,  500f, UnturnedGodot.FluidType.None,       1, 1);   // Maple Bottle: canteen (500 mL, 1 slot, spawns empty)
             Cont(482,  500f, UnturnedGodot.FluidType.None,       1, 1);   // Birch Bottle: canteen
             Cont(483,  500f, UnturnedGodot.FluidType.None,       1, 1);   // Pine Bottle: canteen
+            // non-drink-ish liquids (strawberry): syrup + glue drinkable, chemicals NOT. Their bottles spawn holding their fluid.
+            Cont(1159, 500f, UnturnedGodot.FluidType.MapleSyrup, 0, 0);   // Maple Syrup: 500 mL bottle
+            Cont(70,   250f, UnturnedGodot.FluidType.Glue,       0, 0);   // Glue: 250 mL bottle
+            Cont(75,   500f, UnturnedGodot.FluidType.Chemicals,  0, 0);   // Chemicals: 500 mL bottle (NOT drinkable)
         }
 
         // Fuel containers (gas cans/jerrycans) carry a fuelCapacity from the retail .dat "Fuel" field, so a right-click on

@@ -5,7 +5,7 @@ namespace UnturnedGodot
     // The fluid types (the fluidID). None=0 / Fuel=1 kept stable (gas pumps); new fluids APPENDED so ids don't shift.
     // (DirtyWater is GONE -- dirtiness is now a WaterQuality FLAG on water, not its own type.) The DRINK fluids
     // (Soda/Cola/OrangeJuice/Milk/CoconutWater/EnergyDrink) all act like clean water when drunk -- see FluidDef.IsBeverage.
-    public enum FluidType { None, Fuel, Water, Oil, Gas, Soda, Cola, OrangeJuice, Milk, CoconutWater, EnergyDrink, AppleJuice, GrapeJuice }
+    public enum FluidType { None, Fuel, Water, Oil, Gas, Soda, Cola, OrangeJuice, Milk, CoconutWater, EnergyDrink, AppleJuice, GrapeJuice, MapleSyrup, Glue, Chemicals }
 
     // Water QUALITY (strawberry): clean < tainted < dirty. Bottled water = clean; natural water (river/rain/ocean/inlet) =
     // tainted; the sluice makes dirty. A container takes the WORST quality that enters it (one drop of dirty -> all dirty).
@@ -32,6 +32,9 @@ namespace UnturnedGodot
             [FluidType.EnergyDrink]  = new Def("Energy Drink",  new Color(0.35f, 0.85f, 0.30f)),   // lurid green
             [FluidType.AppleJuice]   = new Def("Apple Juice",   new Color(0.85f, 0.70f, 0.20f)),   // golden
             [FluidType.GrapeJuice]   = new Def("Grape Juice",   new Color(0.42f, 0.16f, 0.42f)),   // deep purple
+            [FluidType.MapleSyrup]   = new Def("Maple Syrup",   new Color(0.50f, 0.26f, 0.07f)),   // dark amber
+            [FluidType.Glue]         = new Def("Glue",          new Color(0.92f, 0.88f, 0.76f)),   // off-white paste
+            [FluidType.Chemicals]    = new Def("Chemicals",     new Color(0.55f, 0.74f, 0.14f)),   // toxic green-yellow
         };
         public static Def Get(FluidType id) => _defs.TryGetValue(id, out var d) ? d : _defs[FluidType.None];
         public static string Name(FluidType id) => Get(id).Name;
@@ -48,7 +51,9 @@ namespace UnturnedGodot
         public static bool IsBeverage(FluidType id) => id == FluidType.Soda || id == FluidType.Cola || id == FluidType.OrangeJuice
                                                     || id == FluidType.Milk || id == FluidType.CoconutWater || id == FluidType.EnergyDrink
                                                     || id == FluidType.AppleJuice || id == FluidType.GrapeJuice;
-        public static bool Drinkable(FluidType id, WaterQuality q) => id == FluidType.Water ? q == WaterQuality.Clean : IsBeverage(id);   // only CLEAN water, or a beverage, can be drunk
+        // Drinkable: CLEAN water, any beverage, or -- per strawberry -- maple syrup + glue (weird, but she said so). NOT chemicals.
+        public static bool Drinkable(FluidType id, WaterQuality q) => id == FluidType.Water ? q == WaterQuality.Clean
+            : (IsBeverage(id) || id == FluidType.MapleSyrup || id == FluidType.Glue);
 
         // Display a volume in litres (1 unit = 1 mL, strawberry 2026-07-22). Sub-litre reads in mL so a near-empty can
         // isn't just "0.0 L"; >= 1 L shows one decimal. e.g. 20000 -> "20.0 L", 450 -> "450 mL".

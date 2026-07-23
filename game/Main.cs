@@ -2560,12 +2560,14 @@ namespace UnturnedGodot
             bool allDrink = true;
             foreach (var bev in beverages) if (!FluidDef.Drinkable(bev, WaterQuality.Clean)) allDrink = false;
             bool fuelNotDrink = !FluidDef.Drinkable(FluidType.Fuel, WaterQuality.Clean);
+            // strawberry: maple syrup + glue ARE drinkable (weird), chemicals are NOT
+            bool weirdDrinks = FluidDef.Drinkable(FluidType.MapleSyrup, WaterQuality.Clean) && FluidDef.Drinkable(FluidType.Glue, WaterQuality.Clean) && !FluidDef.Drinkable(FluidType.Chemicals, WaterQuality.Clean);
             var ojAsset = new SDG.Unturned.ItemAsset { id = 463, itemName = "Orange Juice", fluidCapacity = 1000f, fluidDefaultType = (byte)FluidType.OrangeJuice, fluidDefaultQuality = 0 };
             var ojItem = new SDG.Unturned.Item(463);   // fresh -> lazily full of OJ
             float sx = FluidItem.Sip(ojItem, ojAsset, out float hydx, out _);
             bool ojSip = Mathf.Abs(sx - FluidItem.SipML) < 0.5f && hydx > 0f;
-            GD.Print($"[hosetool] case X: all beverages drinkable={allDrink} · fuel notDrinkable={fuelNotDrink} · OJ sip {sx:0}mL (+{hydx:0.00})");
-            if (!(allDrink && fuelNotDrink && ojSip)) ok = false;
+            GD.Print($"[hosetool] case X: all beverages drinkable={allDrink} · fuel notDrinkable={fuelNotDrink} · syrup+glue drink/chem no={weirdDrinks} · OJ sip {sx:0}mL (+{hydx:0.00})");
+            if (!(allDrink && fuelNotDrink && weirdDrinks && ojSip)) ok = false;
 
             // --- Case Y (water tower): a map WATER TOWER is an INFINITE, TAINTED water source with head -> hose it downhill
             // into a tank; the tank fills with TAINTED water and the tower never depletes (strawberry). ---
