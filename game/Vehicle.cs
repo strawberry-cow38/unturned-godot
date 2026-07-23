@@ -972,6 +972,11 @@ namespace UnturnedGodot
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.7f, MaxVolume = 1.0f,   // outboard motor loop
             Fuel = 500f, Health = 300f, Name = "Runabout",
             Wheels = new (float, float, float, bool)[0],   // NO wheels -- a boat floats on buoyancy
+            Parts = new (string, Color)[]
+            {
+                ("runabout_seats.txt", new Color(0.78f, 0.76f, 0.72f)),   // 4 real cockpit seats (Objects/Seat_0..3 meshes): off-white to match the deck
+                ("runabout_steer.txt", new Color(0.2f, 0.2f, 0.2f)),      // real steering console/wheel (Objects/Steer mesh), driver's side (left, x-0.5)
+            },
         };
         public static Vehicle BuildRunabout(int variant = 0) => Build(_runabout, variant, "runabout");
         // APC -- 8-wheeled AMPHIBIOUS armored car (source vehicles/apc). WaterMode.Amphibious: drives on land via the
