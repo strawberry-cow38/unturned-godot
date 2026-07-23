@@ -24,6 +24,7 @@ namespace UnturnedGodot
 
         MeshInstance3D _cube;
         StandardMaterial3D _mat;
+        Node3D _arrow; StandardMaterial3D _arrowMat;   // in/out flow arrow (mirror of ConnectionPort), shown while the hose tool is out
 
         // source = green (pushes out), consumer = orange (draws in), passthrough = cyan (a fitting relays it) — power palette
         static Color BaseColor(FluidPortKind k) => k switch
@@ -44,28 +45,58 @@ namespace UnturnedGodot
             fp._cube = new MeshInstance3D { Mesh = new BoxMesh { Size = Vector3.One * CubeSize }, MaterialOverride = fp._mat };
             fp.AddChild(fp._cube);
             fp.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = Vector3.One * CubeSize } });
+            fp.BuildArrow();
             fp.SetHighlight(PortHi.None);
             fp.AddToGroup("fluid_ports");   // PlayerController can toggle/scan every fluid port when the hose tool is out
             return fp;
         }
 
-        // Look-at HUD line — reflects the live flow through this port + the fluid it carries.
-        public string InfoLine()
+        // An in/out flow arrow on the port (mirror of ConnectionPort's) — points OUT of the device for a source/passthrough,
+        // IN for a consumer. Hidden until the hose tool is out; blue where you can hose, red where the port is occupied.
+        void BuildArrow()
         {
+            var pk = Kind == FluidPortKind.Consumer ? DeployableDef.PortKind.Consumer
+                   : Kind == FluidPortKind.Passthrough ? DeployableDef.PortKind.Passthrough : DeployableDef.PortKind.Output;
+            _arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowBlue);
+            _arrow = ConnectionPort.MakeArrow(new DeployableDef.Port { Kind = pk, Pos = Position }, _arrowMat, Vector3.Zero);
+            _arrow.Visible = false;
+            AddChild(_arrow);
+        }
+
+        // Show/hide the arrow (the hose tool toggles it every frame it's out); blue = free/usable, red = occupied/unusable.
+        public void SetArrowState(bool show, bool available)
+        {
+            if (_arrow == null) return;
+            if (_arrow.Visible != show) _arrow.Visible = show;
+            if (show && _arrowMat != null) _arrowMat.AlbedoColor = available ? ConnectionPort.ArrowBlue : ConnectionPort.ArrowRed;
+        }
+
+        // Look-at HUD line — reflects the live flow through this port + the fluid it carries. `hosed` = a hose is attached
+        // (the tool passes it): an OUT node (source/passthrough) with no hose AND no flow shows just its name, no flow
+        // numbers (strawberry: "out nodes dont need flow info when they arent connected and dont have fluid flowing").
+        public string InfoLine(bool hosed = false)
+        {
+            string name = Owner != null ? Owner.RoleLabel() : "Fluid";
             string fluid = FluidDef.Name(EffectiveType);
-            return Kind switch
+            bool flowing = Node != null && (Node.Flowing || Mathf.Abs(Node.Flow) > 0.01f);
+            switch (Kind)
             {
-                FluidPortKind.Source => $"{Owner?.Role} ({fluid}) — {Node.Rate:0}/s out · {Node.Load:0}/s drawn",
-                FluidPortKind.Passthrough => $"{Owner?.Role} — {Node.Flow:0}/s out",
-                _ => $"{Owner?.Role} ({fluid}) — intake {(Node.Flowing ? $"{Node.Flow:0}/s in" : "idle")}",
-            };
+                case FluidPortKind.Source:
+                    return (!hosed && !flowing) ? $"{name} ({fluid})" : $"{name} ({fluid}) — {Node.Rate:0}/s out · {Node.Load:0}/s drawn";
+                case FluidPortKind.Passthrough:
+                    return (!hosed && !flowing) ? name : $"{name} — {Node.Flow:0}/s out";
+                default:   // Consumer (an IN node): keep its intake readout (shows "idle" when not flowing)
+                    return $"{name} ({fluid}) — intake {(Node.Flowing ? $"{Node.Flow:0}/s in" : "idle")}";
+            }
         }
 
         // Hose-tool highlight: None = base green/orange; Focus = brighter on look-at; HoseOk/HoseBad = green/red while
-        // routing a hose onto this port (valid vs occupied/incompatible target, e.g. a fluid-type mismatch).
-        public enum PortHi { None, Focus, HoseOk, HoseBad }
+        // routing a hose onto this port (valid vs occupied/incompatible target, e.g. a fluid-type mismatch); HoseWarn =
+        // ORANGE — a legal target that WON'T flow without a pump (uphill / no-head source; strawberry). Still connectable.
+        public enum PortHi { None, Focus, HoseOk, HoseBad, HoseWarn }
         static readonly Color FeedGreen = new Color(0.30f, 0.90f, 0.42f);
         static readonly Color FeedRed = new Color(0.95f, 0.28f, 0.28f);
+        static readonly Color FeedOrange = new Color(0.98f, 0.62f, 0.12f);   // needs-a-pump warn
 
         public void SetHighlight(PortHi state)
         {
@@ -74,6 +105,7 @@ namespace UnturnedGodot
             {
                 case PortHi.HoseOk: Feedback(FeedGreen); break;
                 case PortHi.HoseBad: Feedback(FeedRed); break;
+                case PortHi.HoseWarn: Feedback(FeedOrange); break;
                 case PortHi.Focus:
                     _mat.AlbedoColor = BaseColor(Kind);
                     _mat.EmissionEnabled = true; _mat.Emission = BaseColor(Kind).Lightened(0.55f); _mat.EmissionEnergyMultiplier = 1.1f;

@@ -166,9 +166,9 @@ namespace UnturnedGodot
             if (_valveHandleMat != null) _valveHandleMat.AlbedoColor = Blocked ? new Color(0.9f, 0.2f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);   // red closed / green open
         }
 
-        // A clean, "Fluid"-prefixed label for the billboard (strawberry: everything fluid reads "Fluid ..."). Only tanks
-        // show a billboard, so this only needs the tanked roles; a fitting falls back to "Fluid <role>".
-        string RoleLabel() => Role switch
+        // A clean, "Fluid"-prefixed label (strawberry: everything fluid reads "Fluid ..."). Used by the tank billboard and
+        // the hose-tool port HUD so the in-world name matches the inventory item.
+        public string RoleLabel() => Role switch
         {
             FluidRole.Source => "Fluid Source",
             FluidRole.Storage => "Fluid Tank",

@@ -643,12 +643,18 @@ namespace UnturnedGodot
         // pass -- a STRAIGHT hose (no multi-node routing / clear-hold yet). Type-lock ("cannot mix fluids") is enforced
         // at completion (HoseCompletion, a pure testable predicate); gravity gates whether the finished hose actually
         // FLOWS (FluidNet). The look-ray hits HosePort.PortLayer (1<<11) only, so it never picks a power port. ---
-        const float HoseReach = 5.5f;
+        const float HoseReach = 5.5f, HosePlaceReach = 6f;   // look-at reach / node-place reach (mirror of the wire tool)
+        const int MaxHoseNodes = 20; const float MaxHoseLen = 40f;   // mirror the wire tool's 20-node / 40m budget (strawberry)
         HosePort _hosePort;          // the fluid port currently looked at
         bool _hosing; HosePort _hoseSrc;   // mid-route: a start port is picked, waiting for the opposite-role end
+        readonly System.Collections.Generic.List<Vector3> _hoseNodes = new();   // placed node points (world) between source + free end
         Hose _hosePreview;           // the live hose being routed (follows the look point)
-        PhysicsRayQueryParameters3D _hoseRayQ;
+        PhysicsRayQueryParameters3D _hoseRayQ, _hosePlaceRayQ;
         CanvasLayer _hoseHudLayer; Label _hoseHudLabel;
+        // manage a hose by poking its PORT while not routing (mirror of the wire tool's _clearPort): hold RMB clears it, tap unplugs + re-routes
+        HosePort _clearHosePort; float _hoseClearHold;
+        const float HoseClearTime = 1.0f, HoseClickMax = 0.28f;   // hold this long over a hosed port to clear; release within this = a tap -> unplug
+        bool _hoseArrowsOn;          // in/out port arrows currently shown (only while the hose tool is out)
         public HosePort HoseLookPort => _hosePort;   // L1 probe
 
         // scene wrapper over the engine-free FluidHoseRule for the two live ports (the type-lock rule is L0-tested in core)
@@ -703,11 +709,26 @@ namespace UnturnedGodot
             {
                 if (!IsInstanceValid(_hoseSrc)) { CancelHose(); HoseHudSet(null); return; }
                 var v = CompletionVerdict(_hoseSrc, _hosePort);
+                // #11: a legal (Ok) connection that WON'T flow without a pump (uphill / no-head source, not already lifted)
+                // paints ORANGE + warns, but stays connectable. FluidNet.WouldNeedPump reuses the real gravity/head gate.
+                bool needsPump = false;
+                if (v == HoseVerdict.Ok && IsInstanceValid(_hosePort))
+                {
+                    var (sp, cp) = FluidHoseRule.IsSourceSide(_hoseSrc.Kind) ? (_hoseSrc, _hosePort) : (_hosePort, _hoseSrc);
+                    needsPump = FluidNet.WouldNeedPump(GetTree(), sp, cp);
+                }
                 if (IsInstanceValid(_hosePort) && _hosePort != _hoseSrc)
-                    _hosePort.SetHighlight(v == HoseVerdict.Ok ? HosePort.PortHi.HoseOk : HosePort.PortHi.HoseBad);
-                Vector3 end = v == HoseVerdict.Ok ? _hosePort.GlobalPosition : HoseFreeEnd();
-                _hosePreview?.SetPoints(new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition, end }, valid: v != HoseVerdict.Mismatch);
-                HoseHudSet(v == HoseVerdict.Mismatch ? "cannot mix fluids" : "hose   [LMB] connect  ·  [RMB] cancel");
+                    _hosePort.SetHighlight(v == HoseVerdict.Ok ? (needsPump ? HosePort.PortHi.HoseWarn : HosePort.PortHi.HoseOk) : HosePort.PortHi.HoseBad);
+                Vector3 end = v == HoseVerdict.Ok ? _hosePort.GlobalPosition : HosePlacePoint();
+                var pts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition };
+                pts.AddRange(_hoseNodes); pts.Add(end);
+                float len = PolyLen(pts);
+                bool overLimit = _hoseNodes.Count >= MaxHoseNodes || len > MaxHoseLen;
+                _hosePreview?.SetPoints(pts, valid: v != HoseVerdict.Mismatch && !overLimit);
+                if (v == HoseVerdict.Mismatch) HoseHudSet("cannot mix fluids");
+                else if (overLimit) HoseHudSet($"nodes {_hoseNodes.Count}/{MaxHoseNodes}    {len:0.0}/{MaxHoseLen:0}m   -- LIMIT");
+                else if (needsPump) HoseHudSet($"needs a pump (uphill / no gravity)    nodes {_hoseNodes.Count}/{MaxHoseNodes}   [LMB] connect anyway");
+                else HoseHudSet($"nodes {_hoseNodes.Count}/{MaxHoseNodes}    {len:0.0}/{MaxHoseLen:0}m" + (v == HoseVerdict.Ok ? "    [LMB] connect" : ""));
             }
             else
             {
@@ -716,20 +737,34 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_hosePort))
                 {
                     if (_hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) hint = "   ([RMB] open/close)";
-                    else if (PortHosed(_hosePort)) hint = "   ([RMB] remove hose)";
+                    else if (PortHosed(_hosePort)) hint = "   ([RMB] hold: clear · tap: unplug)";
                 }
-                HoseHudSet(_hosePort == null ? null : _hosePort.InfoLine() + hint);
+                HoseHudSet(_hosePort == null ? null : _hosePort.InfoLine(IsInstanceValid(_hosePort) && PortHosed(_hosePort)) + hint);
             }
         }
 
-        Vector3 HoseFreeEnd()   // the free end while routing = your look point at max reach (a straight hose, no world snap yet)
+        // The free end / node drop = your look point (raycast to world/props), else max reach. Excludes the player + every
+        // deployable AND fluid-device body so a hose routes STRAIGHT THROUGH them (mirror of WirePlacePoint) instead of
+        // sticking to a tank/box face -- fluid bodies are solid colliders now (batch A).
+        Vector3 HosePlacePoint()
         {
             if (_cam == null) return GlobalPosition;
+            var space = GetWorld3D().DirectSpaceState;
             Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
-            return from + fwd * HoseReach;
+            _hosePlaceRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 6) };
+            _hosePlaceRayQ.From = from; _hosePlaceRayQ.To = from + fwd * HosePlaceReach;
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                if (n is Deployable dep && GodotObject.IsInstanceValid(dep)) exclude.Add(dep.GetRid());
+            foreach (var n in GetTree().GetNodesInGroup("fluid_devices"))
+                if (n is FluidContainer fc && GodotObject.IsInstanceValid(fc)) exclude.Add(fc.GetRid());
+            _hosePlaceRayQ.Exclude = exclude;
+            var hit = space.IntersectRay(_hosePlaceRayQ);
+            return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * HosePlaceReach;
         }
 
-        // LMB with the hose tool: start from a usable, unhosed port (either role), or complete on a compatible opposite port.
+        // LMB with the hose tool (mirror of WireLmb): start from a usable, unhosed port (either role), place a routing node,
+        // or complete on a compatible opposite port -- completion + placement both gated by the 20-node/40m budget.
         void HoseLmb()
         {
             if (_dead) return;
@@ -737,15 +772,31 @@ namespace UnturnedGodot
             {
                 if (IsInstanceValid(_hosePort) && _hosePort.Usable && !PortHosed(_hosePort))
                 {
-                    _hosing = true; _hoseSrc = _hosePort;
+                    _hosing = true; _hoseSrc = _hosePort; _hoseNodes.Clear();
                     _hoseSrc.SetHighlight(HosePort.PortHi.Focus);
                     _hosePreview = new Hose(); GetParent().AddChild(_hosePreview);   // preview: null endpoints -> FluidNet skips it until committed
                     GD.Print($"[hose] started from {_hosePort.InfoLine()}");
                 }
                 return;
             }
-            if (CompletionVerdict(_hoseSrc, _hosePort) == HoseVerdict.Ok) CompleteHose(_hosePort);
-            // a Mismatch/None target does nothing on LMB (no node routing in the lean pass)
+            if (CompletionVerdict(_hoseSrc, _hosePort) == HoseVerdict.Ok)
+            {   // complete on the compatible opposite-role port -- only if the finished hose fits the same node/length budget
+                var cpts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition }; cpts.AddRange(_hoseNodes); cpts.Add(_hosePort.GlobalPosition);
+                if (_hoseNodes.Count <= MaxHoseNodes && PolyLen(cpts) <= MaxHoseLen) CompleteHose(_hosePort);
+                return;
+            }
+            Vector3 lp = HosePlacePoint();   // else drop a routing node at the look point (a Mismatch target still just routes)
+            var pts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition }; pts.AddRange(_hoseNodes); pts.Add(lp);
+            if (_hoseNodes.Count >= MaxHoseNodes || PolyLen(pts) > MaxHoseLen) return;   // hitting the limit blocks placing
+            _hoseNodes.Add(lp);
+        }
+
+        // RMB with the hose tool while routing (mirror of WireRmb): undo the last node, or cancel+delete the hose if none.
+        void HoseRmb()
+        {
+            if (!_hosing) return;
+            if (_dead || _hoseNodes.Count == 0) CancelHose();
+            else _hoseNodes.RemoveAt(_hoseNodes.Count - 1);
         }
 
         void CompleteHose(HosePort target)
@@ -754,33 +805,105 @@ namespace UnturnedGodot
             var (srcPort, consPort) = FluidHoseRule.IsSourceSide(_hoseSrc.Kind) ? (_hoseSrc, target) : (target, _hoseSrc);
             AdoptFluidType(srcPort, consPort);   // an empty tank adopts the fluid flowing in (strawberry) — port EffectiveType handles transformers
             _hosePreview.Source = srcPort.Node; _hosePreview.Consumer = consPort.Node;
-            _hosePreview.SetPoints(new System.Collections.Generic.List<Vector3> { srcPort.GlobalPosition, consPort.GlobalPosition }, valid: true);
+            // the committed visual path keeps the routed nodes: start port -> each placed node -> end port
+            var pts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition }; pts.AddRange(_hoseNodes); pts.Add(target.GlobalPosition);
+            _hosePreview.SetPoints(pts, valid: true);
             if (!_hosePreview.IsInGroup("hoses")) _hosePreview.AddToGroup("hoses");
             if (IsInstanceValid(_hoseSrc)) _hoseSrc.SetHighlight(HosePort.PortHi.None);
             if (IsInstanceValid(target)) target.SetHighlight(HosePort.PortHi.None);
-            GD.Print($"[hose] connected {srcPort.Owner?.Role} -> {consPort.Owner?.Role}");
-            _hosePreview = null; _hosing = false; _hoseSrc = null;
+            GD.Print($"[hose] connected {srcPort.Owner?.Role} -> {consPort.Owner?.Role} ({_hoseNodes.Count} nodes)");
+            _hosePreview = null; _hosing = false; _hoseSrc = null; _hoseNodes.Clear();
         }
 
         void CancelHose()
         {
             _hosePreview?.QueueFree(); _hosePreview = null;
             if (IsInstanceValid(_hoseSrc)) _hoseSrc.SetHighlight(HosePort.PortHi.None);
-            _hosing = false; _hoseSrc = null;
+            _hosing = false; _hoseSrc = null; _hoseNodes.Clear();
         }
 
-        // RMB a hosed port (not a valve) to REMOVE the hose attached to it -- frees both ends for re-hosing.
-        void RemoveHose(HosePort p)
+        // --- Hose disconnect: mirror the wire tool's port-poke management (strawberry: reuse the wire UX, don't hardcode a
+        // parallel one). While the tool is out + NOT routing, look at a hosed port: hold RMB clears the hose (% readout),
+        // tap RMB unplugs it + picks it back up to re-route. RMB while routing stays undo (HoseRmb, event-driven). ---
+
+        // the committed hose an endpoint of which is `p` (null if unhosed) -- mirror of WireOnPort
+        Hose HoseOnPort(HosePort p)
         {
-            if (p?.Node == null) return;
+            if (p?.Node == null) return null;
             foreach (var n in GetTree().GetNodesInGroup("hoses"))
-                if (n is Hose h && GodotObject.IsInstanceValid(h) && (h.Source == p.Node || h.Consumer == p.Node))
+                if (n is Hose h && GodotObject.IsInstanceValid(h) && (h.Source == p.Node || h.Consumer == p.Node)) return h;
+            return null;
+        }
+
+        // the HosePort wrapping a given data node (reverse of HosePort.Node), for re-routing an unplugged hose from its source
+        HosePort HosePortForNode(FluidPortNode node)
+        {
+            if (node == null) return null;
+            foreach (var n in GetTree().GetNodesInGroup("fluid_devices"))
+                if (n is FluidContainer c)
+                    foreach (var hp in c.PortNodes)
+                        if (hp.Node == node) return hp;
+            return null;
+        }
+
+        // RMB PRESS while NOT routing: arm a clear/unplug on the hosed port under the crosshair (mirror WireManageArm).
+        void HoseManageArm()
+        {
+            if (_dead || _driving != null || !HoldingHoseTool || Input.MouseMode != Input.MouseModeEnum.Captured) return;
+            if (HoseOnPort(_hosePort) != null) { _clearHosePort = _hosePort; _hoseClearHold = 0f; }
+        }
+
+        // Per-frame: drive an ARMED RMB hold on a hosed port -- held to HoseClearTime clears the hose; released quickly
+        // (<= HoseClickMax) unplugs it; released mid-hold does nothing. Mirror of UpdateWireManage.
+        void UpdateHoseManage(float delta)
+        {
+            if (_clearHosePort == null) return;
+            bool active = HoldingHoseTool && !_hosing && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
+            Hose h = HoseOnPort(_clearHosePort);
+            if (!active || _hosePort != _clearHosePort || h == null) { _clearHosePort = null; _hoseClearHold = 0f; return; }   // looked away / state changed / hose gone -> abort
+            if (Input.IsMouseButtonPressed(MouseButton.Right))
+            {
+                _hoseClearHold += delta;
+                if (_hoseClearHold >= HoseClearTime)   // held long enough -> clear the whole hose
                 {
-                    GD.Print($"[hose] removed hose at {p.InfoLine()}");
-                    h.RemoveFromGroup("hoses");   // stop it conducting THIS tick (QueueFree is deferred to frame end)
-                    h.QueueFree();
-                    return;
+                    h.RemoveFromGroup("hoses"); h.QueueFree();   // drop the group THIS frame so flow + PortHosed update immediately
+                    _clearHosePort = null; _hoseClearHold = 0f; HoseHudSet(null); return;
                 }
+                HoseHudSet($"clearing hose... {Mathf.Clamp((int)(_hoseClearHold / HoseClearTime * 100f), 0, 99)}%");
+            }
+            else { if (_hoseClearHold <= HoseClickMax) UnplugHose(h); _clearHosePort = null; _hoseClearHold = 0f; }   // released quick -> tap-unplug
+        }
+
+        // Unplug a hose: drop its consumer link + leave the "hoses" group, and pick it back up as a routing preview from its
+        // source (all node points kept), so poking either endpoint re-picks it up to re-route. Mirror of UnplugWire.
+        void UnplugHose(Hose hose)
+        {
+            if (hose == null || !IsInstanceValid(hose) || hose.Source == null) { hose?.QueueFree(); return; }
+            var srcPort = HosePortForNode(hose.Source);
+            if (srcPort == null) { hose.RemoveFromGroup("hoses"); hose.QueueFree(); return; }
+            _hoseSrc = srcPort;
+            _hoseNodes.Clear();
+            for (int i = 1; i < hose.Points.Count - 1; i++) _hoseNodes.Add(hose.Points[i]);   // keep the node points; drop source[0] + consumer[last]
+            hose.Consumer = null;
+            hose.RemoveFromGroup("hoses");   // stop conducting immediately
+            _hosePreview = hose; _hosing = true;
+            GD.Print($"[hose] unplugged -> routing from source with {_hoseNodes.Count} kept nodes");
+        }
+
+        // In/out arrows on every fluid port while the hose tool is out (mirror UpdateWireArrows): blue where you can hose,
+        // red where the port is occupied or on a clogged/closed device.
+        void UpdateHoseArrows()
+        {
+            bool show = HoldingHoseTool && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
+            if (!show)
+            {
+                if (_hoseArrowsOn) { foreach (var n in GetTree().GetNodesInGroup("fluid_ports")) if (n is HosePort p && IsInstanceValid(p)) p.SetArrowState(false, false); _hoseArrowsOn = false; }
+                return;
+            }
+            _hoseArrowsOn = true;
+            foreach (var n in GetTree().GetNodesInGroup("fluid_ports"))
+                if (n is HosePort p && IsInstanceValid(p))
+                    p.SetArrowState(true, p.Usable && !PortHosed(p));
         }
 
         // an empty (None) tank adopts the fluid at the OTHER end of the hose on connect. Resolves the type THROUGH relay
@@ -896,6 +1019,8 @@ namespace UnturnedGodot
             var exclude = new Godot.Collections.Array<Rid> { GetRid() };
             foreach (var n in GetTree().GetNodesInGroup("deployables"))
                 if (n is Deployable dep && GodotObject.IsInstanceValid(dep)) exclude.Add(dep.GetRid());
+            foreach (var n in GetTree().GetNodesInGroup("fluid_devices"))
+                if (n is FluidContainer fc && GodotObject.IsInstanceValid(fc)) exclude.Add(fc.GetRid());   // route through fluid bodies too (solid colliders since batch A)
             _wirePlaceRayQ.Exclude = exclude;
             var hit = space.IntersectRay(_wirePlaceRayQ);
             return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * WirePlaceReach;
@@ -2870,7 +2995,7 @@ namespace UnturnedGodot
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
-                else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) CancelHose(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else if (IsInstanceValid(_hosePort) && PortHosed(_hosePort)) RemoveHose(_hosePort); } }   // hose tool: cancel a route; RMB a valve port to toggle it; RMB another hosed port to remove its hose
+                else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
                 else if (HoldingRopeTool) { if (rmb.Pressed) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
@@ -3597,7 +3722,9 @@ namespace UnturnedGodot
             UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview
             UpdateRopeManage((float)delta);                                                   // rope tool: poke a roped node -> hold RMB clear / tap RMB disconnect (mirrors the wire tool)
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
+            UpdateHoseManage((float)delta);                                                   // hose tool: poke a hosed port -> hold RMB clear / tap RMB unplug (mirror)
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
+            UpdateHoseArrows();                                                               // hose tool: show in/out arrows on every fluid port (mirror)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)

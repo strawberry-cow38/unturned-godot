@@ -44,6 +44,45 @@ namespace UnturnedGodot
             return FluidType.None;
         }
 
+        // Would a PROPOSED hose from source-side `srcPort` to consumer-side `consPort` need a PUMP to flow? True when it
+        // wouldn't flow passively (uphill/level, or off a no-head inlet) AND no existing powered pump's head lift already
+        // reaches the consumer end. Same gate FluidNet.Tick applies (below) — reused so the hose-tool "needs a pump" hint
+        // can't disagree with actual flow. The proposed hose is added to the ceiling propagation so a pump on the source
+        // side counts. Small networks -> cheap to recompute per aimed frame.
+        public static bool WouldNeedPump(SceneTree tree, HosePort srcPort, HosePort consPort)
+        {
+            if (srcPort?.Owner == null || consPort?.Owner == null) return false;
+            const float HeadEps = 0.05f;
+            var srcO = srcPort.Owner; var consO = consPort.Owner;
+            float srcY = srcO.GlobalPosition.Y, consY = consO.GlobalPosition.Y;
+            // a headed source flowing DOWNHILL needs no pump; a no-head inlet never flows by gravity (always via a pump)
+            if (!srcO.NoHead && consY < srcY - HeadEps) return false;
+            // else: does an EXISTING powered pump already lift the consumer end? Propagate pump ceilings over the committed
+            // hose graph PLUS this proposed hose, through relay fittings only (the same rule Tick uses).
+            var ceiling = new System.Collections.Generic.Dictionary<FluidContainer, float>();
+            foreach (var n in tree.GetNodesInGroup("fluid_devices"))
+                if (n is FluidContainer c && GodotObject.IsInstanceValid(c))
+                    ceiling[c] = (c is FluidPump pp && pp.IsPowered) ? c.GlobalPosition.Y + pp.HeadLift : float.NegativeInfinity;
+            if (!ceiling.ContainsKey(srcO) || !ceiling.ContainsKey(consO)) return true;
+            var links = new System.Collections.Generic.List<(FluidContainer A, FluidContainer B)>();
+            foreach (var n in tree.GetNodesInGroup("hoses"))
+                if (n is Hose h && h.Source?.Owner is FluidContainer a && h.Consumer?.Owner is FluidContainer b) links.Add((a, b));
+            links.Add((srcO, consO));   // the proposed hose
+            for (int pass = 0; pass <= links.Count; pass++)
+            {
+                bool changed = false;
+                foreach (var (a, b) in links)
+                {
+                    if (!ceiling.ContainsKey(a) || !ceiling.ContainsKey(b)) continue;
+                    if (a.IsFlowRelay && ceiling[a] > ceiling[b]) { ceiling[b] = ceiling[a]; changed = true; }
+                    if (b.IsFlowRelay && ceiling[b] > ceiling[a]) { ceiling[a] = ceiling[b]; changed = true; }
+                }
+                if (!changed) break;
+            }
+            float reach = Mathf.Max(ceiling[srcO], ceiling[consO]);
+            return !(consY < reach - HeadEps);   // within a pump's reach -> no NEW pump needed; else it needs one
+        }
+
         // The HosePort at the far end of the committed hose attached to `p` (null if unhosed).
         static HosePort FarPort(SceneTree tree, HosePort p)
         {
