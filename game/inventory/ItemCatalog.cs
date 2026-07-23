@@ -82,14 +82,15 @@ namespace SDG.Unturned
             Cont(462, 1000f, UnturnedGodot.FluidType.Milk,         0, 0);   // Milk Box: 1 L carton, 1x2
             Cont(94,   500f, UnturnedGodot.FluidType.CoconutWater, 0, 0);   // Bottled Coconut: 500 mL, 1x1
             Cont(93,   500f, UnturnedGodot.FluidType.EnergyDrink,  0, 0);   // Bottled Energy: 500 mL, 1x1
-            // audit sweep (strawberry "check for any more we missed"): more drink bottles + the retail "Refill"-type wooden water bottles
-            Cont(91,  1000f, UnturnedGodot.FluidType.AppleJuice, 0, 0);   // Apple Juice: 1 L, 1x1
-            Cont(92,  1000f, UnturnedGodot.FluidType.GrapeJuice, 0, 0);   // Grape Juice: 1 L, 1x1
+            // audit sweep (strawberry): apple/grape juice = SMALL cartons; the wooden Maple/Birch/Pine bottles are CANTEENS
+            // (500 mL, 1 slot, spawn EMPTY + refillable, same as the canteen); the cans hold their fizzy drink.
+            Cont(91,   250f, UnturnedGodot.FluidType.AppleJuice, 0, 0);   // Apple Juice: 250 mL small carton
+            Cont(92,   250f, UnturnedGodot.FluidType.GrapeJuice, 0, 0);   // Grape Juice: 250 mL small carton
             Cont(80,   355f, UnturnedGodot.FluidType.Cola,       0, 0);   // Canned Cola: 355 mL can, 1x1
             Cont(465,  355f, UnturnedGodot.FluidType.Soda,       0, 0);   // Canned Soda: 355 mL can, 1x1
-            Cont(481, 1000f, UnturnedGodot.FluidType.Water,      0, 0);   // Maple Bottle: 1 L clean water (retail "Refill" wooden bottle)
-            Cont(482, 1000f, UnturnedGodot.FluidType.Water,      0, 0);   // Birch Bottle: 1 L clean water
-            Cont(483, 1000f, UnturnedGodot.FluidType.Water,      0, 0);   // Pine Bottle: 1 L clean water
+            Cont(481,  500f, UnturnedGodot.FluidType.None,       1, 1);   // Maple Bottle: canteen (500 mL, 1 slot, spawns empty)
+            Cont(482,  500f, UnturnedGodot.FluidType.None,       1, 1);   // Birch Bottle: canteen
+            Cont(483,  500f, UnturnedGodot.FluidType.None,       1, 1);   // Pine Bottle: canteen
         }
 
         // Fuel containers (gas cans/jerrycans) carry a fuelCapacity from the retail .dat "Fuel" field, so a right-click on

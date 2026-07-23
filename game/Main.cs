@@ -1308,7 +1308,8 @@ namespace UnturnedGodot
                           || System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_WATERTANK") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1411,6 +1412,33 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.62f, 0f);
                 cam.Position = new Vector3(1.5f, 0.95f, 2.4f);
                 cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_WATERTANK=1: show the map's WATER TOWER (Tower_Water_0) + the big storage tanks (Tank_Forest_Body /
+            // Tank_Fuel_0) in a row with a 1.8 m human-height reference, so strawberry can see the "big water tank" prop +
+            // its scale (--shot=OUT). These are flat-authored map props -> stand them up like the gas pump.
+            if (System.Environment.GetEnvironmentVariable("UG_WATERTANK") == "1")
+            {
+                var standUp = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+                string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+                void Prop(string nm, Vector3 pos)
+                {
+                    var m = ObjMesh.Load(odir + nm + ".obj");
+                    if (m == null) { GD.Print($"[WATERTANK] {nm}.obj MISSING"); return; }
+                    var bb = m.GetAabb();
+                    GD.Print($"[WATERTANK] {nm} AABB size={bb.Size} -> stood-up height ~{bb.Size.Z:0.0}m footprint ~{bb.Size.X:0.0}x{bb.Size.Y:0.0}m");
+                    var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    string tp = odir + nm + "_tex.png";
+                    if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f); }
+                    else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f);
+                    AddChild(new MeshInstance3D { Mesh = m, Basis = standUp, Position = pos, MaterialOverride = mat });
+                }
+                Prop("Tower_Water_0", new Vector3(-4f, 0f, 0f));   // the big WATER TOWER (~15 m) -- the "big water tank" prop
+                Prop("Tank_Fuel_0",   new Vector3(8f, 0f, 1f));    // a horizontal FUEL tank, for contrast (not water)
+                AddChild(new MeshInstance3D { Mesh = new CapsuleMesh { Radius = 0.3f, Height = 1.8f }, Position = new Vector3(-1f, 0.9f, 4.5f),
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.90f, 0.28f, 0.28f) } });   // 1.8 m human scale reference (at the tower base)
+                look = new Vector3(0f, 5f, 0f);
+                cam.Position = new Vector3(1f, 8f, 30f);
+                cam.Fov = 52f; cam.LookAt(look, Vector3.Up);
             }
             // UG_SWITCHCKT=1: a working circuit -- generator -> switch -> spotlight, + sources on the switch's turn-on
             // (green) / turn-off (red) trigger inputs. Default: TurnOn source fed -> switch ON -> spotlight LIT.
