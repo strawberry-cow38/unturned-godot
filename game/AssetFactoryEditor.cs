@@ -38,6 +38,8 @@ namespace UnturnedGodot
         LineEdit _powerWatts, _powerLabel;
         LineEdit _gunDamage, _gunRpm, _gunAmmo, _gunRange, _gunVehDmg, _gunSpread, _gunPellets, _gunRecoil, _gunVel;   // gun-type stats authored per bundle (ApplyFactoryGunStats reads these)
         OptionButton _gunPreset;   // pick any real weapon -> load its full stats as a starting point
+        LineEdit _depHealth, _depFuel, _depEnergy, _depCharge;   // deployable DEVICE stats (BuildDeployableDef reads deploy_*)
+        CheckBox _depBattery, _depSwitch, _depTurbine, _depShatter;   // deployable device behaviour toggles
         CheckBox _poweredLight;   // powered-flag behaviour
         Label _status;
         string[] _meshNames = System.Array.Empty<string>();
@@ -353,6 +355,23 @@ namespace UnturnedGodot
             col.AddChild(gRow2);
             SyncGunUI();
 
+            // deployable DEVICE panel (master 2026-07-23): author a factory deployable as a real power device.
+            // ports come from PowerOut/In/Thru named points (add via +Point); these are the behaviour knobs.
+            var dRow = new HBoxContainer();
+            dRow.AddChild(new Label { Text = "device" });
+            _depHealth = NumFieldD("health"); dRow.AddChild(_depHealth);
+            _depFuel = NumFieldD("fuel"); dRow.AddChild(_depFuel);
+            _depEnergy = NumFieldD("energy"); dRow.AddChild(_depEnergy);
+            _depCharge = NumFieldD("chg W"); dRow.AddChild(_depCharge);
+            col.AddChild(dRow);
+            var dRow2 = new HBoxContainer();
+            _depBattery = DevCheck("battery"); dRow2.AddChild(_depBattery);
+            _depSwitch = DevCheck("switch"); dRow2.AddChild(_depSwitch);
+            _depTurbine = DevCheck("turbine"); dRow2.AddChild(_depTurbine);
+            _depShatter = DevCheck("shatter"); dRow2.AddChild(_depShatter);
+            col.AddChild(dRow2);
+            SyncDeviceUI();
+
             var addRow = new HBoxContainer();
             var addPart = new Button { Text = "＋Part" }; addPart.Pressed += () => TogglePicker(true); addRow.AddChild(addPart);
             var addCol = new Button { Text = "＋Box" }; addCol.Pressed += AddCollider; addRow.AddChild(addCol);
@@ -424,6 +443,7 @@ namespace UnturnedGodot
             SyncSurfUI();
             SyncPowerUI();
             SyncGunUI();
+            SyncDeviceUI();
             RebuildAll();
             Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
             Status($"opened {System.IO.Path.GetFileNameWithoutExtension(path)} ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
@@ -503,6 +523,33 @@ namespace UnturnedGodot
         }
 
         string ParamNumStr(string key) { float v = _bundle.ParamFloat(key, 0f); return v > 0f ? v.ToString("0.###") : ""; }
+
+        // --- deployable DEVICE panel (author a factory power device: generator/battery/switch/turbine) ---
+        LineEdit NumFieldD(string ph) { var e = new LineEdit { PlaceholderText = ph, CustomMinimumSize = new Vector2(58, 0) }; e.TextChanged += _ => WriteDeviceStats(); return e; }
+        CheckBox DevCheck(string label) { var c = new CheckBox { Text = label }; c.Toggled += _ => WriteDeviceStats(); return c; }
+
+        void WriteDeviceStats()
+        {
+            SetNumParam("deploy_health", _depHealth?.Text);
+            SetNumParam("deploy_fuel", _depFuel?.Text);
+            SetNumParam("deploy_energy_max", _depEnergy?.Text);
+            SetNumParam("deploy_charge_watts", _depCharge?.Text);
+            _bundle.SetParam("deploy_battery", _depBattery?.ButtonPressed ?? false);
+            _bundle.SetParam("deploy_switch", _depSwitch?.ButtonPressed ?? false);
+            _bundle.SetParam("deploy_wind_turbine", _depTurbine?.ButtonPressed ?? false);
+            _bundle.SetParam("deploy_shatter", _depShatter?.ButtonPressed ?? false);
+        }
+
+        void SyncDeviceUI()
+        {
+            if (_depHealth == null) return;
+            _depHealth.Text = ParamNumStr("deploy_health"); _depFuel.Text = ParamNumStr("deploy_fuel");
+            _depEnergy.Text = ParamNumStr("deploy_energy_max"); _depCharge.Text = ParamNumStr("deploy_charge_watts");
+            _depBattery.SetPressedNoSignal(_bundle.ParamBool("deploy_battery"));   // NoSignal: don't re-fire WriteDeviceStats during a sync
+            _depSwitch.SetPressedNoSignal(_bundle.ParamBool("deploy_switch"));
+            _depTurbine.SetPressedNoSignal(_bundle.ParamBool("deploy_wind_turbine"));
+            _depShatter.SetPressedNoSignal(_bundle.ParamBool("deploy_shatter"));
+        }
 
         static string[] HooksFor(string type) => type switch
         {
