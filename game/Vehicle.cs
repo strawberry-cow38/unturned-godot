@@ -965,7 +965,7 @@ namespace UnturnedGodot
         {
             Body = "runabout_body.txt", Water = WaterMode.Boat,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.3f,   // unused (no wheels) but non-null for safety
-            DefaultPaints = new[] { "#e8e8ea" },   // white-ish fibreglass hull (flat paint -- no palette)
+            Palette = "runabout_palette.png", DefaultPaints = new[] { "#e8e8ea" },   // paintable hull (Texture_Paintable) + its fixed detail texels via PaintMat
             Engine = 600f, SteerMax = 0f, SteerMin = 0f, SpeedMax = 16f, SpeedMin = 8f, Brake = 0f,   // boat: propulsion is BoatThrust, not wheel EngineForce
             BoxSize = new Vector3(2.8f, 1.6f, 9.0f), BoxCenter = new Vector3(0f, 0.1f, -0.3f),   // hull box (mesh x±1.5, y-0.85..2.1, z-4.94..4.37)
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,
@@ -980,7 +980,7 @@ namespace UnturnedGodot
         {
             Body = "apc_body.txt", Water = WaterMode.Amphibious,
             Wheel = "jeep_wheel.txt", WheelTex = "jeep_wheel_albedo.png", WheelRadius = 0.55f,   // jeep wheel mesh reused (APC wheel not ripped yet)
-            DefaultPaints = new[] { "#5a6650" },   // military olive
+            Palette = "apc_palette.png", DefaultPaints = new[] { "#5a6650" },   // Texture_MilitaryPaintable: olive paintable hull + fixed grille/headlight/taillight texels via PaintMat
             Engine = 700f, SteerMax = 24f, SteerMin = 12f, SpeedMax = 12f, SpeedMin = 6f, Brake = 35f,
             BoxSize = new Vector3(3.6f, 1.8f, 7.7f), BoxCenter = new Vector3(0f, 0.6f, 0f),   // hull (mesh x±1.83 y-0.27..2.31 z-4..3.72)
             ForwardGears = new[] { 18f, 10f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
