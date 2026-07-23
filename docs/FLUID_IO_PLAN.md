@@ -1,0 +1,63 @@
+# Fluid IO System — Plan
+
+strawberry (2026-07-22): "identical to power but uses hoses" — source container → hoses → consumers/storage,
+`fluidID:name:amount` per container with fill bars. Branch `fluid-io` off main.
+
+## Design (strawberry's answers, locked)
+
+1. **Flow = rate-based, power-like.** Fluid flows to a consumer when its demand ≤ available supply (mirrors power's
+   "consumer powered if it receives ≥ its usage"). Flow is a RATE (units/sec); the finite AMOUNT drains/fills over time.
+2. **Strict type-lock, no mixing.** A hose to a mismatched fluid REJECTS at connect time with a "cannot mix fluids"
+   tooltip. Empty containers adopt the first fluid that flows in. So every connected fluid network is single-type by
+   construction → the solver stays type-agnostic (type enforced at hose creation).
+3. **Storage vs consumer.** Storage ACCUMULATES if supplied (later: rain barrels collect rain). Consumers DELETE fluid;
+   some are TRANSFORMERS with an OUTPUT fluid (refinery oil→gas, sluice water→dirty water).
+4. **Splitters + combiners** — mirror power (fan-out / merge).
+- **Electric pumps** (later): consume POWER (bridge to the power net) → give head lift + boost hose flow rate.
+
+## Architecture — mirror power, parallel system
+
+Power reference: `game/ConnectionPort.cs` + `Wire.cs` + `PowerNet.cs` (Godot adapter) + `core/UnturnedSim/PowerSolver.cs`
+(engine-free algorithm) + `DeployableDef.cs` (typed ports). Fluid mirrors each:
+- **`core/UnturnedSim/FluidSolver.cs`** — engine-free, a near-copy of PowerSolver in fluid terms: FluidDevice / FluidPort
+  (Source/Consumer/Passthrough) / FluidHose; Solve() propagates flow RATE, splitter = 0-rate relay + N passthroughs,
+  combiner = 2 inputs summed w/ proportional share, source-cap starvation, TraceLoad. (Kept separate from PowerSolver so
+  head-lift / pump / transform-consumer logic can diverge later.)
+- **`game/FluidNet.cs`** — Godot adapter (mirror PowerNet): walks the fluid deployable/hose node groups → FluidSolver
+  records → Solve → writes flow back to ports, then per-tick moves the ACTUAL amount (source.Drain(flow·dt),
+  dest.Fill(flow·dt)), respecting FluidTank capacity + remaining as rate caps.
+- **`game/Hose.cs`** — mirror Wire; the hose tool rejects mismatched fluid types (tooltip).
+- Fluid **ports** — reuse ConnectionPort with a fluid flag, or a parallel FluidPort (decide in F2).
+- **Container deployables** (DeployableDef or a parallel def): Fluid Source, Storage, Consumer (+ transformer variant),
+  Splitter, Combiner. Each carries a `FluidTank` (fluidID + name + amount + capacity).
+- **Fill bars** — per-container bar (amount/capacity), colored per fluid, matching the power usage-bar style.
+
+## Data model
+- Extend the fluid registry: a `FluidDef` (id → name + color + ...) for Water / Fuel / Oil / Gas / DirtyWater / ...
+  (the existing `FluidType {None, Fuel}` enum comment already says "extensible later"). `FluidTank` (game/FluidTank.cs,
+  Amount/Capacity/Fill/Drain — reuse) gains the fluid id. `StationFuel` shared tanks stay for gas pumps.
+
+## Phasing
+- **F1 DONE (847b6f95):** FluidDef registry + FluidTank id; `FluidSolver` (mirror PowerSolver) + 7 L0 tests. No Godot deps.
+- **F2 DONE (bf3bd685):** `FluidNet` adapter + `Hose` + `FluidContainer` (Source/Storage/Consumer) + `--fluidtest` headless flow (source→hose→storage fills, conserved).
+- **F3 DONE (b7bd4938):** container tank mesh + InfoBillboard fill bar (name / bar colored by fluid / amount prompt); `UG_FLUIDRENDER=1` movie path. Render-verified bars fill/drain.
+- **F3.5a DONE (f945e262):** `HosePort` physical port cube (StaticBody3D, own layer 1<<11) on each container; group `fluid_ports`.
+- **F3.5b DONE (cf16b42f):** `Hose` polyline visual (mirror Wire.SetPoints, thicker); render draws the hose port-to-port.
+- **F3.5c NEXT — the interactive HOSE TOOL + placement (the big one, needs an in-game session to verify):**
+  1. Generalize `ToolDef.IsRope` (bool) → a `Kind {Wire, Rope, Hose}` enum; add a `ToolDef.Hose` entry (item id + held mesh — reuse wire_hold.obj tinted). Add `Viewmodel.IsHoseTool`/`IsHoseViewmodel`, `PlayerController.HoldingHoseTool`.
+  2. `UpdateHoseLook` / `HoseLmb` / `HoseRmb` mirroring the wire tool but LEANER first pass: look at a HosePort (highlight + HUD via InfoLine), LMB a source→start, LMB a consumer→complete a straight hose (node routing/clear-hold = fast-follow), RMB cancel. Ray on `HosePort.PortLayer`.
+  3. **Type-lock reject** = `CanCompleteHose(src, dst)`: opposite kinds, different container, dst unhosed, AND fluid types compatible (either tank None/empty → adopts, else equal). Mismatch → red HoseBad highlight + "cannot mix fluids" HUD. Extract the pure type-lock predicate so it's L0-testable without a session.
+  4. On complete: `new Hose{Source,Consumer}`, AddChild, and if a tank was empty it adopts the other's type.
+  - **In-game PLACEMENT:** mirror `DeployablePlacer` to place Source/Storage containers (later a real fluid item + DeployableDef entry; for now a debug spawn is fine to exercise the tool).
+- **F4 DONE (0b5d3ea9):** splitters + combiners as tankless FITTINGS (FluidContainer Splitter/Combiner roles, multi-port; FluidNet relays them; HosePort cyan passthrough; hose tool IsSourceSide handles Passthrough). **Conservation fix**: FluidNet was filling storage by the OFFERED Flow (a splitter re-exports full supply to every branch) instead of the ACCEPTED demand (SolveRate) → a splitter fabricated fluid. Now fills by SolveRate. Verified L0 (93) + headless fan-out/combine (conserved) + UG_FLUIDSPLIT render + `fluid split`/`fluid combine` console rigs.
+- **F5a DONE (electric PUMP — the power↔fluid bridge):** `game/FluidPump.cs` (`FluidPump : FluidContainer, IPowerDevice`) — a `FluidRole.Pump` fitting (relay in + passthrough out) that ALSO draws power (a Consumer ConnectionPort in group "deployables", mirror of GasPump; `PumpWatts`). When POWERED it gives HEAD LIFT: FluidNet's gravity gate lets a hose ADJACENT to a powered pump (either end) rise up to `HeadLift` m. `FluidContainer` got an `OnReadyExtra` hook so the pump adds its power port. `fluid pump` console rig (source low + pump + high tank + wired generator). Verified: pump lifts uphill when powered / blocks when not / REAL generator-wire powers it (headless cases E/F/G, `Deployable.InstantRampForTests` to skip spin-up) + render (`UG_FLUIDPUMP`).
+- **F5b DONE (TRANSFORMERS — 8df98d3c):** `FluidRole.Transformer` (refinery oil→gas, sluice water→dirty) — a tankless device with a Consumer INPUT (deletes InputType) + a Source OUTPUT (produces OutputType at rate*ratio). `MakeTransformer(in,out,rate,ratio)`. Two fluids on one device → `HosePort.TypeOverride`/`EffectiveType` (input port=InputType, output=OutputType); hose-tool type-lock + adopt use EffectiveType. FluidNet: output supplies only while input flowed last tick (`TransformActive`, 1-tick lag); tankless → input deleted, output created (not conserved by design). `fluid refine`/`fluid sluice` console rigs + UG_FLUIDREFINE render. Verified headless (case H: oil→gas, 500 in / 495 out, ports typed).
+- **F5c (next / deferred):** flow-rate BOOST — DEFERRED, ambiguous: my hoses have NO rate cap to boost (flow = min(source supply, consumer demand); a pump can't create fluid). Need strawberry's intent (does a pump raise a hose's max-carry? add throughput? boost the source cap?). ASK before building. Rain barrels — need a WEATHER/rain system first (grep found none yet); skip until weather lands. Consider making fluid containers/hose REAL placeable items next (catboy's asset-factory deployable-item rail; coordinate at merge).
+
+## Testing — GO EASY, test each PHASE when done (strawberry 2026-07-22)
+Not every chunk/commit. Build as I go; verify at phase boundaries only, and keep it light:
+- **F1:** a FEW L0 `dotnet test` cases for FluidSolver (source→consumer flows / doesn't when under-supplied; a chain;
+  a splitter fan-out; a combiner merge) — enough to trust the core, not an exhaustive suite.
+- **F2+:** `dotnet build` + one headless check per phase (place source+storage+hose, tick, confirm storage fills / bars
+  move / tooltip shows) — one render per phase, not per chunk.
+- Commit source-only on `fluid-io` (no fix-branches). Reconcile with catboy at merge if any shared-file overlap.
