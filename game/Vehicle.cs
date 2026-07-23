@@ -1078,6 +1078,30 @@ namespace UnturnedGodot
                     v.AddChild(new MeshInstance3D { Name = "SteerModel", Mesh = ContentProvider.ParseObj($"res://content/{bodyBase}_steer.txt"), MaterialOverride = SolidMat(new Color(0.28f, 0.23f, 0.14f)) });
             }
 
+            // LIGHTBAR attach point (master 2026-07-23 "add a lightbar attach point with model and texture"): a "Lightbar"
+            // hook mounts the police emergency lightbar (real police_siren0/1 red+blue lens meshes) on ANY composed vehicle,
+            // wired into the existing siren system -> ctrl toggles the flashing red/blue + coloured lights + wail, like a cop car.
+            var lightbarHook = b.Points.Find(pt => pt.Name == "Lightbar");
+            if (lightbarHook != null && v._sirenMat0 == null)
+            {
+                var m0 = ContentProvider.ParseObj("res://content/police_siren0.txt");
+                var m1 = ContentProvider.ParseObj("res://content/police_siren1.txt");
+                if (m0 != null && m1 != null)
+                {
+                    var pos = t0inv * AssetBundle.V3(lightbarHook.Pos) - m0.GetAabb().Merge(m1.GetAabb()).GetCenter();   // land the lightbar's centre on the hook, keep L/R
+                    var mat0 = new StandardMaterial3D { AlbedoColor = new Color(0.5f, 0.08f, 0.08f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // red lens
+                    var mat1 = new StandardMaterial3D { AlbedoColor = new Color(0.08f, 0.12f, 0.5f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // blue lens
+                    var mi0 = new MeshInstance3D { Name = "Lightbar0", Mesh = m0, MaterialOverride = mat0, Position = pos };
+                    var mi1 = new MeshInstance3D { Name = "Lightbar1", Mesh = m1, MaterialOverride = mat1, Position = pos };
+                    mi0.SetMeta("no_outline", true); mi1.SetMeta("no_outline", true);
+                    v.AddChild(mi0); v.AddChild(mi1);
+                    v._sirenMat0 = mat0; v._sirenLight0 = AddSirenLight(mi0, new Color(1f, 0.05f, 0.05f));
+                    v._sirenMat1 = mat1; v._sirenLight1 = AddSirenLight(mi1, new Color(0.2f, 0.3f, 1f));
+                    v._sirenAudio = new AudioStreamPlayer3D { Stream = LoadWav("res://content/siren.wav"), UnitSize = 14f, MaxDistance = 120f, VolumeDb = 2f };
+                    v.AddChild(v._sirenAudio);
+                }
+            }
+
             for (int i = 1; i < b.Parts.Count; i++)   // welded detail parts (the roof pump/siren/etc) as TEXTURED children
             {
                 var mi = AssetBundleLoader.BuildPart(b.Parts[i]);
@@ -1875,7 +1899,7 @@ namespace UnturnedGodot
         void TriggerAlarm() { if (_alarmed && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master)
 
         public void ToggleHeadlights() { if (_alarmTimer > 0f) return; SetHeadlights(!_headlightsOn); }   // source tellHeadlights; blocked while the alarm owns the lights (master)
-        public void PreviewLightsOn() { SetHeadlights(true); SetTaillights(true); }   // showcase/preview: force both lamp sets lit so the lens models glow in a static shot
+        public void PreviewLightsOn() { SetHeadlights(true); SetTaillights(true); if (HasSiren) _sirenOn = true; }   // showcase/preview: force lamps + lightbar lit so the lens models glow in a static shot
         void SetHeadlights(bool on)
         {
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights

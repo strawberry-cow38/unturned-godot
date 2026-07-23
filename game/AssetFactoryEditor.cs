@@ -161,7 +161,22 @@ namespace UnturnedGodot
                     _composeRoot.AddChild(lens); _vehPreview.Add(lens);
                 }
             }
-            GD.Print($"[vehpreview] rendered {_vehPreview.Count} detail nodes (wheels + steer + seat + head/tail light lenses at their hooks)");
+            // lightbar attach point: mount the police emergency lightbar (red+blue lenses) at the "Lightbar" hook (master)
+            var lightbarPt = _bundle.Points.Find(pt => pt.Name == "Lightbar");
+            if (lightbarPt != null)
+            {
+                var m0 = ContentProvider.ParseObj("res://content/police_siren0.txt");
+                var m1 = ContentProvider.ParseObj("res://content/police_siren1.txt");
+                if (m0 != null && m1 != null)
+                {
+                    var pos = AssetBundle.V3(lightbarPt.Pos) - m0.GetAabb().Merge(m1.GetAabb()).GetCenter();
+                    var l0 = new MeshInstance3D { Mesh = m0, Position = pos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.1f, 0.1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                    var l1 = new MeshInstance3D { Mesh = m1, Position = pos, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.3f, 1f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                    _composeRoot.AddChild(l0); _vehPreview.Add(l0);
+                    _composeRoot.AddChild(l1); _vehPreview.Add(l1);
+                }
+            }
+            GD.Print($"[vehpreview] rendered {_vehPreview.Count} detail nodes (wheels + steer + seat + head/tail lenses + lightbar at their hooks)");
         }
 
         void AddDetailMesh(string mesh, string albedo, Vector3 pos, Vector3 scale)
@@ -764,7 +779,7 @@ namespace UnturnedGodot
 
         static string[] HooksFor(string type) => type switch
         {
-            "vehicle" => new[] { "Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR", "Seat_0", "Seat_1", "Steer", "Exit_0", "Exhaust", "Headlight_0", "Headlight_1", "Taillight_0", "Taillight_1", "Light_0" },
+            "vehicle" => new[] { "Wheel_FL", "Wheel_FR", "Wheel_RL", "Wheel_RR", "Seat_0", "Seat_1", "Steer", "Exit_0", "Exhaust", "Headlight_0", "Headlight_1", "Taillight_0", "Taillight_1", "Lightbar", "Light_0" },
             "gun" => new[] { "Muzzle", "Sight", "Magazine", "Eject", "View", "Barrel", "Grip", "Tactical", "Aim" },
             "deployable" => new[] { "Storage", "Anchor", "Light_0", "Point_0" },
             _ => new[] { "Point_0", "Point_1", "Anchor" },
