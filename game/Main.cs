@@ -1455,7 +1455,17 @@ namespace UnturnedGodot
                     _previewPitch = -40f; _previewSettleFrames = 16;   // start looking DOWN so the ghost lands on the ground (valid = blue); released after settle for free-look
                     break;
                 case "vehicle":
-                    { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f); }   // walk over + E to enter/drive
+                    { var v = Vehicle.BuildFromBundle(b); root.AddChild(v); v.GlobalPosition = new Vector3(3.5f, 1.2f, 0f);   // walk over + E to enter/drive
+                      if (System.Environment.GetEnvironmentVariable("UG_VEHSHOT") == "1")   // clean product shot: an orbit cam framing the car + lamps lit, to verify steer/seat/headlights at a glance
+                      {
+                          v.ToggleHeadlights();   // lamps on so the headlight beams show (off by default until 'L' in-game)
+                          var vcam = new Camera3D { Current = true, Fov = 46f, Far = 2000f };
+                          root.AddChild(vcam);
+                          vcam.Position = new Vector3(-0.6f, 3.4f, -5.8f);   // front-left-above the car (it faces -Z) -> headlights + the open cab (steer+seat) both in frame
+                          vcam.LookAt(new Vector3(3.4f, 1.1f, 0f), Vector3.Up);
+                          _previewPlayer = null;   // don't let the FP settle logic re-aim over our showcase cam
+                      }
+                    }
                     break;
                 default:   // prop
                     { var p = AssetBundleLoader.Build(b); if (p != null) { root.AddChild(p); p.GlobalPosition = new Vector3(0f, 0f, -2f); } }
