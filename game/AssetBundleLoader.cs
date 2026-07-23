@@ -182,7 +182,8 @@ namespace UnturnedGodot
         }
 
         // A power point's name -> its port kind (multi-port authoring): PowerOut*/PowerIn*(or PowerConsumer)/PowerThru*(or PowerPass).
-        static DeployableDef.PortKind? PortKindFromName(string n)
+        // Public so factory DEPLOYABLEs (AssetCatalog.BuildDeployableDef) build DeployableDef.Ports from the same named points.
+        public static DeployableDef.PortKind? PortKindFromName(string n)
         {
             n = (n ?? "").ToLowerInvariant();
             if (n.StartsWith("powerout")) return DeployableDef.PortKind.Output;

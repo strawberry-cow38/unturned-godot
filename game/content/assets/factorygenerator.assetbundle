@@ -1,0 +1,17 @@
+{
+  "name": "factorygenerator",
+  "type": "deployable",
+  "parts": [
+    { "mesh": "objects/Gas_Pump_0.obj", "pos": [0, 0, 0], "rot": [-90, 0, 0], "scale": [1, 1, 1] }
+  ],
+  "colliders": [
+    { "shape": "box", "pos": [0, 0.6, 0], "rot": [0, 0, 0], "size": [1, 1.2, 1] }
+  ],
+  "points": [
+    { "name": "PowerOut", "pos": [0.5, 0.6, 0], "rot": [0, 0, 0] }
+  ],
+  "params": {
+    "deploy_fuel": 500,
+    "power_watts": 3000
+  }
+}

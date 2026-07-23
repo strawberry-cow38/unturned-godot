@@ -124,11 +124,37 @@ namespace UnturnedGodot
         // footprint only -- the placed collider hugs the real composed-mesh AABB. HoldMesh null = ghost-only carry for now.
         static DeployableDef BuildDeployableDef(ushort id, string name, AssetBundle b)
         {
-            return new DeployableDef
+            // Power ports from the bundle's named points (PowerOut*/PowerIn*/PowerThru*) -> DeployableDef.Ports, so a factory
+            // deployable is WIREABLE (Deployable builds a ConnectionPort per port). Output/Consumer draw the device's watts.
+            float watts = b.ParamFloat("power_watts", 1000f);
+            var ports = new List<DeployableDef.Port>();
+            foreach (var pt in b.Points)
+            {
+                var k = AssetBundleLoader.PortKindFromName(pt.Name);
+                if (k == null) continue;
+                ports.Add(new DeployableDef.Port { Kind = k.Value, Pos = AssetBundle.V3(pt.Pos), Watts = k == DeployableDef.PortKind.Passthrough ? 0f : watts });
+            }
+            // Behaviour flags (master 2026-07-23 "make factory deployables real devices") -- the runtime already implements
+            // each (Deployable.cs gates on these); the factory just needs to author them via params:
+            //   deploy_fuel>0 = a fuelled GENERATOR (ramps up, engine sound); deploy_battery = a BATTERY (charges IN, discharges
+            //   OUT, needs deploy_energy_max + deploy_charge_watts); deploy_switch = an F-toggle POWER SWITCH; deploy_wind_turbine
+            //   = a WIND TURBINE (output scales with wind); deploy_shatter = shatters into debris on death (no husk).
+            var def = new DeployableDef
             {
                 Id = id, Name = PrettyName(name), FactoryBundle = name,
-                Size = new Vector3(1f, 2f, 1f), Health = 200f, Offset = 0.75f, Radius = 0.5f, Range = 6f, Upright = true,   // Offset lifts the placer's clearance sphere off the ground (else it overlaps the ground -> always invalid/red)
+                Size = new Vector3(1f, 2f, 1f), Offset = 0.75f, Radius = 0.5f, Range = 6f, Upright = true,   // Offset lifts the placer's clearance sphere off the ground (else it overlaps the ground -> always invalid/red)
+                Health = b.ParamFloat("deploy_health", 200f),
+                Fuel = b.ParamFloat("deploy_fuel", 0f),
+                IsBattery = b.ParamBool("deploy_battery", false),
+                EnergyMax = b.ParamFloat("deploy_energy_max", 0f),
+                ChargeWatts = b.ParamFloat("deploy_charge_watts", 0f),
+                IsSwitch = b.ParamBool("deploy_switch", false),
+                IsWindTurbine = b.ParamBool("deploy_wind_turbine", false),
+                ShatterOnDeath = b.ParamBool("deploy_shatter", false),
+                Ports = ports.ToArray(),
             };
+            GD.Print($"[deploydef] {name}: health={def.Health} fuel={def.Fuel} battery={def.IsBattery} switch={def.IsSwitch} turbine={def.IsWindTurbine} shatter={def.ShatterOnDeath} ports={def.Ports.Length}");
+            return def;
         }
 
         // Reverse map for the inventory icon loader: a factory item id -> its bundle name (icons are name-keyed
