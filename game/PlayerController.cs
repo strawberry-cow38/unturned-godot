@@ -135,6 +135,9 @@ namespace UnturnedGodot
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
         const float DeployPickupTime = 1.0f;    // hold F this long over a deployable to pick it back up (wires disconnect)
         const float PickupBarDeadzone = 0.2f;   // hide the progress bar for the first 20% of the hold, so a quick tap-to-toggle doesn't flash it
+        FluidContainer _focusFluid;   // the placed fluid device being LOOKED AT (hold-F pickup target)
+        FluidContainer _fHeldFluid;   // the fluid device F is being HELD on (hold-F = pick it up; hoses/power wire disconnect)
+        float _fluidPickupTimer;      // seconds F has been held on _fHeldFluid
         IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
@@ -151,7 +154,7 @@ namespace UnturnedGodot
 
         void UpdateLookFocus()
         {
-            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null;
+            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -172,6 +175,7 @@ namespace UnturnedGodot
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
+                    else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
                     else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
@@ -239,6 +243,7 @@ namespace UnturnedGodot
                 _focusDeployable = hitDeploy;
                 _focusDeployable?.SetLookFocused(true);
             }
+            if (hitFluid != _focusFluid) _focusFluid = hitFluid;   // no outline shader on fluid bodies -> just track it for hold-F pickup
             if (hitGasPump != _focusGasPump)   // looked-at gas pump: outline + fuel tooltip
             {
                 if (IsInstanceValid(_focusGasPump)) _focusGasPump.SetLookFocused(false);
@@ -1095,6 +1100,65 @@ namespace UnturnedGodot
                 else { _invUI?.Refresh(); if (handsFree) EquipItemAsset(item.GetAsset(), item); }   // hands free -> hold it (a deployable re-enters placement mode)
             }
             GD.Print($"[deploy] picked up #{id} ({name})");
+        }
+
+        // Hold F over a placed fluid device to pick it back up into the bag (mirror of UpdateDeployPickup): its hoses (and a
+        // pump's power wire) disconnect. No tap-toggle -- a fluid device has no power state to flip.
+        void UpdateFluidPickup(float delta)
+        {
+            if (_fHeldFluid == null) { FluidPickupHudSet(null); return; }
+            bool fHeld = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsPhysicalKeyPressed(Key.F);
+            if (!fHeld || !IsInstanceValid(_fHeldFluid) || _fHeldFluid != _focusFluid || _dead || _driving != null)
+            {   // released, looked away, or can't pick up -> cancel the hold
+                _fHeldFluid = null; _fluidPickupTimer = 0f; FluidPickupHudSet(null);
+                return;
+            }
+            _fluidPickupTimer += delta;
+            float frac = Mathf.Clamp(_fluidPickupTimer / DeployPickupTime, 0f, 1f);
+            if (frac >= PickupBarDeadzone) FluidPickupHudSet($"picking up {_fHeldFluid.RoleLabel()}... {Mathf.Clamp((int)(frac * 100f), 0, 99)}%");   // deadzone: no readout for a quick tap
+            if (_fluidPickupTimer >= DeployPickupTime)
+            {
+                var c = _fHeldFluid; _fHeldFluid = null; _fluidPickupTimer = 0f; FluidPickupHudSet(null);
+                PickupFluid(c);
+            }
+        }
+
+        // Return a live placed fluid device to the bag: free its hoses/power wire + despawn, grant the item back (dropped at
+        // its feet if the bag is full). SP-local for now (fluid MP replication is a fast-follow, like placement).
+        void PickupFluid(FluidContainer c)
+        {
+            if (c == null || !IsInstanceValid(c)) return;
+            ushort id = c.Def?.Id ?? 0;
+            string name = c.Def?.Name;
+            Vector3 pos = c.GlobalPosition;
+            var item = id != 0 ? SDG.Unturned.Assets.makeLoot(id) : null;
+            c.Pickup();   // frees its hoses + (a pump) its power wire, then despawns
+            if (item != null)
+            {
+                bool handsFree = Unarmed;
+                if (!(Inventory?.tryAddItem(item) ?? false)) DropWorldItem(item, pos + Vector3.Up * 1f);   // bag full -> drop where it stood
+                else { _invUI?.Refresh(); if (handsFree) EquipItemAsset(item.GetAsset(), item); }   // hands free -> hold it (re-enters placement mode)
+            }
+            GD.Print($"[fluid] picked up #{id} ({name})");
+        }
+
+        // A center-screen pickup readout (fluid devices have no per-device progress billboard like a generator's).
+        CanvasLayer _fluidPickupLayer; Label _fluidPickupLabel;
+        void FluidPickupHudSet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) { if (_fluidPickupLabel != null) _fluidPickupLabel.Visible = false; return; }
+            if (_fluidPickupLabel == null)
+            {
+                _fluidPickupLayer = new CanvasLayer { Layer = 40 }; AddChild(_fluidPickupLayer);
+                _fluidPickupLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+                _fluidPickupLabel.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+                _fluidPickupLabel.AnchorLeft = 0.5f; _fluidPickupLabel.AnchorRight = 0.5f; _fluidPickupLabel.OffsetTop = 150f; _fluidPickupLabel.OffsetLeft = -300f; _fluidPickupLabel.OffsetRight = 300f;
+                _fluidPickupLabel.AddThemeFontSizeOverride("font_size", 26);
+                _fluidPickupLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 0.9f));
+                _fluidPickupLabel.AddThemeConstantOverride("outline_size", 6);
+                _fluidPickupLayer.AddChild(_fluidPickupLabel);
+            }
+            _fluidPickupLabel.Text = text; _fluidPickupLabel.Visible = true;
         }
 
         // Wreck salvage (master): a focused wreck shows a state prompt -- red "Too hot" while burning, red "Requires blowtorch"
@@ -3038,6 +3102,7 @@ namespace UnturnedGodot
                     // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
                     _fHeldDeploy = _focusDeployable; _deployPickupTimer = 0f;
                 }
+                else if (_focusFluid != null && IsInstanceValid(_focusFluid)) { _fHeldFluid = _focusFluid; _fluidPickupTimer = 0f; }   // hold F on a placed fluid device -> pick it up (UpdateFluidPickup)
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (_focusShelf != null && IsInstanceValid(_focusShelf) && OpenCrate(_focusShelf)) { }   // looking at a shelf/container -> open it (look-based, not proximity)
@@ -3728,6 +3793,7 @@ namespace UnturnedGodot
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
+            UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)

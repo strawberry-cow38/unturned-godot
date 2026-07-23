@@ -26,6 +26,7 @@ namespace UnturnedGodot
             };
             c.Infinite = def.FluidInfinite;   // a submersible inlet: never depletes
             c.NoHead = def.FluidNoHead;       // ...and has no head -> its output needs a pump
+            c.Def = def;                      // remember the item def so hold-F pickup returns the right item
             c.Position = pos;
             c.RotationDegrees = new Vector3(0f, yawDeg, 0f);
             parent.AddChild(c);

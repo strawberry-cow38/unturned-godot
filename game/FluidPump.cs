@@ -39,6 +39,16 @@ namespace UnturnedGodot
         // pump on a dead/empty line sits still. Flow shows on the passthrough output; Flowing on the consumer relay.
         public override bool DriveActive => IsPowered && Ports.Exists(p => p != null && (p.Flowing || Mathf.Abs(p.Flow) > 0.01f));
 
+        // picked up -> also free the power wire plugged into its input cube (the base frees its hoses), then re-solve the net
+        protected override void OnPickup()
+        {
+            if (_powerInput == null) return;
+            foreach (var n in GetTree().GetNodesInGroup("wires"))
+                if (n is Wire w && GodotObject.IsInstanceValid(w) && (w.Source == _powerInput || w.Consumer == _powerInput))
+                { w.RemoveFromGroup("wires"); w.QueueFree(); }
+            PowerNet.MarkDirty();
+        }
+
         // IPowerDevice — a pure consumer (mirror of GasPump)
         public bool PowerProducing => false;
         public bool PowerOnFire => false;

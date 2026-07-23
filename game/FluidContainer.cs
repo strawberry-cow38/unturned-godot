@@ -21,6 +21,7 @@ namespace UnturnedGodot
     {
         public FluidTank Tank;             // null for a fitting (splitter/combiner)
         public FluidRole Role;
+        public DeployableDef Def;          // the item def this was placed from -> hold-F pickup returns that item (set by FluidDeploy)
         public bool Blocked;               // a clogged/closed-valve container stops conducting (F5)
         public bool Infinite;              // a submersible INLET: an infinite source (never depletes)
         public bool NoHead;                // no head pressure: its output won't flow passively (gravity) — needs a PUMP to draw from it
@@ -153,6 +154,22 @@ namespace UnturnedGodot
                 _info.SetActive(true);
             }
         }
+
+        // Hold-F pickup (mirror of Deployable.Pickup): free every hose plugged into any of my ports, run the subclass hook
+        // (a pump frees its power wire too), then despawn. The caller grants the item back into the bag.
+        public void Pickup()
+        {
+            foreach (var n in GetTree().GetNodesInGroup("hoses"))
+                if (n is Hose h && GodotObject.IsInstanceValid(h))
+                {
+                    bool mine = false;
+                    foreach (var hp in PortNodes) if (h.Source == hp.Node || h.Consumer == hp.Node) { mine = true; break; }
+                    if (mine) { h.RemoveFromGroup("hoses"); h.QueueFree(); }
+                }
+            OnPickup();   // subclass hook (FluidPump frees its power wire + marks the power net dirty)
+            QueueFree();
+        }
+        protected virtual void OnPickup() { }
 
         // Flip a valve open/closed (Blocked). Closed = stops flow through it + stops a pump's lift propagating past it.
         public void ToggleValve()
