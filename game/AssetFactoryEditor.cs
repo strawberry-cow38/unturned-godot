@@ -74,6 +74,8 @@ namespace UnturnedGodot
             }
             _meshNames = ScanMeshes();
             RebuildAll();
+            AutoFitColliderIfNone();   // a loaded bundle with no collider gets one FIT to the prop -> the viz box hugs the mesh
+            RebuildAll();
             BuildUI();
             Select(Kind.Part, _bundle.Parts.Count > 0 ? 0 : -1);
             GD.Print($"[assetfactory] editor up: {_bundle.Name} [{_bundle.Type}] — {_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt, {_meshNames.Length} meshes");
@@ -152,8 +154,11 @@ namespace UnturnedGodot
         void AddCollider()
         {
             WriteBack();
-            _bundle.Colliders.Add(new AssetBundle.Collider { Shape = "box", Pos = new[] { 0f, 1f, 0f }, Rot = new[] { 0f, 0f, 0f }, Size = new[] { 1f, 1f, 1f } });
-            RebuildAll(); Select(Kind.Collider, _bundle.Colliders.Count - 1); Status("added box collider");
+            // hug the prop's actual mesh bounds, not a floating default [1,1,1]@[0,1,0] (master: the outline should match the prop)
+            var pos = new[] { 0f, 1f, 0f }; var size = new[] { 1f, 1f, 1f };
+            if (TryPartsAabb(out var bb)) { var c = bb.GetCenter(); var s = bb.Size; pos = new[] { c.X, c.Y, c.Z }; size = new[] { s.X, s.Y, s.Z }; }
+            _bundle.Colliders.Add(new AssetBundle.Collider { Shape = "box", Pos = pos, Rot = new[] { 0f, 0f, 0f }, Size = size });
+            RebuildAll(); Select(Kind.Collider, _bundle.Colliders.Count - 1); Status("added box collider (fit to prop)");
         }
 
         void AddVolume()
@@ -230,10 +235,10 @@ namespace UnturnedGodot
             Status($"saved {_bundle.Name}.assetbundle ({_bundle.Parts.Count}p/{_bundle.Colliders.Count}c/{_bundle.Volumes.Count}v/{_bundle.Points.Count}pt)");
         }
 
-        void AutoFitColliderIfNone()
+        // The parts' combined WORLD-space AABB (transformed mesh bounds) -- so a box collider can HUG the prop.
+        bool TryPartsAabb(out Aabb bb)
         {
-            if (_bundle.Colliders.Count > 0 || _partNodes.Count == 0) return;
-            Aabb bb = default; bool has = false;
+            bb = default; bool has = false;
             foreach (var n in _partNodes)
             {
                 if (!IsInstanceValid(n) || n.Mesh == null) continue;
@@ -245,7 +250,13 @@ namespace UnturnedGodot
                     if (!has) { bb = new Aabb(wp, Vector3.Zero); has = true; } else bb = bb.Expand(wp);
                 }
             }
-            if (!has) return;
+            return has;
+        }
+
+        void AutoFitColliderIfNone()
+        {
+            if (_bundle.Colliders.Count > 0 || _partNodes.Count == 0) return;
+            if (!TryPartsAabb(out var bb)) return;
             var c = bb.GetCenter(); var s = bb.Size;
             _bundle.Colliders.Add(new AssetBundle.Collider { Shape = "box", Pos = new[] { c.X, c.Y, c.Z }, Rot = new[] { 0f, 0f, 0f }, Size = new[] { s.X, s.Y, s.Z } });
         }
