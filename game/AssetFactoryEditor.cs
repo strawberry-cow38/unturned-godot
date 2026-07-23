@@ -327,14 +327,14 @@ namespace UnturnedGodot
 
             // preset dropdown (master 2026-07-23): pick any of the 31 real weapons -> load its FULL stats as the
             // starting point, then tweak the fields below. "— none —" leaves the bundle's own params.
-            var pRow = new HBoxContainer();
-            pRow.AddChild(new Label { Text = "preset" });
+            var presetRow = new HBoxContainer();
+            presetRow.AddChild(new Label { Text = "preset" });
             _gunPreset = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
             _gunPreset.AddItem("— none —");
             foreach (var n in GunPresets.Names()) _gunPreset.AddItem(n);
             _gunPreset.ItemSelected += i => { if (i > 0) { var nm = _gunPreset.GetItemText((int)i); GunPresets.WriteToBundle(_bundle, nm); SyncGunUI(); Status($"loaded weapon preset: {nm}"); } };
-            pRow.AddChild(_gunPreset);
-            col.AddChild(pRow);
+            presetRow.AddChild(_gunPreset);
+            col.AddChild(presetRow);
 
             var gRow = new HBoxContainer();   // gun stats (type=gun): each factory gun shoots its own numbers
             gRow.AddChild(new Label { Text = "gun stats" });
