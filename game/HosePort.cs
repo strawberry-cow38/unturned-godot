@@ -57,8 +57,13 @@ namespace UnturnedGodot
         {
             var pk = Kind == FluidPortKind.Consumer ? DeployableDef.PortKind.Consumer
                    : Kind == FluidPortKind.Passthrough ? DeployableDef.PortKind.Passthrough : DeployableDef.PortKind.Output;
+            // fluid ports live in Godot Y-up (not power's flat stand-up frame), so the outward normal is the HORIZONTAL
+            // direction from the device centre to the port (its X,Z). Passing it explicitly keeps the arrow perpendicular
+            // to the cube face instead of pointing at the sky (strawberry).
+            Vector3 horiz = new Vector3(Position.X, 0f, Position.Z);
+            Vector3 outDir = horiz.LengthSquared() > 1e-6f ? horiz.Normalized() : Vector3.Forward;
             _arrowMat = ConnectionPort.ArrowMaterial(ConnectionPort.ArrowBlue);
-            _arrow = ConnectionPort.MakeArrow(new DeployableDef.Port { Kind = pk, Pos = Position }, _arrowMat, Vector3.Zero);
+            _arrow = ConnectionPort.MakeArrow(new DeployableDef.Port { Kind = pk, Pos = Position }, _arrowMat, Vector3.Zero, outDir);
             _arrow.Visible = false;
             AddChild(_arrow);
         }

@@ -1643,7 +1643,7 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
-                    if (_deployable.Fluid != null)   // FLUID device: spawn a FluidContainer locally (rides the ghost/place flow; MP replication = fast-follow)
+                    if (_deployable.Fluid != null)   // FLUID device: spawn a FluidContainer LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
                     {
                         FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
                         PlayPlaceSound(_deployable.PlaceSound, _placePoint);
@@ -1651,8 +1651,19 @@ namespace UnturnedGodot
                         if (_deployItem != null && Inventory != null)
                         {
                             ushort id = _deployItem.id;
-                            Inventory.removeItemAmount(id, 1);
-                            if (Inventory.getItemCount(id) <= 0) { (_revertEquip ?? EquipUnarmed)(); return; }
+                            if (NetPlaceDeployable != null)
+                            {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
+                                // then ServerPlace no-ops the fluid id (filtered from the schema) so NO phantom replica spawns.
+                                // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
+                                // item (the "fluid dupes: gone on place, back on any inv move" bug -- strawberry). Predict the echo.
+                                NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
+                                if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
+                            }
+                            else
+                            {
+                                Inventory.removeItemAmount(id, 1);   // pure SP (no seam): consume locally
+                                if (Inventory.getItemCount(id) <= 0) { (_revertEquip ?? EquipUnarmed)(); return; }
+                            }
                         }
                         _viewmodel?.PlayDeployHold();
                         return;
@@ -3118,6 +3129,14 @@ namespace UnturnedGodot
                 }
                 if (IsInstanceValid(_fHeldDeploy)) _fHeldDeploy.PickupProgress = 0f;
                 _fHeldDeploy = null; _deployPickupTimer = 0f;
+            }
+            else if (@event is InputEventKey { Pressed: false, Keycode: Key.F } && _fHeldFluid != null)
+            {   // released F over a fluid device: a quick TAP on a VALVE opens/closes it (a long hold already picked it up in
+                // UpdateFluidPickup) -- mirrors the generator tap-toggle, so a valve is toggled the SAME way as a power switch
+                // (strawberry: "valve cannot be interacted with?" -- the hose-tool-port RMB still works too).
+                if (IsInstanceValid(_fHeldFluid) && _fluidPickupTimer < DeployPickupTime && _fHeldFluid.Role == FluidRole.Valve)
+                    _fHeldFluid.ToggleValve();
+                _fHeldFluid = null; _fluidPickupTimer = 0f;
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode

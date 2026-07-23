@@ -117,16 +117,23 @@ namespace UnturnedGodot
         // whose arrow points OUT for a producer / IN for a consumer, sitting just outside the port. `basePos` = the port
         // position when the arrow parents the deployable (ghost), or Vector3.Zero when it parents the port cube itself.
         // Returns a Node3D root (holds the two crossed quads). Shared by placed ports + the placement ghost.
-        public static Node3D MakeArrow(DeployableDef.Port p, StandardMaterial3D mat, Vector3 basePos)
+        public static Node3D MakeArrow(DeployableDef.Port p, StandardMaterial3D mat, Vector3 basePos, Vector3 outDirOverride = default)
         {
             // perpendicular to the port's OUTWARD FACE (master): ports sit on VERTICAL faces (authored Z is the up axis
             // after the stand-up), so the outward normal is the dominant HORIZONTAL axis (X or Y). Ignoring Z means a port
             // lowered to the feet still points sideways out of the cube, never diagonally or down.
-            Vector3 outDir = Vector3.Up;
-            if (Mathf.Abs(p.Pos.X) > 1e-3f || Mathf.Abs(p.Pos.Y) > 1e-3f)
-                outDir = Mathf.Abs(p.Pos.X) >= Mathf.Abs(p.Pos.Y)
-                       ? new Vector3(Mathf.Sign(p.Pos.X), 0f, 0f)
-                       : new Vector3(0f, Mathf.Sign(p.Pos.Y), 0f);
+            // A caller in a DIFFERENT frame (fluid ports live in Godot Y-up, not the flat stand-up frame) supplies the
+            // outward direction explicitly via outDirOverride, else the X/Y flat-frame rule above would point them at the sky.
+            Vector3 outDir;
+            if (outDirOverride != Vector3.Zero) outDir = outDirOverride.Normalized();
+            else
+            {
+                outDir = Vector3.Up;
+                if (Mathf.Abs(p.Pos.X) > 1e-3f || Mathf.Abs(p.Pos.Y) > 1e-3f)
+                    outDir = Mathf.Abs(p.Pos.X) >= Mathf.Abs(p.Pos.Y)
+                           ? new Vector3(Mathf.Sign(p.Pos.X), 0f, 0f)
+                           : new Vector3(0f, Mathf.Sign(p.Pos.Y), 0f);
+            }
             Vector3 flow = p.Kind == DeployableDef.PortKind.Consumer ? -outDir : outDir;         // consumer draws IN; producer pushes OUT
 
             // two crossed quads sharing the flow axis (grass "X"): the flat arrow reads from any viewing angle. The quad
