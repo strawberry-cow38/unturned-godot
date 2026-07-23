@@ -276,9 +276,9 @@ namespace UnturnedGodot
                     // refine = oil->gas; sluice = water->dirty water. Hose source->transformer input, then output->the tank.
                     bool sl = fa.StartsWith("sluice");
                     var inT = sl ? FluidType.Water : FluidType.Oil;
-                    var outT = sl ? FluidType.DirtyWater : FluidType.Gas;
+                    var outT = sl ? FluidType.Water : FluidType.Gas;   // sluice now outputs DIRTY-flagged WATER (via DirtiesWater), not a DirtyWater type
                     Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
-                    var xf = FluidContainer.MakeTransformer(inT, outT, 50f, 1f); xf.Position = c + Vector3.Up * 1.0f; world.AddChild(xf);
+                    var xf = FluidContainer.MakeTransformer(inT, outT, 50f, 1f); xf.DirtiesWater = sl; xf.Position = c + Vector3.Up * 1.0f; world.AddChild(xf);
                     SpawnFluidRig(world, FluidRole.Source,  inT,          2000f, c - wx * 4f + Vector3.Up * 2.4f, xf.Position);   // input source WEST, high
                     SpawnFluidRig(world, FluidRole.Storage, FluidType.None,  0f, c + wx * 4f, xf.Position);                       // output tank EAST, low (adopts out fluid)
                     Log($"{(sl ? "sluice" : "refine")} rig (WORLD X): a {FluidDef.Name(inT)} SOURCE (west, high) + a TRANSFORMER + an empty tank (east, low). hose source->the transformer's LEFT (orange) input, then its RIGHT (green) output->the tank. it deletes {FluidDef.Name(inT)} and makes {FluidDef.Name(outT)}.");

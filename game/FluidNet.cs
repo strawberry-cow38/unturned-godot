@@ -44,6 +44,27 @@ namespace UnturnedGodot
             return FluidType.None;
         }
 
+        // The WORST water quality the water AT port `p` carries -- resolved back through the hose graph (strawberry: a
+        // container takes the worst quality that enters it). A sluice OUTPUT is always dirty; a real tank carries its own
+        // Quality; a relay (splitter/pump/valve) reports the worst quality of the upstream it draws from. Clean by default.
+        public static WaterQuality ResolveWaterQuality(SceneTree tree, HosePort p, System.Collections.Generic.HashSet<FluidContainer> seen)
+        {
+            if (p?.Owner == null) return WaterQuality.Clean;
+            var o = p.Owner;
+            if (o.DirtiesWater && p.Kind == FluidPortKind.Source) return WaterQuality.Dirty;          // the sluice makes dirty water at its output
+            if (o.Tank != null && (o.Role == FluidRole.Source || o.Role == FluidRole.Storage)) return o.Tank.Quality;   // a real tank carries its own
+            if (!o.IsFlowRelay || !seen.Add(o)) return WaterQuality.Clean;
+            var worst = WaterQuality.Clean;
+            foreach (var fp in o.PortNodes)
+            {
+                var far = FarPort(tree, fp);
+                if (far == null) continue;
+                var q = ResolveWaterQuality(tree, far, seen);
+                if ((int)q > (int)worst) worst = q;
+            }
+            return worst;
+        }
+
         // Would a PROPOSED hose from source-side `srcPort` to consumer-side `consPort` need a PUMP to flow? True when it
         // wouldn't flow passively (uphill/level, or off a no-head inlet) AND no existing powered pump's head lift already
         // reaches the consumer end. Same gate FluidNet.Tick applies (below) — reused so the hose-tool "needs a pump" hint
@@ -239,7 +260,15 @@ namespace UnturnedGodot
                         c.Tank.Drain(p.Load * dt);
                     // a tank's INPUT fills it by what it accepts (its demand, not the offered Flow)
                     else if (c.Role == FluidRole.Storage && p.Kind == FluidPortKind.Consumer && p.Flowing)
+                    {
                         c.Tank.Fill(p.SolveRate * dt);
+                        // WATER contaminates: the tank takes on the WORST quality of the water reaching this input (strawberry)
+                        if (c.Tank.Type == FluidType.Water)
+                        {
+                            var far = FarPort(tree, PortFor(tree, p));
+                            if (far != null) c.Tank.Contaminate(ResolveWaterQuality(tree, far, new System.Collections.Generic.HashSet<FluidContainer>()));
+                        }
+                    }
                     // FluidRole.Consumer: the fluid is deleted (nothing accumulates).
                     if (p.Flowing || p.Load > 0f) c.LastFlow = p.Kind == FluidPortKind.Source ? p.Load : p.SolveRate;
                 }

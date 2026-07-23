@@ -25,6 +25,7 @@ namespace UnturnedGodot
         public bool Blocked;               // a clogged/closed-valve container stops conducting (F5)
         public bool Infinite;              // a submersible INLET: an infinite source (never depletes)
         public bool NoHead;                // no head pressure: its output won't flow passively (gravity) — needs a PUMP to draw from it
+        public bool DirtiesWater;          // a sluice: its output resolves to DIRTY water regardless of what flows in
         public float FlowRate = 50f;       // base supply (source) / intake (storage/consumer), units/s
         public int Ways = 2;               // splitter outputs / combiner inputs
         public FluidType TransformIn = FluidType.None, TransformOut = FluidType.None;   // transformer: input fluid -> output fluid
@@ -221,10 +222,10 @@ namespace UnturnedGodot
             if (Tank == null || _info == null) return;   // fittings have no tank/bar
             _info.GlobalPosition = GlobalPosition + new Vector3(0, 2.2f, 0);   // hover the bar above the tank (TopLevel node)
             float frac = Tank.Capacity > 0f ? Mathf.Clamp(Tank.Amount / Tank.Capacity, 0f, 1f) : 0f;
-            var col = FluidDef.Color(Tank.Type);
+            var col = FluidDef.WaterColor(Tank.Type, Tank.Quality);   // water folds its quality into the colour (murky when dirty)
             // an un-adopted tank has FluidType.None -> reads "(empty)" (a STATE), not "— Empty" as if Empty were a fluid
-            // (strawberry: "20L of EMPTY"). Amounts show in L, not raw mL.
-            string label = Tank.Type == FluidType.None ? $"{RoleLabel()} (empty)" : $"{RoleLabel()} — {FluidDef.Name(Tank.Type)}";
+            // (strawberry: "20L of EMPTY"). Water shows its quality (Clean/Tainted/Dirty Water). Amounts in L, not raw mL.
+            string label = Tank.Type == FluidType.None ? $"{RoleLabel()} (empty)" : $"{RoleLabel()} — {FluidDef.WaterName(Tank.Type, Tank.Quality)}";
             _info.SetName(label, col);
             _info.SetBar(0, frac, col);
             _info.SetPrompt($"{FluidDef.Litres(Tank.Amount)} / {FluidDef.Litres(Tank.Capacity)}", new Color(0.9f, 0.92f, 0.95f));
