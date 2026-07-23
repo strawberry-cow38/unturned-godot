@@ -125,20 +125,27 @@ namespace UnturnedGodot
             if (steerPt != null) AddCenteredDetail(Vehicle.SteerMeshFor(_bundle), new Color(0.13f, 0.11f, 0.08f), AssetBundle.V3(steerPt.Pos));
             var seatPt = _bundle.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
             if (seatPt != null) AddCenteredDetail(Vehicle.SeatMeshFor(_bundle), new Color(0.22f, 0.22f, 0.24f), AssetBundle.V3(seatPt.Pos));
-            // headlight + taillight LENS models at their hooks (master "missing from the model"): a cream lens box + a
-            // forward (-Z) spotlight per Headlight, a red lens box per Taillight -- mirrors what BuildFromBundle bakes on.
+            // headlight + taillight LENS geometry (master "the actual headlight parts... are missing"): the REAL ripped
+            // {base}_headlights/taillights mesh if the body is a vehicle body (at the body part's transform, like the
+            // runtime), else a cream/red lens box at each hook. + a forward spotlight per Headlight hook as a light cue.
+            var bodyPart = _bundle.Parts.Count > 0 ? _bundle.Parts[0] : null;
+            var bodyMeshName = bodyPart?.Mesh ?? "";
+            var bBase = bodyMeshName.EndsWith("_body.txt") ? bodyMeshName[..^9] : bodyMeshName.EndsWith(".txt") ? bodyMeshName[..^4] : bodyMeshName;
+            bool eRealHl = bBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bBase}_headlights.txt");
+            bool eRealTl = bBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bBase}_taillights.txt");
+            if (eRealHl) AddLightMesh($"{bBase}_headlights.txt", new Color(1f, 0.96f, 0.72f), bodyPart);
+            if (eRealTl) AddLightMesh($"{bBase}_taillights.txt", new Color(1f, 0.2f, 0.2f), bodyPart);
             foreach (var pt in _bundle.Points)
             {
                 if (pt.Name == null) continue;
                 if (pt.Name.StartsWith("Headlight"))
                 {
                     var hp = AssetBundle.V3(pt.Pos);
-                    var lens = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.26f, 0.20f, 0.10f) }, Position = hp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.96f, 0.72f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
-                    _composeRoot.AddChild(lens); _vehPreview.Add(lens);
+                    if (!eRealHl) { var lens = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.26f, 0.20f, 0.10f) }, Position = hp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.96f, 0.72f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } }; _composeRoot.AddChild(lens); _vehPreview.Add(lens); }
                     var beam = new SpotLight3D { Position = hp, SpotRange = 8f, SpotAngle = 32f, LightColor = new Color(1f, 0.95f, 0.75f), LightEnergy = 3f };   // fires local -Z = the vehicle's forward
                     _composeRoot.AddChild(beam); _vehPreview.Add(beam);
                 }
-                else if (pt.Name.StartsWith("Taillight"))
+                else if (pt.Name.StartsWith("Taillight") && !eRealTl)
                 {
                     var tp = AssetBundle.V3(pt.Pos);
                     var lens = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.24f, 0.16f, 0.08f) }, Position = tp, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(1f, 0.15f, 0.15f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded } };
@@ -165,6 +172,18 @@ namespace UnturnedGodot
             var m = ContentProvider.ParseObj($"res://content/{mesh}");
             if (m == null) return;
             var mi = new MeshInstance3D { Mesh = m, MaterialOverride = new StandardMaterial3D { AlbedoColor = mat, CullMode = BaseMaterial3D.CullModeEnum.Disabled }, Position = hook - m.GetAabb().GetCenter() };   // double-sided: ripped seat/steer front-faces would otherwise cull -> "inside out" (master)
+            _composeRoot.AddChild(mi); _vehPreview.Add(mi);
+        }
+
+        // real ripped headlight/taillight LENS mesh at the BODY part's transform (baked in body space), unshaded glow so
+        // it reads as a lit lens in the editor -- mirrors BuildFromBundle loading {base}_headlights/taillights.txt.
+        void AddLightMesh(string mesh, Color glow, AssetBundle.Part bodyPart)
+        {
+            if (bodyPart == null) return;
+            var m = ContentProvider.ParseObj($"res://content/{mesh}");
+            if (m == null) return;
+            var basis = AssetBundle.EulerDegBasis(bodyPart.Rot).Scaled(AssetBundle.V3(bodyPart.Scale, Vector3.One));
+            var mi = new MeshInstance3D { Mesh = m, Transform = new Transform3D(basis, AssetBundle.V3(bodyPart.Pos)), MaterialOverride = new StandardMaterial3D { AlbedoColor = glow, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
             _composeRoot.AddChild(mi); _vehPreview.Add(mi);
         }
 

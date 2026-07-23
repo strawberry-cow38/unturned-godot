@@ -1003,10 +1003,21 @@ namespace UnturnedGodot
             if (seatHook != null) { var seatMesh = SeatMeshFor(b); if (!string.IsNullOrEmpty(seatMesh)) { s.SeatModelFile = seatMesh; s.SeatModel = t0inv * AssetBundle.V3(seatHook.Pos); } }
             var spots = new System.Collections.Generic.List<Vector3>();
             foreach (var pt in b.Points) if (pt.Name != null && pt.Name.StartsWith("Headlight")) spots.Add(t0inv * AssetBundle.V3(pt.Pos));
-            if (spots.Count > 0) { s.SpotPos = spots.ToArray(); s.OmniPos = Vector3.Zero; }   // composed body: spot beams only, no center omni fill
             var tails = new System.Collections.Generic.List<Vector3>();
             foreach (var pt in b.Points) if (pt.Name != null && pt.Name.StartsWith("Taillight")) tails.Add(t0inv * AssetBundle.V3(pt.Pos));
-            if (tails.Count > 0) s.TailPos = tails.ToArray();
+            // a real vehicle BODY (jeep_body.txt) ships its own ripped headlight/taillight lens MESHES (loaded post-Build,
+            // master 2026-07-23 "the actual headlight parts of the vehicle models are missing"); baked in body space, so
+            // use THAT vehicle's own spot/tail light positions too (beams line up with the lenses). A fully-custom body
+            // falls back to the authored Headlight/Taillight hooks.
+            var bodyBase = s.Body != null && s.Body.EndsWith("_body.txt") ? s.Body[..^9]
+                         : s.Body != null && s.Body.EndsWith(".txt") ? s.Body[..^4] : (s.Body ?? "");
+            var realHl = bodyBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bodyBase}_headlights.txt");
+            var realTl = bodyBase.Length > 0 && Godot.FileAccess.FileExists($"res://content/{bodyBase}_taillights.txt");
+            var bodySpec = realHl || realTl ? SpecFor(bodyBase) : s;
+            if (realHl && bodySpec.SpotPos != null) { s.SpotPos = bodySpec.SpotPos; s.OmniPos = bodySpec.OmniPos; }
+            else if (spots.Count > 0) { s.SpotPos = spots.ToArray(); s.OmniPos = Vector3.Zero; }   // composed body: spot beams only, no center omni fill
+            if (realTl && bodySpec.TailPos != null) s.TailPos = bodySpec.TailPos;
+            else if (tails.Count > 0) s.TailPos = tails.ToArray();
 
             // hull from the first box collider (else keep the jeep's box)
             var box = b.Colliders.Find(c => (c.Shape ?? "box") == "box");
@@ -1027,22 +1038,22 @@ namespace UnturnedGodot
             float susp = b.ParamFloat("veh_suspension", 0f);   // wheel travel (master): higher = softer/off-road, lower = stiff. 0 = the spec default (0.25)
             if (susp > 0f && v._wNodes != null) foreach (var w in v._wNodes) w.SuspensionTravel = susp;
 
-            // headlight/taillight LENS MODELS (master 2026-07-23 "headlights / tail lights are missing from the model"):
-            // a real body bakes glowing lens tris in (split via HeadlightZone); a COMPOSED body doesn't, so plant a small
-            // emissive lens box at each Headlight/Taillight hook, SHARING the vehicle's _headlightMat/_taillightMat so the
-            // existing SetHeadlights('L') / SetTaillights(driving) glow them exactly like a real car's lenses.
-            if (spots.Count > 0 && v._headlightMat == null)
+            // headlight/taillight LENS GEOMETRY (master 2026-07-23 "the actual headlight parts of the vehicle models are
+            // missing"): a real vehicle body ships ripped {base}_headlights.txt / _taillights.txt meshes -> load them at
+            // IDENTITY (baked in body space, like the real car's Parts). A fully-custom body falls back to a lens box at
+            // each hook. Either shares _headlightMat/_taillightMat so SetHeadlights('L') / SetTaillights(driving) glow it.
+            if (v._headlightMat == null && (realHl || spots.Count > 0))
             {
                 var hlMat = new StandardMaterial3D { AlbedoColor = new Color(0.94f, 0.89f, 0.73f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                var hlMesh = new BoxMesh { Size = new Vector3(0.26f, 0.20f, 0.10f) };   // a lens pad on the front face
-                foreach (var p in spots) v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = hlMesh, MaterialOverride = hlMat, Position = p });
+                if (realHl) v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = ContentProvider.ParseObj($"res://content/{bodyBase}_headlights.txt"), MaterialOverride = hlMat });
+                else foreach (var p in spots) v.AddChild(new MeshInstance3D { Name = "Headlights", Mesh = new BoxMesh { Size = new Vector3(0.26f, 0.20f, 0.10f) }, MaterialOverride = hlMat, Position = p });
                 v._headlightMat = hlMat;
             }
-            if (tails.Count > 0 && v._taillightMat == null)
+            if (v._taillightMat == null && (realTl || tails.Count > 0))
             {
                 var tlMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.06f, 0.06f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
-                var tlMesh = new BoxMesh { Size = new Vector3(0.24f, 0.16f, 0.08f) };
-                foreach (var p in tails) v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = tlMesh, MaterialOverride = tlMat, Position = p });
+                if (realTl) v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = ContentProvider.ParseObj($"res://content/{bodyBase}_taillights.txt"), MaterialOverride = tlMat });
+                else foreach (var p in tails) v.AddChild(new MeshInstance3D { Name = "Taillights", Mesh = new BoxMesh { Size = new Vector3(0.24f, 0.16f, 0.08f) }, MaterialOverride = tlMat, Position = p });
                 v._taillightMat = tlMat;
             }
 
