@@ -1091,10 +1091,15 @@ namespace UnturnedGodot
                     var lbAabb = m0.GetAabb().Merge(m1.GetAabb());
                     var hookPos = t0inv * AssetBundle.V3(lightbarHook.Pos);
                     var pos = hookPos - lbAabb.GetCenter();   // land the lightbar's centre on the hook, keep L/R
-                    // middle HOUSING: the police lightbar's base/middle is baked into the police BODY (not the ripped lens
-                    // meshes), so add a dark bar spanning the lightbar to seat the red+blue lenses (master "the middle part?")
-                    var housing = new MeshInstance3D { Name = "LightbarBase", Mesh = new BoxMesh { Size = lbAabb.Size * new Vector3(1.02f, 0.8f, 0.8f) }, MaterialOverride = SolidMat(new Color(0.05f, 0.05f, 0.06f)), Position = hookPos };
-                    housing.SetMeta("no_outline", true); v.AddChild(housing);
+                    // middle HOUSING: the police lightbar's base is baked into the police BODY mesh, not a separate part;
+                    // tools/extract_lightbar.py rips that zone -> police_lightbar.txt (master "get the real lightbar part").
+                    // Same police-body space as the lenses, so it seats at the same `pos` offset.
+                    var housingMesh = ContentProvider.ParseObj("res://content/police_lightbar.txt");
+                    if (housingMesh != null)
+                    {
+                        var housing = new MeshInstance3D { Name = "LightbarBase", Mesh = housingMesh, MaterialOverride = SolidMat(new Color(0.07f, 0.07f, 0.08f)), Position = pos };
+                        housing.SetMeta("no_outline", true); v.AddChild(housing);
+                    }
                     var mat0 = new StandardMaterial3D { AlbedoColor = new Color(0.5f, 0.08f, 0.08f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // red lens
                     var mat1 = new StandardMaterial3D { AlbedoColor = new Color(0.08f, 0.12f, 0.5f), Metallic = 0f, Roughness = 0.5f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };   // blue lens
                     var mi0 = new MeshInstance3D { Name = "Lightbar0", Mesh = m0, MaterialOverride = mat0, Position = pos };
