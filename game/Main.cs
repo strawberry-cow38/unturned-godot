@@ -2220,7 +2220,7 @@ namespace UnturnedGodot
             AddChild(srcE); AddChild(pumpE); AddChild(hiE);
             AddChild(new Hose { Source = srcE.Ports[0], Consumer = pumpE.Ports[0] });   // source -> pump relay input
             AddChild(new Hose { Source = pumpE.Ports[1], Consumer = hiE.Ports[0] });    // pump passthrough -> HIGH tank (uphill)
-            bool pumpIsConsumer = pumpE.PowerPorts.Count == 1 && pumpE.PowerPorts[0].Kind == DeployableDef.PortKind.Consumer && pumpE.IsInGroup("deployables");
+            bool pumpIsConsumer = pumpE.PowerPorts.Count >= 1 && pumpE.PowerPorts[0].Kind == DeployableDef.PortKind.Consumer && pumpE.PowerPorts[0].Role == DeployableDef.SwitchRole.None && pumpE.IsInGroup("deployables");   // [0] = power INPUT (draws PumpWatts); [1..2] = remote on/off triggers
             for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
             GD.Print($"[hosetool] case E: hiTank={hiE.Tank.Amount:0} (want filled — powered pump lifted it up) · powerConsumer={pumpIsConsumer}");
             if (!(hiE.Tank.Amount > 400f && pumpIsConsumer)) ok = false;

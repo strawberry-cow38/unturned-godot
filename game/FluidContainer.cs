@@ -178,9 +178,17 @@ namespace UnturnedGodot
             Blocked = !Blocked;
             RefreshValveVisual();
         }
-        void RefreshValveVisual()
+        protected void RefreshValveVisual()
         {
             if (_valveHandleMat != null) _valveHandleMat.AlbedoColor = Blocked ? new Color(0.9f, 0.2f, 0.2f) : new Color(0.3f, 0.85f, 0.4f);   // red closed / green open
+        }
+
+        // Remotely set a valve open/closed (an electrical turn-on/turn-off trigger drives this) -> updates the flow gate + handle colour.
+        public void SetValveOpen(bool open)
+        {
+            if (Role != FluidRole.Valve || Blocked == !open) return;
+            Blocked = !open;
+            RefreshValveVisual();
         }
 
         // A clean, "Fluid"-prefixed label (strawberry: everything fluid reads "Fluid ..."). Used by the tank billboard and

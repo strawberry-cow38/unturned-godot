@@ -20,7 +20,7 @@ namespace UnturnedGodot
                 FluidRole.Splitter    => FluidContainer.MakeFitting(FluidRole.Splitter, def.FluidWays),
                 FluidRole.Combiner    => FluidContainer.MakeFitting(FluidRole.Combiner, def.FluidWays),
                 FluidRole.Pump        => FluidPump.Make(),
-                FluidRole.Valve       => FluidContainer.MakeValve(),
+                FluidRole.Valve       => FluidValve.Make(),   // the placed valve gets electrical turn-on/off triggers (strawberry)
                 FluidRole.Transformer => FluidContainer.MakeTransformer(def.FluidType, def.FluidOut, def.FluidRate, 1f),
                 _                     => FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, def.FluidCapacity, 0f), def.FluidRate),
             };
