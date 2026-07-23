@@ -993,6 +993,21 @@ namespace UnturnedGodot
             }
             if (wheels.Count > 0) { s.Wheels = wheels.ToArray(); s.WheelRadii = null; }   // else keep the jeep's 4
 
+            // interior details from explicit hooks (master 2026-07-23 "steering wheel model, seat positions and models?
+            // headlight light spot emission points?"): a composed body has no built-in wheel/seats/lamps, so drive the
+            // runtime's proven steer/seat/headlight placement (Build() below) off the bundle's Steer / Seat_* / Headlight_*
+            // points, rebased into body-at-origin space like the wheels. No hook -> stays off (older factory cars unaffected).
+            var steerHook = b.Points.Find(pt => pt.Name == "Steer");
+            if (steerHook != null) { s.SteerModel = SteerMeshFor(b); s.SteerPivot = t0inv * AssetBundle.V3(steerHook.Pos); if (s.SteerAxis == Vector3.Zero) s.SteerAxis = new Vector3(0f, 0.259f, 0.966f); }
+            var seatHook = b.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
+            if (seatHook != null) { var seatMesh = SeatMeshFor(b); if (!string.IsNullOrEmpty(seatMesh)) { s.SeatModelFile = seatMesh; s.SeatModel = t0inv * AssetBundle.V3(seatHook.Pos); } }
+            var spots = new System.Collections.Generic.List<Vector3>();
+            foreach (var pt in b.Points) if (pt.Name != null && pt.Name.StartsWith("Headlight")) spots.Add(t0inv * AssetBundle.V3(pt.Pos));
+            if (spots.Count > 0) { s.SpotPos = spots.ToArray(); s.OmniPos = Vector3.Zero; }   // composed body: spot beams only, no center omni fill
+            var tails = new System.Collections.Generic.List<Vector3>();
+            foreach (var pt in b.Points) if (pt.Name != null && pt.Name.StartsWith("Taillight")) tails.Add(t0inv * AssetBundle.V3(pt.Pos));
+            if (tails.Count > 0) s.TailPos = tails.ToArray();
+
             // hull from the first box collider (else keep the jeep's box)
             var box = b.Colliders.Find(c => (c.Shape ?? "box") == "box");
             if (box != null) { s.BoxSize = AssetBundle.V3(box.Size, Vector3.One); s.BoxCenter = t0inv * AssetBundle.V3(box.Pos); }
@@ -1007,7 +1022,7 @@ namespace UnturnedGodot
             var vw = b.ParamString("veh_wheel", null);          // swap the wheel ASSET (master); else the preset's wheel mesh
             if (!string.IsNullOrEmpty(vw)) { s.Wheel = vw; s.WheelTex = AssetBundle.ResolveAlbedo(vw); }
 
-            GD.Print($"[factoryvehicle] {s.Name} preset={preset ?? "jeep"} engine={s.Engine} speed={s.SpeedMax} steer={s.SteerMax} brake={s.Brake} fuel={s.Fuel} health={s.Health} wheel={s.Wheel}");
+            GD.Print($"[factoryvehicle] {s.Name} preset={preset ?? "jeep"} engine={s.Engine} speed={s.SpeedMax} steer={s.SteerMax} brake={s.Brake} fuel={s.Fuel} health={s.Health} wheel={s.Wheel} steerModel={s.SteerModel ?? "none"} seat={s.SeatModelFile ?? "none"} headlights={s.SpotPos?.Length ?? 0}");
             var v = Build(s, 0, "factory:" + s.Name);
             float susp = b.ParamFloat("veh_suspension", 0f);   // wheel travel (master): higher = softer/off-road, lower = stiff. 0 = the spec default (0.25)
             if (susp > 0f && v._wNodes != null) foreach (var w in v._wNodes) w.SuspensionTravel = susp;

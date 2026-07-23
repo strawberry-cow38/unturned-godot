@@ -118,11 +118,13 @@ namespace UnturnedGodot
                 var p = AssetBundle.V3(pt.Pos);
                 AddDetailMesh(wheelName, wheelTex, p, new Vector3(p.X < 0 ? -1f : 1f, 1f, 1f));
             }
-            // steering wheel at the Steer hook; seat model at the first Seat_* hook (one ripped mesh covers the row)
+            // steering wheel at the Steer hook; seat model at the first Seat_* hook (one ripped mesh covers the row).
+            // These ripped interior meshes are baked at their SOURCE-vehicle coords (not origin), so AABB-centre them on
+            // the hook exactly like Build() does at runtime (raw-placing them floats them off into the sky).
             var steerPt = _bundle.Points.Find(pt => pt.Name == "Steer");
-            if (steerPt != null) AddDetailMesh(Vehicle.SteerMeshFor(_bundle), null, AssetBundle.V3(steerPt.Pos), Vector3.One);
+            if (steerPt != null) AddCenteredDetail(Vehicle.SteerMeshFor(_bundle), new Color(0.13f, 0.11f, 0.08f), AssetBundle.V3(steerPt.Pos));
             var seatPt = _bundle.Points.Find(pt => pt.Name != null && pt.Name.StartsWith("Seat_"));
-            if (seatPt != null) AddDetailMesh(Vehicle.SeatMeshFor(_bundle), null, AssetBundle.V3(seatPt.Pos), Vector3.One);
+            if (seatPt != null) AddCenteredDetail(Vehicle.SeatMeshFor(_bundle), new Color(0.22f, 0.22f, 0.24f), AssetBundle.V3(seatPt.Pos));
             // headlight emission points: a bright emissive marker + a forward (-Z) spotlight at each Headlight hook
             foreach (var pt in _bundle.Points)
             {
@@ -142,6 +144,17 @@ namespace UnturnedGodot
             var part = new AssetBundle.Part { Mesh = mesh, Albedo = albedo ?? AssetBundle.ResolveAlbedo(mesh), Pos = new[] { pos.X, pos.Y, pos.Z }, Rot = new[] { 0f, 0f, 0f }, Scale = new[] { scale.X, scale.Y, scale.Z } };
             var mi = AssetBundleLoader.BuildPart(part);
             if (mi == null) return;
+            _composeRoot.AddChild(mi); _vehPreview.Add(mi);
+        }
+
+        // seat/steer: ripped meshes baked at their SOURCE-vehicle coords, drawn dark-solid + AABB-centred on the hook so
+        // the editor preview lands them exactly where Build() puts them on the drivable vehicle (else they float away).
+        void AddCenteredDetail(string mesh, Color mat, Vector3 hook)
+        {
+            if (string.IsNullOrEmpty(mesh)) return;
+            var m = ContentProvider.ParseObj($"res://content/{mesh}");
+            if (m == null) return;
+            var mi = new MeshInstance3D { Mesh = m, MaterialOverride = new StandardMaterial3D { AlbedoColor = mat }, Position = hook - m.GetAabb().GetCenter() };
             _composeRoot.AddChild(mi); _vehPreview.Add(mi);
         }
 
