@@ -430,18 +430,20 @@ namespace UnturnedGodot
 
         // Driver seat position per vehicle (prefab Seats/Seat_0, Godot space Z-negated) + a small body rise so the 3rd-person
         // driver sits in the right spot -- cars sit LEFT, the quad is CENTRED, the bus is far-left + way back (master).
-        // PZ-scale fuel per vehicle CLASS (master): (tank capacity, burn/sec while driving). Rough + tweakable. Keyword-
-        // matched so it covers every build variant. A trailer is never driven -> 0 burn. (A PZ car tank is ~20-40 units.)
-        static (float tank, float burn) FuelClassOf(string name)
+        // Per-vehicle-CLASS fuel BURN rate (units/sec while driving; PZ-scale, master -- tweakable). Keyword-matched so it
+        // covers every build variant. A trailer is never driven -> 0 burn. TANK CAPACITY is now the per-vehicle Spec.Fuel
+        // (metric mL, set on each spec), NOT here -- so a jerrycan (mL) and a vehicle tank share units. Burn stays PZ-scale
+        // for now: consumption is masked by the infFuel default, so a metric consumption pass is deferred.
+        static float FuelBurnClassOf(string name)
         {
             string n = name ?? "";
-            if (n.Contains("Trailer")) return (1f, 0f);                                                                  // never driven (>0 avoids div-by-zero)
-            if (n.Contains("Semi")) return (150f, 3.2f);                                                                 // semi: huge tank, guzzles
-            if (n.Contains("Truck") || n.Contains("Bus") || n.Contains("Firetruck") || n.Contains("Ural")) return (100f, 2.6f);   // big trucks / bus
-            if (n.Contains("Van") || n.Contains("Ambulance")) return (65f, 1.8f);                                        // vans
-            if (n.Contains("Quad")) return (20f, 0.6f);                                                                  // small ATV: little tank, sips
-            if (n.Contains("Roadster") || n.Contains("Golf") || n.Contains("Hatchback")) return (35f, 1.0f);            // small cars
-            return (50f, 1.4f);                                                                                          // Sedan / Police / Jeep / Humvee / Tractor / Off-Roader / default (normal)
+            if (n.Contains("Trailer")) return 0f;                                                                        // never driven
+            if (n.Contains("Semi")) return 3.2f;                                                                         // semi: guzzles
+            if (n.Contains("Truck") || n.Contains("Bus") || n.Contains("Firetruck") || n.Contains("Ural")) return 2.6f; // big trucks / bus
+            if (n.Contains("Van") || n.Contains("Ambulance")) return 1.8f;                                               // vans
+            if (n.Contains("Quad")) return 0.6f;                                                                         // small ATV: sips
+            if (n.Contains("Roadster") || n.Contains("Golf") || n.Contains("Hatchback")) return 1.0f;                   // small cars
+            return 1.4f;                                                                                                 // Sedan / Police / Jeep / Humvee / Tractor / Off-Roader / default
         }
 
         static Vector3 SeatOf(string name) => name switch
@@ -469,7 +471,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // source BoxCollider
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Medium)
-            Fuel = 2000f, Health = 600f, Name = "Jeep", Horn = "carhorn_04.ogg",
+            Fuel = 60_000f, Health = 600f, Name = "Jeep", Horn = "carhorn_04.ogg",   // 60 L tank (metric 1u=1mL; realistic, was the x2500 5,000,000)
             SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source prefab Headlights (Z negated)
             TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source prefab Taillights (rear, Z negated)
             SteerPivot = new Vector3(-0.464f, 1.018f, -0.922f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steering wheel centroid + disc normal (PCA)
@@ -499,7 +501,7 @@ namespace UnturnedGodot
             ExtraBoxes = new (Vector3, Vector3)[] { (new Vector3(2.5f, 0.76f, 3.0f), new Vector3(0f, 0.58f, 3.0f)) },   // low black rear frame (Y 0.2..0.96, Z 1.5..4.5) -- floor raised 0->0.2 to the rear-chassis underside; carries the fifth wheel, kept LOW so the coupled trailer sits on it, not over a tall box
             ForwardGears = new[] { 22f, 15f, 10f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_large.ogg", IdlePitch = 0.8f, MaxPitch = 1.5f, IdleVolume = 0.85f, MaxVolume = 1.0f,   // engine_large = the SOURCE heavy/truck engine (bus uses it); low pitch = diesel rumble (strawberry 2026-07-15)
-            Fuel = 3000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
+            Fuel = 300_000f, Health = 1000f, Name = "Semi Truck", Horn = "carhorn_03.ogg",   // 300 L tank (metric 1u=1mL; realistic big-rig). CarHorn_03 = the SOURCE heavy-truck horn (Ural/Firetruck/Ambulance use it in vanilla; deepest of the ripped horns) (strawberry 2026-07-15)
             SpotPos = new[] { new Vector3(-1.175f, 0.86f, -2.60f), new Vector3(1.175f, 0.86f, -2.60f) }, OmniPos = Vector3.Zero,   // beam sources CENTERED on the real headlight lenses (X±1.175, Y0.86, front face Z-2.58); no middle omni fill (strawberry)
             TailPos = new[] { new Vector3(-0.82f, 0.65f, 4.45f), new Vector3(0.82f, 0.65f, 4.45f) },   // red spot sources centered on the cab taillight blocks (strawberry)
             HeadlightZoneMin = new Vector3(-1.44f, 0.66f, -2.63f), HeadlightZoneMax = new Vector3(-0.92f, 1.05f, -2.20f),   // LEFT headlight = the CREAM-texel geometry X[-1.40,-0.95] Y[0.71,1.01] near the fender (NOT the grey trim by the grille I was wrongly lighting). Verified: zone catches exactly the 20 cream tris, nothing else. right = auto X-mirror (strawberry)
@@ -542,7 +544,7 @@ namespace UnturnedGodot
             },
             ForwardGears = new[] { 1f }, ReverseGear = 1f, ShiftUpRpm = 5000f,   // unused (no engine) but non-null for the drive logic
             Sound = null,   // no engine -> no engine loop
-            Fuel = 1f, Health = 600f, Name = "Semi Trailer",   // Fuel=1 (never driven; >0 avoids a fuel-fraction div-by-zero); Health = design call
+            Fuel = 1000f, Health = 600f, Name = "Semi Trailer",   // never driven; >0 avoids a fuel-fraction div-by-zero (metric 1u=1mL, nominal 1 L)
             TailPos = new[] { new Vector3(-1.13f, 1.0f, 8.0f), new Vector3(1.13f, 1.0f, 8.0f) },   // red spot sources centered on the trailer's baked taillights (X±1.13, Y1.0, Z8.0) (strawberry)
             TaillightZoneMin = new Vector3(-1.42f, 0.84f, 7.85f), TaillightZoneMax = new Vector3(-0.84f, 1.17f, 8.15f),   // split the REAL baked red taillights (X[0.88,1.38] Y[0.88,1.13] Z[7.90,8.10]) out -> emissive, driven by the cab pass-through. NO added blocks (was duping the baked ones) (strawberry)
             SteerPivot = Vector3.Zero, SteerAxis = Vector3.Zero,
@@ -576,7 +578,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.0f, 0.777f, 3.581f), BoxCenter = new Vector3(0f, 0.478f, 0.407f),   // source BoxCollider
             ForwardGears = new[] { 20f, 10f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_small.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Small)
-            Fuel = 1000f, Health = 450f, Name = "Quad", Horn = "carhorn_01.ogg",
+            Fuel = 15_000f, Health = 450f, Name = "Quad", Horn = "carhorn_01.ogg",   // 15 L tank (metric 1u=1mL; realistic ATV)
             SteerPivot = new Vector3(0f, 1.00f, -0.32f), SteerAxis = new Vector3(0f, 1f, 0f),   // handlebars: pivot at the prefab Steer node, yaw around vertical
             Wheels = new (float, float, float, bool)[]
             { (-0.50f, 0.20f, -0.39f, true), (0.50f, 0.20f, -0.39f, true), (-0.50f, 0.20f, 1.44f, false), (0.50f, 0.20f, 1.44f, false) },
@@ -597,7 +599,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(3.0f, 1.018f, 7.964f), BoxCenter = new Vector3(0f, 0.361f, 0.281f),   // source BoxCollider
             ForwardGears = new[] { 20f, 14.6f }, ReverseGear = 12f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,   // .dat EngineSound (prefab AudioSource = Engine_Large; bus MaxPitch 1.8)
-            Fuel = 2250f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",
+            Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Bus", Horn = "carhorn_04.ogg",   // 200 L tank (metric 1u=1mL; realistic bus)
             Wheels = new (float, float, float, bool)[]
             { (-1.50f, 0.08f, -1.52f, true), (1.50f, 0.08f, -1.52f, true), (-1.50f, 0.08f, 2.69f, false), (1.50f, 0.08f, 2.69f, false) },
             Parts = new (string, Color)[]
@@ -618,7 +620,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),   // source BoxCollider (Z negated)
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1500f, Health = 600f, Name = "Sedan", Horn = "carhorn_02.ogg",
+            Fuel = 50_000f, Health = 600f, Name = "Sedan", Horn = "carhorn_02.ogg",   // 50 L tank (metric 1u=1mL; realistic sedan)
             SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.969f), new Vector3(0.765f, 0.708f, -2.969f) }, OmniPos = new Vector3(0f, 0.841f, -2.945f),   // prefab Headlights (Z neg)
             TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.841f), new Vector3(0.979f, 0.688f, 2.841f) },   // prefab Taillights (rear, Z neg)
             SteerPivot = new Vector3(-0.464f, 0.894f, -1.416f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // steer centroid + disc normal (PCA)
@@ -642,7 +644,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 0.916f, 5.261f), BoxCenter = new Vector3(0f, 0.548f, -0.003f),
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1500f, Health = 650f, Name = "Hatchback", Horn = "carhorn_01.ogg",
+            Fuel = 45_000f, Health = 650f, Name = "Hatchback", Horn = "carhorn_01.ogg",   // 45 L tank (metric 1u=1mL; realistic hatchback)
             SpotPos = new[] { new Vector3(-0.765f, 0.571f, -2.679f), new Vector3(0.765f, 0.571f, -2.679f) }, OmniPos = new Vector3(0f, 0.703f, -2.655f),
             TailPos = new[] { new Vector3(-0.979f, 0.738f, 2.677f), new Vector3(0.979f, 0.738f, 2.677f) },
             SteerPivot = new Vector3(-0.464f, 0.894f, -1.089f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -666,7 +668,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.032f, 5.029f), BoxCenter = new Vector3(0f, 0.605f, -0.018f),
             ForwardGears = new[] { 20f, 12.56f }, ReverseGear = 8f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2000f, Health = 550f, Name = "Humvee", Horn = "carhorn_03.ogg",
+            Fuel = 95_000f, Health = 550f, Name = "Humvee", Horn = "carhorn_03.ogg",   // 95 L tank (metric 1u=1mL; realistic military humvee)
             SpotPos = new[] { new Vector3(-0.979f, 0.741f, -2.511f), new Vector3(0.979f, 0.741f, -2.511f) }, OmniPos = new Vector3(0f, 0.873f, -2.487f),
             TailPos = new[] { new Vector3(-0.979f, 0.738f, 2.548f), new Vector3(0.979f, 0.738f, 2.548f) },
             SteerPivot = new Vector3(-0.464f, 0.94f, -1.27f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -690,7 +692,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1250f, Health = 500f, Rarity = EItemRarity.RARE, Name = "Roadster", Horn = "roadster_horn.ogg",
+            Fuel = 50_000f, Health = 500f, Rarity = EItemRarity.RARE, Name = "Roadster", Horn = "roadster_horn.ogg",   // 50 L tank (metric 1u=1mL; realistic sports car)
             SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.969f), new Vector3(0.765f, 0.708f, -2.969f) }, OmniPos = new Vector3(0f, 0.841f, -2.945f),
             TailPos = new[] { new Vector3(-0.979f, 0.688f, 2.841f), new Vector3(0.979f, 0.688f, 2.841f) },
             SteerPivot = new Vector3(-0.464f, 0.894f, -0.46f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -714,7 +716,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 2.0f, 5.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),   // tall van (compound BoxCollider -> one encompassing box)
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 8f, ShiftUpRpm = 4500f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Ambulance", Horn = "carhorn_03.ogg",
+            Fuel = 80_000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Ambulance", Horn = "carhorn_03.ogg",   // 80 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.71f, 0.74f, -2.58f), new Vector3(0.71f, 0.74f, -2.58f) }, OmniPos = new Vector3(0f, 0.87f, -2.56f),
             TailPos = new[] { new Vector3(-0.95f, 0.71f, 2.59f), new Vector3(0.95f, 0.71f, 2.59f) },
             SteerPivot = new Vector3(-0.47f, 0.99f, -2.21f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -740,7 +742,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 2.0f, 7.0f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2250f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Firetruck", Horn = "carhorn_03.ogg",
+            Fuel = 200_000f, Health = 700f, Rarity = EItemRarity.UNCOMMON, Name = "Firetruck", Horn = "carhorn_03.ogg",   // 200 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.69f, 0.89f, -3.59f), new Vector3(0.69f, 0.89f, -3.59f) }, OmniPos = new Vector3(0f, 1.02f, -3.57f),
             TailPos = new[] { new Vector3(-0.98f, 0.55f, 3.64f), new Vector3(0.98f, 0.55f, 3.64f) },
             SteerPivot = new Vector3(-0.47f, 1.16f, -3.20f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -771,7 +773,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.8f, 4.78f), BoxCenter = new Vector3(0f, 0.72f, -0.12f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 3000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2000f, Health = 700f, Name = "Tractor", Horn = "carhorn_03.ogg",
+            Fuel = 40_000f, Health = 700f, Name = "Tractor", Horn = "carhorn_03.ogg",   // 40 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.40f, 1.26f, -2.65f), new Vector3(0.40f, 1.26f, -2.65f) }, OmniPos = new Vector3(0f, 1.40f, -2.62f),
             TailPos = new[] { new Vector3(0.70f, 1.08f, 2.45f), new Vector3(-0.70f, 1.08f, 2.45f) },
             SteerPivot = new Vector3(0f, 1.56f, -0.29f), SteerAxis = new Vector3(0f, 0.5f, 0.866f),   // upright tractor column
@@ -794,7 +796,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 2.0f, 6.6f), BoxCenter = new Vector3(0f, 1.0f, 0f),
             ForwardGears = new[] { 20f, 12f }, ReverseGear = 8f, ShiftUpRpm = 4000f,
             Sound = "engine_large.ogg", IdlePitch = 1.0f, MaxPitch = 1.8f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2500f, Health = 700f, Rarity = EItemRarity.RARE, Name = "Ural", Horn = "carhorn_03.ogg",
+            Fuel = 300_000f, Health = 700f, Rarity = EItemRarity.RARE, Name = "Ural", Horn = "carhorn_03.ogg",   // 300 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.97f, 0.78f, -3.12f), new Vector3(0.97f, 0.78f, -3.12f) }, OmniPos = new Vector3(0f, 0.91f, -3.10f),
             TailPos = new[] { new Vector3(-0.98f, 0.73f, 3.30f), new Vector3(0.98f, 0.73f, 3.30f) },
             SteerPivot = new Vector3(-0.47f, 1.03f, -2.11f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -821,7 +823,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 0.916f, 5.656f), BoxCenter = new Vector3(0f, 0.548f, -0.063f),
             ForwardGears = new[] { 14f, 8f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1750f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Police", Horn = "carhorn_02.ogg",
+            Fuel = 60_000f, Health = 600f, Rarity = EItemRarity.UNCOMMON, Name = "Police", Horn = "carhorn_02.ogg",   // 60 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.77f, 0.71f, -2.97f), new Vector3(0.77f, 0.71f, -2.97f) }, OmniPos = new Vector3(0f, 0.84f, -2.95f),
             TailPos = new[] { new Vector3(-0.98f, 0.69f, 2.84f), new Vector3(0.98f, 0.69f, 2.84f) },
             SteerPivot = new Vector3(-0.47f, 0.90f, -1.42f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -848,7 +850,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),   // jeep-chassis BoxCollider
             ForwardGears = new[] { 20f, 13.7f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 2000f, Health = 600f, Name = "Off_Roader", Horn = "carhorn_04.ogg",
+            Fuel = 80_000f, Health = 600f, Name = "Off_Roader", Horn = "carhorn_04.ogg",   // 80 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.979f, 0.746f, -2.49f), new Vector3(0.979f, 0.746f, -2.49f) }, OmniPos = new Vector3(0f, 0.878f, -2.47f),   // source Headlights (Z negated)
             TailPos = new[] { new Vector3(-0.979f, 0.746f, 2.48f), new Vector3(0.979f, 0.746f, 2.48f) },   // source Taillights (Z negated)
             SteerPivot = new Vector3(-0.465f, 1.022f, -0.923f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),   // source Steer node centroid + disc normal
@@ -872,7 +874,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
             ForwardGears = new[] { 20f, 14.2f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1750f, Health = 550f, Name = "Truck", Horn = "carhorn_01.ogg",
+            Fuel = 150_000f, Health = 550f, Name = "Truck", Horn = "carhorn_01.ogg",   // 150 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.979f, 0.741f, -2.511f), new Vector3(0.979f, 0.741f, -2.511f) }, OmniPos = new Vector3(0f, 0.873f, -2.487f),
             TailPos = new[] { new Vector3(-0.979f, 0.738f, 2.548f), new Vector3(0.979f, 0.738f, 2.548f) },
             SteerPivot = new Vector3(-0.465f, 1.027f, -1.384f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -896,7 +898,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
             ForwardGears = new[] { 20f, 14.4f }, ReverseGear = 10f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1500f, Health = 600f, Name = "Van", Horn = "carhorn_01.ogg",
+            Fuel = 70_000f, Health = 600f, Name = "Van", Horn = "carhorn_01.ogg",   // 70 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.979f, 0.741f, -2.511f), new Vector3(0.979f, 0.741f, -2.511f) }, OmniPos = new Vector3(0f, 0.873f, -2.487f),
             TailPos = new[] { new Vector3(-0.979f, 0.815f, 2.548f), new Vector3(0.979f, 0.815f, 2.548f) },
             SteerPivot = new Vector3(-0.465f, 1.027f, -1.523f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -920,7 +922,7 @@ namespace UnturnedGodot
             BoxSize = new Vector3(2.5f, 1.046f, 4.522f), BoxCenter = new Vector3(0f, 0.612f, 0.029f),
             ForwardGears = new[] { 14f, 8.75f }, ReverseGear = 5f, ShiftUpRpm = 5000f,
             Sound = "engine_medium.ogg", IdlePitch = 1.0f, MaxPitch = 2.0f, IdleVolume = 0.75f, MaxVolume = 1.0f,
-            Fuel = 1500f, Health = 600f, Name = "VW_Golf", Horn = "carhorn_02.ogg",
+            Fuel = 50_000f, Health = 600f, Name = "VW_Golf", Horn = "carhorn_02.ogg",   // 50 L (metric 1u=1mL)
             SpotPos = new[] { new Vector3(-0.765f, 0.708f, -2.588f), new Vector3(0.765f, 0.708f, -2.588f) }, OmniPos = new Vector3(0f, 0.841f, -2.564f),
             TailPos = new[] { new Vector3(-0.765f, 0.787f, 2.424f), new Vector3(0.765f, 0.787f, 2.424f) },
             SteerPivot = new Vector3(-0.465f, 0.897f, -1.180f), SteerAxis = new Vector3(0f, 0.259f, 0.966f),
@@ -1068,7 +1070,7 @@ namespace UnturnedGodot
             v._steerTurnSpeed = s.SteerMax * 2f;   // master: ramp to full lock a LOT longer than source (source default = SteerMax*5 deg/s) -> slower turn-in
             v._gears = s.ForwardGears; v._reverseGear = s.ReverseGear; v._shiftUpRpm = s.ShiftUpRpm;
             v._idlePitch = s.IdlePitch; v._maxPitch = s.MaxPitch; v._idleVol = s.IdleVolume; v._maxVol = s.MaxVolume;
-            var (tank, burn) = FuelClassOf(s.Name); v.FuelMax = v.Fuel = tank; v.FuelBurn = burn;   // PZ-scale tank + per-class burn (master); overrides the spec's old-scale Fuel
+            v.FuelMax = v.Fuel = s.Fuel; v.FuelBurn = FuelBurnClassOf(s.Name);   // TANK = per-vehicle metric Spec.Fuel (1u=1mL) so cans<->vehicles share units; burn = per-class (PZ-scale, infFuel-masked)
             v.HealthMax = v.Health = s.Health; v.Battery = BatteryMax; v.DisplayName = s.Name; v.SeatOffset = SeatOf(s.Name);
             if (s.DriverEye != Vector3.Zero) v.DriverEyeLocal = s.DriverEye;   // tall-cab override (semi); else keep the shared default
             v._outlineColor = ItemTool.RarityColorUI(s.Rarity);   // real vehicle rarity -> look-at outline/label colour (master)

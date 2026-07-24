@@ -307,6 +307,18 @@ namespace UnturnedGodot
                 // a local node (WorldBuilder.SpawnFixturesDirect). yaw = 180-ey, the object's placement yaw.
                 if (name == "Circuit_0")
                     result.Fixtures.Add(new FixtureRecord { DefId = DeployableDef.GridSource.Id, Pos = gpos, YawDegrees = 180f - ey, Basis = basis });
+                // WATER TOWER fluid IO (strawberry): each Tower_Water_0 becomes an infinite (tainted) water SOURCE you can
+                // hose from -- attached SP-local in Playable (MP replication of map fluid fixtures = fast-follow, like the
+                // rest of the fluid system). It rides this prop's mesh; just adds an output spigot at the base. One shared
+                // FluidManager ticks them (created lazily, deduped by the group check).
+                if (name == "Tower_Water_0" && mode == WorldMode.Playable)
+                {
+                    var tower = WaterTowerSource.Make();
+                    tower.Position = gpos;
+                    tower.RotationDegrees = new Vector3(0f, 180f - ey, 0f);
+                    root.AddChild(tower);
+                    if (tower.GetTree() != null && tower.GetTree().GetNodesInGroup("fluid_managers").Count == 0) root.AddChild(new FluidManager());
+                }
                 StaticBody3D destBody = null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
                 {

@@ -132,7 +132,7 @@ namespace UnturnedGodot
             }
             _info.SetBar(0, Fluid.Capacity > 0f ? Mathf.Clamp(Fluid.Amount / Fluid.Capacity, 0f, 1f) : 0f, PumpColor);
             string state = Fluid.IsEmpty ? "empty" : (IsPowered ? "[RMB] with a gas can to fill" : "no power");
-            _info.SetPrompt($"{Fluid.Amount:0} / {Fluid.Capacity:0} fuel · {state}", PumpColor);
+            _info.SetPrompt($"{FluidDef.Litres(Fluid.Amount)} / {FluidDef.Litres(Fluid.Capacity)} fuel · {state}", PumpColor);
         }
     }
 }

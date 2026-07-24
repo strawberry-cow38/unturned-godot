@@ -8,7 +8,7 @@ namespace UnturnedGodot
     // from position (pumps in the same ~30m cell = one station) for the baked PEI pumps. Cleared on each world (re)build.
     public static class StationFuel
     {
-        public const float StationCapacity = 8000f;   // shared tank size per station (PZ pumps are 1k-14k units)
+        public const float StationCapacity = 20_000_000f;   // 20,000 L shared tank per station (metric, 1u=1mL; was PZ 8000 units x2500)
         static readonly Dictionary<int, FluidTank> _tanks = new();
 
         public static FluidTank Tank(int stationId)

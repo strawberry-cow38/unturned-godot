@@ -131,10 +131,14 @@ namespace UnturnedGodot
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
+        SDG.Unturned.Item _heldFluidItem; // a fluid CONTAINER (water bottle / soda / cola / canteen) in hand -> RMB a tank to fill it, LMB to sip clean water (strawberry)
         Deployable _fHeldDeploy;      // the deployable F is being HELD on (hold-F = pick it up; a quick tap = toggle, on release)
         float _deployPickupTimer;     // seconds F has been held on _fHeldDeploy
         const float DeployPickupTime = 1.0f;    // hold F this long over a deployable to pick it back up (wires disconnect)
         const float PickupBarDeadzone = 0.2f;   // hide the progress bar for the first 20% of the hold, so a quick tap-to-toggle doesn't flash it
+        FluidContainer _focusFluid;   // the placed fluid device being LOOKED AT (hold-F pickup target)
+        FluidContainer _fHeldFluid;   // the fluid device F is being HELD on (hold-F = pick it up; hoses/power wire disconnect)
+        float _fluidPickupTimer;      // seconds F has been held on _fHeldFluid
         IPuppetFocusable _focusPuppet;  // MP ONLY: the replicated car/item PUPPET being looked at (client-side outline). SP has none.
         Vector3 _lookEnd;       // where the eye-ray ends (the look sphere sits here)
         MeshInstance3D _lookViz; // O-toggle visualizer of that ONE look sphere
@@ -151,7 +155,7 @@ namespace UnturnedGodot
 
         void UpdateLookFocus()
         {
-            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null;
+            WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -172,6 +176,7 @@ namespace UnturnedGodot
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
+                    else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
                     else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
@@ -239,6 +244,7 @@ namespace UnturnedGodot
                 _focusDeployable = hitDeploy;
                 _focusDeployable?.SetLookFocused(true);
             }
+            if (hitFluid != _focusFluid) _focusFluid = hitFluid;   // no outline shader on fluid bodies -> just track it for hold-F pickup
             if (hitGasPump != _focusGasPump)   // looked-at gas pump: outline + fuel tooltip
             {
                 if (IsInstanceValid(_focusGasPump)) _focusGasPump.SetLookFocused(false);
@@ -639,6 +645,304 @@ namespace UnturnedGodot
             _wiring = false; _wireSrc = null; _wireNodes.Clear();
         }
 
+        // --- Hose tool (item 66): connect a fluid Source port -> a Consumer port. Mirror of the wire tool, LEANER first
+        // pass -- a STRAIGHT hose (no multi-node routing / clear-hold yet). Type-lock ("cannot mix fluids") is enforced
+        // at completion (HoseCompletion, a pure testable predicate); gravity gates whether the finished hose actually
+        // FLOWS (FluidNet). The look-ray hits HosePort.PortLayer (1<<11) only, so it never picks a power port. ---
+        const float HoseReach = 5.5f, HosePlaceReach = 6f;   // look-at reach / node-place reach (mirror of the wire tool)
+        const int MaxHoseNodes = 20; const float MaxHoseLen = 40f;   // mirror the wire tool's 20-node / 40m budget (strawberry)
+        HosePort _hosePort;          // the fluid port currently looked at
+        bool _hosing; HosePort _hoseSrc;   // mid-route: a start port is picked, waiting for the opposite-role end
+        readonly System.Collections.Generic.List<Vector3> _hoseNodes = new();   // placed node points (world) between source + free end
+        Hose _hosePreview;           // the live hose being routed (follows the look point)
+        PhysicsRayQueryParameters3D _hoseRayQ, _hosePlaceRayQ;
+        CanvasLayer _hoseHudLayer; Label _hoseHudLabel;
+        // manage a hose by poking its PORT while not routing (mirror of the wire tool's _clearPort): hold RMB clears it, tap unplugs + re-routes
+        HosePort _clearHosePort; float _hoseClearHold;
+        const float HoseClearTime = 1.0f, HoseClickMax = 0.28f;   // hold this long over a hosed port to clear; release within this = a tap -> unplug
+        bool _hoseArrowsOn;          // in/out port arrows currently shown (only while the hose tool is out)
+        public HosePort HoseLookPort => _hosePort;   // L1 probe
+
+        // scene wrapper over the engine-free FluidHoseRule for the two live ports (the type-lock rule is L0-tested in core)
+        HoseVerdict CompletionVerdict(HosePort start, HosePort target)
+        {
+            if (!IsInstanceValid(start) || !IsInstanceValid(target) || !target.Usable) return HoseVerdict.None;
+            // resolve each end's fluid type THROUGH tankless relay fittings (FluidNet.ResolveNetType): a splitter/pump/valve
+            // has no tank of its own, so its raw EffectiveType is None -- but the type-lock must see the fluid its network
+            // actually carries, else fuel would pipe into a water tank across a fitting.
+            var st = FluidNet.ResolveNetType(GetTree(), start, new System.Collections.Generic.HashSet<FluidContainer>());
+            var tt = FluidNet.ResolveNetType(GetTree(), target, new System.Collections.Generic.HashSet<FluidContainer>());
+            return FluidHoseRule.Completion(start.Kind, target.Kind,
+                st == FluidType.None, tt == FluidType.None, st == tt,
+                ReferenceEquals(start.Owner, target.Owner), PortHosed(target));
+        }
+
+        // is this fluid port already an endpoint of a committed hose? (max 1 hose per port, lean pass)
+        bool PortHosed(HosePort p)
+        {
+            if (p?.Node == null) return false;
+            foreach (var n in GetTree().GetNodesInGroup("hoses"))
+                if (n is Hose h && GodotObject.IsInstanceValid(h) && (h.Source == p.Node || h.Consumer == p.Node)) return true;
+            return false;
+        }
+
+        // Per-frame while the hose tool is out: pick the aimed HosePort (highlight + info), drive the route preview.
+        void UpdateHoseLook()
+        {
+            if (!HoldingHoseTool)
+            {
+                if (_hosing) CancelHose();
+                if (IsInstanceValid(_hosePort)) _hosePort.SetHighlight(HosePort.PortHi.None);
+                _hosePort = null; HoseHudSet(null); return;
+            }
+            HosePort port = null;
+            if (_cam != null && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured)
+            {
+                var space = GetWorld3D().DirectSpaceState;
+                Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+                _hoseRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = HosePort.PortLayer };
+                _hoseRayQ.From = from; _hoseRayQ.To = from + fwd * HoseReach;
+                var hit = space.IntersectRay(_hoseRayQ);
+                if (hit.Count > 0 && hit["collider"].As<GodotObject>() is HosePort hp && IsInstanceValid(hp)) port = hp;
+            }
+            if (port != _hosePort)
+            {
+                if (IsInstanceValid(_hosePort) && _hosePort != _hoseSrc) _hosePort.SetHighlight(HosePort.PortHi.None);
+                _hosePort = port;
+            }
+
+            if (_hosing)
+            {
+                if (!IsInstanceValid(_hoseSrc)) { CancelHose(); HoseHudSet(null); return; }
+                var v = CompletionVerdict(_hoseSrc, _hosePort);
+                // #11: a legal (Ok) connection that WON'T flow without a pump (uphill / no-head source, not already lifted)
+                // paints ORANGE + warns, but stays connectable. FluidNet.WouldNeedPump reuses the real gravity/head gate.
+                bool needsPump = false;
+                if (v == HoseVerdict.Ok && IsInstanceValid(_hosePort))
+                {
+                    var (sp, cp) = FluidHoseRule.IsSourceSide(_hoseSrc.Kind) ? (_hoseSrc, _hosePort) : (_hosePort, _hoseSrc);
+                    needsPump = FluidNet.WouldNeedPump(GetTree(), sp, cp);
+                }
+                if (IsInstanceValid(_hosePort) && _hosePort != _hoseSrc)
+                    _hosePort.SetHighlight(v == HoseVerdict.Ok ? (needsPump ? HosePort.PortHi.HoseWarn : HosePort.PortHi.HoseOk) : HosePort.PortHi.HoseBad);
+                Vector3 end = v == HoseVerdict.Ok ? _hosePort.GlobalPosition : HosePlacePoint();
+                var pts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition };
+                pts.AddRange(_hoseNodes); pts.Add(end);
+                float len = PolyLen(pts);
+                bool overLimit = _hoseNodes.Count >= MaxHoseNodes || len > MaxHoseLen;
+                _hosePreview?.SetPoints(pts, valid: v != HoseVerdict.Mismatch && !overLimit);
+                if (v == HoseVerdict.Mismatch) HoseHudSet("cannot mix fluids");
+                else if (overLimit) HoseHudSet($"nodes {_hoseNodes.Count}/{MaxHoseNodes}    {len:0.0}/{MaxHoseLen:0}m   -- LIMIT");
+                else if (needsPump) HoseHudSet($"needs a pump (uphill / no gravity)    nodes {_hoseNodes.Count}/{MaxHoseNodes}   [LMB] connect anyway");
+                else HoseHudSet($"nodes {_hoseNodes.Count}/{MaxHoseNodes}    {len:0.0}/{MaxHoseLen:0}m" + (v == HoseVerdict.Ok ? "    [LMB] connect" : ""));
+            }
+            else
+            {
+                if (IsInstanceValid(_hosePort)) _hosePort.SetHighlight(HosePort.PortHi.Focus);
+                string hint = "";
+                if (IsInstanceValid(_hosePort))
+                {
+                    if (_hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) hint = "   ([RMB] open/close)";
+                    else if (PortHosed(_hosePort)) hint = "   ([RMB] hold: clear · tap: unplug)";
+                }
+                HoseHudSet(_hosePort == null ? null : _hosePort.InfoLine(IsInstanceValid(_hosePort) && PortHosed(_hosePort)) + hint);
+            }
+        }
+
+        // The free end / node drop = your look point (raycast to world/props), else max reach. Excludes the player + every
+        // deployable AND fluid-device body so a hose routes STRAIGHT THROUGH them (mirror of WirePlacePoint) instead of
+        // sticking to a tank/box face -- fluid bodies are solid colliders now (batch A).
+        Vector3 HosePlacePoint()
+        {
+            if (_cam == null) return GlobalPosition;
+            var space = GetWorld3D().DirectSpaceState;
+            Vector3 from = _cam.GlobalPosition, fwd = -_cam.GlobalTransform.Basis.Z;
+            _hosePlaceRayQ ??= new PhysicsRayQueryParameters3D { CollisionMask = (1u << 0) | (1u << 6) };
+            _hosePlaceRayQ.From = from; _hosePlaceRayQ.To = from + fwd * HosePlaceReach;
+            var exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                if (n is Deployable dep && GodotObject.IsInstanceValid(dep)) exclude.Add(dep.GetRid());
+            foreach (var n in GetTree().GetNodesInGroup("fluid_devices"))
+                if (n is FluidContainer fc && GodotObject.IsInstanceValid(fc)) exclude.Add(fc.GetRid());
+            _hosePlaceRayQ.Exclude = exclude;
+            var hit = space.IntersectRay(_hosePlaceRayQ);
+            return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * HosePlaceReach;
+        }
+
+        // LMB with the hose tool (mirror of WireLmb): start from a usable, unhosed port (either role), place a routing node,
+        // or complete on a compatible opposite port -- completion + placement both gated by the 20-node/40m budget.
+        void HoseLmb()
+        {
+            if (_dead) return;
+            if (!_hosing)
+            {
+                if (IsInstanceValid(_hosePort) && _hosePort.Usable && !PortHosed(_hosePort))
+                {
+                    _hosing = true; _hoseSrc = _hosePort; _hoseNodes.Clear();
+                    _hoseSrc.SetHighlight(HosePort.PortHi.Focus);
+                    _hosePreview = new Hose(); GetParent().AddChild(_hosePreview);   // preview: null endpoints -> FluidNet skips it until committed
+                    GD.Print($"[hose] started from {_hosePort.InfoLine()}");
+                }
+                return;
+            }
+            if (CompletionVerdict(_hoseSrc, _hosePort) == HoseVerdict.Ok)
+            {   // complete on the compatible opposite-role port -- only if the finished hose fits the same node/length budget
+                var cpts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition }; cpts.AddRange(_hoseNodes); cpts.Add(_hosePort.GlobalPosition);
+                if (_hoseNodes.Count <= MaxHoseNodes && PolyLen(cpts) <= MaxHoseLen) CompleteHose(_hosePort);
+                return;
+            }
+            Vector3 lp = HosePlacePoint();   // else drop a routing node at the look point (a Mismatch target still just routes)
+            var pts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition }; pts.AddRange(_hoseNodes); pts.Add(lp);
+            if (_hoseNodes.Count >= MaxHoseNodes || PolyLen(pts) > MaxHoseLen) return;   // hitting the limit blocks placing
+            _hoseNodes.Add(lp);
+        }
+
+        // RMB with the hose tool while routing (mirror of WireRmb): undo the last node, or cancel+delete the hose if none.
+        void HoseRmb()
+        {
+            if (!_hosing) return;
+            if (_dead || _hoseNodes.Count == 0) CancelHose();
+            else _hoseNodes.RemoveAt(_hoseNodes.Count - 1);
+        }
+
+        void CompleteHose(HosePort target)
+        {
+            if (_hosePreview == null || !IsInstanceValid(_hoseSrc)) { CancelHose(); return; }
+            var (srcPort, consPort) = FluidHoseRule.IsSourceSide(_hoseSrc.Kind) ? (_hoseSrc, target) : (target, _hoseSrc);
+            AdoptFluidType(srcPort, consPort);   // an empty tank adopts the fluid flowing in (strawberry) — port EffectiveType handles transformers
+            _hosePreview.Source = srcPort.Node; _hosePreview.Consumer = consPort.Node;
+            // the committed visual path keeps the routed nodes: start port -> each placed node -> end port
+            var pts = new System.Collections.Generic.List<Vector3> { _hoseSrc.GlobalPosition }; pts.AddRange(_hoseNodes); pts.Add(target.GlobalPosition);
+            _hosePreview.SetPoints(pts, valid: true);
+            if (!_hosePreview.IsInGroup("hoses")) _hosePreview.AddToGroup("hoses");
+            if (IsInstanceValid(_hoseSrc)) _hoseSrc.SetHighlight(HosePort.PortHi.None);
+            if (IsInstanceValid(target)) target.SetHighlight(HosePort.PortHi.None);
+            GD.Print($"[hose] connected {srcPort.Owner?.Role} -> {consPort.Owner?.Role} ({_hoseNodes.Count} nodes)");
+            _hosePreview = null; _hosing = false; _hoseSrc = null; _hoseNodes.Clear();
+        }
+
+        void CancelHose()
+        {
+            _hosePreview?.QueueFree(); _hosePreview = null;
+            if (IsInstanceValid(_hoseSrc)) _hoseSrc.SetHighlight(HosePort.PortHi.None);
+            _hosing = false; _hoseSrc = null; _hoseNodes.Clear();
+        }
+
+        // --- Hose disconnect: mirror the wire tool's port-poke management (strawberry: reuse the wire UX, don't hardcode a
+        // parallel one). While the tool is out + NOT routing, look at a hosed port: hold RMB clears the hose (% readout),
+        // tap RMB unplugs it + picks it back up to re-route. RMB while routing stays undo (HoseRmb, event-driven). ---
+
+        // the committed hose an endpoint of which is `p` (null if unhosed) -- mirror of WireOnPort
+        Hose HoseOnPort(HosePort p)
+        {
+            if (p?.Node == null) return null;
+            foreach (var n in GetTree().GetNodesInGroup("hoses"))
+                if (n is Hose h && GodotObject.IsInstanceValid(h) && (h.Source == p.Node || h.Consumer == p.Node)) return h;
+            return null;
+        }
+
+        // the HosePort wrapping a given data node (reverse of HosePort.Node), for re-routing an unplugged hose from its source
+        HosePort HosePortForNode(FluidPortNode node)
+        {
+            if (node == null) return null;
+            foreach (var n in GetTree().GetNodesInGroup("fluid_devices"))
+                if (n is FluidContainer c)
+                    foreach (var hp in c.PortNodes)
+                        if (hp.Node == node) return hp;
+            return null;
+        }
+
+        // RMB PRESS while NOT routing: arm a clear/unplug on the hosed port under the crosshair (mirror WireManageArm).
+        void HoseManageArm()
+        {
+            if (_dead || _driving != null || !HoldingHoseTool || Input.MouseMode != Input.MouseModeEnum.Captured) return;
+            if (HoseOnPort(_hosePort) != null) { _clearHosePort = _hosePort; _hoseClearHold = 0f; }
+        }
+
+        // Per-frame: drive an ARMED RMB hold on a hosed port -- held to HoseClearTime clears the hose; released quickly
+        // (<= HoseClickMax) unplugs it; released mid-hold does nothing. Mirror of UpdateWireManage.
+        void UpdateHoseManage(float delta)
+        {
+            if (_clearHosePort == null) return;
+            bool active = HoldingHoseTool && !_hosing && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
+            Hose h = HoseOnPort(_clearHosePort);
+            if (!active || _hosePort != _clearHosePort || h == null) { _clearHosePort = null; _hoseClearHold = 0f; return; }   // looked away / state changed / hose gone -> abort
+            if (Input.IsMouseButtonPressed(MouseButton.Right))
+            {
+                _hoseClearHold += delta;
+                if (_hoseClearHold >= HoseClearTime)   // held long enough -> clear the whole hose
+                {
+                    h.RemoveFromGroup("hoses"); h.QueueFree();   // drop the group THIS frame so flow + PortHosed update immediately
+                    _clearHosePort = null; _hoseClearHold = 0f; HoseHudSet(null); return;
+                }
+                HoseHudSet($"clearing hose... {Mathf.Clamp((int)(_hoseClearHold / HoseClearTime * 100f), 0, 99)}%");
+            }
+            else { if (_hoseClearHold <= HoseClickMax) UnplugHose(h); _clearHosePort = null; _hoseClearHold = 0f; }   // released quick -> tap-unplug
+        }
+
+        // Unplug a hose: drop its consumer link + leave the "hoses" group, and pick it back up as a routing preview from its
+        // source (all node points kept), so poking either endpoint re-picks it up to re-route. Mirror of UnplugWire.
+        void UnplugHose(Hose hose)
+        {
+            if (hose == null || !IsInstanceValid(hose) || hose.Source == null) { hose?.QueueFree(); return; }
+            var srcPort = HosePortForNode(hose.Source);
+            if (srcPort == null) { hose.RemoveFromGroup("hoses"); hose.QueueFree(); return; }
+            _hoseSrc = srcPort;
+            _hoseNodes.Clear();
+            for (int i = 1; i < hose.Points.Count - 1; i++) _hoseNodes.Add(hose.Points[i]);   // keep the node points; drop source[0] + consumer[last]
+            hose.Consumer = null;
+            hose.RemoveFromGroup("hoses");   // stop conducting immediately
+            _hosePreview = hose; _hosing = true;
+            GD.Print($"[hose] unplugged -> routing from source with {_hoseNodes.Count} kept nodes");
+        }
+
+        // In/out arrows on every fluid port while the hose tool is out (mirror UpdateWireArrows): blue where you can hose,
+        // red where the port is occupied or on a clogged/closed device.
+        void UpdateHoseArrows()
+        {
+            bool show = HoldingHoseTool && !_dead && _driving == null && Input.MouseMode == Input.MouseModeEnum.Captured;
+            if (!show)
+            {
+                if (_hoseArrowsOn) { foreach (var n in GetTree().GetNodesInGroup("fluid_ports")) if (n is HosePort p && IsInstanceValid(p)) { p.Visible = false; p.SetArrowState(false, false); } _hoseArrowsOn = false; }
+                return;
+            }
+            _hoseArrowsOn = true;
+            foreach (var n in GetTree().GetNodesInGroup("fluid_ports"))
+                if (n is HosePort p && IsInstanceValid(p))
+                {   // the fluid IO cubes + arrows only show while the hose tool is out (strawberry) -- the collider stays live so the look-ray still finds them
+                    p.Visible = true;
+                    p.SetArrowState(true, p.Usable && !PortHosed(p));
+                }
+        }
+
+        // an empty (None) tank adopts the fluid at the OTHER end of the hose on connect. Resolves the type THROUGH relay
+        // fittings (ResolveNetType), so a tank fed via a pump/splitter from a fuel source adopts fuel -- not None -- and a
+        // transformer's OutputType still propagates to the tank it feeds. Two set types were already type-locked equal.
+        void AdoptFluidType(HosePort src, HosePort cons)
+        {
+            var srcType = FluidNet.ResolveNetType(GetTree(), src, new System.Collections.Generic.HashSet<FluidContainer>());
+            var consType = FluidNet.ResolveNetType(GetTree(), cons, new System.Collections.Generic.HashSet<FluidContainer>());
+            if (cons.Owner?.Tank != null && cons.Owner.Tank.Type == FluidType.None && srcType != FluidType.None) cons.Owner.Tank.Type = srcType;
+            else if (src.Owner?.Tank != null && src.Owner.Tank.Type == FluidType.None && consType != FluidType.None) src.Owner.Tank.Type = consType;
+        }
+
+        void HoseHudSet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) { if (_hoseHudLabel != null) _hoseHudLabel.Visible = false; return; }
+            if (_hoseHudLabel == null)
+            {
+                _hoseHudLayer = new CanvasLayer { Layer = 40 }; AddChild(_hoseHudLayer);
+                _hoseHudLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+                _hoseHudLabel.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+                _hoseHudLabel.AnchorLeft = 0.5f; _hoseHudLabel.AnchorRight = 0.5f; _hoseHudLabel.OffsetTop = 120f; _hoseHudLabel.OffsetLeft = -300f; _hoseHudLabel.OffsetRight = 300f;
+                _hoseHudLabel.AddThemeFontSizeOverride("font_size", 26);
+                _hoseHudLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 0.9f));
+                _hoseHudLabel.AddThemeConstantOverride("outline_size", 6);
+                _hoseHudLayer.AddChild(_hoseHudLabel);
+            }
+            _hoseHudLabel.Text = text; _hoseHudLabel.Visible = true;
+        }
+
         // Manage a wire by poking its CONNECTION POINT (the wire itself is non-interactive). While the tool is out and
         // NOT routing, look at a wired port: hold RMB -> clear the whole wire (progress readout); tap RMB -> unplug it
         // (pick it back up for re-routing from its source). RMB while routing stays undo (WireRmb, event-driven).
@@ -724,6 +1028,8 @@ namespace UnturnedGodot
             var exclude = new Godot.Collections.Array<Rid> { GetRid() };
             foreach (var n in GetTree().GetNodesInGroup("deployables"))
                 if (n is Deployable dep && GodotObject.IsInstanceValid(dep)) exclude.Add(dep.GetRid());
+            foreach (var n in GetTree().GetNodesInGroup("fluid_devices"))
+                if (n is FluidContainer fc && GodotObject.IsInstanceValid(fc)) exclude.Add(fc.GetRid());   // route through fluid bodies too (solid colliders since batch A)
             _wirePlaceRayQ.Exclude = exclude;
             var hit = space.IntersectRay(_wirePlaceRayQ);
             return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * WirePlaceReach;
@@ -798,6 +1104,65 @@ namespace UnturnedGodot
                 else { _invUI?.Refresh(); if (handsFree) EquipItemAsset(item.GetAsset(), item); }   // hands free -> hold it (a deployable re-enters placement mode)
             }
             GD.Print($"[deploy] picked up #{id} ({name})");
+        }
+
+        // Hold F over a placed fluid device to pick it back up into the bag (mirror of UpdateDeployPickup): its hoses (and a
+        // pump's power wire) disconnect. No tap-toggle -- a fluid device has no power state to flip.
+        void UpdateFluidPickup(float delta)
+        {
+            if (_fHeldFluid == null) { FluidPickupHudSet(null); return; }
+            bool fHeld = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsPhysicalKeyPressed(Key.F);
+            if (!fHeld || !IsInstanceValid(_fHeldFluid) || _fHeldFluid != _focusFluid || _dead || _driving != null)
+            {   // released, looked away, or can't pick up -> cancel the hold
+                _fHeldFluid = null; _fluidPickupTimer = 0f; FluidPickupHudSet(null);
+                return;
+            }
+            _fluidPickupTimer += delta;
+            float frac = Mathf.Clamp(_fluidPickupTimer / DeployPickupTime, 0f, 1f);
+            if (frac >= PickupBarDeadzone) FluidPickupHudSet($"picking up {_fHeldFluid.RoleLabel()}... {Mathf.Clamp((int)(frac * 100f), 0, 99)}%");   // deadzone: no readout for a quick tap
+            if (_fluidPickupTimer >= DeployPickupTime)
+            {
+                var c = _fHeldFluid; _fHeldFluid = null; _fluidPickupTimer = 0f; FluidPickupHudSet(null);
+                PickupFluid(c);
+            }
+        }
+
+        // Return a live placed fluid device to the bag: free its hoses/power wire + despawn, grant the item back (dropped at
+        // its feet if the bag is full). SP-local for now (fluid MP replication is a fast-follow, like placement).
+        void PickupFluid(FluidContainer c)
+        {
+            if (c == null || !IsInstanceValid(c)) return;
+            ushort id = c.Def?.Id ?? 0;
+            string name = c.Def?.Name;
+            Vector3 pos = c.GlobalPosition;
+            var item = id != 0 ? SDG.Unturned.Assets.makeLoot(id) : null;
+            c.Pickup();   // frees its hoses + (a pump) its power wire, then despawns
+            if (item != null)
+            {
+                bool handsFree = Unarmed;
+                if (!(Inventory?.tryAddItem(item) ?? false)) DropWorldItem(item, pos + Vector3.Up * 1f);   // bag full -> drop where it stood
+                else { _invUI?.Refresh(); if (handsFree) EquipItemAsset(item.GetAsset(), item); }   // hands free -> hold it (re-enters placement mode)
+            }
+            GD.Print($"[fluid] picked up #{id} ({name})");
+        }
+
+        // A center-screen pickup readout (fluid devices have no per-device progress billboard like a generator's).
+        CanvasLayer _fluidPickupLayer; Label _fluidPickupLabel;
+        void FluidPickupHudSet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) { if (_fluidPickupLabel != null) _fluidPickupLabel.Visible = false; return; }
+            if (_fluidPickupLabel == null)
+            {
+                _fluidPickupLayer = new CanvasLayer { Layer = 40 }; AddChild(_fluidPickupLayer);
+                _fluidPickupLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+                _fluidPickupLabel.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+                _fluidPickupLabel.AnchorLeft = 0.5f; _fluidPickupLabel.AnchorRight = 0.5f; _fluidPickupLabel.OffsetTop = 150f; _fluidPickupLabel.OffsetLeft = -300f; _fluidPickupLabel.OffsetRight = 300f;
+                _fluidPickupLabel.AddThemeFontSizeOverride("font_size", 26);
+                _fluidPickupLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 0.9f));
+                _fluidPickupLabel.AddThemeConstantOverride("outline_size", 6);
+                _fluidPickupLayer.AddChild(_fluidPickupLabel);
+            }
+            _fluidPickupLabel.Text = text; _fluidPickupLabel.Visible = true;
         }
 
         // Wreck salvage (master): a focused wreck shows a state prompt -- red "Too hot" while burning, red "Requires blowtorch"
@@ -902,7 +1267,7 @@ namespace UnturnedGodot
         // weapon-specific. Holsters any gun viewmodel (the in-hand melee VIEWMODEL is the next melee-system increment).
         public void EquipHeldMelee(string meleeName)
         {
-            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
+            SaveGunState(); _heldItem = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; ClearDeployable();   // stash the outgoing gun's state; equipping a melee REPLACES any held consumable (not a layer)
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;   // swapping off a gun mid-reload aborts it (master)
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             string p = ProjectSettings.GlobalizePath($"res://content/{meleeName}.dat");
@@ -924,7 +1289,7 @@ namespace UnturnedGodot
         public void EquipUnarmed()
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _torchAnimOn = false; _pendingMeleeHit = -1f;
@@ -961,6 +1326,7 @@ namespace UnturnedGodot
             if (asset == null) return false;
             if (asset.gunName != null) { EquipHeldGun(asset.gunName, backing); return true; }
             if (asset.meleeName != null) { EquipHeldMelee(asset.meleeName); return true; }
+            if (asset.IsFluidContainer) { EquipHeldFluidContainer(asset, backing); return true; }   // a water bottle / soda / cola / canteen: held as a CONTAINER (RMB a tank to fill, LMB sip) -- BEFORE the consumable path so it isn't drunk whole
             if (asset.IsConsumable) { EquipHeldConsumable(asset, asset.itemName?.ToLowerInvariant().Replace(" ", "_")); return true; }   // EquipHeldConsumable snapshots the revert target itself
             var deploy = DeployableDef.ById(asset.id);
             if (deploy != null) { EquipHeldDeployable(deploy, backing); return true; }   // generator/spotlight -> hold + placement ghost, LMB plants + consumes one from the bag
@@ -976,7 +1342,7 @@ namespace UnturnedGodot
         public void EquipHeldFuelCan(ItemAsset asset, SDG.Unturned.Item backing)
         {
             SaveGunState(); ClearDeployable();
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFluidItem = null;
             _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
             _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
             _heldFuelItem = backing;
@@ -984,7 +1350,7 @@ namespace UnturnedGodot
             _viewmodel = new Viewmodel { DeployableMesh = "gascan.txt", DeployableAlbedo = "gascan_albedo.png", NaturalHold = true };   // the ripped 1P gas-can model held with BOTH HANDS (NaturalHold -> plays the can's own two-handed Fuel_Equip carry anim, source animations.prefab); HoldingDeployable stays false (no _deployable) so RMB still extracts
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
-            GD.Print($"[fuel] holding {asset?.itemName} -- {(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f):0}/{asset?.fuelCapacity:0} fuel (RMB a powered pump to fill)");
+            GD.Print($"[fuel] holding {asset?.itemName} -- {FluidDef.Litres(backing != null ? Mathf.Max(0f, backing.fuelLevel) : 0f)}/{FluidDef.Litres(asset?.fuelCapacity ?? 0f)} (RMB a powered pump to fill)");
         }
 
         // RMB with a gas can in hand + looking at a POWERED pump: fill the can as much as possible = min(its free space,
@@ -1014,14 +1380,14 @@ namespace UnturnedGodot
                 if (_focusGasPump.NetId != 0) { NetExtractFuel?.Invoke(_focusGasPump.NetId); return; }
                 if (!_focusGasPump.IsPowered) { GD.Print("[fuel] that pump has no power"); return; }
                 float pulled = _focusGasPump.Extract(space);   // drains the pump's shared station tank, capped at what's left
-                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GD.Print($"[fuel] +{pulled:0} from pump -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}"); }
+                if (pulled > 0f) { _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh(); GD.Print($"[fuel] +{FluidDef.Litres(pulled)} from pump -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}"); }
             }
             else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)   // siphon fuel out of a car
             {
                 float pulled = Mathf.Min(space, _focusVehicle.Fuel);
                 if (pulled <= 0.01f) { GD.Print("[fuel] that vehicle is empty"); return; }
                 _focusVehicle.Fuel -= pulled; _heldFuelItem.fuelLevel = canFuel + pulled; _invUI?.Refresh();
-                GD.Print($"[fuel] siphoned {pulled:0} from {_focusVehicle.DisplayName} -> can {_heldFuelItem.fuelLevel:0}/{asset.fuelCapacity:0}");
+                GD.Print($"[fuel] siphoned {FluidDef.Litres(pulled)} from {_focusVehicle.DisplayName} -> can {FluidDef.Litres(_heldFuelItem.fuelLevel)}/{FluidDef.Litres(asset.fuelCapacity)}");
             }
         }
 
@@ -1044,7 +1410,7 @@ namespace UnturnedGodot
                 float poured = Mathf.Min(canFuel, space);
                 _focusDeployable.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
                 PowerNet.MarkDirty();   // a dry gen just got fuel back -> re-evaluate the net (still needs a manual restart)
-                GD.Print($"[fuel] poured {poured:0} -> {_focusDeployable.Def?.Name} {_focusDeployable.Fuel:0}/{_focusDeployable.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+                GD.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusDeployable.Def?.Name} {FluidDef.Litres(_focusDeployable.Fuel)}/{FluidDef.Litres(_focusDeployable.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
             else if (IsInstanceValid(_focusVehicle) && _focusVehicle.FuelMax > 0f)
             {
@@ -1052,8 +1418,103 @@ namespace UnturnedGodot
                 if (space <= 0.01f) { GD.Print("[fuel] that tank is full"); return; }
                 float poured = Mathf.Min(canFuel, space);
                 _focusVehicle.Fuel += poured; _heldFuelItem.fuelLevel = canFuel - poured; _invUI?.Refresh();
-                GD.Print($"[fuel] poured {poured:0} -> {_focusVehicle.DisplayName} {_focusVehicle.Fuel:0}/{_focusVehicle.FuelMax:0}; can {_heldFuelItem.fuelLevel:0} left");
+                GD.Print($"[fuel] poured {FluidDef.Litres(poured)} -> {_focusVehicle.DisplayName} {FluidDef.Litres(_focusVehicle.Fuel)}/{FluidDef.Litres(_focusVehicle.FuelMax)}; can {FluidDef.Litres(_heldFuelItem.fuelLevel)} left");
             }
+        }
+
+        // Equip a fluid CONTAINER (water bottle / soda / cola / canteen) into the hand (strawberry 2026-07-23): RMB a
+        // placed tank to fill it, LMB (aimed away from a tank) to sip clean water for hydration. Held with its real bottle
+        // viewmodel (all four have ripped meshes). Replaces any gun/melee/consumable/fuel-can/deployable in hand.
+        public void EquipHeldFluidContainer(ItemAsset asset, SDG.Unturned.Item backing)
+        {
+            SaveGunState(); ClearDeployable();
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldConsumableMesh = null; _heldFuelItem = null;
+            _reloading = false; _reloadTimer = 0; _hammerActive = false; _hammerPending = false;
+            _needsRechamber = false; _rechambering = false; _shotCountForRechamber = 0;
+            _heldFluidItem = backing;
+            string mesh = FluidItem.HeldMesh(asset);   // most match the item name; the OJ/milk cartons map to box_orange/box_milk
+            var an = ConsumableRegistry.Anims(mesh);   // reuse the drink archetype's equip/use clips so the bottle equips + a sip animates naturally
+            _viewmodel?.QueueFree();
+            _viewmodel = new Viewmodel { ConsumableMesh = $"{mesh}.txt", ConsumableAlbedo = $"{mesh}_albedo.png", ConsumableEquipClip = an.Equip, ConsumableUseClip = an.Use, ConsumableColor = ConsumableRegistry.FlatColor(mesh) };
+            AddChild(_viewmodel);
+            RelinkViewmodelLighting();
+            GD.Print($"[fluid] holding {FluidItem.Label(backing, asset)}  ([LMB] sip · aim a tank + [RMB] to fill)");
+        }
+
+        // Test seams (headless L1): the fill/sip TRANSFER logic itself is pure (FluidItem.Fill/Sip on Item + FluidTank) and
+        // is exercised directly by the fluid self-tests; these let a test drive the controller's focus + hand state if needed.
+        internal void SetHeldFluidContainerForTest(SDG.Unturned.Item backing) => _heldFluidItem = backing;
+        internal void SetFocusFluidForTest(FluidContainer c) => _focusFluid = c;
+
+        // RMB with a fluid container in hand + aimed at a placed tank/source: pull as much as fits into the container
+        // (type-locked, worst-quality-wins). One click, mirrors the gas-can fill.
+        void TryFillContainer()
+        {
+            if (_heldFluidItem == null) return;
+            var asset = _heldFluidItem.GetAsset();
+            if (asset == null || !asset.IsFluidContainer) return;
+            if (_focusFluid == null || !IsInstanceValid(_focusFluid) || _focusFluid.Tank == null) { FluidToast("aim at a tank to fill"); return; }
+            float moved = FluidItem.Fill(_heldFluidItem, asset, _focusFluid.Tank, out string msg);
+            if (moved <= 0f) { FluidToast(msg); return; }
+            _invUI?.Refresh();
+            FluidItem.Read(_heldFluidItem, asset, out var t, out var amt, out var q);
+            FluidToast($"filled {FluidDef.Litres(moved)} {FluidDef.WaterName(t, q)}");
+            GD.Print($"[fluid] filled {asset.itemName} +{FluidDef.Litres(moved)} -> {FluidDef.Litres(amt)} {FluidDef.WaterName(t, q)}");
+        }
+
+        // LMB with a fluid container in hand + NOT aimed at a tank: take a 50 mL sip. Only clean water / soda / cola are
+        // drinkable (tainted/dirty water is refused); a sip restores hydration + plays the drink anim.
+        void TryDrinkContainer()
+        {
+            if (_heldFluidItem == null) return;
+            var asset = _heldFluidItem.GetAsset();
+            if (asset == null || !asset.IsFluidContainer) return;
+            if (_focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null) { FluidToast("aim away from the tank to drink  ([RMB] fills)"); return; }   // spec: drink while NOT looking at a container
+            if (Water >= 0.999f) { FluidToast("not thirsty"); return; }   // don't waste a sip when already fully hydrated (strawberry polish)
+            float sip = FluidItem.Sip(_heldFluidItem, asset, out float hydration, out string msg);
+            if (sip <= 0f) { FluidToast(msg); return; }
+            Water = Mathf.Min(1f, Water + hydration);
+            _invUI?.Refresh();
+            _viewmodel?.PlayConsumeUse();   // sip animation (reuses the drink archetype's Use clip)
+            FluidToast($"sipped {sip:0} mL  (+{hydration * 100f:0}% water)");
+            GD.Print($"[fluid] sip {sip:0} mL from {asset.itemName} -> water {Water:0.00}");
+        }
+
+        // The held-container HUD: a persistent centered line while a fluid container is in hand (its contents + a hint),
+        // briefly overridden by an action toast (filled / sipped / a refusal reason). Ticked each frame after UpdateFluidPickup.
+        float _fluidToastTimer; string _fluidToast;
+        void FluidToast(string msg) { _fluidToast = msg; _fluidToastTimer = 2.2f; }
+        void UpdateFluidContainerHud(float delta)
+        {
+            if (_heldFluidItem == null || _heldFluidItem.GetAsset() is not ItemAsset a || !a.IsFluidContainer)
+            {
+                FluidContainerHudSet(null); _fluidToastTimer = 0f; return;
+            }
+            string text;
+            if (_fluidToastTimer > 0f) { _fluidToastTimer -= delta; text = _fluidToast; }
+            else
+            {
+                bool atTank = _focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null;
+                text = FluidItem.Label(_heldFluidItem, a) + (atTank ? "     [RMB] fill from tank" : "     [LMB] sip");
+            }
+            FluidContainerHudSet(text);
+        }
+        CanvasLayer _fluidContainerLayer; Label _fluidContainerLabel;
+        void FluidContainerHudSet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) { if (_fluidContainerLabel != null) _fluidContainerLabel.Visible = false; return; }
+            if (_fluidContainerLabel == null)
+            {
+                _fluidContainerLayer = new CanvasLayer { Layer = 40 }; AddChild(_fluidContainerLayer);
+                _fluidContainerLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center };
+                _fluidContainerLabel.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+                _fluidContainerLabel.AnchorLeft = 0.5f; _fluidContainerLabel.AnchorRight = 0.5f; _fluidContainerLabel.OffsetTop = 185f; _fluidContainerLabel.OffsetLeft = -360f; _fluidContainerLabel.OffsetRight = 360f;
+                _fluidContainerLabel.AddThemeFontSizeOverride("font_size", 24);
+                _fluidContainerLabel.AddThemeColorOverride("font_outline_color", new Color(0, 0, 0, 0.9f));
+                _fluidContainerLabel.AddThemeConstantOverride("outline_size", 6);
+                _fluidContainerLayer.AddChild(_fluidContainerLabel);
+            }
+            _fluidContainerLabel.Text = text; _fluidContainerLabel.Visible = true;
         }
 
         // A closure that re-equips whatever is held RIGHT NOW (used to revert after a consumable stack empties);
@@ -1071,7 +1532,7 @@ namespace UnturnedGodot
         }
 
         // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
-        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && _heldFuelItem == null && (_melee == null || _melee.Name == "fists");
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && !HoldingHoseTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
 
         // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
         public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
@@ -1082,9 +1543,11 @@ namespace UnturnedGodot
             if (_melee != null && _melee.Name != "fists") return asset.meleeName != null && asset.meleeName == _heldMeleeName;
             if (_heldConsumable != null) return _heldConsumable.id == asset.id;
             if (_heldFuelItem != null) return item != null ? ReferenceEquals(_heldFuelItem, item) : asset.IsFuelContainer;   // a held gas can -> dropping it goes unarmed (master)
+            if (_heldFluidItem != null) return item != null ? ReferenceEquals(_heldFluidItem, item) : asset.IsFluidContainer;   // a held fluid container (bottle/canteen)
             if (_deployable != null) return _deployable.Id == asset.id;
             if (HoldingWireTool) return asset.id == 65;
             if (HoldingRopeTool) return asset.id == 64;
+            if (HoldingHoseTool) return asset.id == 9118;
             return false;
         }
 
@@ -1099,6 +1562,7 @@ namespace UnturnedGodot
         // --- Deployables held in hand (generator / spotlight): equip -> aim shows a placement ghost -> LMB plants it. ---
         public bool HoldingWireTool => _viewmodel != null && _viewmodel.IsWireViewmodel;   // Wire tool (item 65) in hand -> wiring mode (LMB/RMB build/cancel wires); derived from the viewmodel so no state to clear
         public bool HoldingRopeTool => _viewmodel != null && _viewmodel.IsRopeViewmodel;   // Rope tool (item 64) in hand -> tow mode (LMB tie rear->front, RMB cancel/untie); derived from the viewmodel
+        public bool HoldingHoseTool => _viewmodel != null && _viewmodel.IsHoseViewmodel;   // Hose tool (item 66) in hand -> fluid-hose mode (LMB source->consumer, RMB cancel); derived from the viewmodel
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
         DeployablePlacer _placer;       // the world-space ghost preview
@@ -1151,7 +1615,7 @@ namespace UnturnedGodot
                 ushort id = _heldConsumable.id;
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
-                _heldConsumable = null; _heldFuelItem = null;             // one use per item: this one leaves the hand + is deleted (master)
+                _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null;             // one use per item: this one leaves the hand + is deleted (master)
                 int left;
                 if (NetConsume != null)
                 {
@@ -1201,7 +1665,7 @@ namespace UnturnedGodot
             if (def == null) return;
             SaveGunState();
             if (_deployable == null) _revertEquip = CaptureHeldForRevert();   // fresh switch INTO a deployable -> remember what to fall back to when the last one is placed
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false;
             _deployable = def; _deployItem = backing; _placeTimer = 0f;
             _viewmodel?.QueueFree();
@@ -1226,12 +1690,12 @@ namespace UnturnedGodot
         public void EquipTool(ToolDef def, SDG.Unturned.Item backing = null)
         {
             SaveGunState();
-            bool alreadyThisKind = def.IsRope ? HoldingRopeTool : HoldingWireTool;
+            bool alreadyThisKind = def.IsRope ? HoldingRopeTool : (def.IsHose ? HoldingHoseTool : HoldingWireTool);
             if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
-            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldConsumableMesh = null;
+            _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope };
+            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             GD.Print($"[tool] holding the {def.Name}");
@@ -1243,6 +1707,11 @@ namespace UnturnedGodot
         // this car's REAR node to another car's FRONT node like a wire; RMB cancels/unties). Reuses the wire hold mesh
         // tinted hemp-brown. SP/integrated-server only (the pull force needs both vehicle bodies in one physics space).
         public void EquipRopeTool(SDG.Unturned.Item backing = null) => EquipTool(ToolDef.Rope, backing);
+
+        // Equip the Hose tool (item 66): the fluid hose. Held in hand -> HoldingHoseTool drives hose mode (LMB starts at a
+        // source/consumer HosePort, LMB completes on a compatible opposite-role port -> a Hose; RMB cancels a pending route).
+        // Type-lock ("cannot mix fluids") is enforced at completion; gravity gates whether the finished hose actually flows.
+        public void EquipHoseTool(SDG.Unturned.Item backing = null) => EquipTool(ToolDef.Hose, backing);
 
         // Put the held deployable away (called whenever another item is equipped).
         void ClearDeployable()
@@ -1275,6 +1744,31 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
+                    if (_deployable.Fluid != null)   // FLUID device: spawn a FluidContainer LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
+                    {
+                        FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        PlayPlaceSound(_deployable.PlaceSound, _placePoint);
+                        GD.Print($"[fluid] placed {_deployable.Name} at {_placePoint}");
+                        if (_deployItem != null && Inventory != null)
+                        {
+                            ushort id = _deployItem.id;
+                            if (NetPlaceDeployable != null)
+                            {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
+                                // then ServerPlace no-ops the fluid id (filtered from the schema) so NO phantom replica spawns.
+                                // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
+                                // item (the "fluid dupes: gone on place, back on any inv move" bug -- strawberry). Predict the echo.
+                                NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
+                                if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
+                            }
+                            else
+                            {
+                                Inventory.removeItemAmount(id, 1);   // pure SP (no seam): consume locally
+                                if (Inventory.getItemCount(id) <= 0) { (_revertEquip ?? EquipUnarmed)(); return; }
+                            }
+                        }
+                        _viewmodel?.PlayDeployHold();
+                        return;
+                    }
                     if (NetPlaceDeployable != null)
                     {
                         // MP: the placement is a REQUEST -- the server validates spot + supplies, spends
@@ -2534,7 +3028,7 @@ namespace UnturnedGodot
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
-            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
+            _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
             AddChild(_viewmodel);
@@ -2662,10 +3156,12 @@ namespace UnturnedGodot
                 if (_driving != null) _driving.Honk();                 // LMB while driving: horn
                 else if (_riding != null) { }                          // riding a replicated vehicle: no net horn in v1
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
+                else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
                 else if (HoldingRopeTool) RopeLmb();                    // rope tool: pick a rear tow node / complete on a front tow node
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
+                else if (_heldFluidItem != null) TryDrinkContainer();   // holding a fluid container: LMB (aimed away from a tank) sips clean water for hydration (strawberry)
                 else if (_heldFuelItem != null) TryDepositFuel();       // holding a gas can: LMB POURS fuel into the generator/vehicle you're aimed at (master)
                 else if (IsRepeatedMelee) { }                          // Repeated tool (blowtorch/chainsaw): LMB is a continuous HOLD driven by the use-tick (UpdateSalvage), never a swing/punch (source UseableMelee.startPrimary: isRepeated -> startSwing)
                 else if (_melee != null) MeleeAttack(false);            // LMB with a normal melee = WEAK swing (source UseableMelee)
@@ -2676,8 +3172,10 @@ namespace UnturnedGodot
                 if (_driving != null) { if (rmb.Pressed) _driving.ToggleHeadlights(); }   // RMB while driving: toggle lights
                 else if (_riding != null) { }                                             // riding: no net light toggle in v1
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
+                else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
                 else if (HoldingRopeTool) { if (rmb.Pressed) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
+                else if (_heldFluidItem != null) { if (rmb.Pressed) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
                 else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)
                 else if (_melee != null) { if (rmb.Pressed && !IsRepeatedMelee) MeleeAttack(true); }   // RMB = STRONG swing on a normal melee; a Repeated tool (blowtorch/chainsaw) has NO strong attack (source startSecondary: if(!isRepeated)) and no ADS
                 else _viewmodel?.SetAiming(rmb.Pressed);   // hold RMB to ADS -- GUNS only (a melee weapon has no sights)
@@ -2718,6 +3216,7 @@ namespace UnturnedGodot
                     // a generator's power (fired on release). Consume F so it doesn't fall through to open a nearby crate.
                     _fHeldDeploy = _focusDeployable; _deployPickupTimer = 0f;
                 }
+                else if (_focusFluid != null && IsInstanceValid(_focusFluid)) { _fHeldFluid = _focusFluid; _fluidPickupTimer = 0f; }   // hold F on a placed fluid device -> pick it up (UpdateFluidPickup)
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (_focusShelf != null && IsInstanceValid(_focusShelf) && OpenCrate(_focusShelf)) { }   // looking at a shelf/container -> open it (look-based, not proximity)
@@ -2733,6 +3232,14 @@ namespace UnturnedGodot
                 }
                 if (IsInstanceValid(_fHeldDeploy)) _fHeldDeploy.PickupProgress = 0f;
                 _fHeldDeploy = null; _deployPickupTimer = 0f;
+            }
+            else if (@event is InputEventKey { Pressed: false, Keycode: Key.F } && _fHeldFluid != null)
+            {   // released F over a fluid device: a quick TAP on a VALVE opens/closes it (a long hold already picked it up in
+                // UpdateFluidPickup) -- mirrors the generator tap-toggle, so a valve is toggled the SAME way as a power switch
+                // (strawberry: "valve cannot be interacted with?" -- the hose-tool-port RMB still works too).
+                if (IsInstanceValid(_fHeldFluid) && _fluidPickupTimer < DeployPickupTime && _fHeldFluid.Role == FluidRole.Valve)
+                    _fHeldFluid.ToggleValve();
+                _fHeldFluid = null; _fluidPickupTimer = 0f;
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
@@ -3398,13 +3905,18 @@ namespace UnturnedGodot
             OutlineOverlay.DrivingSuppress = _driving != null || _riding != null;   // in a vehicle: nothing focusable -> kill the outline overlay's per-frame 2nd cull + dilate (the 3p-cam POI fps drop, strawberry)
             { ulong _t = Time.GetTicksUsec(); UpdateLookFocus(); Prof.Add("lookat", _t); }   // eye-ray -> focus the item you're aiming at
             UpdateWireLook();                                                                 // wire tool: look at a connection cube -> highlight + info readout
+            UpdateHoseLook();                                                                 // hose tool: look at a fluid port -> highlight + info + drive the route preview
             UpdateRopeLook();                                                                 // rope tool: look at a vehicle tow node -> highlight + drive the tie preview
             UpdateRopeManage((float)delta);                                                   // rope tool: poke a roped node -> hold RMB clear / tap RMB disconnect (mirrors the wire tool)
             UpdateWireManage((float)delta);                                                   // wire tool: poke a wired port -> hold RMB clear / tap RMB unplug
+            UpdateHoseManage((float)delta);                                                   // hose tool: poke a hosed port -> hold RMB clear / tap RMB unplug (mirror)
             UpdateWireArrows();                                                               // wire tool: show in/out arrows on every connection point (blue avail / red occupied)
+            UpdateHoseArrows();                                                               // hose tool: show in/out arrows on every fluid port (mirror)
             if (_showLookHulls) UpdateLookHullViz();                                          // I-toggle: rebuild the look-hull wireframes
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
+            UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
+            UpdateFluidContainerHud((float)delta);   // held fluid container: show its contents + [LMB] sip / [RMB] fill hint (strawberry)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.
             if (_recoilPending != 0f || _recoilYawPending != 0f)

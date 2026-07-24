@@ -29,12 +29,27 @@ namespace UnturnedGodot
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
         public FixtureKind Fixture = FixtureKind.None;   // A3/A2: a server-placed WORLD fixture (GridSource mains / GasPump) vs a normal player-placeable deployable. Bridged to DeployableNetDef.FixtureKind in DeployableNetSchema.
+
+        // FLUID device marker (strawberry 2026-07-22): a non-null Fluid means this "deployable" places a FluidContainer
+        // (the fluid IO system), NOT a power Deployable. The placement ghost still uses Size/Offset/Radius/Range; the real
+        // fluid mesh + HosePorts are built by FluidContainer on spawn (see FluidDeploy.SpawnFor). Rides catboy's item/
+        // placement rail with EXPLICIT ById cases (item ids 9110+, below the asset-factory's 60000+ block).
+        public FluidRole? Fluid = null;
+        public FluidType FluidType = FluidType.None, FluidOut = FluidType.None;   // source/transformer input + transformer output fluid
+        public int FluidWays = 2;                    // splitter outputs / combiner inputs
+        public float FluidCapacity = 20000f, FluidRate = 125f;   // tank capacity (mL) + base flow/intake (mL/s, garden-hose gravity)
+        public bool FluidInfinite, FluidNoHead;      // submersible INLET: an infinite source with no head pressure (pump-only draw)
+        public WaterQuality FluidQuality = WaterQuality.Clean;   // water this source spawns with (natural = tainted; a filled reservoir = tainted; bottled = clean)
+        public bool FluidDirties;                    // a transformer that DIRTIES water (the sluice) -> its output resolves to dirty
+        public bool FluidPurifies;                   // a POWERED transformer that CLEANS water (the purifier) -> FluidDeploy spawns a FluidPurifier (needs power to run)
+        public float WaterDepthMin = -1f, WaterDepthMax = -1f;   // placement must be SUBMERGED in this water-depth band (-1 = no water requirement)
+        public const float SeaLevel = 25.6f;         // PEI water plane world-Y (Lighting.dat seaLevel 0.1 x 256; = Deployable.WindSeaLevel)
         // barricades are authored lying flat -> a +90 X stands them up. (The src uses -90 in Unity's left-handed
         // space; our rip negates Z into Godot's right-handed space, which flips the sense to +90.)
         public static float StandRotX = float.TryParse(System.Environment.GetEnvironmentVariable("UG_DEPLOYROT"), out var r) ? r : 90f;
         // generator fuel drained per SECOND at FULL load while running (master: realistic, not PZ's "days on 20L"). Scaled
-        // by load (idle ~20%). 60-unit tank: ~25min real at full load, ~2h idle. Tunable via UG_GENBURN.
-        public static float GenFuelBurnPerSec = float.TryParse(System.Environment.GetEnvironmentVariable("UG_GENBURN"), out var gb) ? gb : 0.04f;
+        // by load (idle ~20%). 150 L tank: ~25min real at full load, ~2h idle. Tunable via UG_GENBURN. (metric 1u=1mL: was 0.04 units/s x2500)
+        public static float GenFuelBurnPerSec = float.TryParse(System.Environment.GetEnvironmentVariable("UG_GENBURN"), out var gb) ? gb : 100f;
 
         // --- power connection points (nodes). A wire runs OUTPUT -> ... -> CONSUMER; a CONSUMER may also have a
         //     PASSTHROUGH that re-exports (input - usage). Pos is in the flat authored mesh frame (stands up with the model). ---
@@ -55,7 +70,7 @@ namespace UnturnedGodot
         {
             Id = 458, Name = "Generator", Model = "Generator_0",
             HoldMesh = "generator_hold.obj", HoldAlbedo = "generator_hold_tex.png", PlaceSound = "metalplacement",   // src Generator_Small.dat PlacementAudioClip Sounds/MetalPlacement.mp3
-            Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 60f,   // PZ-scale fuel (master): ~7 portable cans; burned by LOAD while running (GenFuelBurnPerSec). src Capacity was 2000
+            Size = new Vector3(2f, 2f, 0.5f), Offset = 0.75f, Radius = 0.5f, Range = 4f, Health = 450f, Fuel = 150_000f,   // 150 L tank (metric 1u=1mL): ~7 jerrycans; burned by LOAD while running (GenFuelBurnPerSec). was PZ 60 units x2500
             Ports = new[] {
                 new Port { Kind = PortKind.Output, Pos = new Vector3(0.4f, 0.6f, 0.05f), Watts = 4000f },   // output on the gray-face mid-right (flat frame; tuned visually)
                 new Port { Kind = PortKind.Consumer, Role = SwitchRole.TurnOn, Pos = new Vector3(-0.5f, 0.4f, -0.2f), Watts = 0f },   // remote START (green): a >=1w sense (0w draw) spins the engine UP. UG_GTON tunes.
@@ -192,9 +207,36 @@ namespace UnturnedGodot
             Ports = new[] { new Port { Kind = PortKind.Output, Pos = new Vector3(0.16f, 0.12f, 0f), Watts = 2500f } },   // rated 2.5kW at full wind; the output CAP ramps 0..2x with wind x height (PowerScale)
         };
 
+        // --- FLUID devices (strawberry 2026-07-22): placeable items that spawn FluidContainers, not power Deployables
+        //     (Fluid marker set). The ghost is a gray box of Size; the real fluid mesh + HosePorts build on spawn. ---
+        static DeployableDef MakeFluid(ushort id, string name, FluidRole role, System.Action<DeployableDef> tweak = null)
+        {
+            var d = new DeployableDef
+            {
+                Id = id, Name = name, ProcBox = true, PlaceSound = "metalplacement", Fluid = role,
+                Size = new Vector3(1f, 1.4f, 1f), Offset = 0.7f, Radius = 0.5f, Range = 4.5f, Health = 200f, Fuel = 0f,
+            };
+            tweak?.Invoke(d);
+            return d;
+        }
+        public static readonly DeployableDef FluidTank    = MakeFluid(9110, "Fluid Tank",    FluidRole.Storage);   // empty; adopts what's piped in
+        public static readonly DeployableDef WaterSource  = MakeFluid(9111, "Fluid Water Source",  FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidCapacity = 200000f; d.FluidQuality = WaterQuality.Tainted; });   // a filled water reservoir (200 L) -- bulk natural water = TAINTED (purify or bottle for clean)
+        public static readonly DeployableDef FluidSplitter = MakeFluid(9112, "Fluid Splitter", FluidRole.Splitter);
+        public static readonly DeployableDef FluidCombiner = MakeFluid(9113, "Fluid Combiner", FluidRole.Combiner);
+        public static readonly DeployableDef FluidPumpDef  = MakeFluid(9114, "Fluid Pump",     FluidRole.Pump);      // draws power; head lift
+        public static readonly DeployableDef FluidValve    = MakeFluid(9115, "Fluid Valve",    FluidRole.Valve);
+        public static readonly DeployableDef Refinery      = MakeFluid(9116, "Fluid Refinery",       FluidRole.Transformer, d => { d.FluidType = FluidType.Oil;   d.FluidOut = FluidType.Gas; });        // oil -> gas
+        public static readonly DeployableDef Sluice        = MakeFluid(9117, "Fluid Sluice",         FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidDirties = true; });   // runs water through -> DIRTY-flagged water (not its own type anymore)
+        public static readonly DeployableDef Purifier      = MakeFluid(9121, "Fluid Purifier",       FluidRole.Transformer, d => { d.FluidType = FluidType.Water; d.FluidOut = FluidType.Water; d.FluidPurifies = true; });   // tainted/dirty water + POWER -> clean water (dead without power)
+        // Submersible INLET (9119): infinite Water source with NO head -> must be PUMPED. Placeable ONLY submerged in a
+        // 0.6-5 m water-depth band. OUTLET (9120): a drain (Consumer) that deletes whatever's piped in; placeable anywhere.
+        public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // river/ocean water = TAINTED
+        public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Fluid Drain",      FluidRole.Consumer);
+
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump };
+        public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -206,6 +248,17 @@ namespace UnturnedGodot
             9105 => Switch,
             1450 => Battery,
             9106 => WindTurbine,
+            9110 => FluidTank,
+            9111 => WaterSource,
+            9112 => FluidSplitter,
+            9113 => FluidCombiner,
+            9114 => FluidPumpDef,
+            9115 => FluidValve,
+            9116 => Refinery,
+            9117 => Sluice,
+            9119 => WaterInlet,
+            9120 => WaterOutlet,
+            9121 => Purifier,
             9200 => GridSource,
             9201 => GasPump,
             _ => null,

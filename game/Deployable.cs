@@ -231,6 +231,8 @@ namespace UnturnedGodot
             d._info = new InfoBillboard { TopLevel = true };
             d.AddChild(d._info);
             parent.AddChild(d);
+            if (def.Fuel > 0f && !def.IsBattery)   // a fuel generator gets a fluid FUEL hose input -> plumb a fuel line to it instead of hand-carrying cans (strawberry)
+                d.AddChild(FluidFuelInlet.Make(d));
             foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
             if (d.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole power net
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
@@ -494,6 +496,7 @@ namespace UnturnedGodot
                 if (_bladeHub != null && IsInstanceValid(_bladeHub)) _bladeHub.RotateZ((float)delta * (0.25f + 5.5f * _windFactor));   // spin ~ wind (+ a slow idle turn)
                 if (Mathf.Abs(_windFactor - _lastWindDirty) > 0.04f) { _lastWindDirty = _windFactor; PowerNet.MarkDirty(); }   // wind moved enough -> re-solve the net
             }
+            float prevLevel = _powerLevel;
             if (InstantRampForTests) _powerLevel = pTarget;   // L1: no ramp -> instant settle for power-flow tests
             else if (_powerLevel < pTarget) _powerLevel = Mathf.Min(pTarget, _powerLevel + (float)delta / WarmupTime);
             else if (_powerLevel > pTarget) _powerLevel = Mathf.Max(pTarget, _powerLevel - (float)delta / CooldownTime);
@@ -506,7 +509,11 @@ namespace UnturnedGodot
             // obviously). The battery (energy-crossing @488) + wind turbine (wind-move @495) already re-solve on their
             // output change; the fuel generator's entire output IS this ramp, so mark dirty until it settles. Cheap --
             // only fires the ~1s a gen is actively spinning up/down, never at steady state (PowerSettled) or idle.
-            if (Def != null && Def.Fuel > 0f && !Def.IsBattery && !PowerSettled) PowerNet.MarkDirty();
+            // re-solve on EVERY frame the level actually moved -- including the final frame it SNAPS to the target (Min/Max
+            // clamp). The old `!PowerSettled` gate stopped one frame too early: the snap-to-1.0 frame was already "settled"
+            // so it skipped the mark, freezing the net's last solve at ~0.996 -> a 4kW gen read ~3984W (strawberry). Marking
+            // on movement fixes that and still costs nothing at steady state (prevLevel == _powerLevel -> no mark).
+            if (Def != null && Def.Fuel > 0f && !Def.IsBattery && _powerLevel != prevLevel) PowerNet.MarkDirty();
             float load = LoadFraction;   // 0..1 of capacity drawn -> louder/deeper engine + harder shake under load (strawberry)
             if (_engineAudio != null)
             {

@@ -61,6 +61,7 @@ namespace UnturnedGodot
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
+            bool fluidTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -71,6 +72,7 @@ namespace UnturnedGodot
                 else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
+                else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
@@ -241,6 +243,8 @@ namespace UnturnedGodot
                 if (System.Environment.GetEnvironmentVariable("UG_NEWMAP") == "1") BuildEditorNew(); else BuildEditor();
                 return;
             }
+
+            if (fluidTest) { RunFluidTest(); return; }   // F2: spawn source->hose->storage, tick the fluid net, log the fill, quit
 
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
@@ -1304,7 +1308,8 @@ namespace UnturnedGodot
                           || System.Environment.GetEnvironmentVariable("UG_SPOTPORTS") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1"
-                          || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1";   // showcases skip the gen/spot/ghost clutter
+                          || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_WATERTANK") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
             {
@@ -1407,6 +1412,33 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.62f, 0f);
                 cam.Position = new Vector3(1.5f, 0.95f, 2.4f);
                 cam.Fov = 50f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_WATERTANK=1: show the map's WATER TOWER (Tower_Water_0) + the big storage tanks (Tank_Forest_Body /
+            // Tank_Fuel_0) in a row with a 1.8 m human-height reference, so strawberry can see the "big water tank" prop +
+            // its scale (--shot=OUT). These are flat-authored map props -> stand them up like the gas pump.
+            if (System.Environment.GetEnvironmentVariable("UG_WATERTANK") == "1")
+            {
+                var standUp = new Basis(Vector3.Right, Mathf.DegToRad(-90f));
+                string odir = ProjectSettings.GlobalizePath("res://content/objects/");
+                void Prop(string nm, Vector3 pos)
+                {
+                    var m = ObjMesh.Load(odir + nm + ".obj");
+                    if (m == null) { GD.Print($"[WATERTANK] {nm}.obj MISSING"); return; }
+                    var bb = m.GetAabb();
+                    GD.Print($"[WATERTANK] {nm} AABB size={bb.Size} -> stood-up height ~{bb.Size.Z:0.0}m footprint ~{bb.Size.X:0.0}x{bb.Size.Y:0.0}m");
+                    var mat = new StandardMaterial3D { Roughness = 0.85f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                    string tp = odir + nm + "_tex.png";
+                    if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) mat.AlbedoTexture = ImageTexture.CreateFromImage(img); else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f); }
+                    else mat.AlbedoColor = new Color(0.62f, 0.66f, 0.70f);
+                    AddChild(new MeshInstance3D { Mesh = m, Basis = standUp, Position = pos, MaterialOverride = mat });
+                }
+                Prop("Tower_Water_0", new Vector3(-4f, 0f, 0f));   // the big WATER TOWER (~15 m) -- the "big water tank" prop
+                Prop("Tank_Fuel_0",   new Vector3(8f, 0f, 1f));    // a horizontal FUEL tank, for contrast (not water)
+                AddChild(new MeshInstance3D { Mesh = new CapsuleMesh { Radius = 0.3f, Height = 1.8f }, Position = new Vector3(-1f, 0.9f, 4.5f),
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.90f, 0.28f, 0.28f) } });   // 1.8 m human scale reference (at the tower base)
+                look = new Vector3(0f, 5f, 0f);
+                cam.Position = new Vector3(1f, 8f, 30f);
+                cam.Fov = 52f; cam.LookAt(look, Vector3.Up);
             }
             // UG_SWITCHCKT=1: a working circuit -- generator -> switch -> spotlight, + sources on the switch's turn-on
             // (green) / turn-off (red) trigger inputs. Default: TurnOn source fed -> switch ON -> spotlight LIT.
@@ -2017,6 +2049,557 @@ namespace UnturnedGodot
         // edit target (Aerial = world, no player, no colliders), drop in the free-fly EditorCamera + the mode-tab
         // dashboard + the Editor controller. Fly + view + switch modes now; the per-mode sub-editors (Objects/
         // Terrain/Spawns/...) + .level save land in the later phases.
+        // Fluid-IO verify (--fluidtest): a full Source -> Hose -> empty Storage. Tick the net; the storage should
+        // fill + the source drain, conserving the total. UG_FLUIDRENDER=1 = a lit scene ticking live so the movie
+        // harness can capture the bars filling (F3 visual verify); else the fast headless log-check (go easy).
+        void RunFluidTest()
+        {
+            if (System.Environment.GetEnvironmentVariable("UG_HOSETOOL") == "1") { RunHoseToolTest(); return; }
+            var src = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);   // full, supplies 50/s
+            var sto = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Fuel, 1000f, 0f), 50f);     // empty, intake 50/s
+            // source raised ABOVE storage so the gravity gate (strawberry: passive flow only downhill) lets it flow;
+            // UG_FLUIDLEVEL=1 puts the storage level with the source to prove the gate then blocks flow (0 in, needs a pump).
+            float stoY = System.Environment.GetEnvironmentVariable("UG_FLUIDLEVEL") == "1" ? 1.2f : 0f;
+            src.Position = new Vector3(-2.5f, 1.2f, 0f); sto.Position = new Vector3(2.5f, stoY, 0f);
+            src.PortLocalPos = new Vector3(0.55f, 0.9f, 0f); sto.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);   // port cubes face each other along the hose
+            AddChild(src); AddChild(sto);   // _Ready builds their ports + visuals + registers them in "fluid_devices"
+            var hose = new Hose { Source = src.Ports[0], Consumer = sto.Ports[0] };
+            AddChild(hose);                 // registers in "hoses"
+
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDREFINE") == "1")
+            {   // F5b render verify: an oil source -> a REFINERY (oil->gas) -> a gas tank (fluid TYPE changes through it)
+                src.QueueFree(); sto.QueueFree(); hose.QueueFree();
+                AddChild(new FluidManager());
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) } });
+                var oil = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Oil, 2000f, 2000f), 50f);
+                oil.Position = new Vector3(-4f, 2.4f, 0f); oil.PortLocalPos = new Vector3(0.55f, 0.9f, 0f);
+                var refn = FluidContainer.MakeTransformer(FluidType.Oil, FluidType.Gas, 50f, 1f); refn.Position = new Vector3(0f, 1.0f, 0f);
+                var gas = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Gas, 1000f, 0f), 50f);
+                gas.Position = new Vector3(4f, 0f, 0f); gas.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);
+                AddChild(oil); AddChild(refn); AddChild(gas);
+                void HoseUp(FluidPortNode a, HosePort an, FluidPortNode b, HosePort bn)
+                { var hh = new Hose { Source = a, Consumer = b }; AddChild(hh); hh.SetPoints(new System.Collections.Generic.List<Vector3> { an.GlobalPosition, bn.GlobalPosition }, valid: true); }
+                HoseUp(oil.Ports[0], oil.PortNodes[0], refn.Ports[0], refn.PortNodes[0]);   // oil -> refinery input
+                HoseUp(refn.Ports[1], refn.PortNodes[1], gas.Ports[0], gas.PortNodes[0]);   // refinery output (gas) -> tank
+                AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
+                AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
+                AddChild(new Camera3D { Position = new Vector3(0f, 3.6f, 10f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
+                GD.Print("[fluidtest] refine render scene up — oil source -> refinery -> gas tank");
+                return;
+            }
+
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDPUMP") == "1")
+            {   // F5 render verify: a low source -> a POWERED pump -> a HIGH tank (fluid lifted uphill past gravity)
+                src.QueueFree(); sto.QueueFree(); hose.QueueFree();
+                AddChild(new FluidManager());
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) } });
+                var s = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+                s.Position = new Vector3(-4f, 0f, 0f); s.PortLocalPos = new Vector3(0.55f, 0.9f, 0f);
+                var pump = FluidPump.Make(6f); pump.Position = new Vector3(0f, 0f, 0f);
+                var hi = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+                hi.Position = new Vector3(4f, 3f, 0f); hi.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);   // 3m UP
+                AddChild(s); AddChild(pump); AddChild(hi);
+                void HoseUp(FluidPortNode a, HosePort an, FluidPortNode b, HosePort bn)
+                { var hh = new Hose { Source = a, Consumer = b }; AddChild(hh); hh.SetPoints(new System.Collections.Generic.List<Vector3> { an.GlobalPosition, bn.GlobalPosition }, valid: true); }
+                HoseUp(s.Ports[0], s.PortNodes[0], pump.Ports[0], pump.PortNodes[0]);   // source -> pump input
+                HoseUp(pump.Ports[1], pump.PortNodes[1], hi.Ports[0], hi.PortNodes[0]); // pump -> HIGH tank (uphill)
+                Deployable.InstantRampForTests = true;   // no PowerManager in this scene -> instant-ramp the gen + one Recompute keeps the pump powered
+                var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(0f, 0f, -3f), 0f);
+                var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = pump.PowerPorts[0]; wr.AddToGroup("wires");
+                wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, pump.PowerPorts[0].GlobalPosition }, valid: true);
+                gen.TogglePower(); PowerNet.Recompute(GetTree());
+                AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
+                AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
+                AddChild(new Camera3D { Position = new Vector3(0f, 3.6f, 10f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
+                GD.Print("[fluidtest] pump render scene up — low source -> powered pump -> HIGH tank (uphill)");
+                return;
+            }
+
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDSPLIT") == "1")
+            {   // F4 render verify: one source fans through a SPLITTER to two storages (each leg downhill)
+                src.QueueFree(); sto.QueueFree(); hose.QueueFree();   // drop the simple scene; build the fan-out fresh
+                AddChild(new FluidManager());
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(40f, 40f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) } });
+                var s = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 200f);
+                s.Position = new Vector3(-4f, 2.4f, 0f); s.PortLocalPos = new Vector3(0.55f, 0.9f, 0f);
+                var sp = FluidContainer.MakeFitting(FluidRole.Splitter, 2); sp.Position = new Vector3(0f, 1.0f, 0f);
+                var d0 = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+                d0.Position = new Vector3(3.6f, 0f, -1.4f); d0.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);
+                var d1 = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+                d1.Position = new Vector3(3.6f, 0f, 1.4f); d1.PortLocalPos = new Vector3(-0.55f, 0.9f, 0f);
+                AddChild(s); AddChild(sp); AddChild(d0); AddChild(d1);
+                void HoseUp(FluidPortNode a, HosePort an, FluidPortNode b, HosePort bn)
+                { var hh = new Hose { Source = a, Consumer = b }; AddChild(hh); hh.SetPoints(new System.Collections.Generic.List<Vector3> { an.GlobalPosition, bn.GlobalPosition }, valid: true); }
+                HoseUp(s.Ports[0], s.PortNodes[0], sp.Ports[0], sp.PortNodes[0]);    // source -> splitter input
+                HoseUp(sp.Ports[1], sp.PortNodes[1], d0.Ports[0], d0.PortNodes[0]);  // passthrough #0 -> storage 0
+                HoseUp(sp.Ports[2], sp.PortNodes[2], d1.Ports[0], d1.PortNodes[0]);  // passthrough #1 -> storage 1
+                AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
+                AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
+                AddChild(new Camera3D { Position = new Vector3(0f, 4f, 11f), RotationDegrees = new Vector3(-18f, 0f, 0f), Current = true });
+                GD.Print("[fluidtest] split render scene up — source -> splitter -> two storages");
+                return;
+            }
+
+            if (System.Environment.GetEnvironmentVariable("UG_FLUIDRENDER") == "1")
+            {   // F3 render verify: a lit scene ticking live; the movie harness captures the storage bar filling
+                AddChild(new FluidManager());
+                AddChild(new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(30f, 30f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.36f, 0.30f) } });
+                hose.SetPoints(new System.Collections.Generic.List<Vector3> { src.PortNodes[0].GlobalPosition, sto.PortNodes[0].GlobalPosition }, valid: true);   // the hose draws itself port-to-port
+                AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-55f, -40f, 0f), ShadowEnabled = true });
+                AddChild(new WorldEnvironment { Environment = new Godot.Environment { BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0.50f, 0.66f, 0.86f), AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0.85f } });
+                AddChild(new Camera3D { Position = new Vector3(0f, 3.2f, 8f), RotationDegrees = new Vector3(-16f, 0f, 0f), Current = true });
+                GD.Print("[fluidtest] render scene up — source full, storage filling live");
+                return;   // no quit; the movie harness's --quit-after ends it
+            }
+
+            GD.Print($"[fluidtest] start: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0}");
+            const float dt = 0.1f;
+            for (int i = 0; i < 100; i++)   // 10 s of 0.1 s ticks -> ~500 units moved (50/s), conserved to 1000
+            {
+                FluidNet.Tick(GetTree(), dt);
+                if (i == 9 || i == 49 || i == 99)
+                    GD.Print($"[fluidtest] t={(i + 1) * dt:0.0}s: source={src.Tank.Amount:0} storage={sto.Tank.Amount:0} flow={sto.Ports[0].Flow:0} flowing={sto.Ports[0].Flowing}");
+            }
+            float total = src.Tank.Amount + sto.Tank.Amount;
+            bool ok = sto.Tank.Amount > 400f && src.Tank.Amount < 600f && Mathf.Abs(total - 1000f) < 0.5f;
+            GD.Print($"[fluidtest] RESULT {(ok ? "PASS" : "FAIL")}: storage {sto.Tank.Amount:0}, source {src.Tank.Amount:0}, conserved total {total:0}/1000");
+            GetTree().Quit();
+        }
+
+        // Headless F3.5c hose-tool integration check (UG_HOSETOOL=1): exercise the REAL type-lock rule (FluidHoseRule)
+        // + the connect/adopt/flow path the tool uses, without a mouse. Case A: an EMPTY storage + a Fuel source ->
+        // Ok, adopts Fuel, flows downhill. Case B: a Fuel source + a WATER storage -> Mismatch, refused. (The ray-pick,
+        // highlight, and HUD are visual/session-only — verified in-game later; this locks the logic.)
+        void RunHoseToolTest()
+        {
+            bool ok = true;
+
+            // --- Case A: empty storage adopts + flows ---
+            var srcA = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);
+            var stoA = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);   // EMPTY -> None type
+            srcA.Position = new Vector3(-2.5f, 1.2f, 0f); stoA.Position = new Vector3(2.5f, 0f, 0f);   // source above -> gravity lets it flow
+            AddChild(srcA); AddChild(stoA);
+            var spA = srcA.PortNodes[0]; var cpA = stoA.PortNodes[0];
+            var vA = FluidHoseRule.Completion(spA.Kind, cpA.Kind,
+                srcA.Tank.Type == FluidType.None, stoA.Tank.Type == FluidType.None, srcA.Tank.Type == stoA.Tank.Type, false, false);
+            GD.Print($"[hosetool] case A verdict={vA} (want Ok)");
+            if (vA != HoseVerdict.Ok) ok = false;
+            else
+            {   // connect exactly as CompleteHose does: order by kind, empty adopts, build + register the hose
+                if (stoA.Tank.Type == FluidType.None) stoA.Tank.Type = srcA.Tank.Type;   // adopt
+                var hA = new Hose { Source = spA.Node, Consumer = cpA.Node }; AddChild(hA);
+                for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+                GD.Print($"[hosetool] case A: storage={stoA.Tank.Amount:0} type={FluidDef.Name(stoA.Tank.Type)}");
+                if (!(stoA.Tank.Amount > 400f && stoA.Tank.Type == FluidType.Fuel)) ok = false;   // filled + adopted Fuel
+            }
+
+            // --- Case B: mismatched fluids refused ---
+            var srcB = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);
+            var stoB = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 1000f, 100f), 50f);   // holds WATER
+            srcB.Position = new Vector3(-2.5f, 1.2f, 6f); stoB.Position = new Vector3(2.5f, 0f, 6f);
+            AddChild(srcB); AddChild(stoB);
+            var vB = FluidHoseRule.Completion(srcB.PortNodes[0].Kind, stoB.PortNodes[0].Kind,
+                srcB.Tank.Type == FluidType.None, stoB.Tank.Type == FluidType.None, srcB.Tank.Type == stoB.Tank.Type, false, false);
+            GD.Print($"[hosetool] case B verdict={vB} (want Mismatch)");
+            if (vB != HoseVerdict.Mismatch) ok = false;
+
+            // --- Case C (F4): a SPLITTER fans one source to two storages (each hose downhill: src above splitter above stores) ---
+            var srcC = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 200f);   // supplies 200/s (covers both intakes)
+            var split = FluidContainer.MakeFitting(FluidRole.Splitter, 2);                                         // 0-rate relay + 2 passthroughs
+            var stoC0 = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            var stoC1 = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcC.Position = new Vector3(-5f, 3f, 12f); split.Position = new Vector3(0f, 1.5f, 12f);
+            stoC0.Position = new Vector3(4f, 0f, 10f); stoC1.Position = new Vector3(4f, 0f, 14f);
+            AddChild(srcC); AddChild(split); AddChild(stoC0); AddChild(stoC1);
+            AddChild(new Hose { Source = srcC.Ports[0], Consumer = split.Ports[0] });   // source -> splitter relay input (Ports[0]=Consumer)
+            AddChild(new Hose { Source = split.Ports[1], Consumer = stoC0.Ports[0] });  // splitter passthrough #0 -> storage 0
+            AddChild(new Hose { Source = split.Ports[2], Consumer = stoC1.Ports[0] });  // splitter passthrough #1 -> storage 1
+            for (int i = 0; i < 100; i++)
+            {
+                FluidNet.Tick(GetTree(), 0.1f);
+                if (i == 5) GD.Print($"[hosetool] case C t=0.6: sto0 accepts={stoC0.Ports[0].SolveRate:0} sto1 accepts={stoC1.Ports[0].SolveRate:0} srcLoad={srcC.Ports[0].Load:0} (want 50/50/100 — Flow OFFERED is higher through a splitter)");
+            }
+            float totalC = srcC.Tank.Amount + stoC0.Tank.Amount + stoC1.Tank.Amount;
+            GD.Print($"[hosetool] case C: sto0={stoC0.Tank.Amount:0} sto1={stoC1.Tank.Amount:0} src={srcC.Tank.Amount:0} total={totalC:0}/2000 (want both filled + conserved)");
+            if (!(stoC0.Tank.Amount > 400f && stoC1.Tank.Amount > 400f && Mathf.Abs(totalC - 2000f) < 1f)) ok = false;
+
+            // --- Case D (F4): a COMBINER merges two sources into one storage (each source above the combiner above the store) ---
+            var srcD0 = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 5000f, 5000f), 300f);   // 300/s each
+            var srcD1 = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 5000f, 5000f), 300f);
+            var comb = FluidContainer.MakeFitting(FluidRole.Combiner, 2);                                          // 2 relays + 1 passthrough
+            var stoD = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 10000f, 0f), 500f);    // wants 500/s (600 available covers it)
+            srcD0.Position = new Vector3(-5f, 3f, 22f); srcD1.Position = new Vector3(-5f, 3f, 26f);
+            comb.Position = new Vector3(0f, 1.5f, 24f); stoD.Position = new Vector3(5f, 0f, 24f);
+            AddChild(srcD0); AddChild(srcD1); AddChild(comb); AddChild(stoD);
+            AddChild(new Hose { Source = srcD0.Ports[0], Consumer = comb.Ports[0] });   // source0 -> combiner relay input #0
+            AddChild(new Hose { Source = srcD1.Ports[0], Consumer = comb.Ports[1] });   // source1 -> combiner relay input #1
+            AddChild(new Hose { Source = comb.Ports[2], Consumer = stoD.Ports[0] });    // combiner passthrough (Ports[2]) -> storage
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            float totalD = srcD0.Tank.Amount + srcD1.Tank.Amount + stoD.Tank.Amount;
+            GD.Print($"[hosetool] case D: storage={stoD.Tank.Amount:0} src0={srcD0.Tank.Amount:0} src1={srcD1.Tank.Amount:0} total={totalD:0}/10000 (want storage filled + conserved)");
+            if (!(stoD.Tank.Amount > 4000f && Mathf.Abs(totalD - 10000f) < 1f)) ok = false;
+
+            // --- Case E (F5): a POWERED pump LIFTS fluid uphill (source low -> pump -> HIGH tank, past the gravity gate) ---
+            var srcE = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpE = FluidPump.Make(6f); pumpE.DebugForcePower = true;   // powered -> 6m head lift (no PowerNet in the fluid test)
+            var hiE = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcE.Position = new Vector3(-4f, 0f, 32f); pumpE.Position = new Vector3(0f, 0f, 32f); hiE.Position = new Vector3(4f, 3f, 32f);   // tank 3m UP
+            AddChild(srcE); AddChild(pumpE); AddChild(hiE);
+            AddChild(new Hose { Source = srcE.Ports[0], Consumer = pumpE.Ports[0] });   // source -> pump relay input
+            AddChild(new Hose { Source = pumpE.Ports[1], Consumer = hiE.Ports[0] });    // pump passthrough -> HIGH tank (uphill)
+            bool pumpIsConsumer = pumpE.PowerPorts.Count >= 1 && pumpE.PowerPorts[0].Kind == DeployableDef.PortKind.Consumer && pumpE.PowerPorts[0].Role == DeployableDef.SwitchRole.None && pumpE.IsInGroup("deployables");   // [0] = power INPUT (draws PumpWatts); [1..2] = remote on/off triggers
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case E: hiTank={hiE.Tank.Amount:0} (want filled — powered pump lifted it up) · powerConsumer={pumpIsConsumer}");
+            if (!(hiE.Tank.Amount > 400f && pumpIsConsumer)) ok = false;
+
+            // --- Case F (F5): an UNPOWERED pump can't lift — the high tank stays empty (gravity gate holds) ---
+            var srcF = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpF = FluidPump.Make(6f);   // NOT powered
+            var hiF = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcF.Position = new Vector3(-4f, 0f, 40f); pumpF.Position = new Vector3(0f, 0f, 40f); hiF.Position = new Vector3(4f, 3f, 40f);
+            AddChild(srcF); AddChild(pumpF); AddChild(hiF);
+            AddChild(new Hose { Source = srcF.Ports[0], Consumer = pumpF.Ports[0] });
+            AddChild(new Hose { Source = pumpF.Ports[1], Consumer = hiF.Ports[0] });
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case F: hiTank={hiF.Tank.Amount:0} (want ~0 — unpowered pump can't lift uphill)");
+            if (hiF.Tank.Amount > 1f) ok = false;
+
+            // --- Case G (F5): the REAL power bridge — a wired generator powers the pump (no debug flag), which then lifts ---
+            var srcG = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpG = FluidPump.Make(6f);   // powered ONLY by the wired generator below
+            var hiG = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcG.Position = new Vector3(-4f, 0f, 48f); pumpG.Position = new Vector3(0f, 0f, 48f); hiG.Position = new Vector3(4f, 3f, 48f);
+            AddChild(srcG); AddChild(pumpG); AddChild(hiG);
+            AddChild(new Hose { Source = srcG.Ports[0], Consumer = pumpG.Ports[0] });
+            AddChild(new Hose { Source = pumpG.Ports[1], Consumer = hiG.Ports[0] });
+            Deployable.InstantRampForTests = true;   // skip the engine spin-up ramp so the generator produces on the first solve (headless)
+            var gen = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(0f, 0f, 46f), 0f);   // a power source
+            var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+            var wr = new Wire(); AddChild(wr); wr.Source = genOut; wr.Consumer = pumpG.PowerPorts[0]; wr.AddToGroup("wires");
+            wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, pumpG.PowerPorts[0].GlobalPosition }, valid: true);
+            gen.TogglePower();                 // generator ON (instant ramp)
+            PowerNet.Recompute(GetTree());     // solve the power net -> the pump's consumer port lights Powered
+            bool poweredReal = pumpG.IsPowered;
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case G: pump powered by wire={poweredReal} · hiTank={hiG.Tank.Amount:0} (want powered + filled)");
+            if (!(poweredReal && hiG.Tank.Amount > 400f)) ok = false;
+
+            // --- Case H (F5b): a REFINERY transforms oil -> gas (deletes oil input, produces gas output into a tank) ---
+            var oilSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Oil, 1000f, 1000f), 50f);
+            var refinery = FluidContainer.MakeTransformer(FluidType.Oil, FluidType.Gas, 50f, 1f);
+            var gasTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);   // empty; would adopt Gas on a real connect
+            oilSrc.Position = new Vector3(-4f, 3f, 56f); refinery.Position = new Vector3(0f, 1.5f, 56f); gasTank.Position = new Vector3(4f, 0f, 56f);
+            AddChild(oilSrc); AddChild(refinery); AddChild(gasTank);
+            AddChild(new Hose { Source = oilSrc.Ports[0], Consumer = refinery.Ports[0] });   // oil -> refinery input (Consumer)
+            AddChild(new Hose { Source = refinery.Ports[1], Consumer = gasTank.Ports[0] });   // refinery output (Source, Gas) -> tank
+            bool typedPorts = refinery.PortNodes[0].EffectiveType == FluidType.Oil && refinery.PortNodes[1].EffectiveType == FluidType.Gas;
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case H: oil={oilSrc.Tank.Amount:0} gasTank={gasTank.Tank.Amount:0} · ports oil-in/gas-out={typedPorts} · refineryActive={refinery.TransformActive}");
+            if (!(oilSrc.Tank.Amount < 600f && gasTank.Tank.Amount > 400f && typedPorts)) ok = false;   // oil consumed + gas produced + ports carry in/out types
+
+            // --- Case I (F5): pump lift PROPAGATES through a splitter — a reachable high tank fills, a too-high one blocks ---
+            var srcI = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 2000f, 2000f), 100f);
+            var pumpI = FluidPump.Make(6f); pumpI.DebugForcePower = true;   // ceiling = pumpY(0) + 6 = 6
+            var splitI = FluidContainer.MakeFitting(FluidRole.Splitter, 2);
+            var lowI = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);    // Y=4, within ceiling 6 -> fills
+            var highI = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);   // Y=8, ABOVE ceiling 6 -> blocked
+            srcI.Position = new Vector3(-6f, 0f, 64f); pumpI.Position = new Vector3(-2f, 0f, 64f); splitI.Position = new Vector3(2f, 0f, 64f);
+            lowI.Position = new Vector3(6f, 4f, 62f); highI.Position = new Vector3(6f, 8f, 66f);
+            AddChild(srcI); AddChild(pumpI); AddChild(splitI); AddChild(lowI); AddChild(highI);
+            AddChild(new Hose { Source = srcI.Ports[0], Consumer = pumpI.Ports[0] });    // source -> pump
+            AddChild(new Hose { Source = pumpI.Ports[1], Consumer = splitI.Ports[0] });  // pump -> splitter (lift carries THROUGH)
+            AddChild(new Hose { Source = splitI.Ports[1], Consumer = lowI.Ports[0] });   // splitter -> low high-tank (Y4)
+            AddChild(new Hose { Source = splitI.Ports[2], Consumer = highI.Ports[0] });  // splitter -> too-high tank (Y8)
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case I: low(Y4)={lowI.Tank.Amount:0} high(Y8)={highI.Tank.Amount:0} (want low filled via lift-through-splitter, high blocked by ceiling 6)");
+            if (!(lowI.Tank.Amount > 400f && highI.Tank.Amount < 1f)) ok = false;
+
+            // --- Case J (F5): a VALVE is a switch for a hose — open flows, closed stops ---
+            var srcJ = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 50f);
+            var valveJ = FluidContainer.MakeValve();
+            var stoJ = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 50f);
+            srcJ.Position = new Vector3(-4f, 2f, 72f); valveJ.Position = new Vector3(0f, 1f, 72f); stoJ.Position = new Vector3(4f, 0f, 72f);   // downhill, gravity feeds
+            AddChild(srcJ); AddChild(valveJ); AddChild(stoJ);
+            AddChild(new Hose { Source = srcJ.Ports[0], Consumer = valveJ.Ports[0] });   // source -> valve input
+            AddChild(new Hose { Source = valveJ.Ports[1], Consumer = stoJ.Ports[0] });   // valve output -> tank
+            for (int i = 0; i < 50; i++) FluidNet.Tick(GetTree(), 0.1f);   // valve OPEN -> fills
+            float openFill = stoJ.Tank.Amount;
+            valveJ.ToggleValve();   // CLOSE it
+            for (int i = 0; i < 50; i++) FluidNet.Tick(GetTree(), 0.1f);   // valve CLOSED -> no more flow
+            float afterClose = stoJ.Tank.Amount;
+            GD.Print($"[hosetool] case J: openFill={openFill:0} afterClose={afterClose:0} (want ~250 while open, unchanged after closing)");
+            if (!(openFill > 200f && Mathf.Abs(afterClose - openFill) < 1f)) ok = false;
+
+            // --- Case K (items): each fluid DeployableDef places a working FluidContainer via the item/placement rail ---
+            var fdefs = new[] { DeployableDef.FluidTank, DeployableDef.WaterSource, DeployableDef.FluidSplitter, DeployableDef.FluidCombiner, DeployableDef.FluidPumpDef, DeployableDef.FluidValve, DeployableDef.Refinery, DeployableDef.Sluice, DeployableDef.Purifier };
+            var wantRoles = new[] { FluidRole.Storage, FluidRole.Source, FluidRole.Splitter, FluidRole.Combiner, FluidRole.Pump, FluidRole.Valve, FluidRole.Transformer, FluidRole.Transformer, FluidRole.Transformer };
+            bool itemsOk = true;
+            for (int k = 0; k < fdefs.Length; k++)
+            {
+                var placed = FluidDeploy.SpawnFor(fdefs[k], this, new Vector3(k * 2f, 0f, 96f), 0f) as FluidContainer;
+                bool roleOk = placed != null && placed.Role == wantRoles[k] && DeployableDef.ById(fdefs[k].Id) == fdefs[k];
+                if (fdefs[k].Fluid == FluidRole.Pump && placed is not FluidPump) roleOk = false;
+                if (fdefs[k] == DeployableDef.Purifier && placed is not FluidPurifier) roleOk = false;   // the purifier def must spawn the powered subclass
+                if (!roleOk) { itemsOk = false; GD.Print($"[hosetool] item {fdefs[k].Name} FAILED (role {placed?.Role})"); }
+            }
+            // end-to-end: place a Water Source (high) + a Fluid Tank (low) via the rail, hose, tick -> tank fills
+            var wsrc = FluidDeploy.SpawnFor(DeployableDef.WaterSource, this, new Vector3(-4f, 2f, 104f), 0f) as FluidContainer;
+            var wtank = FluidDeploy.SpawnFor(DeployableDef.FluidTank, this, new Vector3(4f, 0f, 104f), 0f) as FluidContainer;
+            AddChild(new Hose { Source = wsrc.Ports[0], Consumer = wtank.Ports[0] });
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case K: allRolesOk={itemsOk} · placed WaterSource->FluidTank fills to {wtank.Tank.Amount:0} (want >400)");
+            if (!(itemsOk && wtank.Tank.Amount > 400f)) ok = false;
+
+            // --- Case L (items by name): `give <name>` resolves each fluid item to the right id (exact-match branch) ---
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            var byNameChecks = new (string name, ushort id)[] {
+                ("Fluid Tank", 9110), ("Fluid Water Source", 9111), ("Fluid Splitter", 9112), ("Fluid Combiner", 9113),
+                ("Fluid Pump", 9114), ("Fluid Valve", 9115), ("Fluid Refinery", 9116), ("Fluid Sluice", 9117), ("Hose Tool", 9118), ("Fluid Purifier", 9121) };
+            bool byName = true;
+            foreach (var (nm, id) in byNameChecks)
+            {
+                var a = System.Linq.Enumerable.FirstOrDefault(SDG.Unturned.Assets.all(), x => string.Equals(x.itemName, nm, System.StringComparison.OrdinalIgnoreCase));
+                if (a == null || a.id != id) { byName = false; GD.Print($"[hosetool] name '{nm}' -> {(a?.id.ToString() ?? "MISSING")} (want {id})"); }
+            }
+            GD.Print($"[hosetool] case L: all fluid items resolve by name = {byName}");
+            if (!byName) ok = false;
+
+            // --- Case M (tank buffer): a tank has an INPUT and an OUTPUT — source -> tank -> tank2, tank feeds downstream ---
+            var srcM = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 3000f, 3000f), 125f);
+            var tankM = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 3000f, 0f), 125f);   // buffer: fills from src, feeds tank2
+            var tank2M = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 3000f, 0f), 125f);
+            srcM.Position = new Vector3(-4f, 3f, 112f); tankM.Position = new Vector3(0f, 2f, 112f); tank2M.Position = new Vector3(4f, 1f, 112f);   // downhill
+            AddChild(srcM); AddChild(tankM); AddChild(tank2M);
+            AddChild(new Hose { Source = srcM.Ports[0], Consumer = tankM.Ports[0] });    // source -> tank INPUT (Ports[0]=Consumer)
+            AddChild(new Hose { Source = tankM.Ports[1], Consumer = tank2M.Ports[0] });  // tank OUTPUT (Ports[1]=Source) -> tank2 input
+            for (int i = 0; i < 100; i++) FluidNet.Tick(GetTree(), 0.1f);
+            float totalM = srcM.Tank.Amount + tankM.Tank.Amount + tank2M.Tank.Amount;
+            GD.Print($"[hosetool] case M: src={srcM.Tank.Amount:0} tank={tankM.Tank.Amount:0} tank2={tank2M.Tank.Amount:0} total={totalM:0}/3000 (want tank2 filled via the tank's OUTPUT + conserved)");
+            if (!(tank2M.Tank.Amount > 400f && Mathf.Abs(totalM - 3000f) < 2f)) ok = false;   // tank2 got fluid THROUGH the buffer tank + conserved
+
+            // --- Case N (inlet + outlet): a NO-HEAD infinite INLET needs a pump; an OUTLET drain deletes what enters it ---
+            var inlet = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 1000f, 1000f), 125f);
+            inlet.Infinite = true; inlet.NoHead = true;   // submersible inlet: infinite + no head pressure
+            var pumpN = FluidPump.Make(6f);   // NOT powered yet
+            var tankN = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 5000f, 0f), 125f);
+            inlet.Position = new Vector3(-4f, 0f, 120f); pumpN.Position = new Vector3(0f, 0f, 120f); tankN.Position = new Vector3(4f, 2f, 120f);   // tank UP
+            AddChild(inlet); AddChild(pumpN); AddChild(tankN);
+            AddChild(new Hose { Source = inlet.Ports[0], Consumer = pumpN.Ports[0] });   // inlet -> pump
+            AddChild(new Hose { Source = pumpN.Ports[1], Consumer = tankN.Ports[0] });   // pump -> high tank
+            for (int i = 0; i < 40; i++) FluidNet.Tick(GetTree(), 0.1f);   // pump OFF: no-head inlet can't push -> nothing
+            float inletOff = tankN.Tank.Amount;
+            pumpN.DebugForcePower = true;   // power the pump -> it draws infinite water up
+            for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
+            // OUTLET: a source -> outlet drain; the source drains but the outlet stores NOTHING (deletes)
+            var srcO = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 1000f, 1000f), 125f);
+            var outlet = FluidDeploy.SpawnFor(DeployableDef.WaterOutlet, this, new Vector3(4f, 0f, 128f), 0f) as FluidContainer;
+            srcO.Position = new Vector3(-4f, 1f, 128f); AddChild(srcO);
+            AddChild(new Hose { Source = srcO.Ports[0], Consumer = outlet.Ports[0] });
+            for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case N: inlet pumpOff tank={inletOff:0} (want ~0) pumpOn tank={tankN.Tank.Amount:0} (want filled) inlet={inlet.Tank.Amount:0} (want 1000 infinite) · outlet drained src {1000 - srcO.Tank.Amount:0}, stored {outlet.Tank.Amount:0} (want >0 drained, 0 stored)");
+            if (!(inletOff < 1f && tankN.Tank.Amount > 400f && inlet.Tank.Amount > 999f && srcO.Tank.Amount < 600f && outlet.Tank.Amount < 1f)) ok = false;
+
+            // --- Case O (hose removal): removing a hose (leaves the "hoses" group) stops its flow immediately ---
+            var srcP = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 1000f, 1000f), 125f);
+            var tankP = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 1000f, 0f), 125f);
+            srcP.Position = new Vector3(-4f, 2f, 136f); tankP.Position = new Vector3(4f, 0f, 136f);   // downhill
+            AddChild(srcP); AddChild(tankP);
+            var hP = new Hose { Source = srcP.Ports[0], Consumer = tankP.Ports[0] }; AddChild(hP);
+            for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);   // hose present -> fills
+            float beforeRemove = tankP.Tank.Amount;
+            hP.RemoveFromGroup("hoses");   // what RemoveHose does (then QueueFree) -> stop conducting this tick
+            for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);   // hose gone -> no more flow
+            GD.Print($"[hosetool] case O: beforeRemove={beforeRemove:0} afterRemove={tankP.Tank.Amount:0} (want filled then UNCHANGED after removing the hose)");
+            if (!(beforeRemove > 100f && Mathf.Abs(tankP.Tank.Amount - beforeRemove) < 1f)) ok = false;
+
+            // --- Case P (bug-3): the type-lock resolves THROUGH a tankless fitting. A Fuel source feeds a PUMP (no tank of
+            // its own -> raw type None); ResolveNetType must still report Fuel across it, so hosing the pump's OUTPUT to a
+            // WATER tank is a Mismatch. Pre-fix the fitting read as empty and fuel could pipe into the water tank. ---
+            var srcQ = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 1000f, 1000f), 125f);
+            var pumpQ = FluidPump.Make();
+            var waterQ = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 1000f, 100f), 125f);   // holds WATER
+            srcQ.Position = new Vector3(-4f, 1f, 148f); pumpQ.Position = new Vector3(0f, 1f, 148f); waterQ.Position = new Vector3(4f, 0f, 148f);
+            AddChild(srcQ); AddChild(pumpQ); AddChild(waterQ);
+            AddChild(new Hose { Source = srcQ.Ports[0], Consumer = pumpQ.Ports[0] });   // fuel source -> pump input (committed)
+            var pumpType = FluidNet.ResolveNetType(GetTree(), pumpQ.PortNodes[1], new System.Collections.Generic.HashSet<FluidContainer>());   // pump OUTPUT resolves through the fitting
+            var vQ = FluidHoseRule.Completion(pumpQ.PortNodes[1].Kind, waterQ.PortNodes[0].Kind,
+                pumpType == FluidType.None, waterQ.Tank.Type == FluidType.None, pumpType == waterQ.Tank.Type, false, false);
+            GD.Print($"[hosetool] case P: pump resolves to {FluidDef.Name(pumpType)} (want Fuel) · pump->water verdict={vQ} (want Mismatch)");
+            if (!(pumpType == FluidType.Fuel && vQ == HoseVerdict.Mismatch)) ok = false;
+
+            // --- Case Q (flow boost): a POWERED pump runs its line at 5x the gravity rate (125 -> 625). A plain downhill
+            // gravity line and a downhill pumped line, ticked the same short time: the pumped one moves ~5x as much. ---
+            var qGsrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 9000f, 9000f), 125f);
+            var qGtank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 9000f, 0f), 125f);
+            qGsrc.Position = new Vector3(-4f, 2f, 160f); qGtank.Position = new Vector3(4f, 0f, 160f);   // downhill, NO pump
+            AddChild(qGsrc); AddChild(qGtank);
+            AddChild(new Hose { Source = qGsrc.Ports[0], Consumer = qGtank.Ports[0] });
+            var qBsrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 9000f, 9000f), 125f);
+            var qBpump = FluidPump.Make(); qBpump.DebugForcePower = true;   // powered -> boosts its whole line
+            var qBtank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 9000f, 0f), 125f);
+            qBsrc.Position = new Vector3(-4f, 2f, 168f); qBpump.Position = new Vector3(0f, 1f, 168f); qBtank.Position = new Vector3(4f, 0f, 168f);   // downhill THROUGH the pump
+            AddChild(qBsrc); AddChild(qBpump); AddChild(qBtank);
+            AddChild(new Hose { Source = qBsrc.Ports[0], Consumer = qBpump.Ports[0] });
+            AddChild(new Hose { Source = qBpump.Ports[1], Consumer = qBtank.Ports[0] });
+            for (int i = 0; i < 5; i++) FluidNet.Tick(GetTree(), 0.1f);   // 0.5s: gravity ~62, pumped ~312
+            float qRatio = qGtank.Tank.Amount > 1f ? qBtank.Tank.Amount / qGtank.Tank.Amount : 0f;
+            GD.Print($"[hosetool] case Q: gravity={qGtank.Tank.Amount:0} pumped={qBtank.Tank.Amount:0} ratio={qRatio:0.0} (want ~5x)");
+            if (!(qRatio > 4f && qRatio < 6f)) ok = false;
+
+            // --- Case R (auto-shutoff): a powered pump idles (hasWork false, 0w draw) when the line has no downstream demand
+            // (target FULL) or no upstream supply (source DRY) -- gated on tank STATE, so it can't deadlock an uphill line. ---
+            var rSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 2000f, 2000f), 125f);
+            var rPump = FluidPump.Make(); rPump.DebugForcePower = true;
+            var rFull = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 500f, 500f), 125f);   // target ALREADY FULL
+            rSrc.Position = new Vector3(-4f, 1f, 180f); rPump.Position = new Vector3(0f, 1f, 180f); rFull.Position = new Vector3(4f, 0f, 180f);
+            AddChild(rSrc); AddChild(rPump); AddChild(rFull);
+            AddChild(new Hose { Source = rSrc.Ports[0], Consumer = rPump.Ports[0] });
+            AddChild(new Hose { Source = rPump.Ports[1], Consumer = rFull.Ports[0] });
+            for (int i = 0; i < 10; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool fullShut = !rPump.DebugHasWork && rPump.DebugInputWatts < 1f;
+            var rDry = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 2000f, 0f), 125f);   // EMPTY source (dry)
+            var rPump2 = FluidPump.Make(); rPump2.DebugForcePower = true;
+            var rTank2 = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 2000f, 0f), 125f);
+            rDry.Position = new Vector3(-4f, 1f, 192f); rPump2.Position = new Vector3(0f, 1f, 192f); rTank2.Position = new Vector3(4f, 0f, 192f);
+            AddChild(rDry); AddChild(rPump2); AddChild(rTank2);
+            AddChild(new Hose { Source = rDry.Ports[0], Consumer = rPump2.Ports[0] });
+            AddChild(new Hose { Source = rPump2.Ports[1], Consumer = rTank2.Ports[0] });
+            for (int i = 0; i < 10; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool dryShut = !rPump2.DebugHasWork && rPump2.DebugInputWatts < 1f;
+            GD.Print($"[hosetool] case R: full-target shutoff={fullShut} (hasWork={rPump.DebugHasWork} watts={rPump.DebugInputWatts:0}) · dry-source shutoff={dryShut} · fullTank unchanged={Mathf.Abs(rFull.Tank.Amount - 500f) < 1f}");
+            if (!(fullShut && dryShut && Mathf.Abs(rFull.Tank.Amount - 500f) < 1f)) ok = false;
+
+            // --- Case S (fuel a generator via hose): a fuel source hosed to a generator's FUEL INLET fills the gen's Fuel
+            // tank; a WATER source is refused (fuel-only type-lock). Bridges fluid -> the power/fuel economy (strawberry). ---
+            var genS = Deployable.Spawn(this, DeployableDef.Generator, new Vector3(0f, 0f, 204f), 0f);
+            genS.Fuel = 0f;   // start dry so we can watch it fill via the hose
+            FluidFuelInlet inletS = null;
+            foreach (var ch in genS.GetChildren()) if (ch is FluidFuelInlet fi) { inletS = fi; break; }
+            var fuelSrcS = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Fuel, 50000f, 50000f), 300f);
+            fuelSrcS.Position = new Vector3(-4f, 3f, 204f); AddChild(fuelSrcS);   // above the gen inlet -> downhill
+            if (inletS != null) AddChild(new Hose { Source = fuelSrcS.Ports[0], Consumer = inletS.Ports[0] });
+            for (int i = 0; i < 40; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool waterRefused = inletS != null && FluidHoseRule.Completion(FluidPortKind.Source, inletS.PortNodes[0].Kind,
+                false, inletS.Tank.Type == FluidType.None, FluidType.Water == inletS.Tank.Type, false, false) == HoseVerdict.Mismatch;
+            GD.Print($"[hosetool] case S: gen fuel={genS.Fuel:0} (want >0 — fuelled via hose) · water→fuel-inlet refused={waterRefused}");
+            if (!(inletS != null && genS.Fuel > 100f && waterRefused)) ok = false;
+
+            // --- Case T (water quality): a container takes the WORST quality that enters it. Tainted source -> tainted tank;
+            // clean source -> clean tank; a SLUICE dirties its output -> dirty tank (strawberry). Tanks are Water-typed up
+            // front (the direct-hose build skips the tool's adopt step). ---
+            var tSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 3000f, 3000f, WaterQuality.Tainted), 300f);
+            var tTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 3000f, 0f, WaterQuality.Clean), 125f);
+            tSrc.Position = new Vector3(-4f, 2f, 216f); tTank.Position = new Vector3(4f, 0f, 216f); AddChild(tSrc); AddChild(tTank);
+            AddChild(new Hose { Source = tSrc.Ports[0], Consumer = tTank.Ports[0] });
+            var cSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 3000f, 3000f, WaterQuality.Clean), 300f);
+            var cTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 3000f, 0f, WaterQuality.Clean), 125f);
+            cSrc.Position = new Vector3(-4f, 2f, 224f); cTank.Position = new Vector3(4f, 0f, 224f); AddChild(cSrc); AddChild(cTank);
+            AddChild(new Hose { Source = cSrc.Ports[0], Consumer = cTank.Ports[0] });
+            var slSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 3000f, 3000f, WaterQuality.Clean), 300f);
+            var sluiceT = FluidContainer.MakeTransformer(FluidType.Water, FluidType.Water, 125f, 1f); sluiceT.DirtiesWater = true;
+            var slTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 3000f, 0f, WaterQuality.Clean), 125f);
+            slSrc.Position = new Vector3(-6f, 2f, 232f); sluiceT.Position = new Vector3(0f, 1f, 232f); slTank.Position = new Vector3(6f, 0f, 232f);
+            AddChild(slSrc); AddChild(sluiceT); AddChild(slTank);
+            AddChild(new Hose { Source = slSrc.Ports[0], Consumer = sluiceT.Ports[0] });   // clean water -> sluice input
+            AddChild(new Hose { Source = sluiceT.Ports[1], Consumer = slTank.Ports[0] });  // sluice output (dirty) -> tank
+            for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);
+            GD.Print($"[hosetool] case T: tainted→{tTank.Tank.Quality} (want Tainted) · clean→{cTank.Tank.Quality} (want Clean) · sluice→{slTank.Tank.Quality} (want Dirty)");
+            if (!(tTank.Tank.Quality == WaterQuality.Tainted && cTank.Tank.Quality == WaterQuality.Clean && slTank.Tank.Quality == WaterQuality.Dirty)) ok = false;
+
+            // --- Case U (container fill): a fluid CONTAINER item RMB-fills from a tank, type-locked + worst-quality-wins.
+            // An empty canteen adopts the tank's fluid + quality; once it holds Water it REFUSES a different fluid (strawberry). ---
+            var canAsset = new SDG.Unturned.ItemAsset { id = 60001, itemName = "Canteen", fluidCapacity = 500f, fluidDefaultType = 0, fluidDefaultQuality = 0 };
+            var canItem = new SDG.Unturned.Item(60001);   // fresh -> FluidItem.Read lazily leaves it EMPTY (None-default)
+            var taintedTank = new FluidTank(FluidType.Water, 3000f, 300f, WaterQuality.Tainted);   // only 300 mL -> canteen fills PARTIALLY (leaves space, so the next fill hits type-lock, not "full")
+            float f1 = FluidItem.Fill(canItem, canAsset, taintedTank, out _);
+            FluidItem.Read(canItem, canAsset, out var cuType, out var cuAmt, out var cuQ);
+            bool uFill = Mathf.Abs(f1 - 300f) < 0.5f && cuType == FluidType.Water && cuQ == WaterQuality.Tainted
+                         && Mathf.Abs(cuAmt - 300f) < 0.5f && taintedTank.Amount < 0.5f;
+            var fuelTank = new FluidTank(FluidType.Fuel, 3000f, 3000f);
+            float f2 = FluidItem.Fill(canItem, canAsset, fuelTank, out string uMsg);   // canteen holds Water + has 200 mL space -> fuel refused by TYPE-LOCK (not "full"), tank untouched
+            bool uLock = f2 <= 0f && uMsg != null && uMsg.Contains("mix") && Mathf.Abs(fuelTank.Amount - 3000f) < 0.5f;
+            GD.Print($"[hosetool] case U: fill {f1:0}mL type={cuType} q={cuQ} tank={taintedTank.Amount:0} · mismatch moved={f2:0} (\"{uMsg}\")");
+            if (!(uFill && uLock)) ok = false;
+
+            // --- Case V (container drink): a sip takes 50 mL off a CLEAN water bottle + returns hydration; dirty/tainted
+            // water refuses the sip (strawberry: can't drink tainted/dirty). ---
+            var botAsset = new SDG.Unturned.ItemAsset { id = 60002, itemName = "Bottled Water", fluidCapacity = 1000f, fluidDefaultType = (byte)FluidType.Water, fluidDefaultQuality = (byte)WaterQuality.Clean };
+            var botItem = new SDG.Unturned.Item(60002);   // fresh -> lazily FULL of clean water
+            float s1 = FluidItem.Sip(botItem, botAsset, out float hyd1, out _);
+            FluidItem.Read(botItem, botAsset, out _, out var vAmt, out _);
+            bool vSip = Mathf.Abs(s1 - FluidItem.SipML) < 0.5f && hyd1 > 0f && Mathf.Abs(vAmt - (1000f - FluidItem.SipML)) < 0.5f;
+            var dirtyItem = new SDG.Unturned.Item(60002); FluidItem.Write(dirtyItem, FluidType.Water, 1000f, WaterQuality.Dirty);
+            float s2 = FluidItem.Sip(dirtyItem, botAsset, out float hyd2, out string vMsg);
+            bool vRefuse = s2 <= 0f && hyd2 <= 0f;
+            GD.Print($"[hosetool] case V: sip {s1:0}mL (+{hyd1:0.00}) left={vAmt:0} · dirty refused={s2 <= 0f} (\"{vMsg}\")");
+            if (!(vSip && vRefuse)) ok = false;
+
+            // --- Case W (purifier): tainted water + POWER -> CLEAN water; DEAD without power (strawberry). A tainted source
+            // feeds a purifier feeds a clean tank. UNPOWERED the purifier is inert (draws nothing, produces nothing) -> tank
+            // stays empty + source undrained. POWERED it consumes tainted + outputs CLEAN -> tank fills with clean water. ---
+            var pSrc = FluidContainer.Make(FluidRole.Source, new FluidTank(FluidType.Water, 5000f, 5000f, WaterQuality.Tainted), 300f);
+            var purifier = FluidPurifier.Make();
+            var pTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 5000f, 0f, WaterQuality.Clean), 125f);
+            pSrc.Position = new Vector3(-6f, 3f, 240f); purifier.Position = new Vector3(0f, 2f, 240f); pTank.Position = new Vector3(6f, 1f, 240f);   // downhill
+            AddChild(pSrc); AddChild(purifier); AddChild(pTank);
+            AddChild(new Hose { Source = pSrc.Ports[0], Consumer = purifier.Ports[0] });    // tainted water -> purifier INPUT (Ports[0]=Consumer)
+            AddChild(new Hose { Source = purifier.Ports[1], Consumer = pTank.Ports[0] });   // purifier OUTPUT (clean) -> tank
+            for (int i = 0; i < 30; i++) FluidNet.Tick(GetTree(), 0.1f);                    // UNPOWERED: inert
+            float offTank = pTank.Tank.Amount, offSrc = pSrc.Tank.Amount;                   // snapshot the off-phase state for an honest readout
+            bool offInert = offTank < 0.5f && offSrc > 4999f;
+            purifier.DebugForcePower = true;                                                 // wire power
+            for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool onClean = pTank.Tank.Amount > 400f && pTank.Tank.Quality == WaterQuality.Clean && pSrc.Tank.Amount < 5000f;
+            GD.Print($"[hosetool] case W: OFF tank={offTank:0} src={offSrc:0} (want 0/5000) · ON tank={pTank.Tank.Amount:0} q={pTank.Tank.Quality} src={pSrc.Tank.Amount:0} (want >400/Clean/<5000)");
+            if (!(offInert && onClean)) ok = false;
+
+            // --- Case X (drink fluids): the new beverage fluids (soda/cola/OJ/milk/coconut/energy) are ALL drinkable + a
+            // carton container sips them like water; non-beverages (fuel) are not drinkable (strawberry). ---
+            var beverages = new[] { FluidType.Soda, FluidType.Cola, FluidType.OrangeJuice, FluidType.Milk, FluidType.CoconutWater, FluidType.EnergyDrink, FluidType.AppleJuice, FluidType.GrapeJuice };
+            bool allDrink = true;
+            foreach (var bev in beverages) if (!FluidDef.Drinkable(bev, WaterQuality.Clean)) allDrink = false;
+            // strawberry's rule: the ONLY thing blocked is bad water; EVERYTHING else (fuel/syrup/glue/chemicals) is a player choice -> drinkable
+            bool badWaterBlocked = !FluidDef.Drinkable(FluidType.Water, WaterQuality.Tainted) && !FluidDef.Drinkable(FluidType.Water, WaterQuality.Dirty);
+            bool elseDrinkable = FluidDef.Drinkable(FluidType.Fuel, WaterQuality.Clean) && FluidDef.Drinkable(FluidType.MapleSyrup, WaterQuality.Clean)
+                                 && FluidDef.Drinkable(FluidType.Glue, WaterQuality.Clean) && FluidDef.Drinkable(FluidType.Chemicals, WaterQuality.Clean);
+            var ojAsset = new SDG.Unturned.ItemAsset { id = 463, itemName = "Orange Juice", fluidCapacity = 1000f, fluidDefaultType = (byte)FluidType.OrangeJuice, fluidDefaultQuality = 0 };
+            var ojItem = new SDG.Unturned.Item(463);   // fresh -> lazily full of OJ
+            float sx = FluidItem.Sip(ojItem, ojAsset, out float hydx, out _);
+            bool ojSip = Mathf.Abs(sx - FluidItem.SipML) < 0.5f && hydx > 0f;
+            GD.Print($"[hosetool] case X: beverages drink={allDrink} · bad-water BLOCKED={badWaterBlocked} · fuel+syrup+glue+chem drink={elseDrinkable} · OJ sip {sx:0}mL (+{hydx:0.00})");
+            if (!(allDrink && badWaterBlocked && elseDrinkable && ojSip)) ok = false;
+
+            // --- Case Y (water tower): a map WATER TOWER is an INFINITE, TAINTED water source with head -> hose it downhill
+            // into a tank; the tank fills with TAINTED water and the tower never depletes (strawberry). ---
+            var tower = WaterTowerSource.Make();
+            var towerTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.Water, 5000f, 0f, WaterQuality.Clean), 125f);
+            tower.Position = new Vector3(-6f, 3f, 248f); towerTank.Position = new Vector3(2f, 0f, 248f);   // tower high, tank low (gravity, no pump)
+            AddChild(tower); AddChild(towerTank);
+            AddChild(new Hose { Source = tower.Ports[0], Consumer = towerTank.Ports[0] });   // tower output (Ports[0]=Source) -> tank
+            for (int i = 0; i < 60; i++) FluidNet.Tick(GetTree(), 0.1f);
+            bool towerOk = towerTank.Tank.Amount > 400f && towerTank.Tank.Quality == WaterQuality.Tainted && tower.Tank.Amount > 199999f;   // filled + tainted; tower infinite (undepleted)
+            GD.Print($"[hosetool] case Y: tank={towerTank.Tank.Amount:0} q={towerTank.Tank.Quality} (want >400/Tainted) · tower={tower.Tank.Amount:0} (want ~200000 infinite)");
+            if (!towerOk) ok = false;
+
+            // --- Case Z (machine status lines): the at-a-glance status a machine shows so a player can see WHY it's dead
+            // (strawberry polish). Valve open/closed; an unwired pump/purifier reads "no power"; a powered-but-no-work pump
+            // (rPump from case R: target full) reads "idle — no supply"; a powered active purifier (case W) reads "purifying". ---
+            var zValve = FluidContainer.MakeValve();
+            bool zOpen = zValve.StatusLine().text == "open";
+            zValve.ToggleValve();
+            bool zClosed = zValve.StatusLine().text == "closed";
+            bool zPumpNoPower = FluidPump.Make().StatusLine().text == "no power";       // fresh pump, never wired
+            bool zPurifNoPower = FluidPurifier.Make().StatusLine().text == "no power";  // fresh purifier, never wired
+            bool zPumpIdle = rPump.StatusLine().text == "idle — no supply";             // powered, target full -> no work (case R)
+            bool zPurifRun = purifier.StatusLine().text == "purifying";                 // powered + water flowing (case W)
+            GD.Print($"[hosetool] case Z: valve open={zOpen} closed={zClosed} · pump noPower={zPumpNoPower} idle={zPumpIdle} · purifier noPower={zPurifNoPower} run={zPurifRun}");
+            if (!(zOpen && zClosed && zPumpNoPower && zPurifNoPower && zPumpIdle && zPurifRun)) ok = false;
+
+            GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
+            GetTree().Quit();
+        }
+
         async void BuildEditor()
         {
             _worldBuild = true;

@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -247,6 +247,110 @@ namespace UnturnedGodot
                 Player.EquipUnarmed();
                 Log("unarmed -> fists (LMB/RMB to punch)");
             }
+            else if (verb == "fluid")
+            {
+                // fluid [split|combine]  -- debug fluid-IO rigs, then equip the hose tool. Aim a green/cyan port -> LMB ->
+                // aim an orange port -> LMB. Bare = source + empty + water tanks; split = source->splitter->2 tanks;
+                // combine = 2 sources->combiner->1 tank. Fittings sit between (source ABOVE fitting ABOVE tanks, gravity).
+                if (Player == null) { Log("no player"); return; }
+                var world = Player.GetParent();
+                if (world == null) { Log("no world"); return; }
+                if (GetTree().GetNodesInGroup("fluid_managers").Count == 0) world.AddChild(new FluidManager());
+                Vector3 p = Player.GlobalPosition;
+                Vector3 fwd = -Player.GlobalTransform.Basis.Z; fwd.Y = 0f; fwd = fwd.Normalized();
+                Vector3 right = Player.GlobalTransform.Basis.X; right.Y = 0f; right = right.Normalized();
+                string fa = arg.Trim().ToLowerInvariant();
+                if (fa.StartsWith("valve"))
+                {
+                    // valve rig (WORLD X): a high SOURCE + a VALVE + a low tank. Gravity feeds it; hose source->valve->tank,
+                    // then RMB the valve's port (with the hose tool out) to open/close it — the handle goes green/red.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var valve = FluidContainer.MakeValve(); valve.Position = c + Vector3.Up * 1.0f; world.AddChild(valve);
+                    SpawnFluidRig(world, FluidRole.Source, FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 1.6f, valve.Position);   // source WEST, high
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None, 0f, c + wx * 4f, valve.Position);   // tank EAST, low
+                    Log("valve rig (WORLD X): a high fuel SOURCE + a VALVE + a low empty tank. hose source->the valve's LEFT (orange) input, then its RIGHT (cyan) output->the tank. RMB the valve's port to open/close it (handle = green open / red closed).");
+                }
+                else if (fa.StartsWith("refine") || fa.StartsWith("sluice"))
+                {
+                    // transformer rig (WORLD X): a high source of the INPUT fluid + a refinery/sluice + a low output tank.
+                    // refine = oil->gas; sluice = water->dirty water. Hose source->transformer input, then output->the tank.
+                    bool sl = fa.StartsWith("sluice");
+                    var inT = sl ? FluidType.Water : FluidType.Oil;
+                    var outT = sl ? FluidType.Water : FluidType.Gas;   // sluice now outputs DIRTY-flagged WATER (via DirtiesWater), not a DirtyWater type
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var xf = FluidContainer.MakeTransformer(inT, outT, 50f, 1f); xf.DirtiesWater = sl; xf.Position = c + Vector3.Up * 1.0f; world.AddChild(xf);
+                    SpawnFluidRig(world, FluidRole.Source,  inT,          2000f, c - wx * 4f + Vector3.Up * 2.4f, xf.Position);   // input source WEST, high
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,  0f, c + wx * 4f, xf.Position);                       // output tank EAST, low (adopts out fluid)
+                    Log($"{(sl ? "sluice" : "refine")} rig (WORLD X): a {FluidDef.Name(inT)} SOURCE (west, high) + a TRANSFORMER + an empty tank (east, low). hose source->the transformer's LEFT (orange) input, then its RIGHT (green) output->the tank. it deletes {FluidDef.Name(inT)} and makes {FluidDef.Name(outT)}.");
+                }
+                else if (fa.StartsWith("pump"))
+                {
+                    // pump rig (WORLD X): a low SOURCE + an electric PUMP + a HIGH tank + a generator wired to the pump.
+                    // Once the generator spins up the pump lifts fluid UPHILL to the high tank. Hose src->pump, pump->tank.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var pump = FluidPump.Make(6f); pump.Position = c; world.AddChild(pump);
+                    SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f, c);             // source WEST, low
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + Vector3.Up * 3f, c);   // tank EAST, HIGH (3m up)
+                    var gen = Deployable.Spawn(world, DeployableDef.Generator, c + Vector3.Back * 3f, 0f);      // a generator to power the pump
+                    var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                    if (genOut != null && pump.PowerPorts.Count > 0)
+                    {
+                        var wr = new Wire(); world.AddChild(wr); wr.Source = genOut; wr.Consumer = pump.PowerPorts[0]; wr.AddToGroup("wires");
+                        wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, pump.PowerPorts[0].GlobalPosition }, valid: true);
+                    }
+                    gen.TogglePower(); PowerNet.Recompute(GetTree());
+                    Log("pump rig (WORLD X): low fuel SOURCE (west) + an electric PUMP + a HIGH empty tank (east, 3m up) + a wired generator. once the gen spins up (~1s) the pump lifts fluid UPHILL. hose source->pump input, then pump output->the high tank.");
+                }
+                else if (fa.StartsWith("purif"))
+                {
+                    // purify rig (WORLD X): a TAINTED water SOURCE (west) + a powered PURIFIER + an empty tank (east) + a
+                    // wired generator. Once the gen powers the purifier, tainted water in -> CLEAN water out. Hose src->purifier, purifier->tank.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right;
+                    var purifier = FluidPurifier.Make(); purifier.Position = c + Vector3.Up * 1.0f; world.AddChild(purifier);
+                    SpawnFluidRig(world, FluidRole.Source,  FluidType.Water, 2000f, c - wx * 4f + Vector3.Up * 2.0f, purifier.Position, WaterQuality.Tainted);   // TAINTED source WEST, high
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,     0f, c + wx * 4f, purifier.Position);   // clean tank EAST, low
+                    var gen = Deployable.Spawn(world, DeployableDef.Generator, c + Vector3.Back * 3f, 0f);
+                    var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                    if (genOut != null && purifier.PowerPorts.Count > 0)
+                    {
+                        var wr = new Wire(); world.AddChild(wr); wr.Source = genOut; wr.Consumer = purifier.PowerPorts[0]; wr.AddToGroup("wires");
+                        wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, purifier.PowerPorts[0].GlobalPosition }, valid: true);
+                    }
+                    gen.TogglePower(); PowerNet.Recompute(GetTree());
+                    Log("purify rig (WORLD X): a TAINTED water SOURCE (west) + a powered PURIFIER + an empty tank (east) + a wired generator. hose source->the purifier's LEFT (orange) input, then its RIGHT (green) output->the tank -> CLEAN water. cut the gen's power and it stops cleaning.");
+                }
+                else if (fa.StartsWith("split") || fa.StartsWith("combine"))
+                {
+                    // fittings have fixed local ±X port faces (input -X / output +X), so lay the rig along WORLD X near
+                    // the player: source(s) WEST + high, fitting centre, storage(s) EAST + low. Look west/east to aim.
+                    Vector3 c = p + fwd * 5f; Vector3 wx = Vector3.Right, wz = Vector3.Back;
+                    Vector3 fit = c + Vector3.Up * 1.0f;
+                    if (fa.StartsWith("split"))
+                    {
+                        SpawnFluidFitting(world, FluidRole.Splitter, 2, fit);
+                        SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f, fit);
+                        SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + wz * -1.5f, fit);
+                        SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f + wz *  1.5f, fit);
+                        Log("split rig (laid along WORLD X): fuel SOURCE (west, high) + a SPLITTER (cyan outputs) + two empty STORAGES (east, low). hose source->splitter input, then each cyan output->a tank.");
+                    }
+                    else
+                    {
+                        SpawnFluidFitting(world, FluidRole.Combiner, 2, fit);
+                        SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f + wz * -1.5f, fit);
+                        SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel, 2000f, c - wx * 4f + Vector3.Up * 2.4f + wz *  1.5f, fit);
+                        SpawnFluidRig(world, FluidRole.Storage, FluidType.None,    0f, c + wx * 4f, fit);
+                        Log("combine rig (laid along WORLD X): two fuel SOURCES (west, high) + a COMBINER + an empty STORAGE (east, low). hose each source->a combiner input, then the cyan output->the tank.");
+                    }
+                }
+                else
+                {
+                    SpawnFluidRig(world, FluidRole.Source,  FluidType.Fuel,  1000f, p + fwd * 4f + Vector3.Up * 1.6f, p);   // raised so gravity feeds
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.None,     0f, p + fwd * 4f + right * 2f, p);          // empty -> adopts + fills
+                    SpawnFluidRig(world, FluidRole.Storage, FluidType.Water,  200f, p + fwd * 4f - right * 2f, p);          // water -> "cannot mix fluids"
+                    Log("fluid rig: raised fuel SOURCE + empty STORAGE + water STORAGE. hose tool equipped -> LMB a green port then an orange port (water tank rejects: 'cannot mix fluids').");
+                }
+                Player.EquipHoseTool();
+            }
             else if (verb == "survival" || verb == "hunger")
             {
                 // survival [on|off]  -- toggle hunger/thirst drain (OFF by default). Bare `survival` flips it.
@@ -289,6 +393,24 @@ namespace UnturnedGodot
             locationName = m[0].Name;
             serverCmd = string.Format(System.Globalization.CultureInfo.InvariantCulture, "teleport {0:0.##} {1:0.##} {2:0.##}", pos.X, pos.Y, pos.Z);
             return true;
+        }
+
+        // Spawn one debug fluid container at `pos`, its hose port cube on the face toward `facePlayer` so it's aimable.
+        void SpawnFluidRig(Node world, FluidRole role, FluidType type, float amount, Vector3 pos, Vector3 facePlayer, WaterQuality quality = WaterQuality.Clean)
+        {
+            var c = FluidContainer.Make(role, new FluidTank(type, 2000f, amount, quality), 50f);
+            c.Position = pos;
+            Vector3 toP = facePlayer - pos; toP.Y = 0f;
+            if (toP.LengthSquared() > 1e-4f) { toP = toP.Normalized(); c.PortLocalPos = new Vector3(toP.X * 0.55f, 0.9f, toP.Z * 0.55f); }
+            world.AddChild(c);
+        }
+
+        // Spawn a tankless FITTING (splitter/combiner) at `pos`, unrotated — its input(-X)/output(+X) faces align to world X.
+        void SpawnFluidFitting(Node world, FluidRole role, int ways, Vector3 pos)
+        {
+            var c = FluidContainer.MakeFitting(role, ways);
+            c.Position = pos;
+            world.AddChild(c);
         }
 
         static ItemAsset ResolveItem(string arg)
