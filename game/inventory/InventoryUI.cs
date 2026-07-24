@@ -20,8 +20,22 @@ namespace UnturnedGodot
         const int PAD = 12;
         const int CLOTHW = 190;      // clothing column width
         const int GUTTER = 24;       // gap between clothing column and storage
+        // clothing PAPERDOLL (strawberry): a live 3D render of the worn character at the top of the clothing column.
+        const int PDW = CLOTHW - 16; // paperdoll display width (174)
+        const int PDH = 232;         // paperdoll display height
+        const int PDTOP = 30;        // y of the paperdoll inside the clothing box (below the CLOTHING header)
+        const int CLOTHH = PDTOP + PDH + 14 + 7 * (CELL + 10) + 10;   // header + paperdoll + 7 equip slots
 
         Control _root, _dash, _storageCol;
+        // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
+        // inventory's worn slots (PlayerClothingController.Refresh is read-only), lit + framed by a camera. Built once;
+        // Refresh() repaints its clothing; drag on its view spins it. Held weapon deferred (needs 3P gun anims).
+        SubViewport _pdVp;
+        Camera3D _pdCam;
+        RiggedCharacter _pdBody;
+        PlayerClothingController _pdClothing;
+        float _pdYaw = 0.5f;         // spin offset from facing the camera (drag adjusts it)
+        bool _pdDragging, _pdFramed;
         // each clothing equip slot carries its EItemType so a drop can be matched to it (shirt->SHIRT slot) and its worn
         // garment grabbed for a drag-out unequip. These Controls are the clothing drop targets (worn state lives in Inv.worn*,
         // NOT a page grid, so they can't go in _drop which is page-indexed -- they're hit-tested via PointToClothSlot).
@@ -69,8 +83,8 @@ namespace UnturnedGodot
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
-        public void Open() { _open = true; Visible = true; Refresh(); _lastSig = InventorySignature(); }
-        public void Close() { _open = false; Visible = false; }
+        public void Open() { _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
+        public void Close() { _open = false; Visible = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
 
         long _lastSig = -1;
@@ -78,6 +92,8 @@ namespace UnturnedGodot
         {
             if (!_open) return;
             CenterDash();   // keep centred as the viewport settles
+            _pdBody?.Tick(delta);   // advance the paperdoll's idle so it breathes instead of a frozen T-pose
+            FramePaperdoll();       // one-time: aim + distance the camera at the rig's real bounds (needs it in-tree)
             // LIVE update (master): if the inventory changed in the background (e.g. a consume finishing while the bag's
             // open), rebuild the grid -- but NOT mid drag / selection, so it doesn't yank the item out from under you.
             if (!_dragging && _selPanel == null)
@@ -668,10 +684,12 @@ namespace UnturnedGodot
         // left column: the equip slots (hat/glasses/mask/shirt/vest/backpack/pants), each showing the worn item
         void BuildClothingColumn()
         {
-            var box = new Panel { Position = Vector2.Zero, Size = new Vector2(CLOTHW, 7 * (CELL + 10) + 52) };
+            var box = new Panel { Position = Vector2.Zero, Size = new Vector2(CLOTHW, CLOTHH) };
             StyleBox(box, new Color(0.06f, 0.06f, 0.07f, 0.9f));
             _dash.AddChild(box);
             box.AddChild(Header("CLOTHING", new Vector2(10, 8), CLOTHW - 20));
+
+            BuildPaperdoll(box);   // the 3D worn-character render at the top of the column
 
             (string name, System.Func<Item> worn, EItemType type)[] rows =
             {
@@ -680,7 +698,7 @@ namespace UnturnedGodot
                 ("Vest",     () => Inv?.wornVest,     EItemType.VEST),     ("Backpack", () => Inv?.wornBackpack, EItemType.BACKPACK),
                 ("Pants",    () => Inv?.wornPants,    EItemType.PANTS),
             };
-            float y = 42;
+            float y = PDTOP + PDH + 14;   // stack the equip slots BELOW the paperdoll
             foreach (var (name, worn, type) in rows)
             {
                 var slot = new Panel { Position = new Vector2(12, y), Size = new Vector2(CELL, CELL) };
@@ -694,10 +712,99 @@ namespace UnturnedGodot
             }
         }
 
+        // Build the 3D paperdoll: a dark stage + an isolated SubViewport rendering a preview character clothed off the
+        // player's worn slots, surfaced in a SubViewportContainer you can drag to spin. Built once (BuildClothingColumn runs once).
+        void BuildPaperdoll(Panel box)
+        {
+            var stage = new Panel { Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH) };
+            StyleBox(stage, new Color(0.05f, 0.06f, 0.08f, 0.95f));   // dark backdrop so the character reads against it
+            box.AddChild(stage);
+
+            // a SubViewportContainer shows the viewport clipped to the stage. Stretch off -> the viewport keeps its own
+            // LOCKED size (so the render aspect is deterministic regardless of layout timing). Dragging its surface spins the rig.
+            var vpc = new SubViewportContainer
+            {
+                Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH),
+                Stretch = false, MouseFilter = Control.MouseFilterEnum.Stop, TooltipText = "drag to rotate",
+            };
+            vpc.GuiInput += PaperdollDrag;
+            box.AddChild(vpc);
+            _pdVp = new SubViewport
+            {
+                Size = new Vector2I(PDW, PDH),                        // LOCK the render aspect (0.75 portrait)
+                OwnWorld3D = true,                                    // isolated from the game world (like the viewmodel)
+                TransparentBg = true,
+                Msaa3D = Viewport.Msaa.Msaa4X,                        // antialias the character edges
+                RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+                RenderTargetClearMode = SubViewport.ClearMode.Always,
+            };
+            vpc.AddChild(_pdVp);
+
+            // straight-on camera; its exact distance/height is computed from the rig's real AABB in _Process once it's
+            // in-tree (FramePaperdoll) -- avoids guessing at the mesh's origin/height. A rough start avoids a bad first frame.
+            _pdCam = new Camera3D { Fov = 34f, Current = true, Position = new Vector3(0f, 0.98f, 3.8f) };
+            _pdVp.AddChild(_pdCam);
+
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 155f, 0f), LightEnergy = 1.2f });                                          // key
+            _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-8f, -35f, 0f), LightEnergy = 0.55f, LightColor = new Color(0.78f, 0.84f, 1f) }); // cool fill (the world env doesn't reach an isolated SubViewport)
+            _pdVp.AddChild(new WorldEnvironment
+            {
+                Environment = new Godot.Environment
+                {
+                    BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = new Color(0f, 0f, 0f, 0f),
+                    AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = new Color(0.5f, 0.52f, 0.56f), AmbientLightEnergy = 1.0f,
+                    TonemapMode = Godot.Environment.ToneMapper.Aces,
+                },
+            });
+
+            _pdBody = RiggedCharacter.Build("res://content/rig.json", new Color(0.82f, 0.66f, 0.52f));   // same rig + skin as the live 3P body
+            if (_pdBody != null)
+            {
+                _pdVp.AddChild(_pdBody);
+                _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f);   // face the camera (rig forward is -Z; the cam sits at +Z)
+                _pdBody.PlayLoop("Idle_Stand");
+                if (Inv != null) { _pdClothing = new PlayerClothingController(_pdBody, Inv); _pdClothing.Refresh(); }   // Inv may not be wired yet -> lazily created in Refresh()
+            }
+        }
+
+        // One-time deterministic frame: read the rig's actual world AABB (only valid once in-tree) and set the camera's
+        // height + distance to fit the character's full HEIGHT (ignoring the wide bind-pose arm span) with a margin. This
+        // SubViewport's effective vertical extent runs ~15% tighter than the FOV math with a slight upward bias (measured
+        // off the render) -> pad + drop the aim so the WHOLE body fits. LookAt needs the node in-tree -> done here.
+        void FramePaperdoll()
+        {
+            if (_pdFramed || _pdCam == null || _pdBody?.Body == null || !_pdBody.Body.IsInsideTree()) return;
+            var mi = _pdBody.Body;
+            Aabb ab = mi.GlobalTransform * mi.GetAabb();          // world-space bounds of the body mesh
+            if (ab.Size.Y < 0.1f) return;                         // not skinned/built yet -> wait a frame
+            float cy = ab.Position.Y + ab.Size.Y * 0.5f;          // vertical centre of the body
+            float frameH = ab.Size.Y * 1.36f;                     // ~85% fill after the tightening
+            float dist = frameH * 0.5f / Mathf.Tan(Mathf.DegToRad(_pdCam.Fov * 0.5f));
+            float aimY = cy - 0.15f;
+            _pdCam.Position = new Vector3(0f, aimY, dist);
+            _pdCam.LookAt(new Vector3(0f, aimY, 0f), Vector3.Up);
+            _pdFramed = true;
+        }
+
+        // Drag left/right on the paperdoll to spin the character (source has a rotation slider; a drag is the same intent).
+        void PaperdollDrag(InputEvent e)
+        {
+            if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left) _pdDragging = mb.Pressed;
+            else if (e is InputEventMouseMotion mm && _pdDragging && _pdBody != null)
+            {
+                _pdYaw -= mm.Relative.X * 0.012f;
+                _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f);
+            }
+        }
+
         public void Refresh()
         {
             if (Inv == null || _storageCol == null) return;
             CloseSelection();   // the panel points at a specific item; drop it when the layout rebuilds
+
+            // repaint the paperdoll's worn clothing off the current slots (any inventory change can wear/unwear)
+            if (_pdClothing == null && _pdBody != null) _pdClothing = new PlayerClothingController(_pdBody, Inv);   // Inv wasn't ready at build time
+            _pdClothing?.Refresh();
 
             // worn clothing into the equip slots
             foreach (var (slot, lbl, worn, _) in _clothing)
@@ -741,7 +848,7 @@ namespace UnturnedGodot
         void CenterDash()
         {
             float w = CLOTHW + GUTTER + _storageW;
-            float h = Mathf.Max(7 * (CELL + 10) + 52, _storageH);
+            float h = Mathf.Max(CLOTHH, _storageH);
             Vector2 vp = GetViewport().GetVisibleRect().Size;
             _dash.Position = new Vector2(Mathf.Round((vp.X - w) / 2f), Mathf.Round((vp.Y - h) / 2f));
         }
