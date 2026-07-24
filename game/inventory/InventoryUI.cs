@@ -20,13 +20,16 @@ namespace UnturnedGodot
         const int PAD = 12;
         const int CLOTHW = 190;      // clothing column width
         const int GUTTER = 24;       // gap between clothing column and storage
+        const int NAVH = 46;         // top navbar strip (Inventory / Crafting / Skills / Information tabs) -- retail dashboard header
+        const int NAMEH = 44;        // name + faction badge under the navbar (top-left)
+        const int BODYTOP = NAVH + 10 + NAMEH + 12;   // y where the columns (clothing / storage) start, below the navbar + name
         // clothing PAPERDOLL (strawberry): a live 3D render of the worn character at the top of the clothing column.
         const int PDW = CLOTHW - 16; // paperdoll display width (174)
         const int PDH = 232;         // paperdoll display height
         const int PDTOP = 30;        // y of the paperdoll inside the clothing box (below the CLOTHING header)
         const int CLOTHH = PDTOP + PDH + 14 + 7 * (CELL + 10) + 10;   // header + paperdoll + 7 equip slots
 
-        Control _root, _dash, _storageCol;
+        Control _root, _dash, _storageCol, _topBar;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
         // inventory's worn slots (PlayerClothingController.Refresh is read-only), lit + framed by a camera. Built once;
         // Refresh() repaints its clothing; drag on its view spins it. Held weapon deferred (needs 3P gun anims).
@@ -78,8 +81,10 @@ namespace UnturnedGodot
             _root.AddChild(_dash);
 
             BuildClothingColumn();
-            _storageCol = new Control { Position = new Vector2(CLOTHW + GUTTER, 0) };
+            _storageCol = new Control { Position = new Vector2(CLOTHW + GUTTER, BODYTOP) };
             _dash.AddChild(_storageCol);
+            _topBar = new Control();   // navbar + name badge across the top (rebuilt at the dash width in Refresh)
+            _dash.AddChild(_topBar);
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
@@ -684,7 +689,7 @@ namespace UnturnedGodot
         // left column: the equip slots (hat/glasses/mask/shirt/vest/backpack/pants), each showing the worn item
         void BuildClothingColumn()
         {
-            var box = new Panel { Position = Vector2.Zero, Size = new Vector2(CLOTHW, CLOTHH) };
+            var box = new Panel { Position = new Vector2(0, BODYTOP), Size = new Vector2(CLOTHW, CLOTHH) };
             StyleBox(box, new Color(0.06f, 0.06f, 0.07f, 0.9f));
             _dash.AddChild(box);
             box.AddChild(Header("CLOTHING", new Vector2(10, 8), CLOTHW - 20));
@@ -842,13 +847,42 @@ namespace UnturnedGodot
             }
             _storageH = y;
 
+            BuildTopBar(CLOTHW + GUTTER + _storageW);   // navbar + name span the dashboard width
             CenterDash();
+        }
+
+        void BuildTopBar(float w)
+        {
+            if (_topBar == null) return;
+            foreach (Node c in _topBar.GetChildren()) c.QueueFree();
+            // navbar tabs (retail: Inventory / Crafting / Skills / Information) -- Inventory highlighted as the current tab
+            string[] tabs = { "Inventory", "Crafting", "Skills", "Information" };
+            float tw = (w - (tabs.Length - 1) * 6) / tabs.Length;
+            for (int i = 0; i < tabs.Length; i++)
+            {
+                var tab = new Panel { Position = new Vector2(i * (tw + 6), 0), Size = new Vector2(tw, NAVH) };
+                StyleBox(tab, i == 0 ? new Color(0.22f, 0.34f, 0.52f, 0.95f) : new Color(0.10f, 0.13f, 0.19f, 0.9f));
+                _topBar.AddChild(tab);
+                var l = new Label { Text = tabs[i], Position = new Vector2(0, 12), Size = new Vector2(tw, 24), HorizontalAlignment = HorizontalAlignment.Center };
+                l.AddThemeColorOverride("font_color", new Color(0.86f, 0.89f, 0.93f));
+                tab.AddChild(l);
+            }
+            // name + faction badge, top-left under the navbar
+            var badge = new Panel { Position = new Vector2(0, NAVH + 10), Size = new Vector2(CLOTHW, NAMEH) };
+            StyleBox(badge, new Color(0.10f, 0.13f, 0.19f, 0.92f));
+            _topBar.AddChild(badge);
+            var nm = new Label { Text = "Survivor", Position = new Vector2(12, 5), Size = new Vector2(CLOTHW - 20, 20) };
+            nm.AddThemeColorOverride("font_color", new Color(0.9f, 0.9f, 0.95f));
+            badge.AddChild(nm);
+            var fac = new Label { Text = "Neutral", Position = new Vector2(12, 24), Size = new Vector2(CLOTHW - 20, 16) };
+            fac.AddThemeColorOverride("font_color", new Color(0.58f, 0.6f, 0.64f));
+            badge.AddChild(fac);
         }
 
         void CenterDash()
         {
             float w = CLOTHW + GUTTER + _storageW;
-            float h = Mathf.Max(CLOTHH, _storageH);
+            float h = BODYTOP + Mathf.Max(CLOTHH, _storageH);
             Vector2 vp = GetViewport().GetVisibleRect().Size;
             _dash.Position = new Vector2(Mathf.Round((vp.X - w) / 2f), Mathf.Round((vp.Y - h) / 2f));
         }
