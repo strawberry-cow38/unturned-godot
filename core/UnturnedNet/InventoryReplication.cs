@@ -390,6 +390,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt8(j.item?.fluidType ?? 0);
             w.WriteClampedFloat(j.item?.fluidAmount ?? -1f, 20, 1);
             w.WriteUInt8(j.item?.fluidQuality ?? 0);
+            w.WriteBit(j.item?.autoDrink ?? true);   // autodrink toggle (default on)
         }
 
         static bool ReadJar(NetPakReader r, out byte x, out byte y, out byte rot, out Item item)
@@ -408,8 +409,9 @@ namespace UnturnedGodot.Net
             if (!r.ReadUInt8(out byte fluidType)) return false;                  // fluid-container contents (server-owned)
             if (!r.ReadClampedFloat(20, 1, out float fluidAmount)) return false;
             if (!r.ReadUInt8(out byte fluidQuality)) return false;
+            if (!r.ReadBit(out bool autoDrink)) return false;                    // autodrink toggle
             item = new Item(id, amount, quality) { gunAmmo = gunAmmo, gunFiremode = gunFiremode, gunMagId = gunMagId, gunAttach = gunAttach, fuelLevel = fuelLevel,
-                                                   fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality };
+                                                   fluidType = fluidType, fluidAmount = fluidAmount, fluidQuality = fluidQuality, autoDrink = autoDrink };
             return true;
         }
 
@@ -475,6 +477,7 @@ namespace UnturnedGodot.Net
                     h = NetHash.MixByte(h, j.item?.fluidType ?? (byte)0);   // fluid-container contents ride the parity hash too (quantized to the wire values)
                     h = NetHash.MixFloat(h, NetQuantization.QuantizeClampedFloat(j.item?.fluidAmount ?? -1f, 20, 1));
                     h = NetHash.MixByte(h, j.item?.fluidQuality ?? (byte)0);
+                    h = NetHash.MixByte(h, (byte)((j.item?.autoDrink ?? true) ? 1 : 0));
                 }
             }
             foreach (var worn in new[] { e.Inventory.wornHat, e.Inventory.wornGlasses, e.Inventory.wornMask,

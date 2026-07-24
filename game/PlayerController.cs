@@ -1470,14 +1470,15 @@ namespace UnturnedGodot
             var asset = _heldFluidItem.GetAsset();
             if (asset == null || !asset.IsFluidContainer) return;
             if (_focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null) { FluidToast("aim away from the tank to drink  ([RMB] fills)"); return; }   // spec: drink while NOT looking at a container
-            if (Water >= 0.999f) { FluidToast("not thirsty"); return; }   // don't waste a sip when already fully hydrated (strawberry polish)
-            float sip = FluidItem.Sip(_heldFluidItem, asset, out float hydration, out string msg);
-            if (sip <= 0f) { FluidToast(msg); return; }
+            if (Water >= 0.999f) { FluidToast("not thirsty"); return; }   // don't waste a full bottle when already hydrated
+            // equipped + LMB = CHUG the whole bottle at once (strawberry); the passive 50 mL sips are autodrink's job
+            float drank = FluidItem.DrinkAll(_heldFluidItem, asset, out float hydration, out string msg);
+            if (drank <= 0f) { FluidToast(msg); return; }
             Water = Mathf.Min(1f, Water + hydration);
             _invUI?.Refresh();
-            _viewmodel?.PlayConsumeUse();   // sip animation (reuses the drink archetype's Use clip)
-            FluidToast($"sipped {sip:0} mL  (+{hydration * 100f:0}% water)");
-            GD.Print($"[fluid] sip {sip:0} mL from {asset.itemName} -> water {Water:0.00}");
+            _viewmodel?.PlayConsumeUse();   // drink animation (reuses the drink archetype's Use clip)
+            FluidToast($"drank {FluidDef.Litres(drank)}  (+{hydration * 100f:0}% water)");
+            GD.Print($"[fluid] chugged {FluidDef.Litres(drank)} from {asset.itemName} -> water {Water:0.00}");
         }
 
         // The held-container HUD: a persistent centered line while a fluid container is in hand (its contents + a hint),
@@ -2974,6 +2975,7 @@ namespace UnturnedGodot
                 if (NetVitalsAdopted) Health = _netAdoptedHealth;
                 return;
             }
+            AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
             bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
             {
@@ -2989,6 +2991,41 @@ namespace UnturnedGodot
             if (_pendServerVitals) return;   // P3b (review finding 5): no local starvation death in the pre-adoption spawn window (server owns HP the moment it adopts)
             if (died) { Deaths++; Die(); }
         }
+
+        // AUTODRINK (strawberry): while hydration sits below the floor, passively sip 50 mL from a bag bottle whose
+        // autodrink is ON and whose contents are SAFE (clean water / a beverage — never anything that'd make you sick).
+        // No animation, no equip needed. Drains one bottle to empty before the next (first-found in a stable scan order).
+        // A modest cooldown keeps it a steady top-up instead of frame-rate-fast draining. SP-local for now (MP routing =
+        // fast-follow with the rest of fluid); only observable once thirst is actually dropping (survival drain ON).
+        public const float AutoDrinkFloor = 0.5f;      // keep hydration at/above this
+        const float AutoDrinkInterval = 0.7f;          // min seconds between auto-sips
+        float _autoDrinkCd;
+        void AutoDrinkTick(float dt)
+        {
+            if (_dead || Inventory == null) return;
+            _autoDrinkCd -= dt;
+            if (Water >= AutoDrinkFloor || _autoDrinkCd > 0f) return;
+            for (byte pg = 0; pg < PlayerInventory.PAGES; pg++)
+            {
+                var page = Inventory.items[pg];
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var jar = page.getItem(i);
+                    var it = jar?.item; var a = it?.GetAsset();
+                    if (a == null || !a.IsFluidContainer || !it.autoDrink) continue;
+                    FluidItem.Read(it, a, out var t, out var amt, out var q);
+                    if (amt <= 0.01f || !FluidDef.Safe(t, q)) continue;   // empty / unsafe -> never autodrunk
+                    float sip = Mathf.Min(FluidItem.SipML, amt);
+                    FluidItem.Write(it, t, amt - sip, q);
+                    Water = Mathf.Min(1f, Water + sip * FluidItem.HydrationPerML);
+                    _autoDrinkCd = AutoDrinkInterval;
+                    _invUI?.Refresh();
+                    return;
+                }
+            }
+        }
+        // test seam: drive one autodrink evaluation from a headless test
+        public void DebugAutoDrinkTick(float dt) => AutoDrinkTick(dt);
 
         public Camera3D Camera => _cam;
 

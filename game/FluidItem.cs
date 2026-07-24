@@ -103,5 +103,24 @@ namespace UnturnedGodot
             hydration = sip * HydrationPerML;
             return sip;
         }
+
+        // Equipped LMB (not aimed at a tank): CHUG the whole bottle at once (strawberry) — the deliberate big-gulp, distinct
+        // from the passive 50 mL autodrink. Empties the container (keeps the item + its type so you can refill it), applies
+        // the hydration for everything it held (Water-vital caps at 1). Same drinkable gate as a sip. Returns mL drunk.
+        public static float DrinkAll(Item held, ItemAsset a, out float hydration, out string msg)
+        {
+            hydration = 0f; msg = null;
+            if (held == null || a == null || !a.IsFluidContainer) { msg = "not a fluid container"; return 0f; }
+            Read(held, a, out var type, out var amount, out var q);
+            if (amount <= 0.01f) { msg = "container is empty"; return 0f; }
+            if (!FluidDef.Drinkable(type, q))
+            {
+                msg = type == FluidType.Water ? $"can't drink {FluidDef.WaterName(type, q).ToLowerInvariant()}" : $"can't drink {FluidDef.Name(type)}";
+                return 0f;
+            }
+            Write(held, type, 0f, q);   // empty it, keep the type/quality (an empty bottle you can refill)
+            hydration = amount * HydrationPerML;
+            return amount;
+        }
     }
 }

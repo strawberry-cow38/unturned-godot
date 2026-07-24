@@ -116,6 +116,10 @@ namespace SDG.Unturned
         public byte fluidType;
         public float fluidAmount = -1f;
         public byte fluidQuality;
+        // AUTODRINK (strawberry): a fluid container with this ON passively sips 50 mL to keep the holder hydrated while it
+        // sits in the bag (only for SAFE liquids -- FluidDef.Safe; gated game-side). Defaults ON; a per-item toggle in the
+        // inventory flips it. Non-container items ignore it.
+        public bool autoDrink = true;
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {

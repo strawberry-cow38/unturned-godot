@@ -64,13 +64,12 @@ namespace UnturnedGodot.Testing
         }
     }
 
-    // strawberry: "1 sip consumes the whole bottle" — a fluid CONTAINER (water bottle etc.) was reaching the consumable
-    // CHUG path (EquipHeldConsumable → one click eats the whole item) instead of the container SIP path. Both the equip
-    // dispatch AND the item-panel "Hold" button must route a container to EquipHeldFluidContainer. This exercises the REAL
-    // catalog (id 14/473/337) so a water-specific wiring miss would fail here.
-    public class FluidContainerNotChugged : GameTest
+    // strawberry's two drink modes: equipped + LMB = CHUG the whole bottle; autodrink = passive 50 mL sips of a SAFE bottle
+    // in the bag when hydration falls below the floor. Also guards the earlier fix — a fluid container (also EItemType.WATER
+    // = IsConsumable) must equip as a CONTAINER, never reach the consumable chug path. Uses the REAL catalog (14/473/337).
+    public class FluidContainerDrinkModes : GameTest
     {
-        public override string Name => "fluid.container_not_chugged";
+        public override string Name => "fluid.container_drink_modes";
         public override IEnumerable<Step> Run()
         {
             ItemCatalog.RegisterAll();
@@ -79,23 +78,43 @@ namespace UnturnedGodot.Testing
                 var a = Assets.find(id);
                 T.Check($"{name} ({id}) resolves as a fluid container", a != null && a.IsFluidContainer);
                 var p = new PlayerController { Water = 0.1f, Inventory = new PlayerInventory() };
-                // the canonical equip dispatch (hotbar/pickup) must hold it as a CONTAINER, never chug it
                 p.EquipItemAsset(a, new Item(id));
                 T.Check($"{name} equips as a container, NOT a chug-consumable", !p.HoldingConsumable);
             }
-            // end-to-end: a water bottle sips 50 mL per click (the item STAYS; pre-fix one click ate the whole thing)
+
+            // equipped + LMB = CHUG: empties the whole bottle at once, big hydration, the (empty) bottle stays reusable
             var wb = Assets.find(14);
-            var pl = new PlayerController { Water = 0.1f, Inventory = new PlayerInventory() };
+            var p1 = new PlayerController { Water = 0.1f, Inventory = new PlayerInventory() };
             var bottle = new Item(14);
-            pl.EquipHeldFluidContainer(wb, bottle);       // what the fixed panel "Hold" + dispatch both route to
-            FluidItem.Read(bottle, wb, out _, out float before, out _);
-            float water0 = pl.Water;
-            pl.DebugDrinkContainer();                     // one "sip"
-            FluidItem.Read(bottle, wb, out _, out float after, out _);
-            T.Check($"one sip takes ~50 mL, not the whole bottle (before {before:0}, after {after:0})",
-                    System.Math.Abs((before - after) - FluidItem.SipML) < 1f);
-            T.Check("hydration rose from the sip", pl.Water > water0);
-            T.Check("the bottle is still held (not consumed away)", !pl.Unarmed && after > 1f);
+            p1.EquipHeldFluidContainer(wb, bottle);
+            FluidItem.Read(bottle, wb, out _, out float b4, out _);
+            p1.DebugDrinkContainer();
+            FluidItem.Read(bottle, wb, out _, out float aft, out _);
+            T.Check($"chug empties the WHOLE bottle (was {b4:0} mL, now {aft:0})", b4 > 900f && aft < 1f);
+            T.Check("chug raised hydration a lot (1 L water)", p1.Water > 0.4f);
+            T.Check("the empty bottle is still held (reusable)", !p1.Unarmed);
+
+            // autodrink: a safe bottle in the bag sips 50 mL when hydration is below the floor
+            var p2 = new PlayerController { Water = 0.2f, Inventory = new PlayerInventory() };
+            var b2 = new Item(14);
+            p2.Inventory.items[2].tryAddItem(b2);
+            float w0 = p2.Water;
+            p2.DebugAutoDrinkTick(1f);
+            T.Check($"autodrink sipped ~5% hydration (a 50 mL sip); {w0:0.00}->{p2.Water:0.00}", System.Math.Abs((p2.Water - w0) - 0.05f) < 0.006f);
+            FluidItem.Read(b2, wb, out _, out float left, out _);
+            T.Check($"autodrink drained 50 mL from the bottle (1000 -> {left:0})", System.Math.Abs(left - 950f) < 1f);
+
+            // autodrink NEVER touches an unsafe fluid (tainted water) or an autodrink-OFF bottle
+            var p3 = new PlayerController { Water = 0.2f, Inventory = new PlayerInventory() };
+            var tainted = new Item(14); FluidItem.Write(tainted, FluidType.Water, 1000f, WaterQuality.Tainted);
+            p3.Inventory.items[2].tryAddItem(tainted);
+            float w3 = p3.Water; p3.DebugAutoDrinkTick(1f);
+            T.Check("autodrink refuses UNSAFE tainted water", System.Math.Abs(p3.Water - w3) < 0.001f);
+            var p4 = new PlayerController { Water = 0.2f, Inventory = new PlayerInventory() };
+            var off = new Item(14) { autoDrink = false };
+            p4.Inventory.items[2].tryAddItem(off);
+            float w4 = p4.Water; p4.DebugAutoDrinkTick(1f);
+            T.Check("autodrink respects the OFF toggle", System.Math.Abs(p4.Water - w4) < 0.001f);
             yield break;
         }
     }

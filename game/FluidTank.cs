@@ -57,6 +57,12 @@ namespace UnturnedGodot
         // energy drink -> stamina, etc.) are a follow-up; right now a sip just hydrates regardless.
         public static bool Drinkable(FluidType id, WaterQuality q) => !(id == FluidType.Water && q != WaterQuality.Clean);
 
+        // SAFE to AUTODRINK (strawberry): the narrower set autodrink defaults ON for + passively sips — CLEAN water or a
+        // proper BEVERAGE. NOT tainted/dirty water, NOT fuel/oil/gas, and NOT the novelty "you can if you insist" liquids
+        // (chemicals / glue / maple syrup — "syrup's more food in liquid form", strawberry). Those you drink only by manual
+        // choice; autodrink never touches them.
+        public static bool Safe(FluidType id, WaterQuality q) => (id == FluidType.Water && q == WaterQuality.Clean) || IsBeverage(id);
+
         // Display a volume in litres (1 unit = 1 mL, strawberry 2026-07-22). Sub-litre reads in mL so a near-empty can
         // isn't just "0.0 L"; >= 1 L shows one decimal. e.g. 20000 -> "20.0 L", 450 -> "450 mL".
         public static string Litres(float mL) => mL < 1000f ? $"{mL:0} mL" : $"{mL / 1000f:0.0} L";

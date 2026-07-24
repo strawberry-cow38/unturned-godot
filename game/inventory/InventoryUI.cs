@@ -447,6 +447,8 @@ namespace UnturnedGodot
             }
             if (asset.IsFuelContainer)   // a gas can gets an extra "Empty" action -> dump its fuel (master)
             { AddActionButton(panel, "Empty", new Vector2(228, by), EmptyFuelSelected); by += 44; }
+            if (asset.IsFluidContainer && jar.item != null)   // a fluid container: toggle autodrink (default on -> passive 50 mL sips of safe liquid)
+            { AddActionButton(panel, jar.item.autoDrink ? "Autodrink: ON" : "Autodrink: OFF", new Vector2(228, by), ToggleAutoDrinkSelected); by += 44; }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
@@ -547,6 +549,18 @@ namespace UnturnedGodot
             if (asset == null || !asset.IsFuelContainer || jar.item == null) return;
             jar.item.fuelLevel = 0f;
             Refresh();
+        }
+
+        void ToggleAutoDrinkSelected()   // flip a fluid container's autodrink; reopen the panel so the button label updates
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || !asset.IsFluidContainer || jar.item == null) return;
+            jar.item.autoDrink = !jar.item.autoDrink;
+            OpenSelection(_selPage, _selX, _selY);   // re-render with the new ON/OFF label
         }
 
         // Equip a deployable (generator/spotlight) -> close the inventory so the player aims the placement ghost and
