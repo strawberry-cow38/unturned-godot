@@ -55,8 +55,47 @@ namespace UnturnedGodot.Testing
             T.Check("a melee offers a hand action", InventoryUI.HasHandAction(new ItemAsset { meleeName = "knife_military" }));
             T.Check("a consumable (FOOD) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { type = EItemType.FOOD }));
             T.Check("a fuel can offers a hand action", InventoryUI.HasHandAction(new ItemAsset { fuelCapacity = 500f }));
+            // a fluid CONTAINER (bottle/canteen) offers a hand action even when it's a GENERIC-type EMPTY canteen (not
+            // IsConsumable) -- pre-fix an empty canteen had the equip code but NO Hold button (the exact rope-style gap).
+            T.Check("a fluid container (GENERIC canteen) offers a hand action", InventoryUI.HasHandAction(new ItemAsset { id = 63334, type = EItemType.GENERIC, fluidCapacity = 500f }));
             T.Check("a plain SUPPLY item (no ToolDef entry) offers NO hand action", !InventoryUI.HasHandAction(new ItemAsset { id = 63333, type = EItemType.SUPPLY }));
             T.Check("null asset -> no hand action", !InventoryUI.HasHandAction(null));
+            yield break;
+        }
+    }
+
+    // strawberry: "1 sip consumes the whole bottle" — a fluid CONTAINER (water bottle etc.) was reaching the consumable
+    // CHUG path (EquipHeldConsumable → one click eats the whole item) instead of the container SIP path. Both the equip
+    // dispatch AND the item-panel "Hold" button must route a container to EquipHeldFluidContainer. This exercises the REAL
+    // catalog (id 14/473/337) so a water-specific wiring miss would fail here.
+    public class FluidContainerNotChugged : GameTest
+    {
+        public override string Name => "fluid.container_not_chugged";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            foreach (var (id, name) in new[] { ((ushort)14, "Bottled Water"), ((ushort)473, "Bottled Soda"), ((ushort)337, "Canteen") })
+            {
+                var a = Assets.find(id);
+                T.Check($"{name} ({id}) resolves as a fluid container", a != null && a.IsFluidContainer);
+                var p = new PlayerController { Water = 0.1f, Inventory = new PlayerInventory() };
+                // the canonical equip dispatch (hotbar/pickup) must hold it as a CONTAINER, never chug it
+                p.EquipItemAsset(a, new Item(id));
+                T.Check($"{name} equips as a container, NOT a chug-consumable", !p.HoldingConsumable);
+            }
+            // end-to-end: a water bottle sips 50 mL per click (the item STAYS; pre-fix one click ate the whole thing)
+            var wb = Assets.find(14);
+            var pl = new PlayerController { Water = 0.1f, Inventory = new PlayerInventory() };
+            var bottle = new Item(14);
+            pl.EquipHeldFluidContainer(wb, bottle);       // what the fixed panel "Hold" + dispatch both route to
+            FluidItem.Read(bottle, wb, out _, out float before, out _);
+            float water0 = pl.Water;
+            pl.DebugDrinkContainer();                     // one "sip"
+            FluidItem.Read(bottle, wb, out _, out float after, out _);
+            T.Check($"one sip takes ~50 mL, not the whole bottle (before {before:0}, after {after:0})",
+                    System.Math.Abs((before - after) - FluidItem.SipML) < 1f);
+            T.Check("hydration rose from the sip", pl.Water > water0);
+            T.Check("the bottle is still held (not consumed away)", !pl.Unarmed && after > 1f);
             yield break;
         }
     }

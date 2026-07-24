@@ -408,6 +408,19 @@ namespace UnturnedGodot
             desc.AddThemeColorOverride("font_color", new Color(0.78f, 0.78f, 0.8f));
             desc.AddThemeFontSizeOverride("font_size", 13);
             panel.AddChild(desc);
+            // a fluid CONTAINER shows its live contents (the "tooltip" strawberry wanted back): type + amount + capacity
+            if (asset.IsFluidContainer && jar.item != null)
+            {
+                FluidItem.Read(jar.item, asset, out var ct, out var ca, out var cq);
+                string contents = (ca <= 0.001f || ct == FluidType.None)
+                    ? $"Contents: empty  ·  holds {FluidDef.Litres(asset.fluidCapacity)}"
+                    : $"Contents: {FluidDef.Litres(ca)} {FluidDef.WaterName(ct, cq)}  ·  of {FluidDef.Litres(asset.fluidCapacity)}";
+                var ccol = ct == FluidType.None ? new Color(0.72f, 0.74f, 0.77f) : FluidDef.WaterColor(ct, cq).Lerp(Colors.White, 0.3f);
+                var cl = new Label { Text = contents, Position = new Vector2(228, 120), Size = new Vector2(258, 22) };
+                cl.AddThemeColorOverride("font_color", ccol);
+                cl.AddThemeFontSizeOverride("font_size", 13);
+                panel.AddChild(cl);
+            }
 
             // right-bottom: actions. ONE state-aware hand button (strawberry): if this item is the one in hand
             // -> "Dequip" (back to fists); else "Equip" (gun/melee/deployable) or "Hold" (consumable). Then Drop + Close.
@@ -418,6 +431,8 @@ namespace UnturnedGodot
             {
                 if (Player != null && Player.IsHeld(asset, jar.item))
                     AddActionButton(panel, "Dequip", new Vector2(228, by), () => { Player?.Dequip(); CloseSelection(); });
+                else if (asset.IsFluidContainer)
+                    AddActionButton(panel, "Hold", new Vector2(228, by), HoldFluidSelected);   // a bottle/canteen: hold as a CONTAINER (LMB sip, RMB fill) -- BEFORE IsConsumable, since water-type containers are also consumable
                 else if (asset.IsConsumable)
                     AddActionButton(panel, "Hold", new Vector2(228, by), HoldSelected);   // hold it in-hand -> LMB to eat/drink
                 else if (asset.IsFuelContainer)
@@ -451,7 +466,7 @@ namespace UnturnedGodot
         // A new holdable type is added HERE + the button dispatch in openSelection; regressed by InventoryTests.HandActions.
         public static bool HasHandAction(ItemAsset asset) =>
             asset != null && (asset.gunName != null || asset.meleeName != null || asset.IsConsumable
-                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer);
+                || DeployableDef.ById(asset.id) != null || ToolDef.ById(asset.id) != null || asset.IsFuelContainer || asset.IsFluidContainer);
 
         void EquipSelected()
         {
@@ -504,6 +519,20 @@ namespace UnturnedGodot
             Player?.EquipHeldFuelCan(asset, jar.item);
             CloseSelection();
             Close();   // leave the inventory so LMB pours / RMB sucks
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+
+        void HoldFluidSelected()   // hold a fluid CONTAINER (bottle/canteen): LMB sips clean water/soda/…, RMB fills from a tank
+        {
+            var pg = Inv.items[_selPage];
+            byte idx = pg.getIndex(_selX, _selY);
+            if (idx == byte.MaxValue) return;
+            var jar = pg.getItem(idx);
+            var asset = jar.GetAsset();
+            if (asset == null || !asset.IsFluidContainer) return;
+            Player?.EquipHeldFluidContainer(asset, jar.item);
+            CloseSelection();
+            Close();   // leave the inventory so LMB sips / RMB fills
             Input.MouseMode = Input.MouseModeEnum.Captured;
         }
 
@@ -809,6 +838,16 @@ namespace UnturnedGodot
                 tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.85f), Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline -> visible on any icon
                 tile.AddChild(new ColorRect { Color = new Color(0.32f, 0.32f, 0.35f, 1f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // empty track (grey) -> the bar reads even at 0
                 if (frac > 0f) tile.AddChild(new ColorRect { Color = new Color(0.95f, 0.78f, 0.2f), Position = new Vector2(3, h - 9), Size = new Vector2((w - 6) * frac, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // fuel fill (yellow)
+            }
+
+            if (asset?.IsFluidContainer == true && jar.item != null)   // a fluid container (bottle/canteen) shows a fill bar tinted by its fluid, even at 0 (strawberry)
+            {
+                FluidItem.Read(jar.item, asset, out var ftype, out var famt, out var fq);
+                float frac = asset.fluidCapacity > 0f ? Mathf.Clamp(famt / asset.fluidCapacity, 0f, 1f) : 0f;
+                var fcol = ftype == FluidType.None ? new Color(0.45f, 0.48f, 0.52f) : FluidDef.WaterColor(ftype, fq);   // water folds its quality into the colour
+                tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.85f), Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline
+                tile.AddChild(new ColorRect { Color = new Color(0.30f, 0.31f, 0.34f, 1f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // empty track (grey) -> reads even at 0
+                if (frac > 0f) tile.AddChild(new ColorRect { Color = fcol, Position = new Vector2(3, h - 9), Size = new Vector2((w - 6) * frac, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // fluid fill, tinted by type
             }
             return tile;
         }

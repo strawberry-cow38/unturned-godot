@@ -1639,6 +1639,8 @@ namespace UnturnedGodot
 
         // test-only: drive the eat/drink timer from a headless self-test (--consumeholdtest)
         public void DebugConsumeTick(float dt) => TickConsume(dt);
+        // test seam: drive a held fluid-container sip from a headless test (no look-ray / focus needed)
+        public void DebugDrinkContainer() => TryDrinkContainer();
 
         // The first grid cell holding an item of this id (page,x,y) -- the NetConsume address (the held
         // consumable doesn't carry its source cell; the server deletes by id, so any matching cell names it).

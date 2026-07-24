@@ -74,8 +74,8 @@ namespace SDG.Unturned
                 if (sy > 0) a.size_y = sy;
             }
             Cont(14,  1000f, UnturnedGodot.FluidType.Water, 1, 1);   // Bottled Water: 1 L clean, 1x1 (was a whole-drink consumable -> now a refillable container)
-            Cont(473, 2000f, UnturnedGodot.FluidType.Soda,  2, 1);   // Bottled Soda: 2 L, 2x1
-            Cont(472, 2000f, UnturnedGodot.FluidType.Cola,  2, 1);   // Bottled Cola: 2 L, 2x1
+            Cont(473, 2000f, UnturnedGodot.FluidType.Soda,  1, 2);   // Bottled Soda: 2 L, 1x2 (VERTICAL — a tall bottle, strawberry)
+            Cont(472, 2000f, UnturnedGodot.FluidType.Cola,  1, 2);   // Bottled Cola: 2 L, 1x2 (vertical)
             Cont(337,  500f, UnturnedGodot.FluidType.None,  1, 1);   // Canteen: 500 mL, 1 slot, spawns EMPTY
             // drink fluids (strawberry 2026-07-23) -- each spawns in its own retail bottle/carton, keeps its retail size (0 = don't override)
             Cont(463, 1000f, UnturnedGodot.FluidType.OrangeJuice,  0, 0);   // Orange Juice: 1 L carton, retail 1x2
