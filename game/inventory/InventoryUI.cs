@@ -850,10 +850,8 @@ namespace UnturnedGodot
             }
             _storageH = y;
 
-            _nearbyCol.Position = new Vector2(CLOTHW + GUTTER + _storageW + GUTTER, BODYTOP);   // Nearby column to the RIGHT of storage
             BuildNearby();
-            BuildTopBar(CLOTHW + GUTTER + _storageW + GUTTER + NEARW);   // navbar + name span the whole dashboard (incl. Nearby)
-            CenterDash();
+            CenterDash();   // scales to fill the height + spreads the columns + navbar to span the FULL screen
         }
 
         void BuildTopBar(float w)
@@ -884,14 +882,18 @@ namespace UnturnedGodot
             badge.AddChild(fac);
         }
 
-        void CenterDash()   // LEFT-anchored + SCALED to fill the screen (retail dashboard is large, not a small centered blob)
+        void CenterDash()   // scale to fill the height + SPREAD the columns to span the FULL screen width (master: "span the full screen")
         {
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            float contentW = CLOTHW + GUTTER + _storageW + GUTTER + NEARW;
             float contentH = BODYTOP + Mathf.Max(CLOTHH, _storageH);
-            float s = Mathf.Clamp(Mathf.Min(vp.X * 0.72f / contentW, vp.Y * 0.92f / contentH), 1.0f, 1.75f);
+            float margin = Mathf.Round(vp.X * 0.02f);
+            float s = Mathf.Clamp(vp.Y * 0.9f / contentH, 1.0f, 2.0f);
             _dash.Scale = new Vector2(s, s);
-            _dash.Position = new Vector2(Mathf.Round(vp.X * 0.03f), Mathf.Round(vp.Y * 0.04f));
+            _dash.Position = new Vector2(margin, Mathf.Round(vp.Y * 0.035f));
+            float localFull = (vp.X - 2f * margin) / s;                                   // full usable width in local (pre-scale) units
+            _storageCol.Position = new Vector2(Mathf.Round(CLOTHW + 0.26f * localFull), BODYTOP);   // storage ~1/3 across (gap after clothing)
+            _nearbyCol.Position = new Vector2(Mathf.Round(localFull - NEARW), BODYTOP);            // Nearby flush to the right edge
+            BuildTopBar(localFull);                                                        // navbar + name span the full width
         }
 
         void BuildNearby()   // Nearby/proximity column on the right -- a "Nearby" header + a grid (proximity population is a follow-up; this is the retail LAYOUT slot)
