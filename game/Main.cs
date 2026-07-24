@@ -1035,7 +1035,12 @@ namespace UnturnedGodot
             AddChild(sun);
             var dn = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f };   // a 5-minute day/night cycle
             AddChild(dn);
-            AddChild(new RainOverlay { Cycle = dn, Raining = GD.Randf() < 0.35f });   // ~a third of runs start rainy
+            // Weather is now SCHEDULED off PEI's real Weather_Types table instead of a one-shot coin flip at
+            // world build -- forecast, fade in, hold, fade out, repeat (src LightingManager). The overlay is the
+            // same shader; WeatherManager just owns whether and how hard it rains.
+            var rain = new RainOverlay { Cycle = dn, Raining = false };
+            AddChild(rain);
+            WeatherManager.Attach(this, rain, dn);
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
@@ -3194,7 +3199,28 @@ namespace UnturnedGodot
             AddChild(sun);
             var cyc = new DayNightCycle { Sun = sun, Env = env, DayLength = 5f, Time = 0.5f };   // fast; start at noon
             AddChild(cyc);
-            AddChild(new RainOverlay { Cycle = cyc, Raining = true });   // demo the rain too
+            // UG_WEATHER=clear|rain|heavy drives the REAL WeatherManager over this reference scene so the weather
+            // system can be render-verified; unset leaves the original forced-rain demo exactly as it was (the
+            // existing daynight golden must not move).
+            string wmode = System.Environment.GetEnvironmentVariable("UG_WEATHER");
+            var dnRain = new RainOverlay { Cycle = cyc, Raining = wmode == null };   // demo the rain too
+            AddChild(dnRain);
+            if (wmode != null)
+            {
+                // Freeze the sky for the render: this demo runs a 5 s day, so between two runs the sun moves far
+                // enough that a pixel diff measures the LIGHTING, not the weather (first comparison showed light
+                // and heavy rain differing from clear by 53.9% vs 54.1% -- pure noise). Frozen, the only variable
+                // left is the weather.
+                cyc.Speed = 0f; cyc.Time = 0.5f;
+                var wm = WeatherManager.Attach(this, dnRain, cyc, seed: 4242);
+                // Hold the weather PERPETUALLY for a still frame. Stepping a scheduled shower here does not work:
+                // this demo scene runs a 5 s day, so PEI's 0.05-0.15 cycle window is a sub-second shower that a
+                // settle loop blows straight through (first attempt rendered blend=0.00 with the type re-rolled).
+                if (wmode == "rain") wm.Sim.SetPerpetual(0);
+                else if (wmode == "heavy") wm.Sim.SetPerpetual(1);                      // density only, no flash
+                else if (wmode == "lightning") { wm.Sim.SetPerpetual(1); wm.Strike(); } // the flash, judged separately
+                GD.Print($"[WEATHERSHOT] mode={wmode} stage={wm.Sim.Stage} blend={wm.Sim.BlendAlpha:0.00} active={wm.Sim.Active?.Name ?? "none"}");
+            }
 
             var ground = new StaticBody3D { CollisionLayer = 1 << 0 };
             ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });

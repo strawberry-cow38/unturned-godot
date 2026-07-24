@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid", "weather" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -319,6 +319,25 @@ namespace UnturnedGodot
                 if (Player == null) { Log("no player"); return; }
                 Player.EquipHeldDeployable(def);
                 Log($"holding {def.Name} -- aim (blue=ok / red=blocked), LMB to place");
+            }
+            else if (verb == "weather")
+            {
+                // weather [clear|rain|heavy|lightning]  -- src CommandWeather. No arg = report the forecast.
+                // Weather is normally SCHEDULED off PEI's Weather_Types table, so this is how you see it on demand
+                // instead of waiting out a 2.3-5.6 day-cycle forecast.
+                var wm = GetTree().GetNodesInGroup("weather").Count > 0 ? GetTree().GetNodesInGroup("weather")[0] as WeatherManager : null;
+                if (wm == null || wm.Sim == null) { Log("no weather manager in this world"); return; }
+                string a = (arg ?? "").Trim();
+                if (a.Length == 0)
+                {
+                    var act = wm.Sim.Active;
+                    Log(act == null
+                        ? $"clear -- next weather in {wm.Sim.ForecastTimer:0}s"
+                        : $"{act.Value.Name} -- stage {wm.Sim.Stage}, blend {wm.Sim.BlendAlpha:0.00}, {wm.Sim.ActiveTimer:0}s left");
+                    return;
+                }
+                if (wm.ApplyCommand(a)) Log($"weather -> {a}");
+                else Log("usage: weather [clear|rain|heavy|lightning]");
             }
             else if (verb == "unarmed")
             {
