@@ -23,13 +23,14 @@ namespace UnturnedGodot
         const int NAVH = 46;         // top navbar strip (Inventory / Crafting / Skills / Information tabs) -- retail dashboard header
         const int NAMEH = 44;        // name + faction badge under the navbar (top-left)
         const int BODYTOP = NAVH + 10 + NAMEH + 12;   // y where the columns (clothing / storage) start, below the navbar + name
+        const int NEARW = 6 * CELL;  // Nearby/proximity column width (6-wide grid) on the right
         // clothing PAPERDOLL (strawberry): a live 3D render of the worn character at the top of the clothing column.
         const int PDW = CLOTHW - 16; // paperdoll display width (174)
         const int PDH = 232;         // paperdoll display height
         const int PDTOP = 30;        // y of the paperdoll inside the clothing box (below the CLOTHING header)
         const int CLOTHH = PDTOP + PDH + 14 + 7 * (CELL + 10) + 10;   // header + paperdoll + 7 equip slots
 
-        Control _root, _dash, _storageCol, _topBar;
+        Control _root, _dash, _storageCol, _topBar, _nearbyCol;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
         // inventory's worn slots (PlayerClothingController.Refresh is read-only), lit + framed by a camera. Built once;
         // Refresh() repaints its clothing; drag on its view spins it. Held weapon deferred (needs 3P gun anims).
@@ -85,6 +86,8 @@ namespace UnturnedGodot
             _dash.AddChild(_storageCol);
             _topBar = new Control();   // navbar + name badge across the top (rebuilt at the dash width in Refresh)
             _dash.AddChild(_topBar);
+            _nearbyCol = new Control();   // Nearby/proximity column on the right (positioned + filled in Refresh)
+            _dash.AddChild(_nearbyCol);
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
@@ -847,7 +850,9 @@ namespace UnturnedGodot
             }
             _storageH = y;
 
-            BuildTopBar(CLOTHW + GUTTER + _storageW);   // navbar + name span the dashboard width
+            _nearbyCol.Position = new Vector2(CLOTHW + GUTTER + _storageW + GUTTER, BODYTOP);   // Nearby column to the RIGHT of storage
+            BuildNearby();
+            BuildTopBar(CLOTHW + GUTTER + _storageW + GUTTER + NEARW);   // navbar + name span the whole dashboard (incl. Nearby)
             CenterDash();
         }
 
@@ -879,12 +884,19 @@ namespace UnturnedGodot
             badge.AddChild(fac);
         }
 
-        void CenterDash()
+        void CenterDash()   // LEFT-anchored top-left (retail dashboard fills wide from the corner), not a centered blob
         {
-            float w = CLOTHW + GUTTER + _storageW;
-            float h = BODYTOP + Mathf.Max(CLOTHH, _storageH);
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            _dash.Position = new Vector2(Mathf.Round((vp.X - w) / 2f), Mathf.Round((vp.Y - h) / 2f));
+            _dash.Position = new Vector2(Mathf.Round(vp.X * 0.045f), Mathf.Round(vp.Y * 0.07f));
+        }
+
+        void BuildNearby()   // Nearby/proximity column on the right -- a "Nearby" header + a grid (proximity population is a follow-up; this is the retail LAYOUT slot)
+        {
+            if (_nearbyCol == null) return;
+            foreach (Node c in _nearbyCol.GetChildren()) c.QueueFree();
+            _nearbyCol.AddChild(Header("Nearby", new Vector2(0, 0), NEARW));
+            var grid = new GridPanel { Cells = new Vector2I(6, 5), Cell = CELL, Position = new Vector2(0, HEADER - 6), Size = new Vector2(NEARW, 5 * CELL) };
+            _nearbyCol.AddChild(grid);
         }
 
         float AddSlot(string name, byte page, float y)
