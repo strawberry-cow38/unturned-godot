@@ -862,6 +862,17 @@ namespace UnturnedGodot
                 tile.AddChild(new ColorRect { Color = new Color(0f, 0f, 0f, 0.85f), Position = new Vector2(2, h - 10), Size = new Vector2(w - 4, 8), MouseFilter = Control.MouseFilterEnum.Ignore });   // black outline
                 tile.AddChild(new ColorRect { Color = new Color(0.30f, 0.31f, 0.34f, 1f), Position = new Vector2(3, h - 9), Size = new Vector2(w - 6, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // empty track (grey) -> reads even at 0
                 if (frac > 0f) tile.AddChild(new ColorRect { Color = fcol, Position = new Vector2(3, h - 9), Size = new Vector2((w - 6) * frac, 6), MouseFilter = Control.MouseFilterEnum.Ignore });   // fluid fill, tinted by type
+                // "autodrink ON" badge (strawberry): a cyan droplet-dot in the top-left — shown ONLY on the one ACTIVE
+                // autodrink bottle (first enabled+safe+non-empty), so exactly one bottle is marked at a time.
+                if (ReferenceEquals(jar.item, FluidItem.ActiveAutoDrink(Inv)))
+                {
+                    var badge = new Panel { Position = new Vector2(3, 3), Size = new Vector2(15, 15), MouseFilter = Control.MouseFilterEnum.Ignore };
+                    var bs = new StyleBoxFlat { BgColor = new Color(0.25f, 0.72f, 0.95f) };
+                    bs.BorderColor = new Color(0f, 0f, 0f, 0.85f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(7);   // ~circular droplet-dot
+                    badge.AddThemeStyleboxOverride("panel", bs);
+                    badge.AddChild(new ColorRect { Color = new Color(0.92f, 0.98f, 1f, 0.95f), Position = new Vector2(4, 3), Size = new Vector2(4, 4), MouseFilter = Control.MouseFilterEnum.Ignore });   // a little highlight so it reads as a drop
+                    tile.AddChild(badge);
+                }
             }
             return tile;
         }

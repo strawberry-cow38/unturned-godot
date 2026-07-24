@@ -3005,24 +3005,16 @@ namespace UnturnedGodot
             if (_dead || Inventory == null) return;
             _autoDrinkCd -= dt;
             if (Water >= AutoDrinkFloor || _autoDrinkCd > 0f) return;
-            for (byte pg = 0; pg < PlayerInventory.PAGES; pg++)
-            {
-                var page = Inventory.items[pg];
-                for (byte i = 0; i < page.getItemCount(); i++)
-                {
-                    var jar = page.getItem(i);
-                    var it = jar?.item; var a = it?.GetAsset();
-                    if (a == null || !a.IsFluidContainer || !it.autoDrink) continue;
-                    FluidItem.Read(it, a, out var t, out var amt, out var q);
-                    if (amt <= 0.01f || !FluidDef.Safe(t, q)) continue;   // empty / unsafe -> never autodrunk
-                    float sip = Mathf.Min(FluidItem.SipML, amt);
-                    FluidItem.Write(it, t, amt - sip, q);
-                    Water = Mathf.Min(1f, Water + sip * FluidItem.HydrationPerML);
-                    _autoDrinkCd = AutoDrinkInterval;
-                    _invUI?.Refresh();
-                    return;
-                }
-            }
+            // ONE active bottle at a time = the first ENABLED, safe, non-empty container; empties -> the next takes over,
+            // a disabled bottle is skipped (strawberry). Same rule the inv icon marks, so drink + icon always agree.
+            var active = FluidItem.ActiveAutoDrink(Inventory);
+            if (active == null) return;
+            FluidItem.Read(active, active.GetAsset(), out var t, out var amt, out var q);
+            float sip = Mathf.Min(FluidItem.SipML, amt);
+            FluidItem.Write(active, t, amt - sip, q);
+            Water = Mathf.Min(1f, Water + sip * FluidItem.HydrationPerML);
+            _autoDrinkCd = AutoDrinkInterval;
+            _invUI?.Refresh();
         }
         // test seam: drive one autodrink evaluation from a headless test
         public void DebugAutoDrinkTick(float dt) => AutoDrinkTick(dt);

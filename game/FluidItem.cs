@@ -13,6 +13,27 @@ namespace UnturnedGodot
     {
         public static bool IsContainer(ItemAsset a) => a != null && a.IsFluidContainer;
 
+        // THE one active autodrink bottle (strawberry: "only 1 at a time · bottle empty = check for next · unless
+        // disabled"): the FIRST container in scan order that is autodrink-ENABLED (its per-bottle opt-in) AND holds a SAFE,
+        // non-empty fluid. Multiple bottles may be enabled, but only this one is drunk from + shows the icon; when it
+        // empties the next enabled+safe bottle naturally becomes first, and a disabled bottle is skipped. Null = none.
+        public static Item ActiveAutoDrink(SDG.Unturned.PlayerInventory inv)
+        {
+            if (inv == null) return null;
+            for (byte pg = 0; pg < SDG.Unturned.PlayerInventory.PAGES; pg++)
+            {
+                var page = inv.items[pg];
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var it = page.getItem(i)?.item; var a = it?.GetAsset();
+                    if (a == null || !a.IsFluidContainer || !it.autoDrink) continue;
+                    Read(it, a, out var t, out var amt, out var q);
+                    if (amt > 0.01f && FluidDef.Safe(t, q)) return it;
+                }
+            }
+            return null;
+        }
+
         // The in-hand VIEWMODEL mesh for a held container. Most match the item name (bottled_water, canteen, bottled_soda,
         // bottled_cola, bottled_coconut, bottled_energy); the two retail CARTONS don't (Orange Juice -> box_orange, Milk
         // Box -> box_milk), so they're mapped by id here.

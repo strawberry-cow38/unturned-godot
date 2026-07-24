@@ -115,6 +115,18 @@ namespace UnturnedGodot.Testing
             p4.Inventory.items[2].tryAddItem(off);
             float w4 = p4.Water; p4.DebugAutoDrinkTick(1f);
             T.Check("autodrink respects the OFF toggle", System.Math.Abs(p4.Water - w4) < 0.001f);
+
+            // ONE active bottle at a time (strawberry): with two enabled full bottles, only the FIRST is active; empties ->
+            // the next takes over; a DISABLED bottle is skipped. ActiveAutoDrink is the single source both drink + icon use.
+            var p5 = new PlayerController { Water = 0.2f, Inventory = new PlayerInventory() };
+            var f1 = new Item(14); var f2 = new Item(14);
+            p5.Inventory.items[2].tryAddItem(f1); p5.Inventory.items[2].tryAddItem(f2);
+            FluidItem.Read(f1, wb, out _, out _, out _); FluidItem.Read(f2, wb, out _, out _, out _);   // lazy-init both full
+            T.Check("only the FIRST enabled bottle is the active autodrink one", ReferenceEquals(FluidItem.ActiveAutoDrink(p5.Inventory), f1));
+            FluidItem.Write(f1, FluidType.Water, 0f, WaterQuality.Clean);   // empty the active
+            T.Check("empty active -> the next enabled bottle takes over", ReferenceEquals(FluidItem.ActiveAutoDrink(p5.Inventory), f2));
+            FluidItem.Write(f1, FluidType.Water, 1000f, WaterQuality.Clean); f1.autoDrink = false;   // refill but DISABLE it
+            T.Check("a DISABLED bottle is skipped even when full", ReferenceEquals(FluidItem.ActiveAutoDrink(p5.Inventory), f2));
             yield break;
         }
     }
