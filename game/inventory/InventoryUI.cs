@@ -28,7 +28,7 @@ namespace UnturnedGodot
         const int PDW = CLOTHW - 16; // paperdoll display width (174)
         const int PDH = 232;         // paperdoll display height
         const int PDTOP = 30;        // y of the paperdoll inside the clothing box (below the CLOTHING header)
-        const int CLOTHH = PDTOP + PDH + 14 + 7 * (CELL + 10) + 10;   // header + paperdoll + 7 equip slots
+        const int CLOTHH = PDTOP + PDH + 14 + 3 * (CELL + 6) + 10;   // header + paperdoll + 3 rows of horizontal clothing tabs
 
         Control _root, _dash, _storageCol, _topBar, _nearbyCol, _weaponsCol;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
@@ -708,17 +708,17 @@ namespace UnturnedGodot
                 ("Vest",     () => Inv?.wornVest,     EItemType.VEST),     ("Backpack", () => Inv?.wornBackpack, EItemType.BACKPACK),
                 ("Pants",    () => Inv?.wornPants,    EItemType.PANTS),
             };
-            float y = PDTOP + PDH + 14;   // stack the equip slots BELOW the paperdoll
+            float sy = PDTOP + PDH + 14;   // clothing equip slots as a HORIZONTAL tab grid below the paperdoll (retail: icon tabs, not a vertical labeled list)
+            int perRow = Mathf.Max(1, (CLOTHW - 24 + 6) / (CELL + 6));   // as many CELL-tabs per row as the column fits (~3)
+            int si = 0;
             foreach (var (name, worn, type) in rows)
             {
-                var slot = new Panel { Position = new Vector2(12, y), Size = new Vector2(CELL, CELL) };
+                int col = si % perRow, row = si / perRow;
+                var slot = new Panel { Position = new Vector2(12 + col * (CELL + 6), sy + row * (CELL + 6)), Size = new Vector2(CELL, CELL), TooltipText = name };
                 StyleBox(slot, new Color(0f, 0f, 0f, 0.5f));
                 box.AddChild(slot);
-                var lbl = new Label { Text = name, Position = new Vector2(CELL + 14, y + 14) };
-                lbl.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
-                box.AddChild(lbl);
-                _clothing.Add((slot, lbl, worn, type));
-                y += CELL + 10;
+                _clothing.Add((slot, new Label(), worn, type));   // icon-only tab (garment name in the tooltip)
+                si++;
             }
         }
 
@@ -886,18 +886,17 @@ namespace UnturnedGodot
             badge.AddChild(fac);
         }
 
-        void CenterDash()   // scale to fill the height + SPREAD the columns to span the FULL screen width (master: "span the full screen")
+        void CenterDash()   // COMPACT left-anchored dashboard scaled up to fill (reference: columns tight together, NOT spread with gaps)
         {
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            float contentH = BODYTOP + Mathf.Max(CLOTHH + 12 + 180, _storageH);   // left column now = clothing box + weapons below it
-            float margin = Mathf.Round(vp.X * 0.02f);
-            float s = Mathf.Clamp(vp.Y * 0.9f / contentH, 1.0f, 2.0f);
+            float contentW = CLOTHW + GUTTER + _storageW + GUTTER + NEARW;
+            float contentH = BODYTOP + Mathf.Max(CLOTHH + 12 + 180, _storageH);   // left column = clothing box + weapons below it
+            float s = Mathf.Clamp(Mathf.Min(vp.X * 0.68f / contentW, vp.Y * 0.93f / contentH), 1.0f, 2.4f);   // fill ~2/3 width OR 93% height, whichever fits
             _dash.Scale = new Vector2(s, s);
-            _dash.Position = new Vector2(margin, Mathf.Round(vp.Y * 0.035f));
-            float localFull = (vp.X - 2f * margin) / s;                                   // full usable width in local (pre-scale) units
-            _storageCol.Position = new Vector2(Mathf.Round(CLOTHW + 0.26f * localFull), BODYTOP);   // storage ~1/3 across (gap after clothing)
-            _nearbyCol.Position = new Vector2(Mathf.Round(localFull - NEARW), BODYTOP);            // Nearby flush to the right edge
-            BuildTopBar(localFull);                                                        // navbar + name span the full width
+            _dash.Position = new Vector2(Mathf.Round(vp.X * 0.025f), Mathf.Round(vp.Y * 0.035f));
+            _storageCol.Position = new Vector2(CLOTHW + GUTTER, BODYTOP);                          // grids ADJACENT to the clothing column (compact, no gap)
+            _nearbyCol.Position = new Vector2(CLOTHW + GUTTER + _storageW + GUTTER, BODYTOP);      // Nearby adjacent to the grids
+            BuildTopBar(contentW);                                                                // navbar + name span the compact dashboard width
         }
 
         void BuildNearby()   // Nearby/proximity column on the right -- a "Nearby" header + a grid (proximity population is a follow-up; this is the retail LAYOUT slot)
