@@ -16,6 +16,7 @@ namespace UnturnedGodot
         public Godot.Environment Env;
         public float DayLength = 120f;   // seconds per full cycle (short here; Unturned's is ~an hour)
         public float Time = 0.35f;       // 0..1 time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
+        public float Speed = 1f;         // day/night clock multiplier (console `timeSpeed`); 0 = frozen. Distinct from Engine.TimeScale.
 
         // MP Phase 8 (§3.7): a net sync owns Time (server: tick-derived; client: derived from the synced
         // clock + snapshot tick) -- _Process stops free-running it. SP default (false) is byte-identical.
@@ -153,9 +154,11 @@ void sky() {
 }
 ";
 
+        public override void _Ready() => AddToGroup("daynight");   // so the dev console (time/timeSpeed/dayLength cmds) can find it
+
         public override void _Process(double delta)
         {
-            if (!ExternalTime) Time = Mathf.PosMod(Time + (float)delta / DayLength, 1f);
+            if (!ExternalTime) Time = Mathf.PosMod(Time + (float)delta * Speed / DayLength, 1f);   // Speed = the console timeSpeed multiplier
             if (VisualsEnabled) Apply();
         }
 

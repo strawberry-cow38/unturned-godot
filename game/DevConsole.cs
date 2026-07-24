@@ -126,6 +126,52 @@ namespace UnturnedGodot
                 return;
             }
 
+            // --- time of day + sim speed (strawberry). Handled above the arg guard so bare `time` / `simSpeed` report state. ---
+            if (verb == "simspeed")
+            {
+                if (arg.Length == 0) { Log($"simSpeed = {(float)Engine.TimeScale:0.##}x   (usage: simSpeed <multiplier>)"); return; }
+                if (!float.TryParse(arg, out float x) || x < 0f) { Log("usage: simSpeed <multiplier>  (e.g. 0.5, 1, 5)"); return; }
+                Engine.TimeScale = x;
+                Log($"sim speed = {x:0.##}x (whole simulation)");
+                return;
+            }
+            if (verb == "time" || verb == "timeset" || verb == "timeadd" || verb == "timespeed" || verb == "daylength")
+            {
+                var dnc = DayNight();
+                if (dnc == null) { Log("no day/night cycle in this scene"); return; }
+                if (verb == "time")
+                {
+                    Log($"time {FormatTime(dnc.Time)}  ·  dayLength {dnc.DayLength / 60f:0.#} min  ·  timeSpeed {dnc.Speed:0.##}x  ·  simSpeed {(float)Engine.TimeScale:0.##}x");
+                    return;
+                }
+                if (arg.Length == 0) { Log($"usage: {verb} <value>"); return; }
+                if (verb == "timeset")
+                {
+                    if (!ParseClock(arg, out float h, allowNeg: false)) { Log($"bad time '{arg}' (try: noon, midnight, 8am, 6pm, 1800, 18:30)"); return; }
+                    dnc.Time = Mathf.PosMod(h / 24f, 1f);
+                    Log($"time set to {FormatTime(dnc.Time)}");
+                }
+                else if (verb == "timeadd")
+                {
+                    if (!ParseClock(arg, out float dh, allowNeg: true)) { Log($"bad amount '{arg}' (try: 2, 1:30, -3, 0200)"); return; }
+                    dnc.Time = Mathf.PosMod(dnc.Time + dh / 24f, 1f);
+                    Log($"time -> {FormatTime(dnc.Time)}  ({(dh >= 0 ? "+" : "")}{dh:0.##} h)");
+                }
+                else if (verb == "timespeed")
+                {
+                    if (!float.TryParse(arg, out float sp) || sp < 0f) { Log("usage: timeSpeed <multiplier>  (0 = freeze the clock)"); return; }
+                    dnc.Speed = sp;
+                    Log($"time speed = {sp:0.##}x (day/night clock{(sp <= 0f ? " -- FROZEN" : "")})");
+                }
+                else // daylength
+                {
+                    if (!int.TryParse(arg, out int min) || min < 1) { Log("usage: dayLength <minutes>  (a whole minute count)"); return; }
+                    dnc.DayLength = min * 60f;
+                    Log($"day length = {min} min ({(min == 1 ? "1 minute" : $"{min} minutes")} per full cycle)");
+                }
+                return;
+            }
+
             if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
 
             if (RemoteClient != null && System.Array.IndexOf(ServerGatedVerbs, verb) >= 0)
@@ -449,6 +495,59 @@ namespace UnturnedGodot
             SetInput(_histIdx < _history.Count ? _history[_histIdx] : "");   // one-past-the-end = a fresh blank line
         }
         void SetInput(string s) { _input.Text = s; _input.CaretColumn = s.Length; }
+        // the world's day/night cycle (joins group "daynight" in its _Ready) -- drives the time/timeSpeed/dayLength cmds
+        DayNightCycle DayNight()
+        {
+            foreach (var n in GetTree().GetNodesInGroup("daynight")) if (n is DayNightCycle d && IsInstanceValid(d)) return d;
+            return null;
+        }
+
+        // named times of day -> hour (0..24), for `timeSet noon` etc.
+        static readonly System.Collections.Generic.Dictionary<string, float> NamedTimes = new()
+        {
+            ["midnight"] = 0f, ["night"] = 22f, ["dawn"] = 6f, ["sunrise"] = 6f, ["morning"] = 8f,
+            ["noon"] = 12f, ["midday"] = 12f, ["afternoon"] = 15f, ["dusk"] = 18f, ["sunset"] = 18f, ["evening"] = 19f,
+        };
+
+        // Parse a time/duration into HOURS: a name (noon/midnight/dawn/...), 12-hour (8am, 6:30pm), 24-hour HH:MM (18:30),
+        // military HHMM (1800, 0830), or a bare number (18, 1.5). timeSet reads it as an absolute clock; timeAdd as a delta
+        // (allowNeg). Returns false on garbage.
+        public static bool ParseClock(string s, out float hours, bool allowNeg)
+        {
+            hours = 0f;
+            s = s.Trim().ToLowerInvariant();
+            if (s.Length == 0) return false;
+            if (NamedTimes.TryGetValue(s, out hours)) return true;
+            bool am = false, pm = false;
+            if (s.EndsWith("am")) { am = true; s = s[..^2].Trim(); }
+            else if (s.EndsWith("pm")) { pm = true; s = s[..^2].Trim(); }
+            float h, m = 0f;
+            if (s.Contains(':'))
+            {
+                var p = s.Split(':');
+                if (p.Length != 2 || !float.TryParse(p[0], out h) || !float.TryParse(p[1], out m)) return false;
+            }
+            else if (!am && !pm && s.Length >= 3 && s.Length <= 4 && s.All(char.IsDigit))
+            {
+                int v = int.Parse(s); h = v / 100; m = v % 100;   // military HHMM: last two digits = minutes
+            }
+            else if (!float.TryParse(s, out h)) return false;
+            if (m < 0f || m >= 60f) return false;
+            if (am || pm) { if (h == 12f) h = 0f; if (pm) h += 12f; }   // 12am=0, 12pm=12, 8pm=20
+            hours = h + m / 60f;
+            return allowNeg || hours >= 0f;
+        }
+
+        // 0..1 time-of-day -> "HH:MM (label)" for the `time` readout
+        public static string FormatTime(float t01)
+        {
+            float hrs = Mathf.PosMod(t01, 1f) * 24f;
+            int H = (int)hrs; int M = (int)Mathf.Round((hrs - H) * 60f);
+            if (M >= 60) { M = 0; H = (H + 1) % 24; }
+            string name = H switch { 0 => " (midnight)", 6 => " (dawn)", 12 => " (noon)", 18 => " (dusk)", _ => "" };
+            return $"{H:00}:{M:00}{name}";
+        }
+
         void Log(string msg) { _log.Text = msg; GD.Print("[console] " + msg); }
     }
 

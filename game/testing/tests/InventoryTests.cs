@@ -223,4 +223,30 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // strawberry: the console time commands parse noon/midnight/8am/1800/18:30 into a time of day. Locks the tricky cases
+    // (12am=00:00, 12pm=12:00, military HHMM, am/pm, named) + the readout round-trip. Pure DevConsole.ParseClock/FormatTime.
+    public class ConsoleTimeParse : GameTest
+    {
+        public override string Name => "console.time_parse";
+        public override IEnumerable<Step> Run()
+        {
+            void Hr(string s, float wantHours)
+            {
+                bool ok = DevConsole.ParseClock(s, out float h, allowNeg: false);
+                T.Check($"'{s}' -> {wantHours:0.##}h (got {(ok ? h.ToString("0.##") : "PARSE-FAIL")})", ok && Mathf.Abs(h - wantHours) < 0.01f);
+            }
+            Hr("noon", 12f); Hr("midnight", 0f); Hr("dawn", 6f); Hr("dusk", 18f);
+            Hr("8am", 8f); Hr("8pm", 20f); Hr("12am", 0f); Hr("12pm", 12f); Hr("8:30am", 8.5f);
+            Hr("1800", 18f); Hr("0830", 8.5f); Hr("18:30", 18.5f); Hr("6", 6f);
+            T.Check("garbage 'banana' is rejected", !DevConsole.ParseClock("banana", out _, false));
+            T.Check("negative rejected when not allowed", !DevConsole.ParseClock("-3", out _, false));
+            T.Check("negative ALLOWED for timeAdd", DevConsole.ParseClock("-3", out float neg, true) && Mathf.Abs(neg + 3f) < 0.01f);
+            // readout: 0.5 -> noon, 0.75 -> dusk, 0.0 -> midnight
+            T.Check($"FormatTime(0.5) = noon ({DevConsole.FormatTime(0.5f)})", DevConsole.FormatTime(0.5f).StartsWith("12:00"));
+            T.Check($"FormatTime(0.75) = dusk ({DevConsole.FormatTime(0.75f)})", DevConsole.FormatTime(0.75f).StartsWith("18:00"));
+            T.Check($"FormatTime(0) = midnight ({DevConsole.FormatTime(0f)})", DevConsole.FormatTime(0f).StartsWith("00:00"));
+            yield break;
+        }
+    }
 }
