@@ -884,10 +884,14 @@ namespace UnturnedGodot
             badge.AddChild(fac);
         }
 
-        void CenterDash()   // LEFT-anchored top-left (retail dashboard fills wide from the corner), not a centered blob
+        void CenterDash()   // LEFT-anchored + SCALED to fill the screen (retail dashboard is large, not a small centered blob)
         {
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            _dash.Position = new Vector2(Mathf.Round(vp.X * 0.045f), Mathf.Round(vp.Y * 0.07f));
+            float contentW = CLOTHW + GUTTER + _storageW + GUTTER + NEARW;
+            float contentH = BODYTOP + Mathf.Max(CLOTHH, _storageH);
+            float s = Mathf.Clamp(Mathf.Min(vp.X * 0.72f / contentW, vp.Y * 0.92f / contentH), 1.0f, 1.75f);
+            _dash.Scale = new Vector2(s, s);
+            _dash.Position = new Vector2(Mathf.Round(vp.X * 0.03f), Mathf.Round(vp.Y * 0.04f));
         }
 
         void BuildNearby()   // Nearby/proximity column on the right -- a "Nearby" header + a grid (proximity population is a follow-up; this is the retail LAYOUT slot)
