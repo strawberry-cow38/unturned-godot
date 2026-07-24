@@ -1470,6 +1470,7 @@ namespace UnturnedGodot
             var asset = _heldFluidItem.GetAsset();
             if (asset == null || !asset.IsFluidContainer) return;
             if (_focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null) { FluidToast("aim away from the tank to drink  ([RMB] fills)"); return; }   // spec: drink while NOT looking at a container
+            if (Water >= 0.999f) { FluidToast("not thirsty"); return; }   // don't waste a sip when already fully hydrated (strawberry polish)
             float sip = FluidItem.Sip(_heldFluidItem, asset, out float hydration, out string msg);
             if (sip <= 0f) { FluidToast(msg); return; }
             Water = Mathf.Min(1f, Water + hydration);

@@ -2582,6 +2582,20 @@ namespace UnturnedGodot
             GD.Print($"[hosetool] case Y: tank={towerTank.Tank.Amount:0} q={towerTank.Tank.Quality} (want >400/Tainted) · tower={tower.Tank.Amount:0} (want ~200000 infinite)");
             if (!towerOk) ok = false;
 
+            // --- Case Z (machine status lines): the at-a-glance status a machine shows so a player can see WHY it's dead
+            // (strawberry polish). Valve open/closed; an unwired pump/purifier reads "no power"; a powered-but-no-work pump
+            // (rPump from case R: target full) reads "idle — no supply"; a powered active purifier (case W) reads "purifying". ---
+            var zValve = FluidContainer.MakeValve();
+            bool zOpen = zValve.StatusLine().text == "open";
+            zValve.ToggleValve();
+            bool zClosed = zValve.StatusLine().text == "closed";
+            bool zPumpNoPower = FluidPump.Make().StatusLine().text == "no power";       // fresh pump, never wired
+            bool zPurifNoPower = FluidPurifier.Make().StatusLine().text == "no power";  // fresh purifier, never wired
+            bool zPumpIdle = rPump.StatusLine().text == "idle — no supply";             // powered, target full -> no work (case R)
+            bool zPurifRun = purifier.StatusLine().text == "purifying";                 // powered + water flowing (case W)
+            GD.Print($"[hosetool] case Z: valve open={zOpen} closed={zClosed} · pump noPower={zPumpNoPower} idle={zPumpIdle} · purifier noPower={zPurifNoPower} run={zPurifRun}");
+            if (!(zOpen && zClosed && zPumpNoPower && zPurifNoPower && zPumpIdle && zPurifRun)) ok = false;
+
             GD.Print($"[hosetool] RESULT {(ok ? "PASS" : "FAIL")}");
             GetTree().Quit();
         }

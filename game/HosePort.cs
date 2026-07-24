@@ -84,15 +84,21 @@ namespace UnturnedGodot
         {
             string name = Owner != null ? Owner.RoleLabel() : "Fluid";
             string fluid = FluidDef.Name(EffectiveType);
-            bool flowing = Node != null && (Node.Flowing || Mathf.Abs(Node.Flow) > 0.01f);
+            // the meaningful throughput: a SOURCE reports what's actually DRAWN off it (Load); a passthrough/consumer
+            // reports its Flow. Plain "flowing N mL/s" wording instead of the "N/s out · N/s drawn" telemetry (strawberry).
+            float flow = Node == null ? 0f : Mathf.Abs(Kind == FluidPortKind.Source ? Node.Load : Node.Flow);
+            bool flowing = flow > 0.01f || (Node != null && Node.Flowing);
             switch (Kind)
             {
                 case FluidPortKind.Source:
-                    return (!hosed && !flowing) ? $"{name} ({fluid})" : $"{name} ({fluid}) — {Node.Rate:0}/s out · {Node.Load:0}/s drawn";
+                    // an OUT node with no hose AND no flow shows just its name — no flow numbers when idle + unconnected
+                    if (!hosed && !flowing) return $"{name} ({fluid})";
+                    return flowing ? $"{name} ({fluid}) — flowing {flow:0} mL/s" : $"{name} ({fluid}) — not flowing";
                 case FluidPortKind.Passthrough:
-                    return (!hosed && !flowing) ? name : $"{name} — {Node.Flow:0}/s out";
-                default:   // Consumer (an IN node): keep its intake readout (shows "idle" when not flowing)
-                    return $"{name} ({fluid}) — intake {(Node.Flowing ? $"{Node.Flow:0}/s in" : "idle")}";
+                    if (!hosed && !flowing) return name;
+                    return flowing ? $"{name} — flowing {flow:0} mL/s" : $"{name} — not flowing";
+                default:   // Consumer (an IN node)
+                    return flowing ? $"{name} ({fluid}) — taking {flow:0} mL/s" : $"{name} ({fluid}) — idle";
             }
         }
 

@@ -68,6 +68,17 @@ namespace UnturnedGodot
         // pump on a dead/empty line sits still. Flow shows on the passthrough output; Flowing on the consumer relay.
         public override bool DriveActive => IsPowered && Ports.Exists(p => p != null && (p.Flowing || Mathf.Abs(p.Flow) > 0.01f));
 
+        // at-a-glance status (strawberry polish): the pump answers "why isn't my water moving?" without the hose tool.
+        // off (remote-disabled) → no power (wire it) → idle (line has no supply/sink) → pumping.
+        public override (string text, Color color) StatusLine()
+        {
+            if (!_remoteOn) return ("off", StatusOff);   // an electrical TurnOff trigger disabled it
+            bool wired = DebugForcePower || (_powerInput != null && GodotObject.IsInstanceValid(_powerInput) && _powerInput.Powered);
+            if (!wired) return ("no power", StatusWarn);   // needs a wire from a generator
+            if (!_hasWork) return ("idle — no supply", StatusIdle);   // powered but the line has no source to draw / nowhere to push
+            return ("pumping", StatusGo);
+        }
+
         // picked up -> also free any wire plugged into the input or a trigger cube (the base frees its hoses), then re-solve
         protected override void OnPickup()
         {

@@ -40,6 +40,13 @@ namespace UnturnedGodot
         // the transform runs ONLY while powered -> an unpowered purifier is inert (no consume, no produce)
         public override bool TransformEnabled => IsPowered;
 
+        // at-a-glance status (strawberry polish): no power (wire it) → idle (powered but no water flowing in) → purifying.
+        public override (string text, Color color) StatusLine()
+        {
+            if (!IsPowered) return ("no power", StatusWarn);
+            return TransformActive ? ("purifying", StatusGo) : ("idle — no water", StatusIdle);
+        }
+
         // picked up -> free any wire plugged into the power input (the base frees its hoses), then re-solve the power net
         protected override void OnPickup()
         {

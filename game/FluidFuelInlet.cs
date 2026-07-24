@@ -14,6 +14,7 @@ namespace UnturnedGodot
         public static FluidFuelInlet Make(Deployable gen) => new FluidFuelInlet
         {
             Role = FluidRole.Storage, _gen = gen, FlowRate = 125f,   // garden-hose fuel intake (625 through a powered pump)
+            DisplayName = "Generator Fuel Inlet",   // the hose-tool port HUD names it clearly (not "Fluid Tank")
             Tank = new FluidTank(FluidType.Fuel, 5000f, 0f),   // a 5L in-transit buffer, fuel-locked (Type=Fuel -> won't adopt, demands Fuel)
         };
 

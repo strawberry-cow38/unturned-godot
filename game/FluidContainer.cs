@@ -22,6 +22,7 @@ namespace UnturnedGodot
         public FluidTank Tank;             // null for a fitting (splitter/combiner)
         public FluidRole Role;
         public DeployableDef Def;          // the item def this was placed from -> hold-F pickup returns that item (set by FluidDeploy)
+        public string DisplayName;         // an explicit in-world name (water tower / fuel inlet); else RoleLabel falls back to the item Def name
         public bool Blocked;               // a clogged/closed-valve container stops conducting (F5)
         public bool Infinite;              // a submersible INLET: an infinite source (never depletes)
         public bool NoHead;                // no head pressure: its output won't flow passively (gravity) — needs a PUMP to draw from it
@@ -47,6 +48,22 @@ namespace UnturnedGodot
         // input flows); the POWERED purifier overrides it with IsPowered, so an unpowered purifier neither consumes its
         // input nor produces output (FluidNet zeroes its port rates + never latches TransformActive). Ignored by non-transformers.
         public virtual bool TransformEnabled => true;
+
+        // Machine status shown on an at-a-glance billboard (strawberry polish: "machines are silent about why they're
+        // dead"). Returns (text, colour); text == null = no status billboard (a passive splitter/combiner). Green = doing
+        // its job; grey = idle-but-fine (nothing to move); orange = a fixable problem (no power); red = deliberately off.
+        // Overridden by FluidPump / FluidPurifier for their power-aware states.
+        protected static readonly Color StatusGo = new Color(0.40f, 0.90f, 0.48f);
+        protected static readonly Color StatusIdle = new Color(0.70f, 0.72f, 0.76f);
+        protected static readonly Color StatusWarn = new Color(0.98f, 0.62f, 0.12f);
+        protected static readonly Color StatusOff = new Color(0.95f, 0.35f, 0.35f);
+        public virtual (string text, Color color) StatusLine() => Role switch
+        {
+            FluidRole.Valve => Blocked ? ("closed", StatusOff) : ("open", StatusGo),
+            // a plain transformer (refinery/sluice) runs whenever its input flows (1-tick-latched TransformActive)
+            FluidRole.Transformer => TransformActive ? ("running", StatusGo) : ("idle", StatusIdle),
+            _ => (null, default),   // splitter/combiner: passive relay, no status
+        };
 
         public bool IsFitting => Role == FluidRole.Splitter || Role == FluidRole.Combiner || Role == FluidRole.Pump || Role == FluidRole.Transformer || Role == FluidRole.Valve;
 
@@ -149,6 +166,14 @@ namespace UnturnedGodot
                     AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.3f, BottomRadius = 0.3f, Height = 0.12f }, Position = new Vector3(0, 1.2f, 0), MaterialOverride = _valveHandleMat });
                     RefreshValveVisual();
                 }
+                // an at-a-glance status billboard for ACTIVE machines (pump/purifier/valve/refinery/sluice) — a splitter/
+                // combiner has no status (StatusLine text null) so it gets none, keeping passive relays clutter-free.
+                if (DisplayServer.GetName() != "headless" && StatusLine().text != null)
+                {
+                    _info = new InfoBillboard { TopLevel = true };
+                    AddChild(_info);
+                    _info.SetActive(true);
+                }
                 return;
             }
             // tank body — a cylinder tinted by role (green source / blue storage / orange consumer)
@@ -202,14 +227,19 @@ namespace UnturnedGodot
         }
 
         // A clean, "Fluid"-prefixed label (strawberry: everything fluid reads "Fluid ..."). Used by the tank billboard and
-        // the hose-tool port HUD so the in-world name matches the inventory item.
-        public string RoleLabel() => Role switch
-        {
-            FluidRole.Source => "Fluid Source",
-            FluidRole.Storage => "Fluid Tank",
-            FluidRole.Consumer => "Fluid Drain",
-            _ => $"Fluid {Role}",
-        };
+        // the hose-tool port HUD so the in-world name matches the inventory item. Prefers the DEVICE'S REAL NAME (an
+        // explicit DisplayName, else the item Def name) so a refinery/sluice/purifier read distinctly instead of all
+        // showing "Fluid Transformer" (strawberry polish); falls back to a role name for the rare def-less device.
+        public string RoleLabel() =>
+            !string.IsNullOrEmpty(DisplayName) ? DisplayName :
+            !string.IsNullOrEmpty(Def?.Name) ? Def.Name :
+            Role switch
+            {
+                FluidRole.Source => "Fluid Source",
+                FluidRole.Storage => "Fluid Tank",
+                FluidRole.Consumer => "Fluid Drain",
+                _ => $"Fluid {Role}",
+            };
 
         public override void _Process(double delta)
         {
@@ -224,8 +254,16 @@ namespace UnturnedGodot
                 }
                 else if (_pumpDrum.Position != _pumpDrumBase) _pumpDrum.Position = _pumpDrumBase;
             }
-            if (Tank == null || _info == null) return;   // fittings have no tank/bar
-            _info.GlobalPosition = GlobalPosition + new Vector3(0, 2.2f, 0);   // hover the bar above the tank (TopLevel node)
+            if (_info == null) return;
+            _info.GlobalPosition = GlobalPosition + new Vector3(0, 2.2f, 0);   // hover the bar/status above the device (TopLevel node)
+            if (Tank == null)   // a machine (pump/purifier/valve/refinery/sluice): show its name + at-a-glance status, no fill bar
+            {
+                var (status, scol) = StatusLine();
+                _info.SetName(RoleLabel(), new Color(0.9f, 0.92f, 0.95f));
+                _info.SetBar(0, 0f, scol, visible: false);
+                _info.SetPrompt(status ?? "", scol);
+                return;
+            }
             float frac = Tank.Capacity > 0f ? Mathf.Clamp(Tank.Amount / Tank.Capacity, 0f, 1f) : 0f;
             var col = FluidDef.WaterColor(Tank.Type, Tank.Quality);   // water folds its quality into the colour (murky when dirty)
             // an un-adopted tank has FluidType.None -> reads "(empty)" (a STATE), not "— Empty" as if Empty were a fluid

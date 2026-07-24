@@ -16,6 +16,7 @@ namespace UnturnedGodot
             Tank = new FluidTank(FluidType.Water, 200000f, 200000f, WaterQuality.Tainted),
             FlowRate = 125f,
             Infinite = true,                              // never depletes (a reservoir, not a filled tank)
+            DisplayName = "Water Tower",                  // reads distinctly in the hose-tool port HUD (not "Fluid Source")
             PortLocalPos = new Vector3(0f, 1.3f, 2.0f),   // an output spigot at the tower BASE: 1.3 m up, 2 m out past the legs
         };
 
