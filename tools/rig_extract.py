@@ -254,15 +254,15 @@ if RAGDOLL_JSON and os.path.exists(RAGDOLL_JSON):
     print('  ragdoll bones:', len(rag))
 
 # ---- arms-only mesh for the 1P viewmodel: keep only verts skinned to the arm bones ----
-# The final `bones` list order is [Skeleton(0), Spine(1), Skull(2), Left_Shoulder(3), Left_Arm(4),
-# Left_Hand(5), Left_Hook(6), Right_Shoulder(7), Right_Arm(8), Right_Hand(9), Right_Hook(10), legs...].
-# The arm bones are 3..10 (Left/Right {Shoulder,Arm,Hand,Hook}). Drops head/torso/legs so the
-# first-person camera sees just the arms holding the gun (no body to occlude). NOTE: this indexes the
-# `bones` list, NOT BONE_ORDER (the bind list, which puts Spine first). The old range(1,9) was off by
-# two -- it counted Spine(1)+Skull(2) as arms and dropped Right_Hand(9)/Right_Hook(10), deleting the
-# entire right-hand cluster (~half the arm mesh) and leaking a stray Skull face-quad into the viewmodel.
-ARM_BONES = set(range(3, 11))
-keep = [i for i in range(VCOUNT) if sk_idx[i][0] in ARM_BONES]
+# Drops head/torso/legs so the first-person camera sees just the arms holding the gun (no body to occlude).
+# CRITICAL index-space note: sk_idx values are SKIN-BIND-SLOT indices (Unity boneIndex0/1 -> the `skin` bind
+# list), NOT `bones`-list indices. Slot j maps to skeleton bone skin[j]['bone'] (e.g. slot 9 -> Skull, slot 10
+# -> Left_Hip). So the filter MUST resolve slot->bone: keep a vert iff its primary slot's skeleton bone is an
+# arm bone (3..10 = Left/Right {Shoulder,Arm,Hand,Hook}). (A prior fix hardcoded slot range(3,11) as if it were
+# bone-space -- that scooped the 105-vert Skull face cluster into the arms, flinging it to head height in the
+# viewmodel = a spike into the sky, and dropped the left upper arm. Resolving through `skin` can't be confused.)
+ARM_SKELETON_BONES = set(range(3, 11))   # Left_Shoulder..Right_Hook, in the `bones` list's index space
+keep = [i for i in range(VCOUNT) if skin[sk_idx[i][0]]['bone'] in ARM_SKELETON_BONES]
 remap = {old: new for new, old in enumerate(keep)}
 arms_faces = []
 for k in range(0, len(faces), 3):
