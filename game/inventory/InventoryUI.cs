@@ -421,6 +421,17 @@ namespace UnturnedGodot
                 cl.AddThemeFontSizeOverride("font_size", 13);
                 panel.AddChild(cl);
             }
+            // a FOOD item shows its CONDITION (freshness) as a % coloured red->yellow->green (source getQualityColor);
+            // under the sick threshold it's flagged spoiled -- eating it feeds you less + raises infection (FoodSpoil).
+            if (asset.type == EItemType.FOOD && jar.item != null)
+            {
+                int q = jar.item.quality;
+                string tag = q < FoodSpoil.SickThreshold ? "  ·  spoiled" : q >= 90 ? "  ·  fresh" : "";
+                var fl = new Label { Text = $"Condition: {q}%{tag}", Position = new Vector2(228, 120), Size = new Vector2(258, 22) };
+                fl.AddThemeColorOverride("font_color", ItemTool.QualityColor(q / 100f).Lerp(Colors.White, 0.3f));   // brighten so the spoiled (dark-red) end stays legible on the dark panel
+                fl.AddThemeFontSizeOverride("font_size", 13);
+                panel.AddChild(fl);
+            }
 
             // right-bottom: actions. ONE state-aware hand button (strawberry): if this item is the one in hand
             // -> "Dequip" (back to fists); else "Equip" (gun/melee/deployable) or "Hold" (consumable). Then Drop + Close.
@@ -873,6 +884,21 @@ namespace UnturnedGodot
                     badge.AddChild(new ColorRect { Color = new Color(0.92f, 0.98f, 1f, 0.95f), Position = new Vector2(4, 3), Size = new Vector2(4, 4), MouseFilter = Control.MouseFilterEnum.Ignore });   // a little highlight so it reads as a drop
                     tile.AddChild(badge);
                 }
+            }
+
+            if (asset?.type == EItemType.FOOD && jar.item != null)   // FOOD shows its CONDITION as a coloured % in the bottom-right corner (source SleekItem quality box: red->yellow->green)
+            {
+                int q = jar.item.quality;
+                var qcol = ItemTool.QualityColor(q / 100f);
+                var box = new Panel { Position = new Vector2(w - 32, h - 17), Size = new Vector2(30, 15), MouseFilter = Control.MouseFilterEnum.Ignore };
+                var bs = new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0.72f) };
+                bs.SetCornerRadiusAll(3); bs.BorderColor = qcol; bs.SetBorderWidthAll(1);   // dark chip, outlined in the condition colour so it reads on any icon
+                box.AddThemeStyleboxOverride("panel", bs);
+                var lbl = new Label { Text = $"{q}%", Size = new Vector2(30, 15), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                lbl.AddThemeColorOverride("font_color", qcol.Lerp(Colors.White, 0.45f));   // brighten the text so even the dark-red (spoiled) end reads on the chip; the border keeps the pure hue
+                lbl.AddThemeFontSizeOverride("font_size", 10);
+                box.AddChild(lbl);
+                tile.AddChild(box);
             }
             return tile;
         }

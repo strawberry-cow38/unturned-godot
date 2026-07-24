@@ -91,6 +91,14 @@ namespace UnturnedGodot.Testing
             T.Check("peekItemQuality returns the first-found instance's condition (42)", inv2.peekItemQuality(13) == 42);
             T.Check("peekItemQuality of an absent id -> 100 (treated fresh)", inv2.peekItemQuality(9999) == 100);
 
+            // ── the condition colour ramp (ItemTool.QualityColor, source getQualityColor): red@0 -> yellow@50 -> green@100.
+            var c0 = ItemTool.QualityColor(0f); var c50 = ItemTool.QualityColor(0.5f); var c100 = ItemTool.QualityColor(1f);
+            T.Check("0% condition is red (#bf1f1f)", Mathf.Abs(c0.R - 191f / 255f) < 0.01f && Mathf.Abs(c0.G - 31f / 255f) < 0.01f);
+            T.Check("50% condition is yellow (#dcb413)", Mathf.Abs(c50.R - 220f / 255f) < 0.01f && Mathf.Abs(c50.G - 180f / 255f) < 0.01f);
+            T.Check("100% condition is green (#1f871f)", Mathf.Abs(c100.R - 31f / 255f) < 0.01f && Mathf.Abs(c100.G - 135f / 255f) < 0.01f);
+            T.Check("red->yellow half brightens (G rises 0->50%)", ItemTool.QualityColor(0.4f).G > ItemTool.QualityColor(0.1f).G);
+            T.Check("yellow->green half sheds red (R falls 50->100%)", ItemTool.QualityColor(0.9f).R < ItemTool.QualityColor(0.6f).R);
+
             yield break;
         }
     }

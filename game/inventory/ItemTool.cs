@@ -15,5 +15,16 @@ namespace SDG.Unturned
             EItemRarity.MYTHICAL  => new Godot.Color(50f / 51f, 10f / 51f, 5f / 51f),
             _ => Godot.Colors.White,
         };
+
+        // ItemTool.getQualityColor: food/water CONDITION colour ramp -- red (spoiled) -> yellow (half) -> green (fresh).
+        // Byte-exact port of the source (Palette.COLOR_R #bf1f1f / COLOR_Y #dcb413 / COLOR_G #1f871f). q01 = quality/100.
+        public static Godot.Color QualityColor(float q01)
+        {
+            q01 = Godot.Mathf.Clamp(q01, 0f, 1f);
+            var r = new Godot.Color(191f / 255f, 31f / 255f, 31f / 255f);
+            var y = new Godot.Color(220f / 255f, 180f / 255f, 19f / 255f);
+            var g = new Godot.Color(31f / 255f, 135f / 255f, 31f / 255f);
+            return q01 < 0.5f ? r.Lerp(y, q01 * 2f) : y.Lerp(g, (q01 - 0.5f) * 2f);
+        }
     }
 }
