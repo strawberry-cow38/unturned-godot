@@ -292,6 +292,17 @@ namespace UnturnedGodot.Testing
             p.FillHeldContainer(FluidType.Water, WaterQuality.Clean, 999999f);   // overfill
             FluidItem.Read(bottle, wb, out _, out var a4, out _);
             T.Check($"fill overfill clamps to capacity ({a4:0}/{wb.fluidCapacity:0})", System.Math.Abs(a4 - wb.fluidCapacity) < 1f);
+
+            // fill/empty a LOOKED-AT placed tank (not holding anything) -> targets the focused tank instead
+            var p2 = new PlayerController { Inventory = new PlayerInventory() };
+            var placedTank = FluidContainer.Make(FluidRole.Storage, new FluidTank(FluidType.None, 5000f, 0f));
+            p2.SetFocusFluidForTest(placedTank);
+            T.Check("not holding -> FocusedFluidTank is the looked-at tank", p2.FocusedFluidTank == placedTank && !p2.HoldingFluidContainer);
+            T.Check("fill targets the looked-at tank", p2.FillFocusedTank(FluidType.Water, WaterQuality.Tainted, 3000f));
+            T.Check($"tank = 3000 mL tainted water (t={placedTank.Tank.Type} a={placedTank.Tank.Amount:0} q={placedTank.Tank.Quality})",
+                    placedTank.Tank.Type == FluidType.Water && System.Math.Abs(placedTank.Tank.Amount - 3000f) < 1f && placedTank.Tank.Quality == WaterQuality.Tainted);
+            p2.EmptyFocusedTank();
+            T.Check($"empty tank -> 0 ({placedTank.Tank.Amount:0})", placedTank.Tank.Amount < 1f);
             yield break;
         }
     }

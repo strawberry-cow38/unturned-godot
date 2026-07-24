@@ -3039,6 +3039,22 @@ namespace UnturnedGodot
             return true;
         }
         public bool HoldingFluidContainer => _heldFluidItem != null;
+        // the placed fluid device currently LOOKED AT (a tank/source/consumer with a Tank; null for a fitting or nothing)
+        public FluidContainer FocusedFluidTank => (_focusFluid != null && IsInstanceValid(_focusFluid) && _focusFluid.Tank != null) ? _focusFluid : null;
+        public bool FillFocusedTank(FluidType type, WaterQuality q, float amountMl)
+        {
+            var c = FocusedFluidTank; if (c == null) return false;
+            c.Tank.Type = type;
+            c.Tank.Amount = amountMl < 0f ? c.Tank.Capacity : Mathf.Clamp(amountMl, 0f, c.Tank.Capacity);
+            c.Tank.Quality = q;
+            return true;
+        }
+        public bool EmptyFocusedTank()
+        {
+            var c = FocusedFluidTank; if (c == null) return false;
+            c.Tank.Amount = 0f;
+            return true;
+        }
 
         public Camera3D Camera => _cam;
 

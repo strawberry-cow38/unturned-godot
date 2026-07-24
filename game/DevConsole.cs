@@ -171,12 +171,16 @@ namespace UnturnedGodot
                 }
                 return;
             }
-            // fill <fluid>[:<flag>] [amount] / empty -- set the contents of the HELD fluid container (strawberry)
+            // fill <fluid>[:<flag>] [amount] / empty -- set the contents of the HELD fluid container, else the looked-at
+            // placed tank (strawberry). Held bottle wins if both; a fitting (splitter/pump) has no tank -> not a target.
             if (verb == "fill" || verb == "empty")
             {
                 if (Player == null) { Log("no player"); return; }
-                if (!Player.HoldingFluidContainer) { Log("hold a fluid container first (equip a bottle/canteen)"); return; }
-                if (verb == "empty") { Player.EmptyHeldContainer(); Log("emptied the held container"); return; }
+                bool held = Player.HoldingFluidContainer;
+                bool tank = !held && Player.FocusedFluidTank != null;
+                string tgt = held ? "held container" : "tank";
+                if (!held && !tank) { Log("hold a fluid container, or look at a tank"); return; }
+                if (verb == "empty") { if (held) Player.EmptyHeldContainer(); else Player.EmptyFocusedTank(); Log($"emptied the {tgt}"); return; }
                 if (arg.Length == 0) { Log("usage: fill <fluid>[:<flag>] [amount]  (e.g. fill water:dirty 500, fill soda 1L)"); return; }
                 var fp = arg.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
                 var fq = fp[0].Split(':', 2);
@@ -195,8 +199,8 @@ namespace UnturnedGodot
                 }
                 float ml = -1f;   // no amount -> fill to capacity
                 if (fp.Length > 1 && !ParseVolume(fp[1], out ml)) { Log($"bad amount '{fp[1]}' (mL, or with an L suffix: 500, 1.5L)"); return; }
-                Player.FillHeldContainer(type, quality, ml);
-                Log($"filled: {(ml < 0f ? "full" : FluidDef.Litres(ml))} of {FluidDef.WaterName(type, quality)}");
+                if (held) Player.FillHeldContainer(type, quality, ml); else Player.FillFocusedTank(type, quality, ml);
+                Log($"filled the {tgt}: {(ml < 0f ? "full" : FluidDef.Litres(ml))} of {FluidDef.WaterName(type, quality)}");
                 return;
             }
 
