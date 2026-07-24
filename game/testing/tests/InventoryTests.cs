@@ -249,4 +249,50 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // strawberry: `fill <fluid>[:<flag>] [amount]` / `empty` on the held container. Locks the fluid-name + volume parsers
+    // (aliases, L-suffix) and the fill/empty result on a real held water bottle.
+    public class FluidFillCommand : GameTest
+    {
+        public override string Name => "fluid.fill_command";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            void Fl(string s, FluidType want)
+            {
+                bool ok = FluidDef.TryParse(s, out var t);
+                T.Check($"fluid '{s}' -> {want} (got {(ok ? t.ToString() : "FAIL")})", ok && t == want);
+            }
+            Fl("water", FluidType.Water); Fl("soda", FluidType.Soda); Fl("oj", FluidType.OrangeJuice);
+            Fl("gasoline", FluidType.Gas); Fl("gas", FluidType.Gas); Fl("chemicals", FluidType.Chemicals);
+            Fl("coconut", FluidType.CoconutWater); Fl("syrup", FluidType.MapleSyrup);
+            T.Check("garbage fluid 'lava' rejected", !FluidDef.TryParse("lava", out _));
+            void Vol(string s, float wantMl)
+            {
+                bool ok = DevConsole.ParseVolume(s, out float ml);
+                T.Check($"volume '{s}' -> {wantMl:0} mL (got {(ok ? ml.ToString("0") : "FAIL")})", ok && Mathf.Abs(ml - wantMl) < 0.5f);
+            }
+            Vol("500", 500f); Vol("500ml", 500f); Vol("1.5L", 1500f); Vol("2l", 2000f);
+            T.Check("garbage volume 'lots' rejected", !DevConsole.ParseVolume("lots", out _));
+
+            // fill/empty on a real held water bottle
+            var wb = Assets.find(14);
+            var p = new PlayerController { Inventory = new PlayerInventory() };
+            var bottle = new Item(14);
+            p.EquipHeldFluidContainer(wb, bottle);
+            T.Check("fill water:dirty 500 -> 500 mL dirty water", p.FillHeldContainer(FluidType.Water, WaterQuality.Dirty, 500f));
+            FluidItem.Read(bottle, wb, out var t1, out var a1, out var q1);
+            T.Check($"contents = 500 mL dirty water (t={t1} a={a1:0} q={q1})", t1 == FluidType.Water && System.Math.Abs(a1 - 500f) < 1f && q1 == WaterQuality.Dirty);
+            p.FillHeldContainer(FluidType.Soda, WaterQuality.Clean, -1f);   // no amount -> full
+            FluidItem.Read(bottle, wb, out var t2, out var a2, out _);
+            T.Check($"fill soda (no amount) -> FULL soda (t={t2} a={a2:0}/{wb.fluidCapacity:0})", t2 == FluidType.Soda && System.Math.Abs(a2 - wb.fluidCapacity) < 1f);
+            p.EmptyHeldContainer();
+            FluidItem.Read(bottle, wb, out _, out var a3, out _);
+            T.Check($"empty -> 0 mL ({a3:0})", a3 < 1f);
+            p.FillHeldContainer(FluidType.Water, WaterQuality.Clean, 999999f);   // overfill
+            FluidItem.Read(bottle, wb, out _, out var a4, out _);
+            T.Check($"fill overfill clamps to capacity ({a4:0}/{wb.fluidCapacity:0})", System.Math.Abs(a4 - wb.fluidCapacity) < 1f);
+            yield break;
+        }
+    }
 }

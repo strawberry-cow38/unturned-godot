@@ -63,6 +63,32 @@ namespace UnturnedGodot
         // choice; autodrink never touches them.
         public static bool Safe(FluidType id, WaterQuality q) => (id == FluidType.Water && q == WaterQuality.Clean) || IsBeverage(id);
 
+        // Parse a fluid NAME (for the `fill <fluid>` console command) -> FluidType, with friendly aliases. False = unknown.
+        public static bool TryParse(string s, out FluidType type)
+        {
+            type = FluidType.None;
+            switch ((s ?? "").Trim().ToLowerInvariant().Replace(" ", "").Replace("_", ""))
+            {
+                case "none": case "empty":                 type = FluidType.None; return true;
+                case "fuel":                               type = FluidType.Fuel; return true;
+                case "water":                              type = FluidType.Water; return true;
+                case "oil":                                type = FluidType.Oil; return true;
+                case "gas": case "gasoline":               type = FluidType.Gas; return true;
+                case "soda":                               type = FluidType.Soda; return true;
+                case "cola":                               type = FluidType.Cola; return true;
+                case "orangejuice": case "oj": case "orange": type = FluidType.OrangeJuice; return true;
+                case "milk":                               type = FluidType.Milk; return true;
+                case "coconutwater": case "coconut":       type = FluidType.CoconutWater; return true;
+                case "energydrink": case "energy":         type = FluidType.EnergyDrink; return true;
+                case "applejuice": case "apple":           type = FluidType.AppleJuice; return true;
+                case "grapejuice": case "grape":           type = FluidType.GrapeJuice; return true;
+                case "maplesyrup": case "syrup": case "maple": type = FluidType.MapleSyrup; return true;
+                case "glue":                               type = FluidType.Glue; return true;
+                case "chemicals": case "chemical": case "chems": type = FluidType.Chemicals; return true;
+                default: return false;
+            }
+        }
+
         // Display a volume in litres (1 unit = 1 mL, strawberry 2026-07-22). Sub-litre reads in mL so a near-empty can
         // isn't just "0.0 L"; >= 1 L shows one decimal. e.g. 20000 -> "20.0 L", 450 -> "450 mL".
         public static string Litres(float mL) => mL < 1000f ? $"{mL:0} mL" : $"{mL / 1000f:0.0} L";

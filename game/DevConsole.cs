@@ -171,6 +171,34 @@ namespace UnturnedGodot
                 }
                 return;
             }
+            // fill <fluid>[:<flag>] [amount] / empty -- set the contents of the HELD fluid container (strawberry)
+            if (verb == "fill" || verb == "empty")
+            {
+                if (Player == null) { Log("no player"); return; }
+                if (!Player.HoldingFluidContainer) { Log("hold a fluid container first (equip a bottle/canteen)"); return; }
+                if (verb == "empty") { Player.EmptyHeldContainer(); Log("emptied the held container"); return; }
+                if (arg.Length == 0) { Log("usage: fill <fluid>[:<flag>] [amount]  (e.g. fill water:dirty 500, fill soda 1L)"); return; }
+                var fp = arg.Split(' ', 2, System.StringSplitOptions.RemoveEmptyEntries);
+                var fq = fp[0].Split(':', 2);
+                if (!FluidDef.TryParse(fq[0], out var type))
+                { Log($"unknown fluid '{fq[0]}' (water, soda, cola, fuel, oil, gas, orangejuice, milk, coconut, energy, apple, grape, syrup, glue, chemicals)"); return; }
+                var quality = WaterQuality.Clean;
+                if (fq.Length > 1 && fq[1].Length > 0)
+                {
+                    switch (fq[1].Trim().ToLowerInvariant())
+                    {
+                        case "clean": quality = WaterQuality.Clean; break;
+                        case "tainted": quality = WaterQuality.Tainted; break;
+                        case "dirty": quality = WaterQuality.Dirty; break;
+                        default: Log($"unknown flag '{fq[1]}' (clean, tainted, dirty)"); return;
+                    }
+                }
+                float ml = -1f;   // no amount -> fill to capacity
+                if (fp.Length > 1 && !ParseVolume(fp[1], out ml)) { Log($"bad amount '{fp[1]}' (mL, or with an L suffix: 500, 1.5L)"); return; }
+                Player.FillHeldContainer(type, quality, ml);
+                Log($"filled: {(ml < 0f ? "full" : FluidDef.Litres(ml))} of {FluidDef.WaterName(type, quality)}");
+                return;
+            }
 
             if (arg.Length == 0) { Log("usage: give <item> | vehicle <name>"); return; }
 
@@ -536,6 +564,19 @@ namespace UnturnedGodot
             if (am || pm) { if (h == 12f) h = 0f; if (pm) h += 12f; }   // 12am=0, 12pm=12, 8pm=20
             hours = h + m / 60f;
             return allowNeg || hours >= 0f;
+        }
+
+        // Parse a fluid volume for `fill`: a number in mL, or with an "L" suffix -> litres (500 -> 500 mL, 1.5L -> 1500 mL).
+        public static bool ParseVolume(string s, out float ml)
+        {
+            ml = 0f;
+            s = (s ?? "").Trim().ToLowerInvariant();
+            bool litres = false;
+            if (s.EndsWith("ml")) s = s[..^2].Trim();
+            else if (s.EndsWith("l")) { litres = true; s = s[..^1].Trim(); }
+            if (!float.TryParse(s, out float v) || v < 0f) return false;
+            ml = litres ? v * 1000f : v;
+            return true;
         }
 
         // 0..1 time-of-day -> "HH:MM (label)" for the `time` readout

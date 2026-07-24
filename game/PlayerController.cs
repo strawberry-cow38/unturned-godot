@@ -3019,6 +3019,27 @@ namespace UnturnedGodot
         // test seam: drive one autodrink evaluation from a headless test
         public void DebugAutoDrinkTick(float dt) => AutoDrinkTick(dt);
 
+        // Console `fill <fluid>[:<flag>] [amount]` / `empty` on the HELD fluid container (strawberry). amountMl < 0 = full.
+        public bool FillHeldContainer(FluidType type, WaterQuality q, float amountMl)
+        {
+            var a = _heldFluidItem?.GetAsset();
+            if (_heldFluidItem == null || a == null || !a.IsFluidContainer) return false;
+            float amt = amountMl < 0f ? a.fluidCapacity : Mathf.Clamp(amountMl, 0f, a.fluidCapacity);
+            FluidItem.Write(_heldFluidItem, type, amt, q);
+            _invUI?.Refresh();
+            return true;
+        }
+        public bool EmptyHeldContainer()
+        {
+            var a = _heldFluidItem?.GetAsset();
+            if (_heldFluidItem == null || a == null || !a.IsFluidContainer) return false;
+            FluidItem.Read(_heldFluidItem, a, out var t, out _, out var q);
+            FluidItem.Write(_heldFluidItem, t, 0f, q);   // zero it, keep the type/quality
+            _invUI?.Refresh();
+            return true;
+        }
+        public bool HoldingFluidContainer => _heldFluidItem != null;
+
         public Camera3D Camera => _cam;
 
         // Load a real gun .dat (e.g. Eaglefire) through the ported UnturnedDat layer and equip it.
