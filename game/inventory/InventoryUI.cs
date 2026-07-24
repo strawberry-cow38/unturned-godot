@@ -30,7 +30,7 @@ namespace UnturnedGodot
         const int PDTOP = 30;        // y of the paperdoll inside the clothing box (below the CLOTHING header)
         const int CLOTHH = PDTOP + PDH + 14 + 7 * (CELL + 10) + 10;   // header + paperdoll + 7 equip slots
 
-        Control _root, _dash, _storageCol, _topBar, _nearbyCol;
+        Control _root, _dash, _storageCol, _topBar, _nearbyCol, _weaponsCol;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
         // inventory's worn slots (PlayerClothingController.Refresh is read-only), lit + framed by a camera. Built once;
         // Refresh() repaints its clothing; drag on its view spins it. Held weapon deferred (needs 3P gun anims).
@@ -88,6 +88,8 @@ namespace UnturnedGodot
             _dash.AddChild(_topBar);
             _nearbyCol = new Control();   // Nearby/proximity column on the right (positioned + filled in Refresh)
             _dash.AddChild(_nearbyCol);
+            _weaponsCol = new Control { Position = new Vector2(0, BODYTOP + CLOTHH + 12) };   // PRIMARY/SECONDARY, bottom-LEFT under the clothing column (retail)
+            _dash.AddChild(_weaponsCol);
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
@@ -828,13 +830,15 @@ namespace UnturnedGodot
                 }
             }
 
-            // storage side
+            // weapons -> LEFT column (below the clothing box); storage grids -> centre column
+            foreach (Node c in _weaponsCol.GetChildren()) c.QueueFree();
             foreach (Node c in _storageCol.GetChildren()) c.QueueFree();
             _drop.Clear();
+            float wy = 0;
+            wy = AddSlot(_weaponsCol, "PRIMARY", 0, wy);
+            wy = AddSlot(_weaponsCol, "SECONDARY", 1, wy);
             float y = 0;
             _storageW = 5 * CELL;
-            y = AddSlot("PRIMARY", 0, y);
-            y = AddSlot("SECONDARY", 1, y);
             (byte page, string name)[] grids =
             {
                 (PlayerInventory.STORAGE, "CRATE"),   // shown only when a storage crate is open (size > 0)
@@ -885,7 +889,7 @@ namespace UnturnedGodot
         void CenterDash()   // scale to fill the height + SPREAD the columns to span the FULL screen width (master: "span the full screen")
         {
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            float contentH = BODYTOP + Mathf.Max(CLOTHH, _storageH);
+            float contentH = BODYTOP + Mathf.Max(CLOTHH + 12 + 180, _storageH);   // left column now = clothing box + weapons below it
             float margin = Mathf.Round(vp.X * 0.02f);
             float s = Mathf.Clamp(vp.Y * 0.9f / contentH, 1.0f, 2.0f);
             _dash.Scale = new Vector2(s, s);
@@ -905,14 +909,14 @@ namespace UnturnedGodot
             _nearbyCol.AddChild(grid);
         }
 
-        float AddSlot(string name, byte page, float y)
+        float AddSlot(Control col, string name, byte page, float y)
         {
             var pg = Inv.items[page];
-            _storageCol.AddChild(Header(name, new Vector2(0, y), 5 * CELL));
+            col.AddChild(Header(name, new Vector2(0, y), 5 * CELL));
             y += HEADER - 6;
             var box = new Panel { Position = new Vector2(0, y), Size = new Vector2(5 * CELL, CELL) };
             StyleBox(box, new Color(0f, 0f, 0f, 0.45f));
-            _storageCol.AddChild(box);
+            col.AddChild(box);
             _drop.Add((page, box, true));
             if (pg.getItemCount() > 0)
             {
