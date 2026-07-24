@@ -176,6 +176,7 @@ namespace UnturnedGodot
             d.Position = surface + Vector3.Up * (def.Upright ? -ab.Position.Y : DeployableDef.GroundLift(ab));   // base sits on the surface (upright models skip the stand-up lift)
             d.Basis = def.Upright ? new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) : DeployableDef.StandBasis(yawDeg);   // yaw (+ the stand-up for flat-authored ripped models)
             if (def.IsWindTurbine) d._bladeHub = mi.FindChild("BladeHub", true, false) as Node3D;   // the spinning blade hub
+            if (def.IsTrap) d.AddChild(Trap.Make(d, def, ab));   // src InteractableTrapTrigger: the damage volume that watches for walkers
             d.AddToGroup("deployables");
             foreach (var pdef in def.Ports)   // power connection cubes (children -> stand up with the model)
             {

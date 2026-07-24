@@ -35,6 +35,22 @@ namespace UnturnedGodot
         // fluid mesh + HosePorts are built by FluidContainer on spawn (see FluidDeploy.SpawnFor). Rides catboy's item/
         // placement rail with EXPLICIT ById cases (item ids 9110+, below the asset-factory's 60000+ block).
         public FluidRole? Fluid = null;
+
+        // --- TRAP marker (src ItemTrapAsset). A non-explosive trap damages the ONE entity that walked in; an
+        //     explosive one detonates a blast of Range2 and takes the whole damage block with it. Field names
+        //     mirror the .dat keys so the rip stays greppable. The trigger/gate LOGIC is engine-free in
+        //     core/UnturnedSim/TrapRule.cs; Trap.cs is just the Godot trigger + the damage hookup. ---
+        public bool IsTrap;
+        public bool TrapExplosive;      // .dat `Explosive` -> blast instead of a single-target hit
+        public bool TrapBroken;         // .dat `Broken` -> also breaks the victim's legs (Snare)
+        public bool TrapDamageTires;    // .dat `Damage_Tires` -> pops vehicle tires that roll over it (Caltrop)
+        public bool TrapRequiresPower;  // .dat `Requires_Power` -> inert unless wired (none of the five PEI traps use it)
+        public float TrapRange2;        // .dat Range2: EXPLOSION radius (not the placement Range)
+        public float TrapPlayerDamage, TrapZombieDamage, TrapAnimalDamage;
+        public float TrapVehicleDamage, TrapBarricadeDamage, TrapStructureDamage, TrapResourceDamage;
+        public float TrapSetupDelay = 0.25f;   // src ItemTrapAsset default: seconds after placement before it can bite
+        public float TrapCooldown;             // src default 0: seconds between bites
+        public float TrapLaunchSpeed;          // .dat Explosion_Launch_Speed (src default = playerDamage * 0.1f)
         public FluidType FluidType = FluidType.None, FluidOut = FluidType.None;   // source/transformer input + transformer output fluid
         public int FluidWays = 2;                    // splitter outputs / combiner inputs
         public float FluidCapacity = 20000f, FluidRate = 125f;   // tank capacity (mL) + base flow/intake (mL/s, garden-hose gravity)
@@ -233,10 +249,68 @@ namespace UnturnedGodot
         public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // river/ocean water = TAINTED
         public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Fluid Drain",      FluidRole.Consumer);
 
+        // --- TRAPS (src ItemTrapAsset + InteractableTrap). A trap is an ordinary barricade you plant, plus a
+        //     trigger volume that damages whatever walks in. Every value below is read from the ripped .dat
+        //     (~/unturned-bundles/Bundles/Items/Barricades/<name>/<name>.dat) -- nothing invented. The two
+        //     explosives reuse the grenade blast path; the rest damage the single entity that stepped on them.
+        //     None of the five ship Trap_Setup_Delay / Trap_Cooldown / Requires_Power, so the src defaults
+        //     apply (setup 0.25 s, cooldown 0, unpowered) -- see ItemTrapAsset.PopulateAsset. ---
+        static DeployableDef MakeTrap(ushort id, string name, float health, float radius, float offset,
+                                      float playerDmg, float zombieDmg, float animalDmg,
+                                      System.Action<DeployableDef> tweak = null)
+        {
+            var d = new DeployableDef
+            {
+                Id = id, Name = name, ProcBox = true, PlaceSound = "metalplacement",
+                IsTrap = true, Health = health, Radius = radius, Offset = offset, Range = 4f,   // every trap .dat: Range 4
+                Size = new Vector3(0.5f, 0.5f, 0.08f),   // a low, flat pad -- the src models are flat-authored barricades
+                TrapPlayerDamage = playerDmg, TrapZombieDamage = zombieDmg, TrapAnimalDamage = animalDmg,
+                // src ItemTrapAsset.PopulateAsset: Explosion_Launch_Speed defaults to playerDamage * 0.1f when the key
+                // is absent -- and NONE of the five .dat ship it. So the landmine/claymore carry launchSpeed 9.1, which
+                // is > the src's 0.01 threshold => they detonate on a player even on a PvE server. Not a guess: it falls
+                // straight out of the default. Overridable per-def by `tweak`.
+                TrapLaunchSpeed = playerDmg * 0.1f,
+            };
+            tweak?.Invoke(d);
+            return d;
+        }
+        // src Landmine.dat: id 1101, Type Trap, Health 1, Radius 0.05, Offset 0.075, Explosive, Range2 8,
+        // Player 91 / Zombie 175 / Animal 175 / Barricade 75 / Structure 75 / Vehicle 175 / Resource 625.
+        public static readonly DeployableDef Landmine = MakeTrap(1101, "Landmine", 1f, 0.05f, 0.075f, 91f, 175f, 175f, d =>
+        {
+            d.TrapExplosive = true; d.TrapRange2 = 8f;
+            d.TrapVehicleDamage = 175f; d.TrapBarricadeDamage = 75f; d.TrapStructureDamage = 75f; d.TrapResourceDamage = 625f;
+        });
+        // src Claymore.dat: id 1102 -- identical damage block to the landmine, bigger body (Radius 0.2 / Offset 0.225).
+        public static readonly DeployableDef Claymore = MakeTrap(1102, "Claymore", 1f, 0.2f, 0.225f, 91f, 175f, 175f, d =>
+        {
+            d.TrapExplosive = true; d.TrapRange2 = 8f;
+            d.TrapVehicleDamage = 175f; d.TrapBarricadeDamage = 75f; d.TrapStructureDamage = 75f; d.TrapResourceDamage = 625f;
+            d.Size = new Vector3(0.5f, 0.5f, 0.22f);
+        });
+        // src Barbedwire.dat: id 386, Health 70, Radius 0.15, Offset 0.2, Player 40 / Zombie 80 / Animal 80. Not explosive.
+        public static readonly DeployableDef Barbedwire = MakeTrap(386, "Barbed Wire", 70f, 0.15f, 0.2f, 40f, 80f, 80f, d =>
+        {
+            d.Size = new Vector3(2f, 1f, 0.5f);   // a wire section is a wide, low barrier
+        });
+        // src Caltrop.dat: id 382, Health 15, Radius 0.1, Offset 0.125, Player 20 / Zombie 40, Damage_Tires (no Animal_Damage key -> 0).
+        public static readonly DeployableDef Caltrop = MakeTrap(382, "Caltrop", 15f, 0.1f, 0.125f, 20f, 40f, 0f, d =>
+        {
+            d.TrapDamageTires = true;
+            d.Size = new Vector3(0.4f, 0.4f, 0.1f);
+        });
+        // src Snare.dat: id 1113, Health 1, Radius 0.05, Offset 0.075, Player 10 / Zombie 175 / Animal 175, `Broken` (breaks legs).
+        public static readonly DeployableDef Snare = MakeTrap(1113, "Snare", 1f, 0.05f, 0.075f, 10f, 175f, 175f, d =>
+        {
+            d.TrapBroken = true;
+        });
+        public static readonly DeployableDef[] Traps = { Landmine, Claymore, Barbedwire, Caltrop, Snare };
+
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier,
+            Landmine, Claymore, Barbedwire, Caltrop, Snare };
         public static DeployableDef ById(ushort id) => id switch
         {
             458 => Generator,
@@ -261,6 +335,11 @@ namespace UnturnedGodot
             9121 => Purifier,
             9200 => GridSource,
             9201 => GasPump,
+            1101 => Landmine,     // src Landmine.dat
+            1102 => Claymore,     // src Claymore.dat
+            386  => Barbedwire,   // src Barbedwire.dat
+            382  => Caltrop,      // src Caltrop.dat
+            1113 => Snare,        // src Snare.dat
             _ => null,
         };
 
