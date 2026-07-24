@@ -155,6 +155,23 @@ namespace SDG.Unturned
             return n;
         }
 
+        // Condition (quality 0-100) of the FIRST-found instance of `id` -- i.e. the exact one removeItemAmount(id,1)
+        // will delete next, in the same page/index scan order. Used to score the moldy-food eating penalty against the
+        // instance actually consumed (source eats player.equipment.quality). 100 if none found (treated as fresh).
+        public byte peekItemQuality(ushort id)
+        {
+            for (byte b = 0; b < (byte)(PAGES - 2); b++)
+            {
+                var page = items[b];
+                for (byte i = 0; i < page.getItemCount(); i++)
+                {
+                    var jar = page.getItem(i);
+                    if (jar?.item != null && jar.item.id == id) return jar.item.quality;
+                }
+            }
+            return 100;
+        }
+
         // consume up to `amount` of item id across the player's pages (crafting supply consumption); removes emptied jars
         public void removeItemAmount(ushort id, int amount)
         {

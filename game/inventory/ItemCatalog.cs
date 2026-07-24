@@ -143,6 +143,11 @@ namespace SDG.Unturned
                 a.useVirus = I(4); a.useDisinfectant = I(5); a.useEnergy = I(6);
                 a.useStopsBleeding = I(7) == 1;   // Bleeding_Modifier Heal
                 a.useHealBroken = I(8) == 1;       // Bones_Modifier Heal
+                if (c.Length >= 11)                // cols 10/11: Quality_Min/Quality_Max spawn-condition band (source ItemAsset)
+                {
+                    a.qualityMin = (byte)System.Math.Clamp(I(9), 0, 100);
+                    a.qualityMax = (byte)System.Math.Clamp(I(10), 0, 100);
+                }
                 n++;
             }
             GD.Print($"[items] wired consumable effects for {n} food/water/medical items");

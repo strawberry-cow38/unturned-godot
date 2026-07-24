@@ -637,7 +637,7 @@ namespace UnturnedGodot
             byte idx = pg.getIndex(_selX, _selY);
             if (idx == byte.MaxValue) return;
             var jar = pg.getItem(idx);
-            Player?.Consume(jar.GetAsset());   // vitals stay client-led (HP server-adopted via AdoptReplicatedVitals; food/water local)
+            Player?.Consume(jar.GetAsset(), jar.item?.quality ?? 100);   // pass the eaten instance's CONDITION -> moldy-food penalty (vitals stay client-led; HP server-adopted, food/water local)
             // MP: the DELETE is a REQUEST -- the server removes by id (the cell just names one) and the owner
             // echo repaints the decremented grid, so SKIP the local decrement (mirror DropSelected @558-567 /
             // TickConsume @1038-1050). SP: the direct local decrement, unchanged.

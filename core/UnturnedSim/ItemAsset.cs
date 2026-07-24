@@ -77,6 +77,12 @@ namespace SDG.Unturned
         public byte fluidDefaultType;      // FluidType enum value the container spawns holding (0 = None = spawns empty)
         public byte fluidDefaultQuality;   // WaterQuality enum value it spawns at (0 = Clean)
         public bool IsFluidContainer => fluidCapacity > 0f;
+        // Spawn CONDITION band (source ItemAsset Quality_Min/Quality_Max; defaults 10/90). A WORLD-spawned FOOD item
+        // rolls its freshness (the Item.quality byte, 0-100) in [qualityMin, qualityMax]: perishable raw foods ship a
+        // low Quality_Max (e.g. 50 -> can spawn already-moldy), preserved foods a high Quality_Min (MRE 50-100). Loaded
+        // from content/consumable_stats.tsv (cols 10/11). Non-food items keep the defaults (their quality stays 100).
+        public byte qualityMin = 10;
+        public byte qualityMax = 90;
         // Loose per-round ammo (shotgun shells): stacks in a slot up to stackSize, matched to a gun by magCaliber (magCapacity 0).
         // A reload consumes shells from the stack rather than swapping a whole magazine. (12/20 Gauge Shells, stack 32.)
         public bool isAmmo;
@@ -120,6 +126,10 @@ namespace SDG.Unturned
         // sits in the bag (only for SAFE liquids -- FluidDef.Safe; gated game-side). Defaults ON; a per-item toggle in the
         // inventory flips it. Non-container items ignore it.
         public bool autoDrink = true;
+        // FOOD SPOILAGE (strawberry): a food item's `quality` (0-100) doubles as its FRESHNESS/condition -- it ticks down
+        // once per in-game day at a per-food-type rate (FoodSpoil). `preserved` HALTS spoilage (a fridge sets it; the fridge
+        // itself is stubbed, but the flag + skip path are wired). Non-food items ignore both.
+        public bool preserved;
 
         public Item(ushort newID, byte newAmount = 1, byte newQuality = 100)
         {
@@ -137,6 +147,7 @@ namespace SDG.Unturned
     {
         static readonly Dictionary<ushort, ItemAsset> _byId = new();
         static readonly Dictionary<string, ItemAsset> _byGuid = new();   // item GUID -> asset (blueprint ingredient resolution)
+        static readonly System.Random _lootRng = new();   // world-loot condition roll (freshness of spawned food) -- source uses UnityEngine.Random
 
         public static void add(ItemAsset a) { if (a != null) { _byId[a.id] = a; if (!string.IsNullOrEmpty(a.guid)) _byGuid[a.guid] = a; } }
         // World loot factory: a magazine spawns FULL (Military Magazine = 30 rounds) rather than empty (master). Other items = 1.
@@ -144,6 +155,8 @@ namespace SDG.Unturned
         {
             var a = find(id);
             var it = new Item(id, a != null && a.IsMagazine ? (byte)System.Math.Max(1, a.magCapacity) : (byte)1);
+            if (a != null && a.type == EItemType.FOOD)   // FOOD spawns at a random CONDITION (source Item ctor: Random(Quality_Min, Quality_Max)); <50 = moldy = infects you to eat, and it decays a bit more each in-game day (FoodSpoil)
+                it.quality = (byte)_lootRng.Next(System.Math.Min(a.qualityMin, a.qualityMax), System.Math.Max(a.qualityMin, a.qualityMax) + 1);
             if (a != null && a.IsFuelContainer) it.fuelLevel = 0f;   // a fresh gas can starts EMPTY -> fill it at a pump
             if (a != null && a.IsFluidContainer)                     // a fluid container spawns holding its default fluid (a bottle = full; a canteen = empty)
             {

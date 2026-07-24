@@ -62,16 +62,25 @@ namespace UnturnedGodot
         public float Infection { get => _vitals.Infection; set => _vitals.Infection = value; }   // 0..1 virus; zombie bites raise it (Zombie.askDamage's player.life.askInfect(b/3))
         public void Infect(float amount) => Infection = Mathf.Clamp(Infection + amount * Skills.ImmunityInfectionMultiplier(), 0f, 1f);   // IMMUNITY skill cuts infection gained (source UseableConsumeable:325)
 
-        // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals.
-        public void Consume(ItemAsset a)
+        // Use a consumable (ItemConsumeableAsset): apply its Health/Food/Water/bleeding effects to the vitals. `quality`
+        // is the eaten instance's CONDITION (0-100, source player.equipment.quality) -- FOOD/WATER items ride it as
+        // freshness; source scales food+water restored by quality/100 and, below 50, infects you (moldy food penalty).
+        // Non-condition items spawn at quality 100 -> full effect, no penalty (byte-identical to the old behaviour).
+        public void Consume(ItemAsset a, int quality = 100)
         {
             if (a == null) return;
+            float qf = FoodSpoil.NutritionScale(quality);   // source: askEat/askDrink scale by player.equipment.quality / 100
             if (a.useHealth > 0) Health = Mathf.Min(MaxHealth, Health + a.useHealth);
-            if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f);
-            if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f);
+            if (a.useFood  > 0) Food  = Mathf.Min(1f, Food  + a.useFood  / 100f * qf);
+            if (a.useWater > 0) Water = Mathf.Min(1f, Water + a.useWater / 100f * qf);
             if (a.useEnergy > 0) Stamina = Mathf.Min(1f, Stamina + a.useEnergy / 100f);   // askRest: energy drinks/bars restore stamina
             if (a.useVirus > 0) Infect(a.useVirus / 100f);   // askInfect: raises infection (IMMUNITY skill cuts it, via Infect)
             if (a.useDisinfectant > 0) Infection = Mathf.Max(0f, Infection - a.useDisinfectant / 100f);   // askDisinfect: antibiotics/vaccine lower infection
+            // Moldy penalty (source UseableConsumeable.performUseOnSelf): eating a FOOD/WATER item under 50% condition
+            // infects you, scaled by how spoiled it is. This is the "food below 50% subtracts from your bar" mechanic --
+            // raising infection = the bar drains (inverted). IMMUNITY cuts it (inside Infect).
+            float moldy = FoodSpoil.MoldyInfection(a.useFood, a.useWater, quality);
+            if (moldy > 0f) Infect(moldy);
             if (a.useStopsBleeding) { Bleeding = false; _bleedTimer = 0; }
             if (a.useHealBroken) Broken = false;   // Bones_Modifier Heal (Medkit/Splint) mends broken legs
         }
@@ -1612,8 +1621,9 @@ namespace UnturnedGodot
             _consumeTimer -= dt;
             if (_consumeTimer <= 0f && _heldConsumable != null)
             {
-                Consume(_heldConsumable);   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
                 ushort id = _heldConsumable.id;
+                int eatenQuality = Inventory?.peekItemQuality(id) ?? 100;   // condition of the instance removeItemAmount will delete -> scores the moldy-food penalty against what's actually eaten
+                Consume(_heldConsumable, eatenQuality);   // apply Health/Food/Water/etc. (MP too: vitals stay client-led until the vitals split; the server mirrors coarse health itself)
                 var asset = _heldConsumable; string mesh = _heldConsumableMesh;
                 GD.Print($"[consume] consumed {_heldConsumable.itemName}");
                 _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null;             // one use per item: this one leaves the hand + is deleted (master)
@@ -3019,6 +3029,21 @@ namespace UnturnedGodot
         // test seam: drive one autodrink evaluation from a headless test
         public void DebugAutoDrinkTick(float dt) => AutoDrinkTick(dt);
 
+        // FOOD SPOILAGE (strawberry): once per in-game day (DayNightCycle.Day advancing over a midnight crossing) every
+        // FOOD item in the bag loses a slice of its freshness (FoodSpoil.PerDay, by food type) unless `preserved` (fridge).
+        // Driven off the day counter so a dev `timeAdd 48` fast-forwards two days of spoilage at once. The first frame just
+        // syncs the baseline (no retroactive spoilage on spawn/load). SP-local; MP server-authoritative day sync = fast-follow.
+        int _lastSpoilDay = -1;
+        void FoodSpoilTick()
+        {
+            if (Inventory == null) return;
+            if (GetTree().GetFirstNodeInGroup("daynight") is not DayNightCycle dnc) return;
+            if (_lastSpoilDay < 0) { _lastSpoilDay = dnc.Day; return; }   // baseline on first observation -- don't spoil the moment you spawn
+            while (_lastSpoilDay < dnc.Day) { FoodSpoil.TickDay(Inventory); _lastSpoilDay++; }
+        }
+        // test seam: drive one day of food spoilage from a headless test
+        public void DebugFoodSpoilTick() => FoodSpoil.TickDay(Inventory);
+
         // Console `fill <fluid>[:<flag>] [amount]` / `empty` on the HELD fluid container (strawberry). amountMl < 0 = full.
         public bool FillHeldContainer(FluidType type, WaterQuality q, float amountMl)
         {
@@ -4296,6 +4321,7 @@ namespace UnturnedGodot
             Moving = moving;                                  // exposed for zombie stealth detection
             _viewmodel?.SetLocomotion(moving, _move.Stance);
             UpdateVitals(moving, (float)delta);
+            FoodSpoilTick();             // once per in-game day: spoil the food in the bag (freshness -> moldy)
             TickConsume((float)delta);   // eat/drink timer -> applies the held consumable's effects
             TickDeploy((float)delta);    // deployable: follow the aim with the ghost + finish a pending place
             if (_viewmodel != null && _worldSun != null && _viewmodel.WorldSun == null) RelinkViewmodelLighting();   // safety: any viewmodel created before/without a link (Drive PEI timing, vehicle exit) still takes the world lighting

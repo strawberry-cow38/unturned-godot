@@ -154,8 +154,10 @@ namespace UnturnedGodot
                 else if (verb == "timeadd")
                 {
                     if (!ParseClock(arg, out float dh, allowNeg: true)) { Log($"bad amount '{arg}' (try: 2, 1:30, -3, 0200)"); return; }
-                    dnc.Time = Mathf.PosMod(dnc.Time + dh / 24f, 1f);
-                    Log($"time -> {FormatTime(dnc.Time)}  ({(dh >= 0 ? "+" : "")}{dh:0.##} h)");
+                    int d0 = dnc.Day;
+                    dnc.Advance(dh / 24f);   // laps midnight -> bumps Day -> fast-forwards food spoilage that many days
+                    int laps = dnc.Day - d0;
+                    Log($"time -> {FormatTime(dnc.Time)}  ({(dh >= 0 ? "+" : "")}{dh:0.##} h{(laps > 0 ? $", +{laps} day{(laps == 1 ? "" : "s")}" : "")})");
                 }
                 else if (verb == "timespeed")
                 {

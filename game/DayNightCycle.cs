@@ -17,6 +17,10 @@ namespace UnturnedGodot
         public float DayLength = 120f;   // seconds per full cycle (short here; Unturned's is ~an hour)
         public float Time = 0.35f;       // 0..1 time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk
         public float Speed = 1f;         // day/night clock multiplier (console `timeSpeed`); 0 = frozen. Distinct from Engine.TimeScale.
+        // Running in-game day count, bumped once per forward midnight crossing (natural cycle OR a dev `timeAdd` that
+        // laps midnight). Drives food spoilage -- a watcher ticks spoilage each time this advances. Monotonic:
+        // a rewind (negative timeAdd) repositions the clock but never decrements Day (spoilage doesn't reverse).
+        public int Day;
 
         // MP Phase 8 (§3.7): a net sync owns Time (server: tick-derived; client: derived from the synced
         // clock + snapshot tick) -- _Process stops free-running it. SP default (false) is byte-identical.
@@ -158,8 +162,18 @@ void sky() {
 
         public override void _Process(double delta)
         {
-            if (!ExternalTime) Time = Mathf.PosMod(Time + (float)delta * Speed / DayLength, 1f);   // Speed = the console timeSpeed multiplier
+            if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
             if (VisualsEnabled) Apply();
+        }
+
+        // Advance the day/night clock by `frac` cycles (delta/DayLength per frame, or timeAdd's hours/24). Wraps Time into
+        // [0,1) exactly as before AND bumps the running Day counter on each forward midnight crossing (frac can exceed 1
+        // for a big timeAdd -> multiple days at once). Negative frac rewinds Time but leaves Day untouched (monotonic).
+        public void Advance(float frac)
+        {
+            float nt = Time + frac;
+            if (nt >= 1f) Day += (int)nt;   // one Day per whole cycle crossed forward (usually exactly 1)
+            Time = Mathf.PosMod(nt, 1f);
         }
 
         void EnsureSky()
