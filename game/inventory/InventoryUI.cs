@@ -860,8 +860,9 @@ namespace UnturnedGodot
             // storage side: player grids WRAP into columns to fill the storage box width (source clothingBox ScaleContentToWidth)
             foreach (Node c in _storageCol.GetChildren()) c.QueueFree();
             _drop.Clear();
-            float colX = 0, y = 0, colW = 0;
-            float availH = GetViewport().GetVisibleRect().Size.Y - NAVH - 3 * MARGIN;
+            Vector2 vpsz = GetViewport().GetVisibleRect().Size;
+            float availW = vpsz.X - (MARGIN + CHARW + GUTTER) - MARGIN;   // storage box fills the screen right of the character
+            float x = 0, rowY = 0, rowH = 0;
             (byte page, string name)[] grids =
             {
                 (PlayerInventory.STORAGE, "NEARBY"),   // a storage crate / nearby container (shown only when open, size > 0)
@@ -872,14 +873,15 @@ namespace UnturnedGodot
             {
                 var pg = Inv.items[page];
                 if (pg.width == 0 || pg.height == 0) continue;
+                float gw = pg.width * CELL;
                 float gh = (HEADER - 6) + pg.height * CELL + PAD;
-                if (y + gh > availH && y > 0) { colX += colW + GUTTER; y = 0; colW = 0; }   // column full -> start a new one to the right
-                AddGridAt(name, pg, new Vector2(colX, y));
-                y += gh;
-                colW = Mathf.Max(colW, pg.width * CELL);
+                if (x + gw > availW && x > 0) { x = 0; rowY += rowH; rowH = 0; }   // row full -> wrap to the next row down
+                AddGridAt(name, pg, new Vector2(x, rowY));
+                x += gw + GUTTER * 2;   // flow left-to-right so the grids sit side by side and fill the width
+                rowH = Mathf.Max(rowH, gh + PAD);
             }
-            _storageW = colX + colW;
-            _storageH = availH;
+            _storageW = availW;
+            _storageH = rowY + rowH;
 
             LayoutDash();
         }
