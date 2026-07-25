@@ -271,10 +271,22 @@ namespace UnturnedGodot
             }
         }
 
+        // strawberry's F3 in the tanked POI: frame 37.2ms, cpu process 7.6ms, PHYSICS 32.2ms, render 487 draws /
+        // 0.2M prims with zombie shadows already off. 87% of the frame is the physics tick and none of it is the
+        // GPU. 64 active bodies / 156 pairs is nothing for Jolt, so the cost is script work in here -- and the F3
+        // systems line couldn't name it, because nothing in the zombie path was instrumented. Now it is: z.total
+        // is the whole tick, the rest are its legs, all summed across every zombie per profiler window.
         public override void _PhysicsProcess(double delta)
         {
             if (IsPuppet) return;   // puppet: ZombiePuppets drives the node from replicated state (PuppetFrame)
-            CullRender();
+            ulong _tz = Time.GetTicksUsec();
+            PhysicsTick(delta);
+            Prof.Add("z.total", _tz);
+        }
+
+        void PhysicsTick(double delta)
+        {
+            { ulong _t = Time.GetTicksUsec(); CullRender(); Prof.Add("z.cull", _t); }
             float g = PlayerMovementDef.GRAVITY;
             float dt = (float)delta;
 
@@ -328,18 +340,19 @@ namespace UnturnedGodot
                 _huntSalience = 0f;   // idle = no current sound target -> the next sound (any loudness) can grab us fresh
                 if (Speciality == ESpeciality.FLANKER && _rig != null) _rig.SetGhost(false);   // FRIENDLY: solid again
                 Velocity = new Vector3(0f, Velocity.Y - g * dt, 0f);   // gravity only -- no wandering
-                StepUp((float)dt);
-                MoveAndSlide();
-                if (_rig != null) { _rig.Tick(delta); _rig.SetLocomotion(0f); }
-                TrySense(player);   // vision cone -> Alert() when the player walks into view
+                // A motionless zombie still pays a full StepUp + MoveAndSlide sweep every tick. That is the leg
+                // most likely to dominate a POI, because idle is the state most zombies are in most of the time.
+                { ulong _t = Time.GetTicksUsec(); StepUp((float)dt); MoveAndSlide(); Prof.Add("z.move", _t); }
+                if (_rig != null) { ulong _t = Time.GetTicksUsec(); _rig.Tick(delta); _rig.SetLocomotion(0f); Prof.Add("z.rig", _t); }
+                { ulong _t = Time.GetTicksUsec(); TrySense(player); Prof.Add("z.sense", _t); }   // vision cone -> Alert() when the player walks into view
                 return;
             }
 
             // --- POINT: investigate a noise; sight can still promote it to a full player hunt ---
             if (_hunt == EHunt.POINT)
             {
-                TrySense(player);                                   // may set _hunt = EHunt.PLAYER
-                if (_hunt == EHunt.POINT) { TickPoint(g, dt); return; }
+                { ulong _t = Time.GetTicksUsec(); TrySense(player); Prof.Add("z.sense", _t); }   // may set _hunt = EHunt.PLAYER
+                if (_hunt == EHunt.POINT) { ulong _t = Time.GetTicksUsec(); TickPoint(g, dt); Prof.Add("z.point", _t); return; }
             }
 
             // --- PLAYER hunt: give up if the player died or broke away (Zombie.tick leave) ---
@@ -349,7 +362,8 @@ namespace UnturnedGodot
             if (player.Health <= 0f || num3 > LEAVE_SQ) { _hunt = EHunt.NONE; return; }
             // chase while we can SEE them; the moment sight breaks, remember the spot and (after a short grace) go
             // INVESTIGATE it instead of tracking magically through walls (master's rework).
-            if (CanSee(player)) { _lastSeen = pp; _hasLastSeen = true; _lostSightAcc = 0f; }
+            bool sees; { ulong _t = Time.GetTicksUsec(); sees = CanSee(player); Prof.Add("z.sense", _t); }
+            if (sees) { _lastSeen = pp; _hasLastSeen = true; _lostSightAcc = 0f; }
             else { _lostSightAcc += dt; if (_lostSightAcc > 1.5f && _hasLastSeen) { _hunt = EHunt.POINT; _huntPoint = _lastSeen; _lastHunted = (float)_age; _hasLastSeen = false; return; } }
 
             // --- pick the approach point for this path (Zombie.tick banded flanking) ---
@@ -381,8 +395,10 @@ namespace UnturnedGodot
             // gating movement on isMoving (as a first pass did) leaves a dead zone short of the swing range. ---
             bool inReach = num3 < ATTACK_PLAYER_SQ;
             Vector3 horiz;
-            if (inReach) { Velocity = new Vector3(0f, Velocity.Y - g * dt, 0f); StepUp((float)dt); MoveAndSlide(); horiz = Vector3.Zero; }   // in swing range: plant + swing, don't shove into them
-            else horiz = MoveTo(tp, g, (float)dt);   // PATH to the (flank) approach point on the navmesh -> routes around buildings, no beeline
+            { ulong _t = Time.GetTicksUsec();
+              if (inReach) { Velocity = new Vector3(0f, Velocity.Y - g * dt, 0f); StepUp((float)dt); MoveAndSlide(); horiz = Vector3.Zero; }   // in swing range: plant + swing, don't shove into them
+              else horiz = MoveTo(tp, g, (float)dt);   // PATH to the (flank) approach point on the navmesh -> routes around buildings, no beeline
+              Prof.Add("z.move", _t); }
 
             // --- ACID: spit a corrosive glob at the player from range (Zombie askSpit -> askAcid) ---
             if (Speciality == ESpeciality.ACID && _age > _nextSpit && num3 > 16f && num3 < 900f && num4 < 6f)

@@ -70,9 +70,63 @@ So shadows are **~60% of zombie draws and ~75% of their triangles** — each zom
 for the cascades. Worth capping (and it corroborates the uncapped 100 m / 4-split config below), but
 it is a 2.5× on something already trivial. It is not a 14× collapse.
 
+## It is the PHYSICS frame, not the renderer (measured on the real box, 2026-07-25)
+
+strawberry's F3 in the tanked POI, having killed nothing:
+
+```
+FPS 26   frame 37.2 ms   worst 40.9 ms
+cpu: process 7.6 ms   physics 32.2 ms
+render: 487 draws   1313 objs   0.2M prims        <- trivial
+zombie shadows OFF [F5]                            <- and still tanked
+```
+
+**87% of the frame is the physics tick.** Everything above about shadows, fill, cascades and draw
+volume is therefore beside the point for this bug — the renderer was never involved. Zombie shadows
+were already off in that reading and it was still 26 fps.
+
+Two traps in that screenshot, both of which caught someone today:
+
+- **`64 active bodies` is not the zombies.** They are `CharacterBody3D` — kinematic — and contribute
+  nothing to that counter. Loot, vehicles and deployables do, and they are present with zombies off,
+  when there is no tank. So the active-body count is background, not the delta.
+- **`TimePhysicsProcess` is not the solver.** It is the whole physics frame including every
+  `_PhysicsProcess` script callback. "64 bodies can't cost 32 ms" is correct *about the solver* and
+  irrelevant to the number on screen.
+
+### What the zombie AI script actually costs
+
+`--zperf` with `UG_ZAI=1` spawns real (non-puppet) zombies plus a registered player and prints the
+per-leg cost per physics tick. Physics is CPU, so unlike every render measurement this box is honest
+about it, and it needs no rendering driver at all. Stable across every run:
+
+```
+z.move   ~0.013 ms per zombie per tick   (StepUp + MoveAndSlide; linear; FLAT GROUND -- best case)
+z.rig    ~0.008 ms                       (animation, advanced at the 50 Hz physics rate)
+z.sense  ~0.001 ms idle, ~0.01 ms hunting
+                                          -> ~0.024 ms per idle zombie per tick
+```
+
+**At ~20 zombies that is half a millisecond.** The zombie AI script is not a 32 ms cost on any
+hardware. Do not go hunting in `ZombieController`'s logic.
+
+Two things that are NOT established, recorded so nobody quotes them:
+
+- The engine-side share. Identical n=60 runs gave 7.11/2.99 ms (puppet) and 8.66/16.13 ms (AI) --
+  the run-to-run variance is larger than the effect, and averaging 575 samples did not fix it. This
+  4-core box is too noisy to resolve it. Read `z.total` against the physics line on real hardware.
+- An apparent superlinearity in zombie count. It was an artifact of the probe's spawn grid: at n=60
+  the rows extend far enough that some zombies face the player, see him and switch to hunting. More
+  zombies did not get more expensive, more zombies got *awake*.
+
 ## Still open — the real cause
 
-Prime suspect is **shadow cascades**, and the config supports it:
+**SUPERSEDED — read the physics-frame section above first.** Everything from here down was written
+while the renderer was still the suspect, and the F3 reading killed that: 32.2 of 37.2 ms is the
+physics tick, with zombie shadows already off. It is kept because the render measurements themselves
+are sound and worth not repeating, not because the conclusions still point anywhere useful.
+
+Prime suspect *was* **shadow cascades**, and the config supports it:
 
 - `project.godot` has **no `[rendering]` section at all**, so everything is at Godot defaults.
 - `DirectionalLight3D`s are created with `ShadowEnabled = true` and no cascade config →

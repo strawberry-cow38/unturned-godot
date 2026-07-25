@@ -1355,15 +1355,79 @@ namespace UnturnedGodot
             cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
 
             SDG.Unturned.ItemCatalog.RegisterAll();
+
+            // UG_ZAI=1 makes this the CPU probe instead of the render probe. strawberry's F3 in the tanked POI
+            // reads frame 37.2ms / physics 32.2ms / render 487 draws, so the tank is the PHYSICS frame and the
+            // renderer was never involved. Physics is CPU, which means -- unlike every render number today -- this
+            // box can measure it honestly, and it does not need a rendering driver at all.
+            //
+            // Real AI, not puppets: the whole cost being hunted lives in ZombieController._PhysicsProcess, which
+            // puppets skip entirely. Needs a registered player avatar too, or every zombie early-returns before
+            // doing any work and the probe reports a confident zero.
+            // UG_ZAI=1 runs real AI. UG_ZAI=puppet builds the identical scene -- same bodies, same rigs, same
+            // NavigationAgent3Ds -- but as puppets, whose _PhysicsProcess returns immediately. Same reporting
+            // either way, so AI-minus-puppet is exactly the AI script's share and the remainder is what a zombie
+            // costs the engine just by EXISTING. No new code paths to be wrong about; the difference is the answer.
+            string zai = System.Environment.GetEnvironmentVariable("UG_ZAI");
+            _zaiMode = zai == "1" || zai == "puppet";
+            bool aiPuppets = zai == "puppet";
+            if (_zaiMode && !aiPuppets)
+            {
+                _zaiPlayer = new PlayerController { Inventory = new SDG.Unturned.PlayerInventory() };
+                AddChild(_zaiPlayer);
+                _zaiPlayer.GlobalPosition = new Vector3(0f, 0f, 6f);
+            }
+
             for (int i = 0; i < _zpN; i++)
             {
-                var z = new ZombieController { IsPuppet = true };   // puppet: no AI, isolates the RENDER cost
+                var z = new ZombieController { IsPuppet = !_zaiMode || aiPuppets };   // puppet: no AI, isolates the RENDER cost
                 AddChild(z);
                 z.GlobalPosition = new Vector3((i % 8) * 2.5f - 9f, 0f, (i / 8) * 2.5f - 4f);
                 _zpZombies.Add(z);
             }
-            GD.Print($"[zperf] spawned {_zpN} zombies  cam={(cam1p ? "1p" : "3p")} (counters read zero under --headless -- needs a real driver)");
+            GD.Print($"[zperf] spawned {_zpN} zombies  cam={(cam1p ? "1p" : "3p")}  mode={(_zaiMode ? "AI/cpu" : "render")}");
             SetProcess(true);
+        }
+
+        bool _zaiMode; PlayerController _zaiPlayer; double _zaiClock; ulong _zaiPhys0; bool _zaiArmed;
+        double _zaiPhysSum, _zaiPhysMax; int _zaiPhysN;
+
+        // Per-PHYSICS-TICK cost of each zombie AI leg, summed across every zombie. Divided by the number of
+        // physics ticks that actually elapsed rather than by frames, because Prof accumulates per tick and the
+        // number to compare against is strawberry's 32.2ms physics frame.
+        void ZAITick(double delta)
+        {
+            const double Warm = 1.5, Win = 4.0;
+            _zaiClock += delta;
+            if (!_zaiArmed)
+            {
+                if (_zaiClock < Warm) return;            // let rigs build + the AI settle out of its first tick
+                Prof.Reset(); _zaiPhys0 = Engine.GetPhysicsFrames(); _zaiArmed = true;
+                return;
+            }
+            // TimePhysicsProcess is a SINGLE sample -- the last physics frame, not an average. Sampling it once at
+            // the end read 13.2ms and 20.3ms on two runs of the same n=60, a 53% spread, which is more than the
+            // difference the scaling analysis was trying to detect. Average it across the window instead, and
+            // report the worst frame beside it so a spiky profile can't hide inside a calm mean.
+            double physNow = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
+            _zaiPhysSum += physNow; _zaiPhysN++;
+            if (physNow > _zaiPhysMax) _zaiPhysMax = physNow;
+
+            if (_zaiClock < Warm + Win) return;
+
+            ulong ticks = Engine.GetPhysicsFrames() - _zaiPhys0;
+            if (ticks == 0) { GD.Print("[zai] no physics ticks elapsed -- probe is broken, not the game"); GetTree().Quit(); return; }
+
+            double phys = _zaiPhysN > 0 ? _zaiPhysSum / _zaiPhysN : 0.0;
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var kv in Prof.Us) parts.Add($"{kv.Key}={kv.Value / (double)ticks / 1000.0:0.000}ms");
+            parts.Sort();
+            GD.Print($"[zai] n={_zpN} ticks={ticks} physicsFrame={phys:0.000}ms (worst {_zaiPhysMax:0.000}, {_zaiPhysN} samples)   per-tick: {string.Join("  ", parts)}");
+            // A zero here means the zombies never reached their AI (no registered player), NOT that the AI is free.
+            // Say so out loud -- a silent zero is the exact failure mode that wasted the render half of this hunt.
+            if (!Prof.Us.TryGetValue("z.total", out var tot) || tot == 0)
+                GD.Print("[zai] z.total is ZERO -> zombies early-returned before any AI work (no player registered?). NOT a result.");
+            GetTree().Quit();
         }
 
         // Each step: let the change settle, then average frame time over a window and print it with the counters.
@@ -3611,7 +3675,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
-            if (_zpZombies.Count > 0) { ZPerfTick(delta); return; }   // --zperf probe owns the frame
+            if (_zpZombies.Count > 0) { if (_zaiMode) ZAITick(delta); else ZPerfTick(delta); return; }   // --zperf probe owns the frame
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
                 _frame++;
