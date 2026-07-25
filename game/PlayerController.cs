@@ -2132,6 +2132,7 @@ namespace UnturnedGodot
         // half (tinyclaw) already draws the bar + grid the moment the page is non-zero; drops route through the same _drop.
         public void ScanNearbyItems()
         {
+            if (Inventory == null || !IsInsideTree()) return;   // no-op in headless/test contexts without a live world
             var area = Inventory.items[PlayerInventory.AREA];
             area.clear();
             var found = new System.Collections.Generic.List<SDG.Unturned.Item>();

@@ -191,6 +191,16 @@ namespace UnturnedGodot
             }
             else if (e is InputEventMouseButton rmb && rmb.ButtonIndex == MouseButton.Right && rmb.Pressed)
             {
+                if (_dragging)   // #3: RMB during a drag CANCELS it (source onRightClickedDuringDrag -> stopDrag); the item snaps home, never moved
+                {
+                    _dragFromCloth = false;
+                    _dragging = false;
+                    _dragTile?.QueueFree(); _dragTile = null;
+                    PlayInventoryAudio();   // #4: source stopDrag plays inventory audio
+                    Refresh();
+                    GetViewport().SetInputAsHandled();
+                    return;
+                }
                 // RIGHT-click opens the item action menu (master: RMB only, not a left-click)
                 CloseSelection();
                 if (PointToCell(rmb.GlobalPosition, out byte page, out byte cx, out byte cy, out _, out _))
@@ -211,6 +221,7 @@ namespace UnturnedGodot
                 // physically fits in a grid. (Rendering already keys off `rot % 2`, so 2/3 draw correctly.)
                 _dragRot = (byte)((_dragRot + 1) % 4);
                 RebuildDragTile();
+                PlayInventoryAudio();   // #4: source plays inventory audio on rotate
                 GetViewport().SetInputAsHandled();
             }
             else if (e is InputEventKey { Pressed: true } bk && _selPanel != null && bk.Keycode >= Key.Key3 && bk.Keycode <= Key.Key9)
@@ -248,6 +259,7 @@ namespace UnturnedGodot
             _grab = global - itemTopLeft;
             _dragging = true;
             RebuildDragTile();
+            PlayInventoryAudio();   // #4: source startDrag plays inventory audio on grab
         }
 
         void RebuildDragTile()
@@ -263,6 +275,19 @@ namespace UnturnedGodot
             _dragTile.GlobalPosition = GetViewport().GetMousePosition() - _grab;
         }
 
+        AudioStreamPlayer _invAudio;
+        // #4: source PlayInventoryAudio -- a soft click on grab / drop / rotate / cancel. The retail clip is ripped to
+        // content/sounds/inventory.wav; this NO-OPS until that file exists (LoadWavOneShot returns null), so the wiring
+        // is complete + build-safe and the sound "just turns on" once ripped.
+        void PlayInventoryAudio()
+        {
+            var stream = PlayerController.LoadWavOneShot("res://content/sounds/inventory.wav");
+            if (stream == null) return;
+            if (_invAudio == null || !IsInstanceValid(_invAudio)) { _invAudio = new AudioStreamPlayer(); AddChild(_invAudio); }
+            _invAudio.Stream = stream;
+            _invAudio.Play();
+        }
+
         void Drop(Vector2 global)
         {
             byte sp = _dragPage, sx = _dragX0, sy = _dragY0, srot = _dragRot;
@@ -270,6 +295,7 @@ namespace UnturnedGodot
             _dragFromCloth = false;
             _dragging = false;
             _dragTile?.QueueFree(); _dragTile = null;
+            PlayInventoryAudio();   // #4: source stopDrag plays inventory audio on every drop
             // the held item's top-left lands where the cursor is minus the grab; +half a cell so it snaps to the nearest
             Vector2 topLeft = global - _grab + new Vector2(CELL / 2f, CELL / 2f);
 
