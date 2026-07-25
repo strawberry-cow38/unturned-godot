@@ -243,14 +243,17 @@ namespace UnturnedGodot
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
-        // src Landmine.dat: id 1341, Useable Trap. A planted proximity mine -- when a victim comes within TrapTrigger it
-        // detonates a big AoE blast (reusing DamageTool.explode) and shatters itself. v1 arms on ZOMBIES (base defense);
-        // player-trigger + a place-and-walk-away arming grace + the real ripped Landmine_0 mesh are flagged follow-ups.
+        // SOURCE-EXACT from retail Landmine.dat (Bundles/Items/Barricades/Landmine) -- read directly; .dat is text, the
+        // AssetRipper (down) only gates the MESH. id 1101, Trap, Explosive. Range2=8 blast; Player/Zombie/Vehicle dmg
+        // 91/175/175; Health 1 = a shot/blast destroys it -> it DETONATES (Vulnerable Explosive), handled in TakeDamage.
+        // Fuller src damages (Animal 175, Barricade/Structure 75, Resource 625, Object 100) await extending Explode past
+        // zombie/player/vehicle. TrapTrigger 1.4 approximates the src barricade-contact trigger; arm grace is a QoL (the
+        // .dat has no setup delay). ProcBox placeholder until the real mesh (AssetRipper down).
         public static readonly DeployableDef Landmine = new()
         {
-            Id = 1341, Name = "Landmine", ProcBox = true,   // TODO(inc2): rip the real Landmine_0 mesh + 1p hold model
-            Size = new Vector3(0.4f, 0.4f, 0.12f), Offset = 0.02f, Radius = 0.2f, Range = 4f, Health = 50f,
-            IsTrap = true, TrapTrigger = 1.4f, TrapBlast = 6f, TrapZombieDamage = 200f, TrapPlayerDamage = 101f, TrapVehicleDamage = 100f,
+            Id = 1101, Name = "Landmine", ProcBox = true,   // TODO: rip the real Landmine mesh once the AssetRipper is back
+            Size = new Vector3(1f, 1f, 0.35f), Offset = 0.075f, Radius = 0.05f, Range = 4f, Health = 1f,
+            IsTrap = true, TrapTrigger = 1.4f, TrapBlast = 8f, TrapZombieDamage = 175f, TrapPlayerDamage = 91f, TrapVehicleDamage = 175f,
             ShatterOnDeath = true, PlaceSound = "metalplacement",
         };
 
@@ -258,7 +261,7 @@ namespace UnturnedGodot
             FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine };
         public static DeployableDef ById(ushort id) => id switch
         {
-            1341 => Landmine,
+            1101 => Landmine,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

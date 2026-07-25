@@ -273,6 +273,7 @@ namespace UnturnedGodot
             Health = Mathf.Max(0f, Health - amount);
             if (Health <= 0f)
             {
+                if (Def != null && Def.IsTrap) { DetonateTrap(); return; }   // a Vulnerable Explosive trap (Landmine.dat Health 1) DETONATES when shot/blasted, not just crumbles
                 _deadTimer = ExplodeDelay;
                 _powered = false; _powerLevel = 0f;   // a dying generator cuts out INSTANTLY (no wind-down); the ramp tick stops the audio + settles the mesh
                 if (_fire != null) _fire.Emitting = true;   // a small fire the moment it dies, before Explode() ramps the blaze
@@ -300,6 +301,7 @@ namespace UnturnedGodot
         }
         void DetonateTrap()
         {
+            if (_exploded) return;
             // AoE (reuse DamageTool.explode via the nearest player -- it only HOLDS the method; the blast originates here)
             PlayerRegistry.Nearest(GlobalPosition)?.Explode(GlobalPosition, Def.TrapBlast, Def.TrapZombieDamage, Def.TrapPlayerDamage, Def.TrapVehicleDamage);
             Explode();   // the mine's own blast consumes it -> ShatterOnDeath debris, no salvage husk

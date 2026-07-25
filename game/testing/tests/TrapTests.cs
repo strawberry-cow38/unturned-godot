@@ -60,4 +60,21 @@ namespace UnturnedGodot.Testing
             T.Check("a player in range IS a victim", mine.DebugVictimNear());
         }
     }
+
+    // Source: Landmine.dat is Health 1 + Vulnerable Explosive -- a shot/blast destroys it, which DETONATES it (not a
+    // silent crumble). TakeDamage on a trap routes to DetonateTrap.
+    public class LandmineDetonatesWhenShot : GameTest
+    {
+        public override string Name => "trap.landmine_shot";
+        public override IEnumerable<Step> Run()
+        {
+            var mine = Deployable.Spawn(World, DeployableDef.Landmine, Vector3.Zero, 0f);
+            yield return Ticks(2);
+            T.Check("placed, not yet exploded", mine != null && !mine.DebugExploded);
+            if (mine == null) yield break;
+
+            mine.TakeDamage(5f);   // any hit exceeds its 1 HP -> detonate
+            T.Check("a shot detonates the mine (Vulnerable Explosive, Health 1)", mine.DebugExploded);
+        }
+    }
 }
