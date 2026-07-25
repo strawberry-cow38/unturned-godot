@@ -16,7 +16,19 @@ namespace UnturnedGodot
         public PlayerClothingController Clothing;   // P5: equip/unequip drives BOTH worn-slot state AND the on-body visual (RiggedCharacter) through this controller
 
         const int CELL = 50;         // SleekItems cell size
-        const int HEADER = 30;       // per-page header strip (source SizeOffset_Y = height*50 + 30)
+        const int HEADER = 30;       // legacy per-page strip (kept for the char-panel slots)
+        // --- the source's ACTUAL page-stacking metrics (PlayerDashboardInventoryUI.updateBoxAreas) ---
+        // Each visible page is a HEADER BAR with its grid directly beneath it -- strawberry's annotation
+        // "clothing slots show above the storage slots they provide" is literally this loop:
+        //     header.PositionOffset_Y = y;  items.PositionOffset_Y = y + 70;  y += gridHeight + 80;
+        // Bare clothing (hat/mask/glasses) has no grid and advances only 70.
+        const int HDRH = 60;         // headers[i].SizeOffset_Y = 60
+        const int HDRGAP = 70;       // grid sits 70px below its own header
+        const int PAGEADV = 80;      // advance = gridHeight + 80 (=> 10px between grid bottom and next header)
+        const int GRIDPAD = 30;      // SleekItems.SizeOffset_Y = rows*50 + 30
+        const int BOXX = 430;        // box.PositionOffset_X = 430 (410 char panel + margins)
+        const int BOXINSET = 440;    // box.SizeOffset_X = -440
+        const int SPLITMIN = 1350;   // isSplitClothingArea kicks in at this screen width
         const int PAD = 12;
         // SOURCE-ACCURATE layout (PlayerDashboardInventoryUI): top navbar (60px), a fixed 410px CHARACTER panel on
         // the left (3D paperdoll + worn slots + the two weapon slots at its bottom), and a storage BOX filling the
@@ -31,11 +43,14 @@ namespace UnturnedGodot
         const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
 
         Control _root, _dash, _storageCol, _weaponRow;
+        Control _clothingCol, _areaCol;   // source clothingBox (player pages) + areaBox (STORAGE/Nearby); split 50/50 at >=1350px
         Panel _charBox;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
         // inventory's worn slots (PlayerClothingController.Refresh is read-only), lit + framed by a camera. Built once;
         // Refresh() repaints its clothing; drag on its view spins it. Held weapon deferred (needs 3P gun anims).
         SubViewport _pdVp;
+        Control _pdHit;   // the paperdoll's on-screen rect -- retail's equip drop zone (drag a garment onto the model)
+        Panel _pdStage;   // the framed backing behind the model; grown to fill the character panel in LayoutDash
         Camera3D _pdCam;
         RiggedCharacter _pdBody;
         PlayerClothingController _pdClothing;
@@ -85,8 +100,13 @@ namespace UnturnedGodot
 
             BuildNavbar();            // top 60px tab strip (Inventory / Crafting / Skills / Information)
             BuildCharacterPanel();    // left 410px: paperdoll + worn slots + the two weapon slots at the bottom
-            _storageCol = new Control { Position = new Vector2(MARGIN + CHARW + GUTTER, NAVH + MARGIN) };
+            // source: box at PositionOffset_X 430, holding clothingBox (player pages) and areaBox (STORAGE/Nearby).
+            _storageCol = new Control { Position = new Vector2(BOXX, NAVH + MARGIN) };
             _dash.AddChild(_storageCol);
+            _clothingCol = new Control();                 // left half (or full width when not split)
+            _areaCol = new Control();                     // right half; hidden when the screen is too narrow to split
+            _storageCol.AddChild(_clothingCol);
+            _storageCol.AddChild(_areaCol);
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
@@ -288,11 +308,25 @@ namespace UnturnedGodot
             page = cx = cy = 0; ctl = null; isSlot = false; return false;
         }
 
-        // hit-test a clothing equip slot (Hat/Shirt/... in the left column) under a screen point -> its index in _clothing
+        // Hit-test a clothing equip target under a screen point. Retail has NO slot list -- you drag a garment onto
+        // the CHARACTER MODEL and it lands in the slot its own type dictates (PlayerDashboardInventoryUI drops onto
+        // characterPlayer). So the paperdoll is the drop zone, and the target slot is resolved from the dragged
+        // item's EItemType rather than from where the cursor happens to be.
         bool PointToClothSlot(Vector2 global, out int idx)
         {
             for (int i = 0; i < _clothing.Count; i++)
-                if (new Rect2(_clothing[i].slot.GlobalPosition, _clothing[i].slot.Size).HasPoint(global)) { idx = i; return true; }
+                if (_clothing[i].slot.Visible &&
+                    new Rect2(_clothing[i].slot.GlobalPosition, _clothing[i].slot.Size).HasPoint(global)) { idx = i; return true; }
+
+            if (_pdHit != null && new Rect2(_pdHit.GlobalPosition, _pdHit.Size).HasPoint(global) && _dragJar != null)
+            {
+                var t = _dragJar.GetAsset()?.type;
+                if (t != null)
+                {
+                    int m = _clothing.FindIndex(c => c.type == t.Value);
+                    if (m >= 0) { idx = m; return true; }
+                }
+            }
             idx = -1; return false;
         }
 
@@ -730,10 +764,13 @@ namespace UnturnedGodot
             float y = PDTOP + PDH + 14;   // stack the equip slots BELOW the paperdoll
             foreach (var (name, worn, type) in rows)
             {
-                var slot = new Panel { Position = new Vector2(12, y), Size = new Vector2(CELL, CELL) };
+                // Retail has no worn-slot LIST -- the worn garments are the header bars in the centre column, and
+                // the model itself is the equip target. These stay in the tree (Refresh repaints them and the drag
+                // code resolves types through them) but are HIDDEN, so the panel matches the reference.
+                var slot = new Panel { Position = new Vector2(12, y), Size = new Vector2(CELL, CELL), Visible = false };
                 StyleBox(slot, new Color(0f, 0f, 0f, 0.5f));
                 _charBox.AddChild(slot);
-                var lbl = new Label { Text = name, Position = new Vector2(CELL + 20, y + 15) };
+                var lbl = new Label { Text = name, Position = new Vector2(CELL + 20, y + 15), Visible = false };
                 lbl.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
                 _charBox.AddChild(lbl);
                 _clothing.Add((slot, lbl, worn, type));
@@ -749,6 +786,7 @@ namespace UnturnedGodot
         void BuildPaperdoll(Panel box)
         {
             var stage = new Panel { Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH) };
+            _pdStage = stage;
             StyleBox(stage, new Color(0.05f, 0.06f, 0.08f, 0.95f));   // dark backdrop so the character reads against it
             box.AddChild(stage);
 
@@ -760,6 +798,7 @@ namespace UnturnedGodot
                 Stretch = false, MouseFilter = Control.MouseFilterEnum.Stop, TooltipText = "drag to rotate",
             };
             vpc.GuiInput += PaperdollDrag;
+            _pdHit = vpc;   // this rect IS the equip target (see PointToClothSlot)
             box.AddChild(vpc);
             _pdVp = new SubViewport
             {
@@ -775,6 +814,10 @@ namespace UnturnedGodot
             // straight-on camera; its exact distance/height is computed from the rig's real AABB in _Process once it's
             // in-tree (FramePaperdoll) -- avoids guessing at the mesh's origin/height. A rough start avoids a bad first frame.
             _pdCam = new Camera3D { Fov = 34f, Current = true, Position = new Vector3(0f, 0.98f, 3.8f) };
+            // Keep-HEIGHT (Godot's default) is correct for a standing figure in a portrait panel -- the body's
+            // height is the binding constraint. The earlier crop wasn't the aspect mode, it was that the camera
+            // framed once at the ORIGINAL viewport size and never re-framed after the panel grew; LayoutDash now
+            // clears _pdFramed on a resize so FramePaperdoll recomputes the distance for the real aspect.
             _pdVp.AddChild(_pdCam);
 
             _pdVp.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-25f, 155f, 0f), LightEnergy = 1.2f });                                          // key
@@ -857,31 +900,62 @@ namespace UnturnedGodot
             AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(0, 0),             3 * CELL);
             AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(3 * CELL + 16, 0), 3 * CELL);
 
-            // storage side: player grids WRAP into columns to fill the storage box width (source clothingBox ScaleContentToWidth)
-            foreach (Node c in _storageCol.GetChildren()) c.QueueFree();
+            // Storage side, 1:1 with source updateBoxAreas: pages STACK VERTICALLY as [header bar -> its own grid]
+            // pairs, NOT side by side. Strawberry's annotation ("clothing slots show above the storage slots they
+            // provide") is exactly this loop. When the screen is >= 1350 wide the source splits into two columns:
+            // the player's own pages on the left (clothingBox), STORAGE + Nearby on the right (areaBox).
+            foreach (Node c in _clothingCol.GetChildren()) c.QueueFree();
+            foreach (Node c in _areaCol.GetChildren()) c.QueueFree();
             _drop.Clear();
             Vector2 vpsz = GetViewport().GetVisibleRect().Size;
-            float availW = vpsz.X - (MARGIN + CHARW + GUTTER) - MARGIN;   // storage box fills the screen right of the character
-            float x = 0, rowY = 0, rowH = 0;
-            (byte page, string name)[] grids =
-            {
-                (PlayerInventory.STORAGE, "NEARBY"),   // a storage crate / nearby container (shown only when open, size > 0)
-                (2, "POCKETS"), (PlayerInventory.BACKPACK, "BACKPACK"), (PlayerInventory.VEST, "VEST"),
-                (PlayerInventory.SHIRT, "SHIRT"), (PlayerInventory.PANTS, "PANTS"),
-            };
-            foreach (var (page, name) in grids)
+            float boxW = vpsz.X - BOXINSET;                       // source box.SizeOffset_X = -440
+            bool split = vpsz.X >= SPLITMIN;                      // source isSplitClothingArea
+            float colW = split ? boxW * 0.5f - 5f : boxW;         // clothingBox: SizeScale_X 0.5, SizeOffset_X -5
+            _clothingCol.Position = Vector2.Zero;
+            _areaCol.Position = new Vector2(boxW * 0.5f + 5f, 0f);   // areaBox: PositionScale_X 0.5, PositionOffset_X 5
+            _areaCol.Visible = split;
+
+            // the player's OWN pages, in source page order: Hands, then each worn bag under its item name
+            float yC = 0f;
+            foreach (var (page, fallback) in new (byte, string)[] {
+                         ((byte)2, "Hands"), (PlayerInventory.BACKPACK, "Backpack"),
+                         (PlayerInventory.VEST, "Vest"), (PlayerInventory.SHIRT, "Shirt"),
+                         (PlayerInventory.PANTS, "Pants") })
             {
                 var pg = Inv.items[page];
-                if (pg.width == 0 || pg.height == 0) continue;
-                float gw = pg.width * CELL;
-                float gh = (HEADER - 6) + pg.height * CELL + PAD;
-                if (x + gw > availW && x > 0) { x = 0; rowY += rowH; rowH = 0; }   // row full -> wrap to the next row down
-                AddGridAt(name, pg, new Vector2(x, rowY));
-                x += gw + GUTTER * 2;   // flow left-to-right so the grids sit side by side and fill the width
-                rowH = Mathf.Max(rowH, gh + PAD);
+                if (pg.width == 0 || pg.height == 0) continue;   // source: header hidden when newHeight == 0
+                AddGridAt(WornName(page, fallback), pg, new Vector2(0, yC), _clothingCol, colW, WornItem(page));
+                yC += pg.height * CELL + GRIDPAD + PAGEADV;      // source: y += items.SizeOffset_Y + 80
             }
-            _storageW = availW;
-            _storageH = rowY + rowH;
+            // Worn clothing that grants NO storage still gets a bar (source headers[7]/[8]/[9] = hat/mask/glasses:
+            // visible only when that item is worn, advance 70, and NO grid beneath).
+            foreach (var worn in new[] { Inv.wornHat, Inv.wornMask, Inv.wornGlasses })
+            {
+                if (worn == null) continue;
+                _clothingCol.AddChild(HeaderBar(worn.GetAsset()?.itemName ?? "Worn", new Vector2(0, yC), colW, worn));
+                yC += HDRGAP;   // source: offsetClothing_y += 70
+            }
+
+            // STORAGE + Nearby live in the right column when split, else continue down the single column
+            Control aCol = split ? _areaCol : _clothingCol;
+            float yA = split ? 0f : yC;
+            foreach (var (page, name) in new (byte, string)[] {
+                         (PlayerInventory.STORAGE, "Storage"), (PlayerInventory.AREA, "Nearby") })
+            {
+                var pg = Inv.items[page];
+                bool always = page == PlayerInventory.AREA;   // source: headers[AREA].IsVisible = true, always
+                if ((pg.width == 0 || pg.height == 0) && !always) continue;
+                if (pg.width == 0 || pg.height == 0)
+                {
+                    aCol.AddChild(HeaderBar(name, new Vector2(0, yA), colW));   // bar with no grid under it
+                    yA += HDRGAP;
+                    continue;
+                }
+                AddGridAt(name, pg, new Vector2(0, yA), aCol, colW);
+                yA += pg.height * CELL + GRIDPAD + PAGEADV;
+            }
+            _storageW = boxW;
+            _storageH = Mathf.Max(yC, split ? yA : yA) - 10f;   // source ContentSizeOffset = y - 10
 
             LayoutDash();
         }
@@ -893,6 +967,17 @@ namespace UnturnedGodot
             {
                 _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
                 if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN);
+
+                // The model DOMINATES the left column in the reference -- it isn't a small portrait pinned to the
+                // top. Stretch it to the space between the header and the weapon row.
+                // Reference measurement: retail's model area is ~260x590 => aspect ~0.44. Match that rather than
+                // stretching to the full column, which produced an extreme aspect the camera can't frame.
+                float avail = _charBox.Size.Y - PDTOP - CELL - (HEADER - 6) - 2 * MARGIN - 10f;
+                float pdH = Mathf.Clamp(avail, PDH, PDW / 0.44f);
+                if (_pdVp != null && Mathf.Abs(_pdVp.Size.Y - pdH) > 1f) _pdFramed = false;   // re-frame for the new aspect
+                if (_pdStage != null) _pdStage.Size = new Vector2(PDW, pdH);
+                if (_pdHit != null) _pdHit.Size = new Vector2(PDW, pdH);
+                if (_pdVp != null) _pdVp.Size = new Vector2I(PDW, Mathf.RoundToInt(pdH));
             }
         }
 
@@ -914,12 +999,33 @@ namespace UnturnedGodot
         }
 
         // one storage grid page placed at an explicit position inside the storage box (Refresh lays the columns out)
-        void AddGridAt(string name, Items page, Vector2 pos)
+        // One page = a full-width HEADER BAR with its grid 70px beneath it (source updateBoxAreas). `col` is the
+        // clothingBox or areaBox equivalent; `colW` is that column's width so the bar spans it like SizeScale_X = 1.
+
+        // Source shows the WORN ITEM'S NAME as the page header ("White T-Shirt", "Trouser Pants"), not the slot
+        // name -- that's why retail reads as a list of your clothes rather than a list of categories.
+        Item WornItem(byte page) =>
+            page == PlayerInventory.BACKPACK ? Inv.wornBackpack
+          : page == PlayerInventory.VEST     ? Inv.wornVest
+          : page == PlayerInventory.SHIRT    ? Inv.wornShirt
+          : page == PlayerInventory.PANTS    ? Inv.wornPants : null;
+
+        string WornName(byte page, string fallback)
         {
-            _storageCol.AddChild(Header($"{name}  {page.width}x{page.height}", pos, page.width * CELL));
+            Item worn = page == PlayerInventory.BACKPACK ? Inv.wornBackpack
+                      : page == PlayerInventory.VEST     ? Inv.wornVest
+                      : page == PlayerInventory.SHIRT    ? Inv.wornShirt
+                      : page == PlayerInventory.PANTS    ? Inv.wornPants : null;
+            return worn?.GetAsset()?.itemName ?? fallback;
+        }
+        void AddGridAt(string name, Items page, Vector2 pos, Control col = null, float colW = 0f, Item worn = null)
+        {
+            col ??= _clothingCol;
+            if (colW <= 0f) colW = page.width * CELL;
+            col.AddChild(HeaderBar(name, pos, colW, worn));
             var grid = new GridPanel { Cells = new Vector2I(page.width, page.height), Cell = CELL,
-                                       Position = pos + new Vector2(0, HEADER - 6), Size = new Vector2(page.width * CELL, page.height * CELL) };
-            _storageCol.AddChild(grid);
+                                       Position = pos + new Vector2(0, HDRGAP), Size = new Vector2(page.width * CELL, page.height * CELL) };
+            col.AddChild(grid);
             _drop.Add((page.page, grid, false));
             for (byte i = 0; i < page.getItemCount(); i++)
             {
@@ -1051,6 +1157,44 @@ namespace UnturnedGodot
             return tile;
         }
 
+
+        // A page header the way retail draws it: a full-width 60px BAR (source headers[] are ISleekButton,
+        // SizeOffset_Y = 60, SizeScale_X = 1) with the worn item's icon on the left, its name centred, and the
+        // item's condition on the right. The old plain text label was the single biggest visual gap vs the
+        // reference -- retail's inventory reads as a stack of BARS, not a list of captions.
+        Control HeaderBar(string text, Vector2 pos, float width, Item worn = null)
+        {
+            var bar = new Panel { Position = pos, Size = new Vector2(width, HDRH), MouseFilter = Control.MouseFilterEnum.Ignore };
+            StyleBox(bar, new Color(0.15f, 0.17f, 0.22f, 0.94f));
+
+            if (worn != null)
+            {
+                var icon = MakeTile(new ItemJar(worn), HDRH - 12, HDRH - 12);
+                icon.Position = new Vector2(6, 6);
+                icon.MouseFilter = Control.MouseFilterEnum.Ignore;
+                bar.AddChild(icon);
+            }
+
+            var name = new Label { Text = text, Position = new Vector2(0, 0), Size = new Vector2(width, HDRH),
+                                   HorizontalAlignment = HorizontalAlignment.Center,
+                                   VerticalAlignment = VerticalAlignment.Center,
+                                   MouseFilter = Control.MouseFilterEnum.Ignore };
+            name.AddThemeColorOverride("font_color", new Color(0.88f, 0.88f, 0.91f));
+            name.AddThemeFontSizeOverride("font_size", 15);
+            bar.AddChild(name);
+
+            if (worn != null)
+            {
+                var pct = new Label { Text = $"{worn.quality}%", Position = new Vector2(width - 74, 0),
+                                      Size = new Vector2(64, HDRH), HorizontalAlignment = HorizontalAlignment.Right,
+                                      VerticalAlignment = VerticalAlignment.Center,
+                                      MouseFilter = Control.MouseFilterEnum.Ignore };
+                pct.AddThemeColorOverride("font_color", new Color(0.95f, 0.72f, 0.25f));
+                pct.AddThemeFontSizeOverride("font_size", 13);
+                bar.AddChild(pct);
+            }
+            return bar;
+        }
         static Label Header(string text, Vector2 pos, float width)
         {
             var l = new Label { Text = text, Position = pos, Size = new Vector2(width, HEADER - 8) };
