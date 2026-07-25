@@ -342,4 +342,61 @@ namespace UnturnedGodot.Testing
             T.Check($"rotation reaches all 4 orientations (saw {seen.Count}: {string.Join(",", seen)})", seen.Count == 4);
         }
     }
+
+    // #8 + #9: the two source deviations found in the final UX review against PlayerDashboardInventoryUI.
+    //   #8 checkSlot(:928/:955) + checkEquip(:988) run `PlayerDashboardUI.close(); PlayerLifeUI.open();` on EVERY
+    //      successful weapon equip -- equipping a gun returns you to the game, it does not leave you in the bag.
+    //   #9 the modifier lives on TWO different buttons: onGrabbedItem (LMB) drops/takes, onSelectedItem (RMB)
+    //      transfers. We had the transfer on LMB and no drop shortcut at all.
+    public class InventoryEquipClosesAndCtrlGrab : GameTest
+    {
+        public override string Name => "inv.equip_closes_ctrlgrab";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var inv = new PlayerInventory();
+            var ui = new InventoryUI { Inv = inv };
+            World.AddChild(ui);
+            ui.Open();
+            yield return Ticks(2);
+            T.Check("bag starts open", ui.IsOpen);
+
+            // --- #8: equipping a WEAPON must exit the bag ---
+            var gun = new Item(4);   // an Eaglefire-class gun asset (gunName != null)
+            T.Check("seeded a gun into Hands", inv.items[2].tryAddItem(gun));
+            var gjar = inv.items[2].getItem(0);
+            bool isGun = gjar.GetAsset()?.gunName != null;
+            T.Check($"seeded item really is a gun (gunName {gjar.GetAsset()?.gunName ?? "<null>"})", isGun);
+            ui.DebugEquip(2, gjar.x, gjar.y);
+            yield return Ticks(1);
+            T.Check("equipping a weapon CLOSED the bag (source PlayerDashboardUI.close)", !ui.IsOpen);
+
+            // --- #9: Ctrl+LMB on your OWN page drops to the ground, it does not transfer ---
+            ui.Open();
+            yield return Ticks(1);
+            var med = new Item(15);   // Medkit 2x2
+            T.Check("seeded an item into Hands to drop", inv.items[2].tryAddItem(med));
+            var djar = inv.items[2].getItem(0);
+            int handsBefore = inv.items[2].getItemCount();
+            bool dropped = ui.DebugCtrlGrab(2, djar.x, djar.y);
+            yield return Ticks(1);
+            T.Check($"Ctrl+LMB on an own page reported a drop (got {dropped})", dropped);
+            T.Check($"the item LEFT hands ({handsBefore} -> {inv.items[2].getItemCount()})",
+                    inv.items[2].getItemCount() == handsBefore - 1);
+
+            // --- #9: Ctrl+LMB on the AREA/ground page TAKES into your pages ---
+            var area = inv.items[PlayerInventory.AREA];
+            area.resize(6, 4);
+            var loot = new Item(15);
+            T.Check("seeded an item on the ground", area.tryAddItem(loot));
+            var ljar = area.getItem(0);
+            int areaBefore = area.getItemCount(), handsBefore2 = inv.items[2].getItemCount();
+            bool took = ui.DebugCtrlGrab(PlayerInventory.AREA, ljar.x, ljar.y);
+            yield return Ticks(1);
+            T.Check($"Ctrl+LMB on the ground reported a take (got {took})", took);
+            T.Check($"the item LEFT the ground ({areaBefore} -> {area.getItemCount()})", area.getItemCount() == areaBefore - 1);
+            T.Check($"the item ARRIVED in my pages ({handsBefore2} -> {inv.items[2].getItemCount()})",
+                    inv.items[2].getItemCount() == handsBefore2 + 1);
+        }
+    }
 }

@@ -127,6 +127,9 @@ namespace UnturnedGodot
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
         // demo/verify: advance the held-item rotation one step and report it (proves 4 states, not a toggle)
         public int DebugCycleRot() { _dragRot = (byte)((_dragRot + 1) % 4); return _dragRot; }
+        // #9 seam: headless can't hold Ctrl and click, so drive the Ctrl+LMB branch (drop from own pages / take from AREA)
+        // directly. Ctrl+RMB is already covered by DebugQuickAction, which is the same QuickAction the RMB branch calls.
+        public bool DebugCtrlGrab(byte page, byte x, byte y) => CtrlGrab(page, x, y);
 
         long _lastSig = -1;
         public override void _Process(double delta)
@@ -178,11 +181,13 @@ namespace UnturnedGodot
                         if (new Rect2(_selPanel.GlobalPosition, _selPanel.Size).HasPoint(mb.GlobalPosition)) return;
                         CloseSelection();   // clicked outside -> dismiss, then fall through to grab
                     }
-                    // MODIFIER + click = retail's quick-action (transfer / pick up / equip) instead of a drag.
-                    // Checked BEFORE StartDrag so the modifier click never begins a drag it won't finish.
+                    // #9: MODIFIER + LMB is the source's onGrabbedItem modifier branch -- DROP to the ground from any of
+                    // your own pages, TAKE from the nearby/AREA page. It is NOT the quick transfer; that's Ctrl+RMB
+                    // (onSelectedItem) below. Checked BEFORE StartDrag so the modifier click never begins a drag it
+                    // won't finish. Modifier is Ctrl because ControlsSettings binds OTHER to KeyCode.LeftControl.
                     if (!_dragging && Input.IsKeyPressed(Key.Ctrl)
                         && PointToCell(mb.GlobalPosition, out byte qp, out byte qx, out byte qy, out _, out _)
-                        && QuickAction(qp, qx, qy))
+                        && CtrlGrab(qp, qx, qy))
                     { GetViewport().SetInputAsHandled(); return; }
 
                     if (!_dragging) { StartDrag(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
@@ -201,6 +206,14 @@ namespace UnturnedGodot
                     GetViewport().SetInputAsHandled();
                     return;
                 }
+                // #9: MODIFIER + RMB is the source's onSelectedItem modifier branch -- the storage-aware quick
+                // transfer (AREA -> STORAGE, STORAGE -> tryFindSpace in your pages, your page -> STORAGE). Checked
+                // before the action menu so the modifier click transfers instead of opening a panel.
+                if (Input.IsKeyPressed(Key.Ctrl)
+                    && PointToCell(rmb.GlobalPosition, out byte tp, out byte tx, out byte ty, out _, out _)
+                    && QuickAction(tp, tx, ty))
+                { GetViewport().SetInputAsHandled(); return; }
+
                 // RIGHT-click opens the item action menu (master: RMB only, not a left-click)
                 CloseSelection();
                 if (PointToCell(rmb.GlobalPosition, out byte page, out byte cx, out byte cy, out _, out _))
@@ -402,6 +415,22 @@ namespace UnturnedGodot
             return ok;
         }
 
+        // #9: the source's onGrabbedItem modifier branch. Ctrl+LMB on the nearby/AREA page TAKES the item into your
+        // pages (`ItemManager.takeItem`); on any page of your own it DROPS the item to the ground (`sendDropItem`).
+        // Distinct from Ctrl+RMB, which is the storage-aware transfer. DropSelected keys off the _sel* triple and
+        // already does its own CloseSelection+Refresh, so seeding the triple first is the same pattern DebugEquip uses.
+        bool CtrlGrab(byte page, byte cx, byte cy)
+        {
+            byte idx = Inv.items[page].getIndex(cx, cy);
+            if (idx == byte.MaxValue) return false;
+            var jar = Inv.items[page].getItem(idx);
+            if (page == PlayerInventory.AREA) return MoveTo(page, idx, jar, 255);   // ground -> first of my pages with room
+            _selPage = page; _selX = jar.x; _selY = jar.y;
+            DropSelected();
+            PlayInventoryAudio();
+            return true;
+        }
+
         // Wearable -> equip into its own slot, mirroring checkAction's per-type sendSwap* calls.
         bool QuickEquip(byte page, byte cx, byte cy, ItemJar jar)
         {
@@ -509,8 +538,15 @@ namespace UnturnedGodot
             if (idx == byte.MaxValue) return false;
             int ci = _clothing.FindIndex(c => c.type == slotType);
             if (ci < 0) return false;
-            var s = _clothing[ci].slot;
-            layoutValid = s.Size.X > 1f && s.Size.Y > 1f;   // Control laid out (GlobalPosition/Size meaningful)
+            // The equip drop TARGET moved: the per-slot boxes are now built hidden (the worn item shows on the
+            // paperdoll + in its header instead), and PointToClothSlot gates its slot loop on `.Visible`. So a drop
+            // at a hidden slot's centre matches nothing and falls through to the _pdHit paperdoll branch, which does
+            // not contain that point -- the gesture silently stopped equipping. Aim at whichever target is actually
+            // live so this keeps testing a REAL Drop() through the REAL hit-test rather than a control nobody can hit.
+            Control s = _clothing[ci].slot.Visible ? (Control)_clothing[ci].slot : _pdHit;
+            // NB: must not be `Size > 1` on a hidden slot -- a hidden Panel keeps its explicit 50x50, so the old check
+            // passed and the test FAILED instead of taking the "not laid out headless" skip.
+            layoutValid = s != null && s.Size.X > 1f && s.Size.Y > 1f;   // Control laid out (GlobalPosition/Size meaningful)
             if (!layoutValid) return false;
             _dragFromCloth = false; _dragJar = pg.getItem(idx);
             _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
@@ -651,8 +687,9 @@ namespace UnturnedGodot
             byte idx = pg.getIndex(_selX, _selY);
             if (idx == byte.MaxValue) return;
             var asset = pg.getItem(idx).GetAsset();
-            if (asset?.gunName != null) Player?.EquipHeldGun(asset.gunName, pg.getItem(idx).item);   // equipping a gun makes it the held weapon; the item carries its saved ammo/firemode/mag (master)
-            else if (asset?.meleeName != null) Player?.EquipHeldMelee(asset.meleeName);   // a melee weapon -> the melee viewmodel + weapon-specific swings
+            bool equipped = false;
+            if (asset?.gunName != null) { Player?.EquipHeldGun(asset.gunName, pg.getItem(idx).item); equipped = true; }   // equipping a gun makes it the held weapon; the item carries its saved ammo/firemode/mag (master)
+            else if (asset?.meleeName != null) { Player?.EquipHeldMelee(asset.meleeName); equipped = true; }   // a melee weapon -> the melee viewmodel + weapon-specific swings
             // holster a grid gun into the first empty hand slot; an already-slotted gun just stays put.
             // MP: the slot pick is computed on the mirrored grid and the server runs the same TryDrag
             // (the echo re-seats the jar); the in-hand equip above stays local either way.
@@ -666,6 +703,11 @@ namespace UnturnedGodot
                     }
             CloseSelection();
             Refresh();
+            // #8: source closes the dashboard on EVERY successful weapon equip -- checkSlot (both branches, :928/:955)
+            // and checkEquip (:988) each run `PlayerDashboardUI.close(); PlayerLifeUI.open();`. Equipping a gun puts you
+            // back in the game rather than leaving you sitting in the bag. Gated on `equipped` because the source only
+            // closes on the success path; the clothing route (checkAction's sendSwap*) deliberately does NOT close.
+            if (equipped) { Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }
         }
 
         // Equip a consumable INTO the hands (like a gun) -> close the inventory so LMB begins eating/drinking.
