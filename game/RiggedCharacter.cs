@@ -372,6 +372,24 @@ namespace UnturnedGodot
         static readonly System.Collections.Generic.Dictionary<(RigData, bool), (AnimationLibrary lib, string[] names)> _animCache = new();
         static readonly System.Collections.Generic.Dictionary<(RigData, bool), (ArrayMesh mesh, Skin skin)> _skinCache = new();
 
+        // The mesh + skin were cached per rig, but the TEXTURE never was: every character built re-read its atlas
+        // off disk and made a fresh ImageTexture, so a POI of 20 zombies uploaded 20 copies of the same image to
+        // the GPU (there are only 6 zombie atlases in total, and one shared face). That is per-instance VRAM and a
+        // disk read per spawn for bytes we already had. Texture only -- NOT the material: SetGhost/SetShirt mutate
+        // the material per instance, so a shared one would ghost every zombie at once.
+        static readonly System.Collections.Generic.Dictionary<string, ImageTexture> _texCache = new();
+
+        static ImageTexture LoadTexCached(string resPath)
+        {
+            if (resPath == null) return null;
+            if (_texCache.TryGetValue(resPath, out var cached) && cached != null) return cached;
+            var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(resPath));
+            if (img == null) return null;
+            var tex = ImageTexture.CreateFromImage(img);
+            _texCache[resPath] = tex;
+            return tex;
+        }
+
         // The 36+36 distinct consumable Equip/Use clips (CE_n/CU_n) live in their OWN file so rig.json stays lean.
         // Only the 1P arms viewmodel needs them, so they're merged in for armsOnly builds (not the 3P body/zombies).
         static System.Collections.Generic.Dictionary<string, ClipData> _consumableAnims;
@@ -489,10 +507,10 @@ namespace UnturnedGodot
                     AlbedoColor = tint,
                     CullMode = BaseMaterial3D.CullModeEnum.Front, // Z-flip reverses winding -> cull the (reversed) BACK faces = single-sided = HALF the fragment cost (was Disabled/double-sided, the horde's per-pixel killer)
                 };
-                var img = Image.LoadFromFile(ProjectSettings.GlobalizePath(albedoTexPath));
-                if (img != null)
+                var tex = LoadTexCached(albedoTexPath);   // shared across every zombie using this atlas
+                if (tex != null)
                 {
-                    bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                    bodyMat.AlbedoTexture = tex;
                     bodyMat.TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;   // blocky Unturned pixels
                 }
                 mi.MaterialOverride = bodyMat;
@@ -514,8 +532,8 @@ namespace UnturnedGodot
             // mirror is invisible. Parented to the character root (follows position/turn; head-bob float is tiny).
             if (faceTexPath != null && !armsOnly)
             {
-                var fimg = Image.LoadFromFile(ProjectSettings.GlobalizePath(faceTexPath));
-                if (fimg != null)
+                var ftex = LoadTexCached(faceTexPath);   // one shared face texture, not one per character
+                if (ftex != null)
                 {
                     // Bone-attach to the Skull so the face TRACKS the head through animation + ragdoll (not a fixed
                     // root child, which floats at rest-pose height). Skull rest = pos(0,1.32,0), basis maps
@@ -525,7 +543,7 @@ namespace UnturnedGodot
                     var fq = new MeshInstance3D { Name = "Face", Mesh = new QuadMesh { Size = new Vector2(0.38f, 0.38f) }, VisibilityRangeEnd = 45f, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // tiny transparent decal: cull its overdraw past ~45m + it never needs a shadow
                     fq.MaterialOverride = new StandardMaterial3D
                     {
-                        AlbedoTexture = ImageTexture.CreateFromImage(fimg),
+                        AlbedoTexture = ftex,
                         Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor,   // hard-edged pixel decal -> CUTOUT (early-z, no blend overdraw) beats alpha-blend
                         AlphaScissorThreshold = 0.5f,
                         TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,

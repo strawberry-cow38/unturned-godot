@@ -58,6 +58,7 @@ namespace UnturnedGodot
         {
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
+            bool zperf = false;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -76,6 +77,7 @@ namespace UnturnedGodot
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
+                else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
@@ -268,6 +270,7 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (zperf) { BuildZPerf(); return; }
             if (deployTest)   // deployables showcase: both placed on a ground plane + a valid(blue)/invalid(red) ghost
             {
                 GetWindow().Size = new Vector2I(1280, 720);
@@ -1274,6 +1277,117 @@ namespace UnturnedGodot
             if (w < 0.5f)  return new Color(0f, 1f, 1f - (w - 0.25f) * 4f);
             if (w < 0.75f) return new Color((w - 0.5f) * 4f, 1f, 0f);
             return new Color(1f, 1f - (w - 0.75f) * 4f, 0f);
+        }
+
+        // GPU perf probe (--zperf). MUST run with a real rendering driver (xvfb + lavapipe + --rendering-driver
+        // vulkan), NEVER --headless: under --headless nothing renders, so every render counter reads zero and any
+        // timing is just the frame pacer. That was the bug in my first two attempts at measuring this.
+        //
+        // lavapipe is a software rasteriser so absolute ms means nothing here -- but DRAW CALLS, PRIMITIVES and
+        // VRAM are hardware-independent, and a multiplier is exactly what those expose. Spawns N zombies, samples
+        // the counters, hides them, samples again: the delta is the per-zombie render cost, including how many
+        // times each one is drawn (shadow cascades included).
+        //
+        // Frame time is also reported, and it is NOT redundant with the counters. Counters cannot see FRAGMENTS --
+        // overdraw and shadow-map fill cost the same zero draw calls whether they shade 1 pixel or 10 million.
+        // lavapipe's cost is fragment-dominated, so the RATIO between phases is a fill-rate proxy even though the
+        // absolute ms is worthless. Read ratios here, never numbers.
+        int _zpN; int _zpStep; double _zpStepClock; int _zpFrames; double _zpFrameSum;
+        readonly System.Collections.Generic.List<ZombieController> _zpZombies = new();
+
+        void BuildZPerf()
+        {
+            _zpN = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ZN"), out var n) ? n : 20;
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.30f, 0.34f, 0.42f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(300f, 300f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.34f, 0.40f, 0.28f), Roughness = 1f },
+            });
+            var gb = new StaticBody3D(); gb.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() }); AddChild(gb);
+
+            // Uncapped and vsync off: the timing pass is only meaningful as a ratio between phases, and a frame
+            // pacer flattens exactly that. (Under a pacer every phase reads the pacer's period -- the mistake that
+            // produced the first two rounds of garbage numbers.)
+            DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
+            Engine.MaxFps = 0;
+
+            // UG_ZRES=WxH. This is the discriminator the counters cannot give: fragment cost scales with PIXELS,
+            // geometry/draw cost does not. Run the same N at two resolutions -- if the zombies' marginal frame time
+            // scales with the pixel count, their cost is fill (overdraw / shadow-map rasterisation) and a bigger
+            // screen makes it worse; if it stays flat, it is geometry and the screen is irrelevant. The scaling LAW
+            // transfers to real hardware even though lavapipe's constant does not.
+            var res = (System.Environment.GetEnvironmentVariable("UG_ZRES") ?? "").Split('x');
+            if (res.Length == 2 && int.TryParse(res[0], out var rw) && int.TryParse(res[1], out var rh))
+            {
+                DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);   // project sets Maximized, which ignores a size request
+                DisplayServer.WindowSetSize(new Vector2I(rw, rh));
+            }
+
+            // UG_ZCAM=1p sits the camera at driver-eye range; the default 3p matches the chase cam's worst case
+            // (34 m back and elevated). That camera distance is the one thing strawberry's tank is gated on, and it
+            // is also what decides how much world each shadow cascade has to cover.
+            bool cam1p = System.Environment.GetEnvironmentVariable("UG_ZCAM") == "1p";
+            var cam = new Camera3D { Current = true, Fov = 60f, Far = 4000f };
+            AddChild(cam);
+            cam.GlobalPosition = cam1p ? new Vector3(0f, 1.7f, 6f) : new Vector3(0f, 12f, 34f);
+            cam.LookAt(new Vector3(0f, 1f, 0f), Vector3.Up);
+
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            for (int i = 0; i < _zpN; i++)
+            {
+                var z = new ZombieController { IsPuppet = true };   // puppet: no AI, isolates the RENDER cost
+                AddChild(z);
+                z.GlobalPosition = new Vector3((i % 8) * 2.5f - 9f, 0f, (i / 8) * 2.5f - 4f);
+                _zpZombies.Add(z);
+            }
+            GD.Print($"[zperf] spawned {_zpN} zombies  cam={(cam1p ? "1p" : "3p")} (counters read zero under --headless -- needs a real driver)");
+            SetProcess(true);
+        }
+
+        // Each step: let the change settle, then average frame time over a window and print it with the counters.
+        // ON - OFF is the zombies' whole render cost; ON - ON,noshadow is the part that is shadow casting.
+        void ZPerfTick(double delta)
+        {
+            const double Warm = 0.6, Window = 2.0;
+            _zpStepClock += delta;
+            if (_zpStepClock > Warm) { _zpFrames++; _zpFrameSum += delta; }
+            if (_zpStepClock < Warm + Window) return;
+
+            double M(Performance.Monitor m) => Performance.GetMonitor(m);
+            string tag = _zpStep switch { 0 => $"ON(n={_zpN})", 1 => "OFF", _ => "ON,noshadow" };
+            // Report the size actually rendered, not the size asked for: a resolution-scaling experiment where the
+            // resolution silently never changed reads as "flat, so not fill" -- a null result that looks like data.
+            Vector2 vp = GetViewport().GetVisibleRect().Size;
+            GD.Print(
+                $"[zperf] {tag,-12} {vp.X:0}x{vp.Y:0} " +
+                $"frame={(_zpFrames > 0 ? _zpFrameSum / _zpFrames * 1000.0 : 0.0):0.00}ms " +
+                $"draws={M(Performance.Monitor.RenderTotalDrawCallsInFrame):0} " +
+                $"objs={M(Performance.Monitor.RenderTotalObjectsInFrame):0} " +
+                $"prims={M(Performance.Monitor.RenderTotalPrimitivesInFrame):0} " +
+                $"vram={M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0.0}MB");
+
+            _zpStep++; _zpStepClock = 0; _zpFrames = 0; _zpFrameSum = 0;
+            switch (_zpStep)
+            {
+                case 1: foreach (var z in _zpZombies) z.Visible = false; break;                                  // scene without them at all
+                case 2: foreach (var z in _zpZombies) { z.Visible = true; SetZombieShadows(z, false); } break;   // drawn, casting nothing
+                default: GetTree().Quit(); break;
+            }
+        }
+
+        static void SetZombieShadows(Node root, bool on)
+        {
+            if (root is GeometryInstance3D gi) gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
+            foreach (var c in root.GetChildren()) SetZombieShadows(c, on);
         }
 
         void BuildDeployTest()
@@ -3475,6 +3589,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_zpZombies.Count > 0) { ZPerfTick(delta); return; }   // --zperf probe owns the frame
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
                 _frame++;

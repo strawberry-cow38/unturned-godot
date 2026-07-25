@@ -32,6 +32,70 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Perf regression (strawberry): SP zombies drew their full skinned rig at any distance, because the render
+    // cull only ever existed on the MP puppet path. Symptom was localised to sitting still in a car in 3rd
+    // person inside a POI -- the chase cam pulls a far wider slice of the map into frustum than any on-foot
+    // view, so many more distant zombies were being skinned and drawn. Past CullRadius the rig must be hidden;
+    // AI keeps running either way.
+    public class ZombieDistantRigCulled : GameTest
+    {
+        public override string Name => "zombie.distant_rig_culled";
+        public override IEnumerable<Step> Run()
+        {
+            var cam = new Camera3D { Current = true, Fov = 60f, Far = 4000f };
+            World.AddChild(cam);
+            cam.GlobalPosition = Vector3.Zero;
+
+            var near = new ZombieController();
+            World.AddChild(near);
+            near.GlobalPosition = new Vector3(0f, 0f, -12f);      // well inside CullRadius (90 m)
+
+            var far = new ZombieController();
+            World.AddChild(far);
+            far.GlobalPosition = new Vector3(0f, 0f, -400f);      // far outside it
+            yield return Ticks(40);                               // rigs build + the staggered cull re-evaluates (~4x/sec)
+
+            var nearRig = FindDown<RiggedCharacter>(near);
+            var farRig = FindDown<RiggedCharacter>(far);
+            T.Check("both zombies built a rig", nearRig != null && farRig != null);
+            if (nearRig == null || farRig == null) yield break;
+
+            T.Check($"a NEAR zombie is still drawn (dist 12m, visible={nearRig.Visible})", nearRig.Visible);
+            T.Check($"a DISTANT zombie's rig is culled (dist 400m, visible={farRig.Visible})", !farRig.Visible);
+
+            // and it must come back, or a zombie you drive toward stays invisible
+            far.GlobalPosition = new Vector3(0f, 0f, -20f);
+            yield return Ticks(40);
+            T.Check($"it is drawn again once close (visible={farRig.Visible})", farRig.Visible);
+
+            // The GPU half: a skinned caster is re-skinned per shadow cascade, and the 3p chase cam's much larger
+            // cascade volume is what made a POI full of zombies GPU-bound. Close ones keep their shadow.
+            var mid = new ZombieController();
+            World.AddChild(mid);
+            mid.GlobalPosition = new Vector3(0f, 0f, -60f);   // drawn (< 90m) but well beyond ShadowRadius (28m)
+            yield return Ticks(40);
+            var midRig = FindDown<RiggedCharacter>(mid);
+            T.Check("mid-distance zombie built a rig", midRig?.Body != null);
+            if (midRig?.Body != null)
+            {
+                T.Check($"a NEAR zombie still casts a shadow (cast={nearRig.Body?.CastShadow})",
+                        nearRig.Body != null && nearRig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.On);
+                T.Check($"a 60m zombie is still DRAWN but casts NO shadow (visible={midRig.Visible}, cast={midRig.Body.CastShadow})",
+                        midRig.Visible && midRig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.Off);
+            }
+
+            cam.QueueFree(); near.QueueFree(); far.QueueFree(); mid.QueueFree();
+        }
+
+        static TN FindDown<TN>(Node n) where TN : Node
+        {
+            if (n is TN hit) return hit;
+            foreach (var c in n.GetChildren())
+                if (FindDown<TN>(c) is TN found) return found;
+            return null;
+        }
+    }
+
     // Regression for the MP-report "zombie face renders on the LEFT ARM" (#36): the face decal's
     // BoneAttachment3D must bind to the Skull bone and the quad must ride that bone, not an arm.
     // IsPuppet = the MP path; the rig build is shared with SP zombies, so this guards both.

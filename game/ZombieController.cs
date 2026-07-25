@@ -222,9 +222,59 @@ namespace UnturnedGodot
             }
         }
 
+        // Perf: SP zombies never got the render cull the MP puppets have (ZombiePuppets.cs:52-63) -- every one
+        // drew its full skinned rig at any distance. strawberry localised the symptom precisely: sitting STILL
+        // in a car in 3rd person inside a POI tanks fps, while the same POI on foot (1p or 3p) and the same car
+        // in 1p are both fine. That rules out the AI, the streaming anchor and the outline pass -- all identical
+        // in those cases -- and leaves the one thing that changes: the chase cam sits far back and high, so it
+        // pulls a much wider slice of the POI into frustum than any on-foot view. Godot frustum-culls for us,
+        // but every distant zombie INSIDE that wide frustum was still a fully-skinned 17-bone draw.
+        //
+        // So cull by distance, mirroring the puppet rule: past CullRadius hide the rig entirely; hidden rigs
+        // skip skinning and drawing. AI/physics keep running -- the zombie still walks, hears and hunts, it
+        // just isn't drawn from 90m away. NearAlways keeps close ones always visible so turning never pops one in.
+        // strawberry measured this precisely: F3 shows nothing abnormal on the CPU side, so it is GPU-bound, it is
+        // the zombies, and it only bites sitting still in a car in 3rd person inside a POI. The thing that changes
+        // between those cases is where the CAMERA is: the chase cam sits up to 34 m back and elevated
+        // (PlayerController.cs:4261), which balloons the directional light's shadow cascade volume compared with
+        // any 1p or on-foot view. Every caster inside that bigger volume gets drawn into the cascades -- and a
+        // SKINNED caster is the expensive kind, because the skinning re-runs per cascade.
+        //
+        // The rig's body mesh (RiggedCharacter.cs:469) never set CastShadow, so it defaults to On. The intent was
+        // clearly there -- the tiny face decal three lines later sets it Off with "it never needs a shadow" -- it
+        // just never reached the body. ResourceField makes the same call deliberately (trees cast, small props
+        // don't), so this is the established tradeoff in this codebase, not a new one.
+        //
+        // Distance-based rather than a blanket Off, so a zombie next to you still grounds itself with a shadow and
+        // only the many distant ones in a wide 3p view stop paying for one.
+        const float CullRadius = 90f;    const float CullRadiusSq = CullRadius * CullRadius;
+        const float ShadowRadius = 28f;  const float ShadowRadiusSq = ShadowRadius * ShadowRadius;
+        float _cullTimer;
+
+        void CullRender()
+        {
+            if (_rig == null || Dead) return;              // a corpse/ragdoll is handled by the death path
+            _cullTimer -= 0.02f;                           // 50Hz tick; re-evaluate ~4x/sec, staggered by spawn order
+            if (_cullTimer > 0f) return;
+            _cullTimer = 0.22f + GD.Randf() * 0.14f;
+            var cam = GetViewport()?.GetCamera3D();
+            if (cam == null) return;                       // no camera (headless/server) -> leave it drawn, never hide blind
+            float dSq = cam.GlobalPosition.DistanceSquaredTo(GlobalPosition);
+            bool near = dSq <= CullRadiusSq;
+            if (_rig.Visible != near) _rig.Visible = near;
+            if (_rig.Body != null)
+            {
+                var want = dSq <= ShadowRadiusSq
+                    ? GeometryInstance3D.ShadowCastingSetting.On
+                    : GeometryInstance3D.ShadowCastingSetting.Off;
+                if (_rig.Body.CastShadow != want) _rig.Body.CastShadow = want;
+            }
+        }
+
         public override void _PhysicsProcess(double delta)
         {
             if (IsPuppet) return;   // puppet: ZombiePuppets drives the node from replicated state (PuppetFrame)
+            CullRender();
             float g = PlayerMovementDef.GRAVITY;
             float dt = (float)delta;
 
