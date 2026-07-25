@@ -1386,48 +1386,70 @@ namespace UnturnedGodot
                 z.GlobalPosition = new Vector3((i % 8) * 2.5f - 9f, 0f, (i / 8) * 2.5f - 4f);
                 _zpZombies.Add(z);
             }
-            GD.Print($"[zperf] spawned {_zpN} zombies  cam={(cam1p ? "1p" : "3p")}  mode={(_zaiMode ? "AI/cpu" : "render")}");
+            // UG_ZFREEZE=1 is cow tools' F6 (RiggedCharacter.SetAnimFrozen) driven headlessly, so the skeleton
+            // share can be measured here instead of only in a live session. It is the leg z.rig CANNOT see: Tick()
+            // is a near-no-op once UsePhysicsAnimRate has put the mixer in Physics callback mode, so the actual
+            // 17-bones-per-zombie posing happens engine-side inside the physics frame and no script timer wraps it.
+            if (System.Environment.GetEnvironmentVariable("UG_ZFREEZE") == "1") RiggedCharacter.SetAnimFrozen(true);
+
+            GD.Print($"[zperf] spawned {_zpN} zombies  cam={(cam1p ? "1p" : "3p")}  mode={(_zaiMode ? "AI/cpu" : "render")}  animFrozen={RiggedCharacter.AnimFrozen}");
             SetProcess(true);
         }
 
-        bool _zaiMode; PlayerController _zaiPlayer; double _zaiClock; ulong _zaiPhys0; bool _zaiArmed;
-        double _zaiPhysSum, _zaiPhysMax; int _zaiPhysN;
+        bool _zaiMode; PlayerController _zaiPlayer; double _zaiClock; ulong _zaiPhys0;
+        double _zaiPhysSum, _zaiPhysMax; int _zaiPhysN; int _zaiPhase; readonly double[] _zaiResult = new double[2];
+        int _zaiGc0, _zaiGc1, _zaiGc2;
 
-        // Per-PHYSICS-TICK cost of each zombie AI leg, summed across every zombie. Divided by the number of
-        // physics ticks that actually elapsed rather than by frames, because Prof accumulates per tick and the
-        // number to compare against is strawberry's 32.2ms physics frame.
+        // A/B INSIDE ONE PROCESS, alternating windows. Comparing two separate launches does not work on this box:
+        // three paired frozen/live runs gave 13.3/13.5, 11.5/6.6 and 17.3/33.8ms -- the effect changed SIGN, and the
+        // mean said freezing animation made it slower, which is impossible. Cross-process noise (boot, JIT, page
+        // cache, whatever else has the 4 cores) is larger than anything being measured. Back-to-back windows in one
+        // process share all of that, so the difference between them is the thing that actually changed.
+        //
+        // Alternates live/frozen/live/frozen rather than doing one of each, so a monotonic drift over the run shows
+        // up as disagreement between the two halves instead of masquerading as the effect.
         void ZAITick(double delta)
         {
-            const double Warm = 1.5, Win = 4.0;
+            const double Warm = 1.5, Win = 3.0;
             _zaiClock += delta;
-            if (!_zaiArmed)
-            {
-                if (_zaiClock < Warm) return;            // let rigs build + the AI settle out of its first tick
-                Prof.Reset(); _zaiPhys0 = Engine.GetPhysicsFrames(); _zaiArmed = true;
-                return;
-            }
-            // TimePhysicsProcess is a SINGLE sample -- the last physics frame, not an average. Sampling it once at
-            // the end read 13.2ms and 20.3ms on two runs of the same n=60, a 53% spread, which is more than the
-            // difference the scaling analysis was trying to detect. Average it across the window instead, and
-            // report the worst frame beside it so a spiky profile can't hide inside a calm mean.
+            if (_zaiClock < Warm) return;                  // rigs build + the AI settles out of its first tick
+
             double physNow = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
             _zaiPhysSum += physNow; _zaiPhysN++;
             if (physNow > _zaiPhysMax) _zaiPhysMax = physNow;
-
-            if (_zaiClock < Warm + Win) return;
+            if (_zaiClock < Warm + Win * (_zaiPhase + 1)) return;
 
             ulong ticks = Engine.GetPhysicsFrames() - _zaiPhys0;
-            if (ticks == 0) { GD.Print("[zai] no physics ticks elapsed -- probe is broken, not the game"); GetTree().Quit(); return; }
-
             double phys = _zaiPhysN > 0 ? _zaiPhysSum / _zaiPhysN : 0.0;
+            bool frozen = RiggedCharacter.AnimFrozen;
+
+            // Check BEFORE the reset below, not after -- the first version of this guard read Prof.Us on the far
+            // side of Prof.Reset() and cheerfully reported "z.total is ZERO, NOT a result" on runs that had just
+            // produced perfectly good numbers. A guard against lying instruments that lies is worse than none.
+            bool noAiWork = !Prof.Us.TryGetValue("z.total", out var tot) || tot == 0;
+
+            // GC per window. The worst frames here reach 120ms in a headless probe on flat ground, which is not a
+            // plausible cost for 60 capsules -- so the question is whether the "noise" is this box or the GAME.
+            // CanSee allocates a Godot.Collections.Array<Rid> and a PhysicsRayQueryParameters3D per zombie per tick;
+            // at n=60 that is ~3000 marshalled allocations a second. If gen0 tracks the spikes, the spikes are ours.
+            int g0 = System.GC.CollectionCount(0), g1 = System.GC.CollectionCount(1), g2 = System.GC.CollectionCount(2);
+            int d0 = g0 - _zaiGc0, d1 = g1 - _zaiGc1, d2 = g2 - _zaiGc2; _zaiGc0 = g0; _zaiGc1 = g1; _zaiGc2 = g2;
+
             var parts = new System.Collections.Generic.List<string>();
-            foreach (var kv in Prof.Us) parts.Add($"{kv.Key}={kv.Value / (double)ticks / 1000.0:0.000}ms");
+            if (ticks > 0) foreach (var kv in Prof.Us) parts.Add($"{kv.Key}={kv.Value / (double)ticks / 1000.0:0.000}ms");
             parts.Sort();
-            GD.Print($"[zai] n={_zpN} ticks={ticks} physicsFrame={phys:0.000}ms (worst {_zaiPhysMax:0.000}, {_zaiPhysN} samples)   per-tick: {string.Join("  ", parts)}");
-            // A zero here means the zombies never reached their AI (no registered player), NOT that the AI is free.
-            // Say so out loud -- a silent zero is the exact failure mode that wasted the render half of this hunt.
-            if (!Prof.Us.TryGetValue("z.total", out var tot) || tot == 0)
-                GD.Print("[zai] z.total is ZERO -> zombies early-returned before any AI work (no player registered?). NOT a result.");
+            GD.Print($"[zai] n={_zpN} win{_zaiPhase} anim={(frozen ? "FROZEN" : "live  ")} " +
+                     $"physicsFrame={phys:0.000}ms (worst {_zaiPhysMax:0.000}, {_zaiPhysN} samples) " +
+                     $"gc[{d0}/{d1}/{d2}] heap={System.GC.GetTotalMemory(false) / 1048576.0:0.0}MB   per-tick: {string.Join("  ", parts)}");
+            if (_zaiPhase < 2) _zaiResult[_zaiPhase] = phys;
+            if (noAiWork) GD.Print("[zai] z.total is ZERO -> zombies early-returned before any AI work (no player registered?). NOT a result.");
+
+            _zaiPhase++;
+            _zaiPhysSum = 0; _zaiPhysN = 0; _zaiPhysMax = 0; Prof.Reset(); _zaiPhys0 = Engine.GetPhysicsFrames();
+            if (_zaiPhase < 4) { RiggedCharacter.SetAnimFrozen(_zaiPhase % 2 == 1); return; }
+
+            GD.Print($"[zai] first pair: live {_zaiResult[0]:0.000}ms -> frozen {_zaiResult[1]:0.000}ms " +
+                     $"(skeleton share {_zaiResult[0] - _zaiResult[1]:0.000}ms). Trust it only if the SECOND pair agrees.");
             GetTree().Quit();
         }
 

@@ -110,11 +110,39 @@ z.sense  ~0.001 ms idle, ~0.01 ms hunting
 **At ~20 zombies that is half a millisecond.** The zombie AI script is not a 32 ms cost on any
 hardware. Do not go hunting in `ZombieController`'s logic.
 
+`z.rig` is NOT the animation cost. `Tick()` only calls `Advance()` for a Manual-mode mixer, and
+`UsePhysicsAnimRate` puts zombies in Physics mode, so for a zombie `Tick()` decrements a float and
+returns. The actual 17-bones-per-zombie posing is done by the engine's AnimationMixer inside the
+physics frame, where no script timer reaches it. `z.rig` measures bookkeeping. Use F6 (cow tools'
+`RiggedCharacter.SetAnimFrozen`, `_ap.Active = false`) to measure the real skeleton share.
+
+Related and unfixed: the distance cull hides the rig but does **not** stop the mixer, so a culled
+zombie at 200 m still poses all 17 bones every physics tick.
+
+### GC is not the spike cause
+
+Per-window collection counts against the physics frame, same process, three seconds apart:
+
+```
+win1  gc[0/0/0]   physics  25.2 ms
+win2  gc[1/0/0]   physics 105.5 ms   (worst frame 215 ms)
+win3  gc[0/0/0]   physics  29.6 ms
+```
+
+Near-zero collections through a 4x swing, matching the `gen0 +0` on strawberry's own F3. Not GC.
+
+Worth fixing anyway, separately from this hunt: the managed heap climbed 152 -> 169 MB in twelve
+seconds with 60 zombies. `HasLineOfSight` allocates three marshalled objects per zombie per tick --
+a `PhysicsRayQueryParameters3D`, a `Godot.Collections.Array<Rid>`, and the `Dictionary` returned by
+`IntersectRay` -- roughly 3000 allocations a second, all of which could be cached per zombie.
+
 Two things that are NOT established, recorded so nobody quotes them:
 
-- The engine-side share. Identical n=60 runs gave 7.11/2.99 ms (puppet) and 8.66/16.13 ms (AI) --
-  the run-to-run variance is larger than the effect, and averaging 575 samples did not fix it. This
-  4-core box is too noisy to resolve it. Read `z.total` against the physics line on real hardware.
+- The engine-side share. FOUR instrument designs failed on this box: a single monitor sample, a
+  windowed average, cross-process paired runs (13.3/13.5, 11.5/6.6, 17.3/33.8 ms -- the effect
+  changed sign), and a same-run alternating A/B (still 105 ms vs 29 ms between adjacent windows).
+  The variance exceeds the effect every time. **Do not attempt a fifth design here** -- this 4-core
+  box cannot time a physics frame. Read `z.total` against the physics line on real hardware instead.
 - An apparent superlinearity in zombie count. It was an artifact of the probe's spawn grid: at n=60
   the rows extend far enough that some zombies face the player, see him and switch to hunting. More
   zombies did not get more expensive, more zombies got *awake*.
