@@ -3475,6 +3475,8 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (System.Environment.GetEnvironmentVariable("UG_RENDERSTATS") == "1" && (Engine.GetFramesDrawn() % 30) == 0)   // headless render-stat probe (strawberry gpu tank): the F3 render line, read deterministically
+                GD.Print($"[RSTAT] f{Engine.GetFramesDrawn()} objs={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalObjectsInFrame)} draws={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame)} prims={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalPrimitivesInFrame)} vram={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.VideoMemUsed) / 1048576}MB");
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
                 _frame++;
