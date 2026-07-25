@@ -1443,15 +1443,23 @@ namespace UnturnedGodot
             {
                 int q = jar.item.quality;
                 var qcol = ItemTool.QualityColor(q / 100f);
-                var box = new Panel { Position = new Vector2(w - 36, h - 17), Size = new Vector2(34, 15), MouseFilter = Control.MouseFilterEnum.Ignore };   // 34 wide (was 30) so a 3-digit "100%" fits the chip and stays centred instead of spilling off the right
                 var bs = new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0.72f) };
                 bs.SetCornerRadiusAll(3); bs.BorderColor = qcol; bs.SetBorderWidthAll(1);   // dark chip, outlined in the condition colour so it reads on any icon
-                box.AddThemeStyleboxOverride("panel", bs);
-                var lbl = new Label { Text = $"{q}%", Size = new Vector2(34, 15), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                bs.ContentMarginLeft = 4; bs.ContentMarginRight = 4; bs.ContentMarginTop = 0; bs.ContentMarginBottom = 0;   // even breathing room L/R so the text sits centred in the card
+                // A PanelContainer SIZES ITSELF to the label, so the chip always wraps "{q}%" exactly (5% / 85% / 100%) and
+                // the text is centred inside its card by construction. The old fixed-width Panel let a wide "100%" spill past
+                // the card's edges no matter the width I picked (master: "the %s werent centered in their mini card").
+                var lbl = new Label { Text = $"{q}%", HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
                 lbl.AddThemeColorOverride("font_color", qcol.Lerp(Colors.White, 0.45f));   // brighten the text so even the dark-red (spoiled) end reads on the chip; the border keeps the pure hue
-                lbl.AddThemeFontSizeOverride("font_size", 9);   // 9 (was 10) so "100%" comfortably fits the widened chip and centres
-                box.AddChild(lbl);
-                tile.AddChild(box);
+                lbl.AddThemeFontSizeOverride("font_size", 11);
+                var card = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+                card.AddThemeStyleboxOverride("panel", bs);
+                card.AddChild(lbl);
+                tile.AddChild(card);
+                card.SetAnchorsPreset(Control.LayoutPreset.BottomRight);   // pin the auto-sized chip to the tile's bottom-right corner,
+                card.GrowHorizontal = Control.GrowDirection.Begin;         // growing LEFT / UP as the text widens so it never clips the icon edge
+                card.GrowVertical = Control.GrowDirection.Begin;
+                card.OffsetRight = -2; card.OffsetBottom = -2;             // 2 px inset from the corner
             }
             return tile;
         }
