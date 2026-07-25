@@ -372,6 +372,29 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Weapon slots as inventory slots (master 2026-07-25): the primary/secondary slots must accept a dragged weapon and
+    // the 1/2 keys equip whatever's in them (EquipHotbar reads pages 0/1). Regression guard for the drop-registration bug
+    // -- AddSlotAt registered pages 0/1 in _drop, but _drop.Clear() ran right after and wiped them every refresh, so the
+    // slots silently rejected drags. Reverting the fix makes both slots stop being drop targets and these Checks fail.
+    public class InventoryWeaponSlotsAreDropTargets : GameTest
+    {
+        public override string Name => "inv.weapon_slots";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var inv = new PlayerInventory();
+            var ui = new InventoryUI { Inv = inv };
+            World.AddChild(ui);
+            ui.Open();
+            yield return Ticks(2);   // build + lay out the dashboard so the weapon slots populate _drop with real rects
+
+            T.Check("PRIMARY slot (page 0) is a registered drop target", ui.DebugSlotIsDropTarget(0));
+            T.Check("SECONDARY slot (page 1) is a registered drop target", ui.DebugSlotIsDropTarget(1));
+            T.Check("a drag onto the PRIMARY slot rect resolves to page 0", ui.DebugSlotHitTest(0));
+            T.Check("a drag onto the SECONDARY slot rect resolves to page 1", ui.DebugSlotHitTest(1));
+        }
+    }
+
     // #8 + #9: the two source deviations found in the final UX review against PlayerDashboardInventoryUI.
     //   #8 checkSlot(:928/:955) + checkEquip(:988) run `PlayerDashboardUI.close(); PlayerLifeUI.open();` on EVERY
     //      successful weapon equip -- equipping a gun returns you to the game, it does not leave you in the bag.

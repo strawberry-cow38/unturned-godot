@@ -1147,6 +1147,18 @@ namespace UnturnedGodot
         }
         public bool DebugPaperdollSpinning => _pdDragging;   // true only mid-drag; a completed DebugPaperdollDragSpin leaves it false
 
+        // TEST SEAMS (master: primary/secondary slots function as inv slots). A weapon slot is a working drag target only
+        // if it's registered in _drop AND PointToCell resolves its on-screen rect to that page. The bug: _drop.Clear() ran
+        // AFTER the slots were added, wiping them -> reverting the fix makes both of these return false.
+        public bool DebugSlotIsDropTarget(byte page) => _drop.Exists(t => t.Item1 == page && t.Item3);
+        public bool DebugSlotHitTest(byte slotPage)
+        {
+            foreach (var (p, box, isSlot) in _drop)
+                if (p == slotPage && isSlot)
+                    return PointToCell(box.GlobalPosition + box.Size * 0.5f, out byte pg, out _, out _, out _, out bool s) && pg == slotPage && s;
+            return false;
+        }
+
         public void Refresh()
         {
             if (Inv == null || _storageCol == null) return;
@@ -1170,18 +1182,22 @@ namespace UnturnedGodot
                 }
             }
 
-            // weapon slots -> the character panel's bottom row (source: primary/secondary sit under the character)
-            foreach (Node c in _weaponRow.GetChildren()) c.QueueFree();
-            AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(0, 0),             3 * CELL);
-            AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(3 * CELL + 16, 0), 3 * CELL);
-
             // Storage side, 1:1 with source updateBoxAreas: pages STACK VERTICALLY as [header bar -> its own grid]
             // pairs, NOT side by side. Strawberry's annotation ("clothing slots show above the storage slots they
             // provide") is exactly this loop. When the screen is >= 1350 wide the source splits into two columns:
             // the player's own pages on the left (clothingBox), STORAGE + Nearby on the right (areaBox).
+            foreach (Node c in _weaponRow.GetChildren()) c.QueueFree();
             foreach (Node c in _clothingCol.GetChildren()) c.QueueFree();
             foreach (Node c in _areaCol.GetChildren()) c.QueueFree();
             _drop.Clear();
+
+            // weapon slots -> the character panel's bottom row (source: primary/secondary sit under the character). They
+            // register as page-0/1 drop targets inside AddSlotAt, so they MUST be built AFTER _drop.Clear() -- previously
+            // they were added BEFORE the clear, so their drag targets got wiped every refresh and the primary/secondary
+            // slots silently rejected any dragged weapon (master: "make primary/secondary function as inv slots"). The 1/2
+            // keys already equip pages 0/1 (PlayerController.EquipHotbar), so registering the drop targets completes it.
+            AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(0, 0),             3 * CELL);
+            AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(3 * CELL + 16, 0), 3 * CELL);
             Vector2 vpsz = GetViewport().GetVisibleRect().Size;
             float boxW = vpsz.X - BOXINSET;                       // source box.SizeOffset_X = -440
             bool split = vpsz.X >= SPLITMIN;                      // source isSplitClothingArea
@@ -1421,13 +1437,13 @@ namespace UnturnedGodot
             {
                 int q = jar.item.quality;
                 var qcol = ItemTool.QualityColor(q / 100f);
-                var box = new Panel { Position = new Vector2(w - 32, h - 17), Size = new Vector2(30, 15), MouseFilter = Control.MouseFilterEnum.Ignore };
+                var box = new Panel { Position = new Vector2(w - 36, h - 17), Size = new Vector2(34, 15), MouseFilter = Control.MouseFilterEnum.Ignore };   // 34 wide (was 30) so a 3-digit "100%" fits the chip and stays centred instead of spilling off the right
                 var bs = new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0.72f) };
                 bs.SetCornerRadiusAll(3); bs.BorderColor = qcol; bs.SetBorderWidthAll(1);   // dark chip, outlined in the condition colour so it reads on any icon
                 box.AddThemeStyleboxOverride("panel", bs);
-                var lbl = new Label { Text = $"{q}%", Size = new Vector2(30, 15), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                var lbl = new Label { Text = $"{q}%", Size = new Vector2(34, 15), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
                 lbl.AddThemeColorOverride("font_color", qcol.Lerp(Colors.White, 0.45f));   // brighten the text so even the dark-red (spoiled) end reads on the chip; the border keeps the pure hue
-                lbl.AddThemeFontSizeOverride("font_size", 10);
+                lbl.AddThemeFontSizeOverride("font_size", 9);   // 9 (was 10) so "100%" comfortably fits the widened chip and centres
                 box.AddChild(lbl);
                 tile.AddChild(box);
             }
