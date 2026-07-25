@@ -27,15 +27,48 @@ namespace UnturnedGodot
             SetProcess(false);   // start hidden: _Process is fully DISABLED (not even called) until F3 -> zero cost while off (master)
         }
 
+        // F4/F5 are the two discriminators for the zombie fps tank (docs/ZOMBIE_FPS_NOTES.md). Neither question
+        // can be answered off a counter, and neither can be answered on the ARM box at all -- lavapipe's frame
+        // timing sits on a fixed ~95-160ms floor -- so they have to be answerable in one keypress in the live
+        // session where the tank actually happens.
+        //
+        //   F4  3D render scale 1.0 -> 0.5 -> 0.25. Fragment cost scales with pixels and NOTHING else does, so
+        //       fps roughly doubling at 0.5 means it is fill (overdraw / shadow-map rasterisation); fps barely
+        //       moving means it is not fill, and what is left is a stall.
+        //   F5  zombie shadow casting off. Recovers -> the shadow pass (which is 178 of 303 zombie draws and 75%
+        //       of their triangles, measured). Doesn't -> the zombie render path itself.
+        //
+        // F5 applies to the zombies that exist right now; press it again after a wave spawns.
+        float _scale3D = 1f;
+        bool _zShadows = true;
+
         public override void _Input(InputEvent e)
         {
-            if (e is InputEventKey { Pressed: true, Keycode: Key.F3, Echo: false })
+            if (e is not InputEventKey { Pressed: true, Echo: false } k) return;
+            if (k.Keycode == Key.F3)
             {
                 _on = !_on;
                 _label.Visible = _on;
                 SetProcess(_on);   // only run the per-frame sampling while the overlay is actually shown
                 if (_on) { _accum = 0; _frames = 0; _worstFrame = 0; }   // fresh sampling window on show
             }
+            else if (k.Keycode == Key.F4)
+            {
+                _scale3D = _scale3D > 0.75f ? 0.5f : (_scale3D > 0.35f ? 0.25f : 1f);
+                GetViewport().Scaling3DScale = _scale3D;
+            }
+            else if (k.Keycode == Key.F5)
+            {
+                _zShadows = !_zShadows;
+                foreach (var z in GetTree().GetNodesInGroup("zombies")) SetShadows(z, _zShadows);
+            }
+        }
+
+        static void SetShadows(Node root, bool on)
+        {
+            if (root is GeometryInstance3D gi)
+                gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
+            foreach (var c in root.GetChildren()) SetShadows(c, on);
         }
 
         public override void _Process(double delta)
@@ -62,7 +95,7 @@ namespace UnturnedGodot
                 $"scene: {M(Performance.Monitor.ObjectNodeCount):0} nodes   {M(Performance.Monitor.ObjectCount):0} objects   {M(Performance.Monitor.ObjectResourceCount):0} res   {M(Performance.Monitor.ObjectOrphanNodeCount):0} orphans\n" +
                 $"mem: static {M(Performance.Monitor.MemoryStatic) / 1048576.0:0} MB   vram {M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0} MB\n" +
                 $"systems (ms/win, big = the spike): {SystemsBreakdown()}\n" +
-                $"[F3 to hide]";
+                $"3d scale {_scale3D:0.00} [F4]   zombie shadows {(_zShadows ? "ON" : "OFF")} [F5]   [F3 to hide]";
             Prof.Reset();
             _accum = 0; _frames = 0; _worstFrame = 0;
         }

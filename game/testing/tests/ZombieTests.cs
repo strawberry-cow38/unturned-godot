@@ -96,6 +96,72 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The F4/F5 fps discriminators (Profiler.cs, docs/ZOMBIE_FPS_NOTES.md). F4 halves the 3D render scale --
+    // fragment cost scales with pixels and nothing else does, so it separates fill from a stall; F5 drops zombie
+    // shadow casting, which is 178 of 303 zombie draws. Neither question is answerable on this box (lavapipe's
+    // frame timing sits on a fixed ~95-160ms floor), so they get pressed on hardware I will never touch -- which
+    // means the WIRING is the part that has to be proven here, or I am shipping a diagnostic that silently
+    // does nothing and reads as "flat, therefore not fill".
+    //
+    // Driven through Input.ParseInputEvent rather than by calling _Input directly: the thing most likely to be
+    // broken is whether a CanvasLayer that has SetProcess(false) receives input at all, and a direct call would
+    // skip exactly that.
+    public class DebugFpsDiscriminators : GameTest
+    {
+        public override string Name => "debug.fps_discriminators";
+        public override IEnumerable<Step> Run()
+        {
+            var prof = new Profiler();
+            World.AddChild(prof);
+            var z = new ZombieController();
+            World.AddChild(z);
+            z.GlobalPosition = new Vector3(0f, 0f, -5f);
+            yield return Ticks(20);   // rig builds
+
+            var rig = FindDown<RiggedCharacter>(z);
+            T.Check("zombie built a rig", rig != null && rig.Body != null);
+            T.Check("zombie joined the \"zombies\" group F5 drives", z.IsInGroup("zombies"));
+
+            var vp = prof.GetViewport();
+            T.Check($"starts at full 3d render scale (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 1f) < 0.001f);
+            T.Check("zombie starts casting a shadow",
+                rig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.On);
+
+            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F4 });
+            yield return Ticks(2);
+            T.Check($"F4 halves the render scale to 0.50 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 0.5f) < 0.001f);
+
+            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F4 });
+            yield return Ticks(2);
+            T.Check($"F4 again -> 0.25 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 0.25f) < 0.001f);
+
+            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F4 });
+            yield return Ticks(2);
+            T.Check($"F4 wraps back to 1.00 (got {vp.Scaling3DScale:0.00})", Mathf.Abs(vp.Scaling3DScale - 1f) < 0.001f);
+
+            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F5 });
+            yield return Ticks(2);
+            T.Check("F5 stops the zombie casting a shadow",
+                rig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.Off);
+
+            Input.ParseInputEvent(new InputEventKey { Pressed = true, Keycode = Key.F5 });
+            yield return Ticks(2);
+            T.Check("F5 again restores it",
+                rig.Body.CastShadow == GeometryInstance3D.ShadowCastingSetting.On);
+
+            vp.Scaling3DScale = 1f;   // shared viewport: never leave a later test rendering at quarter res
+            prof.QueueFree(); z.QueueFree();
+        }
+
+        static TN FindDown<TN>(Node n) where TN : Node
+        {
+            if (n is TN hit) return hit;
+            foreach (var c in n.GetChildren())
+                if (FindDown<TN>(c) is TN found) return found;
+            return null;
+        }
+    }
+
     // Regression for the MP-report "zombie face renders on the LEFT ARM" (#36): the face decal's
     // BoneAttachment3D must bind to the Skull bone and the quad must ride that bone, not an arm.
     // IsPuppet = the MP path; the rig build is shared with SP zombies, so this guards both.
