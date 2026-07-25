@@ -77,4 +77,55 @@ namespace UnturnedGodot.Testing
                     behindGlass.HasLineOfSightFrom(eye));
         }
     }
+
+    // Regression, reported live by strawberry ("nearby loot is not working... it wasn't working before btw"):
+    // the Nearby/AREA page was permanently EMPTY in-game. Not the radius and not the LOS -- the scan simply was
+    // never on the path a player uses. There are four ways to open the bag (the keybind via Toggle, OpenInventory,
+    // crate-open, and the replicated storage fact) and only OpenInventory scanned; the keybind goes Toggle -> Open
+    // and populated nothing. Main.cs's demo called OpenInventory, so every harness looked fine while the actual
+    // game never worked -- a green-on-the-wrong-caller bug.
+    //
+    // So this test drives the REAL entry point (Toggle, what G does) rather than the convenient one.
+    public class ItemNearbyPopulatesOnRealOpenPath : GameTest
+    {
+        public override string Name => "item.nearby_open_path";
+        public override IEnumerable<Step> Run()
+        {
+            SDG.Unturned.ItemCatalog.RegisterAll();
+            WorldItem.NoDropRotation = true;
+
+            var ground = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };
+            ground.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(40f, 0.2f, 40f) } });
+            ground.Position = new Vector3(0f, -0.1f, 0f);
+            World.AddChild(ground);
+
+            var player = new PlayerController();
+            World.AddChild(player);
+            yield return Ticks(4);                       // _Ready builds Inventory + the dashboard
+
+            T.Check("player built an inventory", player.Inventory != null);
+            if (player.Inventory == null) yield break;
+
+            var a = WorldItem.Spawn(World, new SDG.Unturned.Item(67), new Vector3(1.5f, 0.3f, 0f));
+            var b = WorldItem.Spawn(World, new SDG.Unturned.Item(67), new Vector3(-1.5f, 0.3f, 0f));
+            yield return Ticks(6);
+
+            var area = player.Inventory.items[SDG.Unturned.PlayerInventory.AREA];
+            T.Check($"AREA starts empty before any open (count={area.getItemCount()})", area.getItemCount() == 0);
+
+            // the actual keybind path: Toggle, not OpenInventory
+            player.DebugToggleInventory();
+            yield return Ticks(2);
+
+            area = player.Inventory.items[SDG.Unturned.PlayerInventory.AREA];
+            T.Check($"the KEYBIND open path populated Nearby (count={area.getItemCount()}, expected 2)",
+                    area.getItemCount() == 2);
+            T.Check($"...and gave the page a non-zero grid so the bar can draw ({area.width}x{area.height})",
+                    area.width > 0 && area.height > 0);
+
+            // A live PlayerController left in the shared World leaks into later tests (L1 is ONE engine boot) --
+            // this test originally took three power.* tests down with it. Same convention as GunTests/InventoryTests.
+            player.QueueFree(); a.QueueFree(); b.QueueFree();
+        }
+    }
 }

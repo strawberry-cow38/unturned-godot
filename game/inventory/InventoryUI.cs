@@ -120,7 +120,13 @@ namespace UnturnedGodot
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
-        public void Open() { _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
+        // The Nearby/AREA refresh lives HERE, not at the call sites, because there are four ways to open the bag
+        // (the G keybind via Toggle, OpenInventory, crate-open, and the replicated storage-open fact) and only
+        // ONE of them was scanning. The keybind -- i.e. every time a player actually opens their inventory --
+        // went through Toggle -> Open and never populated the page, so Nearby was permanently empty in-game
+        // while the demo path in Main.cs worked fine. Scanning on Open closes the whole class instead of the
+        // one call site that got noticed.
+        public void Open() { Player?.ScanNearbyItems(); _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
         public void Close() { _open = false; Visible = false; _pdDragging = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
         // demo/verify: run the modifier quick-action on a cell (headless can't hold ctrl and click)

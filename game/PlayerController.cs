@@ -2099,8 +2099,7 @@ namespace UnturnedGodot
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
             (near as StoreShelf)?.BeginLiveDisplay(Inventory.items[PlayerInventory.STORAGE]);   // live-update the shelf models as the grid is edited (not just on close)
             GD.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
-            ScanNearbyItems();   // also surface any dropped ground loot in the AREA (Nearby) page
-            _invUI?.Open();
+            _invUI?.Open();      // Open() also scans the AREA (Nearby) page for dropped ground loot
             Input.MouseMode = Input.MouseModeEnum.Visible;
             return true;
         }
@@ -3444,7 +3443,10 @@ namespace UnturnedGodot
             }
         }
 
-        public void OpenInventory() { ScanNearbyItems(); _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }   // Open() scans Nearby itself now
+        /// <summary>L1 seam: the G-keybind path exactly as _Input runs it (`_invUI?.Toggle()`), so a test can
+        /// exercise the entry point players actually use rather than the convenient OpenInventory one.</summary>
+        public void DebugToggleInventory() => _invUI?.Toggle();
         public void DemoSelect(byte page, byte x, byte y) { _invUI?.DebugSelect(page, x, y); Input.MouseMode = Input.MouseModeEnum.Visible; }
         public void DemoEquip(byte page, byte x, byte y) => _invUI?.DebugEquip(page, x, y);
 
