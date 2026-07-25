@@ -289,14 +289,23 @@ namespace UnturnedGodot
         }
 
         AudioStreamPlayer _invAudio;
+        /// <summary>#4 seam: the clip path PlayInventoryAudio last resolved, or null if it never fired. Lets a test
+        /// assert WHICH foley a path routes to (and that the silent paths stay silent) without an audio device.</summary>
+        public string DebugLastAudio;
         // #4: source PlayInventoryAudio (ItemAsset.GetDefaultInventoryAudio :2409) -- a per-grab foley on grab/drop/rotate/
         // cancel. Retail splits LIGHT (a 1x1 item, size_x<2 && size_y<2) vs ROUGH (bigger) and picks a RANDOM variant per
         // grab (7 light / 6 rough real clips ripped from core.masterbundle) so a fast loot run doesn't machine-gun one clip.
-        void PlayInventoryAudio()
+        // `jar` names the item the sound is FOR. Defaults to the dragged one, but non-drag callers (the quick
+        // transfer) must pass theirs explicitly -- _dragJar is stale or null on those paths.
+        void PlayInventoryAudio(ItemJar jar = null)
         {
-            bool light = _dragJar == null || (_dragJar.size_x < 2 && _dragJar.size_y < 2);
+            var j = jar ?? _dragJar;
+            bool light = j == null || (j.size_x < 2 && j.size_y < 2);
             int v = (int)(GD.Randi() % (uint)(light ? 7 : 6)) + 1;
-            var stream = PlayerController.LoadWavOneShot($"res://content/sounds/inv_{(light ? "light" : "heavy")}_{v:00}.wav");
+            string path = $"res://content/sounds/inv_{(light ? "light" : "heavy")}_{v:00}.wav";
+            // Recorded BEFORE the load so the routing is assertable headlessly, where the stream may not resolve.
+            DebugLastAudio = path;
+            var stream = PlayerController.LoadWavOneShot(path);
             if (stream == null) return;
             if (_invAudio == null || !IsInstanceValid(_invAudio)) { _invAudio = new AudioStreamPlayer(); AddChild(_invAudio); }
             _invAudio.Stream = stream;
@@ -413,7 +422,14 @@ namespace UnturnedGodot
             Inv.items[page].removeItem(idx);
             bool ok = dest == 255 ? Inv.tryAddItem(jar.item) : Inv.items[dest].tryAddItem(jar.item);
             if (!ok) Inv.items[page].tryAddItem(jar.item);   // no room -> restore, no-op rather than a loss
-            if (ok) { CloseSelection(); Refresh(); }
+            if (ok)
+            {
+                // Source onSelectedItem plays the foley on BOTH grid<->storage transfer branches (:887, :898) but NOT
+                // on the AREA take (:872-877 is a bare takeItem). Pass the jar explicitly: PlayInventoryAudio picks
+                // light-vs-heavy off item size, and nothing is being DRAGGED here, so _dragJar would be stale or null.
+                if (page != PlayerInventory.AREA) PlayInventoryAudio(jar);
+                CloseSelection(); Refresh();
+            }
             return ok;
         }
 
@@ -428,8 +444,10 @@ namespace UnturnedGodot
             var jar = Inv.items[page].getItem(idx);
             if (page == PlayerInventory.AREA) return MoveTo(page, idx, jar, 255);   // ground -> first of my pages with room
             _selPage = page; _selX = jar.x; _selY = jar.y;
+            // No foley here: the source's onGrabbedItem modifier branch is a bare sendDropItem / takeItem with no
+            // PlayInventoryAudio call. (It also can't be correct here -- nothing is being dragged, so the light-vs-heavy
+            // pick would read a stale _dragJar from the previous drag, or null on a fresh session.)
             DropSelected();
-            PlayInventoryAudio();
             return true;
         }
 

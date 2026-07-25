@@ -399,4 +399,61 @@ namespace UnturnedGodot.Testing
                     inv.items[2].getItemCount() == handsBefore2 + 1);
         }
     }
+
+    // #4 audio ROUTING, which the merge of #4 (foley picked off _dragJar) and #9 (paths that never set _dragJar)
+    // made wrong. Source, precisely:
+    //   onSelectedItem  :887/:898  quick transfer grid<->storage  -> PLAYS, light-vs-heavy by item size
+    //   onSelectedItem  :872-877   take from AREA                 -> SILENT (bare takeItem)
+    //   onGrabbedItem   modifier   Ctrl+LMB drop / take           -> SILENT (bare sendDropItem)
+    //   checkSlot       :925       equip into a slot              -> SILENT ("there may be Equip audio")
+    public class InventoryAudioRouting : GameTest
+    {
+        public override string Name => "inv.audio_routing";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var inv = new PlayerInventory();
+            inv.items[PlayerInventory.STORAGE].resize(6, 4);   // a crate open, so QuickAction transfers
+            var ui = new InventoryUI { Inv = inv };
+            World.AddChild(ui);
+            ui.Open();
+            yield return Ticks(2);
+
+            // A 2x2 Medkit is HEAVY. Nothing has been dragged, so _dragJar is null -- the pre-fix code read it and
+            // called every transfer "light". The jar must come from the item being moved.
+            var heavy = new Item(15);
+            T.Check("seeded a 2x2 medkit into Hands", inv.items[2].tryAddItem(heavy));
+            var hjar = inv.items[2].getItem(0);
+            T.Check($"the medkit really is bigger than 1x1 ({hjar.size_x}x{hjar.size_y})", hjar.size_x >= 2 || hjar.size_y >= 2);
+
+            ui.DebugLastAudio = null;
+            bool moved = ui.DebugQuickAction(2, hjar.x, hjar.y);
+            yield return Ticks(1);
+            T.Check($"quick transfer moved the item (got {moved})", moved);
+            T.Check($"the transfer PLAYED a foley (got {ui.DebugLastAudio ?? "<silence>"})", ui.DebugLastAudio != null);
+            T.Check($"a 2x2 item routed to a HEAVY clip, not light (got {ui.DebugLastAudio})",
+                    ui.DebugLastAudio != null && ui.DebugLastAudio.Contains("inv_heavy_"));
+
+            // Ctrl+LMB drop from an own page is SILENT in source.
+            var m2 = new Item(15);
+            T.Check("seeded another item to drop", inv.items[2].tryAddItem(m2));
+            var djar = inv.items[2].getItem(0);
+            ui.DebugLastAudio = null;
+            bool dropped = ui.DebugCtrlGrab(2, djar.x, djar.y);
+            yield return Ticks(1);
+            T.Check($"Ctrl+LMB reported a drop (got {dropped})", dropped);
+            T.Check($"the Ctrl+LMB drop stayed SILENT (got {ui.DebugLastAudio ?? "<silence>"})", ui.DebugLastAudio == null);
+
+            // Taking off the ground is SILENT in source too.
+            var area = inv.items[PlayerInventory.AREA];
+            area.resize(6, 4);
+            T.Check("seeded an item on the ground", area.tryAddItem(new Item(15)));
+            var ljar = area.getItem(0);
+            ui.DebugLastAudio = null;
+            bool took = ui.DebugCtrlGrab(PlayerInventory.AREA, ljar.x, ljar.y);
+            yield return Ticks(1);
+            T.Check($"Ctrl+LMB on the ground reported a take (got {took})", took);
+            T.Check($"the ground take stayed SILENT (got {ui.DebugLastAudio ?? "<silence>"})", ui.DebugLastAudio == null);
+        }
+    }
 }
