@@ -2130,15 +2130,25 @@ namespace UnturnedGodot
         // Scan dropped ground items (WorldItems in the "worlditems" group) within a radius and pack them into the AREA /
         // "Nearby" page so the dashboard's Nearby bar shows real ground loot. Rescanned each time the bag opens. The UI
         // half (tinyclaw) already draws the bar + grid the moment the page is non-zero; drops route through the same _drop.
+        /// <summary>Nearby/AREA radius, squared. 16 = 4 m, the source's value (see ScanNearbyItems).</summary>
+        public const float NearbyRadiusSq = 16f;
+
         public void ScanNearbyItems()
         {
             if (Inventory == null || !IsInsideTree()) return;   // no-op in headless/test contexts without a live world
             var area = Inventory.items[PlayerInventory.AREA];
             area.clear();
             var found = new System.Collections.Generic.List<SDG.Unturned.Item>();
-            const float rSq = 36f;   // ~6 m
+            // Source radius: onItemDropAdded rejects on `(model.position - eyesPosition).sqrMagnitude > 16`,
+            // and findSimulatedItemsInRadius takes a **sqrRadius** (its parameter is literally named that) of
+            // the same 16 -- so both agree on 4 m, measured from the EYES, not the feet. Ours was 6 m from the
+            // body origin, which on a tall player is a materially different volume.
+            const float rSq = NearbyRadiusSq;
+            Vector3 eye = _cam != null ? _cam.GlobalPosition : GlobalPosition + Vector3.Up * 1.6f;
             foreach (var n in GetTree().GetNodesInGroup("worlditems"))
-                if (n is WorldItem wi && wi.Item != null && GlobalPosition.DistanceSquaredTo(wi.GlobalPosition) < rSq)
+                if (n is WorldItem wi && wi.Item != null
+                    && eye.DistanceSquaredTo(wi.GlobalPosition) < rSq
+                    && wi.HasLineOfSightFrom(eye))     // don't list loot through a wall (source: Linecast, BLOCK_PICKUP)
                     found.Add(wi.Item);
             if (found.Count == 0) { area.loadSize(0, 0); return; }
             area.loadSize(6, 6);

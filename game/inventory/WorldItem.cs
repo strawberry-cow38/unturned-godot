@@ -46,6 +46,35 @@ namespace UnturnedGodot
         bool _settled;
         public bool Settled => _settled;   // L1 tests: has the dropped item come to rest?
         public bool LocalVisualSuppressed => _suppressed;   // P2b: true -> hidden + off the look-hit layer under --spconsume (the WorldItemReplicaView puppet is the visible/focusable copy)
+
+        /// <summary>Is there a clear line from `eye` to this item? Used by the Nearby/AREA inventory page.
+        /// Source: PlayerDashboardInventoryUI casts Physics.Linecast(eyesPosition, renderer.bounds.center,
+        /// RayMasks.BLOCK_PICKUP) per pending drop and skips anything the ray hits.
+        ///
+        /// Deliberately does NOT reuse the render cull's answer (`Visible`), even though that already does an
+        /// LOS pass: the render cull ALSO applies a ~60deg view cone, and the source's AREA rule has no cone at
+        /// all — it's distance + line-of-sight only. Reusing it would silently drop every item behind the
+        /// player from the Nearby page, which is a different feature wearing the same raycast.
+        ///
+        /// Shares the render cull's hitbox-sample technique: ANY clear sample point counts, so an item peeking
+        /// past a corner still lists, and a fully-walled one costs the full 9 rays. Mask bit0 = large opaque
+        /// world geometry (WorldBuilder puts small props + glass on bit6 precisely so they don't block this).</summary>
+        public bool HasLineOfSightFrom(Vector3 eye)
+        {
+            if (!IsInsideTree() || _suppressed) return false;
+            var space = GetWorld3D()?.DirectSpaceState;
+            if (space == null) return true;             // no physics world (headless/test) -> don't hide loot behind a missing raycast
+            Transform3D gt = GlobalTransform;
+            var pts = _hitPts ?? new[] { _boxCtr };     // model not built yet -> fall back to the body origin
+            foreach (var lp in pts)
+            {
+                var q = PhysicsRayQueryParameters3D.Create(eye, gt * lp);
+                q.CollisionMask = 1;                    // bit0 only, same as the render cull
+                if (_excludeSelf != null) q.Exclude = _excludeSelf;
+                if (space.IntersectRay(q).Count == 0) return true;
+            }
+            return false;
+        }
         Vector3[] _hitPts;          // hitbox sample points (centre + 8 corners, local) for the full-hitbox LOS cull (master)
         Vector3 _boxCtr;
         Godot.Collections.Array<Rid> _excludeSelf;   // cached ray-exclude (this body) so the LOS rays don't re-alloc
