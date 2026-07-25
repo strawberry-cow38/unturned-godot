@@ -131,6 +131,31 @@ namespace UnturnedGodot
         // directly. Ctrl+RMB is already covered by DebugQuickAction, which is the same QuickAction the RMB branch calls.
         public bool DebugCtrlGrab(byte page, byte x, byte y) => CtrlGrab(page, x, y);
 
+        // #3: cancel an in-progress drag (RMB during a drag; source onRightClickedDuringDrag -> stopDrag). The dragged
+        // item is NEVER moved out of its page (the drag only previewed a floating tile) -> cancel = drop tile + repaint.
+        bool CancelDrag()
+        {
+            if (!_dragging) return false;
+            _dragFromCloth = false;
+            _dragging = false;
+            _dragTile?.QueueFree(); _dragTile = null;
+            PlayInventoryAudio();   // source stopDrag plays a foley
+            Refresh();
+            return true;
+        }
+        public bool DebugIsDragging => _dragging;                                    // #3 test seam
+        public bool DebugRmbCancel() => CancelDrag();                                // #3 test: exercise the real cancel path
+        public bool DebugStartDrag(byte page, byte x, byte y)                        // #3 test: set up a grid drag headless (StartDrag's grid branch)
+        {
+            if (Inv == null) return false;
+            var pg = Inv.items[page]; byte idx = pg.getIndex(x, y);
+            if (idx == byte.MaxValue) return false;
+            _dragFromCloth = false; _dragJar = pg.getItem(idx);
+            _dragPage = page; _dragX0 = _dragJar.x; _dragY0 = _dragJar.y; _dragRot = _dragJar.rot;
+            _grab = Vector2.Zero; _dragging = true;
+            return _dragging;
+        }
+
         long _lastSig = -1;
         public override void _Process(double delta)
         {
@@ -196,16 +221,7 @@ namespace UnturnedGodot
             }
             else if (e is InputEventMouseButton rmb && rmb.ButtonIndex == MouseButton.Right && rmb.Pressed)
             {
-                if (_dragging)   // #3: RMB during a drag CANCELS it (source onRightClickedDuringDrag -> stopDrag); the item snaps home, never moved
-                {
-                    _dragFromCloth = false;
-                    _dragging = false;
-                    _dragTile?.QueueFree(); _dragTile = null;
-                    PlayInventoryAudio();   // #4: source stopDrag plays inventory audio
-                    Refresh();
-                    GetViewport().SetInputAsHandled();
-                    return;
-                }
+                if (_dragging) { CancelDrag(); GetViewport().SetInputAsHandled(); return; }   // #3: RMB during a drag CANCELS it (source onRightClickedDuringDrag -> stopDrag)
                 // #9: MODIFIER + RMB is the source's onSelectedItem modifier branch -- the storage-aware quick
                 // transfer (AREA -> STORAGE, STORAGE -> tryFindSpace in your pages, your page -> STORAGE). Checked
                 // before the action menu so the modifier click transfers instead of opening a panel.

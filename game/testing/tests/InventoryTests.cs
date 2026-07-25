@@ -400,6 +400,42 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // #3: RMB during an in-progress drag CANCELS it (source onRightClickedDuringDrag -> stopDrag). The dragged item is
+    // only ever a floating PREVIEW -- it never leaves its page -- so a cancel must END the drag AND leave the item put.
+    public class InventoryDragRmbCancel : GameTest
+    {
+        public override string Name => "inv.drag_rmb_cancel";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var inv = new PlayerInventory();
+            var ui = new InventoryUI { Inv = inv };
+            World.AddChild(ui);
+            ui.Open();
+            yield return Ticks(2);
+
+            T.Check("seeded an item into Hands", inv.items[2].tryAddItem(new Item(3)));
+            var jar = inv.items[2].getItem(0);
+            byte px = jar.x, py = jar.y;
+            int countBefore = inv.items[2].getItemCount();
+
+            T.Check("not dragging before start", !ui.DebugIsDragging);
+            T.Check("drag started", ui.DebugStartDrag(2, px, py));
+            T.Check("dragging is true after start", ui.DebugIsDragging);
+
+            bool cancelled = ui.DebugRmbCancel();
+            yield return Ticks(1);
+            T.Check("RMB-cancel reported it cancelled a live drag", cancelled);
+            T.Check("NOT dragging after RMB-cancel", !ui.DebugIsDragging);
+            T.Check($"the item never left its page ({countBefore} -> {inv.items[2].getItemCount()})", inv.items[2].getItemCount() == countBefore);
+            byte idxNow = inv.items[2].getIndex(px, py);
+            T.Check("the item is STILL at its original cell", idxNow != byte.MaxValue);
+            T.Check("...and it's the same item (id 3)", idxNow != byte.MaxValue && inv.items[2].getItem(idxNow).item.id == 3);
+
+            T.Check("RMB-cancel with nothing dragging is a no-op", !ui.DebugRmbCancel());
+        }
+    }
+
     // #4 audio ROUTING, which the merge of #4 (foley picked off _dragJar) and #9 (paths that never set _dragJar)
     // made wrong. Source, precisely:
     //   onSelectedItem  :887/:898  quick transfer grid<->storage  -> PLAYS, light-vs-heavy by item size
