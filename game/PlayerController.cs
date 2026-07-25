@@ -2099,6 +2099,7 @@ namespace UnturnedGodot
             CopyPage(near.Storage, Inventory.items[PlayerInventory.STORAGE], near.Width, near.Height);
             (near as StoreShelf)?.BeginLiveDisplay(Inventory.items[PlayerInventory.STORAGE]);   // live-update the shelf models as the grid is edited (not just on close)
             GD.Print($"[crate] opened ({near.Storage.getItemCount()} items)");
+            ScanNearbyItems();   // also surface any dropped ground loot in the AREA (Nearby) page
             _invUI?.Open();
             Input.MouseMode = Input.MouseModeEnum.Visible;
             return true;
@@ -2124,6 +2125,23 @@ namespace UnturnedGodot
             var s = Inventory.items[PlayerInventory.STORAGE];
             s.clear(); s.loadSize(0, 0);
             _openCrate = null;
+        }
+
+        // Scan dropped ground items (WorldItems in the "worlditems" group) within a radius and pack them into the AREA /
+        // "Nearby" page so the dashboard's Nearby bar shows real ground loot. Rescanned each time the bag opens. The UI
+        // half (tinyclaw) already draws the bar + grid the moment the page is non-zero; drops route through the same _drop.
+        public void ScanNearbyItems()
+        {
+            var area = Inventory.items[PlayerInventory.AREA];
+            area.clear();
+            var found = new System.Collections.Generic.List<SDG.Unturned.Item>();
+            const float rSq = 36f;   // ~6 m
+            foreach (var n in GetTree().GetNodesInGroup("worlditems"))
+                if (n is WorldItem wi && wi.Item != null && GlobalPosition.DistanceSquaredTo(wi.GlobalPosition) < rSq)
+                    found.Add(wi.Item);
+            if (found.Count == 0) { area.loadSize(0, 0); return; }
+            area.loadSize(6, 6);
+            foreach (var it in found) area.tryAddItem(it);
         }
 
         // MP storage state (wired only by ClientWorldSession): the crate the SERVER says we have open.
@@ -3415,7 +3433,7 @@ namespace UnturnedGodot
             }
         }
 
-        public void OpenInventory() { _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
+        public void OpenInventory() { ScanNearbyItems(); _invUI?.Open(); Input.MouseMode = Input.MouseModeEnum.Visible; }
         public void DemoSelect(byte page, byte x, byte y) { _invUI?.DebugSelect(page, x, y); Input.MouseMode = Input.MouseModeEnum.Visible; }
         public void DemoEquip(byte page, byte x, byte y) => _invUI?.DebugEquip(page, x, y);
 

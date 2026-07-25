@@ -3174,6 +3174,12 @@ namespace UnturnedGodot
             crate.Add(new SDG.Unturned.Item(95, 4));  // Bandage x4
             crate.Add(new SDG.Unturned.Item(13, 3));  // Canned Beans x3
 
+            // a few items dropped on the GROUND nearby -> the AREA (Nearby) scan picks these up (bitvox: show storage + nearby)
+            WorldItem.Spawn(this, new SDG.Unturned.Item(4),     new Vector3(1.2f, 0.3f, 0.6f));    // Eaglefire
+            WorldItem.Spawn(this, new SDG.Unturned.Item(6, 30), new Vector3(-1.0f, 0.3f, 0.8f));   // Military mag x30
+            WorldItem.Spawn(this, new SDG.Unturned.Item(13),    new Vector3(0.7f, 0.3f, 1.1f));    // Canned Beans
+            WorldItem.Spawn(this, new SDG.Unturned.Item(14),    new Vector3(-0.6f, 0.3f, 1.2f));   // Water Bottle
+
             player.OpenNearestCrate();   // within 2.5 m -> loads the crate into STORAGE + opens the dashboard
             GD.Print("[CRATE] opened a storage crate");
         }
