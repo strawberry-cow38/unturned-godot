@@ -3,34 +3,38 @@ using System.Collections.Generic;
 
 namespace UnturnedGodot.Testing
 {
-    // Landmine trap: a placed Deployable with IsTrap watches TrapTrigger for a zombie, then DetonateTrap() -- an AoE
-    // blast (DamageTool.explode, already covered by the grenade tests) plus shattering the mine. This proves the piece
-    // I added: the proximity ARMING/TRIGGER. A zombie outside TrapTrigger leaves it armed; a zombie inside detonates it.
+    // Landmine trap: a placed Deployable (IsTrap) is inert for TrapArmDelay (placer grace), then arms and watches
+    // TrapTrigger for a zombie; a victim in range detonates it (AoE via DamageTool.explode, covered by the grenade
+    // tests) and shatters the mine. Proves the pieces I added: the arming grace, the trigger radius, and detonation.
     public class LandmineArmsAndDetonates : GameTest
     {
         public override string Name => "trap.landmine";
         public override IEnumerable<Step> Run()
         {
             var mine = Deployable.Spawn(World, DeployableDef.Landmine, Vector3.Zero, 0f);
-            yield return Ticks(2);
-            T.Check("landmine placed + armed (not yet exploded)", mine != null && !mine.DebugExploded);
+            var z = new ZombieController();
+            World.AddChild(z);
+            yield return Ticks(3);   // mesh/collision build + the zombie joins the "zombies" group
+            T.Check("landmine placed (not yet exploded)", mine != null && !mine.DebugExploded);
             if (mine == null) yield break;
 
-            // a zombie OUTSIDE the trigger radius must NOT set it off
-            var far = new ZombieController();
-            World.AddChild(far);
-            far.GlobalPosition = new Vector3(5f, 0f, 0f);        // 5 m > 1.4 m trigger
-            yield return Ticks(2);
-            mine.DebugTrapCheck();
-            T.Check("a zombie out of range leaves it armed", !mine.DebugExploded);
+            z.GlobalPosition = new Vector3(0.8f, 0f, 0f);   // INSIDE the 1.4 m trigger (no Ticks after -> it stays put)
 
-            // a zombie INSIDE the trigger radius detonates it
-            var near = new ZombieController();
-            World.AddChild(near);
-            near.GlobalPosition = new Vector3(0.8f, 0f, 0f);     // 0.8 m < 1.4 m trigger
-            yield return Ticks(2);
+            // GRACE: a freshly-planted mine is inert -- a zombie in range must NOT set it off (else you blast yourself)
             mine.DebugTrapCheck();
-            T.Check("a zombie in range detonates the mine", mine.DebugExploded);
+            T.Check("placer grace: a fresh mine ignores a zombie in range", !mine.DebugExploded);
+
+            mine.DebugAdvanceArm(2f);   // past TrapArmDelay -> armed
+
+            // armed, but a zombie OUT of range still doesn't trigger it
+            z.GlobalPosition = new Vector3(5f, 0f, 0f);     // 5 m > 1.4 m
+            mine.DebugTrapCheck();
+            T.Check("armed but zombie out of range: still armed", !mine.DebugExploded);
+
+            // armed + a zombie IN range detonates it
+            z.GlobalPosition = new Vector3(0.8f, 0f, 0f);
+            mine.DebugTrapCheck();
+            T.Check("armed + zombie in range detonates the mine", mine.DebugExploded);
         }
     }
 }

@@ -286,7 +286,7 @@ namespace UnturnedGodot
 
         // --- TRAP (landmine): a proximity mine. _Process watches TrapTrigger for a victim, then DetonateTrap() blasts +
         //     shatters. v1 arms on zombies only (base defense); player-trigger + a place-and-walk-away arming grace = follow-ups. ---
-        float _trapAccum;
+        float _trapAccum, _armTime;
         bool TrapVictimNear()
         {
             if (Def == null || GetTree() == null) return false;
@@ -302,8 +302,9 @@ namespace UnturnedGodot
             PlayerRegistry.Nearest(GlobalPosition)?.Explode(GlobalPosition, Def.TrapBlast, Def.TrapZombieDamage, Def.TrapPlayerDamage, Def.TrapVehicleDamage);
             Explode();   // the mine's own blast consumes it -> ShatterOnDeath debris, no salvage husk
         }
-        // test seam: arm-check once, deterministically (bypasses the _Process throttle)
-        public void DebugTrapCheck() { if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f && TrapVictimNear()) DetonateTrap(); }
+        // test seams: check-once deterministically (bypass the _Process throttle) + advance the arm timer past the grace
+        public void DebugTrapCheck() { if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f && _armTime >= Def.TrapArmDelay && TrapVictimNear()) DetonateTrap(); }
+        public void DebugAdvanceArm(float dt) => _armTime += dt;
         public bool DebugExploded => _exploded;
 
         // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
@@ -465,8 +466,9 @@ namespace UnturnedGodot
             // spent a day chasing; a proximity trap doesn't need per-frame resolution.
             if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f)
             {
+                _armTime += (float)delta;   // placer grace: inert until armed, so planting it doesn't blast you
                 _trapAccum += (float)delta;
-                if (_trapAccum >= 0.2f) { _trapAccum = 0f; if (TrapVictimNear()) DetonateTrap(); }
+                if (_trapAccum >= 0.2f) { _trapAccum = 0f; if (_armTime >= Def.TrapArmDelay && TrapVictimNear()) DetonateTrap(); }
             }
             // damage/burn lifecycle runs ALWAYS (not just when focused): 0-HP explosion delay + the wreck fire arc.
             if (_deadTimer >= 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }
