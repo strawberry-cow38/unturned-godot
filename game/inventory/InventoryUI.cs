@@ -47,7 +47,7 @@ namespace UnturnedGodot
         const int MARGIN = 12;       // screen-edge margin
         const int CHARW = 410;       // character panel width (source characterBox SizeOffset_X = 410)
         const int GUTTER = 20;       // gap between the character panel and the storage box
-        const int PDTOP = 38;        // paperdoll y inside the character panel (below the CHARACTER header)
+        const int PDTOP = 58;        // paperdoll y inside the character panel (below the name/faction badge)
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
         const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
 
@@ -839,6 +839,27 @@ namespace UnturnedGodot
             }
         }
 
+        // Name + faction badge at the character panel's top (source characterPlayer / SleekPlayer @ (10,10), 410x50):
+        // an avatar chip, username (yellow), faction "Neutral [0]" under it, and a yellow + on the right. Themed to match.
+        void BuildNameBadge(Panel box)
+        {
+            var badge = new Panel { Position = new Vector2(8, 6), Size = new Vector2(CHARW - 16, 46) };
+            StyleBox(badge, UI_BAR);
+            box.AddChild(badge);
+            var av = new Panel { Position = new Vector2(8, 7), Size = new Vector2(32, 32) };
+            StyleBox(av, UI_TAB_OFF);
+            badge.AddChild(av);
+            var uname = new Label { Text = "Survivor", Position = new Vector2(50, 4) };
+            uname.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f));   // yellow username
+            badge.AddChild(uname);
+            var fac = new Label { Text = "Neutral [0]", Position = new Vector2(50, 23) };
+            fac.AddThemeColorOverride("font_color", new Color(0.72f, 0.77f, 0.83f));
+            badge.AddChild(fac);
+            var plus = new Label { Text = "+", Position = new Vector2(CHARW - 44, 12) };
+            plus.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f));
+            badge.AddChild(plus);
+        }
+
         // The left CHARACTER panel (source characterBox, 410px): the 3D paperdoll at the top, the worn-clothing equip
         // slots below it, and the two weapon slots pinned to the BOTTOM (repositioned in LayoutDash). Built once.
         void BuildCharacterPanel()
@@ -846,7 +867,7 @@ namespace UnturnedGodot
             _charBox = new Panel { Position = new Vector2(MARGIN, NAVH + MARGIN), Size = new Vector2(CHARW, 600) };   // height fixed up in LayoutDash
             StyleBox(_charBox, UI_PANEL);
             _dash.AddChild(_charBox);
-            _charBox.AddChild(Header("CHARACTER", new Vector2(10, 8), CHARW - 20));
+            BuildNameBadge(_charBox);   // name/faction badge strip (source characterPlayer @ (10,10), 410x50)
 
             BuildPaperdoll(_charBox);   // the 3D worn-character render at the top of the panel
 
