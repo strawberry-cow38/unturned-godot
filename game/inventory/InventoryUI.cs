@@ -121,7 +121,7 @@ namespace UnturnedGodot
 
         public void Toggle() { if (_open) Close(); else Open(); }
         public void Open() { _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
-        public void Close() { _open = false; Visible = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
+        public void Close() { _open = false; Visible = false; _pdDragging = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
         // demo/verify: run the modifier quick-action on a cell (headless can't hold ctrl and click)
         public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
@@ -215,9 +215,20 @@ namespace UnturnedGodot
                         && CtrlGrab(qp, qx, qy))
                     { GetViewport().SetInputAsHandled(); return; }
 
+                    // Press on the paperdoll rect (when NOT carrying an item) begins a SPIN, not an item grab. This MUST
+                    // live here rather than on _pdHit's Control.GuiInput: _Input runs before gui_input, and the StartDrag
+                    // branch just below calls SetInputAsHandled() on every press -> it was swallowing the paperdoll's
+                    // GuiInput so the old PaperdollDrag handler never fired (that's why click-spin looked dead).
+                    if (!_dragging && OverPaperdoll(mb.GlobalPosition))
+                    { _pdDragging = true; GetViewport().SetInputAsHandled(); return; }
+
                     if (!_dragging) { StartDrag(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
                 }
-                else if (_dragging) { Drop(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
+                else
+                {
+                    if (_pdDragging) { _pdDragging = false; GetViewport().SetInputAsHandled(); }        // end a paperdoll spin
+                    else if (_dragging) { Drop(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
+                }
             }
             else if (e is InputEventMouseButton rmb && rmb.ButtonIndex == MouseButton.Right && rmb.Pressed)
             {
@@ -239,9 +250,15 @@ namespace UnturnedGodot
                 }
                 GetViewport().SetInputAsHandled();
             }
-            else if (e is InputEventMouseMotion mm && _dragging)
+            else if (e is InputEventMouseMotion mm)
             {
-                _dragTile.GlobalPosition = mm.GlobalPosition - _grab;
+                if (_pdDragging)
+                {
+                    _pdYaw -= mm.Relative.X * 0.012f;                          // horizontal drag spins the rig around Y
+                    if (_pdBody != null) _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f);   // _pdYaw stays authoritative even pre-rig
+                    GetViewport().SetInputAsHandled();
+                }
+                else if (_dragging) { _dragTile.GlobalPosition = mm.GlobalPosition - _grab; }
             }
             else if (e is InputEventKey { Pressed: true, Keycode: Key.R } && _dragging)
             {
@@ -1043,8 +1060,7 @@ namespace UnturnedGodot
                 Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH),
                 Stretch = false, MouseFilter = Control.MouseFilterEnum.Stop, TooltipText = "drag to rotate",
             };
-            vpc.GuiInput += PaperdollDrag;
-            _pdHit = vpc;   // this rect IS the equip target (see PointToClothSlot)
+            _pdHit = vpc;   // this rect IS the equip drop target (PointToClothSlot) AND the click-spin hit-rect (OverPaperdoll in _Input)
             box.AddChild(vpc);
             _pdVp = new SubViewport
             {
@@ -1108,15 +1124,28 @@ namespace UnturnedGodot
         }
 
         // Drag left/right on the paperdoll to spin the character (source has a rotation slider; a drag is the same intent).
-        void PaperdollDrag(InputEvent e)
+        // The press/motion handling lives in _Input (see the spin branch there), because _Input consumes the press before
+        // a Control.GuiInput would ever see it; this is just the hit-test for "is the cursor over the paperdoll rect".
+        bool OverPaperdoll(Vector2 global) => _pdHit != null && new Rect2(_pdHit.GlobalPosition, _pdHit.Size).HasPoint(global);
+
+        // TEST SEAM: drive a REAL click-drag on the paperdoll through _Input (the exact path the fix repairs -- the press
+        // must reach the spin branch instead of being swallowed by the item-drag StartDrag/SetInputAsHandled). Returns the
+        // applied yaw delta in radians; float.NaN if the press failed to start a spin (routing still broken). +relX -> -delta.
+        public float DebugPaperdollDragSpin(float relX)
         {
-            if (e is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left) _pdDragging = mb.Pressed;
-            else if (e is InputEventMouseMotion mm && _pdDragging && _pdBody != null)
-            {
-                _pdYaw -= mm.Relative.X * 0.012f;
-                _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f);
-            }
+            if (_pdHit == null) return float.NaN;
+            bool wasOpen = _open; _open = true;
+            var c = _pdHit.GlobalPosition + _pdHit.Size * 0.5f;
+            _Input(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true, Position = c, GlobalPosition = c });
+            if (!_pdDragging) { _open = wasOpen; return float.NaN; }
+            float y0 = _pdYaw;
+            _Input(new InputEventMouseMotion { Relative = new Vector2(relX, 0f), Position = c, GlobalPosition = c });
+            float delta = _pdYaw - y0;
+            _Input(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = false, Position = c, GlobalPosition = c });
+            _open = wasOpen;
+            return delta;
         }
+        public bool DebugPaperdollSpinning => _pdDragging;   // true only mid-drag; a completed DebugPaperdollDragSpin leaves it false
 
         public void Refresh()
         {

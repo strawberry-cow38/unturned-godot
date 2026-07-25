@@ -343,6 +343,35 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Paperdoll click-spin (master 2026-07-25): a horizontal click-drag on the 3D character rotates it around Y. Regression
+    // guard for the input-routing bug -- _Input's item-drag StartDrag branch called SetInputAsHandled() on EVERY press, which
+    // swallowed the paperdoll SubViewportContainer's GuiInput so the old PaperdollDrag never fired (spin looked dead). The fix
+    // routes a paperdoll press to a spin INSIDE _Input, before StartDrag. Driving the real _Input here means reverting the fix
+    // makes the press fail to start a spin (DebugPaperdollDragSpin -> NaN) and the first Check fails.
+    public class InventoryPaperdollSpin : GameTest
+    {
+        public override string Name => "inv.paperdoll_spin";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            var inv = new PlayerInventory();
+            var ui = new InventoryUI { Inv = inv };
+            World.AddChild(ui);
+            ui.Open();
+            yield return Ticks(2);   // let the character panel lay out so the paperdoll rect has a real size + position
+
+            // a rightward drag of +100px must spin the rig; the live handler applies _pdYaw -= relX * 0.012
+            float d = ui.DebugPaperdollDragSpin(100f);
+            T.Check($"press on the paperdoll STARTS a spin, not an item-grab (delta={d})", !float.IsNaN(d));
+            T.Check($"a +100px drag applied the yaw step ~-1.2 rad (got {d})", !float.IsNaN(d) && Mathf.Abs(d - (-100f * 0.012f)) < 0.01f);
+            T.Check("the drag released cleanly, not stuck spinning", !ui.DebugPaperdollSpinning);
+
+            // dragging the other way must spin back (delta flips sign)
+            float back = ui.DebugPaperdollDragSpin(-100f);
+            T.Check($"dragging left spins the opposite way (got {back})", !float.IsNaN(back) && back > 0f);
+        }
+    }
+
     // #8 + #9: the two source deviations found in the final UX review against PlayerDashboardInventoryUI.
     //   #8 checkSlot(:928/:955) + checkEquip(:988) run `PlayerDashboardUI.close(); PlayerLifeUI.open();` on EVERY
     //      successful weapon equip -- equipping a gun returns you to the game, it does not leave you in the bag.
