@@ -1082,6 +1082,7 @@ namespace UnturnedGodot
                 AddChild(pause);
                 player.PauseMenu = pause;
                 AddChild(new Profiler());   // F3 -> perf overlay (fps/frame/worst-frame/timings/draw-calls/mem) for stutter diagnosis (master)
+                AddChild(new ZombieAnimCut());   // F6 -> freeze ALL rig anim (skeletons leg of the engine-side POI-fps cut: read F3 physics ms with it on vs off)
                 var attach = new AttachmentMenu();   // T -> weapon-attachment menu (iron sights removable, etc.)
                 AddChild(attach);
                 player.AttachMenu = attach;

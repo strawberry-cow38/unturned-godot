@@ -734,6 +734,7 @@ namespace UnturnedGodot
             { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
             { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
             root.AddChild(new Profiler());   // F3 perf overlay (parity)
+            root.AddChild(new ZombieAnimCut());   // F6 -> freeze rig anim (skeletons-cut, parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)
         }
 

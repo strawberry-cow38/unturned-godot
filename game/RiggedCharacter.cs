@@ -19,6 +19,23 @@ namespace UnturnedGodot
         public Skeleton3D Skeleton { get; private set; }
         public string[] ClipNames { get; private set; } = Array.Empty<string>();
 
+        // --- skeletons-cut instrument (strawberry POI-fps hunt): freeze ALL skeletal AnimationPlayers so the
+        //     physics-frame cost of posing 17 bones x N zombies (UsePhysicsAnimRate -> the AnimationMixer runs in the
+        //     PHYSICS callback) can be read straight off F3's physics line. z.rig only times the near-no-op Tick(); the
+        //     real per-zombie posing is engine-side (AnimationMixer, physics callback) and INVISIBLE to it. Active=false
+        //     stops the mixer dead -> the skeleton holds its last pose and the engine skips it. F6 (ZombieAnimCut)
+        //     toggles it live. Not a fix -- an instrument: freeze it, watch F3 physics ms drop (or not).
+        static readonly HashSet<RiggedCharacter> _live = new();
+        public static bool AnimFrozen { get; private set; }
+        public static int LiveRigCount => _live.Count;
+        public static void SetAnimFrozen(bool f)
+        {
+            AnimFrozen = f;
+            foreach (var rc in _live) if (rc._ap != null) rc._ap.Active = !f;
+        }
+        public override void _EnterTree() { _live.Add(this); if (AnimFrozen && _ap != null) _ap.Active = false; }
+        public override void _ExitTree() => _live.Remove(this);
+
         // FLANKER_STALK: swap the body to a faint translucent shimmer (Unturned's ZombieClothing.ghostMaterial) --
         // NOT fully gone; a keen eye can still pick out the stalker. Restores the solid tint when off.
         // Clothes-shader body: drive the ghost_alpha uniform (1.0 solid / 0.2 shimmer). Atlas body: the old
