@@ -289,12 +289,14 @@ namespace UnturnedGodot
         }
 
         AudioStreamPlayer _invAudio;
-        // #4: source PlayInventoryAudio -- a soft click on grab / drop / rotate / cancel. The retail clip is ripped to
-        // content/sounds/inventory.wav; this NO-OPS until that file exists (LoadWavOneShot returns null), so the wiring
-        // is complete + build-safe and the sound "just turns on" once ripped.
+        // #4: source PlayInventoryAudio (ItemAsset.GetDefaultInventoryAudio :2409) -- a per-grab foley on grab/drop/rotate/
+        // cancel. Retail splits LIGHT (a 1x1 item, size_x<2 && size_y<2) vs ROUGH (bigger) and picks a RANDOM variant per
+        // grab (7 light / 6 rough real clips ripped from core.masterbundle) so a fast loot run doesn't machine-gun one clip.
         void PlayInventoryAudio()
         {
-            var stream = PlayerController.LoadWavOneShot("res://content/sounds/inventory.wav");
+            bool light = _dragJar == null || (_dragJar.size_x < 2 && _dragJar.size_y < 2);
+            int v = (int)(GD.Randi() % (uint)(light ? 7 : 6)) + 1;
+            var stream = PlayerController.LoadWavOneShot($"res://content/sounds/inv_{(light ? "light" : "heavy")}_{v:00}.wav");
             if (stream == null) return;
             if (_invAudio == null || !IsInstanceValid(_invAudio)) { _invAudio = new AudioStreamPlayer(); AddChild(_invAudio); }
             _invAudio.Stream = stream;
