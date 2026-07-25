@@ -97,7 +97,7 @@ namespace UnturnedGodot
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,            // gear .obj is Z-flipped like every ripped static mesh -> double-sided (repo convention: guns/vehicles/character), never inside-out
             };
             if (albedo != null) mat.AlbedoTexture = albedo;
-            var mi = new MeshInstance3D { Name = name, Mesh = mesh, MaterialOverride = mat, VisibilityRangeEnd = 95f };
+            var mi = new MeshInstance3D { Name = name, Mesh = mesh, MaterialOverride = mat, VisibilityRangeEnd = 95f, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // DIAGNOSTIC: gear/attachment meshes stop casting shadows too, so the skinned-shadow isolation is clean
             att.AddChild(mi);
             mi.Position = offset;                        // captured Model_0 bone-local offset (clothing_content.tsv attach_off)
             slot = att;
@@ -466,7 +466,7 @@ namespace UnturnedGodot
             var mesh = geom.mesh;
             var skin = geom.skin;
 
-            var mi = new MeshInstance3D { Name = "Body", Mesh = mesh, VisibilityRangeEnd = 95f };   // horde perf: don't draw a skinned body past ~95m (player/arms always near, never culled)
+            var mi = new MeshInstance3D { Name = "Body", Mesh = mesh, VisibilityRangeEnd = 95f, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };   // DIAGNOSTIC (strawberry 3p-car-POI tank): skinned bodies no longer cast shadows -> isolates whether skinned zombie shadows are the GPU cost. horde perf: don't draw a skinned body past ~95m (player/arms always near, never culled)
             root.Body = mi;
             skel.AddChild(mi);
             mi.Skin = skin;
