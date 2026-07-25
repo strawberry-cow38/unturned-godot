@@ -4020,6 +4020,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (NetAvatar) return;   // per-frame work is all client-side (render interp, look focus, recoil drain, cam) -- none of it on a server avatar
+            if (System.Environment.GetEnvironmentVariable("UG_3P") == "1") _fp = false;   // render harness (UG_3P=1): force 3rd-person even while driving, to reproduce strawberry's 3p-vehicle gpu tank headlessly
             if (_interpReady && !_dead && _driving == null)   // RENDER INTERPOLATION (master): lerp the visual position between the last two 50Hz ticks so it doesn't step at 50Hz while rendering at 60+
                 GlobalPosition = _interpPrev.Lerp(_interpCurr, (float)Engine.GetPhysicsInterpolationFraction());
             if (_driving != null && !_dead)   // driving: position the cam from the vehicle's Godot-INTERPOLATED visual transform, so cam + car mesh are both smooth + IN SYNC (master: godot smoothing for the car)
