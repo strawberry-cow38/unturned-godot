@@ -37,4 +37,27 @@ namespace UnturnedGodot.Testing
             T.Check("armed + zombie in range detonates the mine", mine.DebugExploded);
         }
     }
+
+    // The landmine also arms on a PLAYER (PvP + you can't just walk over your own field). This covers the DETECTION
+    // path (TrapVictimNear via PlayerRegistry) without detonating -- the detonation is the same code the zombie test
+    // already exercises, so there's no need to blast a bare test player through its damage/UI path.
+    public class LandmineDetectsPlayer : GameTest
+    {
+        public override string Name => "trap.landmine_player";
+        public override IEnumerable<Step> Run()
+        {
+            var player = new PlayerController();
+            World.AddChild(player);                              // registers in PlayerRegistry on _EnterTree
+            player.GlobalPosition = new Vector3(30f, 0f, 0f);    // far away
+            var mine = Deployable.Spawn(World, DeployableDef.Landmine, Vector3.Zero, 0f);
+            yield return Ticks(3);
+            T.Check("placed", mine != null);
+            if (mine == null) yield break;
+
+            T.Check("a player far away is NOT a victim", !mine.DebugVictimNear());
+
+            player.GlobalPosition = new Vector3(0.8f, 0f, 0f);   // inside the 1.4 m trigger
+            T.Check("a player in range IS a victim", mine.DebugVictimNear());
+        }
+    }
 }

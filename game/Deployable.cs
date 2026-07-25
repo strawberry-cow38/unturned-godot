@@ -294,6 +294,8 @@ namespace UnturnedGodot
             Vector3 me = GlobalPosition;
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && z.GlobalPosition.DistanceSquaredTo(me) <= r2) return true;
+            var p = PlayerRegistry.Nearest(me);   // a mine doesn't care WHO steps on it (PvP + you); the arm grace already protects the placer
+            if (p != null && p.GlobalPosition.DistanceSquaredTo(me) <= r2) return true;
             return false;
         }
         void DetonateTrap()
@@ -305,6 +307,7 @@ namespace UnturnedGodot
         // test seams: check-once deterministically (bypass the _Process throttle) + advance the arm timer past the grace
         public void DebugTrapCheck() { if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f && _armTime >= Def.TrapArmDelay && TrapVictimNear()) DetonateTrap(); }
         public void DebugAdvanceArm(float dt) => _armTime += dt;
+        public bool DebugVictimNear() => Def != null && Def.IsTrap && TrapVictimNear();   // detection only (no detonation side-effects) -- for the player-path test
         public bool DebugExploded => _exploded;
 
         // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
