@@ -28,6 +28,13 @@ namespace UnturnedGodot
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
+
+        // --- TRAP (landmine/spike): IsTrap makes the placed Deployable watch TrapTrigger for a victim, then detonate a
+        //     TrapBlast-radius AoE (reusing DamageTool.explode) and shatter itself. Src ItemTrapAsset (range2 + damage). ---
+        public bool IsTrap;
+        public float TrapTrigger = 1.4f;   // proximity radius that fires it (m)
+        public float TrapBlast = 6f;       // AoE explosion radius on trigger (m; 0 = contact-only)
+        public float TrapZombieDamage = 200f, TrapPlayerDamage = 101f, TrapVehicleDamage = 100f;
         public FixtureKind Fixture = FixtureKind.None;   // A3/A2: a server-placed WORLD fixture (GridSource mains / GasPump) vs a normal player-placeable deployable. Bridged to DeployableNetDef.FixtureKind in DeployableNetSchema.
 
         // FLUID device marker (strawberry 2026-07-22): a non-null Fluid means this "deployable" places a FluidContainer
@@ -235,10 +242,22 @@ namespace UnturnedGodot
 
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
+        // src Landmine.dat: id 1341, Useable Trap. A planted proximity mine -- when a victim comes within TrapTrigger it
+        // detonates a big AoE blast (reusing DamageTool.explode) and shatters itself. v1 arms on ZOMBIES (base defense);
+        // player-trigger + a place-and-walk-away arming grace + the real ripped Landmine_0 mesh are flagged follow-ups.
+        public static readonly DeployableDef Landmine = new()
+        {
+            Id = 1341, Name = "Landmine", ProcBox = true,   // TODO(inc2): rip the real Landmine_0 mesh + 1p hold model
+            Size = new Vector3(0.4f, 0.4f, 0.12f), Offset = 0.02f, Radius = 0.2f, Range = 4f, Health = 50f,
+            IsTrap = true, TrapTrigger = 1.4f, TrapBlast = 6f, TrapZombieDamage = 200f, TrapPlayerDamage = 101f, TrapVehicleDamage = 100f,
+            ShatterOnDeath = true, PlaceSound = "metalplacement",
+        };
+
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine };
         public static DeployableDef ById(ushort id) => id switch
         {
+            1341 => Landmine,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

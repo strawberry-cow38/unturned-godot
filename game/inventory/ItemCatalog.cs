@@ -48,6 +48,7 @@ namespace SDG.Unturned
             Add(9119, "Fluid Inlet", 2, 2, EItemType.GENERIC, EItemRarity.RARE,   0, 0, "An infinite water inlet -- but only placeable submerged in water (a valid depth band; the ghost turns blue only there). It has no pressure of its own, so you MUST run a powered pump on its line to draw water up out of it.");
             Add(9120, "Fluid Drain",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A drain that deletes whatever fluid is piped into it. Place it anywhere and hose your overflow / waste line into it.");
             Add(9121, "Fluid Purifier",   2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered water purifier. Wire it to power, hose tainted or dirty water into its input, and clean drinkable water comes out. Dead without power.");
+            Add(1341, "Landmine",         2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A proximity mine. Plant it, and anything that wanders within ~1.4 m sets off a heavy blast. Consumed by its own explosion -- no salvage.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

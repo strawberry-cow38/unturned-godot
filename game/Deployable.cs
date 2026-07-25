@@ -284,6 +284,28 @@ namespace UnturnedGodot
         public bool Hurt => !OnFire && Health < HealthMax;                                  // alive (not on fire) + damaged -> a blowtorch can repair it (src isRepair)
         public void Repair(float amount) { if (!OnFire) Health = Mathf.Min(HealthMax, Health + amount); }   // blowtorch repair: heal HP up to max, same as a car
 
+        // --- TRAP (landmine): a proximity mine. _Process watches TrapTrigger for a victim, then DetonateTrap() blasts +
+        //     shatters. v1 arms on zombies only (base defense); player-trigger + a place-and-walk-away arming grace = follow-ups. ---
+        float _trapAccum;
+        bool TrapVictimNear()
+        {
+            if (Def == null || GetTree() == null) return false;
+            float r2 = Def.TrapTrigger * Def.TrapTrigger;
+            Vector3 me = GlobalPosition;
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))
+                if (n is ZombieController z && z.GlobalPosition.DistanceSquaredTo(me) <= r2) return true;
+            return false;
+        }
+        void DetonateTrap()
+        {
+            // AoE (reuse DamageTool.explode via the nearest player -- it only HOLDS the method; the blast originates here)
+            PlayerRegistry.Nearest(GlobalPosition)?.Explode(GlobalPosition, Def.TrapBlast, Def.TrapZombieDamage, Def.TrapPlayerDamage, Def.TrapVehicleDamage);
+            Explode();   // the mine's own blast consumes it -> ShatterOnDeath debris, no salvage husk
+        }
+        // test seam: arm-check once, deterministically (bypasses the _Process throttle)
+        public void DebugTrapCheck() { if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f && TrapVictimNear()) DetonateTrap(); }
+        public bool DebugExploded => _exploded;
+
         // src InteractableGenerator.use(): F toggles isPowered. Only a fuelled, non-wrecked, settled generator responds
         // (the buffer: you can't flip it again until the warmup/cooldown ramp finishes). The ramp itself runs in _Process.
         public void TogglePower()   // IsPowered/conduction flipped -> the net needs a recompute
@@ -438,6 +460,14 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            // TRAP (landmine): proximity-armed. Watch for a victim inside TrapTrigger, then detonate. Throttled to ~5 Hz
+            // -- a mine is cheap, but N mines x M zombies EVERY frame is exactly the _PhysicsProcess-shaped cost we just
+            // spent a day chasing; a proximity trap doesn't need per-frame resolution.
+            if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f)
+            {
+                _trapAccum += (float)delta;
+                if (_trapAccum >= 0.2f) { _trapAccum = 0f; if (TrapVictimNear()) DetonateTrap(); }
+            }
             // damage/burn lifecycle runs ALWAYS (not just when focused): 0-HP explosion delay + the wreck fire arc.
             if (_deadTimer >= 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }
             if (_burnTime >= 0f)   // wreck fire: 0-40s full, 40-60s dying down, out at 60s (+ light killed), sits 5 min, then despawns
