@@ -18,15 +18,19 @@ namespace UnturnedGodot
         const int CELL = 50;         // SleekItems cell size
         const int HEADER = 30;       // per-page header strip (source SizeOffset_Y = height*50 + 30)
         const int PAD = 12;
-        const int CLOTHW = 190;      // clothing column width
-        const int GUTTER = 24;       // gap between clothing column and storage
-        // clothing PAPERDOLL (strawberry): a live 3D render of the worn character at the top of the clothing column.
-        const int PDW = CLOTHW - 16; // paperdoll display width (174)
-        const int PDH = 232;         // paperdoll display height
-        const int PDTOP = 30;        // y of the paperdoll inside the clothing box (below the CLOTHING header)
-        const int CLOTHH = PDTOP + PDH + 14 + 7 * (CELL + 10) + 10;   // header + paperdoll + 7 equip slots
+        // SOURCE-ACCURATE layout (PlayerDashboardInventoryUI): top navbar (60px), a fixed 410px CHARACTER panel on
+        // the left (3D paperdoll + worn slots + the two weapon slots at its bottom), and a storage BOX filling the
+        // rest of the screen to the right. The dashboard FILLS the screen (source container = full rect - margin),
+        // NOT a centred blob.
+        const int NAVH = 60;         // top navbar strip (source backdropBox starts at Y=60, below the nav)
+        const int MARGIN = 12;       // screen-edge margin
+        const int CHARW = 410;       // character panel width (source characterBox SizeOffset_X = 410)
+        const int GUTTER = 20;       // gap between the character panel and the storage box
+        const int PDTOP = 38;        // paperdoll y inside the character panel (below the CHARACTER header)
+        const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
+        const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
 
-        Control _root, _dash, _storageCol;
+        Control _root, _dash, _storageCol, _charBox, _weaponRow;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
         // inventory's worn slots (PlayerClothingController.Refresh is read-only), lit + framed by a camera. Built once;
         // Refresh() repaints its clothing; drag on its view spins it. Held weapon deferred (needs 3P gun anims).
@@ -75,10 +79,12 @@ namespace UnturnedGodot
             _root.AddChild(dim);
 
             _dash = new Control();
+            _dash.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // the dashboard FILLS the screen (source container = full rect)
             _root.AddChild(_dash);
 
-            BuildClothingColumn();
-            _storageCol = new Control { Position = new Vector2(CLOTHW + GUTTER, 0) };
+            BuildNavbar();            // top 60px tab strip (Inventory / Crafting / Skills / Information)
+            BuildCharacterPanel();    // left 410px: paperdoll + worn slots + the two weapon slots at the bottom
+            _storageCol = new Control { Position = new Vector2(MARGIN + CHARW + GUTTER, NAVH + MARGIN) };
             _dash.AddChild(_storageCol);
         }
 
@@ -91,7 +97,7 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             if (!_open) return;
-            CenterDash();   // keep centred as the viewport settles
+            LayoutDash();   // keep the panels sized/placed to the screen as the viewport settles
             _pdBody?.Tick(delta);   // advance the paperdoll's idle so it breathes instead of a frozen T-pose
             FramePaperdoll();       // one-time: aim + distance the camera at the rig's real bounds (needs it in-tree)
             // LIVE update (master): if the inventory changed in the background (e.g. a consume finishing while the bag's
@@ -682,14 +688,36 @@ namespace UnturnedGodot
         }
 
         // left column: the equip slots (hat/glasses/mask/shirt/vest/backpack/pants), each showing the worn item
-        void BuildClothingColumn()
+        // Top navbar: a full-width 60px strip with the dashboard tab labels (source PlayerDashboardUI nav, above the
+        // inventory content). The Inventory tab reads active; the rest are placeholders for the sibling dashboards.
+        void BuildNavbar()
         {
-            var box = new Panel { Position = Vector2.Zero, Size = new Vector2(CLOTHW, CLOTHH) };
-            StyleBox(box, new Color(0.06f, 0.06f, 0.07f, 0.9f));
-            _dash.AddChild(box);
-            box.AddChild(Header("CLOTHING", new Vector2(10, 8), CLOTHW - 20));
+            var nav = new Panel();
+            nav.SetAnchorsPreset(Control.LayoutPreset.TopWide);
+            nav.OffsetBottom = NAVH;
+            StyleBox(nav, new Color(0.04f, 0.04f, 0.05f, 0.96f));
+            _dash.AddChild(nav);
+            string[] tabs = { "INVENTORY", "CRAFTING", "SKILLS", "INFORMATION" };
+            float tx = MARGIN + 6;
+            for (int i = 0; i < tabs.Length; i++)
+            {
+                var t = new Label { Text = tabs[i], Position = new Vector2(tx, 19) };
+                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.5f, 0.5f, 0.55f));
+                _dash.AddChild(t);
+                tx += tabs[i].Length * 11f + 34f;
+            }
+        }
 
-            BuildPaperdoll(box);   // the 3D worn-character render at the top of the column
+        // The left CHARACTER panel (source characterBox, 410px): the 3D paperdoll at the top, the worn-clothing equip
+        // slots below it, and the two weapon slots pinned to the BOTTOM (repositioned in LayoutDash). Built once.
+        void BuildCharacterPanel()
+        {
+            _charBox = new Panel { Position = new Vector2(MARGIN, NAVH + MARGIN), Size = new Vector2(CHARW, 600) };   // height fixed up in LayoutDash
+            StyleBox(_charBox, new Color(0.06f, 0.06f, 0.07f, 0.9f));
+            _dash.AddChild(_charBox);
+            _charBox.AddChild(Header("CHARACTER", new Vector2(10, 8), CHARW - 20));
+
+            BuildPaperdoll(_charBox);   // the 3D worn-character render at the top of the panel
 
             (string name, System.Func<Item> worn, EItemType type)[] rows =
             {
@@ -703,17 +731,20 @@ namespace UnturnedGodot
             {
                 var slot = new Panel { Position = new Vector2(12, y), Size = new Vector2(CELL, CELL) };
                 StyleBox(slot, new Color(0f, 0f, 0f, 0.5f));
-                box.AddChild(slot);
-                var lbl = new Label { Text = name, Position = new Vector2(CELL + 14, y + 14) };
+                _charBox.AddChild(slot);
+                var lbl = new Label { Text = name, Position = new Vector2(CELL + 20, y + 15) };
                 lbl.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
-                box.AddChild(lbl);
+                _charBox.AddChild(lbl);
                 _clothing.Add((slot, lbl, worn, type));
-                y += CELL + 10;
+                y += CELL + 8;
             }
+
+            _weaponRow = new Control { Position = new Vector2(12, 540) };   // PRIMARY/SECONDARY, pinned to the panel bottom in LayoutDash
+            _charBox.AddChild(_weaponRow);
         }
 
         // Build the 3D paperdoll: a dark stage + an isolated SubViewport rendering a preview character clothed off the
-        // player's worn slots, surfaced in a SubViewportContainer you can drag to spin. Built once (BuildClothingColumn runs once).
+        // player's worn slots, surfaced in a SubViewportContainer you can drag to spin. Built once (BuildCharacterPanel runs once).
         void BuildPaperdoll(Panel box)
         {
             var stage = new Panel { Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH) };
@@ -820,16 +851,19 @@ namespace UnturnedGodot
                 }
             }
 
-            // storage side
+            // weapon slots -> the character panel's bottom row (source: primary/secondary sit under the character)
+            foreach (Node c in _weaponRow.GetChildren()) c.QueueFree();
+            AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(0, 0),             3 * CELL);
+            AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(3 * CELL + 16, 0), 3 * CELL);
+
+            // storage side: player grids WRAP into columns to fill the storage box width (source clothingBox ScaleContentToWidth)
             foreach (Node c in _storageCol.GetChildren()) c.QueueFree();
             _drop.Clear();
-            float y = 0;
-            _storageW = 5 * CELL;
-            y = AddSlot("PRIMARY", 0, y);
-            y = AddSlot("SECONDARY", 1, y);
+            float colX = 0, y = 0, colW = 0;
+            float availH = GetViewport().GetVisibleRect().Size.Y - NAVH - 3 * MARGIN;
             (byte page, string name)[] grids =
             {
-                (PlayerInventory.STORAGE, "CRATE"),   // shown only when a storage crate is open (size > 0)
+                (PlayerInventory.STORAGE, "NEARBY"),   // a storage crate / nearby container (shown only when open, size > 0)
                 (2, "POCKETS"), (PlayerInventory.BACKPACK, "BACKPACK"), (PlayerInventory.VEST, "VEST"),
                 (PlayerInventory.SHIRT, "SHIRT"), (PlayerInventory.PANTS, "PANTS"),
             };
@@ -837,46 +871,51 @@ namespace UnturnedGodot
             {
                 var pg = Inv.items[page];
                 if (pg.width == 0 || pg.height == 0) continue;
-                _storageW = Mathf.Max(_storageW, pg.width * CELL);
-                y = AddGrid(name, pg, y);
+                float gh = (HEADER - 6) + pg.height * CELL + PAD;
+                if (y + gh > availH && y > 0) { colX += colW + GUTTER; y = 0; colW = 0; }   // column full -> start a new one to the right
+                AddGridAt(name, pg, new Vector2(colX, y));
+                y += gh;
+                colW = Mathf.Max(colW, pg.width * CELL);
             }
-            _storageH = y;
+            _storageW = colX + colW;
+            _storageH = availH;
 
-            CenterDash();
+            LayoutDash();
         }
 
-        void CenterDash()
+        void LayoutDash()
         {
-            float w = CLOTHW + GUTTER + _storageW;
-            float h = Mathf.Max(CLOTHH, _storageH);
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            _dash.Position = new Vector2(Mathf.Round((vp.X - w) / 2f), Mathf.Round((vp.Y - h) / 2f));
+            if (_charBox != null)
+            {
+                _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
+                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN);
+            }
         }
 
-        float AddSlot(string name, byte page, float y)
+        // a wide single-row slot (PRIMARY / SECONDARY) placed at an explicit position inside `parent`
+        void AddSlotAt(Control parent, string name, byte page, Vector2 pos, float w)
         {
             var pg = Inv.items[page];
-            _storageCol.AddChild(Header(name, new Vector2(0, y), 5 * CELL));
-            y += HEADER - 6;
-            var box = new Panel { Position = new Vector2(0, y), Size = new Vector2(5 * CELL, CELL) };
+            parent.AddChild(Header(name, pos, w));
+            var box = new Panel { Position = pos + new Vector2(0, HEADER - 6), Size = new Vector2(w, CELL) };
             StyleBox(box, new Color(0f, 0f, 0f, 0.45f));
-            _storageCol.AddChild(box);
+            parent.AddChild(box);
             _drop.Add((page, box, true));
             if (pg.getItemCount() > 0)
             {
-                var tile = MakeTile(pg.getItem(0), 5 * CELL, CELL);
+                var tile = MakeTile(pg.getItem(0), (int)w, CELL);
                 tile.Position = Vector2.Zero;
                 box.AddChild(tile);
             }
-            return y + CELL + PAD;
         }
 
-        float AddGrid(string name, Items page, float y)
+        // one storage grid page placed at an explicit position inside the storage box (Refresh lays the columns out)
+        void AddGridAt(string name, Items page, Vector2 pos)
         {
-            _storageCol.AddChild(Header($"{name}  {page.width}x{page.height}", new Vector2(0, y), page.width * CELL));
-            y += HEADER - 6;
+            _storageCol.AddChild(Header($"{name}  {page.width}x{page.height}", pos, page.width * CELL));
             var grid = new GridPanel { Cells = new Vector2I(page.width, page.height), Cell = CELL,
-                                       Position = new Vector2(0, y), Size = new Vector2(page.width * CELL, page.height * CELL) };
+                                       Position = pos + new Vector2(0, HEADER - 6), Size = new Vector2(page.width * CELL, page.height * CELL) };
             _storageCol.AddChild(grid);
             _drop.Add((page.page, grid, false));
             for (byte i = 0; i < page.getItemCount(); i++)
@@ -889,7 +928,6 @@ namespace UnturnedGodot
                 tile.Position = new Vector2(jar.x * CELL, jar.y * CELL);
                 grid.AddChild(tile);
             }
-            return y + page.height * CELL + PAD;
         }
 
         // real ground-truth item icons (the game's Extras/Icons, matched by id + downscaled) -> content/items/icons/<id>.png.
