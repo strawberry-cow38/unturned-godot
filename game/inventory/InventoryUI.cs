@@ -30,7 +30,8 @@ namespace UnturnedGodot
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
         const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
 
-        Control _root, _dash, _storageCol, _charBox, _weaponRow;
+        Control _root, _dash, _storageCol, _weaponRow;
+        Panel _charBox;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
         // inventory's worn slots (PlayerClothingController.Refresh is read-only), lit + framed by a camera. Built once;
         // Refresh() repaints its clothing; drag on its view spins it. Held weapon deferred (needs 3P gun anims).
