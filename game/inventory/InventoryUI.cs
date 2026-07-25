@@ -619,6 +619,11 @@ namespace UnturnedGodot
             { AddActionButton(panel, "Empty", new Vector2(228, by), EmptyFuelSelected); by += 44; }
             if (asset.IsFluidContainer && jar.item != null)   // a fluid container: toggle autodrink (default on -> passive 50 mL sips of safe liquid)
             { AddActionButton(panel, jar.item.autoDrink ? "Autodrink: ON" : "Autodrink: OFF", new Vector2(228, by), ToggleAutoDrinkSelected); by += 44; }
+            if (Inv.items[PlayerInventory.STORAGE].width > 0 && Inv.items[PlayerInventory.STORAGE].height > 0)   // #7: a crate is open -> Store/Take quick-move (source onClickedStore; reuses QuickAction's crate<->pages logic)
+            {
+                string smove = _selPage == PlayerInventory.STORAGE ? "Take" : "Store";
+                AddActionButton(panel, smove, new Vector2(228, by), () => { QuickAction(_selPage, _selX, _selY); CloseSelection(); }); by += 44;
+            }
             AddActionButton(panel, "Drop", new Vector2(228, by), DropSelected); by += 44;
             AddActionButton(panel, "Close", new Vector2(228, by), CloseSelection);
         }
