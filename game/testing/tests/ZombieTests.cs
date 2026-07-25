@@ -33,9 +33,9 @@ namespace UnturnedGodot.Testing
     }
 
     // Regression for the MP-report "zombie face renders on the LEFT ARM" (#36): the face decal's
-    // BoneAttachment3D must actually bind to the Skull bone, and the quad must sit at the head-front
-    // (~(0,1.75,-0.25) in character space), not at the shoulder/arm. IsPuppet = the MP path; the rig
-    // build is shared with SP zombies, so this guards both.
+    // BoneAttachment3D must bind to the Skull bone and the quad must ride that bone, not an arm.
+    // IsPuppet = the MP path; the rig build is shared with SP zombies, so this guards both.
+    // Assertions are pose-invariant on purpose -- see the note by the distance checks.
     public class ZombieFaceOnSkull : GameTest
     {
         public override string Name => "zombie.face_on_skull";
@@ -44,7 +44,21 @@ namespace UnturnedGodot.Testing
             var z = new ZombieController { IsPuppet = true };
             World.AddChild(z);
             z.GlobalPosition = Vector3.Zero;
-            yield return Ticks(3);   // let the rig enter the tree + the skeleton pose/attachment update run
+            yield return Ticks(1);   // rig enters the tree
+
+            // Wait for the rig to stop moving before sampling. Deliberately a SETTLE condition ("position stopped
+            // changing"), not "position reached the value we're about to assert" -- the latter would make the
+            // assertion tautological.
+            Vector3 prev = Vector3.Inf; int stable = 0;
+            yield return Until(() =>
+            {
+                var fq = FindFaceQuad(z);
+                if (fq == null) return false;
+                Vector3 p = fq.GlobalPosition;
+                stable = p.DistanceSquaredTo(prev) < 1e-10f ? stable + 1 : 0;
+                prev = p;
+                return stable >= 3;          // three consecutive identical samples = the pose has come to rest
+            }, maxSimSeconds: 5);
 
             Skeleton3D skel = FindDown<Skeleton3D>(z);
             T.Check("puppet zombie has a skeleton", skel != null);
@@ -59,9 +73,44 @@ namespace UnturnedGodot.Testing
             if (att == null || face == null) yield break;
 
             T.Check($"face attachment bound to the Skull bone (BoneIdx {att.BoneIdx}, Skull {skull})", att.BoneIdx == skull);
-            Vector3 local = z.ToLocal(face.GlobalPosition);
-            T.Check($"face quad sits at the head-front, not the arm (local {local})",
-                Mathf.Abs(local.X) < 0.15f && local.Y > 1.5f && local.Y < 2.0f && local.Z < -0.1f);
+            // Position is asserted RELATIVE TO THE SKULL BONE, not in character space.
+            //
+            // This was `local.Y > 1.5 && local.Y < 2.0` -- head height in character space -- and it failed on a
+            // correctly-bound rig about a third of the time. Measured cause, not guessed: the rig comes to rest
+            // in one of two exact reproducible poses (upright, skull at y=1.32; or hunched, skull at y=0.25) and
+            // the upright one has mirrored variants (face x = +0.112 / -0.112). So the old check was asserting
+            // WHICH ANIMATION PHASE the zombie happened to be sampled in -- nothing to do with bone binding.
+            //
+            // (An earlier theory that this was a partial/unfinished pose was wrong: waiting for the pose to
+            // settle does not fix it, because the hunched pose is fully settled. dist(face -> Skull) measured
+            // 0.50 in EVERY run, passing and failing alike -- the binding was never once broken.)
+            //
+            // That distance is the real invariant, so assert it. Bug #36 ("face renders on the LEFT ARM") would
+            // put the quad on Left_Arm -- tiny distance to the arm, large one to the skull -- which both checks
+            // below catch in any pose. Verified by re-binding the attachment to Left_Arm: FAIL, "skull 0.72 vs
+            // L-arm 0.50".
+            Vector3 faceInSkel = skel.ToLocal(face.GlobalPosition);
+            float dSkull = faceInSkel.DistanceTo(skel.GetBoneGlobalPose(skull).Origin);
+            int leftArm = skel.FindBone("Left_Arm"), rightArm = skel.FindBone("Right_Arm");
+            float dLeftArm  = leftArm  >= 0 ? faceInSkel.DistanceTo(skel.GetBoneGlobalPose(leftArm).Origin)  : float.MaxValue;
+            float dRightArm = rightArm >= 0 ? faceInSkel.DistanceTo(skel.GetBoneGlobalPose(rightArm).Origin) : float.MaxValue;
+
+            T.Check($"face quad rides the Skull bone rigidly (dist {dSkull:0.00}, expected ~0.5 in every pose)",
+                    dSkull < 0.75f);
+            T.Check($"face quad is on the skull, NOT an arm (skull {dSkull:0.00} vs L-arm {dLeftArm:0.00}, R-arm {dRightArm:0.00})",
+                    dSkull < dLeftArm && dSkull < dRightArm);
+        }
+
+        /// <summary>The face decal quad under whichever BoneAttachment3D carries it, or null if the rig
+        /// hasn't built it yet. Used by the settle-wait above and mirrors the lookup the assertions do.</summary>
+        static MeshInstance3D FindFaceQuad(Node root)
+        {
+            var sk = FindDown<Skeleton3D>(root);
+            if (sk == null) return null;
+            foreach (var c in sk.GetChildren())
+                if (c is BoneAttachment3D ba && ba.GetNodeOrNull<MeshInstance3D>("Face") is MeshInstance3D fq)
+                    return fq;
+            return null;
         }
 
         static TN FindDown<TN>(Node n) where TN : Node
