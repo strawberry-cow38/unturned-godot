@@ -306,4 +306,40 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // The quick-action (retail's ControlsSettings.other + click) and 4-way rotation, both added after the
+    // UX review against PlayerDashboardInventoryUI. These are the two behaviours a UI change can silently
+    // break, and both compile fine while doing nothing -- so they get asserted, not eyeballed.
+    public class InventoryQuickActionAndRotation : GameTest
+    {
+        public override string Name => "inv.quickaction_rotation";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();                         // assets must be registered before Item(id) resolves
+            var inv = new PlayerInventory();
+            inv.items[PlayerInventory.STORAGE].resize(6, 4);   // an open crate
+            var ui = new InventoryUI { Inv = inv };
+            World.AddChild(ui);
+            ui.Open();
+            yield return Ticks(2);
+
+            // put an item in Hands, then quick-action it -- with a crate open it must land IN THE CRATE
+            var it = new Item(15);   // Medkit 2x2
+            T.Check("seeded an item into Hands", inv.items[2].tryAddItem(it));
+            int handsBefore = inv.items[2].getItemCount(), crateBefore = inv.items[PlayerInventory.STORAGE].getItemCount();
+            var jar = inv.items[2].getItem(0);
+
+            bool moved = ui.DebugQuickAction(2, jar.x, jar.y);
+            yield return Ticks(1);
+            T.Check($"quick-action reported a move (got {moved})", moved);
+            T.Check($"item LEFT hands ({handsBefore} -> {inv.items[2].getItemCount()})", inv.items[2].getItemCount() == handsBefore - 1);
+            T.Check($"item ARRIVED in the crate ({crateBefore} -> {inv.items[PlayerInventory.STORAGE].getItemCount()})",
+                    inv.items[PlayerInventory.STORAGE].getItemCount() == crateBefore + 1);
+
+            // rotation must cycle all FOUR orientations, not toggle two
+            var seen = new System.Collections.Generic.HashSet<int>();
+            for (int i = 0; i < 6; i++) { seen.Add(ui.DebugCycleRot()); }
+            T.Check($"rotation reaches all 4 orientations (saw {seen.Count}: {string.Join(",", seen)})", seen.Count == 4);
+        }
+    }
 }

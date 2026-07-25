@@ -122,6 +122,10 @@ namespace UnturnedGodot
         public void Open() { _open = true; Visible = true; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always; Refresh(); _lastSig = InventorySignature(); }
         public void Close() { _open = false; Visible = false; if (_pdVp != null) _pdVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled; }   // stop rendering the paperdoll while the bag is closed
         public void DebugSelect(byte page, byte x, byte y) { Open(); OpenSelection(page, x, y); }   // demo/verify only
+        // demo/verify: run the modifier quick-action on a cell (headless can't hold ctrl and click)
+        public bool DebugQuickAction(byte page, byte x, byte y) => QuickAction(page, x, y);
+        // demo/verify: advance the held-item rotation one step and report it (proves 4 states, not a toggle)
+        public int DebugCycleRot() { _dragRot = (byte)((_dragRot + 1) % 4); return _dragRot; }
 
         long _lastSig = -1;
         public override void _Process(double delta)
@@ -173,6 +177,13 @@ namespace UnturnedGodot
                         if (new Rect2(_selPanel.GlobalPosition, _selPanel.Size).HasPoint(mb.GlobalPosition)) return;
                         CloseSelection();   // clicked outside -> dismiss, then fall through to grab
                     }
+                    // MODIFIER + click = retail's quick-action (transfer / pick up / equip) instead of a drag.
+                    // Checked BEFORE StartDrag so the modifier click never begins a drag it won't finish.
+                    if (!_dragging && Input.IsKeyPressed(Key.Ctrl)
+                        && PointToCell(mb.GlobalPosition, out byte qp, out byte qx, out byte qy, out _, out _)
+                        && QuickAction(qp, qx, qy))
+                    { GetViewport().SetInputAsHandled(); return; }
+
                     if (!_dragging) { StartDrag(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
                 }
                 else if (_dragging) { Drop(mb.GlobalPosition); GetViewport().SetInputAsHandled(); }
@@ -194,7 +205,10 @@ namespace UnturnedGodot
             }
             else if (e is InputEventKey { Pressed: true, Keycode: Key.R } && _dragging)
             {
-                _dragRot = (byte)(_dragRot ^ 1);   // toggle a 90-degree rotation of the held item
+                // Source: `dragJar.rot++; dragJar.rot %= 4` -- FOUR orientations, not a 90-degree toggle. This is
+                // not cosmetic: a 2-state toggle can never place a non-square item at 180/270, which changes what
+                // physically fits in a grid. (Rendering already keys off `rot % 2`, so 2/3 draw correctly.)
+                _dragRot = (byte)((_dragRot + 1) % 4);
                 RebuildDragTile();
                 GetViewport().SetInputAsHandled();
             }
@@ -321,6 +335,58 @@ namespace UnturnedGodot
         // the CHARACTER MODEL and it lands in the slot its own type dictates (PlayerDashboardInventoryUI drops onto
         // characterPlayer). So the paperdoll is the drop zone, and the target slot is resolved from the dragged
         // item's EItemType rather than from where the cursor happens to be.
+
+        // Retail's quick-action: hold the "other" modifier and click an item instead of dragging it
+        // (source PlayerDashboardInventoryUI.onSelectedItem -> checkAction). This is how loot actually moves in
+        // retail -- without it every single item is a manual drag. Ctrl stands in for ControlsSettings.other.
+        //
+        //   crate open + item in Nearby   -> into the crate
+        //   crate open + item in crate    -> into your pages (first with room)
+        //   crate open + item on you      -> into the crate
+        //   crate closed + item in Nearby -> pick it up
+        //   crate closed + wearable       -> equip that slot
+        bool QuickAction(byte page, byte cx, byte cy)
+        {
+            if (Inv == null) return false;
+            byte idx = Inv.items[page].getIndex(cx, cy);
+            if (idx == byte.MaxValue) return false;
+            var jar = Inv.items[page].getItem(idx);
+            if (jar?.item == null) return false;
+
+            bool crateOpen = Inv.items[PlayerInventory.STORAGE].width > 0 && Inv.items[PlayerInventory.STORAGE].height > 0;
+
+            // where should it go?
+            byte dest;
+            if (crateOpen) dest = page == PlayerInventory.STORAGE ? (byte)255 : PlayerInventory.STORAGE;   // 255 = "any of my pages"
+            else if (page == PlayerInventory.AREA) dest = 255;                                            // pick up off the ground
+            else { return QuickEquip(page, cx, cy, jar); }                                                // wear/equip it
+
+            return MoveTo(page, idx, jar, dest);
+        }
+
+        // Move a jar out of `page` into `dest` (255 = first of my own pages with room). Puts it back if the
+        // destination has no room, so a failed quick-move can never eat an item.
+        bool MoveTo(byte page, byte idx, ItemJar jar, byte dest)
+        {
+            Inv.items[page].removeItem(idx);
+            bool ok = dest == 255 ? Inv.tryAddItem(jar.item) : Inv.items[dest].tryAddItem(jar.item);
+            if (!ok) Inv.items[page].tryAddItem(jar.item);   // no room -> restore, no-op rather than a loss
+            if (ok) { CloseSelection(); Refresh(); }
+            return ok;
+        }
+
+        // Wearable -> equip into its own slot, mirroring checkAction's per-type sendSwap* calls.
+        bool QuickEquip(byte page, byte cx, byte cy, ItemJar jar)
+        {
+            var t = jar.GetAsset()?.type;
+            if (t == null) return false;
+            int ci = _clothing.FindIndex(c => c.type == t.Value);
+            if (ci < 0) return false;
+            WearFromGrid(_clothing[ci].type, page, cx, cy);
+            CloseSelection();
+            Refresh();
+            return true;
+        }
         bool PointToClothSlot(Vector2 global, out int idx)
         {
             for (int i = 0; i < _clothing.Count; i++)
