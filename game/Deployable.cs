@@ -302,8 +302,20 @@ namespace UnturnedGodot
         void DetonateTrap()
         {
             if (_exploded) return;
-            // AoE (reuse DamageTool.explode via the nearest player -- it only HOLDS the method; the blast originates here)
+            // AoE to living things + vehicles (reuse DamageTool.explode via the nearest player -- it only HOLDS the method)
             PlayerRegistry.Nearest(GlobalPosition)?.Explode(GlobalPosition, Def.TrapBlast, Def.TrapZombieDamage, Def.TrapPlayerDamage, Def.TrapVehicleDamage);
+            // + nearby placed DEPLOYABLES (src Structure_Damage, base-raiding). Skip other traps so mines don't chain-RECURSE
+            // (a minefield still works -- each mine triggers on its own proximity); a real chain reaction is a deferred follow-up.
+            if (GetTree() != null)
+            {
+                float r = Def.TrapBlast; Vector3 me = GlobalPosition;
+                foreach (var n in GetTree().GetNodesInGroup("deployables"))
+                    if (n is Deployable dp && dp != this && GodotObject.IsInstanceValid(dp) && (dp.Def == null || !dp.Def.IsTrap))
+                    {
+                        float dist = dp.GlobalPosition.DistanceTo(me);
+                        if (dist <= r) dp.TakeDamage(Def.TrapStructureDamage * (1f - dist / r));   // linear falloff (same shape as DamageTool.explode)
+                    }
+            }
             Explode();   // the mine's own blast consumes it -> ShatterOnDeath debris, no salvage husk
         }
         // test seams: check-once deterministically (bypass the _Process throttle) + advance the arm timer past the grace

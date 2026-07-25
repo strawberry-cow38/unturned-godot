@@ -77,4 +77,24 @@ namespace UnturnedGodot.Testing
             T.Check("a shot detonates the mine (Vulnerable Explosive, Health 1)", mine.DebugExploded);
         }
     }
+
+    // The blast also damages nearby placed DEPLOYABLES (src Structure_Damage) -- base-raiding. Detonate a mine next to
+    // a generator; the generator loses health. (Other traps are skipped so mines don't chain-recurse.)
+    public class LandmineDamagesNearbyDeployable : GameTest
+    {
+        public override string Name => "trap.landmine_structure";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(2f, 0f, 0f), 0f);   // within the 8 m blast
+            var mine = Deployable.Spawn(World, DeployableDef.Landmine, Vector3.Zero, 0f);
+            yield return Ticks(3);
+            T.Check("generator + mine placed", gen != null && mine != null);
+            if (gen == null || mine == null) yield break;
+
+            float genHp = gen.Health;
+            mine.TakeDamage(5f);   // shoot the mine -> it detonates
+            yield return Ticks(1);
+            T.Check($"the mine's blast damaged the nearby generator ({genHp:0} -> {gen.Health:0})", gen.Health < genHp);
+        }
+    }
 }

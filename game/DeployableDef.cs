@@ -36,6 +36,7 @@ namespace UnturnedGodot
         public float TrapBlast = 6f;       // AoE explosion radius on trigger (m; 0 = contact-only)
         public float TrapZombieDamage = 200f, TrapPlayerDamage = 101f, TrapVehicleDamage = 100f;
         public float TrapArmDelay = 1.5f;   // placer grace: the mine is inert for this long after planting so you can step clear of your own blast
+        public float TrapStructureDamage = 75f;   // src Barricade/Structure_Damage (Landmine.dat 75): blast damage to nearby placed deployables (base-raiding)
         public FixtureKind Fixture = FixtureKind.None;   // A3/A2: a server-placed WORLD fixture (GridSource mains / GasPump) vs a normal player-placeable deployable. Bridged to DeployableNetDef.FixtureKind in DeployableNetSchema.
 
         // FLUID device marker (strawberry 2026-07-22): a non-null Fluid means this "deployable" places a FluidContainer
