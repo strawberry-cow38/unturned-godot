@@ -29,9 +29,13 @@ VK_ICD="${VK_ICD:-/usr/share/vulkan/icd.d/lvp_icd.aarch64.json}"
 for cam in 1p 3p; do
   for res in 640x360 1920x1080; do
     echo "=== camera $cam  res $res  (n=$N) ==="
-    # xvfb's default screen is 1280x1024, which would silently clamp the large resolution -- give it room.
+    # Neither `--resolution` nor a runtime WindowSetSize changes anything on its own: the project's
+    # "canvas_items" stretch pins the render target to the content size, so three earlier runs all rendered
+    # 2560x1600 while claiming to sweep resolutions. The probe clears ContentScaleMode first and then prints
+    # the render-target size it ACTUALLY got -- always read that field, because a sweep that never swept
+    # looks exactly like a genuine flat result.
     UG_ZN="$N" UG_ZCAM="$cam" UG_ZRES="$res" VK_ICD_FILENAMES="$VK_ICD" timeout 240 \
-      xvfb-run -a -s "-screen 0 2048x1280x24" "$GODOT" --path "$ROOT/game" --rendering-driver vulkan -- --zperf 2>&1 \
+      xvfb-run -a -s "-screen 0 2560x1600x24" "$GODOT" --path "$ROOT/game" --rendering-driver vulkan -- --zperf 2>&1 \
       | grep -E '^\[zperf\]'
   done
 done

@@ -88,6 +88,29 @@ Prime suspect is **shadow cascades**, and the config supports it:
 
 **Unverified.** Nobody has measured it. Do not treat the above as established.
 
+### The probe's frame TIMING is not usable on this box. Its counters are.
+
+Do not repeat this mistake — it was made three times in one session. `--zperf` prints frame time, and on
+the ARM box under xvfb + lavapipe that number is worthless:
+
+```
+sun shadow off, 1 draw call, 2 primitives (an empty frame):   95 ms @ 640x360   160 ms @ 1920x1080
+anything heavier, any resolution, any N:                      pins at ~160 ms
+```
+
+A one-quad frame cannot cost 95 ms in any renderer, so that is a fixed per-frame cost unrelated to the
+scene, and ~160 ms is a hard ceiling everything saturates against. Every "no measurable difference"
+timed at 1920x1080 was therefore the frame sitting on the ceiling, **not** the zombies being free. One
+such reading was posted to the channel as evidence that fill was ruled out. It ruled out nothing.
+
+Always run the `UG_ZSUN=noshadow` control alongside any timing: if a delta only exists when the floor
+is present, the delta *was* the floor.
+
+The counters (draws / objs / prims / vram) are unaffected by this — they are deterministic and
+hardware-independent, and every conclusion above that rests on them still holds.
+
+**Fill is NOT ruled out.** It is unmeasured, and it cannot be measured here.
+
 Also note what headless *cannot* settle: cow tools ran the loaded POI + horde under both opengl3 and
 Vulkan/Forward+ offline and got normal counts and normal wall-clock in both. An offline frame dump has
 no display, no vsync and no present loop, so a real-time interactive stall would not show up there
@@ -113,3 +136,9 @@ Read it twice — zombies ON vs OFF, 3p in the POI:
 Then, to confirm shadows specifically: flip zombie `CastShadow` fully Off. Tank vanishes → shadows,
 and the fix is a proper shadow cull + a `DirectionalShadowMaxDistance` cap. Tank remains → it's the
 zombie mesh/render path itself and the render line above says which.
+
+And the fill discriminator, which is five seconds of work and settles the axis nothing here can reach:
+set `rendering/scaling_3d/scale` to `0.5` and stand in the same 3p-car-POI spot. Fill cost scales with
+pixels and nothing else does, so **fps roughly doubles → it is fill** (overdraw / shadow-map
+rasterisation); **fps barely moves → it is not fill**, and what remains is a stall — a GPU→CPU sync or
+synchronous pipeline compilation — which is hunted with GPU timings, not with counters.

@@ -1292,7 +1292,7 @@ namespace UnturnedGodot
         // overdraw and shadow-map fill cost the same zero draw calls whether they shade 1 pixel or 10 million.
         // lavapipe's cost is fragment-dominated, so the RATIO between phases is a fill-rate proxy even though the
         // absolute ms is worthless. Read ratios here, never numbers.
-        int _zpN; int _zpStep; double _zpStepClock; int _zpFrames; double _zpFrameSum;
+        int _zpN; int _zpStep; double _zpStepClock; int _zpFrames; double _zpFrameSum; double _zpFrameMax;
         readonly System.Collections.Generic.List<ZombieController> _zpZombies = new();
 
         void BuildZPerf()
@@ -1306,7 +1306,13 @@ namespace UnturnedGodot
                 AmbientLightColor = new Color(0.72f, 0.72f, 0.75f), AmbientLightEnergy = 1.0f,
             };
             AddChild(new WorldEnvironment { Environment = env });
-            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = true });
+            // UG_ZSUN=noshadow drops the sun's shadow pass. Not a scene option -- a NOISE FLOOR control. The default
+            // 4-split PSSM atlas is rasterised in full every frame regardless of screen resolution or scene content,
+            // so under a software rasteriser it is a large fixed cost that swamps whatever is being measured (an
+            // empty 5-draw frame still cost ~124ms). Run any measurement both ways: if a delta only exists with the
+            // floor present, the delta was the floor.
+            bool sunShadow = System.Environment.GetEnvironmentVariable("UG_ZSUN") != "noshadow";
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -40f, 0f), LightEnergy = 1.3f, ShadowEnabled = sunShadow });
             AddChild(new MeshInstance3D
             {
                 Mesh = new PlaneMesh { Size = new Vector2(300f, 300f) },
@@ -1320,16 +1326,23 @@ namespace UnturnedGodot
             DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
             Engine.MaxFps = 0;
 
-            // UG_ZRES=WxH. This is the discriminator the counters cannot give: fragment cost scales with PIXELS,
-            // geometry/draw cost does not. Run the same N at two resolutions -- if the zombies' marginal frame time
-            // scales with the pixel count, their cost is fill (overdraw / shadow-map rasterisation) and a bigger
-            // screen makes it worse; if it stays flat, it is geometry and the screen is irrelevant. The scaling LAW
-            // transfers to real hardware even though lavapipe's constant does not.
+            // UG_ZRES=WxH. Resolution is the discriminator the counters cannot give: fragment cost scales with
+            // PIXELS, geometry/draw cost does not. Run the same N at two resolutions -- if the zombies' marginal
+            // frame time scales with pixel count their cost is fill (overdraw / shadow-map rasterisation); if it
+            // stays flat it is geometry. The scaling LAW transfers to real hardware; lavapipe's constant does not.
+            //
+            // ContentScaleMode MUST be cleared first. The project uses stretch mode "canvas_items", which pins the
+            // render target to the 2560x1440 content size no matter what the window does -- both `--resolution` and
+            // WindowSetSize were silently ignored because of it, and three runs "measured" 2560x1600 while claiming
+            // to sweep resolutions. Mode must leave Maximized too, or a size request is a no-op.
             var res = (System.Environment.GetEnvironmentVariable("UG_ZRES") ?? "").Split('x');
             if (res.Length == 2 && int.TryParse(res[0], out var rw) && int.TryParse(res[1], out var rh))
             {
-                DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);   // project sets Maximized, which ignores a size request
-                DisplayServer.WindowSetSize(new Vector2I(rw, rh));
+                var win = GetWindow();
+                win.ContentScaleMode = Window.ContentScaleModeEnum.Disabled;
+                win.ContentScaleAspect = Window.ContentScaleAspectEnum.Ignore;
+                win.Mode = Window.ModeEnum.Windowed;
+                win.Size = new Vector2I(rw, rh);
             }
 
             // UG_ZCAM=1p sits the camera at driver-eye range; the default 3p matches the chase cam's worst case
@@ -1357,25 +1370,34 @@ namespace UnturnedGodot
         // ON - OFF is the zombies' whole render cost; ON - ON,noshadow is the part that is shadow casting.
         void ZPerfTick(double delta)
         {
-            const double Warm = 0.6, Window = 2.0;
+            const double Warm = 0.6, Win = 2.0;
             _zpStepClock += delta;
-            if (_zpStepClock > Warm) { _zpFrames++; _zpFrameSum += delta; }
-            if (_zpStepClock < Warm + Window) return;
+            if (_zpStepClock > Warm)
+            {
+                _zpFrames++; _zpFrameSum += delta;
+                // Worst frame in the window, not just the mean. A STALL -- a GPU->CPU sync or a synchronous
+                // pipeline compile -- is spikes, and a mean averages it straight back out of existence.
+                if (delta > _zpFrameMax) _zpFrameMax = delta;
+            }
+            if (_zpStepClock < Warm + Win) return;
 
             double M(Performance.Monitor m) => Performance.GetMonitor(m);
             string tag = _zpStep switch { 0 => $"ON(n={_zpN})", 1 => "OFF", _ => "ON,noshadow" };
-            // Report the size actually rendered, not the size asked for: a resolution-scaling experiment where the
-            // resolution silently never changed reads as "flat, so not fill" -- a null result that looks like data.
-            Vector2 vp = GetViewport().GetVisibleRect().Size;
+            // Report the size actually rendered, straight off the render target -- not the size asked for, and not
+            // the window's idea of it. A resolution-scaling experiment where the resolution silently never changed
+            // reads as "flat, therefore not fill": a null result that looks exactly like data. That already happened
+            // once here (WindowSetSize was ignored and every run rendered 2560x1600).
+            Vector2I vp = (Vector2I)GetViewport().GetTexture().GetSize();
             GD.Print(
-                $"[zperf] {tag,-12} {vp.X:0}x{vp.Y:0} " +
+                $"[zperf] {tag,-12} {vp.X}x{vp.Y} " +
                 $"frame={(_zpFrames > 0 ? _zpFrameSum / _zpFrames * 1000.0 : 0.0):0.00}ms " +
+                $"worst={_zpFrameMax * 1000.0:0.00}ms " +
                 $"draws={M(Performance.Monitor.RenderTotalDrawCallsInFrame):0} " +
                 $"objs={M(Performance.Monitor.RenderTotalObjectsInFrame):0} " +
                 $"prims={M(Performance.Monitor.RenderTotalPrimitivesInFrame):0} " +
                 $"vram={M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0.0}MB");
 
-            _zpStep++; _zpStepClock = 0; _zpFrames = 0; _zpFrameSum = 0;
+            _zpStep++; _zpStepClock = 0; _zpFrames = 0; _zpFrameSum = 0; _zpFrameMax = 0;
             switch (_zpStep)
             {
                 case 1: foreach (var z in _zpZombies) z.Visible = false; break;                                  // scene without them at all
