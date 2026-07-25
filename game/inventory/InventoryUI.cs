@@ -709,56 +709,34 @@ namespace UnturnedGodot
             }
         }
 
-        // The left CHARACTER panel (source characterBox, 410px): the 3D paperdoll at the top, the worn-clothing equip
-        // slots below it, and the two weapon slots pinned to the BOTTOM (repositioned in LayoutDash). Built once.
+        // The left CHARACTER panel = source characterBox @ (10,70), 410 wide, height = backdrop-280. A live character
+        // render FILLS it (source SleekCameraImage). There is NO worn-clothing slot list in the real source -- clothing
+        // shows ON the character and lives in the storage pages -- so we don't draw one (that was the "far from source"
+        // bug). The two weapon slots sit at the backdrop bottom-left BELOW the box (positioned each Refresh). Built once.
         void BuildCharacterPanel()
         {
-            _charBox = new Panel { Position = new Vector2(MARGIN, NAVH + MARGIN), Size = new Vector2(CHARW, 600) };   // height fixed up in LayoutDash
-            StyleBox(_charBox, new Color(0.06f, 0.06f, 0.07f, 0.9f));
+            _charBox = new Panel { Position = new Vector2(MARGIN, 104), Size = new Vector2(CHARW, 400) };   // pos/size finalised in LayoutDash
+            StyleBox(_charBox, new Color(0.05f, 0.05f, 0.06f, 0.55f));
             _dash.AddChild(_charBox);
-            _charBox.AddChild(Header("CHARACTER", new Vector2(10, 8), CHARW - 20));
 
-            BuildPaperdoll(_charBox);   // the 3D worn-character render at the top of the panel
+            BuildPaperdoll(_charBox);   // the live character render fills the whole box
 
-            (string name, System.Func<Item> worn, EItemType type)[] rows =
-            {
-                ("Hat",      () => Inv?.wornHat,      EItemType.HAT),      ("Glasses",  () => Inv?.wornGlasses,  EItemType.GLASSES),
-                ("Mask",     () => Inv?.wornMask,     EItemType.MASK),     ("Shirt",    () => Inv?.wornShirt,    EItemType.SHIRT),
-                ("Vest",     () => Inv?.wornVest,     EItemType.VEST),     ("Backpack", () => Inv?.wornBackpack, EItemType.BACKPACK),
-                ("Pants",    () => Inv?.wornPants,    EItemType.PANTS),
-            };
-            float y = PDTOP + PDH + 14;   // stack the equip slots BELOW the paperdoll
-            foreach (var (name, worn, type) in rows)
-            {
-                var slot = new Panel { Position = new Vector2(12, y), Size = new Vector2(CELL, CELL) };
-                StyleBox(slot, new Color(0f, 0f, 0f, 0.5f));
-                _charBox.AddChild(slot);
-                var lbl = new Label { Text = name, Position = new Vector2(CELL + 20, y + 15) };
-                lbl.AddThemeColorOverride("font_color", new Color(0.72f, 0.72f, 0.75f));
-                _charBox.AddChild(lbl);
-                _clothing.Add((slot, lbl, worn, type));
-                y += CELL + 8;
-            }
-
-            _weaponRow = new Control { Position = new Vector2(12, 540) };   // PRIMARY/SECONDARY, pinned to the panel bottom in LayoutDash
-            _charBox.AddChild(_weaponRow);
+            _weaponRow = new Control();   // holds PRIMARY/SECONDARY, placed at the backdrop bottom-left each Refresh
+            _dash.AddChild(_weaponRow);
         }
 
         // Build the 3D paperdoll: a dark stage + an isolated SubViewport rendering a preview character clothed off the
         // player's worn slots, surfaced in a SubViewportContainer you can drag to spin. Built once (BuildCharacterPanel runs once).
         void BuildPaperdoll(Panel box)
         {
-            var stage = new Panel { Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH) };
+            var stage = new Panel();
+            stage.SetAnchorsPreset(Control.LayoutPreset.FullRect);   // fill the character box (source characterImage SizeScale 1,1)
             StyleBox(stage, new Color(0.05f, 0.06f, 0.08f, 0.95f));   // dark backdrop so the character reads against it
             box.AddChild(stage);
 
-            // a SubViewportContainer shows the viewport clipped to the stage. Stretch off -> the viewport keeps its own
-            // LOCKED size (so the render aspect is deterministic regardless of layout timing). Dragging its surface spins the rig.
-            var vpc = new SubViewportContainer
-            {
-                Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH),
-                Stretch = false, MouseFilter = Control.MouseFilterEnum.Stop, TooltipText = "drag to rotate",
-            };
+            // a SubViewportContainer that FILLS the character box; Stretch on -> the render scales to fill (portrait character).
+            var vpc = new SubViewportContainer { Stretch = true, MouseFilter = Control.MouseFilterEnum.Stop, TooltipText = "drag to rotate" };
+            vpc.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             vpc.GuiInput += PaperdollDrag;
             box.AddChild(vpc);
             _pdVp = new SubViewport
@@ -838,31 +816,17 @@ namespace UnturnedGodot
             if (_pdClothing == null && _pdBody != null) _pdClothing = new PlayerClothingController(_pdBody, Inv);   // Inv wasn't ready at build time
             _pdClothing?.Refresh();
 
-            // worn clothing into the equip slots
-            foreach (var (slot, lbl, worn, _) in _clothing)
-            {
-                foreach (Node c in slot.GetChildren()) c.QueueFree();
-                var it = worn();
-                if (it != null)
-                {
-                    var t = MakeTile(new ItemJar(it), CELL, CELL);
-                    t.Position = Vector2.Zero;
-                    slot.AddChild(t);
-                    lbl.Text = it.GetAsset()?.itemName ?? lbl.Text;
-                }
-            }
-
-            // weapon slots -> the character panel's bottom row (source: primary/secondary sit under the character)
+            // weapon slots: source slots[0]=PRIMARY @ (10,-160)+scaleY1, slots[1]=SECONDARY @ (270,-160) -> backdrop bottom-left, side by side
             foreach (Node c in _weaponRow.GetChildren()) c.QueueFree();
-            AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(0, 0),             3 * CELL);
-            AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(3 * CELL + 16, 0), 3 * CELL);
+            float wy = GetViewport().GetVisibleRect().Size.Y - 150;
+            AddSlotAt(_weaponRow, "PRIMARY",   0, new Vector2(2 * MARGIN,       wy), 3 * CELL);
+            AddSlotAt(_weaponRow, "SECONDARY", 1, new Vector2(2 * MARGIN + 260, wy), 3 * CELL);
 
-            // storage side: player grids WRAP into columns to fill the storage box width (source clothingBox ScaleContentToWidth)
+            // storage side: source clothingBox -> pages STACK VERTICALLY (offsetClothing_y). Full width, or left-half when the
+            // screen is wide enough to also show the NEARBY area (source isSplitClothingArea: Screen.width >= 1350).
             foreach (Node c in _storageCol.GetChildren()) c.QueueFree();
             _drop.Clear();
-            Vector2 vpsz = GetViewport().GetVisibleRect().Size;
-            float availW = vpsz.X - (MARGIN + CHARW + GUTTER) - MARGIN;   // storage box fills the screen right of the character
-            float x = 0, rowY = 0, rowH = 0;
+            float sy = 0, colW = 0;
             (byte page, string name)[] grids =
             {
                 (PlayerInventory.STORAGE, "NEARBY"),   // a storage crate / nearby container (shown only when open, size > 0)
@@ -873,15 +837,12 @@ namespace UnturnedGodot
             {
                 var pg = Inv.items[page];
                 if (pg.width == 0 || pg.height == 0) continue;
-                float gw = pg.width * CELL;
-                float gh = (HEADER - 6) + pg.height * CELL + PAD;
-                if (x + gw > availW && x > 0) { x = 0; rowY += rowH; rowH = 0; }   // row full -> wrap to the next row down
-                AddGridAt(name, pg, new Vector2(x, rowY));
-                x += gw + GUTTER * 2;   // flow left-to-right so the grids sit side by side and fill the width
-                rowH = Mathf.Max(rowH, gh + PAD);
+                AddGridAt(name, pg, new Vector2(0, sy));
+                sy += (HEADER - 6) + pg.height * CELL + PAD + 10;   // stack down the column (source page spacing + 10)
+                colW = Mathf.Max(colW, pg.width * CELL);
             }
-            _storageW = availW;
-            _storageH = rowY + rowH;
+            _storageW = colW;
+            _storageH = sy;
 
             LayoutDash();
         }
@@ -889,11 +850,8 @@ namespace UnturnedGodot
         void LayoutDash()
         {
             Vector2 vp = GetViewport().GetVisibleRect().Size;
-            if (_charBox != null)
-            {
-                _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
-                if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN);
-            }
+            // character box: source characterBox height = backdrop - 280, leaving the bottom strip for the weapon slots
+            if (_charBox != null) _charBox.Size = new Vector2(CHARW, Mathf.Max(300f, vp.Y - 104 - 200));
         }
 
         // a wide single-row slot (PRIMARY / SECONDARY) placed at an explicit position inside `parent`
