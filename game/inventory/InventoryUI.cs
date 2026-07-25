@@ -50,8 +50,9 @@ namespace UnturnedGodot
         const int PDTOP = 58;        // paperdoll y inside the character panel (below the name/faction badge)
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
         const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
+        const int COSMH = 44;        // reserved strip under the paperdoll: rotation slider + cosmetic-swap buttons
 
-        Control _root, _dash, _storageCol, _weaponRow;
+        Control _root, _dash, _storageCol, _weaponRow, _cosmeticRow;
         Control _clothingCol, _areaCol;   // source clothingBox (player pages) + areaBox (STORAGE/Nearby); split 50/50 at >=1350px
         Panel _charBox;
         // clothing paperdoll: an isolated SubViewport (own world) renders a preview RiggedCharacter clothed off the SAME
@@ -894,8 +895,27 @@ namespace UnturnedGodot
                 y += CELL + 8;
             }
 
+            BuildCosmeticRow();   // rotation slider + 3 cosmetic-swap buttons in the strip under the paperdoll
+
             _weaponRow = new Control { Position = new Vector2(12, 540) };   // PRIMARY/SECONDARY, pinned to the panel bottom in LayoutDash
             _charBox.AddChild(_weaponRow);
+        }
+
+        // Rotation slider + 3 cosmetic-swap buttons under the paperdoll (source characterSlider + swapCosmetics/Skins/Mythics
+        // buttons at the bottom of characterBox). Positioned each LayoutDash into the reserved COSMH strip above the weapons.
+        void BuildCosmeticRow()
+        {
+            _cosmeticRow = new Control();
+            _charBox.AddChild(_cosmeticRow);
+            string[] tips = { "Cosmetics", "Skins", "Mythics" };
+            for (int i = 0; i < 3; i++)
+            {
+                var b = new Button { Text = tips[i].Substring(0, 1), Position = new Vector2(10 + i * 36, 4), Size = new Vector2(32, 32), TooltipText = "Swap " + tips[i] };
+                _cosmeticRow.AddChild(b);
+            }
+            var slider = new HSlider { Position = new Vector2(10 + 3 * 36 + 10, 12), Size = new Vector2(CHARW - (10 + 3 * 36 + 10) - 20, 18), MinValue = -Mathf.Pi, MaxValue = Mathf.Pi, Step = 0.01 };
+            slider.ValueChanged += (double v) => { _pdYaw = (float)v; if (_pdBody != null) _pdBody.Rotation = new Vector3(0f, Mathf.Pi + _pdYaw, 0f); };
+            _cosmeticRow.AddChild(slider);
         }
 
         // Build the 3D paperdoll: a dark stage + an isolated SubViewport rendering a preview character clothed off the
@@ -1084,12 +1104,14 @@ namespace UnturnedGodot
             {
                 _charBox.Size = new Vector2(CHARW, Mathf.Max(600f, vp.Y - NAVH - 2 * MARGIN));   // fill the height below the navbar
                 if (_weaponRow != null) _weaponRow.Position = new Vector2(12, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN);
+                // rotation slider + cosmetic buttons sit in the reserved COSMH strip just above the weapon slots
+                if (_cosmeticRow != null) _cosmeticRow.Position = new Vector2(0, _charBox.Size.Y - CELL - (HEADER - 6) - MARGIN - COSMH);
 
                 // The model DOMINATES the left column in the reference -- it isn't a small portrait pinned to the
                 // top. Stretch it to the space between the header and the weapon row.
                 // Reference measurement: retail's model area is ~260x590 => aspect ~0.44. Match that rather than
                 // stretching to the full column, which produced an extreme aspect the camera can't frame.
-                float avail = _charBox.Size.Y - PDTOP - CELL - (HEADER - 6) - 2 * MARGIN - 10f;
+                float avail = _charBox.Size.Y - PDTOP - CELL - (HEADER - 6) - 2 * MARGIN - 10f - COSMH;
                 float pdH = Mathf.Clamp(avail, PDH, PDW / 0.44f);
                 if (_pdVp != null && Mathf.Abs(_pdVp.Size.Y - pdH) > 1f) _pdFramed = false;   // re-frame for the new aspect
                 if (_pdStage != null) _pdStage.Size = new Vector2(PDW, pdH);
