@@ -15,6 +15,15 @@ namespace UnturnedGodot
         public PlayerController Player;   // for Use -> apply consumable effects to the vitals
         public PlayerClothingController Clothing;   // P5: equip/unequip drives BOTH worn-slot state AND the on-body visual (RiggedCharacter) through this controller
 
+
+        // --- retail palette: the dashboard is a translucent overlay, NOT an opaque dark panel ---
+        static readonly Color UI_PANEL = new Color(0.10f, 0.13f, 0.18f, 0.42f);   // char panel / backdrop: world shows through
+        static readonly Color UI_BAR   = new Color(0.17f, 0.24f, 0.32f, 0.78f);   // page header bars (blue-grey)
+        static readonly Color UI_NAV   = new Color(0.13f, 0.18f, 0.24f, 0.80f);   // navbar strip
+        static readonly Color UI_CELL  = new Color(0.62f, 0.72f, 0.84f, 0.30f);   // empty grid cell: LIGHT + see-through
+        static readonly Color UI_TAB_ON  = new Color(0.55f, 0.62f, 0.70f, 0.72f);   // lit/open tab
+        static readonly Color UI_TAB_OFF = new Color(0.22f, 0.29f, 0.37f, 0.62f);   // the other tabs + icon buttons
+        static readonly Color UI_STAGE = new Color(0.08f, 0.11f, 0.15f, 0.30f);   // paperdoll backing
         const int CELL = 50;         // SleekItems cell size
         const int HEADER = 30;       // legacy per-page strip (kept for the char-panel slots)
         // --- the source's ACTUAL page-stacking metrics (PlayerDashboardInventoryUI.updateBoxAreas) ---
@@ -431,7 +440,7 @@ namespace UnturnedGodot
             _selPage = page; _selX = x; _selY = y;
 
             var panel = new Panel { Size = new Vector2(500, 300) };
-            StyleBox(panel, new Color(0.05f, 0.05f, 0.06f, 0.98f));
+            StyleBox(panel, UI_PANEL);
             _root.AddChild(panel);
             _selPanel = panel;
             Vector2 vp = GetViewport().GetVisibleRect().Size;
@@ -730,16 +739,37 @@ namespace UnturnedGodot
             var nav = new Panel();
             nav.SetAnchorsPreset(Control.LayoutPreset.TopWide);
             nav.OffsetBottom = NAVH;
-            StyleBox(nav, new Color(0.04f, 0.04f, 0.05f, 0.96f));
+            StyleBox(nav, UI_NAV);
             _dash.AddChild(nav);
-            string[] tabs = { "INVENTORY", "CRAFTING", "SKILLS", "INFORMATION" };
-            float tx = MARGIN + 6;
+            // Retail's navbar is four WIDE TAB BUTTONS spanning the bar with their keybind in the label
+            // ("Inventory [G]"), separated by small square icon buttons -- not left-aligned plain text.
+            (string label, string key)[] tabs =
+            {
+                ("Inventory", "G"), ("Craft", "Y"), ("Skills", "U"), ("Information", "M"),
+            };
+            float vpw = GetViewport().GetVisibleRect().Size.X;
+            const float ICONW = 44f;                                  // the little square buttons between tabs
+            float tabW = (vpw - MARGIN * 2 - ICONW * tabs.Length) / tabs.Length;
+            float tx2 = MARGIN;
             for (int i = 0; i < tabs.Length; i++)
             {
-                var t = new Label { Text = tabs[i], Position = new Vector2(tx, 19) };
-                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.5f, 0.5f, 0.55f));
+                var btn = new Panel { Position = new Vector2(tx2, 8), Size = new Vector2(tabW, NAVH - 16) };
+                StyleBox(btn, i == 0 ? UI_TAB_ON : UI_TAB_OFF);        // the open page reads as the lit tab
+                _dash.AddChild(btn);
+
+                var t = new Label { Text = $"{tabs[i].label} [{tabs[i].key}]", Position = new Vector2(tx2, 8),
+                                    Size = new Vector2(tabW, NAVH - 16),
+                                    HorizontalAlignment = HorizontalAlignment.Center,
+                                    VerticalAlignment = VerticalAlignment.Center };
+                t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.78f, 0.82f, 0.88f));
+                t.AddThemeFontSizeOverride("font_size", 15);
                 _dash.AddChild(t);
-                tx += tabs[i].Length * 11f + 34f;
+                tx2 += tabW;
+
+                var ico = new Panel { Position = new Vector2(tx2 + 4, 8), Size = new Vector2(ICONW - 8, NAVH - 16) };
+                StyleBox(ico, UI_TAB_OFF);
+                _dash.AddChild(ico);
+                tx2 += ICONW;
             }
         }
 
@@ -748,7 +778,7 @@ namespace UnturnedGodot
         void BuildCharacterPanel()
         {
             _charBox = new Panel { Position = new Vector2(MARGIN, NAVH + MARGIN), Size = new Vector2(CHARW, 600) };   // height fixed up in LayoutDash
-            StyleBox(_charBox, new Color(0.06f, 0.06f, 0.07f, 0.9f));
+            StyleBox(_charBox, UI_PANEL);
             _dash.AddChild(_charBox);
             _charBox.AddChild(Header("CHARACTER", new Vector2(10, 8), CHARW - 20));
 
@@ -787,7 +817,7 @@ namespace UnturnedGodot
         {
             var stage = new Panel { Position = new Vector2(8, PDTOP), Size = new Vector2(PDW, PDH) };
             _pdStage = stage;
-            StyleBox(stage, new Color(0.05f, 0.06f, 0.08f, 0.95f));   // dark backdrop so the character reads against it
+            StyleBox(stage, UI_STAGE);   // translucent backing -- retail shows the world behind the model
             box.AddChild(stage);
 
             // a SubViewportContainer shows the viewport clipped to the stage. Stretch off -> the viewport keeps its own
@@ -1165,7 +1195,7 @@ namespace UnturnedGodot
         Control HeaderBar(string text, Vector2 pos, float width, Item worn = null)
         {
             var bar = new Panel { Position = pos, Size = new Vector2(width, HDRH), MouseFilter = Control.MouseFilterEnum.Ignore };
-            StyleBox(bar, new Color(0.15f, 0.17f, 0.22f, 0.94f));
+            StyleBox(bar, UI_BAR);
 
             if (worn != null)
             {
@@ -1218,14 +1248,21 @@ namespace UnturnedGodot
         public Vector2I Cells = new(1, 1);
         public int Cell = 50;
 
+        // Retail draws each empty cell as its OWN light, translucent, rounded tile with a bright border -- the
+        // grid reads as a sheet of pale squares you can see the world through, not a dark slab with faint
+        // gridlines. Verified off the reference: cells there sample as light blue (the sky behind them).
+        public static Color CellFill = new(0.62f, 0.72f, 0.84f, 0.30f);
+        public static Color CellEdge = new(0.86f, 0.92f, 1f, 0.55f);
+
         public override void _Draw()
         {
-            DrawRect(new Rect2(Vector2.Zero, Size), new Color(0f, 0f, 0f, 0.5f), true);
-            var line = new Color(1f, 1f, 1f, 0.10f);
-            for (int x = 0; x <= Cells.X; x++)
-                DrawLine(new Vector2(x * Cell, 0), new Vector2(x * Cell, Cells.Y * Cell), line, 1f);
-            for (int y = 0; y <= Cells.Y; y++)
-                DrawLine(new Vector2(0, y * Cell), new Vector2(Cells.X * Cell, y * Cell), line, 1f);
+            for (int y = 0; y < Cells.Y; y++)
+                for (int x = 0; x < Cells.X; x++)
+                {
+                    var r = new Rect2(x * Cell + 1, y * Cell + 1, Cell - 2, Cell - 2);
+                    DrawRect(r, CellFill, true);
+                    DrawRect(r, CellEdge, false, 1f);
+                }
         }
     }
 }
