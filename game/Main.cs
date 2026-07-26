@@ -59,6 +59,7 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_COLLVIS") == "1") GetTree().DebugCollisionsHint = true;   // diagnostic: overlay physics collision shapes (must be set before bodies enter the tree)
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
             bool zperf = false;
+            bool zbody = false;
             bool deployTest = false;
             bool wearcloth = false;
             bool skillsui = false;
@@ -78,6 +79,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
+                else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
@@ -270,6 +272,7 @@ namespace UnturnedGodot
                 return;
             }
 
+            if (zbody) { BuildZBody(); return; }
             if (zperf) { BuildZPerf(); return; }
             if (deployTest)   // deployables showcase: both placed on a ground plane + a valid(blue)/invalid(red) ghost
             {
@@ -1394,6 +1397,107 @@ namespace UnturnedGodot
 
             GD.Print($"[zperf] spawned {_zpN} zombies  cam={(cam1p ? "1p" : "3p")}  mode={(_zaiMode ? "AI/cpu" : "render")}  animFrozen={RiggedCharacter.AnimFrozen}");
             SetProcess(true);
+        }
+
+        // ============================================================================
+        // --zbody: MECHANISM PROBE FOR THE 20ms
+        //
+        // strawberry's zombies-off control in a live POI, same spot, 3p in a vehicle:
+        //     zombies OFF  physics  2.4ms  217fps  11 active,  28 pairs
+        //     zombies ON   physics 26.8ms   30fps  74 active, 192 pairs
+        // Zombies add 24.4ms of physics. Their SCRIPT (every Prof tag summed) is 4.1ms of it.
+        // The other 20.3ms is the physics server simulating their bodies.
+        //
+        // So the claim to test is narrow and does not need the AI at all: do N kinematic capsules
+        // being swept every tick cost engine-side physics proportional to N? This spawns bare
+        // CharacterBody3Ds with no rig, no AI, no nav agent, and alternates moving/parked windows
+        // INSIDE ONE PROCESS -- the only design that survived this box's variance.
+        //
+        // Also corrects something I told strawberry: I claimed kinematic bodies contribute nothing
+        // to the active-body counter. 11 -> 74 with 63 zombies says otherwise. A CharacterBody3D
+        // that is moved every tick is active. I reasoned from what "kinematic" means instead of
+        // checking a delta that was already on screen.
+        readonly System.Collections.Generic.List<CharacterBody3D> _zbBodies = new();
+        bool _zbMode, _zbMoving = true; int _zbPhase, _zbPhysN; double _zbClock, _zbPhysSum, _zbPhysMax;
+        readonly double[] _zbRes = new double[4];
+
+        void BuildZBody()
+        {
+            _zbMode = true;
+            int n = int.TryParse(System.Environment.GetEnvironmentVariable("UG_ZN"), out var v) ? v : 63;
+            bool obstacles = System.Environment.GetEnvironmentVariable("UG_ZBOBST") == "1";
+
+            var gb = new StaticBody3D();
+            gb.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
+            AddChild(gb);
+
+            // UG_ZBOBST=1 adds static boxes so the sweeps hit real geometry instead of one infinite
+            // plane. strawberry's POI is full of buildings; a bare plane is the cheapest possible case
+            // and will understate, so the two modes bracket the answer rather than pretending to be it.
+            if (obstacles)
+                for (int i = 0; i < 120; i++)
+                {
+                    var sb = new StaticBody3D();
+                    var cs = new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(2f, 3f, 2f) } };
+                    sb.AddChild(cs); AddChild(sb);
+                    sb.GlobalPosition = new Vector3((i % 12) * 4f - 22f, 1.5f, (i / 12) * 4f - 18f);
+                }
+
+            for (int i = 0; i < n; i++)
+            {
+                var b = new CharacterBody3D { CollisionLayer = 1u << 1, CollisionMask = 1u << 0 };
+                b.AddChild(new CollisionShape3D { Shape = new CapsuleShape3D { Radius = 0.35f, Height = 1.8f } });
+                AddChild(b);
+                b.GlobalPosition = new Vector3((i % 10) * 2.2f - 10f, 1.0f, (i / 10) * 2.2f - 6f);
+                _zbBodies.Add(b);
+            }
+            GD.Print($"[zbody] {n} kinematic capsules, obstacles={obstacles}");
+            SetProcess(true); SetPhysicsProcess(true);
+        }
+
+        // Driving the capsules from here rather than from a per-body script keeps the probe honest:
+        // the only thing under test is MoveAndSlide on N kinematic bodies, with no other per-node work.
+        public override void _PhysicsProcess(double delta)
+        {
+            if (_zbMode) ZBodyPhysics(delta);
+        }
+
+        void ZBodyPhysics(double delta)
+        {
+            if (!_zbMoving) return;
+            float t = (float)_zbClock;
+            for (int i = 0; i < _zbBodies.Count; i++)
+            {
+                var b = _zbBodies[i];
+                float a = t * 0.7f + i * 0.37f;
+                b.Velocity = new Vector3(Mathf.Cos(a) * 2.4f, -9.8f * (float)delta, Mathf.Sin(a) * 2.4f);
+                b.MoveAndSlide();
+            }
+        }
+
+        void ZBodyTick(double delta)
+        {
+            const double Warm = 1.0, Win = 3.0;
+            _zbClock += delta;
+            if (_zbClock < Warm) return;
+            double now = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0;
+            _zbPhysSum += now; _zbPhysN++;
+            if (now > _zbPhysMax) _zbPhysMax = now;
+            if (_zbClock < Warm + Win * (_zbPhase + 1)) return;
+
+            double phys = _zbPhysN > 0 ? _zbPhysSum / _zbPhysN : 0.0;
+            GD.Print($"[zbody] win{_zbPhase} {( _zbMoving ? "MOVING" : "parked")} n={_zbBodies.Count} " +
+                     $"physics={phys:0.000}ms (worst {_zbPhysMax:0.000}, {_zbPhysN} samples) " +
+                     $"active={Performance.GetMonitor(Performance.Monitor.Physics3DActiveObjects):0} " +
+                     $"pairs={Performance.GetMonitor(Performance.Monitor.Physics3DCollisionPairs):0}");
+            if (_zbPhase < 4) _zbRes[_zbPhase] = phys;
+
+            _zbPhase++; _zbPhysSum = 0; _zbPhysN = 0; _zbPhysMax = 0;
+            if (_zbPhase < 4) { _zbMoving = _zbPhase % 2 == 0; return; }
+
+            GD.Print($"[zbody] pair1 moving {_zbRes[0]:0.000} -> parked {_zbRes[1]:0.000} (delta {_zbRes[0] - _zbRes[1]:0.000}ms)");
+            GD.Print($"[zbody] pair2 moving {_zbRes[2]:0.000} -> parked {_zbRes[3]:0.000} (delta {_zbRes[2] - _zbRes[3]:0.000}ms)  -- trust only if the pairs agree");
+            GetTree().Quit();
         }
 
         bool _zaiMode; PlayerController _zaiPlayer; double _zaiClock; ulong _zaiPhys0;
@@ -3698,6 +3802,7 @@ namespace UnturnedGodot
 
         public override void _Process(double delta)
         {
+            if (_zbMode) { ZBodyTick(delta); return; }                                                  // --zbody probe owns the frame
             if (_zpZombies.Count > 0) { if (_zaiMode) ZAITick(delta); else ZPerfTick(delta); return; }   // --zperf probe owns the frame
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
             {
