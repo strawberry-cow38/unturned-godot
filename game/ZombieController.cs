@@ -181,8 +181,14 @@ namespace UnturnedGodot
 
         // Phase 2: path toward `target` on the baked pocket navmesh via the agent (NO beeline), moving at Speed. Returns
         // the horizontal velocity applied (for facing + locomotion). Off-navmesh, the agent falls back toward the target.
+        // Split into z.nav and z.sweep because strawberry's F3 in a live POI reported z.point at 7.46ms per
+        // physics tick -- 44% of the whole frame, from ONE AI branch. z.point wraps all of TickPoint, so it says
+        // where the cost is but not what it is. These two tags separate the NavigationAgent3D work (a re-path 4x/s
+        // per zombie, plus a GetNextPathPosition read EVERY tick) from the kinematic sweep. Both callers of MoveTo
+        // are covered, so the player-hunt path is measured too.
         Vector3 MoveTo(Vector3 target, float g, float dt)
         {
+            ulong _tn = Time.GetTicksUsec();
             _repathAcc += dt;
             if (_repathAcc > 0.25f) { _nav.TargetPosition = target; _repathAcc = 0f; }   // re-target ~4x/s (perf: not every tick)
             Vector3 horiz = Vector3.Zero;
@@ -191,8 +197,9 @@ namespace UnturnedGodot
                 Vector3 to = _nav.GetNextPathPosition() - GlobalPosition; to.Y = 0f;
                 if (to.LengthSquared() > 1e-4f) horiz = to.Normalized() * Speed;
             }
+            Prof.Add("z.nav", _tn);
             Velocity = new Vector3(horiz.X, Velocity.Y - g * dt, horiz.Z);
-            StepUp(dt); MoveAndSlide();
+            { ulong _ts = Time.GetTicksUsec(); StepUp(dt); MoveAndSlide(); Prof.Add("z.sweep", _ts); }
             return horiz;
         }
 
@@ -567,9 +574,11 @@ namespace UnturnedGodot
 
             if (_rig != null)
             {
+                ulong _tr = Time.GetTicksUsec();
                 _rig.Tick(dt);
                 if (!_startled) { _startled = true; _rig.PlayOnce("Startle_" + _startleId); PlaySound(_roars); }
                 else _rig.SetLocomotion(horiz.Length());
+                Prof.Add("z.prig", _tr);
             }
             if (horiz.LengthSquared() > 1e-4f) LookAt(me + horiz, Vector3.Up);
         }
