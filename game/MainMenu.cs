@@ -17,6 +17,7 @@ namespace UnturnedGodot
     {
         public System.Action<bool> OnPlay;        // legacy flat-terrain survival build (test flags only)
         public System.Action<bool> OnDrivePEI;    // bool = noZombies -- the real PEI world; the dashboard's Play opens this
+        public System.Action OnDriveNewZombies;   // the same PEI world with the zombie REWRITE enabled (equivalent to --newzombies)
         public System.Action OnMultiplayer;       // top-level "Multiplayer": connect to the MP test server (VoX: always our test server for now; server browser later)
         public System.Action OnEditor;            // Workshop -> the singleplayer map editor (PEI)
         public System.Action OnNewMap;            // Workshop -> a fresh blank map in the editor
@@ -233,6 +234,9 @@ namespace UnturnedGodot
             box.AddChild(head);
             box.AddChild(SubButton("Prince Edward Island", () => OnDrivePEI?.Invoke(false)));
             box.AddChild(SubButton("Prince Edward Island — No Zombies", () => OnDrivePEI?.Invoke(true)));
+            // The rewrite (docs/ZOMBIE_REWRITE_PLAN.md), reachable WITHOUT a command line: the launcher
+            // hands off with only `--path game`, so --newzombies was unusable from a normal Play click.
+            box.AddChild(SubButton("Prince Edward Island — New Zombies", () => OnDriveNewZombies?.Invoke()));
             layer.AddChild(_playPanel);
         }
 

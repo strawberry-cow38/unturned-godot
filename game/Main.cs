@@ -503,6 +503,9 @@ namespace UnturnedGodot
                 var menu = new MainMenu();
                 menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
                 menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; _peiPlayable = true; BuildObjectsTest(); };
+                // Same world, zombie REWRITE enabled. Setting the flag here is exactly what --newzombies
+                // does; the menu route exists because the launcher passes no game arguments at all.
+                menu.OnDriveNewZombies = () => { menu.QueueFree(); ZombieDirector.Enabled = true; _noZombies = false; _peiPlayable = true; BuildObjectsTest(); };
                 menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // in-game MP-test entry (replaces the launcher checkbox): same path as --connect=claw.bitvox.me
                 menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
                 menu.OnNewMap = () => { menu.QueueFree(); BuildEditorNew(); };   // Workshop -> a fresh blank map
