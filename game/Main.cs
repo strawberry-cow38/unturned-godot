@@ -1636,6 +1636,7 @@ namespace UnturnedGodot
                           || System.Environment.GetEnvironmentVariable("UG_PORTSTATES") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_DEVIO") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_WINDTURBINE") == "1"
+                          || System.Environment.GetEnvironmentVariable("UG_TRAPS") == "1"
                           || System.Environment.GetEnvironmentVariable("UG_WATERTANK") == "1";   // showcases skip the gen/spot/ghost clutter
             Deployable placedGen = null, placedSpot = null;
             if (!showSplit)
@@ -1717,6 +1718,23 @@ namespace UnturnedGodot
                 look = new Vector3(0f, 0.15f, 0f);
                 cam.Position = new Vector3(0.9f, 0.7f, 1.3f);
                 cam.Fov = 45f; cam.LookAt(look, Vector3.Up);
+            }
+            // UG_TRAPS=1: the three trap deployables (landmine / wooden spikes / charge) with their REAL ripped world
+            // meshes -- verify they sit FLAT on the ground (floor traps, NOT stood up like a wall barricade) + the albedo.
+            if (System.Environment.GetEnvironmentVariable("UG_TRAPS") == "1")
+            {
+                var traps = new[] { DeployableDef.Landmine, DeployableDef.Spike, DeployableDef.Charge };
+                float tx = -1.3f;
+                foreach (var def in traps)
+                {
+                    Deployable.Spawn(this, def, new Vector3(tx, 0f, 0f), 0f);
+                    var m = ObjMesh.Load(ProjectSettings.GlobalizePath($"res://content/objects/{def.Model}.obj"));
+                    if (m != null) { var bb = m.GetAabb(); GD.Print($"[TRAPS] {def.Name} ({def.Model}) AABB size={bb.Size} center={bb.GetCenter()}"); }
+                    tx += 1.3f;
+                }
+                look = new Vector3(0f, 0.05f, 0f);
+                cam.Position = new Vector3(0f, 1.2f, 2.1f);
+                cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
             }
             // UG_SWITCH=1: two Power Switches side by side -- left ON (green light), right toggled OFF (red) -- verify the state light + gate.
             if (System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1")

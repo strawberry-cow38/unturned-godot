@@ -260,7 +260,7 @@ namespace UnturnedGodot
         // .dat has no setup delay). ProcBox placeholder until the real mesh (AssetRipper down).
         public static readonly DeployableDef Landmine = new()
         {
-            Id = 1101, Name = "Landmine", ProcBox = true,   // TODO: rip the real Landmine mesh once the AssetRipper is back
+            Id = 1101, Name = "Landmine", Model = "Landmine_0",   // real world mesh ripped from core.masterbundle (tools/extract_trap_meshes.py)
             Size = new Vector3(1f, 1f, 0.35f), Offset = 0.075f, Radius = 0.05f, Range = 4f, Health = 1f,
             IsTrap = true, TrapTrigger = 1.4f, TrapBlast = 8f, TrapZombieDamage = 175f, TrapPlayerDamage = 91f, TrapVehicleDamage = 175f,
             ShatterOnDeath = true, PlaceSound = "metalplacement",
@@ -273,7 +273,7 @@ namespace UnturnedGodot
         // wired yet, src 60). ProcBox placeholder until the real Spikes mesh (AssetRipper down). Wood variant = Pine.
         public static readonly DeployableDef Spike = new()
         {
-            Id = 385, Name = "Wooden Spikes", ProcBox = true,   // TODO: real Spikes_Pine mesh (a spike-cluster) once the AssetRipper is back
+            Id = 385, Name = "Wooden Spikes", Model = "Spikes_0",   // real spikes_pine mesh ripped from core.masterbundle (tools/extract_trap_meshes.py)
             Size = new Vector3(1f, 2f, 0.35f), Offset = 0.25f, Radius = 0.2f, Range = 4f, Health = 40f,
             IsTrap = true, TrapExplosive = false, TrapTrigger = 1.1f, TrapArmDelay = 0.25f,
             TrapZombieDamage = 60f, TrapPlayerDamage = 30f, TrapAnimalDamage = 60f, TrapWearPerHit = 5f, TrapCooldown = 0f,
@@ -289,7 +289,7 @@ namespace UnturnedGodot
         // to fire your charges) is the paired next increment; today a charge is triggered by DetonateAllCharges / a shot.
         public static readonly DeployableDef Charge = new()
         {
-            Id = 1241, Name = "Remote Explosive", ProcBox = true,   // TODO: rip the real Charge mesh once the AssetRipper is back
+            Id = 1241, Name = "Remote Explosive", Model = "Charge_0",   // real charge Model_0 mesh ripped from core.masterbundle (tools/extract_trap_meshes.py)
             Size = new Vector3(1f, 1f, 0.325f), Offset = 0.05f, Radius = 0.05f, Range = 4f, Health = 1f,
             IsTrap = true, TrapManual = true, TrapBlast = 8f, TrapZombieDamage = 200f, TrapPlayerDamage = 200f, TrapVehicleDamage = 500f,
             TrapAnimalDamage = 200f, TrapStructureDamage = 1000f,
