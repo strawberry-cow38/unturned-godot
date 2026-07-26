@@ -28,12 +28,15 @@ namespace UnturnedGodot
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
+        public bool ExplosionProof;   // src Proof_Explosion: immune to OTHER explosions' damage (the Charge) so a stack doesn't chain-detonate -- you blow them on the Detonator's command, not from one stray blast
 
-        // --- TRAP: IsTrap makes the placed Deployable watch TrapTrigger for a victim. Two families, split by TrapExplosive
-        //     (src ItemTrapAsset.isExplosive): EXPLOSIVE (landmine) fires a TrapBlast-radius AoE (DamageTool.explode) and
-        //     consumes itself; CONTACT (spike) shreds whoever ENTERS its footprint, wears itself down 5 HP/hit, persists. ---
+        // --- TRAP: IsTrap makes the placed Deployable a hazard. THREE families: EXPLOSIVE proximity (landmine) fires a
+        //     TrapBlast AoE (DamageTool.explode) + self-consumes; CONTACT (spike, TrapExplosive=false) shreds whoever ENTERS
+        //     + wears down; MANUAL (charge, TrapManual=true) is an INERT explosive -- no auto-trigger, blows only when a
+        //     Detonator fires it (Deployable.DetonateManual) or it's shot. Split by TrapExplosive (src isExplosive) + TrapManual. ---
         public bool IsTrap;
-        public bool TrapExplosive = true;   // src isExplosive: true = proximity BLAST that self-consumes (landmine); false = CONTACT hazard (spike)
+        public bool TrapExplosive = true;   // src isExplosive: true = BLAST (landmine/charge); false = CONTACT hazard (spike)
+        public bool TrapManual = false;     // src Charge/InteractableCharge: INERT until a Detonator triggers it (no proximity/contact poll)
         public float TrapTrigger = 1.4f;   // proximity radius that fires it (m)
         public float TrapBlast = 6f;       // AoE explosion radius on trigger (m; 0 = contact-only)
         public float TrapZombieDamage = 200f, TrapPlayerDamage = 101f, TrapVehicleDamage = 100f;
@@ -277,12 +280,29 @@ namespace UnturnedGodot
             PlaceSound = "woodplacement",
         };
 
+        // src Charge.dat: id 1241, Type Charge, Build Charge, Rarity Epic. A REMOTE explosive (base-raiding): placed INERT
+        // -- NO proximity/contact trigger (TrapManual). It blows only when a Detonator fires it (Deployable.DetonateManual)
+        // or it's shot (Health 1 Vulnerable -> TakeDamage detonates it, like the landmine). HUGE blast -- Range2 8, Player/
+        // Zombie 200, Vehicle 500, Structure 1000 (TrapStructureDamage), Animal 200. Src Proof_Explosion (a charge resists
+        // other blasts so a stack doesn't chain early) is already honoured: DetonateTrap's deployable-damage loop SKIPS
+        // traps. ProcBox placeholder until the real Charge mesh (AssetRipper down). NOTE: the DETONATOR item (equip + plunge
+        // to fire your charges) is the paired next increment; today a charge is triggered by DetonateAllCharges / a shot.
+        public static readonly DeployableDef Charge = new()
+        {
+            Id = 1241, Name = "Remote Explosive", ProcBox = true,   // TODO: rip the real Charge mesh once the AssetRipper is back
+            Size = new Vector3(1f, 1f, 0.325f), Offset = 0.05f, Radius = 0.05f, Range = 4f, Health = 1f,
+            IsTrap = true, TrapManual = true, TrapBlast = 8f, TrapZombieDamage = 200f, TrapPlayerDamage = 200f, TrapVehicleDamage = 500f,
+            TrapAnimalDamage = 200f, TrapStructureDamage = 1000f,
+            ShatterOnDeath = true, ExplosionProof = true, PlaceSound = "metalplacement",
+        };
+
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike, Charge };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
             385 => Spike,
+            1241 => Charge,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

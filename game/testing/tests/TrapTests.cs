@@ -218,4 +218,95 @@ namespace UnturnedGodot.Testing
             T.Check($"breaking a spike does NOT blast the neighbour ({genHp:0} -> {gen.Health:0})", Mathf.IsEqualApprox(gen.Health, genHp));
         }
     }
+
+    // Remote Explosive (src Charge.dat id 1241): a MANUAL charge is INERT -- unlike the landmine it does NOT auto-trigger
+    // on proximity. A zombie sitting right on it, for many ticks, must not set it off. Proves TrapManual skips the poll.
+    public class ChargeIsInertUntilTriggered : GameTest
+    {
+        public override string Name => "trap.charge_inert";
+        public override IEnumerable<Step> Run()
+        {
+            var charge = Deployable.Spawn(World, DeployableDef.Charge, Vector3.Zero, 0f);
+            var z = new ZombieController();
+            World.AddChild(z);
+            yield return Ticks(3);
+            T.Check("charge placed", charge != null && !charge.DebugExploded);
+            if (charge == null) yield break;
+
+            z.GlobalPosition = new Vector3(0.5f, 0f, 0f);   // right on top of it (would set off a landmine)
+            yield return Ticks(20);   // 4 s of _Process polls -- a manual charge ignores them all
+            T.Check("a placed charge is INERT (no proximity auto-trigger)", !charge.DebugExploded);
+        }
+    }
+
+    // A Detonator fires the charge (Deployable.DetonateManual). That path detonates it -- the remote-trigger core.
+    public class ChargeDetonatesOnCommand : GameTest
+    {
+        public override string Name => "trap.charge_detonate";
+        public override IEnumerable<Step> Run()
+        {
+            var charge = Deployable.Spawn(World, DeployableDef.Charge, Vector3.Zero, 0f);
+            yield return Ticks(2);
+            T.Check("placed, not yet blown", charge != null && !charge.DebugExploded);
+            if (charge == null) yield break;
+
+            charge.DetonateManual();   // what a Detonator plunge calls
+            T.Check("DetonateManual blows the charge", charge.DebugExploded);
+        }
+    }
+
+    // Health 1 + Vulnerable: a shot/blast destroys a charge, which DETONATES it (explosive), same as the landmine.
+    public class ChargeDetonatesWhenShot : GameTest
+    {
+        public override string Name => "trap.charge_shot";
+        public override IEnumerable<Step> Run()
+        {
+            var charge = Deployable.Spawn(World, DeployableDef.Charge, Vector3.Zero, 0f);
+            yield return Ticks(2);
+            if (charge == null) yield break;
+            T.Check("placed, not yet blown", !charge.DebugExploded);
+            charge.TakeDamage(5f);   // exceeds its 1 HP -> detonate
+            T.Check("a shot detonates the charge", charge.DebugExploded);
+        }
+    }
+
+    // Charges are for RAIDING: the blast does huge Structure_Damage (1000) to nearby placed deployables -- far more than a
+    // landmine (75). Detonate a charge next to a generator; it should be devastated (not merely dinged).
+    public class ChargeDevastatesStructures : GameTest
+    {
+        public override string Name => "trap.charge_raid";
+        public override IEnumerable<Step> Run()
+        {
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(2f, 0f, 0f), 0f);   // within the 8 m blast
+            var charge = Deployable.Spawn(World, DeployableDef.Charge, Vector3.Zero, 0f);
+            yield return Ticks(3);
+            T.Check("generator + charge placed", gen != null && charge != null);
+            if (gen == null || charge == null) yield break;
+
+            float genHp = gen.Health;
+            charge.DetonateManual();
+            yield return Ticks(1);
+            T.Check($"the charge devastates the generator ({genHp:0} -> {gen.Health:0}, big Structure_Damage)", gen.Health <= genHp - 300f);
+        }
+    }
+
+    // DetonateAllCharges (a Detonator plunge) fires EVERY placed charge at once. Place three; all blow. (Each blast skips
+    // other traps, so they don't chain-detonate early -- src Proof_Explosion.)
+    public class DetonatorFiresAllCharges : GameTest
+    {
+        public override string Name => "trap.charge_detonate_all";
+        public override IEnumerable<Step> Run()
+        {
+            var a = Deployable.Spawn(World, DeployableDef.Charge, new Vector3(-4f, 0f, 0f), 0f);
+            var b = Deployable.Spawn(World, DeployableDef.Charge, new Vector3(0f, 0f, 0f), 0f);
+            var c = Deployable.Spawn(World, DeployableDef.Charge, new Vector3(4f, 0f, 0f), 0f);
+            yield return Ticks(3);
+            T.Check("three charges placed", a != null && b != null && c != null);
+            if (a == null || b == null || c == null) yield break;
+
+            int n = Deployable.DetonateAllCharges(World.GetTree());
+            T.Check($"DetonateAllCharges fired every charge (n={n})", n >= 3);
+            T.Check("all three charges blew", a.DebugExploded && b.DebugExploded && c.DebugExploded);
+        }
+    }
 }

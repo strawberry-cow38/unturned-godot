@@ -360,6 +360,25 @@ namespace UnturnedGodot
             SpawnDebris(); QueueFree();
         }
 
+        // A MANUAL trap (remote charge) fired by a Detonator: the same blast as any explosive trap. Public so the detonator
+        // item can trigger it. No-op unless this is a live manual charge.
+        public void DetonateManual()
+        {
+            if (Def != null && Def.IsTrap && Def.TrapManual && !_exploded && _deadTimer < 0f) DetonateTrap();
+        }
+        // Fire EVERY placed manual charge in the world (a Detonator plunge). SP: all charges are yours. Each charge's blast
+        // SKIPS other traps (DetonateTrap's deployable loop), so a field doesn't chain-detonate early (src Proof_Explosion).
+        // Returns the count fired.
+        public static int DetonateAllCharges(SceneTree tree)
+        {
+            if (tree == null) return 0;
+            int n = 0;
+            foreach (var node in tree.GetNodesInGroup("deployables"))
+                if (node is Deployable dp && GodotObject.IsInstanceValid(dp) && dp.Def != null && dp.Def.TrapManual && !dp._exploded && dp._deadTimer < 0f)
+                { dp.DetonateManual(); n++; }
+            return n;
+        }
+
         // test seams: check-once deterministically (bypass the _Process throttle) + advance the arm timer past the grace
         public void DebugTrapCheck() { if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f && _armTime >= Def.TrapArmDelay && TrapVictimNear()) DetonateTrap(); }
         public void DebugContactTick() { if (Def != null && Def.IsTrap && !Def.TrapExplosive && !_exploded && _deadTimer < 0f && _armTime >= Def.TrapArmDelay) TrapContactTick(); }
@@ -449,7 +468,7 @@ namespace UnturnedGodot
                     if (d <= R) v.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));
                 }
             foreach (var n in GetTree().GetNodesInGroup("deployables"))
-                if (n is Deployable dep && dep != this && !dep._exploded)
+                if (n is Deployable dep && dep != this && !dep._exploded && (dep.Def == null || !dep.Def.ExplosionProof))   // Proof_Explosion (charge) resists other blasts -> no early chain
                 {
                     float d = dep.GlobalPosition.DistanceTo(p);
                     if (d <= R) dep.TakeDamage(SDG.Unturned.ExplosionMath.Linear(120f, d, R));   // chain: blow the next generator too
@@ -523,8 +542,9 @@ namespace UnturnedGodot
         {
             // TRAP (landmine): proximity-armed. Watch for a victim inside TrapTrigger, then detonate. Throttled to ~5 Hz
             // -- a mine is cheap, but N mines x M zombies EVERY frame is exactly the _PhysicsProcess-shaped cost we just
-            // spent a day chasing; a proximity trap doesn't need per-frame resolution.
-            if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f)
+            // spent a day chasing; a proximity trap doesn't need per-frame resolution. A MANUAL charge (TrapManual) skips
+            // this entirely -- it's inert until a Detonator fires it.
+            if (Def != null && Def.IsTrap && !Def.TrapManual && !_exploded && _deadTimer < 0f)
             {
                 _armTime += (float)delta;   // placer grace: inert until armed, so planting it doesn't blast you
                 if (_trapCd > 0f) _trapCd -= (float)delta;   // contact-trap cooldown between damage events (src Trap_Cooldown)
