@@ -49,6 +49,7 @@ namespace SDG.Unturned
             Add(9120, "Fluid Drain",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "A drain that deletes whatever fluid is piped into it. Place it anywhere and hose your overflow / waste line into it.");
             Add(9121, "Fluid Purifier",   2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered water purifier. Wire it to power, hose tainted or dirty water into its input, and clean drinkable water comes out. Dead without power.");
             Add(1101, "Landmine",         2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A proximity mine. Plant it, and anything that wanders within ~1.4 m sets off a heavy blast. Fragile -- a stray shot detonates it. Consumed by its own explosion.");
+            Add(385,  "Wooden Spikes",    2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A bed of sharpened stakes. Anything that steps onto it gets shredded (60 to zombies, 30 to players); it wears ~5 HP per hit and breaks after ~8. Unrepairable, and not explosive -- a shot just snaps it.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

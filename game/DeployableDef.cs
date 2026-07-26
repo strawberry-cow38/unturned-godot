@@ -29,14 +29,19 @@ namespace UnturnedGodot
         public bool ShatterOnDeath;   // true -> explodes into flying debris + vanishes (no salvageable husk, drops nothing); false -> charred blowtorch-salvageable wreck
         public bool ProcBox;          // true -> a plain gray BoxMesh of Size (no .obj/palette); the custom splitters use it
 
-        // --- TRAP (landmine/spike): IsTrap makes the placed Deployable watch TrapTrigger for a victim, then detonate a
-        //     TrapBlast-radius AoE (reusing DamageTool.explode) and shatter itself. Src ItemTrapAsset (range2 + damage). ---
+        // --- TRAP: IsTrap makes the placed Deployable watch TrapTrigger for a victim. Two families, split by TrapExplosive
+        //     (src ItemTrapAsset.isExplosive): EXPLOSIVE (landmine) fires a TrapBlast-radius AoE (DamageTool.explode) and
+        //     consumes itself; CONTACT (spike) shreds whoever ENTERS its footprint, wears itself down 5 HP/hit, persists. ---
         public bool IsTrap;
+        public bool TrapExplosive = true;   // src isExplosive: true = proximity BLAST that self-consumes (landmine); false = CONTACT hazard (spike)
         public float TrapTrigger = 1.4f;   // proximity radius that fires it (m)
         public float TrapBlast = 6f;       // AoE explosion radius on trigger (m; 0 = contact-only)
         public float TrapZombieDamage = 200f, TrapPlayerDamage = 101f, TrapVehicleDamage = 100f;
-        public float TrapArmDelay = 1.5f;   // placer grace: the mine is inert for this long after planting so you can step clear of your own blast
+        public float TrapAnimalDamage = 0f;   // src Animal_Damage (contact traps); 0 = leaves animals alone (no animal-trap target wired yet)
+        public float TrapArmDelay = 1.5f;   // placer grace / src Trap_Setup_Delay: inert this long after planting (landmine QoL 1.5; src spike 0.25)
         public float TrapStructureDamage = 75f;   // src Barricade/Structure_Damage (Landmine.dat 75): blast damage to nearby placed deployables (base-raiding)
+        public float TrapWearPerHit = 5f;   // src InteractableTrap BarricadeManager.damage(transform, 5f): a CONTACT trap loses this HP per victim it shreds -> wears out (Health/5 hits) then breaks
+        public float TrapCooldown = 0f;     // src Trap_Cooldown: min seconds between two damage events on a contact trap (Spikes.dat 0 -> every distinct ENTER hits)
         public FixtureKind Fixture = FixtureKind.None;   // A3/A2: a server-placed WORLD fixture (GridSource mains / GasPump) vs a normal player-placeable deployable. Bridged to DeployableNetDef.FixtureKind in DeployableNetSchema.
 
         // FLUID device marker (strawberry 2026-07-22): a non-null Fluid means this "deployable" places a FluidContainer
@@ -258,11 +263,26 @@ namespace UnturnedGodot
             ShatterOnDeath = true, PlaceSound = "metalplacement",
         };
 
+        // src Spikes_Pine.dat: id 385, Type Trap, Build Spike, Rarity Rare. A CONTACT hazard (NOT explosive): whatever
+        // ENTERS its footprint gets shredded (zombie 60 / player 30 / animal 60) and the spike WEARS 5 HP/hit (Health 40
+        // -> ~8 hits) then breaks apart -- Vulnerable + Unrepairable. Retail PvP-gates player damage & ignores riders in a
+        // vehicle; the port (like the landmine) hurts whoever steps on it. Animal damage deferred (no animal-trap target
+        // wired yet, src 60). ProcBox placeholder until the real Spikes mesh (AssetRipper down). Wood variant = Pine.
+        public static readonly DeployableDef Spike = new()
+        {
+            Id = 385, Name = "Wooden Spikes", ProcBox = true,   // TODO: real Spikes_Pine mesh (a spike-cluster) once the AssetRipper is back
+            Size = new Vector3(1f, 2f, 0.35f), Offset = 0.25f, Radius = 0.2f, Range = 4f, Health = 40f,
+            IsTrap = true, TrapExplosive = false, TrapTrigger = 1.1f, TrapArmDelay = 0.25f,
+            TrapZombieDamage = 60f, TrapPlayerDamage = 30f, TrapAnimalDamage = 60f, TrapWearPerHit = 5f, TrapCooldown = 0f,
+            PlaceSound = "woodplacement",
+        };
+
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
+            385 => Spike,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

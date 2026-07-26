@@ -273,7 +273,8 @@ namespace UnturnedGodot
             Health = Mathf.Max(0f, Health - amount);
             if (Health <= 0f)
             {
-                if (Def != null && Def.IsTrap) { DetonateTrap(); return; }   // a Vulnerable Explosive trap (Landmine.dat Health 1) DETONATES when shot/blasted, not just crumbles
+                // a trap at 0 HP: explosive (landmine, Health 1) DETONATES when shot/blasted; a contact trap (spike) worn or shot out just BREAKS apart
+                if (Def != null && Def.IsTrap) { if (Def.TrapExplosive) DetonateTrap(); else BreakTrap(); return; }
                 _deadTimer = ExplodeDelay;
                 _powered = false; _powerLevel = 0f;   // a dying generator cuts out INSTANTLY (no wind-down); the ramp tick stops the audio + settles the mesh
                 if (_fire != null) _fire.Emitting = true;   // a small fire the moment it dies, before Explode() ramps the blaze
@@ -287,7 +288,8 @@ namespace UnturnedGodot
 
         // --- TRAP (landmine): a proximity mine. _Process watches TrapTrigger for a victim, then DetonateTrap() blasts +
         //     shatters. v1 arms on zombies only (base defense); player-trigger + a place-and-walk-away arming grace = follow-ups. ---
-        float _trapAccum, _armTime;
+        float _trapAccum, _armTime, _trapCd;
+        System.Collections.Generic.HashSet<ulong> _trapInside = new();   // instance ids currently inside a CONTACT trap's footprint -> src OnTriggerEnter fires once per ENTRY, not every tick you stand on it
         bool TrapVictimNear()
         {
             if (Def == null || GetTree() == null) return false;
@@ -318,8 +320,49 @@ namespace UnturnedGodot
             }
             Explode();   // the mine's own blast consumes it -> ShatterOnDeath debris, no salvage husk
         }
+        // A CONTACT trap (spike): shred each victim that just ENTERED the footprint (src OnTriggerEnter), then WEAR the trap
+        // per hit so it grinds down and breaks -- no AoE, no self-consume. Runs ~5 Hz from _Process (+ once from a test seam).
+        // The _trapInside set is what gives src's "hit on entry, not every tick you keep standing on it".
+        void TrapContactTick()
+        {
+            if (Def == null || GetTree() == null) return;
+            float r2 = Def.TrapTrigger * Def.TrapTrigger;
+            Vector3 me = GlobalPosition;
+            var nowInside = new System.Collections.Generic.HashSet<ulong>();
+            foreach (var n in GetTree().GetNodesInGroup("zombies"))
+            {
+                if (n is not ZombieController z || z.GlobalPosition.DistanceSquaredTo(me) > r2) continue;
+                ulong id = z.GetInstanceId(); nowInside.Add(id);
+                if (!_trapInside.Contains(id)) TrapShred(() => z.DamageHit(Def.TrapZombieDamage, z.GlobalPosition, Vector3.Up));
+                if (_exploded) { _trapInside = nowInside; return; }   // wore out mid-sweep -> stop
+            }
+            var p = PlayerRegistry.Nearest(me);   // like the landmine: whoever steps on it (the arm grace protects the placer)
+            if (p != null && p.GlobalPosition.DistanceSquaredTo(me) <= r2)
+            {
+                ulong id = p.GetInstanceId(); nowInside.Add(id);
+                if (Def.TrapPlayerDamage > 0f && !_trapInside.Contains(id)) TrapShred(() => p.TakeDamage(Def.TrapPlayerDamage, me));
+            }
+            _trapInside = nowInside;
+        }
+        // one damage event on a contact trap: gated by the cooldown, then deal it + wear the trap (which may BREAK it).
+        void TrapShred(System.Action deal)
+        {
+            if (Def.TrapCooldown > 0f && _trapCd > 0f) return;   // src lastTriggered/cooldown: min interval between damage events
+            deal();
+            _trapCd = Def.TrapCooldown;
+            TakeDamage(Def.TrapWearPerHit);   // src BarricadeManager.damage(transform, 5f); at 0 HP TakeDamage routes a contact trap to BreakTrap
+        }
+        // a CONTACT trap worn/shot to 0 HP: it just breaks apart -- no blast, no burning wreck, no salvage (src barricade destroy).
+        void BreakTrap()
+        {
+            if (_exploded) return;
+            _exploded = true; _deadTimer = -1f;
+            SpawnDebris(); QueueFree();
+        }
+
         // test seams: check-once deterministically (bypass the _Process throttle) + advance the arm timer past the grace
         public void DebugTrapCheck() { if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f && _armTime >= Def.TrapArmDelay && TrapVictimNear()) DetonateTrap(); }
+        public void DebugContactTick() { if (Def != null && Def.IsTrap && !Def.TrapExplosive && !_exploded && _deadTimer < 0f && _armTime >= Def.TrapArmDelay) TrapContactTick(); }
         public void DebugAdvanceArm(float dt) => _armTime += dt;
         public bool DebugVictimNear() => Def != null && Def.IsTrap && TrapVictimNear();   // detection only (no detonation side-effects) -- for the player-path test
         public bool DebugExploded => _exploded;
@@ -484,8 +527,17 @@ namespace UnturnedGodot
             if (Def != null && Def.IsTrap && !_exploded && _deadTimer < 0f)
             {
                 _armTime += (float)delta;   // placer grace: inert until armed, so planting it doesn't blast you
+                if (_trapCd > 0f) _trapCd -= (float)delta;   // contact-trap cooldown between damage events (src Trap_Cooldown)
                 _trapAccum += (float)delta;
-                if (_trapAccum >= 0.2f) { _trapAccum = 0f; if (_armTime >= Def.TrapArmDelay && TrapVictimNear()) DetonateTrap(); }
+                if (_trapAccum >= 0.2f)
+                {
+                    _trapAccum = 0f;
+                    if (_armTime >= Def.TrapArmDelay)
+                    {
+                        if (Def.TrapExplosive) { if (TrapVictimNear()) DetonateTrap(); }   // landmine: proximity -> blast
+                        else TrapContactTick();                                             // spike: shred whoever ENTERED, wear itself down
+                    }
+                }
             }
             // damage/burn lifecycle runs ALWAYS (not just when focused): 0-HP explosion delay + the wreck fire arc.
             if (_deadTimer >= 0f) { _deadTimer -= (float)delta; if (_deadTimer <= 0f) Explode(); }
