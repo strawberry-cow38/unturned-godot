@@ -321,6 +321,15 @@ void fragment() {
         public static bool IsWater(byte layer) => layer == 5;   // splat layer 5 = ocean; every other layer is drivable land
 
         public static Terrain Active;   // most-recently-built terrain -> bullet impacts sample the ground material off its splatmap
+
+        // Water surface (the global ocean plane). Retail models water as WaterVolume boxes; PEI's ocean is one
+        // box whose surface sits at seaLevel*256 world-Y (source: LevelLighting legacy water). The port has a
+        // single global plane, so submersion = point.y < SeaLevelY and the swim surface elevation IS SeaLevelY.
+        // HasWater is false under UG_NOWATER (no plane built) so swimming disables cleanly.
+        public static float SeaLevelY = 25.6f;   // = 0.1(PEI seaLevel) * 256; overwritten per-build
+        public static bool HasWater;
+        /// <summary>Is this world point below the ocean surface? (the port's WaterUtility.isPointUnderwater).</summary>
+        public static bool IsPointUnderwater(float worldY) => HasWater && worldY < SeaLevelY;
         // The bullet-impact surface material at a world point, from the dominant splat layer (so shooting sand kicks up sand,
         // road/rock = concrete chips, dirt = dirt, grass/forest = foliage -- instead of one flat guess for the whole island).
         public PlayerController.Surf SurfAt(float worldX, float worldZ) => SampleDominantLayer(worldX, worldZ) switch
@@ -508,9 +517,11 @@ void fragment() {
 
             // translucent ocean surface at PEI's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18, v12 = 0.1)
             // UG_NOWATER=1 skips the water plane -> see a map's raw terrain/textures from above (esp. flat custom maps below sea level)
-            if (System.Environment.GetEnvironmentVariable("UG_NOWATER") != "1")
+            HasWater = System.Environment.GetEnvironmentVariable("UG_NOWATER") != "1";
+            if (HasWater)
             {
                 float waterY = 0.1f * 256f;   // = 25.6 world-Y; Unturned water surface = seaLevel * Level.TERRAIN(256), Use_Legacy_Water path
+                SeaLevelY = waterY;            // expose for swim submersion tests (PlayerController water state)
                 var water = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2((maxX - minX + 1) * TILE_SIZE + 400f, (maxY - minY + 1) * TILE_SIZE + 400f) } };
                 water.Position = new Vector3(baseX + GW * UNIT * 0.5f, waterY, -(baseZ + GH * UNIT * 0.5f));
                 water.MaterialOverride = new StandardMaterial3D

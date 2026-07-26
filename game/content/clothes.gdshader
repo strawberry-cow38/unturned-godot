@@ -16,16 +16,20 @@
 // Unassigned shirt/pants read as fully transparent (alpha 0 -> skin shows): every texture is gated by a
 // has_* bool that defaults false, so a bare body renders as plain skin_color without binding any texture.
 //
-// depth_draw_always + a ghost_alpha uniform preserves RiggedCharacter's FLANKER_STALK ghost toggle
-// through the ShaderMaterial (source is Opaque; at ghost_alpha=1.0 the depth write keeps it solid/
-// self-occluding = opaque look, at 0.2 it's the faint stalker shimmer). cull_front replicates the old
-// StandardMaterial3D CullMode.Front (the rig's Z-flip reverses winding).
+// OPAQUE (the source StandardClothes is Opaque, and the composite is always fully opaque -- skin is an opaque base,
+// shirt/pants only LAYER over it). Writing ALPHA at all forced Godot to put the body in the TRANSPARENT queue, where
+// it sorted by AABB distance against the other transparent surface -- the translucent ocean plane -- and drew ON TOP
+// of the water even where submerged (the "3p body renders on top of the water" bug). depth_prepass_alpha didn't fix
+// it: it keeps the body transparent. As an opaque surface the body draws in the opaque pass, writes real depth, and
+// the water (transparent) depth-tests against it -- submerged parts are correctly occluded/tinted. The FLANKER_STALK
+// ghost shimmer is the ATLAS body path (StandardMaterial3D, RiggedCharacter._bodyMat) -- the clothes-shader body
+// (player/corpse/1P arms) never ghosts, so no ALPHA is needed here. cull_front replicates the old CullMode.Front
+// (the rig's Z-flip reverses winding).
 shader_type spatial;
-render_mode cull_front, depth_draw_always;
+render_mode cull_front;
 
 uniform vec4 skin_color : source_color = vec4(0.82, 0.66, 0.52, 1.0);
 uniform bool flip_shirt = false;   // left-handed model mirror (SP single body: false)
-uniform float ghost_alpha = 1.0;   // FLANKER_STALK ghost: 1.0 solid, 0.2 shimmer
 
 uniform bool has_shirt_albedo = false;
 uniform bool has_shirt_emission = false;
@@ -63,6 +67,5 @@ void fragment() {
 
 	METALLIC = mix(shirtMetallic.r * shirtAlbedo.a, pantsMetallic.r, pantsAlbedo.a);
 	ROUGHNESS = 1.0 - mix(shirtMetallic.a * shirtAlbedo.a, pantsMetallic.a, pantsAlbedo.a);
-
-	ALPHA = ghost_alpha;
+	// no ALPHA write -> opaque body (see the header note): fixes the 3p-body-over-water depth sort.
 }
