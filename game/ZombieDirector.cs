@@ -48,6 +48,9 @@ namespace UnturnedGodot
         public int LiveCount => _sim?.Count ?? 0;
         public int ViewsInUse { get; private set; }
 
+        int _lastPlayerCount;
+        Vector3 _lastPlayerPos;
+
         public override void _Ready()
         {
             _rng.Randomize();
@@ -112,6 +115,8 @@ namespace UnturnedGodot
             }
 
             int n = GatherPlayers();
+            _lastPlayerCount = n;
+            if (n > 0) _lastPlayerPos = G(_players[0]);
             _sim.SetPlayers(_players, n);
             _sim.SimStep(_tick++, delta);
             SyncViews(delta);
@@ -238,7 +243,11 @@ namespace UnturnedGodot
         {
             if (_sim == null) return "zdirector: no sim";
             var s = _sim.Stats;
-            return $"zsim {s.Alive} alive  C/N/F/A {s.Close}/{s.Near}/{s.Far}/{s.Ambient}  " +
+            // Player count + hot regions are in here because "everything is AMBIENT" has two very
+            // different causes -- nobody to measure against, or nobody near a region -- and they look
+            // identical from the tier counts alone.
+            return $"players {_lastPlayerCount} @ {_lastPlayerPos}  hot {_sim.Regions.HotCount}/{_sim.Regions.Count}  " +
+                   $"zsim {s.Alive} alive  C/N/F/A {s.Close}/{s.Near}/{s.Far}/{s.Ambient}  " +
                    $"due {s.Due}  moving {s.Moving}  paths {s.PathQueries}/tick (+{s.PathQueued} queued, " +
                    $"{_sim.TotalPathQueries} total)  views {ViewsInUse}";
         }

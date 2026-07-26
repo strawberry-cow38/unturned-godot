@@ -3825,6 +3825,36 @@ namespace UnturnedGodot
         // baked pockets, that rows tier correctly against a real player position, that Godot's navigation
         // server answers the corridor queries, and that zombies MOVE. Reports positions, not intentions.
         UnityEngine.Vector3[] _zdStart;
+
+        // Stand the measurement point in the POCKET WITH THE MOST ZOMBIES, deliberately, and before the
+        // clock starts. PEI's player spawn is out in the wilderness, where the correct behaviour is that
+        // nothing happens -- measuring there says nothing about whether the system works. The case worth
+        // measuring is the one that used to cost 24.4 ms: a player standing inside a populated POI.
+        void ZombieDirTestStand()
+        {
+            var zd = _zdField;
+            if (zd?.Sim == null) return;
+            var sim = zd.Sim;
+            int best = -1, bestCount = 0;
+            var perRegion = new int[sim.Regions.Count];
+            for (int i = 0; i < sim.Count; i++)
+            {
+                int r = sim.RegionOf(i);
+                if (r >= 0 && ++perRegion[r] > bestCount) { bestCount = perRegion[r]; best = r; }
+            }
+            if (best < 0) { GD.Print("[zdirtest] every row is off-partition -- cannot pick a POI"); return; }
+
+            // Centre of the pocket is not necessarily ON the zombies; stand on the densest one's position
+            // so the sample really is "a player among the horde".
+            var c = sim.Regions.BoundsOf(best).Center;
+            UnityEngine.Vector3 anchor = new UnityEngine.Vector3(c.x, 0f, c.z);
+            for (int i = 0; i < sim.Count; i++)
+                if (sim.RegionOf(i) == best) { anchor = sim.PositionOf(i); break; }
+
+            zd.DebugPlayer = new Vector3(anchor.x, anchor.y, anchor.z);
+            GD.Print($"[zdirtest] standing the test player in pocket {best} ({bestCount} zombies) at ({anchor.x:0},{anchor.z:0})");
+        }
+
         void RunZombieDirTest()
         {
             var zd = _zdField;
@@ -3887,8 +3917,11 @@ namespace UnturnedGodot
             // sample at frame 30 (nav synced), then again ~5 s later, and report how far rows actually walked
             if (_zdirTest)
             {
-                if (++_zdFrames == 30) RunZombieDirTest();
-                else if (_zdFrames >= 330) { _zdirTest = false; RunZombieDirTest(); }
+                // Stand the player in a POI first, THEN start the clock. Movie-mode frames are expensive
+                // under lavapipe, so the window is short -- a few seconds of sim, not the ten it was.
+                if (++_zdFrames == 10) ZombieDirTestStand();
+                else if (_zdFrames == 40) RunZombieDirTest();
+                else if (_zdFrames >= 130) { _zdirTest = false; RunZombieDirTest(); }
                 return;
             }
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)

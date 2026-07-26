@@ -260,6 +260,11 @@ namespace SDG.Unturned
 
         public void SimStep(long tick, double dt)
         {
+            // A region must never be colder than the tiers measured inside it. With a margin tighter than
+            // NearRange, a zombie 50 m away in the next pocket stays AMBIENT and ignores you -- the region
+            // test silently overrules the distance test. Found on PEI: the spawn sits in wilderness, more
+            // than the old 32 m margin from every pocket, so the entire level slept.
+            if (_regions.HotMargin < NearRange) _regions.HotMargin = NearRange;
             _regions.MarkHot(_players, _playerCount);
             _spatial.Build(_pos, _count);
 
