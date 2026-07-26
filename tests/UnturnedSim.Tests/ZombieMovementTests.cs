@@ -48,10 +48,20 @@ namespace UnturnedSim.Tests
             for (long t = from; t < from + ticks; t++) sim.SimStep(t, 0.02);
         }
 
+        /// <summary>These tests are about MOVEMENT, not perception: make the zombies see the player from
+        /// anywhere so the thing under test is the corridor following and the path budget. Perception --
+        /// range, cone, line of sight -- has its own suite in ZombieSenseTests.</summary>
+        static void SeeEverything(ZombieSim sim)
+        {
+            sim.Kinds[0].SightRange = 5000f;
+            sim.Kinds[0].SightHalfAngleDeg = 180f;
+        }
+
         [Test]
         public void A_Zombie_Walks_To_The_Player_Without_Any_Physics_Body()
         {
             var sim = NewSim(new RecordingNav(), out _);
+            SeeEverything(sim);
             var id = sim.Spawn(0, new Vector3(20f, 0f, 0f));
             Run(sim, 50 * 20);   // 20 seconds
 
@@ -64,7 +74,7 @@ namespace UnturnedSim.Tests
         public void Speed_Is_The_Kind_Record_Not_The_Tick_Rate()
         {
             var sim = NewSim(new RecordingNav(), out _);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             var id = sim.Spawn(0, new Vector3(200f, 0f, 0f));
             float speed = sim.Kinds[0].MoveSpeed;
 
@@ -81,7 +91,7 @@ namespace UnturnedSim.Tests
             // The trap this guards: Far updates at 10 Hz, so integrating a 50 Hz step would make it crawl
             // at a fifth speed and visibly change pace the moment it crossed a tier boundary.
             var near = NewSim(new RecordingNav(), out _);
-            near.PursueRange = 1000f;
+            SeeEverything(near);
             var a = near.Spawn(0, new Vector3(40f, 0f, 0f));       // inside NearRange 96
             Run(near, 50 * 3);
             near.TryGetRow(a, out int ra);
@@ -89,7 +99,7 @@ namespace UnturnedSim.Tests
             float nearTravel = 40f - near.PositionOf(ra).x;
 
             var far = NewSim(new RecordingNav(), out _);
-            far.PursueRange = 1000f;
+            SeeEverything(far);
             var b = far.Spawn(0, new Vector3(200f, 0f, 0f));       // beyond NearRange -> Far
             Run(far, 50 * 3);
             far.TryGetRow(b, out int rb);
@@ -109,7 +119,7 @@ namespace UnturnedSim.Tests
                 Corridor = new[] { new Vector3(30f, 0f, 30f), new Vector3(0f, 0f, 30f), Vector3.zero },
             };
             var sim = NewSim(nav, out _);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             var id = sim.Spawn(0, new Vector3(30f, 0f, 0f));
 
             // 30 s at the kind's 1.6 m/s covers ~48 m, which is enough to walk the 30 m out-leg and turn.
@@ -139,7 +149,7 @@ namespace UnturnedSim.Tests
             // The exact failure the budget exists for: sixty zombies hear one gunshot on the same tick.
             var nav = new RecordingNav();
             var sim = NewSim(nav, out _);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             sim.PathQueriesPerTick = 8;
             for (int i = 0; i < 60; i++) sim.Spawn(0, new Vector3(30f + i * 0.1f, 0f, 20f));
 
@@ -156,7 +166,7 @@ namespace UnturnedSim.Tests
         {
             var nav = new RecordingNav();
             var sim = NewSim(nav, out _);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             sim.PathQueriesPerTick = 4;
             var ids = new List<ZombieId>();
             for (int i = 0; i < 40; i++) ids.Add(sim.Spawn(0, new Vector3(30f, 0f, 20f + i * 0.5f)));
@@ -176,7 +186,7 @@ namespace UnturnedSim.Tests
         {
             var nav = new RecordingNav { Refuse = true };
             var sim = NewSim(nav, out _);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             var id = sim.Spawn(0, new Vector3(20f, 0f, 0f));
             Run(sim, 50 * 3);
 
@@ -204,7 +214,7 @@ namespace UnturnedSim.Tests
         {
             var nav = new RecordingNav();
             var sim = NewSim(nav, out var players);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             sim.Spawn(0, new Vector3(30f, 0f, 0f));
             Run(sim, 20);
             int afterFirst = nav.Queries.Count;
@@ -220,7 +230,7 @@ namespace UnturnedSim.Tests
         {
             var nav = new RecordingNav();
             var sim = NewSim(nav, out _);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             var id = sim.Spawn(0, new Vector3(30f, 0f, 0f));
             Run(sim, 30);
             sim.TryGetRow(id, out int row);
@@ -239,7 +249,7 @@ namespace UnturnedSim.Tests
             // corridor computed for a corpse.
             var nav = new RecordingNav();
             var sim = NewSim(nav, out _);
-            sim.PursueRange = 1000f;
+            SeeEverything(sim);
             var ids = new List<ZombieId>();
             for (int i = 0; i < 20; i++) ids.Add(sim.Spawn(0, new Vector3(30f + i, 0f, 10f)));
             Run(sim, 25);

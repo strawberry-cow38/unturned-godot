@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine; // SDG.Compat Vector3
 
 namespace SDG.Unturned
@@ -34,6 +35,27 @@ namespace SDG.Unturned
     {
         Idle = 0,
         Pursue = 1,
+        Investigate = 2,   // heading for a noise, or for where the player was last seen
+        Attack = 3,        // in reach, swinging
+        Dead = 4,
+    }
+
+    /// <summary>A swing that connected this step. The sim never applies damage to a player itself --
+    /// players are the game layer's business -- so it reports and lets the caller resolve.</summary>
+    public struct ZombieAttackEvent
+    {
+        public ZombieId Id;
+        public int PlayerIndex;
+        public float Damage;
+    }
+
+    /// <summary>A zombie that died this step, for the presentation layer to turn into a corpse.</summary>
+    public struct ZombieDeathEvent
+    {
+        public ZombieId Id;
+        public Vector3 Position;
+        public Vector3 Facing;
+        public ZombieLimb KillingLimb;
     }
 
     public struct ZombieStepStats
@@ -44,6 +66,7 @@ namespace SDG.Unturned
         public int Moving;       // rows that actually integrated a position this tick
         public int PathQueries;  // navmesh queries issued this tick (never exceeds PathQueriesPerTick)
         public int PathQueued;   // rows still waiting for one -- a persistent backlog means the budget is too small
+        public int Dead;         // corpses still holding a row
         public int Alive => Close + Near + Far + Ambient;
     }
 
@@ -75,12 +98,23 @@ namespace SDG.Unturned
         /// <summary>Path queries allowed per tick, across the whole level. This is the cap that stops a
         /// horde all hearing one gunshot and issuing sixty navmesh queries in a single tick.</summary>
         public int PathQueriesPerTick = 8;
-        public float PursueRange = 48f;      // placeholder trigger until phase 2 does real perception
         public float RepathInterval = 1.2f;  // seconds before a corridor is considered stale
         public float DestMovedTolerance = 3f;// how far the target may drift before the corridor is refetched
         public float WaypointReached = 0.7f;
 
         public const int MaxWaypoints = 8;
+
+        // --- perception + combat (phase 2) ---------------------------------------------------------
+        /// <summary>What blocks sight. Null means nothing does.</summary>
+        public IZombieLineOfSight Sight = new OpenField();
+        public float EyeHeight = 1.0f;           // where a zombie looks from, and gets looked at
+        public float LoseSightGrace = 1.5f;      // seconds of no sight before a chase becomes an investigation
+        public float InvestigateGiveUp = 3f;     // seconds standing at a noise before losing interest
+        public float InvestigateTimeout = 12f;   // hard cap: an unreachable noise never holds one forever
+        public float AttackInterval = 1f;        // seconds between swings
+        public float AttackWindup = 0.4f;        // the hit lands mid-swing
+        public float VerticalAttackReach = 2.1f;
+        public float CorpseSeconds = 24f;        // how long a body lingers before its row is recycled
 
         // --- rows (dense, swap-removed; index here is a ROW, not an id) ----------------------------
         Vector3[] _pos = new Vector3[64];
@@ -103,6 +137,26 @@ namespace SDG.Unturned
         int[] _pathQueue = new int[64];
         int _queueHead, _queueTail, _queueCount;
         readonly Vector3[] _scratchCorridor = new Vector3[MaxWaypoints];
+
+        // perception + combat rows
+        Vector3[] _heardPos = new Vector3[64];
+        float[] _heardSalience = new float[64];   // best sound heard since the last step
+        float[] _huntSalience = new float[64];    // salience of the noise currently being investigated
+        Vector3[] _lastSeen = new Vector3[64];
+        bool[] _hasLastSeen = new bool[64];
+        float[] _lostSight = new float[64];
+        float[] _stateClock = new float[64];      // when the current investigation started
+        float[] _lastAttack = new float[64];
+        bool[] _swingPending = new bool[64];
+        int[] _targetPlayer = new int[64];
+        float[] _diedAt = new float[64];
+        byte[] _killedBy = new byte[64];
+
+        double _simTime;
+        readonly List<ZombieAttackEvent> _attacks = new List<ZombieAttackEvent>();
+        readonly List<ZombieDeathEvent> _deaths = new List<ZombieDeathEvent>();
+        readonly List<ZombieId> _toRecycle = new List<ZombieId>();
+        int[] _queryScratch = new int[256];
 
         // --- slot table (stable handles -> rows) ---------------------------------------------------
         int[] _slotRow = new int[64];
@@ -176,6 +230,11 @@ namespace SDG.Unturned
             _face[row] = new Vector3(0f, 0f, 1f);
             _corridorLen[row] = 0; _corridorAt[row] = 0;
             _repath[row] = 0f; _queued[row] = false;
+            _heardSalience[row] = 0f; _huntSalience[row] = 0f;
+            _hasLastSeen[row] = false; _lostSight[row] = 0f;
+            _stateClock[row] = 0f; _lastAttack[row] = -1000f;
+            _swingPending[row] = false; _targetPlayer[row] = -1;
+            _diedAt[row] = 0f; _killedBy[row] = (byte)ZombieLimb.Spine;
 
             _slotRow[slot] = row;
             if (_slotGen[slot] == 0) _slotGen[slot] = 1;   // generation 0 is reserved for "no zombie"
@@ -201,6 +260,18 @@ namespace SDG.Unturned
                 _corridorAt[row] = _corridorAt[last];
                 _repath[row] = _repath[last];
                 _queued[row] = _queued[last];
+                _heardPos[row] = _heardPos[last];
+                _heardSalience[row] = _heardSalience[last];
+                _huntSalience[row] = _huntSalience[last];
+                _lastSeen[row] = _lastSeen[last];
+                _hasLastSeen[row] = _hasLastSeen[last];
+                _lostSight[row] = _lostSight[last];
+                _stateClock[row] = _stateClock[last];
+                _lastAttack[row] = _lastAttack[last];
+                _swingPending[row] = _swingPending[last];
+                _targetPlayer[row] = _targetPlayer[last];
+                _diedAt[row] = _diedAt[last];
+                _killedBy[row] = _killedBy[last];
                 System.Array.Copy(_corridor, last * MaxWaypoints, _corridor, row * MaxWaypoints, MaxWaypoints);
                 _slotRow[_rowSlot[last]] = row;
             }
@@ -265,6 +336,9 @@ namespace SDG.Unturned
             // test silently overrules the distance test. Found on PEI: the spawn sits in wilderness, more
             // than the old 32 m margin from every pocket, so the entire level slept.
             if (_regions.HotMargin < NearRange) _regions.HotMargin = NearRange;
+            _simTime += dt;
+            _attacks.Clear();
+            _deaths.Clear();
             _regions.MarkHot(_players, _playerCount);
             _spatial.Build(_pos, _count);
 
@@ -289,13 +363,30 @@ namespace SDG.Unturned
                     default: stats.Ambient++; break;
                 }
 
+                if ((ZombieState)_state[row] == ZombieState.Dead) stats.Dead++;
                 if (IsDue(tier, _rowSlot[row], tick)) _due[_dueCount++] = row;
             }
 
             stats.Due = _dueCount;
             StepMovement(dt, ref stats);
+            RecycleCorpses();
             stats.PathQueued = _queueCount;
             Stats = stats;
+        }
+
+        /// <summary>A corpse holds its row for CorpseSeconds so the presentation layer can ragdoll it,
+        /// then the row is recycled. The old system spawned 11 PhysicalBone3D per corpse and never
+        /// despawned any of them; a level's worth of that is its own performance problem.</summary>
+        void RecycleCorpses()
+        {
+            _toRecycle.Clear();
+            for (int row = 0; row < _count; row++)
+            {
+                if ((ZombieState)_state[row] != ZombieState.Dead) continue;
+                if (_simTime - _diedAt[row] < CorpseSeconds) continue;
+                _toRecycle.Add(IdOf(row));
+            }
+            foreach (var id in _toRecycle) Despawn(id);
         }
 
         /// <summary>
@@ -306,20 +397,24 @@ namespace SDG.Unturned
         /// </summary>
         void StepMovement(double dt, ref ZombieStepStats stats)
         {
-            if (Nav == null) return;
-
             for (int i = 0; i < _dueCount; i++)
             {
                 int row = _due[i];
                 var tier = (ZombieTier)_tier[row];
-                if (tier == ZombieTier.Ambient) continue;   // objective-level advance lands with phase 2's goals
+                if ((ZombieState)_state[row] == ZombieState.Dead) continue;
+                if (tier == ZombieTier.Ambient) continue;   // objective-level advance lands with phase 3's goals
+                if (Nav == null) { UpdateIntent(row, (float)dt * StrideOf(tier)); continue; }
 
                 // A due row has skipped (stride - 1) ticks, so it must integrate all of them or a Far
                 // zombie would crawl at a fifth speed and visibly change pace when it crossed a tier.
                 float step = (float)dt * StrideOf(tier);
 
-                UpdateIntent(row);
-                if (_state[row] != (byte)ZombieState.Pursue) continue;
+                UpdateIntent(row, step);
+                var state = (ZombieState)_state[row];
+
+                if (state == ZombieState.Attack) { TickAttack(row, step); continue; }
+                if (state != ZombieState.Pursue && state != ZombieState.Investigate) continue;
+                _swingPending[row] = false;   // left reach mid-swing; the blow does not follow you
 
                 _repath[row] += step;
                 if (NeedsPath(row)) Enqueue(row);
@@ -334,22 +429,150 @@ namespace SDG.Unturned
         int StrideOf(ZombieTier tier) =>
             tier == ZombieTier.Far ? Math.Max(1, FarStride) : (tier == ZombieTier.Ambient ? Math.Max(1, AmbientStride) : 1);
 
-        /// <summary>Phase 1 placeholder for perception: pursue the nearest player inside PursueRange.
-        /// Phase 2 replaces this with the real sight cone, line of sight and hearing -- at which point
-        /// this becomes a state transition and nothing else in the movement path changes.</summary>
-        void UpdateIntent(int row)
+        /// <summary>
+        /// Decide what this zombie is doing. Sight outranks sound; a zombie already committed to a noise
+        /// stays on task unless a strictly more salient one arrives, so a horde does not re-target on
+        /// every footstep. Losing sight mid-chase does not delete the target -- it becomes a place to go
+        /// and look, which is what stops zombies tracking you through walls.
+        /// </summary>
+        void UpdateIntent(int row, float step)
         {
-            if (_playerCount <= 0) { _state[row] = (byte)ZombieState.Idle; return; }
+            var state = (ZombieState)_state[row];
+            if (state == ZombieState.Dead) return;
+
+            // A sound heard since the last step can start or redirect an investigation, but never
+            // interrupts an active chase.
+            if (_heardSalience[row] > 0f)
+            {
+                if (state != ZombieState.Pursue && state != ZombieState.Attack &&
+                    _heardSalience[row] > _huntSalience[row])
+                {
+                    _state[row] = (byte)ZombieState.Investigate;
+                    _dest[row] = _heardPos[row];
+                    _huntSalience[row] = _heardSalience[row];
+                    _stateClock[row] = (float)_simTime;
+                    state = ZombieState.Investigate;
+                }
+                _heardSalience[row] = 0f;
+            }
+
+            int seen = SeePlayer(row);
+            if (seen >= 0)
+            {
+                _targetPlayer[row] = seen;
+                _lastSeen[row] = _players[seen];
+                _hasLastSeen[row] = true;
+                _lostSight[row] = 0f;
+                _dest[row] = _players[seen];
+                _state[row] = (byte)(InAttackReach(row, seen) ? ZombieState.Attack : ZombieState.Pursue);
+                return;
+            }
+
+            if (state == ZombieState.Pursue || state == ZombieState.Attack)
+            {
+                _lostSight[row] += step;
+                if (_lostSight[row] <= LoseSightGrace)
+                {
+                    // Brief occlusion -- a doorway, a passing tree. Keep closing on where they were.
+                    _state[row] = (byte)ZombieState.Pursue;
+                    return;
+                }
+                // Sight is properly gone: go look where they were, rather than tracking through walls.
+                _state[row] = (byte)(_hasLastSeen[row] ? ZombieState.Investigate : ZombieState.Idle);
+                if (_hasLastSeen[row]) { _dest[row] = _lastSeen[row]; _hasLastSeen[row] = false; }
+                _huntSalience[row] = 0f;
+                _stateClock[row] = (float)_simTime;
+                return;
+            }
+
+            if (state == ZombieState.Investigate)
+            {
+                float elapsed = (float)_simTime - _stateClock[row];
+                float d2 = HorizontalSqr(_dest[row], _pos[row]);
+                bool arrived = d2 < 3f;
+                if (elapsed > InvestigateTimeout || (arrived && elapsed > InvestigateGiveUp))
+                {
+                    _state[row] = (byte)ZombieState.Idle;
+                    _huntSalience[row] = 0f;          // idle again: the next sound of any loudness can take us
+                    _corridorLen[row] = 0;
+                }
+                return;
+            }
+
+            _state[row] = (byte)ZombieState.Idle;
+            _huntSalience[row] = 0f;
+        }
+
+        /// <summary>Index of a player this zombie can currently SEE: inside the kind's sight range, within
+        /// its cone, and with a clear line. -1 for none.</summary>
+        int SeePlayer(int row)
+        {
+            if (_playerCount <= 0) return -1;
+            var kind = _kinds[_kind[row]];
             Vector3 p = _pos[row];
-            int nearest = -1; float best = float.MaxValue;
+            Vector3 eye = new Vector3(p.x, p.y + EyeHeight, p.z);
+            Vector3 facing = _face[row];
+            float cos = MathF.Cos(kind.SightHalfAngleDeg * MathF.PI / 180f);
+
+            int best = -1; float bestD2 = float.MaxValue;
             for (int i = 0; i < _playerCount; i++)
             {
-                float d2 = (_players[i] - p).sqrMagnitude;
-                if (d2 < best) { best = d2; nearest = i; }
+                Vector3 to = _players[i] - p;
+                float d2 = to.sqrMagnitude;
+                if (d2 > kind.SightRange * kind.SightRange || d2 >= bestD2) continue;
+
+                Vector3 flat = new Vector3(to.x, 0f, to.z);
+                if (flat.sqrMagnitude > 1e-6f && facing.sqrMagnitude > 1e-6f)
+                    if (Vector3.Dot(flat.normalized, facing.normalized) < cos) continue;   // outside the cone
+
+                var target = new Vector3(_players[i].x, _players[i].y + EyeHeight, _players[i].z);
+                if (Sight != null && !Sight.CanSee(eye, target)) continue;
+
+                best = i; bestD2 = d2;
             }
-            if (nearest < 0 || best > PursueRange * PursueRange) { _state[row] = (byte)ZombieState.Idle; return; }
-            _state[row] = (byte)ZombieState.Pursue;
-            _dest[row] = _players[nearest];
+            return best;
+        }
+
+        bool InAttackReach(int row, int player)
+        {
+            var kind = _kinds[_kind[row]];
+            float d2 = HorizontalSqr(_players[player], _pos[row]);
+            float dy = MathF.Abs(_players[player].y - _pos[row].y);
+            return d2 < kind.AttackRange * kind.AttackRange && dy < VerticalAttackReach;
+        }
+
+        static float HorizontalSqr(Vector3 a, Vector3 b)
+        {
+            float dx = a.x - b.x, dz = a.z - b.z;
+            return dx * dx + dz * dz;
+        }
+
+        /// <summary>Swing on a cadence, with the hit landing mid-swing rather than on the frame the
+        /// animation starts -- so a zombie you kill during the wind-up does not still hit you.</summary>
+        void TickAttack(int row, float step)
+        {
+            int target = _targetPlayer[row];
+            if (target < 0 || target >= _playerCount) { _state[row] = (byte)ZombieState.Idle; return; }
+            float now = (float)_simTime;
+
+            if (_swingPending[row])
+            {
+                if (now - _lastAttack[row] < AttackWindup) return;
+                _swingPending[row] = false;
+                if (!InAttackReach(row, target)) return;    // they moved out of reach mid-swing
+                _attacks.Add(new ZombieAttackEvent
+                {
+                    Id = IdOf(row),
+                    PlayerIndex = target,
+                    Damage = _kinds[_kind[row]].AttackDamage,
+                });
+                return;
+            }
+            if (now - _lastAttack[row] > AttackInterval)
+            {
+                _lastAttack[row] = now;
+                _swingPending[row] = true;
+            }
         }
 
         bool NeedsPath(int row)
@@ -421,15 +644,128 @@ namespace SDG.Unturned
             return moved;
         }
 
+        // --- combat surface --------------------------------------------------------------------------
+
+        /// <summary>Swings that connected this step, for the caller to resolve against its players.</summary>
+        public ReadOnlySpan<ZombieAttackEvent> Attacks => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_attacks);
+        /// <summary>Zombies that died this step, for the caller to turn into corpses.</summary>
+        public ReadOnlySpan<ZombieDeathEvent> Deaths => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_deaths);
+        public double SimTime => _simTime;
+
+
+        /// <summary>
+        /// Shoot. Candidates come from the spatial grid and are tested analytically against the kind's
+        /// capsule -- no collider, no physics query, no requirement that the zombie be near enough to
+        /// have a body or a rig. This is the whole reason bodies could become scarce.
+        /// </summary>
+        public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out ZombieHit hit)
+        {
+            hit = default;
+            if (_count == 0 || maxDistance <= 0f) return false;
+            Vector3 dir = direction.normalized;
+            if (dir.sqrMagnitude < 1e-6f) return false;
+
+            // Rows store FEET, but a zombie is a capsule standing on them, so a chest-height shot passes
+            // ~1.4 m ABOVE the stored position. Padding by radius alone nominated nobody and every shot
+            // missed. Reach a whole body's height plus its width -- conservative, and every candidate is
+            // exact-tested against the capsule immediately afterwards anyway.
+            float pad = MathF.Max(0.01f, _kinds.MaxRadius + _kinds.MaxHeight);
+            if (_queryScratch.Length < _count) _queryScratch = new int[Math.Max(_count, 256)];
+            int n = _spatial.QuerySegment(origin, origin + dir * maxDistance, pad, _queryScratch);
+
+            float bestT = float.MaxValue; int bestRow = -1;
+            for (int i = 0; i < n; i++)
+            {
+                int row = _queryScratch[i];
+                if ((ZombieState)_state[row] == ZombieState.Dead) continue;   // corpses are the ragdoll's problem
+                var kind = _kinds[_kind[row]];
+                float t = ZombieCombat.RayCapsule(origin, dir, _pos[row], kind.Radius, kind.Height);
+                if (t < 0f || t > maxDistance || t >= bestT) continue;
+                bestT = t; bestRow = row;
+            }
+            if (bestRow < 0) return false;
+
+            Vector3 point = origin + dir * bestT;
+            hit = new ZombieHit
+            {
+                Id = IdOf(bestRow),
+                Row = bestRow,
+                Point = point,
+                Distance = bestT,
+                Limb = ZombieCombat.LimbAt(point, _pos[bestRow], _kinds[_kind[bestRow]].Height),
+                Hit = true,
+            };
+            return true;
+        }
+
+        /// <summary>Hurt a zombie. Returns true if this killed it. The caller owns limb multipliers --
+        /// the gun already knows them, and inventing a second set here would be a guess.</summary>
+        public bool Damage(ZombieId id, float amount, ZombieLimb limb = ZombieLimb.Spine)
+        {
+            if (!TryGetRow(id, out int row)) return false;
+            if ((ZombieState)_state[row] == ZombieState.Dead) return false;
+            _health[row] -= amount;
+            if (_health[row] > 0f) return false;
+
+            _health[row] = 0f;
+            _state[row] = (byte)ZombieState.Dead;
+            _diedAt[row] = (float)_simTime;
+            _killedBy[row] = (byte)limb;
+            _corridorLen[row] = 0;
+            _swingPending[row] = false;
+            _deaths.Add(new ZombieDeathEvent
+            {
+                Id = id,
+                Position = _pos[row],
+                Facing = _face[row],
+                KillingLimb = limb,
+            });
+            return true;
+        }
+
+        /// <summary>A noise at <paramref name="pos"/> carrying <paramref name="loudness"/> metres. Only
+        /// zombies whose ears reach it and for whom it carries that far hear it; each keeps the most
+        /// salient one (loud and close beats loud and far). One grid query, not a pass over the level.</summary>
+        public int Hear(Vector3 pos, float loudness)
+        {
+            if (_count == 0 || loudness <= 0f) return 0;
+            if (_queryScratch.Length < _count) _queryScratch = new int[Math.Max(_count, 256)];
+            int n = _spatial.QuerySphere(pos, loudness, _queryScratch);
+
+            int heard = 0;
+            for (int i = 0; i < n; i++)
+            {
+                int row = _queryScratch[i];
+                if ((ZombieState)_state[row] == ZombieState.Dead) continue;
+                float dist = (pos - _pos[row]).magnitude;
+                if (dist > _kinds[_kind[row]].HearingRange) continue;   // outside its ears
+                float salience = loudness - dist;                       // loud + close wins
+                if (salience <= _heardSalience[row]) continue;
+                _heardSalience[row] = salience;
+                _heardPos[row] = pos;
+                heard++;
+            }
+            return heard;
+        }
+
         public ZombieState StateOf(int row) => (ZombieState)_state[row];
+        public bool IsDead(int row) => (ZombieState)_state[row] == ZombieState.Dead;
         public Vector3 FacingOf(int row) => _face[row];
         public Vector3 DestinationOf(int row) => _dest[row];
         public int WaypointsRemaining(int row) => Math.Max(0, _corridorLen[row] - _corridorAt[row]);
 
         ZombieTier ClassifyTier(int row, int region)
         {
-            if (!_regions.IsHot(region)) return ZombieTier.Ambient;
-            if (_playerCount <= 0) return ZombieTier.Ambient;
+            // A zombie with something going on -- a noise it just heard, a chase or an investigation in
+            // progress -- keeps thinking even where no player is standing. Without this, a gunshot next
+            // to an AMBIENT zombie was silently discarded: the tier gate skipped it before it ever got
+            // to react, so hearing only worked in regions that were already awake.
+            var state = (ZombieState)_state[row];
+            bool busy = _heardSalience[row] > 0f || state == ZombieState.Investigate ||
+                        state == ZombieState.Pursue || state == ZombieState.Attack;
+
+            if (!_regions.IsHot(region)) return busy ? ZombieTier.Far : ZombieTier.Ambient;
+            if (_playerCount <= 0) return busy ? ZombieTier.Far : ZombieTier.Ambient;
 
             Vector3 p = _pos[row];
             float best = float.MaxValue;
@@ -477,6 +813,18 @@ namespace SDG.Unturned
             Array.Resize(ref _repath, capacity);
             Array.Resize(ref _queued, capacity);
             Array.Resize(ref _pathQueue, capacity);
+            Array.Resize(ref _heardPos, capacity);
+            Array.Resize(ref _heardSalience, capacity);
+            Array.Resize(ref _huntSalience, capacity);
+            Array.Resize(ref _lastSeen, capacity);
+            Array.Resize(ref _hasLastSeen, capacity);
+            Array.Resize(ref _lostSight, capacity);
+            Array.Resize(ref _stateClock, capacity);
+            Array.Resize(ref _lastAttack, capacity);
+            Array.Resize(ref _swingPending, capacity);
+            Array.Resize(ref _targetPlayer, capacity);
+            Array.Resize(ref _diedAt, capacity);
+            Array.Resize(ref _killedBy, capacity);
             DropQueue();   // the queue array just moved under the ring cursors
         }
 

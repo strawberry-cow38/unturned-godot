@@ -49,6 +49,11 @@ namespace UnturnedGodot.Testing
             var spawns = new List<Vector3>();
             for (int i = 0; i < 12; i++) spawns.Add(new Vector3(30f + i, 0f, 10f));
             dir.DebugBuild(NavSandbox.OneRegion(), spawns.ToArray());
+            // This test is about MOVEMENT and engine wiring, not perception: let them see the player from
+            // anywhere, so a failure means the navmesh path broke rather than that they spawned facing
+            // the wrong way. Sight cones, line of sight and hearing have their own L0 suite.
+            dir.Sim.Kinds[0].SightRange = 5000f;
+            dir.Sim.Kinds[0].SightHalfAngleDeg = 180f;
 
             yield return Ticks(10);   // the navigation map merges its regions on a physics tick, not in _Ready
             var start = new Vector3[dir.Sim.Count];

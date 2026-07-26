@@ -23,6 +23,21 @@ namespace SDG.Unturned
         Vector3 SnapToSurface(Vector3 p);
     }
 
+    /// <summary>The other thing the sim cannot answer alone: whether a wall is in the way. Kept separate
+    /// from the navmesh because sight and pathing block on different things -- you can see over a fence
+    /// you cannot walk through, and a zombie can path round a corner it cannot see round.</summary>
+    public interface IZombieLineOfSight
+    {
+        bool CanSee(Vector3 from, Vector3 to);
+    }
+
+    /// <summary>Nothing blocks sight. The default, and what the L0 sensing tests use when the test is
+    /// about the cone rather than about walls.</summary>
+    public sealed class OpenField : IZombieLineOfSight
+    {
+        public bool CanSee(Vector3 from, Vector3 to) => true;
+    }
+
     /// <summary>A flat plane at y = 0 that routes straight to the target. The default when no engine is
     /// attached, and what the L0 movement tests run against.</summary>
     public sealed class FlatGroundNav : IZombieNavQuery

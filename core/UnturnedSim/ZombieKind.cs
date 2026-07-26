@@ -39,12 +39,16 @@ namespace SDG.Unturned
 
         public int Count => _kinds.Count;
         public float MaxRadius { get; private set; }
+        /// <summary>Tallest kind. Rows store FEET, so any spatial query that wants to catch a whole body
+        /// has to reach this far above the stored position.</summary>
+        public float MaxHeight { get; private set; }
 
         public ushort Register(ZombieKind kind)
         {
             if (kind == null) throw new ArgumentNullException(nameof(kind));
             if (_kinds.Count >= ushort.MaxValue) throw new InvalidOperationException("zombie kind ids exhausted");
             if (kind.Radius > MaxRadius) MaxRadius = kind.Radius;
+            if (kind.Height > MaxHeight) MaxHeight = kind.Height;
             _kinds.Add(kind);
             return (ushort)(_kinds.Count - 1);
         }
