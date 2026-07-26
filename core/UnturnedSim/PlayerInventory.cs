@@ -69,6 +69,27 @@ namespace SDG.Unturned
         // Source: legs never break on a fall if ANY worn piece has Prevents_Falling_Broken_Bones (PlayerLife:2436).
         public bool PreventsFallingBoneBreak => AnyWorn(a => a.preventsFallingBoneBreak);
 
+        /// <summary>The worn pieces a deadzone cares about. Unlike the fall/explosion aggregates this is
+        /// PER SLOT, not "any worn piece": a radiation-proof pair of trousers on your head is not a
+        /// respirator, and the harsher zones check the mask, shirt and trousers separately.</summary>
+        public RadiationGear RadiationProtection()
+        {
+            return new RadiationGear
+            {
+                MaskProofs = SlotProofsRadiation(wornMask),
+                MaskQuality = wornMask?.quality ?? 0,
+                ShirtProofs = SlotProofsRadiation(wornShirt),
+                PantsProofs = SlotProofsRadiation(wornPants),
+            };
+        }
+
+        bool SlotProofsRadiation(Item worn)
+        {
+            if (worn == null) return false;
+            var a = Assets.find(worn.id);
+            return a != null && a.proofRadiation;
+        }
+
         bool AnyWorn(Func<ItemAsset, bool> pred)
         {
             foreach (var it in new[] { wornShirt, wornPants, wornHat, wornBackpack, wornVest, wornMask, wornGlasses })
