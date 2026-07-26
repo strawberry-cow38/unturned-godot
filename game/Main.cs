@@ -49,6 +49,7 @@ namespace UnturnedGodot
         bool _navShot;   // --navshot: nav-debug verify screenshot (waits for load + navmesh overlay + zombie cones)
         bool _navPathTest;   // --navpathtest: after a few frames (nav synced), query the navmesh + report routing
         bool _zombieTest; ZombieField _ztField;   // --zombietest: after a few frames, verify planned pocket spawns land ON the baked navmesh
+        bool _zdirTest; ZombieDirector _zdField; int _zdFrames;   // --zdirtest: boot the REWRITE on PEI and watch it run -- do rows tier, path and actually move?
         bool _bakeNav;   // --bakenav: sync-load the full world + bake+save the canonical navmesh, then quit (offline tool; the game only loads)
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
@@ -64,7 +65,7 @@ namespace UnturnedGodot
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -76,6 +77,7 @@ namespace UnturnedGodot
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
+                else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) proptest = arg["--proptest=".Length..];   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
@@ -113,6 +115,7 @@ namespace UnturnedGodot
                 else if (arg == "--demo") demo = true;
                 else if (arg == "--play") play = true;
                 else if (arg == "--nozombies") _noZombies = true;   // no-zombie test environment
+                else if (arg == "--newzombies") ZombieDirector.Enabled = true;   // the rewrite (docs/ZOMBIE_REWRITE_PLAN.md): sim rows + borrowed rigs, no per-zombie body. Off = the old ZombieField/ZombieController path, untouched
                 else if (arg == "--netdemo") netdemo = true;
                 else if (arg == "--server") server = true;
                 else if (arg == "--dedicated") dedicated = true;   // headless dedicated server: the REAL world (WorldBuilder dedicated mode) + NetServerSession on UDP
@@ -252,6 +255,7 @@ namespace UnturnedGodot
 
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
+            if (zdirTest) { ZombieDirector.Enabled = true; _bakeNav = true; _peiPlayable = true; _zdirTest = true; BuildObjectsTest(); return; }   // sync-load the REWRITE on the real map, then watch it tier/path/move for a few seconds
 
             if (navShot != null) { GetWindow().Size = new Vector2I(1280, 720); BuildNavShot(navShot); return; }
 
@@ -2217,6 +2221,7 @@ namespace UnturnedGodot
             if (_peiPlayable) LootTables.Load(_mapRoot + "/Spawns/Items.dat");
             _pdPlayer = res.Player;   // UG_AUTOFIRE terrain-impact verification
             _ztField = res.Zombies;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
+            _zdField = res.Director;  // --zdirtest reads this to watch the rewrite tier/path/move on the real map
             if (res.HasVehicleAim && !_vHave) { _vAim = res.VehicleAim; _vHave = true; }
             // P6a: the GAME "Drive PEI"/--peidrive path (Playable + a real player, NOT the nav-bake/navpath/zombie
             // offline harnesses, which set _bakeNav) boots the consuming listen-server by default. --objects is Aerial
@@ -3815,6 +3820,43 @@ namespace UnturnedGodot
             GetTree().Quit();
         }
 
+        // --zdirtest: run the REWRITE on the real map and watch it. The L0 tests prove the sim's logic
+        // against a mock navmesh; this proves the thing that L0 cannot -- that it is wired to the actual
+        // baked pockets, that rows tier correctly against a real player position, that Godot's navigation
+        // server answers the corridor queries, and that zombies MOVE. Reports positions, not intentions.
+        UnityEngine.Vector3[] _zdStart;
+        void RunZombieDirTest()
+        {
+            var zd = _zdField;
+            if (zd?.Sim == null) { GD.Print("[zdirtest] no ZombieDirector/sim -- did --newzombies wire in?"); GetTree().Quit(); return; }
+            var sim = zd.Sim;
+
+            if (_zdStart == null)   // first sampled frame: remember where everyone was
+            {
+                _zdStart = new UnityEngine.Vector3[sim.Count];
+                for (int i = 0; i < sim.Count; i++) _zdStart[i] = sim.PositionOf(i);
+                GD.Print($"[zdirtest] {sim.Count} rows, {sim.Regions.Count} regions from the pockets, 0 CharacterBody3D");
+                GD.Print($"[zdirtest] {zd.DebugLine()}");
+                return;
+            }
+
+            int moved = 0; float furthest = 0f, total = 0f;
+            int n = Mathf.Min(_zdStart.Length, sim.Count);
+            for (int i = 0; i < n; i++)
+            {
+                var d = sim.PositionOf(i) - _zdStart[i];
+                float dist = new Vector2(d.x, d.z).Length();
+                if (dist > 0.25f) moved++;
+                total += dist;
+                if (dist > furthest) furthest = dist;
+            }
+            var s = sim.Stats;
+            GD.Print($"[zdirtest] {zd.DebugLine()}");
+            GD.Print($"[zdirtest] over the sampled window: {moved}/{n} rows moved, furthest {furthest:0.##} m, mean {(n > 0 ? total / n : 0):0.###} m");
+            GD.Print($"[zdirtest] {(moved > 0 && s.PathQueries >= 0 && s.Alive > 0 ? "PASS -- zombies exist, tier, path and walk with no physics bodies" : "FAIL -- nothing moved")}");
+            GetTree().Quit();
+        }
+
 
 
 
@@ -3842,6 +3884,13 @@ namespace UnturnedGodot
             }
             if (_navPathTest) { if (++_frame >= 25) { _navPathTest = false; RunNavPathTest(); } return; }   // let the nav map sync a few frames, then query
             if (_zombieTest) { if (++_frame >= 25) { _zombieTest = false; RunZombieTest(); } return; }   // let the nav map sync, then verify pocket spawns land on it
+            // sample at frame 30 (nav synced), then again ~5 s later, and report how far rows actually walked
+            if (_zdirTest)
+            {
+                if (++_zdFrames == 30) RunZombieDirTest();
+                else if (_zdFrames >= 330) { _zdirTest = false; RunZombieDirTest(); }
+                return;
+            }
             if (System.Environment.GetEnvironmentVariable("UG_PERF") == "1" && (_perfT -= (float)delta) <= 0f)
             {
                 _perfT = 1f;

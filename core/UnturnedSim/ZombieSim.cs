@@ -28,11 +28,22 @@ namespace SDG.Unturned
         public override string ToString() => IsNone ? "zombie:none" : $"zombie:{Slot}.{Generation}";
     }
 
+    /// <summary>What a zombie is doing. Phase 1 has only the two movement states; sensing, attacking and
+    /// dying arrive in phase 2, where they become transitions rather than new classes.</summary>
+    public enum ZombieState : byte
+    {
+        Idle = 0,
+        Pursue = 1,
+    }
+
     public struct ZombieStepStats
     {
         public int Close, Near, Far, Ambient;
-        public int Due;        // rows scheduled to think this tick
-        public int Orphan;     // rows outside every region -- should be 0; nonzero means bad spawn data
+        public int Due;          // rows scheduled to think this tick
+        public int Orphan;       // rows outside every region -- should be 0; nonzero means bad spawn data
+        public int Moving;       // rows that actually integrated a position this tick
+        public int PathQueries;  // navmesh queries issued this tick (never exceeds PathQueriesPerTick)
+        public int PathQueued;   // rows still waiting for one -- a persistent backlog means the budget is too small
         public int Alive => Close + Near + Far + Ambient;
     }
 
@@ -57,6 +68,20 @@ namespace SDG.Unturned
         public int FarStride = 5;            // 10 Hz at 50 Hz
         public int AmbientStride = 50;       // 1 Hz at 50 Hz
 
+        // --- movement + pathing (phase 1) ---------------------------------------------------------
+        /// <summary>Where the walkable surface is. Null means nothing walks -- the sim still tiers and
+        /// schedules, it just has nowhere to go.</summary>
+        public IZombieNavQuery Nav;
+        /// <summary>Path queries allowed per tick, across the whole level. This is the cap that stops a
+        /// horde all hearing one gunshot and issuing sixty navmesh queries in a single tick.</summary>
+        public int PathQueriesPerTick = 8;
+        public float PursueRange = 48f;      // placeholder trigger until phase 2 does real perception
+        public float RepathInterval = 1.2f;  // seconds before a corridor is considered stale
+        public float DestMovedTolerance = 3f;// how far the target may drift before the corridor is refetched
+        public float WaypointReached = 0.7f;
+
+        public const int MaxWaypoints = 8;
+
         // --- rows (dense, swap-removed; index here is a ROW, not an id) ----------------------------
         Vector3[] _pos = new Vector3[64];
         float[] _health = new float[64];
@@ -65,6 +90,19 @@ namespace SDG.Unturned
         int[] _region = new int[64];
         int[] _rowSlot = new int[64];
         int _count;
+
+        // movement rows
+        byte[] _state = new byte[64];          // ZombieState
+        Vector3[] _dest = new Vector3[64];     // where this zombie is trying to get to
+        Vector3[] _face = new Vector3[64];     // last non-zero heading, for the view layer
+        Vector3[] _corridor = new Vector3[64 * MaxWaypoints];
+        byte[] _corridorLen = new byte[64];
+        byte[] _corridorAt = new byte[64];
+        float[] _repath = new float[64];       // seconds since this corridor was fetched
+        bool[] _queued = new bool[64];         // already waiting for a path query
+        int[] _pathQueue = new int[64];
+        int _queueHead, _queueTail, _queueCount;
+        readonly Vector3[] _scratchCorridor = new Vector3[MaxWaypoints];
 
         // --- slot table (stable handles -> rows) ---------------------------------------------------
         int[] _slotRow = new int[64];
@@ -95,6 +133,11 @@ namespace SDG.Unturned
         public ZombieRegions Regions => _regions;
         public ZombieKindTable Kinds => _kinds;
         public ZombieStepStats Stats { get; private set; }
+
+        /// <summary>Navmesh queries issued since the level loaded. Stats.PathQueries is the per-TICK
+        /// figure, which is 0 on most ticks by design -- this is the one to watch when tuning the budget,
+        /// and the one to assert on when the question is "did it path at all".</summary>
+        public long TotalPathQueries { get; private set; }
 
         /// <summary>Rows scheduled to think this tick, valid until the next step. Phases 1-2 iterate
         /// this, never all rows.</summary>
@@ -128,6 +171,11 @@ namespace SDG.Unturned
             _tier[row] = (byte)ZombieTier.Ambient;   // corrected by the first step; never assume Close
             _region[row] = _regions.RegionOf(position);
             _rowSlot[row] = slot;
+            _state[row] = (byte)ZombieState.Idle;
+            _dest[row] = position;
+            _face[row] = new Vector3(0f, 0f, 1f);
+            _corridorLen[row] = 0; _corridorAt[row] = 0;
+            _repath[row] = 0f; _queued[row] = false;
 
             _slotRow[slot] = row;
             if (_slotGen[slot] == 0) _slotGen[slot] = 1;   // generation 0 is reserved for "no zombie"
@@ -146,9 +194,20 @@ namespace SDG.Unturned
                 _tier[row] = _tier[last];
                 _region[row] = _region[last];
                 _rowSlot[row] = _rowSlot[last];
+                _state[row] = _state[last];
+                _dest[row] = _dest[last];
+                _face[row] = _face[last];
+                _corridorLen[row] = _corridorLen[last];
+                _corridorAt[row] = _corridorAt[last];
+                _repath[row] = _repath[last];
+                _queued[row] = _queued[last];
+                System.Array.Copy(_corridor, last * MaxWaypoints, _corridor, row * MaxWaypoints, MaxWaypoints);
                 _slotRow[_rowSlot[last]] = row;
             }
             _count = last;
+            // Any queued path request naming a row is now naming a different zombie. Rather than patch
+            // indices inside the queue, drop it: the row re-queues on its next due tick.
+            DropQueue();
 
             _slotRow[id.Slot] = -1;
             _slotGen[id.Slot]++;                          // every outstanding handle to this slot dies here
@@ -180,10 +239,13 @@ namespace SDG.Unturned
         public int RegionOf(int row) => _region[row];
         public ZombieId IdOf(int row) => new ZombieId(_rowSlot[row], _slotGen[_rowSlot[row]]);
 
+        /// <summary>Teleport a row. The corridor is dropped, because a route computed from where the
+        /// zombie used to be is not a route from where it is now.</summary>
         public void SetPosition(int row, Vector3 p)
         {
             _pos[row] = p;
             _region[row] = _regions.RegionOf(p, _region[row]);
+            _corridorLen[row] = 0; _corridorAt[row] = 0; _repath[row] = RepathInterval;
         }
 
         /// <summary>Player positions the tiering is measured against. The sim keeps the reference, so
@@ -226,8 +288,138 @@ namespace SDG.Unturned
             }
 
             stats.Due = _dueCount;
+            StepMovement(dt, ref stats);
+            stats.PathQueued = _queueCount;
             Stats = stats;
         }
+
+        /// <summary>
+        /// Move the rows that are due. No physics body is involved: position is integrated along a
+        /// navmesh corridor and Y comes from the surface. The corridor is what keeps them out of walls --
+        /// steering is toward the next WAYPOINT, never straight at the target, so the route does the
+        /// collision avoidance that a swept move used to do at 1-2.4 ms per 63 bodies.
+        /// </summary>
+        void StepMovement(double dt, ref ZombieStepStats stats)
+        {
+            if (Nav == null) return;
+
+            for (int i = 0; i < _dueCount; i++)
+            {
+                int row = _due[i];
+                var tier = (ZombieTier)_tier[row];
+                if (tier == ZombieTier.Ambient) continue;   // objective-level advance lands with phase 2's goals
+
+                // A due row has skipped (stride - 1) ticks, so it must integrate all of them or a Far
+                // zombie would crawl at a fifth speed and visibly change pace when it crossed a tier.
+                float step = (float)dt * StrideOf(tier);
+
+                UpdateIntent(row);
+                if (_state[row] != (byte)ZombieState.Pursue) continue;
+
+                _repath[row] += step;
+                if (NeedsPath(row)) Enqueue(row);
+                if (_corridorLen[row] == 0) continue;   // waiting on the budget; stand still rather than beeline
+
+                if (Advance(row, step)) stats.Moving++;
+            }
+
+            DrainPathQueue(ref stats);
+        }
+
+        int StrideOf(ZombieTier tier) =>
+            tier == ZombieTier.Far ? Math.Max(1, FarStride) : (tier == ZombieTier.Ambient ? Math.Max(1, AmbientStride) : 1);
+
+        /// <summary>Phase 1 placeholder for perception: pursue the nearest player inside PursueRange.
+        /// Phase 2 replaces this with the real sight cone, line of sight and hearing -- at which point
+        /// this becomes a state transition and nothing else in the movement path changes.</summary>
+        void UpdateIntent(int row)
+        {
+            if (_playerCount <= 0) { _state[row] = (byte)ZombieState.Idle; return; }
+            Vector3 p = _pos[row];
+            int nearest = -1; float best = float.MaxValue;
+            for (int i = 0; i < _playerCount; i++)
+            {
+                float d2 = (_players[i] - p).sqrMagnitude;
+                if (d2 < best) { best = d2; nearest = i; }
+            }
+            if (nearest < 0 || best > PursueRange * PursueRange) { _state[row] = (byte)ZombieState.Idle; return; }
+            _state[row] = (byte)ZombieState.Pursue;
+            _dest[row] = _players[nearest];
+        }
+
+        bool NeedsPath(int row)
+        {
+            if (_queued[row]) return false;
+            if (_corridorLen[row] == 0) return true;
+            if (_repath[row] >= RepathInterval) return true;
+            // The target walked off: the corridor still leads somewhere, just not to them any more.
+            int last = row * MaxWaypoints + _corridorLen[row] - 1;
+            return (_corridor[last] - _dest[row]).sqrMagnitude > DestMovedTolerance * DestMovedTolerance;
+        }
+
+        void Enqueue(int row)
+        {
+            if (_queued[row] || _queueCount >= _pathQueue.Length) return;
+            _pathQueue[_queueTail] = row;
+            _queueTail = (_queueTail + 1) % _pathQueue.Length;
+            _queueCount++;
+            _queued[row] = true;
+        }
+
+        void DrainPathQueue(ref ZombieStepStats stats)
+        {
+            int budget = Math.Max(0, PathQueriesPerTick);
+            while (budget-- > 0 && _queueCount > 0)
+            {
+                int row = _pathQueue[_queueHead];
+                _queueHead = (_queueHead + 1) % _pathQueue.Length;
+                _queueCount--;
+                if (row >= _count) continue;             // the row went away while it waited
+                _queued[row] = false;
+
+                int n = Nav.QueryPath(_pos[row], _dest[row], _scratchCorridor);
+                stats.PathQueries++;
+                TotalPathQueries++;
+                if (n > MaxWaypoints) n = MaxWaypoints;
+                for (int w = 0; w < n; w++) _corridor[row * MaxWaypoints + w] = _scratchCorridor[w];
+                _corridorLen[row] = (byte)n;
+                _corridorAt[row] = 0;
+                _repath[row] = 0f;
+            }
+        }
+
+        /// <summary>Follow the corridor for one step. Returns true if the zombie actually moved.</summary>
+        bool Advance(int row, float step)
+        {
+            float speed = _kinds[_kind[row]].MoveSpeed;
+            float remaining = speed * step;
+            Vector3 p = _pos[row];
+            bool moved = false;
+
+            while (remaining > 1e-4f && _corridorAt[row] < _corridorLen[row])
+            {
+                Vector3 wp = _corridor[row * MaxWaypoints + _corridorAt[row]];
+                Vector3 to = new Vector3(wp.x - p.x, 0f, wp.z - p.z);
+                float d = to.magnitude;
+                if (d <= WaypointReached) { _corridorAt[row]++; continue; }
+
+                Vector3 dir = to / d;
+                float travel = Math.Min(remaining, d);
+                p += dir * travel;
+                remaining -= travel;
+                _face[row] = dir;
+                moved = true;
+            }
+
+            if (_corridorAt[row] >= _corridorLen[row]) _corridorLen[row] = 0;   // corridor spent; refetch next time
+            if (moved) _pos[row] = Nav.SnapToSurface(p);
+            return moved;
+        }
+
+        public ZombieState StateOf(int row) => (ZombieState)_state[row];
+        public Vector3 FacingOf(int row) => _face[row];
+        public Vector3 DestinationOf(int row) => _dest[row];
+        public int WaypointsRemaining(int row) => Math.Max(0, _corridorLen[row] - _corridorAt[row]);
 
         ZombieTier ClassifyTier(int row, int region)
         {
@@ -271,6 +463,18 @@ namespace SDG.Unturned
             Array.Resize(ref _tier, capacity);
             Array.Resize(ref _region, capacity);
             Array.Resize(ref _rowSlot, capacity);
+            Array.Resize(ref _state, capacity);
+            Array.Resize(ref _dest, capacity);
+            Array.Resize(ref _face, capacity);
+            Array.Resize(ref _corridor, capacity * MaxWaypoints);
+            Array.Resize(ref _corridorLen, capacity);
+            Array.Resize(ref _corridorAt, capacity);
+            Array.Resize(ref _repath, capacity);
+            Array.Resize(ref _queued, capacity);
+            Array.Resize(ref _pathQueue, capacity);
+            DropQueue();   // the queue array just moved under the ring cursors
         }
+
+        void DropQueue() { _queueHead = _queueTail = _queueCount = 0; for (int i = 0; i < _count; i++) _queued[i] = false; }
     }
 }

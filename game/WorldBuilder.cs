@@ -34,6 +34,7 @@ namespace UnturnedGodot
         public Terrain Terr;               // null if the map couldn't load (no local Unturned install)
         public PlayerController Player;    // Playable/PeiPlay only
         public ZombieField Zombies;        // Playable/Dedicated (and only when zombies are enabled; C4 populated the server)
+        public ZombieDirector Director;    // --newzombies: the rewrite's single node, in place of Zombies
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
@@ -557,10 +558,20 @@ namespace UnturnedGodot
                 if (!noZombies)   // "Drive PEI — No Zombies" menu button / --nozombies flag
                 {
                     await Phase("Zombies");
-                    var zf = new ZombieField { Player = player, Terr = terr };
-                    zf.LoadFromPei(mapRoot);
-                    root.AddChild(zf);
-                    result.Zombies = zf;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
+                    if (ZombieDirector.Enabled)   // --newzombies: the rewrite. One node, sim rows, borrowed rigs, no per-zombie body
+                    {
+                        var zd = new ZombieDirector { Player = player, Terr = terr };
+                        root.AddChild(zd);
+                        zd.LoadFromPei(mapRoot);
+                        result.Director = zd;
+                    }
+                    else
+                    {
+                        var zf = new ZombieField { Player = player, Terr = terr };
+                        zf.LoadFromPei(mapRoot);
+                        root.AddChild(zf);
+                        result.Zombies = zf;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
+                    }
                 }
 
                 // VEHICLE SPAWNS: Spawns/Vehicles.dat -- the shared extraction above (identical order/params/variants)
