@@ -50,7 +50,8 @@ namespace SDG.Unturned
             Add(9121, "Fluid Purifier",   2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A powered water purifier. Wire it to power, hose tainted or dirty water into its input, and clean drinkable water comes out. Dead without power.");
             Add(1101, "Landmine",         2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A proximity mine. Plant it, and anything that wanders within ~1.4 m sets off a heavy blast. Fragile -- a stray shot detonates it. Consumed by its own explosion.");
             Add(385,  "Wooden Spikes",    2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A bed of sharpened stakes. Anything that steps onto it gets shredded (60 to zombies, 30 to players); it wears ~5 HP per hit and breaks after ~8. Unrepairable, and not explosive -- a shot just snaps it.");
-            Add(1241, "Remote Explosive", 2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A plantable raiding charge -- placed INERT (no proximity/contact trigger), it blows only when detonated (a Detonator, paired next) or shot. Huge blast: 200 to bodies, 500 to vehicles, 1000 to structures. Fragile + unrepairable.");
+            Add(1241, "Remote Explosive", 2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A plantable raiding charge -- placed INERT (no proximity/contact trigger); blows only when you set it off with a Detonator or shoot it. Huge blast: 200 to bodies, 500 to vehicles, 1000 to structures. Fragile + unrepairable.");
+            Add(1240, "Detonator",        2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The remote trigger for your charges. Equip it and LEFT-CLICK to detonate every Remote Explosive you've planted, at once. (Held model is a placeholder coil for now.)");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

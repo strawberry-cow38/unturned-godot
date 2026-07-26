@@ -7,7 +7,7 @@ namespace UnturnedGodot
     // (`if (id == 65) wire; if (id == 64) rope`). This is the data-driven registry for them -- a new held tool is a
     // ToolDef entry (mesh + colour + kind), NOT a new hard-coded branch. First step of the general-holdable pass;
     // the other held types (gun/melee/consumable/deployable/fuel) fold onto a shared descriptor next.
-    public enum ToolKind { Wire, Rope, Hose }   // which held-tool mode: power wiring / vehicle tow / fluid hose
+    public enum ToolKind { Wire, Rope, Hose, Detonator }   // which held-tool mode: power wiring / vehicle tow / fluid hose / remote-charge detonator (LMB fires all your charges)
 
     public sealed class ToolDef
     {
@@ -18,13 +18,17 @@ namespace UnturnedGodot
         public ToolKind Kind;        // Wire (65) -> wiring mode / Rope (64) -> tow mode / Hose (9118) -> fluid hose mode
         public bool IsRope => Kind == ToolKind.Rope;   // the Viewmodel.IsRopeTool bit
         public bool IsHose => Kind == ToolKind.Hose;   // the Viewmodel.IsHoseTool bit
+        public bool IsDetonator => Kind == ToolKind.Detonator;   // the Viewmodel.IsDetonatorTool bit
 
         // wire + rope + hose currently share wire_hold.obj (the coil), tinted; dedicated meshes are a drop-in HeldMesh swap.
         public static readonly ToolDef Wire = new() { Id = 65, Name = "Wire tool", HeldMesh = "wire_hold.obj", HeldColor = new Color(0.647f, 0.647f, 0.647f), Kind = ToolKind.Wire };
         public static readonly ToolDef Rope = new() { Id = 64, Name = "Rope tool", HeldMesh = "wire_hold.obj", HeldColor = new Color(0.42f, 0.30f, 0.16f), Kind = ToolKind.Rope };
         public static readonly ToolDef Hose = new() { Id = 9118, Name = "Hose tool", HeldMesh = "wire_hold.obj", HeldColor = new Color(0.16f, 0.17f, 0.19f), Kind = ToolKind.Hose };   // 9118 = custom (fluid block), not a retail id
+        // src Detonator.dat id 1240: the remote-charge trigger. Held -> LMB fires every placed Charge (Deployable.DetonateAllCharges).
+        // Placeholder coil mesh (dark, like the other tools); the real Detonator_0 held mesh is a drop-in HeldMesh swap (viewmodel-pose follow-up).
+        public static readonly ToolDef Detonator = new() { Id = 1240, Name = "Detonator", HeldMesh = "wire_hold.obj", HeldColor = new Color(0.11f, 0.11f, 0.12f), Kind = ToolKind.Detonator };
 
-        public static readonly ToolDef[] All = { Wire, Rope, Hose };
+        public static readonly ToolDef[] All = { Wire, Rope, Hose, Detonator };
         public static ToolDef ById(ushort id) { foreach (var t in All) if (t.Id == id) return t; return null; }
     }
 }

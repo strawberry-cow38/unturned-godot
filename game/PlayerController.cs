@@ -1542,7 +1542,7 @@ namespace UnturnedGodot
         }
 
         // UNARMED = bare fists (or genuinely nothing): the "empty hand" state. A picked-up item auto-equips here.
-        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && !HoldingHoseTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
+        public bool Unarmed => Gun == null && _heldConsumable == null && _deployable == null && !HoldingWireTool && !HoldingHoseTool && !HoldingDetonatorTool && _heldFuelItem == null && _heldFluidItem == null && (_melee == null || _melee.Name == "fists");
 
         // Is this inventory item the one currently IN HAND? (drives the inventory's Equip<->Dequip toggle.)
         public bool IsHeld(ItemAsset asset, SDG.Unturned.Item item)
@@ -1558,6 +1558,7 @@ namespace UnturnedGodot
             if (HoldingWireTool) return asset.id == 65;
             if (HoldingRopeTool) return asset.id == 64;
             if (HoldingHoseTool) return asset.id == 9118;
+            if (HoldingDetonatorTool) return asset.id == 1240;
             return false;
         }
 
@@ -1573,6 +1574,7 @@ namespace UnturnedGodot
         public bool HoldingWireTool => _viewmodel != null && _viewmodel.IsWireViewmodel;   // Wire tool (item 65) in hand -> wiring mode (LMB/RMB build/cancel wires); derived from the viewmodel so no state to clear
         public bool HoldingRopeTool => _viewmodel != null && _viewmodel.IsRopeViewmodel;   // Rope tool (item 64) in hand -> tow mode (LMB tie rear->front, RMB cancel/untie); derived from the viewmodel
         public bool HoldingHoseTool => _viewmodel != null && _viewmodel.IsHoseViewmodel;   // Hose tool (item 66) in hand -> fluid-hose mode (LMB source->consumer, RMB cancel); derived from the viewmodel
+        public bool HoldingDetonatorTool => _viewmodel != null && _viewmodel.IsDetonatorViewmodel;   // Detonator (item 1240) in hand -> LMB fires all placed remote Charges; derived from the viewmodel (auto-clears on re-equip)
         DeployableDef _deployable;      // held deployable (null = none)
         SDG.Unturned.Item _deployItem;  // the backing inventory item (null = console `deploy`, i.e. infinite/no consume)
         DeployablePlacer _placer;       // the world-space ghost preview
@@ -1703,12 +1705,12 @@ namespace UnturnedGodot
         public void EquipTool(ToolDef def, SDG.Unturned.Item backing = null)
         {
             SaveGunState();
-            bool alreadyThisKind = def.IsRope ? HoldingRopeTool : (def.IsHose ? HoldingHoseTool : HoldingWireTool);
+            bool alreadyThisKind = def.IsRope ? HoldingRopeTool : def.IsHose ? HoldingHoseTool : def.IsDetonator ? HoldingDetonatorTool : HoldingWireTool;
             if (!alreadyThisKind) _revertEquip = CaptureHeldForRevert();   // remember what to fall back to
             _heldItem = null; Gun = null; _melee = null; _heldMeleeName = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldConsumableMesh = null;
             _reloading = false; _torchAnimOn = false; ClearDeployable();
             _viewmodel?.QueueFree();
-            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose };
+            _viewmodel = new Viewmodel { ToolMesh = def.HeldMesh, ToolColor = def.HeldColor, IsRopeTool = def.IsRope, IsHoseTool = def.IsHose, IsDetonatorTool = def.IsDetonator };
             AddChild(_viewmodel);
             RelinkViewmodelLighting();
             GD.Print($"[tool] holding the {def.Name}");
@@ -1725,6 +1727,16 @@ namespace UnturnedGodot
         // source/consumer HosePort, LMB completes on a compatible opposite-role port -> a Hose; RMB cancels a pending route).
         // Type-lock ("cannot mix fluids") is enforced at completion; gravity gates whether the finished hose actually flows.
         public void EquipHoseTool(SDG.Unturned.Item backing = null) => EquipTool(ToolDef.Hose, backing);
+        public void EquipDetonator(SDG.Unturned.Item backing = null) => EquipTool(ToolDef.Detonator, backing);   // item 1240: the remote-charge trigger
+
+        // Detonator (item 1240) LMB plunge: fire every placed remote Charge (SP: they're all yours). The source detonator
+        // staggers ~1/tick + only fires SELECTED charges; the port blows them all at once (each is Proof_Explosion so no
+        // early chain). A charge also self-detonates when shot -- this is the intended remote trigger.
+        internal void TryDetonateCharges()
+        {
+            int n = Deployable.DetonateAllCharges(GetTree());
+            GD.Print($"[detonator] plunge -> fired {n} charge(s)");
+        }
 
         // Put the held deployable away (called whenever another item is equipped).
         void ClearDeployable()
@@ -3279,6 +3291,7 @@ namespace UnturnedGodot
                 else if (HoldingWireTool) WireLmb();                    // wire tool: pick output / place node / complete on a consumer
                 else if (HoldingHoseTool) HoseLmb();                    // hose tool: pick a fluid port / complete on the opposite-role port
                 else if (HoldingRopeTool) RopeLmb();                    // rope tool: pick a rear tow node / complete on a front tow node
+                else if (HoldingDetonatorTool) TryDetonateCharges();    // detonator: LMB plunge -> fire all placed remote charges
                 else if (_build != null && _build.Active) _build.Place();   // build mode: place a structure
                 else if (HoldingDeployable) TryPlaceDeployable();       // holding a deployable: LMB plants it at the ghost
                 else if (HoldingConsumable) StartConsume();             // holding a food/drink: LMB eats/drinks it
@@ -3295,6 +3308,7 @@ namespace UnturnedGodot
                 else if (HoldingWireTool) { if (rmb.Pressed) { if (_wiring) WireRmb(); else WireManageArm(); } }   // routing: undo/cancel; else: arm a completed-wire clear/unplug (phase 5)
                 else if (HoldingHoseTool) { if (rmb.Pressed) { if (_hosing) HoseRmb(); else if (IsInstanceValid(_hosePort) && _hosePort.Owner != null && _hosePort.Owner.Role == FluidRole.Valve) _hosePort.Owner.ToggleValve(); else HoseManageArm(); } }   // routing: undo/cancel node; else: RMB a valve port toggles it, else arm a hosed-port clear/unplug (mirror the wire tool)
                 else if (HoldingRopeTool) { if (rmb.Pressed) { if (_roping) CancelRope(); else RopeManageArm(); } }   // rope tool: cancel a pending tie; else arm a clear/disconnect (hold RMB clears the rope, tap disconnects that side) -- mirrors the wire tool
+                else if (HoldingDetonatorTool) { }   // detonator has no RMB action (LMB plunges) -- swallow so it doesn't fall through to ADS
                 else if (HoldingDeployable) { if (rmb.Pressed) Dequip(); }   // RMB cancels placement entirely -> empty hands (strawberry)
                 else if (_heldFluidItem != null) { if (rmb.Pressed) TryFillContainer(); }   // fluid container in hand: RMB a placed tank/source to fill it (LMB sips) (strawberry)
                 else if (_heldFuelItem != null) { if (rmb.Pressed) TryExtractFuel(); }   // gas can in hand: RMB a powered PUMP to SUCK fuel into the can (LMB pours it out into a gen/vehicle) (master)

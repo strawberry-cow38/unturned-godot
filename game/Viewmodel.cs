@@ -620,9 +620,11 @@ namespace UnturnedGodot
         public bool IsGunViewmodel => !EmptyHands && !Fists && MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
         public bool IsRopeTool;   // this tool viewmodel is the tow ROPE (item 64) -- all tools set ToolMesh; the kind bits disambiguate
         public bool IsHoseTool;   // this tool viewmodel is the fluid HOSE (item 66)
-        public bool IsWireViewmodel => ToolMesh != null && !IsRopeTool && !IsHoseTool;
+        public bool IsDetonatorTool;   // this tool viewmodel is the remote-charge DETONATOR (item 1240)
+        public bool IsWireViewmodel => ToolMesh != null && !IsRopeTool && !IsHoseTool && !IsDetonatorTool;
         public bool IsRopeViewmodel => ToolMesh != null && IsRopeTool;
         public bool IsHoseViewmodel => ToolMesh != null && IsHoseTool;
+        public bool IsDetonatorViewmodel => ToolMesh != null && IsDetonatorTool;
         public int GetAttachMask() { int m = 0; for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i]) && SlotAttached(AttachSlots[i])) m |= 1 << i; return m; }
         public void ApplyAttachMask(int mask) { for (int i = 0; i < AttachSlots.Length; i++) if (SlotHasModel(AttachSlots[i])) SetSlotAttached(AttachSlots[i], (mask & (1 << i)) != 0); }
         // swap the slot's model to a named attachment (null/empty = detach). Alternate attachments are calibrated to

@@ -309,4 +309,30 @@ namespace UnturnedGodot.Testing
             T.Check("all three charges blew", a.DebugExploded && b.DebugExploded && c.DebugExploded);
         }
     }
+
+    // The Detonator ITEM (id 1240, charge increment B) is a held TOOL on the wire/rope/hose rail: equip it ->
+    // HoldingDetonatorTool; LMB (TryDetonateCharges) plunges -> fires every placed remote Charge at once. This is the
+    // in-hand trigger end of the remote-charge feature (the charge itself was cf1abbc1).
+    public class DetonatorItemFiresCharges : GameTest
+    {
+        public override string Name => "trap.detonator";
+        public override IEnumerable<Step> Run()
+        {
+            T.Check("the Detonator dispatches as a tool (id 1240)", ToolDef.ById(1240) == ToolDef.Detonator);
+            var player = new PlayerController { CaptureMouse = false };
+            World.AddChild(player);
+            var a = Deployable.Spawn(World, DeployableDef.Charge, new Vector3(-3f, 0f, 0f), 0f);
+            var b = Deployable.Spawn(World, DeployableDef.Charge, new Vector3(3f, 0f, 0f), 0f);
+            yield return Ticks(3);
+            T.Check("two charges placed + inert", a != null && b != null && !a.DebugExploded && !b.DebugExploded);
+            if (a == null || b == null) yield break;
+
+            player.EquipDetonator();   // tool rail -> viewmodel drives HoldingDetonatorTool
+            yield return Ticks(1);
+            T.Check("equipping the detonator puts it in hand (HoldingDetonatorTool)", player.HoldingDetonatorTool);
+
+            player.TryDetonateCharges();   // the LMB plunge
+            T.Check("the detonator plunge fires every placed charge", a.DebugExploded && b.DebugExploded);
+        }
+    }
 }
