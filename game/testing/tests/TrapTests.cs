@@ -335,4 +335,27 @@ namespace UnturnedGodot.Testing
             T.Check("the detonator plunge fires every placed charge", a.DebugExploded && b.DebugExploded);
         }
     }
+
+    // Barbed Wire (src Barbedwire.dat id 386): a CONTACT trap like the spike, tougher (Health 70) + nastier (zombie 80).
+    // Reuses the spike's contact/wear path verbatim -- just different values + mesh; confirms the shared infra covers it.
+    public class BarbedwireShreds : GameTest
+    {
+        public override string Name => "trap.barbedwire";
+        public override IEnumerable<Step> Run()
+        {
+            var bw = Deployable.Spawn(World, DeployableDef.Barbedwire, Vector3.Zero, 0f);
+            var z = new ZombieController();
+            World.AddChild(z);
+            yield return Ticks(3);
+            T.Check("barbed wire placed", bw != null && !bw.DebugExploded);
+            if (bw == null) yield break;
+            bw.DebugAdvanceArm(1f);
+            z.GlobalPosition = new Vector3(0.5f, 0f, 0f);   // inside the footprint
+            float zhp = z.Health, shp = bw.Health;
+            bw.DebugContactTick();
+            T.Check($"a zombie in the wire is shredded ({zhp:0} -> {z.Health:0}, ~80)", z.Health <= zhp - 79f);
+            T.Check($"the wire wears down per hit ({shp:0} -> {bw.Health:0}, ~5)", Mathf.IsEqualApprox(bw.Health, shp - 5f));
+            T.Check("a contact trap doesn't self-detonate", !bw.DebugExploded);
+        }
+    }
 }

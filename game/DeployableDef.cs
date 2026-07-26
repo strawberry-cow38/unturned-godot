@@ -296,13 +296,26 @@ namespace UnturnedGodot
             ShatterOnDeath = true, ExplosionProof = true, PlaceSound = "metalplacement",
         };
 
+        // src Barbedwire.dat: id 386, Type Trap, Build Wire, Rarity Uncommon. A CONTACT hazard like the spike (non-explosive)
+        // -- shreds whoever ENTERS (zombie 80 / player 40 / animal 80) and WEARS 5 HP/hit (Health 70 -> ~14 hits) then breaks.
+        // Bigger + tougher than wooden spikes; the iconic base-defense wire. Real ripped mesh (tools/extract_trap_meshes.py).
+        public static readonly DeployableDef Barbedwire = new()
+        {
+            Id = 386, Name = "Barbed Wire", Model = "Barbedwire_0",
+            Size = new Vector3(2f, 1f, 0.2f), Offset = 0.2f, Radius = 0.15f, Range = 4f, Health = 70f,
+            IsTrap = true, TrapExplosive = false, TrapTrigger = 1.1f, TrapArmDelay = 0.25f,
+            TrapZombieDamage = 80f, TrapPlayerDamage = 40f, TrapAnimalDamage = 80f, TrapWearPerHit = 5f, TrapCooldown = 0f,
+            PlaceSound = "metalplacement",
+        };
+
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike, Charge };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike, Charge, Barbedwire };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
             385 => Spike,
             1241 => Charge,
+            386 => Barbedwire,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

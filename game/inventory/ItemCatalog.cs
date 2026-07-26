@@ -52,6 +52,7 @@ namespace SDG.Unturned
             Add(385,  "Wooden Spikes",    2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "A bed of sharpened stakes. Anything that steps onto it gets shredded (60 to zombies, 30 to players); it wears ~5 HP per hit and breaks after ~8. Unrepairable, and not explosive -- a shot just snaps it.");
             Add(1241, "Remote Explosive", 2, 2, EItemType.GENERIC, EItemRarity.EPIC,     0, 0, "A plantable raiding charge -- placed INERT (no proximity/contact trigger); blows only when you set it off with a Detonator or shoot it. Huge blast: 200 to bodies, 500 to vehicles, 1000 to structures. Fragile + unrepairable.");
             Add(1240, "Detonator",        2, 2, EItemType.GENERIC, EItemRarity.RARE,     0, 0, "The remote trigger for your charges. Equip it and LEFT-CLICK to detonate every Remote Explosive you've planted, at once. (Held model is a placeholder coil for now.)");
+            Add(386,  "Barbed Wire",      2, 2, EItemType.GENERIC, EItemRarity.UNCOMMON, 0, 0, "Coils of barbed wire. Anything that walks into it gets torn up (80 to zombies, 40 to players); it wears ~5 HP per hit and breaks after ~14. Tougher + nastier than wooden spikes, and unrepairable.");
             WireExtractedGuns();
             WireExtractedMelee();
             WireClothingArmor();

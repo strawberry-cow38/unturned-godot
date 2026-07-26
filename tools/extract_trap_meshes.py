@@ -14,6 +14,7 @@ TRAPS = [
     ("items/barricades/landmine/", "Landmine_0"),
     ("items/barricades/spikes_pine/", "Spikes_0"),
     ("items/barricades/charge/", "Charge_0"),
+    ("items/barricades/barbedwire/", "Barbedwire_0"),   # trailing slash so barbedwire_ornamental / fence_barbedwire don't match
 ]
 
 def comps(tt):

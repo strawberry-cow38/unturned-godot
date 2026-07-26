@@ -1723,8 +1723,8 @@ namespace UnturnedGodot
             // meshes -- verify they sit FLAT on the ground (floor traps, NOT stood up like a wall barricade) + the albedo.
             if (System.Environment.GetEnvironmentVariable("UG_TRAPS") == "1")
             {
-                var traps = new[] { DeployableDef.Landmine, DeployableDef.Spike, DeployableDef.Charge };
-                float tx = -1.3f;
+                var traps = new[] { DeployableDef.Landmine, DeployableDef.Spike, DeployableDef.Charge, DeployableDef.Barbedwire };
+                float tx = -1.95f;
                 foreach (var def in traps)
                 {
                     Deployable.Spawn(this, def, new Vector3(tx, 0f, 0f), 0f);
@@ -1733,8 +1733,8 @@ namespace UnturnedGodot
                     tx += 1.3f;
                 }
                 look = new Vector3(0f, 0.05f, 0f);
-                cam.Position = new Vector3(0f, 1.2f, 2.1f);
-                cam.Fov = 55f; cam.LookAt(look, Vector3.Up);
+                cam.Position = new Vector3(0f, 1.35f, 2.9f);
+                cam.Fov = 58f; cam.LookAt(look, Vector3.Up);
             }
             // UG_SWITCH=1: two Power Switches side by side -- left ON (green light), right toggled OFF (red) -- verify the state light + gate.
             if (System.Environment.GetEnvironmentVariable("UG_SWITCH") == "1")
