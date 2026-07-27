@@ -3197,7 +3197,14 @@ namespace UnturnedGodot
                 Vector3 look = Vector3.Zero;
                 if (pockets.Count > 0)
                 {
-                    int pkIdx = int.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVPOCKET"), out var pi) ? Mathf.Clamp(pi, 0, pockets.Count - 1) : 3;   // UG_NAVPOCKET=N -> close up on pocket N
+                    // Default to the most INLAND pocket rather than a hardcoded index. Pocket 3 sat on the
+                    // coast, so the verify shot framed open water with the cones adrift in it -- a render
+                    // that passed every "did it produce a file" check and showed nothing worth looking at.
+                    // Scoring by surrounding land keeps the framing meaningful even if pocket ORDER changes,
+                    // which an index cannot. UG_NAVPOCKET=N still overrides for a specific pocket.
+                    int pkIdx = int.TryParse(System.Environment.GetEnvironmentVariable("UG_NAVPOCKET"), out var pi)
+                        ? Mathf.Clamp(pi, 0, pockets.Count - 1)
+                        : MostInlandPocket(pockets, terr);
                 var pk = pockets[pkIdx];
                     float cy = terr.SampleHeight(pk.Center.X, pk.Center.Z);
                     look = new Vector3(pk.Center.X, cy, pk.Center.Z);
@@ -4080,6 +4087,27 @@ namespace UnturnedGodot
         }
 
         string _shotRequested;       // the capture the COMMAND LINE asked for, set at parse time
+        /// <summary>The pocket with the most land around it, so the nav verify shot frames terrain rather
+        /// than sea. Samples a ring at the camera's own radius (~60 m) and counts non-water hits; ties break
+        /// on the lower index so the choice stays deterministic run to run.</summary>
+        static int MostInlandPocket(System.Collections.Generic.List<NavPocket> pockets, Terrain terr)
+        {
+            int best = 0, bestLand = -1;
+            for (int i = 0; i < pockets.Count; i++)
+            {
+                var c = pockets[i].Center;
+                int land = 0;
+                for (int a = 0; a < 12; a++)
+                {
+                    float ang = a / 12f * Mathf.Tau;
+                    float sx = c.X + 60f * Mathf.Cos(ang), sz = c.Z + 60f * Mathf.Sin(ang);
+                    if (!Terrain.IsWater(terr.SampleDominantLayer(sx, sz))) land++;
+                }
+                if (land > bestLand) { bestLand = land; best = i; }
+            }
+            return best;
+        }
+
         ulong _shotWaitStartMs;      // wall clock at the first frame with a capture pending
         ulong _shotLastReportMs;
         bool _shotTimedOut;
