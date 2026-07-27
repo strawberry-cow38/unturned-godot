@@ -352,9 +352,20 @@ namespace UnturnedGodot
         {
             // Query the POCKET's map when there is one: the scan that dominates a query is proportional
             // to the polygons in the map being queried, and a pocket holds ~3k of PEI's 56,876.
-            // Falls back to the world map for the L1 sandboxes and the legacy path, which have no pockets.
             var map = ZombieNav.MapFor(from);
-            if (!map.IsValid) map = _map;
+            if (!map.IsValid)
+            {
+                // Outside every pocket. Once the maps are split the world map holds NO regions, so a
+                // query against it cannot succeed -- and failure is the expensive case, not the cheap
+                // one: an unreachable target makes Godot flood the whole reachable component before
+                // falling back (nav_mesh_queries_3d.cpp, heap-empty branch). Answering "no route"
+                // directly costs nothing and is the same answer.
+                //
+                // Only when pockets exist, though: the L1 sandboxes and the legacy path put their
+                // regions on the world map and must still reach it.
+                if (ZombieNav.PocketMaps.Count > 0) return 0;
+                map = _map;
+            }
             if (!NavigationServer3D.MapIsActive(map)) return 0;
             // MapGetPath resolves its own endpoints to the nearest polygon, so the two MapGetClosestPoint
             // calls that used to bracket it were redundant -- and they were not cheap: each one scans the
