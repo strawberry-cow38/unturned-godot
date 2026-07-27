@@ -274,6 +274,10 @@ namespace UnturnedGodot
                 if (!cache.TryGetValue(name, out var mesh)) { mesh = ObjMesh.Load(dir + name + ".obj"); cache[name] = mesh; }
                 if (mesh == null) return;
                 float px = F(p[1]), py = F(p[2]), pz = F(p[3]), ex = F(p[4]), ey = F(p[5]), ez = F(p[6]), sx = F(p[7]), sy = F(p[8]), sz = F(p[9]);
+                // MATERIAL-PALETTE variant: gen_placements rolls the per-instance material (LevelObject.GetMaterialOverride:
+                // materialIndexOverride=-1 -> InitState(instanceID);Range(0,count)) and writes the chosen variant's material
+                // name as an 11th token. Absent -> the mesh's own material (unpaletted props + not-yet-extracted palettes).
+                string matName = p.Length >= 11 ? p[10] : name;
                 var gpos = new Vector3(px, py, -pz);
                 // negate-Z LAYOUT (keeps the map orientation) with a RAW mesh (un-mirrored geometry): rotation = old C_z-conjugated euler
                 // raw (un-mirrored) mesh convention: pitch is +ex, NOT -ex. The -ex was left over from the old negate-Z-verts
@@ -284,7 +288,7 @@ namespace UnturnedGodot
                 // term is identity), so the whole map except the handful of rolled props is byte-identical -- no regression.
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
-                var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(name), Transform = new Transform3D(basis, gpos),
+                var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = 320f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 root.AddChild(mainMi);
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
@@ -335,7 +339,7 @@ namespace UnturnedGodot
                         // + all glass/alpha-cutout goes on the see-through layer 6 so the raycast passes through (master). Player collides with both.
                         var ab = mesh.GetAabb();
                         float maxDim = Mathf.Max(ab.Size.X * sx, Mathf.Max(ab.Size.Y * sy, ab.Size.Z * sz));
-                        bool losBlocker = maxDim >= 5f && MatFor(name).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
+                        bool losBlocker = maxDim >= 5f && MatFor(matName).Transparency == BaseMaterial3D.TransparencyEnum.Disabled;
                         var body = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = losBlocker ? 1u << 0 : 1u << 6 };
                         body.SetMeta(PlayerController.SurfMeta, (int)(fmesh != null ? PlayerController.Surf.Wood : PlayerController.Surf.Concrete));   // trees (have foliage) = wood impacts; buildings/props = concrete
                         // A2: the gas pump's interaction collider is now the fixture node's OWN gaspump-meta box
