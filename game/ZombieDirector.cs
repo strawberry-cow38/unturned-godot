@@ -155,6 +155,13 @@ namespace UnturnedGodot
             if (n > 0) _lastPlayerPos = G(_players[0]);
             _sim.SetPlayers(_players, n);
             { ulong _t = Time.GetTicksUsec(); _sim.SimStep(_tick++, delta); Prof.Add("z.sim", _t); }
+            // z.sim's own legs. "z.sim = 352 ms" is true and useless; these say WHICH part. Accumulated
+            // across the window like every other Prof entry, so the units match (ms/win).
+            AddUs("s.regions", _sim.UsRegions);   // MarkHot over the players
+            AddUs("s.spatial", _sim.UsSpatial);   // rebuild of the broadphase over every row
+            AddUs("s.tier", _sim.UsTier);         // the per-row region+tier classification loop
+            AddUs("s.move", _sim.UsMove);         // intent/advance for the DUE rows only
+            AddUs("s.paths", _sim.UsPaths);       // navigation queries -- the one engine call left in here
             { ulong _t = Time.GetTicksUsec(); SyncViews(delta); Prof.Add("z.views", _t); }
             Prof.Add("z.total", _tz);
             // Raycast COUNT, not just time: a sight test is the one engine call in the sim path, and "how
@@ -277,6 +284,12 @@ namespace UnturnedGodot
                 rig.Body.CastShadow = RigShadowsOn ? GeometryInstance3D.ShadowCastingSetting.On
                                                    : GeometryInstance3D.ShadowCastingSetting.Off;
             return rig;
+        }
+
+        static void AddUs(string key, long us)
+        {
+            Prof.Us.TryGetValue(key, out var v);
+            Prof.Us[key] = v + us;
         }
 
         static Vector3 G(UVector3 v) => new Vector3(v.x, v.y, v.z);

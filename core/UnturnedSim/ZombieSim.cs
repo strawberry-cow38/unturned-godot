@@ -329,6 +329,13 @@ namespace SDG.Unturned
 
         // --- the step -------------------------------------------------------------------------------
 
+        // Per-SimStep cost, in microseconds, split into the legs that can actually differ. Engine-free:
+        // Stopwatch is plain .NET, so the sim stays testable without Godot. The director copies these
+        // into the F3 overlay -- z.sim alone said "the sim", which is true and useless.
+        public long UsRegions, UsSpatial, UsTier, UsMove, UsPaths;
+
+        static long Us(long a, long b) => (b - a) * 1_000_000L / System.Diagnostics.Stopwatch.Frequency;
+
         public void SimStep(long tick, double dt)
         {
             // A region must never be colder than the tiers measured inside it. With a margin tighter than
@@ -339,8 +346,11 @@ namespace SDG.Unturned
             _simTime += dt;
             _attacks.Clear();
             _deaths.Clear();
+            long _c0 = System.Diagnostics.Stopwatch.GetTimestamp();
             _regions.MarkHot(_players, _playerCount);
+            long _c1 = System.Diagnostics.Stopwatch.GetTimestamp();
             _spatial.Build(_pos, _count);
+            long _c2 = System.Diagnostics.Stopwatch.GetTimestamp();
 
             if (_due.Length < _count) Array.Resize(ref _due, Math.Max(_count, 64));
             _dueCount = 0;
@@ -368,7 +378,12 @@ namespace SDG.Unturned
             }
 
             stats.Due = _dueCount;
+            long _c3 = System.Diagnostics.Stopwatch.GetTimestamp();
+            UsPaths = 0;                     // StepMovement fills it around DrainPathQueue
             StepMovement(dt, ref stats);
+            long _c4 = System.Diagnostics.Stopwatch.GetTimestamp();
+            UsRegions = Us(_c0, _c1); UsSpatial = Us(_c1, _c2); UsTier = Us(_c2, _c3);
+            UsMove = Us(_c3, _c4) - UsPaths;   // movement WITHOUT the nav queries, which are their own leg
             RecycleCorpses();
             stats.PathQueued = _queueCount;
             Stats = stats;
@@ -423,7 +438,9 @@ namespace SDG.Unturned
                 if (Advance(row, step)) stats.Moving++;
             }
 
+            long _p0 = System.Diagnostics.Stopwatch.GetTimestamp();
             DrainPathQueue(ref stats);
+            UsPaths = Us(_p0, System.Diagnostics.Stopwatch.GetTimestamp());
         }
 
         int StrideOf(ZombieTier tier) =>
