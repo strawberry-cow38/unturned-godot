@@ -392,4 +392,35 @@ namespace UnturnedGodot.Testing
             T.Check($"clean ground is free ({p.Health:0.##})", Mathf.IsEqualApprox(p.Health, start));
         }
     }
+
+    // Locking used to be unreachable. DoorLogic.TrySetLocked existed and was L0-tested, Door.TrySetLocked
+    // wrapped it -- and the only callers in the entire codebase were tests, so a lockable door could not
+    // actually be locked or unlocked by a player in either mode. This drives the seam the hold-F input
+    // drives (the input itself needs a captured mouse, which headless cannot have, hence the public seam).
+    public class PlayerCanLockAndUnlockTheirOwnDoor : GameTest
+    {
+        public override string Name => "door.player_locks_own";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            var mine = Door.Spawn(World, new Vector3(0f, 0f, -3f), 0f, owner: p.PlayerId);
+            var theirs = Door.Spawn(World, new Vector3(-6f, 0f, -3f), 0f, owner: 999UL);
+            yield return Ticks(4);
+
+            T.Check("a door starts unlocked", !mine.IsLocked);
+            T.Check("the owner can lock it through the player seam", p.RequestSetDoorLocked(mine, true));
+            T.Check("and it is locked", mine.IsLocked);
+
+            T.Check("a locked door refuses a stranger", !mine.TryToggle(777UL, 0UL, 500.0));
+
+            T.Check("the owner can unlock it again", p.RequestSetDoorLocked(mine, false));
+            T.Check("and it is unlocked", !mine.IsLocked);
+
+            T.Check("nobody locks someone else's door", !p.RequestSetDoorLocked(theirs, true));
+            T.Check("which stays unlocked", !theirs.IsLocked);
+        }
+    }
 }

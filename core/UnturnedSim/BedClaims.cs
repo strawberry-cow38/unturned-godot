@@ -110,5 +110,36 @@ namespace SDG.Unturned
         }
 
         public bool TryGetOwnedBedId(ulong player, out int id) => _byOwner.TryGetValue(player, out id);
+
+        /// <summary>Adopt an ownership decision made somewhere else -- a server telling a replica how the
+        /// world is. Skips <see cref="CanClaim"/> on purpose: that decision was already made, against the
+        /// deciding side's clock, and re-judging it here is exactly how a replica ends up disagreeing with
+        /// the world everyone else can see. owner 0 releases the bed.
+        ///
+        /// One-bed-per-player is still enforced, because that is a structural invariant of this table (the
+        /// owner index maps to a single id) rather than a rule that may be waived. Returns false only if
+        /// the bed is unknown.</summary>
+        public bool Adopt(int id, ulong owner, double now)
+        {
+            if (!_beds.TryGetValue(id, out var bed)) return false;
+
+            if (bed.Owner != 0UL && bed.Owner != owner
+                && _byOwner.TryGetValue(bed.Owner, out int held) && held == id)
+                _byOwner.Remove(bed.Owner);   // whoever had it has it no longer
+
+            if (owner != 0UL && _byOwner.TryGetValue(owner, out int previous) && previous != id
+                && _beds.TryGetValue(previous, out var old))
+            {
+                old.Owner = 0UL;
+                old.LastClaimed = now;
+                _beds[previous] = old;
+            }
+
+            bed.Owner = owner;
+            bed.LastClaimed = now;
+            _beds[id] = bed;
+            if (owner != 0UL) _byOwner[owner] = id;   // the release case cleared the index above
+            return true;
+        }
     }
 }

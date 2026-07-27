@@ -178,6 +178,10 @@ namespace UnturnedGodot
                 ground.AddChild(new CollisionShape3D { Shape = new WorldBoundaryShape3D() });
                 root.AddChild(ground);
                 GD.Print("[WORLD] dedicated: no map data (set UG_UNTURNED_DIR) -> flat fallback ground, no objects/nav");
+                // The interactables belong on the fallback world too. This branch is what CI and every L1
+                // test actually run, so a dedicated server that only grows doors when retail map data is
+                // present is one whose doors no automated test ever sees.
+                SpawnInteractables(root, null, mapRoot, result);
                 result.Ready = true;
                 return result;
             }
@@ -501,6 +505,18 @@ namespace UnturnedGodot
                 GD.Print($"[vehicles] spawned {nv} PEI vehicles (Civilian=sedan/hatchback/roadster/offroader/truck/van, Military=humvee/jeep/ural, Farm=tractor; golf command-only; air/water/tank skipped)");
             }
 
+            // DOORS / BEDS / DEADZONES: the three ported interactables, placed in the REAL world so they are
+            // reachable by a player rather than only by tests. A door and a bed stand beside the map's spawn
+            // point (F toggles / claims; the bed becomes your respawn point), and a contaminated pocket sits
+            // away from it so it is something you can walk into rather than something you start in.
+            //
+            // OUTSIDE the Playable gate on purpose. These used to be built only for singleplayer, so a
+            // dedicated server and a joined client had no doors or beds at all -- the whole feature was
+            // invisible in the mode it had just been made to work in. Every peer runs this identically, which
+            // is also what lets the ids be world-build order rather than something minted and transmitted.
+            if (mode == WorldMode.Playable || mode == WorldMode.Dedicated || mode == WorldMode.Client)
+                SpawnInteractables(root, terr, mapRoot, result);
+
             if (mode == WorldMode.Playable)
             {
                 await Phase("Player");
@@ -573,24 +589,6 @@ namespace UnturnedGodot
                         root.AddChild(zf);
                         result.Zombies = zf;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
                     }
-                }
-
-                // DOORS / BEDS / DEADZONES: the three ported interactables, placed in the REAL world so they
-                // are reachable by a player rather than only by tests. A door and a bed stand beside the
-                // spawn (F toggles / claims; the bed becomes your respawn point), and a contaminated pocket
-                // sits away from spawn so it is something you can walk into rather than something you start in.
-                {
-                    Bed.ResetForNewWorld();   // a map reload must not inherit the previous level's claims
-                    var door = Door.Spawn(root, new Vector3(sx - 3.0f, terr.SampleHeight(sx - 3.0f, sz + 2.0f), sz + 2.0f), 0f, owner: 1UL);
-                    var bed = Bed.Spawn(root, new Vector3(sx - 5.0f, terr.SampleHeight(sx - 5.0f, sz + 2.0f), sz + 2.0f), 90f);
-                    var deadzones = new DeadzoneField();
-                    root.AddChild(deadzones);
-                    // A 60 m contaminated pocket. Radiation-proof clothing already existed in item data with
-                    // nothing to protect against; this is the hazard that finally gives it a job.
-                    deadzones.AddVolume(new Vector3(sx + 120f, terr.SampleHeight(sx + 120f, sz + 120f) + 15f, sz + 120f),
-                                        new Vector3(30f, 25f, 30f));
-                    result.Deadzones = deadzones;
-                    GD.Print($"[interactables] door + bed at spawn, 1 deadzone volume ({deadzones.VolumeCount} total)");
                 }
 
                 // VEHICLE SPAWNS: Spawns/Vehicles.dat -- the shared extraction above (identical order/params/variants)
@@ -746,6 +744,55 @@ namespace UnturnedGodot
                 try { var _navPk = ZombieNav.LoadPockets(mapRoot); ZombieNav.BuildOrLoad(root, _navPk, overlay: false, save: bakeNav, bakeIfMissing: bakeNav); } catch (System.Exception _ne) { GD.PrintErr($"[zombienav] full-world nav failed: {_ne.Message}"); }   // --bakenav BAKES+SAVES here; the game just LOADS the committed .res
             result.Ready = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
             return result;
+        }
+
+        /// <summary>Place the three ported interactables: a door and a bed beside the map's spawn point (F
+        /// toggles / claims; the bed becomes your respawn point), and a contaminated pocket away from it, so
+        /// it is something you walk into rather than something you start in.
+        ///
+        /// Called for Playable, Dedicated AND Client -- these used to be built only for singleplayer, so a
+        /// dedicated server and a joined client had no doors or beds at all, and the feature was invisible in
+        /// the mode it had just been made to work in. Every peer runs this identically, which is also what
+        /// lets the wire ids be world-build order rather than something minted and transmitted.
+        ///
+        /// A null <paramref name="terr"/> is the no-map-data fallback world: everything sits on y = 0, which
+        /// is where that world's ground plane is.</summary>
+        public static void SpawnInteractables(Node root, Terrain terr, string mapRoot, WorldBuildResult result)
+        {
+            Bed.ResetForNewWorld();   // a map reload must not inherit the previous level's claims
+            var anchor = InteractableAnchor(mapRoot);
+            float ax = anchor.X, az = anchor.Z;
+            float H(float x, float z) => terr != null ? terr.SampleHeight(x, z) : 0f;
+
+            Door.Spawn(root, new Vector3(ax - 3.0f, H(ax - 3.0f, az + 2.0f), az + 2.0f), 0f, owner: 1UL);
+            Bed.Spawn(root, new Vector3(ax - 5.0f, H(ax - 5.0f, az + 2.0f), az + 2.0f), 90f);
+
+            var deadzones = new DeadzoneField();
+            root.AddChild(deadzones);
+            // A 60 m contaminated pocket. Radiation-proof clothing already existed in item data with nothing
+            // to protect against; this is the hazard that finally gives it a job.
+            deadzones.AddVolume(new Vector3(ax + 120f, H(ax + 120f, az + 120f) + 15f, az + 120f),
+                                new Vector3(30f, 25f, 30f));
+            if (result != null) result.Deadzones = deadzones;
+            GD.Print($"[interactables] door + bed at ({ax:0},{az:0}), 1 deadzone volume ({deadzones.VolumeCount} total)");
+        }
+
+        /// <summary>Where the ported interactables stand, from MAP DATA alone.
+        ///
+        /// Deliberately NOT the player's spawn point, even though it is derived the same way: that one is
+        /// then moved by UG_TOWNSPAWN / UG_LHSPAWN / UG_SPAWNX, which are per-process. A server started with
+        /// one of those and a client started without would build the same door in two different places, and
+        /// since reach is judged server-side the player would be refused at a door they are standing in.
+        /// Map data is the only thing both ends are guaranteed to agree on.</summary>
+        public static Vector3 InteractableAnchor(string mapRoot)
+        {
+            var regs = LevelSpawns.PlayerSpawns(mapRoot);
+            if (regs.Count > 0)
+            {
+                var pick = regs[new RandomNumberGenerator { Seed = 7 }.RandiRange(0, regs.Count - 1)];
+                return new Vector3(pick.x, 0f, pick.z);
+            }
+            return new Vector3(0f, 0f, -350f);   // the same no-map fallback the player spawn uses
         }
 
         // The player-shell block (PEI_CLIENT_PLAN §3 C3): everything a HUMAN-driven PlayerController needs

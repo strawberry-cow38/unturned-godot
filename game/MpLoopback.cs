@@ -329,6 +329,13 @@ namespace UnturnedGodot
             DestructibleSync = new DestructibleNetSync(Server, Destructibles);   // seed health/respawn + mirror rubble alive-bits
             Driver.Sim.Add(new DelegateSimStep((t, dt) => DestructibleSync.Tick(), "net.destructibles.sync"));
             if (Destructibles != null) Client.ObjectDestroyed += e => Destructibles.PlayBreakEffect(e.Index);   // break VFX (debris + dust) on a LIVE break broadcast -- the sync above hides the mesh, this shows the shatter
+            // DOORS / BEDS / DEADZONES are deliberately NOT registered here. On a loopback the local player
+            // IS the world's PlayerController, so the direct singleplayer paths already run: DoorLogic and
+            // BedClaims on the nodes themselves, and DeadzoneField's own _PhysicsProcess over PlayerRegistry.
+            // Registering them would give the local doors NetIds, which routes F down the intent path and
+            // would have the loopback server and the local node both acting on the same press. Leaving them
+            // at NetId 0 is what keeps singleplayer byte-identical -- see InteractableNetSync, which the
+            // DEDICATED server does register (it has no PlayerControllers to run the direct paths).
             Driver.Sim.Add(new DelegateSimStep((t, dt) => Server.TickReplication(), "net.server.replicate"));   // LAST (§2.5)
             GD.Print($"[MPLOOPBACK] listen-server up over MemTransport (content {NetContent.Hash:X16})");
         }

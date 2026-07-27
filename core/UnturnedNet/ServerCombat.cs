@@ -126,6 +126,12 @@ namespace UnturnedGodot.Net
         /// NetWorldServer keeps every pre-P3a combat harness byte-identical (ServerTeleport path).</summary>
         public Func<ushort, Vector3, long, bool> RepositionOwner;
 
+        /// <summary>SP/MP unify (beds): where this player wants to come back. Returns null for "no claimed
+        /// bed" -- the map spawn (cs.SpawnPos) still wins, so a host that never wires this respawns exactly
+        /// where it always did. NetWorldServer points it at ServerInteractables, which answers from the same
+        /// BedClaims singleplayer respawns through, so a bed means the same thing in both modes.</summary>
+        public Func<ushort, Vector3?> RespawnPositionOf;
+
         /// <summary>D1 posture (PEI_COMBAT_PLAN §3): while false, players are not combat targets at all --
         /// bullets fly through them, melee ignores them, blasts spare them (self-damage included, since a
         /// D1 shell has no server-auth vitals and an invisible entity death would just rubber-band it).
@@ -309,11 +315,14 @@ namespace UnturnedGodot.Net
             cs.Health = 100;
             cs.RespawnAtTick = -1;
             _state.MarkDirty(cs, tick);
+            // A claimed bed beats the map spawn -- asked here rather than cached at death, so a bed claimed
+            // (or destroyed) during the death timer is honoured, which is what happens in singleplayer too.
+            Vector3 where = RespawnPositionOf?.Invoke(cs.OwnerPlayerId) ?? cs.SpawnPos;
             // P3a: for a client-authoritative owner, ServerTeleport alone is clobbered by the shell's next
             // PlayerStateCommand -- ride the recov/freeze-until-echo primitive so the reposition holds. The
             // seam falls back to a plain ServerTeleport when the owner isn't client-driven (bystander/loopback).
-            if (RepositionOwner == null || !RepositionOwner(cs.OwnerPlayerId, cs.SpawnPos, tick))
-                _players.ServerTeleport(cs.OwnerPlayerId, cs.SpawnPos, tick);
+            if (RepositionOwner == null || !RepositionOwner(cs.OwnerPlayerId, where, tick))
+                _players.ServerTeleport(cs.OwnerPlayerId, where, tick);
             var evt = new PlayerRespawnedEvent { PlayerId = cs.OwnerPlayerId };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventPlayerRespawned, evt.Write));
         }

@@ -65,8 +65,13 @@ namespace UnturnedGodot
         }
 
         // Registered on ENTERING the tree, not only in _Ready: _Ready fires once, so a bed that is
-        // re-parented (removed then re-added) would deregister on exit and never come back.
-        public override void _EnterTree() => Register();
+        // re-parented (removed then re-added) would deregister on exit and never come back. The NetId
+        // lookup rides the same lifecycle for the same reason (see Door).
+        public override void _EnterTree()
+        {
+            Register();
+            if (_netId != 0) _byNetId[_netId] = this;
+        }
 
         void Register()
         {
@@ -99,12 +104,51 @@ namespace UnturnedGodot
         public override void _ExitTree()
         {
             // Destroyed or salvaged: the claim table must forget it, or a dead bed keeps respawning people
-            // into a hole where their base used to be.
+            // into a hole where their base used to be. The NetId lookup lets go too, so a server message
+            // about this bed stops resolving to a node that is on its way out.
             Claims.Remove(BedId);
+            if (_netId != 0 && _byNetId.TryGetValue(_netId, out var held) && held == this) _byNetId.Remove(_netId);
         }
 
         /// <summary>Claim this bed for <paramref name="player"/>, releasing whichever they held before.</summary>
         public bool TryClaim(ulong player, double now) => Claims.Claim(BedId, player, now);
+
+        /// <summary>Server id of this bed, 0 for a singleplayer/local one. Non-zero means claims are the
+        /// server's to make and arrive through <see cref="ApplyReplicatedClaim"/>. Setting it enrols the bed
+        /// in the lookup an inbound BedClaimed uses to find which node the server meant.</summary>
+        public uint NetId
+        {
+            get => _netId;
+            set
+            {
+                if (_netId != 0) _byNetId.Remove(_netId);
+                _netId = value;
+                if (value != 0) _byNetId[value] = this;
+            }
+        }
+        uint _netId;
+
+        static readonly System.Collections.Generic.Dictionary<uint, Bed> _byNetId
+            = new System.Collections.Generic.Dictionary<uint, Bed>();
+
+        /// <summary>Find the bed the server means. A miss is normal -- a bed outside this client's world,
+        /// or one already destroyed locally, has no claim to paint.</summary>
+        public static bool TryGetByNetId(uint netId, out Bed bed)
+        {
+            if (_byNetId.TryGetValue(netId, out bed) && IsInstanceValid(bed)) return true;
+            _byNetId.Remove(netId);
+            bed = null;
+            return false;
+        }
+
+        /// <summary>The server says this bed now belongs to <paramref name="owner"/> (0 = released). Goes
+        /// through the same Claims table SP uses, so the local respawn lookup answers correctly for the
+        /// local player without a second bed-ownership store to keep in step. Bypasses CanClaim on purpose:
+        /// the server already decided, and the cooldown it enforced is its own clock, not this one's.
+        /// The 0 timestamp is deliberate: a replica's LastClaimed is never read (CanClaim is only consulted
+        /// on the direct SP path, which a NetId != 0 bed never takes), so there is no local clock to be
+        /// honest about here -- the settle window lives on the server.</summary>
+        public void ApplyReplicatedClaim(ulong owner) => Claims.Adopt(BedId, owner, 0.0);
 
         public bool CanClaim(ulong player, double now) => Claims.CanClaim(BedId, player, now);
 
@@ -124,6 +168,8 @@ namespace UnturnedGodot
         {
             for (int id = 0; id < _nextId; id++) Claims.Remove(id);
             _nextId = 1;
+            _byNetId.Clear();     // a new world's server ids must not resolve to the old world's nodes
+            Door.ResetNetIds();   // doors have no claim table of their own to hang this off
         }
 
         /// <summary>Tests share one static table; this keeps one case from inheriting another's claims.</summary>

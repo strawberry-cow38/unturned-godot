@@ -28,6 +28,10 @@ namespace UnturnedGodot
 
         public int VolumeCount => _volumes.Count;
 
+        /// <summary>The built volumes, for the server-side copy. They are authored world data rather than
+        /// live state, so the MP host copies them across at boot instead of replicating them.</summary>
+        public IReadOnlyList<DeadzoneVolumeDef> Volumes => _volumes;
+
         public void AddVolume(Vector3 center, Vector3 halfExtent, DeadzoneKind kind = DeadzoneKind.Radiation)
             => AddVolume(center, halfExtent, DeadzoneDef.Default(kind));
 

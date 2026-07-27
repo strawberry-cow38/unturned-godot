@@ -171,6 +171,9 @@ namespace UnturnedGodot
             AddChild(_resourceView);
             _destructibleView = new DestructibleAliveView { Client = Client, Field = Destructibles };
             AddChild(_destructibleView);
+            // SP/MP unify: stamps the local Door/Bed nodes with their server ids (without which F would take
+            // the singleplayer path and swing a door the server never agreed to) and paints the join state.
+            AddChild(new InteractableStateView { Client = Client, WorldRoot = GetParent() ?? (Node)this });
             if (Destructibles != null) Client.ObjectDestroyed += e => Destructibles.PlayBreakEffect(e.Index);   // break VFX (debris + dust) on a LIVE break broadcast (the view above hides the mesh)
             AddChild(new ProjectileReplicaView { Client = Client });   // D1: server-flown grenades render while fused
 
@@ -222,6 +225,19 @@ namespace UnturnedGodot
             // the SERVER's say-so -- the crate grid itself rides the owner inventory echo (STORAGE page 7)
             Client.StorageOpened += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageOpened(e.NetId); };
             Client.StorageClosed += e => { if (Shell != null && IsInstanceValid(Shell)) Shell.OnReplicatedStorageClosed(); };
+            // SP/MP unify: the server's door/bed decisions land on the nodes. These are the ONLY thing that
+            // moves a replicated door or repaints a bed -- the client never applied anything on send, so
+            // there is no local guess to reconcile, just a fact to adopt.
+            Client.DoorStateChanged += e =>
+            {
+                if (!Door.TryGetByNetId(e.NetId, out var d)) return;
+                d.ApplyReplicatedLocked(e.Locked);
+                d.ApplyReplicatedToggle(e.Open);
+            };
+            // The server sends a release event for the bed a re-claimer left BEFORE the claim itself, and
+            // the channel is ordered, so applying each event as it lands is enough -- no need for this
+            // client to keep its own who-owns-what index to work out what was freed.
+            Client.BedClaimed += e => { if (Bed.TryGetByNetId(e.NetId, out var b)) b.ApplyReplicatedClaim(e.Owner); };
 
             // pre-join status: there is NO camera until the shell spawns (its first-person cam IS the
             // view) -- surface the session state so an unreachable server isn't a silent black screen
@@ -504,6 +520,11 @@ namespace UnturnedGodot
             // the CropReplicaView renders the result (materialize / grow / despawn) + the yield rides Items.
             shell.NetPlantCrop = (seedId, pos) => Client.SendPlantCrop(seedId, ToU(pos));
             shell.NetHarvestCrop = netId => Client.SendHarvestCrop(netId);
+            // SP/MP unify: doors + beds route as intent. Nothing swings or changes hands locally on send --
+            // DoorState/BedClaimed (wired in _Ready) carry the server's answer back to the node.
+            shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);
+            shell.NetSetDoorLocked = (netId, locked) => Client.SendSetDoorLocked(netId, locked);
+            shell.NetClaimBed = netId => Client.SendClaimBed(netId);
             // owner-grid initial pull (Step 4): the join snapshot's owner block landed before this shell
             // existed -- adopt it now; the ReplicaUpdated subscription (in _Ready) carries every echo after
             if (Client.Inventories.TryGet(Client.PlayerId, out var invEntry))

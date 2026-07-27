@@ -44,7 +44,11 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
-            // Re-goldened for Version=13 (destructible-props: SystemDestructibles(16) + EventObjectDestroyed(32)/
+            // Re-goldened for Version=14 (sp-mp-interactables: SystemInteractables(17) + commands 32-34 +
+            // EventDoorState(34)/EventBedClaimed(35) -- ONLY the version byte moved 0D->0E, which is the
+            // whole point of this golden: a wire change that touches anything ELSE in the header is a
+            // mistake, and this is where it gets caught); before that Version=13 (destructible-props:
+            // SystemDestructibles(16) + EventObjectDestroyed(32)/
             // EventObjectRestored(33) -- ONLY the version byte moved 0C->0D); before that Version=12 (fluid-fix:
             // gas-can fuel level into the inventory item wire); before that Version=11 (mp-sp-unify wave 2: SystemVitals(13) + SystemContainers(14) +
             // SystemAnimals(15) registered as empty stubs + commands 28-31 reserved -- ONLY the version byte
@@ -67,7 +71,7 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750D08000000000000002800"));   // v13: destructible-props (SystemDestructibles 16 + events 32/33) -- only the version byte (0C->0D) moves
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750E08000000000000002800"));   // v14: sp-mp-interactables (SystemInteractables 17 + commands 32-34 + events 34/35) -- only the version byte (0D->0E) moves
         }
 
         [Test]

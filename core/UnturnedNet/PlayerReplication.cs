@@ -32,6 +32,7 @@ namespace UnturnedGodot.Net
         public const byte SystemContainers = 14;    // world containers/store-shelves as replicated fixtures (A1). ContainerReplication.cs
         public const byte SystemAnimals = 15;       // wildlife (deer/pig/cow) puppets (A5). AnimalReplication.cs
         public const byte SystemDestructibles = 16; // destructible props (rubble) alive-bitmap keyed by deterministic placement index -- the ResourceReplication(12) shape for objects (DestructibleReplication.cs). IN EnableSyncCheck (authored, cross-checkable).
+        public const byte SystemInteractables = 17; // doors + beds: open/locked/owner state, server-authoritative (InteractableReplication.cs). Deadzones need no system -- their effect is damage the server already replicates through SystemVitals(13).
         public const byte SystemSyncCheck = 255;    // hardening: rolling per-system StateHash block for desync detection, composed LAST
                                                     // when SnapshotComposer.EnableSyncCheck is on; never a real system id (reserved)
 
@@ -70,6 +71,13 @@ namespace UnturnedGodot.Net
         public const byte CommandAttachTow = 30;          // B11: tie a rope between two vehicles (tower NetId, towed NetId)
         public const byte CommandDetachTow = 31;          // B11: untie a vehicle's rope (either end)
 
+        // SP/MP unify: doors + beds. Server-authoritative through the SAME DoorLogic/BedClaims singleplayer
+        // runs, reach-gated at the choke point. Deadzones need no command -- nothing about standing in
+        // contaminated ground is a client intent.
+        public const byte CommandToggleDoor = 32;
+        public const byte CommandSetDoorLocked = 33;
+        public const byte CommandClaimBed = 34;
+
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
         public const byte EventHitConfirm = 2;     // Phase 5 combat facts (CombatReplication.cs)
@@ -104,6 +112,8 @@ namespace UnturnedGodot.Net
         public const byte EventPlayerRecov = 31;       // mp-clientauth-foot (wire v9): server rollback of an out-of-envelope on-foot claim (the VehicleRecov 29 shape for walkers) -- ReliableOrdered, owner-unicast; client teleports to the last-good pos, echoes the counter in its state stream
         public const byte EventObjectDestroyed = 32;   // destructible props (rubble): a placed object's alive-bit flipped off by index -- immediacy for the break fx (the EventResourceHarvested 27 shape for objects)
         public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
+        public const byte EventDoorState = 34;         // SP/MP unify: a door's authoritative open+locked state (both bits, so a lock is visible to everyone rather than only to the server)
+        public const byte EventBedClaimed = 35;        // SP/MP unify: a bed's owner changed (0 = released); the loser of a re-claim gets its own event
     }
 
     /// <summary>

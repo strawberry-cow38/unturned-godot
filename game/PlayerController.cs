@@ -1164,6 +1164,49 @@ namespace UnturnedGodot
             }
         }
 
+        // Hold F over a door you own to flip its lock (mirror of UpdateFluidPickup; a quick TAP still just
+        // opens/closes it). Locking had no player-facing input at all before this -- DoorLogic.TrySetLocked
+        // existed, was L0-tested, and nothing but a test ever called it, so an ownable lockable door was in
+        // practice neither lockable nor unlockable. One seam, so it works the same in SP and MP.
+        void UpdateDoorLockHold(float delta)
+        {
+            if (_fHeldDoor == null) return;
+            bool fHeld = Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsPhysicalKeyPressed(Key.F);
+            if (!fHeld || !IsInstanceValid(_fHeldDoor) || _fHeldDoor != _focusDoor || _dead || _driving != null)
+            {
+                _fHeldDoor = null; _doorLockTimer = 0f;
+                return;
+            }
+            _doorLockTimer += delta;
+            float frac = Mathf.Clamp(_doorLockTimer / DeployPickupTime, 0f, 1f);
+            if (frac >= PickupBarDeadzone)
+                FluidPickupHudSet($"{(_fHeldDoor.IsLocked ? "unlocking" : "locking")} the door... {Mathf.Clamp((int)(frac * 100f), 0, 99)}%");
+            if (_doorLockTimer >= DeployPickupTime)
+            {
+                var d = _fHeldDoor; _fHeldDoor = null; _doorLockTimer = 0f; FluidPickupHudSet(null);
+                RequestSetDoorLocked(d, !d.IsLocked);
+            }
+        }
+
+        Door _fHeldDoor;              // the door F is being held on -> hold to lock/unlock
+        float _doorLockTimer;
+
+        /// <summary>Lock or unlock a door as this player. Public for the same reason the other Request*
+        /// helpers are: the hold path needs a captured mouse, which a headless test cannot have.</summary>
+        public bool RequestSetDoorLocked(Door d, bool locked)
+        {
+            if (d == null || !IsInstanceValid(d)) return false;
+            // Replicated door: the server owns the bolt, and the DoorState echo paints the result.
+            if (d.NetId != 0 && NetSetDoorLocked != null) { NetSetDoorLocked(d.NetId, locked); return true; }
+            if (d.TrySetLocked(PlayerId, locked))
+            {
+                FluidPickupHudSet(locked ? "locked" : "unlocked");
+                return true;
+            }
+            FluidPickupHudSet("not your door");   // only the owner holds the key
+            return false;
+        }
+
         // Return a live placed fluid device to the bag: free its hoses/power wire + despawn, grant the item back (dropped at
         // its feet if the bag is full). SP-local for now (fluid MP replication is a fast-follow, like placement).
         void PickupFluid(FluidContainer c)
@@ -2494,6 +2537,12 @@ namespace UnturnedGodot
         // harvest routes the grown replica's server NetId (the yield drops as a replicated world item).
         public System.Action<ushort, Vector3> NetPlantCrop;          // (seedId, worldPos) -> Client.SendPlantCrop
         public System.Action<uint> NetHarvestCrop;                   // grown crop NetId -> Client.SendHarvestCrop
+        // SP/MP unify (doors + beds): same shape as the seams above -- wired ONLY by ClientWorldSession, so
+        // they stay null in SP/loopback and the direct DoorLogic/BedClaims path is byte-identical. Nothing
+        // is applied locally on send; DoorState/BedClaimed carry the server's answer back.
+        public System.Action<uint> NetToggleDoor;                    // door NetId -> Client.SendToggleDoor
+        public System.Action<uint, bool> NetSetDoorLocked;           // (door NetId, locked) -> Client.SendSetDoorLocked
+        public System.Action<uint> NetClaimBed;                      // bed NetId -> Client.SendClaimBed
 
         VehiclePuppet NearestPuppet()
         {
@@ -2986,7 +3035,8 @@ namespace UnturnedGodot
             if (Health <= 0f) { Deaths++; Die(); }
         }
 
-        void ToggleFocusedDoor() => RequestToggleDoor(_focusDoor);
+        // (a door has no ToggleFocusedDoor helper any more: F on a door starts a hold, so the TAP fires from
+        // the key-release handler against the door the hold began on, not against whatever is focused now)
         void ClaimFocusedBed() => RequestClaimBed(_focusBed);
 
         /// <summary>Open/close a door as this player. Public for the same reason the other Request*
@@ -2996,6 +3046,11 @@ namespace UnturnedGodot
         public bool RequestToggleDoor(Door d)
         {
             if (d == null || !IsInstanceValid(d)) return false;
+            // A REPLICATED door (NetId != 0) is the server's to swing: send the intent and wait for the
+            // DoorState echo. Swinging it locally first would look better exactly until the server
+            // refused, and a door that swings back is worse than one that opens late. SP doors (NetId 0)
+            // take the direct path below -- the same DoorLogic call either way.
+            if (d.NetId != 0 && NetToggleDoor != null) { NetToggleDoor(d.NetId); return true; }
             if (d.TryToggle(PlayerId, GroupId, _interactClock)) return true;
             string why = d.LastRefusal switch
             {
@@ -3012,6 +3067,9 @@ namespace UnturnedGodot
         public bool RequestClaimBed(Bed b)
         {
             if (b == null || !IsInstanceValid(b)) return false;
+            // Replicated bed: the server owns who sleeps where (it also has to release whichever bed this
+            // player held, which only it can see). The BedClaimed echo paints the ownership.
+            if (b.NetId != 0 && NetClaimBed != null) { NetClaimBed(b.NetId); return true; }
             if (b.TryClaim(PlayerId, _interactClock)) { FluidPickupHudSet("you will respawn here"); return true; }
             if (b.Owner != 0UL && b.Owner != PlayerId) FluidPickupHudSet("someone else's bed");
             return false;
@@ -3441,7 +3499,7 @@ namespace UnturnedGodot
                     _fHeldDeploy = _focusDeployable; _deployPickupTimer = 0f;
                 }
                 else if (_focusFluid != null && IsInstanceValid(_focusFluid)) { _fHeldFluid = _focusFluid; _fluidPickupTimer = 0f; }   // hold F on a placed fluid device -> pick it up (UpdateFluidPickup)
-                else if (_focusDoor != null && IsInstanceValid(_focusDoor)) ToggleFocusedDoor();   // looking at a door: open/close it (refusals surface as a HUD line)
+                else if (_focusDoor != null && IsInstanceValid(_focusDoor)) { _fHeldDoor = _focusDoor; _doorLockTimer = 0f; }   // looking at a door: F starts a HOLD -> lock/unlock (UpdateDoorLockHold); a quick TAP opens/closes it (fired on release)
                 else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
@@ -3466,6 +3524,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_fHeldFluid) && _fluidPickupTimer < DeployPickupTime && _fHeldFluid.Role == FluidRole.Valve)
                     _fHeldFluid.ToggleValve();
                 _fHeldFluid = null; _fluidPickupTimer = 0f;
+            }
+            else if (@event is InputEventKey { Pressed: false, Keycode: Key.F } && _fHeldDoor != null)
+            {   // released F over a door: a quick TAP opens/closes it (a long hold already flipped the lock
+                // in UpdateDoorLockHold) -- the same tap/hold split the generator and the valve use
+                if (IsInstanceValid(_fHeldDoor) && _doorLockTimer < DeployPickupTime) RequestToggleDoor(_fHeldDoor);
+                _fHeldDoor = null; _doorLockTimer = 0f;
             }
             else if (@event is InputEventKey { Pressed: true, Keycode: Key.B })
                 _build?.Toggle();     // toggle build mode
@@ -4153,6 +4217,7 @@ namespace UnturnedGodot
             { ulong _t = Time.GetTicksUsec(); UpdateSalvage((float)delta); Prof.Add("salvage", _t); }   // wreck salvage prompt + blowtorch teardown
             UpdateDeployPickup((float)delta);   // hold-F to pick a placed deployable back up (its wires disconnect)
             UpdateFluidPickup((float)delta);    // hold-F to pick a placed fluid device back up (its hoses/power wire disconnect)
+            UpdateDoorLockHold((float)delta);   // hold-F on a door you own to lock/unlock it (a tap opens/closes)
             UpdateFluidContainerHud((float)delta);   // held fluid container: show its contents + [LMB] sip / [RMB] fill hint (strawberry)
             // Additive recoil (master): drain the pending kick INTO the real aim over a couple frames (a smooth climb),
             // then leave it there -- the view stays kicked up and the player pulls the mouse back down. Never recovers on its own.

@@ -22,6 +22,11 @@ namespace UnturnedGodot
         public DayNightCycle DayNight;               // optional (WorldBuildResult.DayNight): tick-derived day-night (§3.7)
         public ResourceField Resources;              // optional (WorldBuildResult.Resources): the §3.7 alive-bitmap index space
         public DestructibleField Destructibles;      // optional (WorldBuildResult.Destructibles): the rubble alive-bitmap index space
+        public DeadzoneField Deadzones;              // optional (WorldBuildResult.Deadzones): contaminated volumes, copied server-side (authored data, not replicated)
+        /// <summary>Where the built world's nodes live, for the door/bed scan. Defaults to this node's
+        /// PARENT, which is the node WorldBuilder built into at every current construction site (Main adds
+        /// the DedicatedServer to itself). Set it explicitly if that ever stops being true.</summary>
+        public Node WorldRoot;
         public string MapRoot;                       // optional: loads the 19 nav pockets as relevancy cells (§2.6)
         public string ActiveHoliday = "NONE";        // P3 (wire v6): the holiday THIS world was built with -- rides the Accept so joiners build the same holiday-gated props/colliders
         public bool SurvivalDrain = false;           // B5 (SP/MP-unify): server-authoritative hunger/thirst + starvation + passive regen. OFF by default = SP byte-identical coarse-HP path (strawberry runs survival off); flip on for a survival server.
@@ -41,6 +46,7 @@ namespace UnturnedGodot
         public ContainerNetSync ContainerSync { get; private set; }   // A1: publishes world-build containers as server-owned fixtures + display digests
         public ResourceNetSync ResourceSync { get; private set; }
         public DestructibleNetSync DestructibleSync { get; private set; }
+        public InteractableNetSync InteractableSync { get; private set; }   // SP/MP unify: doors + beds registered as server-authoritative, deadzones seeded
 
         long _lastStatusTick;
 
@@ -181,6 +187,11 @@ namespace UnturnedGodot
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => ResourceSync.Tick(), "net.resources.sync"));
             DestructibleSync = new DestructibleNetSync(Server, Destructibles);   // seed health/respawn + mirror rubble alive-bits
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => DestructibleSync.Tick(), "net.destructibles.sync"));
+            // SP/MP unify: register the built doors/beds as server-authoritative + copy the deadzone volumes
+            // across. The Tick mirrors authoritative door state back onto the server's OWN nodes, so its
+            // physics agrees with what every client is being shown.
+            InteractableSync = new InteractableNetSync(Server, WorldRoot ?? GetParent() ?? (Node)this, Deadzones);
+            Driver.Sim.Add(new DelegateSimStep((tick, dt) => InteractableSync.Tick(), "net.interactables.sync"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }
 

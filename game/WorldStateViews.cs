@@ -98,4 +98,66 @@ namespace UnturnedGodot
                     Field.SetAlive(i, Client.Destructibles.IsAlive(i));
         }
     }
+
+    /// <summary>
+    /// Mirrors the replicated door/bed table (InteractableStateReplication 17) onto the client's own Door
+    /// and Bed nodes, and stamps each node with the NetId that makes it commandable.
+    ///
+    /// The ids come from world-build order rather than the wire, exactly as the resource and destructible
+    /// bitmaps do: every peer runs the same WorldBuilder, so the nth door is the nth door everywhere. That
+    /// is also why this view has to run before a player can touch anything -- an unstamped door has NetId 0,
+    /// which routes down the SINGLEPLAYER path, and the client would swing a door the server never agreed
+    /// to move. Stamping happens once, on the first block to arrive.
+    ///
+    /// Same Version-poll shape as the two views above, so join snapshots and later deltas need no separate
+    /// handling. The DoorState/BedClaimed events are the low-latency path and paint the same nodes; this is
+    /// what makes a client that joined late agree with one that was there all along.
+    /// </summary>
+    public partial class InteractableStateView : Node
+    {
+        public NetWorldClient Client;
+        /// <summary>Where to scan for Door/Bed nodes. Defaults to this node's parent.</summary>
+        public Node WorldRoot;
+
+        long _appliedVersion = -1;
+        bool _stamped;
+
+        public override void _PhysicsProcess(double delta)
+        {
+            if (Client == null) return;
+            if (Client.InteractableState.Version == _appliedVersion) return;
+            _appliedVersion = Client.InteractableState.Version;
+            if (!_stamped) { StampNetIds(); _stamped = true; }
+
+            foreach (var kv in Client.InteractableState.ReplicaDoors)
+            {
+                if (!Door.TryGetByNetId(kv.Key, out var d)) continue;
+                d.ApplyReplicatedLocked(kv.Value.Locked);
+                d.ApplyReplicatedToggle(kv.Value.Open);
+            }
+            foreach (var kv in Client.InteractableState.ReplicaBeds)
+                if (Bed.TryGetByNetId(kv.Key, out var b))
+                    b.ApplyReplicatedClaim(kv.Value);
+        }
+
+        void StampNetIds()
+        {
+            var root = WorldRoot ?? GetParent();
+            if (root == null) return;
+            uint doorId = InteractableNetSync.FirstId, bedId = InteractableNetSync.FirstId;
+            foreach (var n in Walk(root))
+            {
+                if (n is Door d) d.NetId = doorId++;
+                else if (n is Bed b) b.NetId = bedId++;
+            }
+        }
+
+        static System.Collections.Generic.IEnumerable<Node> Walk(Node n)
+        {
+            yield return n;
+            foreach (var child in n.GetChildren())
+                foreach (var d in Walk(child))
+                    yield return d;
+        }
+    }
 }

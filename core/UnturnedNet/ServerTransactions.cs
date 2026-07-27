@@ -92,6 +92,7 @@ namespace UnturnedGodot.Net
         readonly CropReplication _crops;
         readonly ResourceReplication _resources;
         readonly PlayerVitalsReplication _vitals;   // B5: OnConsume raises server food/water/stamina/infection here
+        readonly ServerInteractables _interactables; // SP/MP unify: authoritative door + bed state
         readonly NetIdMinter _ids;
         readonly Func<long> _tick;
         readonly Action<byte[]> _broadcast;
@@ -103,11 +104,13 @@ namespace UnturnedGodot.Net
                                   NetIdMinter ids, Func<long> tick,
                                   Action<byte[]> broadcast, Action<ushort, byte[]> sendTo,
                                   CropReplication crops = null, ResourceReplication resources = null,
-                                  PlayerVitalsReplication vitals = null)
+                                  PlayerVitalsReplication vitals = null,
+                                  ServerInteractables interactables = null)
         {
             _players = players; _combat = combat;
             _skills = skills; _inventories = inventories; _worldItems = worldItems; _deployables = deployables;
             _crops = crops; _resources = resources; _vitals = vitals;
+            _interactables = interactables;
             _ids = ids; _tick = tick; _broadcast = broadcast; _sendTo = sendTo;
             var rng = new Random();   // server-side only (§2.5: only the server rolls); tests inject a stub
             Rand = () => (float)rng.NextDouble();
@@ -185,6 +188,29 @@ namespace UnturnedGodot.Net
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _deployables.CanToggle(cmd.NetId, out var e)
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
+
+            // SP/MP unify: doors + beds. Validation is reach (the server's business) plus the SAME
+            // DoorLogic/BedClaims rules singleplayer runs -- one rule set, not a client copy and a server
+            // copy that drift. A null _interactables leaves these unregistered, so a host without the
+            // system behaves exactly as before.
+            if (_interactables != null)
+            {
+                commands.Register<ToggleDoorCommand>(ReplicationIds.CommandToggleDoor, ToggleDoorCommand.TryRead,
+                    OnToggleDoor,
+                    validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                            && _interactables.CanToggleDoor(cmd.NetId, pos, sender, 0UL));
+
+                commands.Register<SetDoorLockedCommand>(ReplicationIds.CommandSetDoorLocked, SetDoorLockedCommand.TryRead,
+                    OnSetDoorLocked,
+                    validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                            && _interactables.TryGetDoor(cmd.NetId, out var d)
+                                            && (d.Pos - pos).magnitude <= ServerInteractables.InteractReach);
+
+                commands.Register<ClaimBedCommand>(ReplicationIds.CommandClaimBed, ClaimBedCommand.TryRead,
+                    OnClaimBed,
+                    validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                            && _interactables.CanClaimBed(cmd.NetId, pos, sender));
+            }
 
             commands.Register<MoveItemCommand>(ReplicationIds.CommandMoveItem, MoveItemCommand.TryRead,
                 (sender, cmd) =>
@@ -421,6 +447,39 @@ namespace UnturnedGodot.Net
             if (!_deployables.ServerToggle(cmd.NetId, cmd.On, _tick())) return;
             var evt = new DeployableToggledEvent { NetId = cmd.NetId, On = cmd.On };
             _broadcast(NetMessagePak.Pack(ReplicationIds.EventDeployableToggled, evt.Write));
+        }
+
+        // SP/MP unify: the door's authoritative flip, broadcast as a fact (the DeployableToggled shape).
+        void OnToggleDoor(ushort sender, ToggleDoorCommand cmd)
+        {
+            if (!_interactables.ToggleDoor(cmd.NetId, out bool open)) return;
+            BroadcastDoorState(cmd.NetId, open);
+        }
+
+        void OnSetDoorLocked(ushort sender, SetDoorLockedCommand cmd)
+        {
+            // Ownership is DoorLogic's rule: only the owner may lock. A refusal is silent -- the client
+            // simply never sees the state change, which is the same answer it would get from a wall.
+            if (!_interactables.SetDoorLocked(cmd.NetId, sender, cmd.Locked)) return;
+            BroadcastDoorState(cmd.NetId, _interactables.IsDoorOpen(cmd.NetId));
+        }
+
+        void BroadcastDoorState(uint netId, bool open)
+        {
+            var evt = new DoorStateEvent { NetId = netId, Open = open, Locked = _interactables.IsDoorLocked(netId) };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventDoorState, evt.Write));
+        }
+
+        void OnClaimBed(ushort sender, ClaimBedCommand cmd)
+        {
+            if (!_interactables.ClaimBed(cmd.NetId, sender, out uint released)) return;
+            // The bed they LEFT is now free, and everyone needs to know -- otherwise a client keeps
+            // rendering a claimed bed nobody owns.
+            if (released != 0)
+                _broadcast(NetMessagePak.Pack(ReplicationIds.EventBedClaimed,
+                    new BedClaimedEvent { NetId = released, Owner = 0 }.Write));
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventBedClaimed,
+                new BedClaimedEvent { NetId = cmd.NetId, Owner = sender }.Write));
         }
 
         void OnDropItem(ushort sender, DropItemCommand cmd)

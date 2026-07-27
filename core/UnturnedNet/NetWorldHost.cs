@@ -46,6 +46,18 @@ namespace UnturnedGodot.Net
         // destructible props (rubble): the alive-bitmap + the server-only health/respawn authority
         public readonly DestructibleReplication Destructibles = new DestructibleReplication();
         public readonly ServerDestructibles DestructibleHost;
+        // SP/MP unify: doors + beds. The authoritative state itself -- changes go out as reliable events
+        // (they happen rarely and on demand, so there is nothing worth streaming at 25 Hz), and the
+        // InteractableState block below carries the same state to whoever joined after the change.
+        // The game side registers each door/bed as the world builds, then relays a client's intent here.
+        public readonly ServerInteractables Interactables = new ServerInteractables();
+        // SP/MP unify: contaminated ground. Also server-only -- the volumes are authored map data every
+        // peer already has, and the only thing that crosses the wire is the damage/infection it causes,
+        // which the existing vitals + combat paths already replicate.
+        public readonly ServerDeadzones Deadzones = new ServerDeadzones();
+        // ...and the join answer for the above: the events carry changes, this block carries the state a
+        // late joiner never saw change.
+        public readonly InteractableStateReplication InteractableState = new InteractableStateReplication();
         public readonly ServerVehicles VehicleHost;
         public readonly ServerPlayerAuthority PlayerHost;   // mp-clientauth-foot (v9): on-foot claims -> envelope -> ServerDrive adopt
         public readonly ServerCombat Combat;
@@ -75,7 +87,8 @@ namespace UnturnedGodot.Net
             Composer = new SnapshotComposer(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                       Skills, Deployables, Inventories, WorldItems,
                                                                       Vehicles, Clock, Crops, Resources,
-                                                                      Vitals, Containers, Animals, Destructibles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16) last, ascending
+                                                                      Vitals, Containers, Animals, Destructibles,
+                                                                      InteractableState });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17) last, ascending
             Composer.CurrentTick = () => Session.CurrentTick;   // review L1: rejects acks of future ticks
             Composer.RegisterAck(Commands);
             Combat = new ServerCombat(Players, CombatState, Zombies, Projectiles, Ids, BroadcastEvent, SendEventTo);
@@ -84,7 +97,7 @@ namespace UnturnedGodot.Net
             Combat.DamageObject = (index, amount, tick) => DestructibleHost.DamageObject(index, amount, tick);
             Transactions = new ServerTransactions(Players, CombatState, Skills, Inventories, WorldItems, Deployables,
                                                   Ids, () => Session.CurrentTick, BroadcastEvent, SendEventTo,
-                                                  Crops, Resources, Vitals);
+                                                  Crops, Resources, Vitals, Interactables);
             Transactions.Register(Commands);
             VehicleHost = new ServerVehicles(Vehicles, Players, CombatState, () => Session.CurrentTick, BroadcastEvent, SendEventTo);
             VehicleHost.Register(Commands);
@@ -118,6 +131,26 @@ namespace UnturnedGodot.Net
                     case CombatEventKind.Reload:  Combat.OnReload(sender, ev.Reload, tick); break;
                 }
             };
+            Interactables.TickSource = () => Session.CurrentTick;   // every mutation stamps itself against the composer's clock
+            InteractableState.Source = Interactables;               // the join block reads the same authoritative table
+            // SP/MP unify (deadzones): read the gear off the server's authoritative inventory and route the
+            // result out through the paths that already replicate -- damage through the external-damage
+            // queue (death-capable, same as fall/starvation), infection through the owner vitals block, and
+            // the filter burn onto the server's own mask so the owner echo carries the spent quality back.
+            Deadzones.GearOf = pid => Inventories.TryGet(pid, out var inv) ? inv.Inventory.RadiationProtection() : default;
+            Deadzones.DamageSink = (pid, dmg) => Combat.DamagePlayerExternal(pid, dmg);
+            Deadzones.InfectionSink = (pid, amount) => Vitals.ServerRaise(pid, 0f, 0f, 0f, amount, false, false, Session.CurrentTick);
+            Deadzones.MaskBurnSink = (pid, points) =>
+            {
+                if (!Inventories.TryGet(pid, out var inv) || inv.Inventory.wornMask == null) return;
+                var mask = inv.Inventory.wornMask;
+                mask.quality = (byte)System.Math.Clamp(mask.quality - points, 0, 100);
+                inv.LastChangedTick = Session.CurrentTick + 1;   // the owner echo carries the spent filter back
+            };
+            // SP/MP unify (beds): a dead player with a claimed bed comes back at it. Lifted half a metre the
+            // same way the singleplayer respawn does, so they land on the bed rather than inside it.
+            Combat.RespawnPositionOf = pid =>
+                Interactables.TryGetSpawn(pid, out var bedSpawn, out _) ? bedSpawn + Vector3.up * 0.5f : (Vector3?)null;
             Transactions.IsSeated = VehicleHost.IsDriver;   // console teleport rejects seated senders (the seat teleport owns the entity, #27)
             Combat.KillCredited = killer => { if (KillExperience > 0) Transactions.AwardXp(killer, KillExperience); };
             // B5 (SP/MP-unify): server-authoritative fine vitals. HP is NEVER owned by the vitals sim -- each
@@ -204,6 +237,8 @@ namespace UnturnedGodot.Net
                 Zombies.ForgetClient(peer.PlayerId);
                 WorldItems.ForgetClient(peer.PlayerId);
                 Containers.ForgetClient(peer.PlayerId);   // review #8: the two NEW relevancy-filtered systems must clear per-client state on disconnect too, like Zombies/WorldItems
+                Deadzones.OnPlayerLeft(peer.PlayerId);    // accrued exposure does not survive the peer (a recycled playerId must not inherit it)
+                Interactables.OnPlayerLeft(peer.PlayerId);
                 Animals.ForgetClient(peer.PlayerId);
             };
         }
@@ -241,6 +276,9 @@ namespace UnturnedGodot.Net
         public void TickSimulation()
         {
             Session.Tick();
+            // The door cooldown is measured in sim seconds, so the clock must be current BEFORE this tick's
+            // commands are validated against it -- otherwise every toggle is judged against last tick.
+            Interactables.Now = Session.CurrentTick * SimClock.FixedDelta;
             foreach (var peer in Session.Peers)
             {
                 while (peer.TryReceiveReliable(out byte[] msg)) Commands.TryDispatch(msg, peer.PlayerId);
@@ -251,6 +289,10 @@ namespace UnturnedGodot.Net
             // B5: BETWEEN VehicleHost.Step and Combat.Step so a queued starvation drain lands in THIS tick's
             // Combat.Step (the external-damage queue drains at the top of Combat.Step) -- death same tick.
             Vitals.ServerStep(Session.CurrentTick, (float)SimClock.FixedDelta);
+            // Deadzones go in the same window as Vitals and for the same reason: their damage rides the
+            // external-damage queue, which Combat.Step drains at its top, so queueing here kills in THIS
+            // tick rather than the next one.
+            Deadzones.Step((float)SimClock.FixedDelta, Players.All, CombatState.IsAlive);
             Combat.Step(Session.CurrentTick);
             // stamp this tick onto every inventory the dispatch round dirtied (owner-block delta baseline)
             Inventories.ServerCommitDirty(Session.CurrentTick);
@@ -406,6 +448,9 @@ namespace UnturnedGodot.Net
         public readonly AnimalReplication Animals = new AnimalReplication();
         // destructible props (rubble): client mirrors the alive-bitmap; DestructibleAliveView hides/restores nodes
         public readonly DestructibleReplication Destructibles = new DestructibleReplication();
+        // SP/MP unify (v14): the door/bed table as it stood when this client joined. Source stays null here
+        // -- a client only ever reads this block -- and InteractableStateView paints it onto the nodes.
+        public readonly InteractableStateReplication InteractableState = new InteractableStateReplication();
         public readonly SnapshotApplier Applier;
         public readonly EventRegistry Events = new EventRegistry();
         public readonly ClientPrediction Prediction = new ClientPrediction();
@@ -457,6 +502,11 @@ namespace UnturnedGodot.Net
         // destructible props (rubble): a placed object broke / respawned (already applied to the bitmap when these fire)
         public event System.Action<ObjectDestroyedEvent> ObjectDestroyed;
         public event System.Action<ObjectRestoredEvent> ObjectRestored;
+        // SP/MP unify: the server decided a door swung / a bed changed hands. These are the ONLY way a
+        // replica door or bed moves -- the client never toggles one locally and hopes the server agrees,
+        // because a door that swings back a moment later is worse than one that opens a moment late.
+        public event System.Action<DoorStateEvent> DoorStateChanged;
+        public event System.Action<BedClaimedEvent> BedClaimed;
 
         /// <summary>Hardening Part C: a confirmed replica-vs-server StateHash mismatch (the server must
         /// have EnableSyncCheck on; silent otherwise). The game shell surfaces this to the player.</summary>
@@ -471,7 +521,8 @@ namespace UnturnedGodot.Net
             Applier = new SnapshotApplier(new IReplicatedSystem[] { Players, CombatState, Zombies, Projectiles,
                                                                     Skills, Deployables, Inventories, WorldItems,
                                                                     Vehicles, Clock, Crops, Resources,
-                                                                    Vitals, Containers, Animals, Destructibles });   // wave 2 (v11): 13/14/15; v13: Destructibles(16), symmetric with the server Composer
+                                                                    Vitals, Containers, Animals, Destructibles,
+                                                                    InteractableState });   // wave 2 (v11): 13/14/15; v13: Destructibles(16); v14: InteractableState(17), symmetric with the server Composer
             Applier.DesyncDetected += report => DesyncDetected?.Invoke(report);   // (already NetLog'd in the applier)
             Events.Register(ReplicationIds.EventJoinSnapshot, reader =>
             {
@@ -540,6 +591,12 @@ namespace UnturnedGodot.Net
                 e => { Destructibles.ApplyDestroyed(e, Applier.LastAppliedServerTick); ObjectDestroyed?.Invoke(e); });
             Events.Register<ObjectRestoredEvent>(ReplicationIds.EventObjectRestored, ObjectRestoredEvent.TryRead,
                 e => { Destructibles.ApplyRestored(e, Applier.LastAppliedServerTick); ObjectRestored?.Invoke(e); });
+            // SP/MP unify: no replicated system behind these -- the game side owns the door/bed nodes and
+            // applies the fact to them, so the event goes straight out to whoever is listening.
+            Events.Register<DoorStateEvent>(ReplicationIds.EventDoorState, DoorStateEvent.TryRead,
+                e => DoorStateChanged?.Invoke(e));
+            Events.Register<BedClaimedEvent>(ReplicationIds.EventBedClaimed, BedClaimedEvent.TryRead,
+                e => BedClaimed?.Invoke(e));
         }
 
         public NetSessionState State => Session.State;
@@ -778,6 +835,18 @@ namespace UnturnedGodot.Net
 
         public bool SendConsole(string text)
             => SendCommand(ReplicationIds.CommandConsole, new ConsoleCommand { Text = text }.Write);
+
+        // ---- SP/MP unify: door + bed intent. Reliable, transactional, and never applied locally first --
+        // the caller asks, the server answers with DoorState/BedClaimed (or with silence, if refused). ----
+
+        public bool SendToggleDoor(uint netId)
+            => SendCommand(ReplicationIds.CommandToggleDoor, new ToggleDoorCommand { NetId = netId }.Write);
+
+        public bool SendSetDoorLocked(uint netId, bool locked)
+            => SendCommand(ReplicationIds.CommandSetDoorLocked, new SetDoorLockedCommand { NetId = netId, Locked = locked }.Write);
+
+        public bool SendClaimBed(uint netId)
+            => SendCommand(ReplicationIds.CommandClaimBed, new ClaimBedCommand { NetId = netId }.Write);
 
         // ---- Phase 8 crop commands (§3.7): both transactional, ReliableOrdered ----
 

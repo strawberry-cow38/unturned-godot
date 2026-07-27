@@ -110,6 +110,62 @@ namespace UnturnedGodot
 
         public bool TrySetLocked(ulong player, bool locked) => DoorLogic.TrySetLocked(ref _state, player, locked);
 
+        /// <summary>Server id of this door, 0 for a singleplayer/local one. Non-zero means the swing is the
+        /// server's decision and arrives through <see cref="ApplyReplicatedToggle"/>. Setting it enrols the
+        /// door in the lookup an inbound DoorState uses to find which node the server meant.</summary>
+        public uint NetId
+        {
+            get => _netId;
+            set
+            {
+                if (_netId != 0) _byNetId.Remove(_netId);
+                _netId = value;
+                if (value != 0) _byNetId[value] = this;
+            }
+        }
+        uint _netId;
+
+        static readonly System.Collections.Generic.Dictionary<uint, Door> _byNetId
+            = new System.Collections.Generic.Dictionary<uint, Door>();
+
+        /// <summary>Find the door the server is talking about. Misses are normal and not an error: a door
+        /// outside this client's world (or already broken down locally) simply has nothing to swing.</summary>
+        public static bool TryGetByNetId(uint netId, out Door door)
+        {
+            if (_byNetId.TryGetValue(netId, out door) && IsInstanceValid(door)) return true;
+            _byNetId.Remove(netId);   // the node died without clearing its id (QueueFree from a break)
+            door = null;
+            return false;
+        }
+
+        /// <summary>Tests and world rebuilds share one static table; this stops one world inheriting the
+        /// previous one's doors.</summary>
+        public static void ResetNetIds() => _byNetId.Clear();
+
+        // Keep the lookup honest across the node lifecycle, the way Bed keeps its claim table honest: a
+        // broken-down door drops out on the way out, and a REPARENTED one puts itself back (an _ExitTree
+        // that only removed would silently make a re-added door uncommandable). TryGetByNetId's validity
+        // check is the backstop for a free that skips these, not the plan.
+        public override void _EnterTree() { if (_netId != 0) _byNetId[_netId] = this; }
+        public override void _ExitTree()
+        {
+            if (_netId != 0 && _byNetId.TryGetValue(_netId, out var held) && held == this) _byNetId.Remove(_netId);
+        }
+
+        /// <summary>The server says this door is now open/closed. Applied unconditionally -- no rule check,
+        /// no cooldown, no arc test: the server already made the decision and second-guessing it here is how
+        /// a replica ends up disagreeing with the world everyone else sees. Still makes the noise, so a door
+        /// opened by another player pulls zombies on THIS client's sim exactly as it does on the server's.</summary>
+        public void ApplyReplicatedToggle(bool open)
+        {
+            if (_state.IsOpen == open) return;
+            _state.IsOpen = open;   // _PhysicsProcess eases the leaf toward the new target on its own
+            if (IsInsideTree()) SoundBus.Emit(GetTree(), _hingeWorld, DoorLogic.ToggleLoudness);
+        }
+
+        /// <summary>The server says the lock state changed (ownership is unchanged -- only the bolt).</summary>
+        public void ApplyReplicatedLocked(bool locked) => _state.Locked = locked;
+
         /// <summary>Break it down. Returns true if this destroyed the door.</summary>
         public bool TakeDamage(float amount)
         {
