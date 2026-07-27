@@ -24,6 +24,14 @@ namespace UnturnedGodot
         {
             if (tree == null || loudness <= 0f) return;
             tree.CallGroup("zombies", "Hear", pos, loudness);
+            // ...and the REWRITE, whose zombies are sim rows, not nodes -- so no node group can reach
+            // them and CallGroup above is a no-op under --newzombies. Every gunshot in the game was
+            // inaudible to the new zombies for exactly this reason: the bus, the bullet resolution and
+            // the MP publisher all address zombies through a node group the rewrite cannot join.
+            // Suppression still works the same way: a suppressed shot passes loudness <= 0 and returns
+            // above, so it reaches neither system.
+            var zd = ZombieDirector.Instance;
+            zd?.Sim?.Hear(new UnityEngine.Vector3(pos.X, pos.Y, pos.Z), loudness);
         }
     }
 }

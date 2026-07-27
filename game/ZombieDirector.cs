@@ -172,9 +172,27 @@ namespace UnturnedGodot
             // many rays" distinguishes "each ray is slow" from "we are casting far too many".
             Prof.Count("rays", GodotLineOfSight.Rays);
             GodotLineOfSight.Rays = 0;
+            DrainAttacks();
         }
 
         long _tick;
+
+        /// <summary>Apply the swings the sim resolved this tick. Without this the rewritten zombies
+        /// reach you, play the swing, and do nothing at all -- Attacks was never read by anybody.</summary>
+        void DrainAttacks()
+        {
+            var attacks = _sim.Attacks;
+            if (attacks.Length == 0) return;
+            for (int i = 0; i < attacks.Length; i++)
+            {
+                // PlayerIndex indexes the same player array the sim was given in SetPlayers, whose slot 0
+                // is the local player when one exists. Only the local avatar can be damaged here; a
+                // dedicated server resolves its own players through the net layer instead.
+                if (attacks[i].PlayerIndex != 0) continue;
+                if (Player == null || !IsInstanceValid(Player)) continue;
+                Player.TakeDamage(attacks[i].Damage, G(_sim.PositionOf(0)));
+            }
+        }
 
         int GatherPlayers()
         {
@@ -289,6 +307,61 @@ namespace UnturnedGodot
                                                    : GeometryInstance3D.ShadowCastingSetting.Off;
             return rig;
         }
+
+        // --- gameplay entry points -------------------------------------------------------------------
+        //
+        // Rows are not nodes, so nothing in the game can find a rewritten zombie the way it finds a
+        // ZombieController: through the "zombies" node group. Everything that used to address zombies
+        // that way -- SoundBus.Emit, PlayerController's shot and explosion resolution, ZombieNetSync --
+        // silently addressed an empty set under --newzombies, which is why the new zombies could not be
+        // shot, could not hear, and dealt no damage. These are the replacement seams.
+
+        /// <summary>Shoot along a ray. Returns true and applies damage if a sim zombie was hit.
+        /// `killed` reports whether that hit finished it, so callers can keep their kill counters.</summary>
+        public bool ShootRay(Vector3 origin, Vector3 dir, float maxDistance, float damage, out bool killed)
+        {
+            killed = false;
+            if (_sim == null) return false;
+            if (!_sim.Raycast(U(origin), U(dir), maxDistance, out var hit) || !hit.Hit) return false;
+            killed = _sim.Damage(hit.Id, damage, hit.Limb);
+            return true;
+        }
+
+        /// <summary>Damage every sim zombie within `radius` of `point`, scaled by `falloff`. Returns the
+        /// number killed. `blocked` lets the caller keep its own line-of-sight rule (walls stop blasts).</summary>
+        public int DamageSphere(Vector3 point, float radius, System.Func<float, float> falloff,
+                                System.Func<Vector3, bool> blocked = null)
+        {
+            if (_sim == null || radius <= 0f) return 0;
+            int killed = 0;
+            for (int row = _sim.Count - 1; row >= 0; row--)
+            {
+                var p = G(_sim.PositionOf(row));
+                float d = p.DistanceTo(point);
+                if (d > radius) continue;
+                if (blocked != null && blocked(p)) continue;
+                if (_sim.Damage(_sim.IdOf(row), falloff(d))) killed++;
+            }
+            return killed;
+        }
+
+        /// <summary>Bullet-vs-sim for one integration step. Wins only if the zombie is nearer than
+        /// `wallDistance`, so cover still stops the round. Reports the entry point and whether it was a
+        /// head hit, for the impact effect and the hitmarker.</summary>
+        public bool ShootSegment(Vector3 from, Vector3 dir, float length, float wallDistance, float damage,
+                                 out Vector3 point, out bool head, out bool killed)
+        {
+            point = default; head = false; killed = false;
+            if (_sim == null) return false;
+            if (!_sim.Raycast(U(from), U(dir), length, out var hit) || !hit.Hit) return false;
+            if (hit.Distance >= wallDistance) return false;      // the wall was in front of it
+            point = G(hit.Point);
+            head = hit.Limb == ZombieLimb.Skull;
+            killed = _sim.Damage(hit.Id, damage, hit.Limb);
+            return true;
+        }
+
+        static UVector3 U(Vector3 v) => new UVector3(v.X, v.Y, v.Z);
 
         static void AddUs(string key, long us)
         {

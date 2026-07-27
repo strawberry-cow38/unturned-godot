@@ -2051,6 +2051,9 @@ namespace UnturnedGodot
 
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
+            // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
+            // which is why they were unkillable under --newzombies. Swing at the sim too.
+            if (ZombieDirector.Instance is { } zdm && zdm.ShootRay(origin, fwd, range + 0.5f, dmg, out bool zdKilled) && zdKilled) Kills++;
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {
@@ -2088,6 +2091,11 @@ namespace UnturnedGodot
         // (explosionArmor); vehicles take it too. Still no LIMB or buildable damage.
         public void Explode(Vector3 point, float radius, float zombieDamage, float playerDamage, float vehicleDamage)
         {
+            // Sim rows take the blast too, with the SAME falloff and the same wall rule the node path uses.
+            if (ZombieDirector.Instance is { } zde)
+                Kills += zde.DamageSphere(point, radius,
+                    d => ExplosionMath.Linear(zombieDamage, d, radius),
+                    p => ExplosionBlocked(point, p));
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
                 if (n is ZombieController z && !z.Dead)
                 {
@@ -3864,6 +3872,25 @@ namespace UnturnedGodot
                 Vector3 next = new Vector3(un.x, un.y, un.z);
                 var query = PhysicsRayQueryParameters3D.Create(b.Pos, next, (1u << 0) | (1u << 1) | (1u << 4) | (1u << 5) | (1u << 6) | (1u << 9)); // world + enemy + ragdoll + vehicle + props + water surface
                 var hit = space.IntersectRay(query);
+                // A sim zombie has NO collider -- that is the point of the rewrite -- so the physics ray
+                // above passes straight through it and bullets did nothing at all under --newzombies.
+                // Test this step's segment against the sim analytically, and let it win only if it is
+                // CLOSER than whatever the collider ray found, so a wall still stops the bullet.
+                if (!b.Cosmetic && ZombieDirector.Instance is { } zdb)
+                {
+                    Vector3 seg = next - b.Pos;
+                    float segLen = seg.Length();
+                    float wallDist = hit.Count > 0 ? b.Pos.DistanceTo(hit["position"].AsVector3()) : float.MaxValue;
+                    if (segLen > 1e-5f && zdb.ShootSegment(b.Pos, seg / segLen, segLen, wallDist, b.Damage,
+                                                           out Vector3 zPoint, out bool zHead, out bool zKilled))
+                    {
+                        SpawnFleshImpact(zPoint, b.Vel.Normalized());
+                        if (zKilled) Kills++;
+                        HitmarkerHUD.Instance?.Show(zHead);
+                        RemoveBullet(i);
+                        continue;
+                    }
+                }
                 if (hit.Count > 0)
                 {
                     if (b.Cosmetic) { RemoveBullet(i); continue; }   // MP: the tracer stops here, but damage AND impact fx are the server's (ImpactFx/HitConfirmed events render them)

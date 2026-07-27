@@ -185,4 +185,73 @@ namespace UnturnedGodot.Testing
             T.Check($"per-tick scheduled work is a fraction of the fleet (got {s.Due} of 200)", s.Due <= 200 / 50 + 1);
         }
     }
+
+    // Stage 6: the rewrite's zombies are sim ROWS with no collider, so every gameplay path that used to
+    // find a zombie through the "zombies" node group -- bullets, melee, explosions, the sound bus --
+    // addressed an empty set under --newzombies. They could not be shot, could not hear, dealt no
+    // damage. These prove the replacement seams reach the sim, which is the thing a green L0 run cannot
+    // tell you: the sim's combat surface was fully unit-tested and had zero callers for days.
+    public class ZombieDirectorShotsReachSimRows : GameTest
+    {
+        public override string Name => "zdirector.shots_hit_rows";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            NavSandbox.Flat(World);
+            var dir = new ZombieDirector { MaxViews = 4, DebugPlayer = Vector3.Zero };
+            World.AddChild(dir);
+            dir.DebugBuild(NavSandbox.OneRegion(), new[] { new Vector3(0f, 0f, 10f) });
+            yield return Ticks(5);
+
+            T.Check("a row exists to shoot at", dir.Sim.Count == 1);
+            float hp0 = dir.Sim.HealthOf(0);
+
+            // Fire from the origin straight down +Z at chest height. No collider exists anywhere on that
+            // line, which is precisely why the physics ray used to pass through and do nothing.
+            bool hit = dir.ShootRay(new Vector3(0f, 1.4f, 0f), new Vector3(0f, 0f, 1f), 30f, 40f, out bool killed);
+
+            T.Check("the shot found a sim zombie with no collider", hit);
+            T.Check("it lost health", dir.Sim.Count > 0 && dir.Sim.HealthOf(0) < hp0);
+            T.Check("40 damage did not kill a 100 hp zombie", !killed);
+
+            // ...and a wall-blocked shot must NOT land, or bullets would pass through cover.
+            bool behindWall = dir.ShootSegment(new Vector3(0f, 1.4f, 0f), new Vector3(0f, 0f, 1f),
+                                               30f, wallDistance: 2f, damage: 40f, out _, out _, out _);
+            T.Check("a zombie further than the wall is not hit", !behindWall);
+        }
+    }
+
+    public class ZombieDirectorHearsTheSoundBus : GameTest
+    {
+        public override string Name => "zdirector.hears_gunshots";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            NavSandbox.Flat(World);
+            // A player IS registered, because a row with no player in its region tiers to Ambient and
+            // returns before it can path anywhere -- so "it did not move" would prove nothing about
+            // hearing. Sight is switched off instead, which leaves hearing as the only live channel.
+            var dir = new ZombieDirector { MaxViews = 4, DebugPlayer = Vector3.Zero };
+            World.AddChild(dir);
+            // 20 m out: inside ZombieKind.HearingRange (32 m). At 40 m it simply cannot hear the shot,
+            // and the first version of this test failed for that reason rather than for a wiring fault.
+            dir.DebugBuild(NavSandbox.OneRegion(), new[] { new Vector3(0f, 0f, 20f) });
+            dir.Sim.Kinds[0].SightRange = 0.01f;
+            yield return Ticks(5);
+
+            var before = dir.Sim.PositionOf(0);
+            int heard = dir.Sim.Hear(new UnityEngine.Vector3(0f, 0f, 0f), 0f);   // control: silence is ignored
+            T.Check("a silent emit is not heard", heard == 0);
+            SoundBus.Emit(Tree, new Vector3(0f, 0f, 0f), 120f);    // a gunshot at the origin
+            yield return Ticks(120);
+
+            var after = dir.Sim.PositionOf(0);
+            T.Check("a gunshot moved a blind zombie (it heard it)",
+                    new Vector3(after.x, 0f, after.z).DistanceTo(new Vector3(before.x, 0f, before.z)) > 1f);
+            T.Check("...and it moved TOWARD the noise", after.z < before.z - 1f);
+        }
+    }
+
 }
