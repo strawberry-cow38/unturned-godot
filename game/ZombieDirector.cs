@@ -347,9 +347,14 @@ namespace UnturnedGodot
         public int QueryPath(UVector3 from, UVector3 to, UVector3[] corridor)
         {
             if (!NavigationServer3D.MapIsActive(_map)) return 0;
-            var a = NavigationServer3D.MapGetClosestPoint(_map, new Vector3(from.x, from.y, from.z));
-            var b = NavigationServer3D.MapGetClosestPoint(_map, new Vector3(to.x, to.y, to.z));
-            var path = NavigationServer3D.MapGetPath(_map, a, b, true);
+            // MapGetPath resolves its own endpoints to the nearest polygon, so the two MapGetClosestPoint
+            // calls that used to bracket it were redundant -- and they were not cheap: each one scans the
+            // whole map's polygon set, and PEI merges 19 pockets into one map. At PathQueriesPerTick=8,
+            // with Godot running up to 8 physics substeps on an overrunning frame, that was ~128 full
+            // polygon scans per frame purely to compute points MapGetPath then computed again.
+            // Measured on strawberry's box before this change: s.paths 426.9 ms of a 428.9 ms sim tick.
+            var path = NavigationServer3D.MapGetPath(_map,
+                new Vector3(from.x, from.y, from.z), new Vector3(to.x, to.y, to.z), true);
             if (path == null || path.Length == 0) return 0;
 
             int n = 0;
