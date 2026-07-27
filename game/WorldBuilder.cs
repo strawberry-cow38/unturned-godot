@@ -35,6 +35,7 @@ namespace UnturnedGodot
         public PlayerController Player;    // Playable/PeiPlay only
         public ZombieField Zombies;        // Playable/Dedicated (and only when zombies are enabled; C4 populated the server)
         public ZombieDirector Director;    // --newzombies: the rewrite's single node, in place of Zombies
+        public DeadzoneField Deadzones;    // contaminated volumes ticking the player's vitals
         public DayNightCycle DayNight;     // the world clock -- MP Phase 8 syncs read/drive it (§3.7)
         public ResourceField Resources;    // trees/rocks -- MP Phase 8's alive-bitmap indexes into it (§3.7)
         public DestructibleField Destructibles;   // destructible props (rubble) -- the DestructibleReplication(16) alive-bitmap indexes into it
@@ -572,6 +573,23 @@ namespace UnturnedGodot
                         root.AddChild(zf);
                         result.Zombies = zf;   // --zombietest reads this at frame 25 to verify spawns land on the navmesh
                     }
+                }
+
+                // DOORS / BEDS / DEADZONES: the three ported interactables, placed in the REAL world so they
+                // are reachable by a player rather than only by tests. A door and a bed stand beside the
+                // spawn (F toggles / claims; the bed becomes your respawn point), and a contaminated pocket
+                // sits away from spawn so it is something you can walk into rather than something you start in.
+                {
+                    var door = Door.Spawn(root, new Vector3(sx - 3.0f, terr.SampleHeight(sx - 3.0f, sz + 2.0f), sz + 2.0f), 0f, owner: 1UL);
+                    var bed = Bed.Spawn(root, new Vector3(sx - 5.0f, terr.SampleHeight(sx - 5.0f, sz + 2.0f), sz + 2.0f), 90f);
+                    var deadzones = new DeadzoneField();
+                    root.AddChild(deadzones);
+                    // A 60 m contaminated pocket. Radiation-proof clothing already existed in item data with
+                    // nothing to protect against; this is the hazard that finally gives it a job.
+                    deadzones.AddVolume(new Vector3(sx + 120f, terr.SampleHeight(sx + 120f, sz + 120f) + 15f, sz + 120f),
+                                        new Vector3(30f, 25f, 30f));
+                    result.Deadzones = deadzones;
+                    GD.Print($"[interactables] door + bed at spawn, 1 deadzone volume ({deadzones.VolumeCount} total)");
                 }
 
                 // VEHICLE SPAWNS: Spawns/Vehicles.dat -- the shared extraction above (identical order/params/variants)

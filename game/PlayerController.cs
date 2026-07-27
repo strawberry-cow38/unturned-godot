@@ -137,6 +137,16 @@ namespace UnturnedGodot
         StoreShelf _focusShelf;          // the shelf being looked at (whole-shelf outline) -- the shelf of the focused item
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
+        Door _focusDoor;              // the door being looked at -> F toggles it
+        Bed _focusBed;                // the bed being looked at -> F claims it as this player's respawn point
+        /// <summary>Identity used for door/bed ownership. SP is a single local player; MP overwrites this
+        /// per shell so a claim belongs to a person rather than to "the client".</summary>
+        public ulong PlayerId = 1UL;
+        public ulong GroupId;         // 0 = no group; a locked door opens for groupmates when set
+        // Read-only views of what the production look-raycast resolved, so a test can assert the wiring
+        // without a test-only code path deciding the answer.
+        public Door DebugFocusDoor => _focusDoor;
+        public Bed DebugFocusBed => _focusBed;
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
@@ -165,6 +175,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
+            Door hitDoor = null; Bed hitBed = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -184,7 +195,9 @@ namespace UnturnedGodot
                 if (rhit.Count > 0)
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
-                    if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
+                    if (rcol is Door rdoor && IsInstanceValid(rdoor)) hitDoor = rdoor;
+                    else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
+                    else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
                     else if (rcol is Node grn && grn.HasMeta("gaspump") && grn.GetMeta("gaspump").As<GasPump>() is GasPump gpn && IsInstanceValid(gpn)) hitGasPump = gpn;   // gas pump collider tagged in WorldBuilder -> the fixture
                     else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
@@ -254,6 +267,8 @@ namespace UnturnedGodot
                 _focusDeployable?.SetLookFocused(true);
             }
             if (hitFluid != _focusFluid) _focusFluid = hitFluid;   // no outline shader on fluid bodies -> just track it for hold-F pickup
+            _focusDoor = hitDoor;   // no outline shader on doors/beds yet -> just track what F should act on
+            _focusBed = hitBed;
             if (hitGasPump != _focusGasPump)   // looked-at gas pump: outline + fuel tooltip
             {
                 if (IsInstanceValid(_focusGasPump)) _focusGasPump.SetLookFocused(false);
@@ -2941,6 +2956,37 @@ namespace UnturnedGodot
             if (Health <= 0f) { Deaths++; Die(); }
         }
 
+        void ToggleFocusedDoor() => RequestToggleDoor(_focusDoor);
+        void ClaimFocusedBed() => RequestClaimBed(_focusBed);
+
+        /// <summary>Open/close a door as this player. Public for the same reason the other Request*
+        /// helpers are: look-focus needs a captured mouse, which a headless test cannot have, so the F
+        /// path and the tests drive ONE seam rather than the tests re-implementing the rule.
+        /// A refusal is told to the player -- silence reads as a broken door.</summary>
+        public bool RequestToggleDoor(Door d)
+        {
+            if (d == null || !IsInstanceValid(d)) return false;
+            if (d.TryToggle(PlayerId, GroupId, Time.GetTicksMsec() / 1000.0)) return true;
+            string why = d.LastRefusal switch
+            {
+                SDG.Unturned.DoorRefusal.Locked => "locked",
+                SDG.Unturned.DoorRefusal.Obstructed => "something is in the way",
+                SDG.Unturned.DoorRefusal.Cooldown => null,   // still swinging: saying so every frame would be noise
+                _ => null,
+            };
+            if (why != null) FluidPickupHudSet($"the door is {why}");   // reuse the existing centre-screen line
+            return false;
+        }
+
+        /// <summary>Claim a bed as this player's respawn point, releasing whichever they held.</summary>
+        public bool RequestClaimBed(Bed b)
+        {
+            if (b == null || !IsInstanceValid(b)) return false;
+            if (b.TryClaim(PlayerId, Time.GetTicksMsec() / 1000.0)) { FluidPickupHudSet("you will respawn here"); return true; }
+            if (b.Owner != 0UL && b.Owner != PlayerId) FluidPickupHudSet("someone else's bed");
+            return false;
+        }
+
         void Die()
         {
             _dead = true;
@@ -2993,7 +3039,20 @@ namespace UnturnedGodot
             Health = MaxHealth;
             _netAdoptedHealth = MaxHealth;   // P3a: keep the adopted pin in sync with the fresh HP (the server's coarse Health is 100 on respawn too) so the next UpdateVitals doesn't yank it back down
             Stamina = Food = Water = 1f; Infection = 0f; Bleeding = false; Broken = false;   // fresh vitals on respawn
-            if (reposition) GlobalPosition = Spawn;   // P3a: the client-auth MP shell skips this -- the server's recov teleport owns the move to SpawnPos (a GlobalPosition write would be overwritten by the next state claim)
+            // A claimed bed IS your spawn -- that is the whole point of claiming one. No bed (or it was
+            // destroyed while you were dead) falls back to the map spawn.
+            if (reposition)
+            {
+                // P3a: the client-auth MP shell skips this -- the server's recov teleport owns the move to
+                // SpawnPos (a GlobalPosition write would be overwritten by the next state claim).
+                Vector3 target = Bed.TryGetSpawn(PlayerId, out var bedSpawn, out _) ? bedSpawn + Vector3.Up * 0.5f : Spawn;
+                GlobalPosition = target;
+                // ...and reset the render-interp snapshots, for the reason TeleportTo documents: the next
+                // 50 Hz tick restores GlobalPosition from _interpCurr, which still holds the pre-death spot,
+                // so a bare write here is silently undone. Latent all along (respawning at the map spawn
+                // from far away had the same bug); claiming a bed 47 m away is what finally showed it.
+                _interpPrev = _interpCurr = target;
+            }
             Velocity = Vector3.Zero;
             _corpse?.QueueFree(); _corpse = null;
             _clothing?.Refresh();   // re-sync the worn clothing onto the (persistent) body after death (source re-applies thirdClothes on spawn)
@@ -3352,6 +3411,8 @@ namespace UnturnedGodot
                     _fHeldDeploy = _focusDeployable; _deployPickupTimer = 0f;
                 }
                 else if (_focusFluid != null && IsInstanceValid(_focusFluid)) { _fHeldFluid = _focusFluid; _fluidPickupTimer = 0f; }   // hold F on a placed fluid device -> pick it up (UpdateFluidPickup)
+                else if (_focusDoor != null && IsInstanceValid(_focusDoor)) ToggleFocusedDoor();   // looking at a door: open/close it (refusals surface as a HUD line)
+                else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)
                 else if (_focusShelf != null && IsInstanceValid(_focusShelf) && OpenCrate(_focusShelf)) { }   // looking at a shelf/container -> open it (look-based, not proximity)

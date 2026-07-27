@@ -63,8 +63,14 @@ namespace SDG.Unturned
     /// </summary>
     public sealed class DeadzoneSim
     {
-        /// <summary>Seconds inside before anything is applied. The source keeps an equivalent guard so
-        /// that clipping a corner -- or respawning near one -- is not instantly punishing.</summary>
+        /// <summary>Seconds inside before anything is applied, so clipping a corner -- or respawning near
+        /// one -- is not instantly punishing.
+        ///
+        /// Honest provenance: the source has a guard of this KIND but not this shape. It counts
+        /// simulation FRAMES (damage waits until you have been inside for more than two of them) and also
+        /// resets the counter on respawn. 0.5 s is my own value, chosen because a frame-count threshold
+        /// does not port to a sim that callers may step at any rate; the two-frame original would be
+        /// ~0.04 s here, which is not a grace period so much as a rounding error.</summary>
         public const float EntryGrace = 0.5f;
 
         float _inside;                 // continuous seconds in the current zone

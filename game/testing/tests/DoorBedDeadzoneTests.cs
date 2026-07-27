@@ -171,6 +171,82 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The integration tests. Everything above proves the three systems WORK; these prove they are wired
+    // into the game a player actually plays -- that the production look-raycast finds them, and that
+    // dying really returns you to your claimed bed through the ordinary Die/Respawn path.
+
+    // The player's interaction path, through the SAME seam the F key uses. (The look-focus raycast that
+    // normally picks the target cannot run here: it is gated on a captured mouse, and headless Godot
+    // reports MouseMode=Visible however you set it -- measured. So the F handler and this test both go
+    // through RequestToggleDoor/RequestClaimBed, the codebase's existing convention for exactly this.)
+    public class PlayerInteractsWithDoorsAndBeds : GameTest
+    {
+        public override string Name => "player.door_and_bed_interaction";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            Bed.DebugResetAll();
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            var door = Door.Spawn(World, new Vector3(0f, 0f, -3f), 0f, owner: p.PlayerId);
+            var bed = Bed.Spawn(World, new Vector3(3f, 0f, -3f), 0f);
+            yield return Ticks(4);
+
+            T.Check("the player opens their own door", p.RequestToggleDoor(door));
+            T.Check("it is open", door.IsOpen);
+
+            // Someone else's locked door refuses this player.
+            var theirs = Door.Spawn(World, new Vector3(-6f, 0f, -3f), 0f, owner: 999UL);
+            yield return Ticks(2);
+            theirs.TrySetLocked(999UL, true);
+            T.Check("a stranger's locked door refuses", !p.RequestToggleDoor(theirs));
+            T.Check("and stays shut", !theirs.IsOpen);
+
+            T.Check("the player claims a bed", p.RequestClaimBed(bed));
+            T.Check("the bed is theirs", bed.Owner == p.PlayerId);
+            T.Check("which becomes their spawn", Bed.TryGetSpawn(p.PlayerId, out _, out _));
+
+            Bed.DebugResetAll();
+        }
+    }
+
+    public class DyingReturnsYouToYourBed : GameTest
+    {
+        public override string Name => "player.respawns_at_claimed_bed";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            Bed.DebugResetAll();
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            p.CaptureMouse = false;
+            var bed = Bed.Spawn(World, new Vector3(40f, 0f, -25f), 0f);
+            yield return Ticks(4);
+
+            T.Check("the bed is claimed", bed.TryClaim(p.PlayerId, 100.0));
+            T.Check("the claim resolves to a spawn point", Bed.TryGetSpawn(p.PlayerId, out _, out _));
+
+            // Kill through the ordinary damage path and let the ordinary respawn clock run -- no test seam.
+            // Staged, not one compound wait: a single Until hides WHICH half failed.
+            p.TakeDamage(10000f);
+            yield return Ticks(2);
+            T.Check($"the damage killed them (health {p.Health:0})", p.Health <= 0f);
+
+            yield return Until(() => p.Health > 0f, maxSimSeconds: 15);
+            T.Check($"the respawn clock brought them back (health {p.Health:0})", p.Health > 0f);
+
+            yield return Ticks(3);
+            T.Check($"the claim still resolves AFTER respawn (owner={bed.Owner}, id={p.PlayerId})",
+                    Bed.TryGetSpawn(p.PlayerId, out var stillThere, out _) && stillThere.DistanceTo(new Vector3(40f, 0f, -25f)) < 1f);
+            float d = p.GlobalPosition.DistanceTo(new Vector3(40f, 0f, -25f));
+            T.Check($"woke up at the claimed bed, not the map spawn (at {p.GlobalPosition}, {d:0.#} m away)", d < 4f);
+
+            Bed.DebugResetAll();
+        }
+    }
+
     public class DeadzoneLeavesCleanGroundAlone : GameTest
     {
         public override string Name => "deadzone.clean_ground_safe";
