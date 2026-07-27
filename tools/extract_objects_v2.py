@@ -1,8 +1,11 @@
 import UnityPy, os, glob, re, struct, numpy as np, sys
 from collections import Counter
-BUND = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles"
-OBJDAT = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Maps\PEI\Level\Objects.dat"
-OUT = r"C:\claude-workspace\unturned-godot\game\content\objects"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ug_paths
+
+BUND = ug_paths.bundles()
+OBJDAT = ug_paths.map_file("Level", "Objects.dat")
+OUT = ug_paths.objects_out()
 
 # --- TOP object GUIDs from PEI Objects.dat (same parse as the original) ---
 _d = open(OBJDAT, "rb").read(); _p = [0]
@@ -114,7 +117,12 @@ def extract_combined(prefab):
         #                                    L/R-swapped. Negating the part's world-X translation swaps them back (single-part parts at X=0 unaffected).
         if not mp or mp not in by_id: continue
         nm = mesh_name(mp)
-        if "dead" in nm.lower(): continue
+        # NB: no mesh-name "dead" skip -- retail hides by NODE name, not mesh name.
+        # InteractableObjectRubble.updateRubble only SetActives the children called "Alive"/"Dead",
+        # so a part parented elsewhere renders in both states. walk()'s SKIP list already prunes
+        # those subtrees by node name, which is the correct layer. The old filter also ate
+        # permanently-visible parts authored as "Model_0_Dead" -- e.g. the root-level "Model_2"
+        # concrete base on Street_Light_0 / Traffic_Light_0.
         used.append(nm)
         txt = by_id[mp].read().export()
         Rn = np.linalg.inv(M[:3, :3]).T

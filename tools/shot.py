@@ -57,6 +57,10 @@ SCENES = {
     "pei":      (["--peidrive", "--shot={OUT}"], {}, True, 400, "PEI world, drivable"),
     "editor":   (["--editor", "--shot={OUT}"], {}, True, 400, "map editor over PEI"),
     "objects":  (["--objects", "--shot={OUT}"], {}, True, 400, "ripped prop showcase"),
+    # one named prop at identity + RGB axes -- the diagnostic view for a model that looks wrong.
+    # `PROP=Street_Light_0 tools/shot.py prop`
+    "prop":     (["--proptest=" + os.environ.get("PROP", "Street_Light_0"), "--shot={OUT}"], {}, False, 200,
+                 "ONE prop at identity + RGB axes (set PROP=Name)"),
 }
 MULTI = {"menu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
 

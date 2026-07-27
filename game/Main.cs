@@ -1242,7 +1242,13 @@ namespace UnturnedGodot
             AddChild(new MeshInstance3D { Mesh = mesh, MaterialOverride = mat });
             var aabb = mesh.GetAabb(); var c = aabb.GetCenter(); float r = Mathf.Max(aabb.Size.X, Mathf.Max(aabb.Size.Y, aabb.Size.Z));
             if (r < 0.01f) r = 1f;
-            foreach (var (ax, col) in new[] { (Vector3.Right, new Color(1f, 0.15f, 0.15f)), (Vector3.Up, new Color(0.15f, 1f, 0.15f)), (Vector3.Back, new Color(0.2f, 0.4f, 1f)) })
+            GD.Print($"[PROPTEST] {name} aabb pos={aabb.Position} size={aabb.Size}");
+            // UG_NOAXES=1: the axis bars meet AT the origin, so anything small sitting there (a base plate,
+            // a pivot stub) is hidden behind the gizmo -- which is exactly the question when a prop looks
+            // like it is missing its bottom. Turn them off to see what is really at 0,0,0.
+            foreach (var (ax, col) in System.Environment.GetEnvironmentVariable("UG_NOAXES") == "1"
+                     ? System.Array.Empty<(Vector3, Color)>()
+                     : new[] { (Vector3.Right, new Color(1f, 0.15f, 0.15f)), (Vector3.Up, new Color(0.15f, 1f, 0.15f)), (Vector3.Back, new Color(0.2f, 0.4f, 1f)) })
             {
                 var bar = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.06f, 0.06f, 0.06f) * r + ax.Abs() * r * 1.2f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = col } };
                 bar.Position = ax * r * 0.6f;

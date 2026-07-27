@@ -5,9 +5,11 @@ shelves) so they can still be placed in the map editor. Reuses v2's LOD0/world-t
   python extract_object_named.py Shelf_2
 -> content/objects/Shelf_2.obj (+ Shelf_2_tex.png) + a guid_mesh.txt line if missing."""
 import UnityPy, os, glob, re, numpy as np, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ug_paths
 
-BUND = r"C:\Program Files (x86)\Steam\steamapps\common\Unturned\Bundles"
-OUT = r"C:\claude-workspace\unturned-godot\game\content\objects"
+BUND = ug_paths.bundles()
+OUT = ug_paths.objects_out()
 TARGET = (sys.argv[1] if len(sys.argv) > 1 else "Shelf_2")
 
 # GUID (netguid form, as in guid_mesh.txt) + prefab container path, keyed by folder name.
@@ -106,7 +108,13 @@ for gp in lod0_gos(prefab, gomap):
     M = M.copy(); M[0, 3] = -M[0, 3]
     if not mp or mp not in by_id: continue
     nm = mesh_name(mp)
-    if "dead" in nm.lower(): continue
+    # NB: do NOT skip on the mesh asset's name containing "dead". Retail decides visibility by
+    # NODE name, not mesh name -- InteractableObjectRubble.updateRubble only ever SetActives the
+    # children literally called "Alive"/"Dead", so anything sitting elsewhere renders in BOTH
+    # states. walk() already prunes the Dead/Ragdoll/Effect subtrees by node name, which is the
+    # correct layer. The old mesh-name filter additionally ate permanently-visible parts whose
+    # mesh happened to be authored as "Model_0_Dead" -- that is what deleted the concrete base
+    # from Street_Light_0 and Traffic_Light_0 (their root-level "Model_2" node).
     used.append(nm)
     txt = by_id[mp].read().export()
     Rn = np.linalg.inv(M[:3, :3]).T
