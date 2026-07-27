@@ -165,6 +165,7 @@ namespace UnturnedGodot
             // COUNT of those queries, so cost-per-query is read off the overlay instead of inferred.
             // s.paths alone cannot distinguish "each path is expensive" from "we ask for too many".
             Prof.Count("paths", _sim.Stats.PathQueries);
+            Prof.Count("paths.fail", _sim.Stats.PathFailures);   // no route found: the retry-storm tell
             { ulong _t = Time.GetTicksUsec(); SyncViews(delta); Prof.Add("z.views", _t); }
             Prof.Add("z.total", _tz);
             // Raycast COUNT, not just time: a sight test is the one engine call in the sim path, and "how

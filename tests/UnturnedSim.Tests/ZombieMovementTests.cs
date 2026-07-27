@@ -86,6 +86,29 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
+        public void A_Route_That_Cannot_Be_Found_Is_Not_Re_Requested_Every_Tick()
+        {
+            // The shape that pinned the whole path budget flat out: a query fails, leaving the row with
+            // no corridor, and "no corridor" used to mean "ask again" -- unconditionally, next tick, for
+            // ever. Nothing recovers it, because the route genuinely does not exist; the target is simply
+            // somewhere the navmesh cannot reach, e.g. a player parked in a car off the pockets. Standing
+            // perfectly still was enough to hold it down, and a search that finds nothing is the most
+            // expensive search there is.
+            var nav = new RecordingNav { Refuse = true };
+            var sim = NewSim(nav, out _);
+            SeeEverything(sim);
+            sim.Spawn(0, new Vector3(30f, 0f, 0f));
+
+            Run(sim, 250);   // 5 s at 50 Hz
+
+            // FailedPathRetrySeconds is 0.5 s, so ~10 attempts in 5 s. Without the backoff this is ~250.
+            Assert.That(nav.Queries.Count, Is.GreaterThan(0),
+                "a failed route must still be retried eventually -- backing off is not giving up");
+            Assert.That(nav.Queries.Count, Is.LessThanOrEqualTo(20),
+                "a failed route must not be re-requested at the tick rate");
+        }
+
+        [Test]
         public void A_Far_Zombie_Moves_At_The_Same_Speed_As_A_Near_One()
         {
             // The trap this guards: Far updates at 10 Hz, so integrating a 50 Hz step would make it crawl

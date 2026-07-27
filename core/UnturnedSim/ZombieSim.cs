@@ -66,6 +66,7 @@ namespace SDG.Unturned
         public int Moving;       // rows that actually integrated a position this tick
         public int PathQueries;  // navmesh queries issued this tick (never exceeds PathQueriesPerTick)
         public int PathQueued;   // rows still waiting for one -- a persistent backlog means the budget is too small
+        public int PathFailures; // queries that came back with NO route: the expensive, useless kind
         public int Dead;         // corpses still holding a row
         public int Alive => Close + Near + Far + Ambient;
     }
@@ -98,6 +99,7 @@ namespace SDG.Unturned
         /// <summary>Path queries allowed per tick, across the whole level. This is the cap that stops a
         /// horde all hearing one gunshot and issuing sixty navmesh queries in a single tick.</summary>
         public int PathQueriesPerTick = 8;
+        public float FailedPathRetrySeconds = 0.5f;   // backoff after a query that found NO route
         public float RepathInterval = 1.2f;  // seconds before a corridor is considered stale
         public float DestMovedTolerance = 3f;// how far the target may drift before the corridor is refetched
         public float WaypointReached = 0.7f;
@@ -145,6 +147,7 @@ namespace SDG.Unturned
         Vector3[] _lastSeen = new Vector3[64];
         bool[] _hasLastSeen = new bool[64];
         float[] _lostSight = new float[64];
+        bool[] _pathFailed = new bool[64];   // last query for this row came back with no route
         float[] _stateClock = new float[64];      // when the current investigation started
         float[] _lastAttack = new float[64];
         bool[] _swingPending = new bool[64];
@@ -229,7 +232,7 @@ namespace SDG.Unturned
             _dest[row] = position;
             _face[row] = new Vector3(0f, 0f, 1f);
             _corridorLen[row] = 0; _corridorAt[row] = 0;
-            _repath[row] = 0f; _queued[row] = false;
+            _repath[row] = 0f; _queued[row] = false; _pathFailed[row] = false;
             _heardSalience[row] = 0f; _huntSalience[row] = 0f;
             _hasLastSeen[row] = false; _lostSight[row] = 0f;
             _stateClock[row] = 0f; _lastAttack[row] = -1000f;
@@ -266,6 +269,7 @@ namespace SDG.Unturned
                 _lastSeen[row] = _lastSeen[last];
                 _hasLastSeen[row] = _hasLastSeen[last];
                 _lostSight[row] = _lostSight[last];
+                _pathFailed[row] = _pathFailed[last];
                 _stateClock[row] = _stateClock[last];
                 _lastAttack[row] = _lastAttack[last];
                 _swingPending[row] = _swingPending[last];
@@ -316,7 +320,7 @@ namespace SDG.Unturned
         {
             _pos[row] = p;
             _region[row] = _regions.RegionOf(p, _region[row]);
-            _corridorLen[row] = 0; _corridorAt[row] = 0; _repath[row] = RepathInterval;
+            _corridorLen[row] = 0; _corridorAt[row] = 0; _repath[row] = RepathInterval; _pathFailed[row] = false;
         }
 
         /// <summary>Player positions the tiering is measured against. The sim keeps the reference, so
@@ -595,7 +599,16 @@ namespace SDG.Unturned
         bool NeedsPath(int row)
         {
             if (_queued[row]) return false;
-            if (_corridorLen[row] == 0) return true;
+            // A row with no corridor used to re-ask EVERY tick. When a query genuinely cannot find a
+            // route -- a target off the navmesh, e.g. sitting in a car on a road outside the pockets --
+            // it fails again next tick, and again, pinning PathQueriesPerTick flat out forever on the
+            // most expensive kind of query there is: an exhaustive search that finds nothing. Standing
+            // still in a vehicle was enough to hold the whole budget down. Back off instead.
+            // SetPosition/pursue-entry set _repath to RepathInterval, so a FIRST path is still immediate.
+            // Distinguish "never had a path" from "the last query found no route". Backing off on the
+            // former delays a freshly spawned zombie's FIRST path and it visibly loses ground --
+            // Speed_Is_The_Kind_Record_Not_The_Tick_Rate catches exactly that. Only a real failure backs off.
+            if (_corridorLen[row] == 0) return !_pathFailed[row] || _repath[row] >= FailedPathRetrySeconds;
             if (_repath[row] >= RepathInterval) return true;
             // The target walked off: the corridor still leads somewhere, just not to them any more.
             int last = row * MaxWaypoints + _corridorLen[row] - 1;
@@ -627,6 +640,8 @@ namespace SDG.Unturned
                 TotalPathQueries++;
                 if (n > MaxWaypoints) n = MaxWaypoints;
                 for (int w = 0; w < n; w++) _corridor[row * MaxWaypoints + w] = _scratchCorridor[w];
+                if (n == 0) stats.PathFailures++;
+                _pathFailed[row] = n == 0;
                 _corridorLen[row] = (byte)n;
                 _corridorAt[row] = 0;
                 _repath[row] = 0f;
@@ -836,6 +851,7 @@ namespace SDG.Unturned
             Array.Resize(ref _lastSeen, capacity);
             Array.Resize(ref _hasLastSeen, capacity);
             Array.Resize(ref _lostSight, capacity);
+            Array.Resize(ref _pathFailed, capacity);
             Array.Resize(ref _stateClock, capacity);
             Array.Resize(ref _lastAttack, capacity);
             Array.Resize(ref _swingPending, capacity);
