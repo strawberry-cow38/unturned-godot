@@ -108,12 +108,24 @@ namespace UnturnedGodot
                 $"scene: {M(Performance.Monitor.ObjectNodeCount):0} nodes   {M(Performance.Monitor.ObjectCount):0} objects   {M(Performance.Monitor.ObjectResourceCount):0} res   {M(Performance.Monitor.ObjectOrphanNodeCount):0} orphans\n" +
                 $"mem: static {M(Performance.Monitor.MemoryStatic) / 1048576.0:0} MB   vram {M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0} MB\n" +
                 $"systems (ms/win, big = the spike): {SystemsBreakdown()}\n" +
+                $"counts/win: {CountsBreakdown()}\n" +
                 // Report the rigs' ACTUAL casting state when the rewrite is live, not this toggle's flag.
                 // The flag said "ON" while ZombieDirector.BuildRig had set them Off, and that readout was
                 // acted on as evidence.
                 $"3d scale {_scale3D:0.00} [F4]   zombie shadows {ShadowState()} [F5]   [F3 to hide]";
             Prof.Reset();
             _accum = 0; _frames = 0; _worstFrame = 0;
+        }
+
+        /// Tallies, printed as whole numbers. Never folded into the ms line: see Prof.Counts.
+        static string CountsBreakdown()
+        {
+            if (Prof.Counts.Count == 0) return "(none)";
+            var list = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, long>>(Prof.Counts);
+            list.Sort((a, b) => b.Value.CompareTo(a.Value));
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var kv in list) parts.Add($"{kv.Key} {kv.Value}");
+            return string.Join("   ", parts);
         }
 
         static string SystemsBreakdown()

@@ -162,11 +162,14 @@ namespace UnturnedGodot
             AddUs("s.tier", _sim.UsTier);         // the per-row region+tier classification loop
             AddUs("s.move", _sim.UsMove);         // intent/advance for the DUE rows only
             AddUs("s.paths", _sim.UsPaths);       // navigation queries -- the one engine call left in here
+            // COUNT of those queries, so cost-per-query is read off the overlay instead of inferred.
+            // s.paths alone cannot distinguish "each path is expensive" from "we ask for too many".
+            Prof.Count("paths", _sim.Stats.PathQueries);
             { ulong _t = Time.GetTicksUsec(); SyncViews(delta); Prof.Add("z.views", _t); }
             Prof.Add("z.total", _tz);
             // Raycast COUNT, not just time: a sight test is the one engine call in the sim path, and "how
             // many rays" distinguishes "each ray is slow" from "we are casting far too many".
-            Prof.Us["z.rays"] = GodotLineOfSight.Rays;
+            Prof.Count("rays", GodotLineOfSight.Rays);
             GodotLineOfSight.Rays = 0;
         }
 
