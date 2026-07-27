@@ -350,14 +350,19 @@ namespace UnturnedGodot
 
         public int QueryPath(UVector3 from, UVector3 to, UVector3[] corridor)
         {
-            if (!NavigationServer3D.MapIsActive(_map)) return 0;
+            // Query the POCKET's map when there is one: the scan that dominates a query is proportional
+            // to the polygons in the map being queried, and a pocket holds ~3k of PEI's 56,876.
+            // Falls back to the world map for the L1 sandboxes and the legacy path, which have no pockets.
+            var map = ZombieNav.MapFor(from);
+            if (!map.IsValid) map = _map;
+            if (!NavigationServer3D.MapIsActive(map)) return 0;
             // MapGetPath resolves its own endpoints to the nearest polygon, so the two MapGetClosestPoint
             // calls that used to bracket it were redundant -- and they were not cheap: each one scans the
             // whole map's polygon set, and PEI merges 19 pockets into one map. At PathQueriesPerTick=8,
             // with Godot running up to 8 physics substeps on an overrunning frame, that was ~128 full
             // polygon scans per frame purely to compute points MapGetPath then computed again.
             // Measured on strawberry's box before this change: s.paths 426.9 ms of a 428.9 ms sim tick.
-            var path = NavigationServer3D.MapGetPath(_map,
+            var path = NavigationServer3D.MapGetPath(map,
                 new Vector3(from.x, from.y, from.z), new Vector3(to.x, to.y, to.z), true);
             if (path == null || path.Length == 0) return 0;
 

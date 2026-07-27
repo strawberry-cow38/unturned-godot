@@ -64,9 +64,37 @@ namespace UnturnedGodot
         // World geometry is PARSED ONCE (whole subtree), then each pocket bakes from it with its own FilterBakingAabb.
         // Baked meshes are saved to res://content/navmesh/ so subsequent loads skip the (slow) Recast bake -- master's
         // "build it once when we load the map, save it to a file" (editor-time baking comes later).
+        /// One navigation map PER POCKET, with the pocket's bounds, for the rewrite to query.
+        ///
+        /// Why: Godot resolves a path's start and end points to polygons by scanning every polygon in
+        /// the map, twice per query. PEI's 19 pockets share the world's default map -- 56,876 polygons --
+        /// so pathing a zombie ten metres costs ~114k polygon checks, measured at ~3.5 ms per query and
+        /// 175 ms per profiler window. Coarsening the mesh is not available: CellSize is 0.2 m precisely
+        /// so ~1 m doorways keep their navmesh (the diner-doorway fix). Splitting the map is.
+        ///
+        /// Only under --newzombies: ZombieController drives NavigationAgent3D off the world's DEFAULT
+        /// map, as do --navpath and --zombietest, and moving the regions out from under them would leave
+        /// the old system silently walking on nothing.
+        public static readonly List<(Rid Map, Aabb Box)> PocketMaps = new();
+
+        /// The pocket map containing p, or an invalid Rid when there is none (L1 sandboxes, legacy path).
+        public static Rid MapFor(UnityEngine.Vector3 p)
+        {
+            for (int i = 0; i < PocketMaps.Count; i++)
+            {
+                var b = PocketMaps[i].Box;
+                if (p.x >= b.Position.X && p.x <= b.Position.X + b.Size.X &&
+                    p.z >= b.Position.Z && p.z <= b.Position.Z + b.Size.Z)
+                    return PocketMaps[i].Map;
+            }
+            return default;
+        }
+
         public static void BuildOrLoad(Node worldRoot, List<NavPocket> pockets, bool overlay = false, bool save = true, bool bakeIfMissing = true)
         {
             if (pockets.Count == 0) return;
+            PocketMaps.Clear();
+            bool split = ZombieDirector.Enabled;
             const string dir = "res://content/navmesh";
             string absDir = ProjectSettings.GlobalizePath(dir);
             try { System.IO.Directory.CreateDirectory(absDir); } catch { }
@@ -92,9 +120,20 @@ namespace UnturnedGodot
                 if (overlay) GD.Print($"[zombienav]  pocket {i}: {pp} polys @ ({pockets[i].Center.X:0},{pockets[i].Center.Z:0}) box {pockets[i].HalfExtent.X * 2f:0}x{pockets[i].HalfExtent.Z * 2f:0}m");
                 var region = new NavigationRegion3D { NavigationMesh = nm };
                 worldRoot.AddChild(region);
+                if (split)
+                {
+                    var map = NavigationServer3D.MapCreate();
+                    NavigationServer3D.MapSetCellSize(map, CellSize);   // must match the mesh or edges will not weld
+                    NavigationServer3D.MapSetUp(map, Vector3.Up);
+                    NavigationServer3D.MapSetActive(map, true);
+                    region.SetNavigationMap(map);
+                    PocketMaps.Add((map, pockets[i].Box));
+                }
                 if (overlay) { var ov = NavDebug.NavmeshOverlay(nm, new Color(0.1f, 0.9f, 1f, 0.55f)); if (ov != null) worldRoot.AddChild(ov); }   // translucent floor overlay for the verify screenshot
             }
-            GD.Print($"[zombienav] pockets ready: {baked} baked + {loaded} loaded, {polys} total nav polygons (agent r={AgentRadius}m buffer)");
+            GD.Print($"[zombienav] pockets ready: {baked} baked + {loaded} loaded, {polys} total nav polygons (agent r={AgentRadius}m buffer)"
+                     + (split ? $" -- SPLIT across {PocketMaps.Count} per-pocket maps, ~{(PocketMaps.Count > 0 ? polys / PocketMaps.Count : 0)} polys scanned per query instead of {polys}"
+                              : " -- one shared map (legacy path)"));
         }
 
         static NavigationMesh MakeMesh(Aabb box) => new NavigationMesh
