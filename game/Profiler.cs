@@ -61,7 +61,20 @@ namespace UnturnedGodot
             {
                 _zShadows = !_zShadows;
                 foreach (var z in GetTree().GetNodesInGroup("zombies")) SetShadows(z, _zShadows);
+                // ...and the REWRITE's rigs, which are not in that group and so were never toggled. F5
+                // silently did nothing under --newzombies while the overlay claimed a state: pressing it
+                // produced no change, which reads as "shadows are not the cost" rather than "the control
+                // is not wired". A debug toggle that no-ops is a false negative generator.
+                ZombieDirector.Instance?.SetRigShadows(_zShadows);
             }
+        }
+
+        /// What the zombies are ACTUALLY doing, preferring the live director over this class's own flag.
+        string ShadowState()
+        {
+            var zd = ZombieDirector.Instance;
+            if (zd != null) return zd.RigShadowsOn ? "ON" : "OFF";
+            return _zShadows ? "ON" : "OFF";
         }
 
         static void SetShadows(Node root, bool on)
@@ -95,7 +108,10 @@ namespace UnturnedGodot
                 $"scene: {M(Performance.Monitor.ObjectNodeCount):0} nodes   {M(Performance.Monitor.ObjectCount):0} objects   {M(Performance.Monitor.ObjectResourceCount):0} res   {M(Performance.Monitor.ObjectOrphanNodeCount):0} orphans\n" +
                 $"mem: static {M(Performance.Monitor.MemoryStatic) / 1048576.0:0} MB   vram {M(Performance.Monitor.RenderVideoMemUsed) / 1048576.0:0} MB\n" +
                 $"systems (ms/win, big = the spike): {SystemsBreakdown()}\n" +
-                $"3d scale {_scale3D:0.00} [F4]   zombie shadows {(_zShadows ? "ON" : "OFF")} [F5]   [F3 to hide]";
+                // Report the rigs' ACTUAL casting state when the rewrite is live, not this toggle's flag.
+                // The flag said "ON" while ZombieDirector.BuildRig had set them Off, and that readout was
+                // acted on as evidence.
+                $"3d scale {_scale3D:0.00} [F4]   zombie shadows {ShadowState()} [F5]   [F3 to hide]";
             Prof.Reset();
             _accum = 0; _frames = 0; _worstFrame = 0;
         }

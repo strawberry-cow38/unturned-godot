@@ -3842,6 +3842,7 @@ namespace UnturnedGodot
         // baked pockets, that rows tier correctly against a real player position, that Godot's navigation
         // server answers the corridor queries, and that zombies MOVE. Reports positions, not intentions.
         UnityEngine.Vector3[] _zdStart;
+        ulong _zdPhys0;   // physics-frame baseline, so the per-tick costs below divide by the sampled window
 
         // Stand the measurement point in the POCKET WITH THE MOST ZOMBIES, deliberately, and before the
         // clock starts. PEI's player spawn is out in the wilderness, where the correct behaviour is that
@@ -3882,6 +3883,7 @@ namespace UnturnedGodot
             {
                 _zdStart = new UnityEngine.Vector3[sim.Count];
                 for (int i = 0; i < sim.Count; i++) _zdStart[i] = sim.PositionOf(i);
+                _zdPhys0 = Engine.GetPhysicsFrames(); Prof.Reset();   // measure only the sampled window
                 GD.Print($"[zdirtest] {sim.Count} rows, {sim.Regions.Count} regions from the pockets, 0 CharacterBody3D");
                 GD.Print($"[zdirtest] {zd.DebugLine()}");
                 return;
@@ -3900,6 +3902,20 @@ namespace UnturnedGodot
             var s = sim.Stats;
             GD.Print($"[zdirtest] {zd.DebugLine()}");
             GD.Print($"[zdirtest] over the sampled window: {moved}/{n} rows moved, furthest {furthest:0.##} m, mean {(n > 0 ? total / n : 0):0.###} m");
+            // Per-tick cost of the REWRITE. --zperf cannot answer this: it builds ZombieController, the OLD
+            // path, so the rewrite has never had perf coverage -- which is how it reached strawberry at 2 fps
+            // with the F3 systems line naming none of it. z.rays is a count, not a time.
+            {
+                ulong pticks = Engine.GetPhysicsFrames() - _zdPhys0;
+                var parts = new System.Collections.Generic.List<string>();
+                foreach (var kv in Prof.Us)
+                    parts.Add(kv.Key == "z.rays"
+                        ? $"{kv.Key}={kv.Value / (double)System.Math.Max(1, (long)pticks):0.0}/tick"
+                        : $"{kv.Key}={kv.Value / (double)System.Math.Max(1, (long)pticks) / 1000.0:0.000}ms");
+                parts.Sort();
+                GD.Print($"[zdirtest] per-tick over {pticks} physics frames: "
+                         + (parts.Count > 0 ? string.Join("  ", parts) : "(NOTHING INSTRUMENTED)"));
+            }
             GD.Print($"[zdirtest] {(moved > 0 && s.PathQueries >= 0 && s.Alive > 0 ? "PASS -- zombies exist, tier, path and walk with no physics bodies" : "FAIL -- nothing moved")}");
             GetTree().Quit();
         }

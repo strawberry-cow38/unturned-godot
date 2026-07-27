@@ -21,6 +21,27 @@ namespace UnturnedGodot
         /// choice of system is one branch in one place rather than a parameter threaded through everything.</summary>
         public static bool Enabled;
 
+        /// The live director, so the F3/F5 overlay can drive and REPORT the rewrite's rigs.
+        /// It deliberately does not reuse the "zombies" node group: that group means "a
+        /// ZombieController" to HordeSpawner, Vehicle roadkill, Deployable traps and PlayerController,
+        /// and Vehicle's proximity test matches any Node3D in it -- so adding borrowed rigs there would
+        /// quietly change what half the game counts as a zombie, to fix a debug toggle.
+        public static ZombieDirector Instance;
+
+        /// Real shadow state of the borrowed rigs. The overlay used to print a flag it had only ever
+        /// assumed, which told strawberry "zombie shadows ON" while BuildRig had set them Off -- a
+        /// readout that is wrong is worse than one that is missing, because it gets acted on.
+        public bool RigShadowsOn { get; private set; }
+
+        public void SetRigShadows(bool on)
+        {
+            RigShadowsOn = on;
+            var want = on ? GeometryInstance3D.ShadowCastingSetting.On
+                          : GeometryInstance3D.ShadowCastingSetting.Off;
+            foreach (var v in _views)
+                if (v.Rig?.Body != null) v.Rig.Body.CastShadow = want;
+        }
+
         public PlayerController Player;
         public Terrain Terr;
 
@@ -54,7 +75,10 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             _rng.Randomize();
+            Instance = this;
         }
+
+        public override void _ExitTree() { if (Instance == this) Instance = null; }
 
         /// <summary>Build the sim from PEI's navmesh pockets and spawn points. Regions come from the
         /// pocket bounds, which IS the plan's "regions come from the navmesh bounds" -- and is what
@@ -119,12 +143,24 @@ namespace UnturnedGodot
                 _sim.Sight = new GodotLineOfSight(GetWorld3D());
             }
 
-            int n = GatherPlayers();
+            // INSTRUMENTED, because the rewrite dropped what the old controller had. strawberry's F3 showed
+            // physics 59.1 ms with the systems line reading "lookat 0.0  salvage 0.0" -- i.e. the profiler
+            // could not name a single millisecond of it, since nothing here called Prof.Add. That is the
+            // same blindness ZombieController was fixed for; replacing the implementation quietly threw the
+            // measurement away with it. z.total is the whole tick, the rest are its legs.
+            ulong _tz = Time.GetTicksUsec();
+            int n;
+            { ulong _t = Time.GetTicksUsec(); n = GatherPlayers(); Prof.Add("z.gather", _t); }
             _lastPlayerCount = n;
             if (n > 0) _lastPlayerPos = G(_players[0]);
             _sim.SetPlayers(_players, n);
-            _sim.SimStep(_tick++, delta);
-            SyncViews(delta);
+            { ulong _t = Time.GetTicksUsec(); _sim.SimStep(_tick++, delta); Prof.Add("z.sim", _t); }
+            { ulong _t = Time.GetTicksUsec(); SyncViews(delta); Prof.Add("z.views", _t); }
+            Prof.Add("z.total", _tz);
+            // Raycast COUNT, not just time: a sight test is the one engine call in the sim path, and "how
+            // many rays" distinguishes "each ray is slow" from "we are casting far too many".
+            Prof.Us["z.rays"] = GodotLineOfSight.Rays;
+            GodotLineOfSight.Rays = 0;
         }
 
         long _tick;
@@ -237,7 +273,9 @@ namespace UnturnedGodot
             rig.RunClip = rig.WalkClip;
             rig.IdleClip = "Idle_" + _rng.RandiRange(0, 3);
             rig.Play(rig.IdleClip);
-            if (rig.Body != null) rig.Body.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+            if (rig.Body != null)   // inherit the CURRENT toggle, else a rig borrowed after F5 disagrees with the rest
+                rig.Body.CastShadow = RigShadowsOn ? GeometryInstance3D.ShadowCastingSetting.On
+                                                   : GeometryInstance3D.ShadowCastingSetting.Off;
             return rig;
         }
 
@@ -266,10 +304,15 @@ namespace UnturnedGodot
         readonly World3D _world;
         public GodotLineOfSight(World3D world) { _world = world; }
 
+        /// Rays cast since the profiler last read it. The sight test is the only engine call left in the
+        /// sim path, so the count separates "each ray is slow" from "we cast far too many of them".
+        public static long Rays;
+
         public bool CanSee(UVector3 from, UVector3 to)
         {
             var space = _world?.DirectSpaceState;
             if (space == null) return true;   // no physics world (headless sandbox) -> do not blind them
+            Rays++;
             var a = new Vector3(from.x, from.y, from.z);
             var b = new Vector3(to.x, to.y, to.z);
             var q = PhysicsRayQueryParameters3D.Create(a, a + (b - a) * 0.95f);
