@@ -129,16 +129,62 @@ namespace UnturnedGodot
             _appliedVersion = Client.InteractableState.Version;
             if (!_stamped) { StampNetIds(); _stamped = true; }
 
+            _seenDoors.Clear();
             foreach (var kv in Client.InteractableState.ReplicaDoors)
             {
+                _seenDoors.Add(kv.Key);
+                _knownDoors.Add(kv.Key);
                 if (!Door.TryGetByNetId(kv.Key, out var d)) continue;
                 d.ApplyReplicatedLocked(kv.Value.Locked);
                 d.ApplyReplicatedToggle(kv.Value.Open);
             }
+            _seenBeds.Clear();
             foreach (var kv in Client.InteractableState.ReplicaBeds)
-                if (Bed.TryGetByNetId(kv.Key, out var b))
-                    b.ApplyReplicatedClaim(kv.Value);
+            {
+                _seenBeds.Add(kv.Key);
+                _knownBeds.Add(kv.Key);
+                if (Bed.TryGetByNetId(kv.Key, out var b)) b.ApplyReplicatedClaim(kv.Value);
+            }
+            RetireMissing();
         }
+
+        // Every other replica view retires nodes that left the replica (DeployableReplicaView.RetireMissing,
+        // and the crop / world-item / storage views all QueueFree the same way). This one did not, and the
+        // consequence was specific: a raider breaks a door, the server drops it from the table, and every
+        // OTHER client goes on rendering it -- solid, blocking bullets and bodies, at a doorway its owner
+        // already lost. The table was right and the world was wrong, which is exactly what the L0 test that
+        // asserted on the table could not see.
+        void RetireMissing()
+        {
+            _doomed.Clear();
+            foreach (var id in _knownDoors)
+                if (!_seenDoors.Contains(id)) _doomed.Add(id);
+            foreach (var id in _doomed)
+            {
+                _knownDoors.Remove(id);
+                if (Door.TryGetByNetId(id, out var d) && GodotObject.IsInstanceValid(d)) d.QueueFree();
+            }
+
+            _doomed.Clear();
+            foreach (var id in _knownBeds)
+                if (!_seenBeds.Contains(id)) _doomed.Add(id);
+            foreach (var id in _doomed)
+            {
+                _knownBeds.Remove(id);
+                if (Bed.TryGetByNetId(id, out var b) && GodotObject.IsInstanceValid(b)) b.QueueFree();
+            }
+        }
+
+        readonly System.Collections.Generic.HashSet<uint> _seenDoors = new System.Collections.Generic.HashSet<uint>();
+        readonly System.Collections.Generic.HashSet<uint> _seenBeds = new System.Collections.Generic.HashSet<uint>();
+        // Ids this client has seen the server publish AT LEAST ONCE. Retirement is driven off these rather
+        // than off what was stamped, because a stamped-but-never-published id is one the server has not got
+        // to yet -- destroying those would delete perfectly good doors over a registration race, which is a
+        // far worse failure than the phantom door this sweep exists to prevent. Something has to have
+        // existed in the replica before its absence can mean anything.
+        readonly System.Collections.Generic.HashSet<uint> _knownDoors = new System.Collections.Generic.HashSet<uint>();
+        readonly System.Collections.Generic.HashSet<uint> _knownBeds = new System.Collections.Generic.HashSet<uint>();
+        readonly System.Collections.Generic.List<uint> _doomed = new System.Collections.Generic.List<uint>();
 
         void StampNetIds()
         {

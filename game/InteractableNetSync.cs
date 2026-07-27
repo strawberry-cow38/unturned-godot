@@ -41,6 +41,30 @@ namespace UnturnedGodot
 
         public int DoorCount => _doors.Count;
 
+        /// <summary>Server-side barricade damage along a bullet/melee segment (ServerCombat's
+        /// DamageBarricadeAlong seam). Returns true if it hit a door or bed.
+        ///
+        /// This is the ONLY thing that can break a door in multiplayer. A joined client's melee early-returns
+        /// into NetMelee and its bullets are flagged Cosmetic, so neither touches a node locally -- and
+        /// ServerCombat knew nothing about barricades, so nothing broke them on the server either. The result
+        /// was a door that could not be destroyed by anyone in MP.
+        ///
+        /// Destruction then replicates the way the rest of this system does: QueueFree drops the node, Tick
+        /// notices and calls RemoveDoor, and the state block's next resend no longer lists it -- which is
+        /// what the client's retire sweep acts on.</summary>
+        public bool DamageAlong(UVector3 from, UVector3 to, float amount, PhysicsDirectSpaceState3D space)
+        {
+            if (space == null) return false;
+            var q = PhysicsRayQueryParameters3D.Create(
+                new Vector3(from.x, from.y, from.z), new Vector3(to.x, to.y, to.z), 1u << 0);
+            var hit = space.IntersectRay(q);
+            if (hit.Count == 0) return false;
+            var collider = hit["collider"].As<GodotObject>();
+            if (collider is Door d && GodotObject.IsInstanceValid(d)) { d.TakeDamage(amount); return true; }
+            if (collider is Bed b && GodotObject.IsInstanceValid(b)) { b.TakeDamage(amount); return true; }
+            return false;
+        }
+
         void RegisterWorld(Node root)
         {
             uint doorId = FirstId, bedId = FirstId;

@@ -139,6 +139,147 @@ namespace UnturnedGodot.Testing
     }
 
     /// <summary>
+    /// A door broken on the server STOPS EXISTING on a client. Both halves, because either alone is useless.
+    ///
+    /// Found in review (cow tools) and worse than reported: the server had no barricade damage path at all,
+    /// so nothing could break a door in MP -- a client's melee early-returns into NetMelee and its bullets
+    /// are flagged Cosmetic by design. On top of that the client view had no retire sweep (every other
+    /// replica view has one), so even once the server COULD break a door, every other client went on
+    /// rendering it solid at a doorway its owner had already lost.
+    ///
+    /// This asserts on the NODE, not the table. The L0 test asserted the door left the replica table and
+    /// passed the whole time the world still had a door standing in it.
+    /// </summary>
+    public class NetBrokenDoorDisappearsForEveryone : GameTest
+    {
+        public override string Name => "net.door_break_replicates";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var doorAt = new Vector3(0f, 0f, 0f);
+            var serverDoor = Door.Spawn(World, doorAt, 0f, owner: 1UL);
+
+            var net = new MemNetwork(7074);
+            var a = new NetWorldClient(new MemClientTransport(net), "raider", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); a.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), WorldRoot = World };
+            World.AddChild(ded);
+            a.Connect();
+
+            yield return Until(() => a.State == NetSessionState.Connected, 5);
+            T.Check("client joined", a.State == NetSessionState.Connected);
+            uint doorNetId = serverDoor.NetId;
+            T.Check("the door is registered", doorNetId != 0 && ded.Server.Interactables.TryGetDoor(doorNetId, out _));
+
+            // The client's replica table has to know the door BEFORE it breaks, or "it left the table" proves
+            // nothing -- an id that was never there cannot go missing.
+            yield return Until(() => a.InteractableState.TryGetDoor(doorNetId, out _), 6);
+            T.Check("the client's replica table has the door", a.InteractableState.TryGetDoor(doorNetId, out _));
+
+            // Break it the way the server actually breaks one: a barricade-damage ray, the seam ServerCombat
+            // drives from a real bullet/melee hit. Not Door.TakeDamage directly -- that is the shortcut that
+            // let the previous version of this look fine.
+            T.Check("the server has a barricade damage path at all", ded.Server.Combat.DamageBarricadeAlong != null);
+            var from = new UVector3(0f, 1f, 4f);
+            var to = new UVector3(0f, 1f, -4f);
+            bool everHit = false;
+            for (int i = 0; i < 40 && GodotObject.IsInstanceValid(serverDoor); i++)
+                everHit |= ded.Server.Combat.DamageBarricadeAlong(from, to, 100f, ded.Server.Session.CurrentTick);
+            T.Check("the damage ray found the door", everHit);
+
+            yield return Ticks(5);
+            T.Check("the server's door node is gone", !GodotObject.IsInstanceValid(serverDoor));
+
+            yield return Until(() => !ded.Server.Interactables.TryGetDoor(doorNetId, out _), 5);
+            T.Check("the server dropped it from the authoritative table",
+                    !ded.Server.Interactables.TryGetDoor(doorNetId, out _));
+
+            yield return Until(() => !a.InteractableState.TryGetDoor(doorNetId, out _), 6);
+            T.Check("the client's replica table dropped it", !a.InteractableState.TryGetDoor(doorNetId, out _));
+
+            // NOT asserted here: that a client NODE disappears. In this one process the server's door is the
+            // only door node there is, so it would vanish whether or not the client view retires anything --
+            // which is precisely the kind of assertion that proves nothing. The retire sweep gets its own
+            // test below, against a node the server does not own.
+            world.Sim.Sim.Remove(pump);
+            a.Disconnect();
+        }
+    }
+
+    /// <summary>
+    /// The client half: a door that LEAVES the replica table is retired from the world.
+    ///
+    /// Driven against a node the server does not own, so the node can only disappear because the view
+    /// retired it. Every other replica view has this sweep (DeployableReplicaView.RetireMissing and the
+    /// crop / world-item / storage views); InteractableStateView shipped without one, which meant a broken
+    /// door stayed standing and solid on every client except the one that broke it.
+    /// </summary>
+    public class NetRetiredDoorLeavesTheWorld : GameTest
+    {
+        public override string Name => "net.door_retire_sweep";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var net = new MemNetwork(7075);
+            var a = new NetWorldClient(new MemClientTransport(net), "watcher", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); a.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            // No InteractableNetSync: the server's table is registered BY HAND, so the door node below is
+            // purely the client's copy and nothing server-side can free it.
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net),
+                                            WorldRoot = new Node3D() };
+            World.AddChild(ded);
+            a.Connect();
+            yield return Until(() => a.State == NetSessionState.Connected, 5);
+            T.Check("client joined", a.State == NetSessionState.Connected);
+
+            // The client's node lives in its OWN container, which the view scans -- so it is stamped the
+            // first id (exactly as a real client's first world-build door would be) and the server's
+            // matching registration below is the same door as far as the wire is concerned.
+            const uint DoorId = InteractableNetSync.FirstId;
+            ded.Server.Interactables.RegisterDoor(DoorId, new UVector3(0f, 0f, 0f), owner: 1UL);
+
+            var clientSide = new Node3D();
+            World.AddChild(clientSide);
+            var clientDoor = Door.Spawn(clientSide, new Vector3(0f, 0f, 0f), 0f, owner: 1UL);
+            var view = new InteractableStateView { Client = a, WorldRoot = clientSide };
+            World.AddChild(view);
+
+            yield return Until(() => a.InteractableState.TryGetDoor(DoorId, out _), 6);
+            T.Check("the client sees the door in its replica table", a.InteractableState.TryGetDoor(DoorId, out _));
+            T.Check("and the node is alive", GodotObject.IsInstanceValid(clientDoor));
+
+            // The server retires it (what a break does, minus the node the server does not have here).
+            ded.Server.Interactables.RemoveDoor(DoorId);
+
+            yield return Until(() => !a.InteractableState.TryGetDoor(DoorId, out _), 6);
+            T.Check("the replica table dropped it", !a.InteractableState.TryGetDoor(DoorId, out _));
+
+            yield return Until(() => !GodotObject.IsInstanceValid(clientDoor), 6);
+            T.Check("and the client's DOOR NODE is gone -- no phantom door left standing",
+                    !GodotObject.IsInstanceValid(clientDoor));
+
+            world.Sim.Sim.Remove(pump);
+            a.Disconnect();
+        }
+    }
+
+    /// <summary>
     /// A client claims a bed by intent, dies far away, and comes back at the bed. This is the whole reason
     /// beds exist -- without the respawn they are furniture you can highlight.
     /// </summary>

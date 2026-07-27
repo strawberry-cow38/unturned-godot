@@ -191,6 +191,10 @@ namespace UnturnedGodot
             // across. The Tick mirrors authoritative door state back onto the server's OWN nodes, so its
             // physics agrees with what every client is being shown.
             InteractableSync = new InteractableNetSync(Server, WorldRoot ?? GetParent() ?? (Node)this, Deadzones);
+            // Barricade damage: the ONLY path by which a door or bed breaks in MP (a joined client's melee
+            // early-returns and its bullets are cosmetic, so nothing damages one client-side by design).
+            Server.Combat.DamageBarricadeAlong = (from, to, amount, tick) =>
+                InteractableSync.DamageAlong(from, to, amount, GetViewport()?.World3D?.DirectSpaceState);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => InteractableSync.Tick(), "net.interactables.sync"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
         }

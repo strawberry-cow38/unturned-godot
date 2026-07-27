@@ -31,6 +31,10 @@ namespace UnturnedGodot.Net
         public float PlayerDamage = 40f;        // Eaglefire Player_Damage
         public float ZombieDamage = 99f;        // Eaglefire Zombie_Damage (flat vs zombies, like the SP StepBullets path)
         public float ObjectDamage = 25f;        // Eaglefire Object_Damage -- vs destructible props (rubble)
+        // .dat Vehicle_Damage. Barricades (doors/beds) take THIS, not Object_Damage, because that is what the
+        // singleplayer bullet path uses on them -- a door that takes 25 per shot in MP and 35 in SP is the
+        // same door with two different break times. Default 35 = Eaglefire, matching GunDef's parse.
+        public float VehicleDamage = 35f;
         public float HeadMult = 3.0f;           // the NetServer.Hitscan zone table (head/torso/leg)
         public float TorsoMult = 1.0f;
         public float LegMult = 0.6f;
@@ -49,6 +53,7 @@ namespace UnturnedGodot.Net
         public float PlayerDamage = 40f;
         public float ZombieDamage = 50f;        // Military Knife Zombie_Damage
         public float ObjectDamage = 40f;        // vs destructible props (rubble) -- an axe/knife breaks small props in a few swings
+        public float VehicleDamage = 10f;       // barricades take this, matching the SP melee path's `_melee?.VehicleDamage ?? 10f`
         public float Range = 1.75f;
         public float StrongMult = 1.5f;         // .dat Strength on a strong swing
         public int CooldownTicks = 23;          // ~0.45 s weak-swing cadence
@@ -113,6 +118,14 @@ namespace UnturnedGodot.Net
         // destructible props (rubble): (index, amount, tick) -> destroyed? Set by the host to ServerDestructibles.DamageObject.
         // Null on the L0 default (no world = nothing destructible to hit).
         public Func<int, float, long, bool> DamageObject;
+
+        /// <summary>SP/MP unify (doors + beds): (from, to, amount, tick) -> did it hit one? Barricades are
+        /// NOT in the destructible index space -- they are NetId-keyed nodes -- so they need their own hit
+        /// resolution rather than riding DamageObject. Without this the server had no door-damage path at
+        /// all: a client's melee early-returns into NetMelee and its bullets are cosmetic, so a door in MP
+        /// was simply indestructible, and the raiding loop did not exist. Null leaves that old behaviour
+        /// (harnesses with no world nodes), which is why the L1 test asserts on a real broken door.</summary>
+        public Func<Vector3, Vector3, float, long, bool> DamageBarricadeAlong;
         public Func<float, float, float> GroundHeight;        // (x,z) -> ground y for grenade bounces; null = y 0
 
         /// <summary>P3a (SP/MP-unify) respawn-reposition seam: a client-authoritative owner's entity is
@@ -404,6 +417,9 @@ namespace UnturnedGodot.Net
                             // a destructible prop's collider: whittle its health; the break fx rides the
                             // replicated ObjectDestroyed event (not this local impact), so no double-fx.
                             if (hitDestructible >= 0) DamageObject?.Invoke(hitDestructible, b.Gun.ObjectDamage, tick);
+                            // ...or a barricade (door/bed), which is not in that index space. Same segment,
+                            // so a shot that stopped at a door is the shot that damages it.
+                            else DamageBarricadeAlong?.Invoke(b.Pos, next, b.Gun.VehicleDamage, tick);
                             BroadcastImpact(point, ImpactSurface.World);
                             Diag.BulletHitsWorld++;
                             break;
@@ -482,13 +498,16 @@ namespace UnturnedGodot.Net
                     ApplyPlayerDamage(bestPlayer, dmg, pm.Attacker, tick, out bool killed);
                     SendHitConfirm(pm.Attacker, pm.Seq, HitTargetKind.Player, bestPlayer, dmg, killed, false);
                 }
-                else if (WorldRay != null && DamageObject != null)
+                else if (WorldRay != null)
                 {
                     // no fighter in the cone -> a short forward ray can still land on a destructible prop's
                     // collider (fence/sign/billboard). The break fx rides the replicated ObjectDestroyed event.
                     var to = origin + fwd * reach;
-                    if (WorldRay(origin, to, out _, out int mDest) && mDest >= 0)
-                        DamageObject(mDest, DefaultMelee.ObjectDamage * mult, tick);
+                    bool hitWorld = WorldRay(origin, to, out _, out int mDest);
+                    if (hitWorld && mDest >= 0) DamageObject?.Invoke(mDest, DefaultMelee.ObjectDamage * mult, tick);
+                    // ...or a barricade in the same swing. Checked even when the ray found no destructible,
+                    // because a door IS the world geometry the ray stopped on.
+                    else if (hitWorld) DamageBarricadeAlong?.Invoke(origin, to, DefaultMelee.VehicleDamage * mult, tick);
                 }
             }
         }
