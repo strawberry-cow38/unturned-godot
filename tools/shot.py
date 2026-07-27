@@ -30,6 +30,7 @@ Failures are loud and say which of those happened. Adding a scene is one line in
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -63,6 +64,43 @@ SCENES = {
                  "ONE prop at identity + RGB axes (set PROP=Name)"),
 }
 MULTI = {"menu": "menu_00.png", "vehicle": "rig_00.png"}   # scenes whose capture lands under {TMP}
+
+
+def reap(proc):
+    """Kill the whole process GROUP, not just the child we can see.
+
+    subprocess.run(timeout=...) kills only the direct child -- which here is `xvfb-run`, while the
+    Godot it launched is a GRANDchild and quietly survives. A capture that never reaches its exit
+    path does not idle, it spins: one such orphan ran 2h39m at 101% CPU and a leaked --dedicated
+    server another 1h07m, together eating ~1.6 of this box's 4 cores. Nothing errors, so from the
+    outside it just looks like "the headless renders got slow and flaky again" -- and the next
+    person to run one blames the render code. Hence start_new_session + killpg.
+    """
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            return
+        try:
+            proc.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def strays():
+    """Long-lived Godot processes already running -- they will steal cores from this render."""
+    try:
+        ps = subprocess.run(["ps", "-o", "pid=,etimes=,pcpu=,args=", "-C",
+                             os.path.basename(GODOT)], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return []
+    out = []
+    for line in ps.stdout.splitlines():
+        f = line.split(None, 3)
+        if len(f) == 4 and f[1].isdigit() and int(f[1]) > 1800:   # older than any scene's budget
+            out.append((f[0], int(f[1]), f[2]))
+    return out
 
 
 def check(path):
@@ -99,15 +137,27 @@ def take(scene, out, verbose):
     env = dict(os.environ, VK_ICD_FILENAMES=VK_ICD, UG_UNTURNED_DIR=UNTURNED,
                UG_SHOT_TIMEOUT=str(budget), **scene_env)
     log = os.path.join(tmp, f".{scene}.log")
+    for pid, secs, cpu in strays():
+        print(f"  WARNING Godot pid {pid} has run {secs // 60}m at {cpu}% cpu and is competing "
+              f"for cores with this render.", file=sys.stderr)
+        print(f"          If it is a leftover it is safe to kill; CHECK FIRST -- this box is "
+              f"shared, and a long test run looks the same from here.", file=sys.stderr)
     t0 = time.time()
-    try:
-        with open(log, "w") as lf:
-            rc = subprocess.run(cmd, env=env, stdout=lf, stderr=subprocess.STDOUT,
-                                timeout=budget + 60, check=False).returncode
-    except subprocess.TimeoutExpired:
-        print(f"  FAILED  {scene}: hung past {budget + 60}s (the in-game watchdog should have "
-              f"fired at {budget}s -- see {log})", file=sys.stderr)
-        return 2
+    # start_new_session puts the child in its own process group so reap() can take the whole tree
+    # down; without it a timeout leaves Godot orphaned and spinning. See reap().
+    with open(log, "w") as lf:
+        proc = subprocess.Popen(cmd, env=env, stdout=lf, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        try:
+            rc = proc.wait(timeout=budget + 60)
+        except subprocess.TimeoutExpired:
+            reap(proc)
+            print(f"  FAILED  {scene}: hung past {budget + 60}s (the in-game watchdog should have "
+                  f"fired at {budget}s -- see {log}); killed its process group", file=sys.stderr)
+            return 2
+        except KeyboardInterrupt:
+            reap(proc)                       # Ctrl-C must not leave a spinning capture behind
+            raise
     dt = time.time() - t0
 
     cap = os.path.join(tmp, MULTI[scene]) if scene in MULTI else out
