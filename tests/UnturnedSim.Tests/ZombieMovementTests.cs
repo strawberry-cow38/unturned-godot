@@ -219,6 +219,101 @@ namespace UnturnedSim.Tests
             Assert.That(nav.Queries.Count, Is.GreaterThan(0), "it should still be asking");
         }
 
+        // --- Stage 1: the "they make dumb decisions" fixes ------------------------------------------
+
+        [Test]
+        public void A_Chasing_Zombie_Is_Pathed_Before_A_Distant_One_When_The_Budget_Is_Full()
+        {
+            // The queue was FIFO, so a distant zombie's repath was served ahead of a Close one actively
+            // chasing the player. Under load that spends a scarce budget on zombies the player cannot
+            // see and leaves the ones on screen standing still.
+            //
+            // NOTE both rows must be in a tier that actually PATHS. An earlier version of this test used
+            // an Ambient row as the loser -- Ambient rows return before enqueuing (ZombieSim.cs:432), so
+            // nothing competed and the test passed against a deliberately FIFO mutation. It was
+            // decoration. Far (beyond NearRange 96, still in a hot region) does path.
+            var nav = new RecordingNav();
+            var sim = NewSim(nav, out _);
+            SeeEverything(sim);
+            sim.PathQueriesPerTick = 1;                        // one slot: somebody must lose
+
+            var far = sim.Spawn(0, new Vector3(150f, 0f, 0f));  // Far: queued FIRST, wins a pure FIFO
+            var near = sim.Spawn(0, new Vector3(10f, 0f, 0f));  // Close/Near + Pursue: priority 0
+
+            Run(sim, 2);
+
+            sim.TryGetRow(far, out int farRow);
+            sim.TryGetRow(near, out int nearRow);
+            Assert.That(sim.TierOf(farRow), Is.EqualTo(ZombieTier.Far), "test setup: the loser must be a tier that paths");
+            Assert.That(nav.Queries.Count, Is.GreaterThan(0), "test setup: something should have been asked");
+            Assert.That(Math.Abs(nav.Queries[0].From.x - sim.PositionOf(nearRow).x),
+                        Is.LessThan(Math.Abs(nav.Queries[0].From.x - sim.PositionOf(farRow).x)),
+                "the FIRST query served must be the near chaser, not the distant zombie that queued earlier");
+        }
+
+        [Test]
+        public void A_Despawn_Does_Not_Cost_Everyone_Else_Their_Place_In_The_Path_Queue()
+        {
+            // Removing a zombie used to DropQueue() the entire pending set, so under corpse churn the
+            // waiting zombies repeatedly lost their slot and stood there.
+            var nav = new RecordingNav();
+            var sim = NewSim(nav, out _);
+            SeeEverything(sim);
+            sim.PathQueriesPerTick = 1;                       // keep a backlog so the queue matters
+
+            var ids = new List<ZombieId>();
+            for (int i = 0; i < 6; i++) ids.Add(sim.Spawn(0, new Vector3(20f + i, 0f, 0f)));
+            Run(sim, 1);                                      // everyone enqueues
+            int before = nav.Queries.Count;
+
+            sim.Despawn(ids[3]);                              // churn one out from the middle
+            Run(sim, 4);
+
+            Assert.That(nav.Queries.Count, Is.GreaterThan(before),
+                "the survivors' queued requests must still be served after a despawn, not dropped");
+        }
+
+        [Test]
+        public void A_Zombie_Follows_The_Corridor_Height_Instead_Of_Sinking_To_The_Terrain()
+        {
+            // Corridor waypoints carry the navmesh Y. Advance used to overwrite it with a terrain sample,
+            // so a zombie on an upper floor or a bridge was yanked to ground level -- "it sank through
+            // the floor". SnapToSurface here reports y=0 for everything, standing in for flat terrain
+            // under a raised walkway.
+            var nav = new RecordingNav { Corridor = new[] { new Vector3(0f, 6f, 0f) } };   // walkway at y=6
+            var sim = NewSim(nav, out _);
+            SeeEverything(sim);
+            var id = sim.Spawn(0, new Vector3(20f, 6f, 0f));
+
+            Run(sim, 50);
+
+            sim.TryGetRow(id, out int row);
+            Assert.That(sim.PositionOf(row).y, Is.GreaterThan(1f),
+                "height must come from the corridor; a terrain snap drags it to y=0 through the floor");
+        }
+
+        [Test]
+        public void A_Zombie_Waiting_On_A_Backed_Up_Queue_Creeps_Instead_Of_Freezing()
+        {
+            // Standing perfectly still in plain sight while the queue drains is the most obvious "the AI
+            // is broken" tell. A row whose path is PENDING creeps at the target; the companion test
+            // A_Zombie_With_No_Route_Stands_Still... covers the opposite case, where no route exists and
+            // standing is correct.
+            var nav = new RecordingNav();
+            var sim = NewSim(nav, out _);
+            SeeEverything(sim);
+            sim.PathQueriesPerTick = 0;                       // nothing is ever answered: pure pending
+            var id = sim.Spawn(0, new Vector3(30f, 0f, 0f));
+
+            Run(sim, 50);                                     // 1s: past the 0.25s grace
+
+            sim.TryGetRow(id, out int row);
+            Assert.That(sim.PositionOf(row).x, Is.LessThan(29.5f),
+                "a zombie waiting on an unanswered queue should shamble toward its target, not freeze");
+            Assert.That(sim.PositionOf(row).x, Is.GreaterThan(24f),
+                "...but it is a bounded creep, not a full-speed beeline that ignores the navmesh");
+        }
+
         [Test]
         public void Nothing_Moves_When_No_Navmesh_Is_Attached()
         {

@@ -104,7 +104,10 @@ namespace SDG.Unturned
         public float DestMovedTolerance = 3f;// how far the target may drift before the corridor is refetched
         public float WaypointReached = 0.7f;
 
-        public const int MaxWaypoints = 8;
+        // 16, not 8: a chase longer than 8 waypoints became a visible stutter -- walk the corridor,
+        // stand still, re-query, walk again. Doubling it halves the re-query rate on exactly the long
+        // pursuits where standing still is most obvious. Cost is 8 more Vector3 per row.
+        public const int MaxWaypoints = 16;
 
         // --- perception + combat (phase 2) ---------------------------------------------------------
         /// <summary>What blocks sight. Null means nothing does.</summary>
@@ -148,6 +151,7 @@ namespace SDG.Unturned
         bool[] _hasLastSeen = new bool[64];
         float[] _lostSight = new float[64];
         bool[] _pathFailed = new bool[64];   // last query for this row came back with no route
+        float[] _shamble = new float[64];    // seconds spent beelining while waiting for a path
         float[] _stateClock = new float[64];      // when the current investigation started
         float[] _lastAttack = new float[64];
         bool[] _swingPending = new bool[64];
@@ -232,7 +236,7 @@ namespace SDG.Unturned
             _dest[row] = position;
             _face[row] = new Vector3(0f, 0f, 1f);
             _corridorLen[row] = 0; _corridorAt[row] = 0;
-            _repath[row] = 0f; _queued[row] = false; _pathFailed[row] = false;
+            _repath[row] = 0f; _queued[row] = false; _pathFailed[row] = false; _shamble[row] = 0f;
             _heardSalience[row] = 0f; _huntSalience[row] = 0f;
             _hasLastSeen[row] = false; _lostSight[row] = 0f;
             _stateClock[row] = 0f; _lastAttack[row] = -1000f;
@@ -270,6 +274,7 @@ namespace SDG.Unturned
                 _hasLastSeen[row] = _hasLastSeen[last];
                 _lostSight[row] = _lostSight[last];
                 _pathFailed[row] = _pathFailed[last];
+                _shamble[row] = _shamble[last];
                 _stateClock[row] = _stateClock[last];
                 _lastAttack[row] = _lastAttack[last];
                 _swingPending[row] = _swingPending[last];
@@ -280,9 +285,12 @@ namespace SDG.Unturned
                 _slotRow[_rowSlot[last]] = row;
             }
             _count = last;
-            // Any queued path request naming a row is now naming a different zombie. Rather than patch
-            // indices inside the queue, drop it: the row re-queues on its next due tick.
-            DropQueue();
+            // A despawn swap-removes, so queued entries naming `last` now name a different zombie and
+            // entries naming `row` name nobody. This used to drop the WHOLE queue -- which under corpse
+            // churn meant every waiting zombie repeatedly lost its place and stood there, one of the
+            // most visible "dumb AI" symptoms. Patch the two affected indices instead; everyone else
+            // keeps their slot.
+            PatchQueueForSwap(row, last);
 
             _slotRow[id.Slot] = -1;
             _slotGen[id.Slot]++;                          // every outstanding handle to this slot dies here
@@ -320,7 +328,7 @@ namespace SDG.Unturned
         {
             _pos[row] = p;
             _region[row] = _regions.RegionOf(p, _region[row]);
-            _corridorLen[row] = 0; _corridorAt[row] = 0; _repath[row] = RepathInterval; _pathFailed[row] = false;
+            _corridorLen[row] = 0; _corridorAt[row] = 0; _repath[row] = RepathInterval; _pathFailed[row] = false; _shamble[row] = 0f;
         }
 
         /// <summary>Player positions the tiering is measured against. The sim keeps the reference, so
@@ -437,7 +445,19 @@ namespace SDG.Unturned
 
                 _repath[row] += step;
                 if (NeedsPath(row)) Enqueue(row);
-                if (_corridorLen[row] == 0) continue;   // waiting on the budget; stand still rather than beeline
+                if (_corridorLen[row] == 0)
+                {
+                    // No corridor yet. Standing perfectly still in plain sight, sometimes for a second
+                    // while the queue drains, is the single most obvious "the AI is broken" tell -- and
+                    // with a woken horde the back of the queue waits longest. Shamble straight at the
+                    // destination instead, at a reduced speed, while the real path is fetched.
+                    //
+                    // Deliberately NOT a full beeline: capped so it cannot walk a wall for long, and only
+                    // toward a destination we already believe in. The corridor overrides it the moment it
+                    // lands. This is presentation, not pathfinding -- it buys the ~1s the queue costs.
+                    if (ShambleToward(row, step)) stats.Moving++;
+                    continue;
+                }
 
                 if (Advance(row, step)) stats.Moving++;
             }
@@ -615,6 +635,25 @@ namespace SDG.Unturned
             return (_corridor[last] - _dest[row]).sqrMagnitude > DestMovedTolerance * DestMovedTolerance;
         }
 
+        /// <summary>Path-queue priority. 0 = served first.
+        ///
+        /// A single FIFO served an Ambient wanderer's idle repath before a Close zombie actively chasing
+        /// the player, so under load the zombies the player can SEE were the ones left standing -- the
+        /// worst possible place to spend a scarce budget. Three bands, each FIFO within itself:
+        ///   0  Close/Near AND pursuing   -- on screen, chasing: every frame of delay is visible
+        ///   1  anything else pursuing/investigating, or a Close/Near row with no corridor at all
+        ///   2  the rest (Far/Ambient upkeep) -- correctness, not presentation; may wait.</summary>
+        int PriorityOf(int row)
+        {
+            var tier = (ZombieTier)_tier[row];
+            bool near = tier == ZombieTier.Close || tier == ZombieTier.Near;
+            var st = (ZombieState)_state[row];
+            bool hunting = st == ZombieState.Pursue || st == ZombieState.Investigate;
+            if (near && st == ZombieState.Pursue) return 0;
+            if (hunting || (near && _corridorLen[row] == 0)) return 1;
+            return 2;
+        }
+
         void Enqueue(int row)
         {
             if (_queued[row] || _queueCount >= _pathQueue.Length) return;
@@ -629,7 +668,23 @@ namespace SDG.Unturned
             int budget = Math.Max(0, PathQueriesPerTick);
             while (budget-- > 0 && _queueCount > 0)
             {
-                int row = _pathQueue[_queueHead];
+                // Pick the best-priority waiting row rather than the oldest. The queue is at most a few
+                // dozen entries and this runs <= PathQueriesPerTick times per tick, so the linear scan is
+                // cheaper than maintaining a heap and keeps the sim allocation-free and replayable.
+                int bestSlot = -1, bestPri = int.MaxValue;
+                for (int k = 0; k < _queueCount; k++)
+                {
+                    int slot = (_queueHead + k) % _pathQueue.Length;
+                    int cand = _pathQueue[slot];
+                    if (cand >= _count) { bestSlot = slot; break; }      // stale row: drop it first, free
+                    int pri = PriorityOf(cand);
+                    if (pri < bestPri) { bestPri = pri; bestSlot = slot; if (pri == 0) break; }
+                }
+                if (bestSlot < 0) break;
+                int row = _pathQueue[bestSlot];
+                // Compact: shuffle the head forward into the hole so the ring stays contiguous.
+                for (int slot = bestSlot; slot != _queueHead; slot = (slot - 1 + _pathQueue.Length) % _pathQueue.Length)
+                    _pathQueue[slot] = _pathQueue[(slot - 1 + _pathQueue.Length) % _pathQueue.Length];
                 _queueHead = (_queueHead + 1) % _pathQueue.Length;
                 _queueCount--;
                 if (row >= _count) continue;             // the row went away while it waited
@@ -642,10 +697,44 @@ namespace SDG.Unturned
                 for (int w = 0; w < n; w++) _corridor[row * MaxWaypoints + w] = _scratchCorridor[w];
                 if (n == 0) stats.PathFailures++;
                 _pathFailed[row] = n == 0;
+                if (n > 0) _shamble[row] = 0f;   // got a real route; the beeline budget refills
                 _corridorLen[row] = (byte)n;
                 _corridorAt[row] = 0;
                 _repath[row] = 0f;
             }
+        }
+
+        /// <summary>Seconds of beeline a row may accumulate while waiting for a path before it gives up
+        /// and stands. Bounded so a zombie cannot grind along a wall indefinitely when the route it wants
+        /// does not exist -- at which point standing IS the honest animation.</summary>
+        public float ShambleSeconds = 1.5f;
+        public float ShambleSpeedFactor = 0.55f;
+        /// <summary>Grace before a waiting row starts creeping. If the queue answers promptly -- which
+        /// it does whenever the budget is not saturated -- the row never moves without a real route, so
+        /// a zombie whose FIRST query comes back "no route" never takes a single beeline step. Only a
+        /// genuinely backed-up queue (the woken-horde case this exists for) outlasts the grace.</summary>
+        public float ShambleDelaySeconds = 0.25f;
+
+        /// <summary>Creep toward the destination while a path request is pending. Returns true if moved.</summary>
+        bool ShambleToward(int row, float step)
+        {
+            // Only while a path is genuinely PENDING. If the last query came back with no route, there
+            // is no route -- creeping at the destination then means walking into (and through) the wall
+            // that is blocking it, which A_Zombie_With_No_Route_Stands_Still_Instead_Of_Walking_Through
+            // _The_Wall exists to forbid. Standing is the honest animation for "cannot get there".
+            if (_pathFailed[row]) return false;
+            _shamble[row] += step;                                    // time spent waiting, moving or not
+            if (_shamble[row] < ShambleDelaySeconds) return false;     // grace: let the queue answer first
+            if (_shamble[row] >= ShambleDelaySeconds + ShambleSeconds) return false;
+            Vector3 to = new Vector3(_dest[row].x - _pos[row].x, 0f, _dest[row].z - _pos[row].z);
+            float d = to.magnitude;
+            if (d <= WaypointReached) return false;
+            Vector3 dir = to / d;
+            float travel = Math.Min(_kinds[_kind[row]].MoveSpeed * ShambleSpeedFactor * step, d);
+            var p = _pos[row] + dir * travel;
+            _pos[row] = Nav.SnapToSurface(p);   // no corridor to take Y from; terrain is the best guess
+            _face[row] = dir;
+            return true;
         }
 
         /// <summary>Follow the corridor for one step. Returns true if the zombie actually moved.</summary>
@@ -655,6 +744,7 @@ namespace SDG.Unturned
             float remaining = speed * step;
             Vector3 p = _pos[row];
             bool moved = false;
+            bool corridorY = false;
 
             while (remaining > 1e-4f && _corridorAt[row] < _corridorLen[row])
             {
@@ -665,14 +755,23 @@ namespace SDG.Unturned
 
                 Vector3 dir = to / d;
                 float travel = Math.Min(remaining, d);
+                // Lerp height along the segment by the same fraction we moved horizontally, so a ramp or
+                // stair is walked up smoothly instead of being teleported at the waypoint.
+                float y0 = p.y, y1 = wp.y;
                 p += dir * travel;
+                p.y = y0 + (y1 - y0) * (d > 1e-4f ? travel / d : 1f);
                 remaining -= travel;
                 _face[row] = dir;
                 moved = true;
+                corridorY = true;
             }
 
             if (_corridorAt[row] >= _corridorLen[row]) _corridorLen[row] = 0;   // corridor spent; refetch next time
-            if (moved) _pos[row] = Nav.SnapToSurface(p);
+            // Take Y from the corridor, not from the terrain. Waypoints carry the navmesh height, so a
+            // zombie on an upper floor or a bridge kept the right Y until SnapToSurface pulled it down to
+            // ground level -- which reads in-game as sinking through the floor or walking under the
+            // building. Terrain snap remains the fallback for rows with no corridor (wander, spawn).
+            if (moved) _pos[row] = corridorY ? p : Nav.SnapToSurface(p);
             return moved;
         }
 
@@ -852,6 +951,7 @@ namespace SDG.Unturned
             Array.Resize(ref _hasLastSeen, capacity);
             Array.Resize(ref _lostSight, capacity);
             Array.Resize(ref _pathFailed, capacity);
+            Array.Resize(ref _shamble, capacity);
             Array.Resize(ref _stateClock, capacity);
             Array.Resize(ref _lastAttack, capacity);
             Array.Resize(ref _swingPending, capacity);
@@ -862,5 +962,21 @@ namespace SDG.Unturned
         }
 
         void DropQueue() { _queueHead = _queueTail = _queueCount = 0; for (int i = 0; i < _count; i++) _queued[i] = false; }
+
+        /// <summary>Repair the queue after a swap-remove moved row `last` into slot `removed`.
+        /// Entries naming `removed` are stale (that zombie is gone) and are marked for skip; entries
+        /// naming `last` are renamed to `removed`, which is where that zombie now lives.</summary>
+        void PatchQueueForSwap(int removed, int last)
+        {
+            for (int k = 0; k < _queueCount; k++)
+            {
+                int slot = (_queueHead + k) % _pathQueue.Length;
+                int r = _pathQueue[slot];
+                if (r == removed) _pathQueue[slot] = int.MaxValue;   // >= _count: skipped on drain
+                else if (r == last) _pathQueue[slot] = removed;
+            }
+            _queued[removed] = last < _queued.Length && _queued[last];
+            if (last < _queued.Length) _queued[last] = false;
+        }
     }
 }
