@@ -27,6 +27,11 @@ namespace UnturnedGodot
         // The id is held BESIDE the node, not read back off it: once a door is broken down the node is gone
         // and its NetId with it, and that is exactly the moment the id is needed to deregister it.
         readonly List<(uint NetId, Door Node)> _doors = new List<(uint, Door)>();
+        // Beds are tracked for exactly the same reason doors are, and their absence here was a real bug:
+        // the door half of destruction was written and the bed half was not, so a destroyed bed stayed in
+        // the authoritative table, kept its claim (a raided base went on respawning its owner) and never
+        // reached the client retire sweep. Found by the callerless sweep -- RemoveBed's only caller was a test.
+        readonly List<(uint NetId, Bed Node)> _beds = new List<(uint, Bed)>();
 
         /// <summary>Ids start at 1: 0 is the "not replicated, this is a singleplayer node" sentinel every
         /// other node in this codebase uses, and a door with NetId 0 must never be routable.</summary>
@@ -40,6 +45,7 @@ namespace UnturnedGodot
         }
 
         public int DoorCount => _doors.Count;
+        public int BedCount => _beds.Count;
 
         /// <summary>Server-side barricade damage along a bullet/melee segment (ServerCombat's
         /// DamageBarricadeAlong seam). Returns true if it hit a door or bed.
@@ -80,6 +86,7 @@ namespace UnturnedGodot
                 else if (node is Bed b)
                 {
                     b.NetId = bedId++;
+                    _beds.Add((b.NetId, b));
                     var p = b.GlobalPosition;
                     _server.Interactables.RegisterBed(b.NetId, new UVector3(p.X, p.Y, p.Z), b.RotationDegrees.Y);
                 }
@@ -125,6 +132,16 @@ namespace UnturnedGodot
                 if (node.IsOpen != open) node.ApplyReplicatedToggle(open);
                 bool locked = _server.Interactables.IsDoorLocked(netId);
                 if (node.IsLocked != locked) node.ApplyReplicatedLocked(locked);
+            }
+
+            // A destroyed bed has to leave the table too, or the claim outlives the furniture: its owner
+            // keeps respawning at a bed that was blown up, which is exactly the outcome breaking one is for.
+            for (int i = _beds.Count - 1; i >= 0; i--)
+            {
+                var (netId, node) = _beds[i];
+                if (GodotObject.IsInstanceValid(node)) continue;
+                _server.Interactables.RemoveBed(netId);
+                _beds.RemoveAt(i);
             }
         }
     }

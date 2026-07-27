@@ -215,6 +215,71 @@ namespace UnturnedGodot.Testing
     }
 
     /// <summary>
+    /// Destroying a bed in MP takes its owner's spawn with it.
+    ///
+    /// Found by the callerless sweep, not by review or by me: `ServerInteractables.RemoveBed` had exactly
+    /// one caller in the whole repo and it was a test. `InteractableNetSync` tracked `_doors` and not
+    /// `_beds`, so I wrote the door half of destruction and left the bed half — a blown-up bed stayed in
+    /// the authoritative table, kept its claim, and went on respawning its owner into the hole where their
+    /// base used to be. Which is the exact rule BedClaims was written to enforce, and precisely the point
+    /// of breaking one.
+    /// </summary>
+    public class NetDestroyedBedTakesTheSpawn : GameTest
+    {
+        public override string Name => "net.bed_break_clears_spawn";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            var task = WorldBuilder.BuildFullWorld(World, WorldMode.Dedicated,
+                mapRoot: "res://__no_such_map__", mapPlace: "placements.txt",
+                noZombies: true, syncLoad: true, bakeNav: false, activeHoliday: "NONE");
+            var world = task.Result;
+            T.Check("world ready", world.Ready);
+
+            var bedAt = new Vector3(0f, 0f, 0f);
+            var serverBed = Bed.Spawn(World, bedAt, 0f);
+
+            var net = new MemNetwork(7076);
+            var a = new NetWorldClient(new MemClientTransport(net), "sleeper", contentHash: NetContent.Hash);
+            var pump = new DelegateSimStep((t, dt) => { net.Tick(); a.Tick(); }, "l1.clientpump");
+            world.Sim.Sim.Add(pump);
+            var ded = new DedicatedServer { Driver = world.Sim, TransportOverride = new MemServerTransport(net), WorldRoot = World };
+            World.AddChild(ded);
+            a.Connect();
+
+            yield return Until(() => a.State == NetSessionState.Connected, 5);
+            T.Check("client joined", a.State == NetSessionState.Connected);
+            uint bedNetId = serverBed.NetId;
+            T.Check("the bed is tracked for destruction", bedNetId != 0 && ded.InteractableSync.BedCount >= 1);
+
+            ded.Server.Players.ServerTeleport(a.PlayerId, new UVector3(bedAt.X, bedAt.Y, bedAt.Z), ded.Server.Session.CurrentTick);
+            a.SendClaimBed(bedNetId);
+            yield return Until(() => ded.Server.Interactables.BedOwner(bedNetId) == a.PlayerId, 6);
+            T.Check("claimed, and it is now their spawn",
+                    ded.Server.Interactables.BedOwner(bedNetId) == a.PlayerId
+                    && ded.Server.Interactables.TryGetSpawn(a.PlayerId, out _, out _));
+
+            // Break it through the real server damage seam, the same way a raider would.
+            // y=0.2: a bed is only 0.45 m tall, so the door test's chest-height ray sails clean over it.
+            var from = new UVector3(0f, 0.2f, 4f);
+            var to = new UVector3(0f, 0.2f, -4f);
+            for (int i = 0; i < 40 && GodotObject.IsInstanceValid(serverBed); i++)
+                ded.Server.Combat.DamageBarricadeAlong(from, to, 100f, ded.Server.Session.CurrentTick);
+            yield return Ticks(5);
+            T.Check("the bed node is destroyed", !GodotObject.IsInstanceValid(serverBed));
+
+            yield return Until(() => !ded.Server.Interactables.TryGetSpawn(a.PlayerId, out _, out _), 6);
+            T.Check("and the owner's SPAWN went with it -- a raided base stops respawning its owner",
+                    !ded.Server.Interactables.TryGetSpawn(a.PlayerId, out _, out _));
+            T.Check("the bed left the authoritative table", ded.Server.Interactables.BedOwner(bedNetId) == 0UL);
+
+            world.Sim.Sim.Remove(pump);
+            a.Disconnect();
+        }
+    }
+
+    /// <summary>
     /// The client half: a door that LEAVES the replica table is retired from the world.
     ///
     /// Driven against a node the server does not own, so the node can only disappear because the view
