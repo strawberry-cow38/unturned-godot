@@ -21,8 +21,14 @@ namespace UnturnedGodot
         public ulong Owner => Claims.OwnerOf(BedId);
         public bool IsClaimed => Claims.IsClaimed(BedId);
 
+        /// <summary>Beds are barricades: breakable. Destroying one is how you take away someone's
+        /// respawn -- the rule BedClaims already implements, which had no way to fire while beds were
+        /// indestructible.</summary>
+        public float Health = 200f, HealthMax = 200f;
+
         float _yaw;
         Vector3 _spawnPos;
+        StandardMaterial3D _mat;
 
         public static Bed Spawn(Node parent, Vector3 basePos, float yawDeg)
         {
@@ -40,10 +46,11 @@ namespace UnturnedGodot
             CollisionMask = 0;
 
             var size = new Vector3(1.0f, 0.45f, 2.0f);
+            _mat = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.52f, 0.60f), Roughness = 1f };
             AddChild(new MeshInstance3D
             {
                 Mesh = new BoxMesh { Size = size },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.52f, 0.60f), Roughness = 1f },
+                MaterialOverride = _mat,
                 Position = new Vector3(0f, size.Y * 0.5f, 0f),
             });
             AddChild(new CollisionShape3D
@@ -54,7 +61,39 @@ namespace UnturnedGodot
 
             GlobalPosition = _spawnPos;
             RotationDegrees = new Vector3(0f, _yaw, 0f);
+            Register();
+        }
+
+        // Registered on ENTERING the tree, not only in _Ready: _Ready fires once, so a bed that is
+        // re-parented (removed then re-added) would deregister on exit and never come back.
+        public override void _EnterTree() => Register();
+
+        void Register()
+        {
+            if (Claims.TryGet(BedId, out _)) return;   // already known (first _Ready, or never left)
             Claims.Register(BedId, new UVector3(_spawnPos.X, _spawnPos.Y, _spawnPos.Z), _yaw);
+        }
+
+        /// <summary>Break it. Returns true if this destroyed the bed -- which takes its owner's respawn
+        /// point with it, via the _ExitTree deregistration.</summary>
+        public bool TakeDamage(float amount)
+        {
+            if (amount <= 0f || Health <= 0f) return false;
+            Health -= amount;
+            if (Health > 0f) return false;
+            Health = 0f;
+            QueueFree();
+            return true;
+        }
+
+        public bool IsDestroyed => Health <= 0f;
+
+        /// <summary>Look-focus highlight, matching the other focusables.</summary>
+        public void SetLookFocused(bool on)
+        {
+            if (_mat == null) return;
+            _mat.EmissionEnabled = on;
+            _mat.Emission = new Color(0.20f, 0.24f, 0.35f);
         }
 
         public override void _ExitTree()
@@ -78,11 +117,16 @@ namespace UnturnedGodot
             return true;
         }
 
-        /// <summary>Tests share one static table; this keeps one case from inheriting another's claims.</summary>
-        public static void DebugResetAll()
+        /// <summary>Drop every claim. Called when a world is built so a map reload does not inherit the
+        /// previous level's spawn points -- the claim table is static, which is fine for one world at a
+        /// time and would need to become world-scoped for split-screen or a second simultaneous level.</summary>
+        public static void ResetForNewWorld()
         {
             for (int id = 0; id < _nextId; id++) Claims.Remove(id);
             _nextId = 1;
         }
+
+        /// <summary>Tests share one static table; this keeps one case from inheriting another's claims.</summary>
+        public static void DebugResetAll() => ResetForNewWorld();
     }
 }

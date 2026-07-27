@@ -20,6 +20,13 @@ namespace UnturnedGodot
         CollisionShape3D _barrier;     // what stops you walking through a closed door
         Vector3 _size = new Vector3(1.0f, 2.0f, 0.12f);
         float _closedYaw, _swing;      // _swing: 0 = shut, 1 = fully open
+        StandardMaterial3D _leafMat;
+        BoxShape3D _arcShape;
+        PhysicsShapeQueryParameters3D _arcQuery;   // reused; see _Ready
+
+        /// <summary>Doors are barricades: they can be broken down. Without this a locked door was an
+        /// absolute wall, which is not a base defence so much as a permanent one.</summary>
+        public float Health = 250f, HealthMax = 250f;
 
         public bool IsOpen => _state.IsOpen;
         public bool IsLocked => _state.Locked;
@@ -49,13 +56,25 @@ namespace UnturnedGodot
             // Pivot at the jamb, not the middle -- a door hinged at its centre reads as a turnstile.
             _hinge.Position = new Vector3(-_size.X * 0.5f, 0f, 0f);
 
+            _leafMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.29f, 0.17f), Roughness = 0.9f };
             var leaf = new MeshInstance3D
             {
                 Mesh = new BoxMesh { Size = _size },
-                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.29f, 0.17f), Roughness = 0.9f },
+                MaterialOverride = _leafMat,
                 Position = new Vector3(_size.X * 0.5f, _size.Y * 0.5f, 0f),
             };
             _hinge.AddChild(leaf);
+
+            // Reused across toggles: this codebase already paid for per-frame query allocations once
+            // (the "GC dips"), and there is no reason to re-learn it.
+            _arcShape = new BoxShape3D { Size = new Vector3(_size.X, _size.Y, _size.X) };
+            _arcQuery = new PhysicsShapeQueryParameters3D
+            {
+                Shape = _arcShape,
+                CollisionMask = (1u << 1) | (1u << 6),   // enemies + players; static world may touch it
+                CollideWithBodies = true,
+                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
+            };
 
             _barrier = new CollisionShape3D
             {
@@ -88,6 +107,28 @@ namespace UnturnedGodot
 
         public bool TrySetLocked(ulong player, bool locked) => DoorLogic.TrySetLocked(ref _state, player, locked);
 
+        /// <summary>Break it down. Returns true if this destroyed the door.</summary>
+        public bool TakeDamage(float amount)
+        {
+            if (amount <= 0f || Health <= 0f) return false;
+            Health -= amount;
+            if (Health > 0f) return false;
+            Health = 0f;
+            QueueFree();
+            return true;
+        }
+
+        public bool IsDestroyed => Health <= 0f;
+
+        /// <summary>Look-focus highlight, matching what vehicles and deployables do -- without it nothing
+        /// tells the player a door is interactable.</summary>
+        public void SetLookFocused(bool on)
+        {
+            if (_leafMat == null) return;
+            _leafMat.EmissionEnabled = on;
+            _leafMat.Emission = new Color(0.35f, 0.30f, 0.12f);
+        }
+
         /// <summary>Is something standing where the leaf would sweep? Asked of the physics world, because
         /// this is the one part of the decision the sim genuinely cannot answer.</summary>
         bool ArcBlocked()
@@ -96,16 +137,9 @@ namespace UnturnedGodot
             var space = GetWorld3D()?.DirectSpaceState;
             if (space == null) return false;
 
-            var shape = new BoxShape3D { Size = new Vector3(_size.X, _size.Y, _size.X) };
-            var q = new PhysicsShapeQueryParameters3D
-            {
-                Shape = shape,
-                Transform = new Transform3D(Basis.Identity, _hinge.GlobalPosition + Vector3.Up * (_size.Y * 0.5f)),
-                CollisionMask = (1u << 1) | (1u << 6),   // enemies + players; static world is allowed to touch it
-                CollideWithBodies = true,
-                Exclude = new Godot.Collections.Array<Rid> { GetRid() },
-            };
-            return space.IntersectShape(q, 1).Count > 0;
+            if (_arcQuery == null) return false;
+            _arcQuery.Transform = new Transform3D(Basis.Identity, _hinge.GlobalPosition + Vector3.Up * (_size.Y * 0.5f));
+            return space.IntersectShape(_arcQuery, 1).Count > 0;
         }
 
         public override void _PhysicsProcess(double delta)

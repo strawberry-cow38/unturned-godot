@@ -580,6 +580,7 @@ namespace UnturnedGodot
                 // spawn (F toggles / claims; the bed becomes your respawn point), and a contaminated pocket
                 // sits away from spawn so it is something you can walk into rather than something you start in.
                 {
+                    Bed.ResetForNewWorld();   // a map reload must not inherit the previous level's claims
                     var door = Door.Spawn(root, new Vector3(sx - 3.0f, terr.SampleHeight(sx - 3.0f, sz + 2.0f), sz + 2.0f), 0f, owner: 1UL);
                     var bed = Bed.Spawn(root, new Vector3(sx - 5.0f, terr.SampleHeight(sx - 5.0f, sz + 2.0f), sz + 2.0f), 90f);
                     var deadzones = new DeadzoneField();

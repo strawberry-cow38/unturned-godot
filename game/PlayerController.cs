@@ -147,6 +147,9 @@ namespace UnturnedGodot
         // without a test-only code path deciding the answer.
         public Door DebugFocusDoor => _focusDoor;
         public Bed DebugFocusBed => _focusBed;
+        /// <summary>Sim seconds, accumulated from the fixed tick -- NOT engine uptime. Door and bed
+        /// cooldowns are sim rules, and wall-clock keeps running while the game is paused.</summary>
+        double _interactClock;
         GasPump _focusGasPump;        // the gas pump being LOOKED AT (outline + fuel tooltip; RMB w/ a gas can extracts)
         GridPowerSource _focusGrid;   // the grid-power box being LOOKED AT (outline + "Grid Power - <name>: <watts>" tooltip)
         SDG.Unturned.Item _heldFuelItem;  // a gas can equipped in hand -> RMB a powered pump to fill it (master's fluids)
@@ -267,8 +270,18 @@ namespace UnturnedGodot
                 _focusDeployable?.SetLookFocused(true);
             }
             if (hitFluid != _focusFluid) _focusFluid = hitFluid;   // no outline shader on fluid bodies -> just track it for hold-F pickup
-            _focusDoor = hitDoor;   // no outline shader on doors/beds yet -> just track what F should act on
-            _focusBed = hitBed;
+            if (hitDoor != _focusDoor)
+            {
+                if (IsInstanceValid(_focusDoor)) _focusDoor.SetLookFocused(false);
+                _focusDoor = hitDoor;
+                _focusDoor?.SetLookFocused(true);
+            }
+            if (hitBed != _focusBed)
+            {
+                if (IsInstanceValid(_focusBed)) _focusBed.SetLookFocused(false);
+                _focusBed = hitBed;
+                _focusBed?.SetLookFocused(true);
+            }
             if (hitGasPump != _focusGasPump)   // looked-at gas pump: outline + fuel tooltip
             {
                 if (IsInstanceValid(_focusGasPump)) _focusGasPump.SetLookFocused(false);
@@ -2966,7 +2979,7 @@ namespace UnturnedGodot
         public bool RequestToggleDoor(Door d)
         {
             if (d == null || !IsInstanceValid(d)) return false;
-            if (d.TryToggle(PlayerId, GroupId, Time.GetTicksMsec() / 1000.0)) return true;
+            if (d.TryToggle(PlayerId, GroupId, _interactClock)) return true;
             string why = d.LastRefusal switch
             {
                 SDG.Unturned.DoorRefusal.Locked => "locked",
@@ -2982,7 +2995,7 @@ namespace UnturnedGodot
         public bool RequestClaimBed(Bed b)
         {
             if (b == null || !IsInstanceValid(b)) return false;
-            if (b.TryClaim(PlayerId, Time.GetTicksMsec() / 1000.0)) { FluidPickupHudSet("you will respawn here"); return true; }
+            if (b.TryClaim(PlayerId, _interactClock)) { FluidPickupHudSet("you will respawn here"); return true; }
             if (b.Owner != 0UL && b.Owner != PlayerId) FluidPickupHudSet("someone else's bed");
             return false;
         }
@@ -4351,6 +4364,7 @@ namespace UnturnedGodot
             if (_riding != null) { _interpReady = false; LastMoveInput = UnityEngine.Vector2.zero; LastJumpInput = false; RidePuppet(); return; }   // C6 ride mode: same freeze -- capture drive intent only, the SERVER drives
             if (_interpReady && !_dead) GlobalPosition = _interpCurr;   // render-interp (master): restore the TRUE physics position before moving (undoes the _Process visual smoothing)
             StepBullets();   // advance in-flight bullets (travel + drop) each 50 Hz tick — matches the source 0.02s step
+            _interactClock += delta;   // sim seconds for the door/bed cooldowns (see _interactClock)
             if (_bleedTimer > 0) { _bleedTimer -= delta; if (_bleedTimer <= 0) Bleeding = false; }
             if (_dead)
             {

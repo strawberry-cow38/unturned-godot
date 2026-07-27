@@ -19,6 +19,7 @@ namespace UnturnedGodot
     {
         readonly List<DeadzoneVolumeDef> _volumes = new();
         readonly Dictionary<PlayerController, DeadzoneSim> _inside = new();
+        readonly List<PlayerController> _stale = new();   // reused scratch, see _PhysicsProcess
         double _acc;
 
         /// <summary>How often the field re-evaluates. Deadzones are slow hazards; polling every physics
@@ -66,9 +67,11 @@ namespace UnturnedGodot
             }
 
             // Forget players who left the world entirely, so their accrued state does not linger.
-            var stale = new List<PlayerController>();
-            foreach (var kv in _inside) if (!IsInstanceValid(kv.Key)) stale.Add(kv.Key);
-            foreach (var k in stale) _inside.Remove(k);
+            // Scratch list reused rather than allocated per poll (this codebase already paid for that
+            // pattern once with the per-frame query objects).
+            _stale.Clear();
+            foreach (var kv in _inside) if (!IsInstanceValid(kv.Key)) _stale.Add(kv.Key);
+            foreach (var k in _stale) _inside.Remove(k);
         }
 
         /// <summary>One player, one step. Public so the L1 tests can drive it deterministically rather

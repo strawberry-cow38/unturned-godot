@@ -247,6 +247,57 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Review found that doors and beds had no health, which made a rule BedClaims already implements --
+    // destroying a bed takes its owner's respawn with it -- unreachable in an actual game. These cover
+    // the behaviour now that it can happen.
+    public class BreakingABedTakesTheSpawnWithIt : GameTest
+    {
+        public override string Name => "bed.destroyed_removes_spawn";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            Bed.DebugResetAll();
+            Rigs.Ground(World);
+            var bed = Bed.Spawn(World, new Vector3(12f, 0f, 0f), 0f);
+            yield return Ticks(3);
+
+            T.Check("claimed", bed.TryClaim(77UL, 100.0));
+            T.Check("it is a spawn point", Bed.TryGetSpawn(77UL, out _, out _));
+
+            T.Check("a partial hit does not destroy it", !bed.TakeDamage(bed.HealthMax - 1f));
+            T.Check("still a spawn point", Bed.TryGetSpawn(77UL, out _, out _));
+
+            T.Check("the finishing blow destroys it", bed.TakeDamage(50f));
+            yield return Ticks(3);
+            T.Check("and the owner loses their spawn", !Bed.TryGetSpawn(77UL, out _, out _));
+
+            Bed.DebugResetAll();
+        }
+    }
+
+    public class DoorsCanBeBrokenDown : GameTest
+    {
+        public override string Name => "door.breaks_down";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var door = Door.Spawn(World, new Vector3(0f, 0f, -4f), 0f, owner: 500UL);
+            yield return Ticks(3);
+            door.TrySetLocked(500UL, true);
+
+            T.Check("a stranger cannot open it", !door.TryToggle(1UL, 0UL, 100.0));
+            T.Check("chip damage does not fell it", !door.TakeDamage(door.HealthMax - 1f));
+            T.Check("but it can be broken through", door.TakeDamage(10f));
+            yield return Ticks(3);
+            T.Check("the door is gone", !IsInstanceValid(door) || door.IsDestroyed);
+        }
+
+        static bool IsInstanceValid(GodotObject o) => GodotObject.IsInstanceValid(o);
+    }
+
     public class DeadzoneLeavesCleanGroundAlone : GameTest
     {
         public override string Name => "deadzone.clean_ground_safe";
