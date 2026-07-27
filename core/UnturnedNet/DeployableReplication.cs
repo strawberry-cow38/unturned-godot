@@ -418,8 +418,13 @@ namespace UnturnedGodot.Net
                 OwnerPlayerId = owner,
                 Pos = PlayerReplication.Quantize(pos),
                 YawDegrees = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits),
-                Health = def.Health,
-                Fuel = def.FuelCapacity,   // a fresh build starts FULL (Deployable.Spawn does the same)
+                // Quantized at STORE, exactly as the update path below does. Pos and Yaw already were;
+                // Health/Fuel were not, so the server held a raw scalar while every client held the value
+                // round-tripped through WriteClampedFloat(12,2) -- and StateHash folds both in, so the
+                // parity check failed while the power SOLVE still agreed (it does not read exact fuel).
+                // That is the shape of "solve passes, parity fails". Found by cow tools.
+                Health = QuantizeScalar(def.Health),
+                Fuel = QuantizeScalar(def.FuelCapacity),   // a fresh build starts FULL (Deployable.Spawn does the same)
                 LastChangedTick = Stamp(tick),
             };
             _deployables.Add(id, e);
