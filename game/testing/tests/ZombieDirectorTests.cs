@@ -129,6 +129,38 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Regression: the director wired the navmesh but never the EYES, so the sim kept its OpenField
+    // default -- which answers "yes" to every sight test -- and zombies saw straight through walls. The
+    // L0 suite covers the occlusion rules against a mock, which is precisely why nothing caught that no
+    // real implementation was ever plugged in. This asserts the engine one is.
+    public class ZombieDirectorRespectsWalls : GameTest
+    {
+        public override string Name => "zdirector.sight_blocked_by_walls";
+        public override double TimeoutSimSeconds => 30;
+
+        public override IEnumerable<Step> Run()
+        {
+            NavSandbox.Flat(World);
+            var dir = new ZombieDirector { MaxViews = 4, DebugPlayer = new Vector3(0f, 0f, 20f) };
+            World.AddChild(dir);
+            dir.DebugBuild(NavSandbox.OneRegion(), new[] { Vector3.Zero });   // zombie at origin, facing +z at the player
+
+            // A solid wall on the world-geometry layer, squarely between them.
+            var wall = new StaticBody3D { CollisionLayer = 1u << 0, CollisionMask = 0 };
+            wall.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(20f, 6f, 1f) } });
+            World.AddChild(wall);
+            wall.GlobalPosition = new Vector3(0f, 3f, 10f);
+
+            yield return Ticks(30);
+            T.Check($"a wall blocks sight (state {dir.Sim.StateOf(0)})", dir.Sim.StateOf(0) == ZombieState.Idle);
+
+            wall.QueueFree();
+            yield return Ticks(30);
+            T.Check($"and with the wall gone it sees and chases (state {dir.Sim.StateOf(0)})",
+                    dir.Sim.StateOf(0) == ZombieState.Pursue || dir.Sim.StateOf(0) == ZombieState.Attack);
+        }
+    }
+
     // Requirement 8, in-engine: a populated level with the player nowhere near it must tier everything
     // down to AMBIENT and stop doing per-zombie work.
     public class ZombieDirectorCostsNothingWhenYouAreElsewhere : GameTest

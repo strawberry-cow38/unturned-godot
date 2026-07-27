@@ -112,6 +112,11 @@ namespace UnturnedGodot
             {
                 _nav = new GodotNavQuery(GetWorld3D().NavigationMap, Terr);
                 _sim.Nav = _nav;
+                // ...and the eyes. Without this the sim keeps its OpenField default, which answers "yes"
+                // to every sight test -- so zombies saw straight through walls. The L0 suite covers the
+                // occlusion rules against a mock, which is exactly why nobody noticed nothing real was
+                // ever plugged in.
+                _sim.Sight = new GodotLineOfSight(GetWorld3D());
             }
 
             int n = GatherPlayers();
@@ -250,6 +255,26 @@ namespace UnturnedGodot
                    $"zsim {s.Alive} alive  C/N/F/A {s.Close}/{s.Near}/{s.Far}/{s.Ambient}  " +
                    $"due {s.Due}  moving {s.Moving}  paths {s.PathQueries}/tick (+{s.PathQueued} queued, " +
                    $"{_sim.TotalPathQueries} total)  views {ViewsInUse}";
+        }
+    }
+
+    // The zombie's eyes, behind the sim's interface. Mirrors the old controller's confirming ray: world
+    // geometry only (ground, props, and now doors, which sit on the same layer), over 95% of the gap so a
+    // ray that lands exactly on the target's own surface does not count as blocked.
+    public sealed class GodotLineOfSight : IZombieLineOfSight
+    {
+        readonly World3D _world;
+        public GodotLineOfSight(World3D world) { _world = world; }
+
+        public bool CanSee(UVector3 from, UVector3 to)
+        {
+            var space = _world?.DirectSpaceState;
+            if (space == null) return true;   // no physics world (headless sandbox) -> do not blind them
+            var a = new Vector3(from.x, from.y, from.z);
+            var b = new Vector3(to.x, to.y, to.z);
+            var q = PhysicsRayQueryParameters3D.Create(a, a + (b - a) * 0.95f);
+            q.CollisionMask = 1u << 0;   // BLOCK_VISION: world geometry only
+            return space.IntersectRay(q).Count == 0;
         }
     }
 
