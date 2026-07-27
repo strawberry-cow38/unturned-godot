@@ -16,7 +16,7 @@ namespace UnturnedGodot
         const float SwingSeconds = 0.45f;
 
         DoorLogic.DoorState _state;
-        Node3D _hinge;                 // the leaf pivots about this
+        Vector3 _hingeWorld;           // fixed jamb point the leaf swings about (world space)
         CollisionShape3D _barrier;     // what stops you walking through a closed door
         Vector3 _size = new Vector3(1.0f, 2.0f, 0.12f);
         float _closedYaw, _swing;      // _swing: 0 = shut, 1 = fully open
@@ -51,19 +51,20 @@ namespace UnturnedGodot
             CollisionLayer = 1 << 0;   // world geometry: blocks movement AND line of sight, like a wall
             CollisionMask = 0;
 
-            _hinge = new Node3D();
-            AddChild(_hinge);
-            // Pivot at the jamb, not the middle -- a door hinged at its centre reads as a turnstile.
-            _hinge.Position = new Vector3(-_size.X * 0.5f, 0f, 0f);
+            // The collider MUST be a direct child of this StaticBody3D. It used to hang under an
+            // intermediate hinge Node3D, and Godot only owns shapes parented straight to the body -- so
+            // the door had no collision at all: bullets and bodies passed clean through it. The swing is
+            // therefore done by moving the BODY around a fixed hinge point (see ApplySwing) rather than
+            // rotating an inner node.
+            _hingeWorld = GlobalPosition + (Basis.Identity * Vector3.Right).Rotated(Vector3.Up, Mathf.DegToRad(_closedYaw)) * (-_size.X * 0.5f);
 
             _leafMat = new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.29f, 0.17f), Roughness = 0.9f };
-            var leaf = new MeshInstance3D
+            AddChild(new MeshInstance3D
             {
                 Mesh = new BoxMesh { Size = _size },
                 MaterialOverride = _leafMat,
-                Position = new Vector3(_size.X * 0.5f, _size.Y * 0.5f, 0f),
-            };
-            _hinge.AddChild(leaf);
+                Position = new Vector3(0f, _size.Y * 0.5f, 0f),
+            });
 
             // Reused across toggles: this codebase already paid for per-frame query allocations once
             // (the "GC dips"), and there is no reason to re-learn it.
@@ -79,9 +80,9 @@ namespace UnturnedGodot
             _barrier = new CollisionShape3D
             {
                 Shape = new BoxShape3D { Size = _size },
-                Position = new Vector3(_size.X * 0.5f, _size.Y * 0.5f, 0f),
+                Position = new Vector3(0f, _size.Y * 0.5f, 0f),
             };
-            _hinge.AddChild(_barrier);
+            AddChild(_barrier);   // direct child: this is what makes the door solid at all
 
             RotationDegrees = new Vector3(0f, _closedYaw, 0f);
             ApplySwing(0f);
@@ -100,8 +101,10 @@ namespace UnturnedGodot
             LastRefusal = DoorRefusal.None;
             _state = DoorLogic.Toggle(_state, now);
 
-            // Every toggle is heard. This is why you do not casually open doors in a town.
-            if (IsInsideTree()) SoundBus.Emit(GetTree(), GlobalPosition, DoorLogic.ToggleLoudness);
+            // Every toggle is heard. This is why you do not casually open doors in a town. Emitted at the
+            // HINGE, not GlobalPosition: the body now swings, so its origin is a moving target while the
+            // doorway a listener should localise is fixed.
+            if (IsInsideTree()) SoundBus.Emit(GetTree(), _hingeWorld, DoorLogic.ToggleLoudness);
             return true;
         }
 
@@ -138,7 +141,7 @@ namespace UnturnedGodot
             if (space == null) return false;
 
             if (_arcQuery == null) return false;
-            _arcQuery.Transform = new Transform3D(Basis.Identity, _hinge.GlobalPosition + Vector3.Up * (_size.Y * 0.5f));
+            _arcQuery.Transform = new Transform3D(Basis.Identity, _hingeWorld + Vector3.Up * (_size.Y * 0.5f));
             return space.IntersectShape(_arcQuery, 1).Count > 0;
         }
 
@@ -151,17 +154,22 @@ namespace UnturnedGodot
             ApplySwing(_swing);
         }
 
+        // Swing the whole BODY about the fixed hinge point, so its (direct-child) collider swings with it.
         void ApplySwing(float t)
         {
             _swing = t;
-            if (_hinge != null) _hinge.RotationDegrees = new Vector3(0f, SwingDegrees * t, 0f);
-            // The collider rides the leaf, so a fully open door stops blocking the gap it used to fill.
-            if (_barrier != null) _barrier.Disabled = t > 0.85f;
+            if (!IsInsideTree()) return;
+            float yaw = _closedYaw + SwingDegrees * t;
+            var outward = Vector3.Right.Rotated(Vector3.Up, Mathf.DegToRad(yaw));
+            GlobalPosition = _hingeWorld + outward * (_size.X * 0.5f);
+            RotationDegrees = new Vector3(0f, yaw, 0f);
         }
 
         // --- test seams -------------------------------------------------------------------------------
         public void DebugSettleSwing() { ApplySwing(_state.IsOpen ? 1f : 0f); }
         public bool DebugBarrierDisabled => _barrier != null && _barrier.Disabled;
+        /// <summary>The fixed jamb point the leaf swings about -- where the door "is" for a listener.</summary>
+        public Vector3 DebugHinge => _hingeWorld;
         public float DebugSwing => _swing;
     }
 }

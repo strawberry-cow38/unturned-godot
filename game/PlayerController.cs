@@ -1989,6 +1989,23 @@ namespace UnturnedGodot
                 else { _focusDeployable.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult); GD.Print($"[melee] hit {_focusDeployable.Def?.Name} for {(_melee?.VehicleDamage ?? 10f) * mult:0}"); }
                 return;
             }
+            // Barricades take hits like a generator does. Without this doors and beds carried Health and a
+            // TakeDamage nothing in the game ever called -- so "break a bed, its owner loses their spawn"
+            // was unreachable while playing, and the tests that called TakeDamage directly proved only
+            // that the method worked.
+            if (_focusDoor != null && IsInstanceValid(_focusDoor)
+                && (_focusDoor.GlobalPosition - GlobalPosition).Length() < range + 2f)
+            {
+                _focusDoor.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
+                return;
+            }
+            if (_focusBed != null && IsInstanceValid(_focusBed)
+                && (_focusBed.GlobalPosition - GlobalPosition).Length() < range + 2f)
+            {
+                _focusBed.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
+                return;
+            }
+
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             foreach (var n in GetTree().GetNodesInGroup("zombies"))
@@ -3761,6 +3778,12 @@ namespace UnturnedGodot
             _bullets.Add(b);
         }
 
+        /// <summary>Test seam: put a real bullet in flight. Deliberately only FIRES -- StepBullets still
+        /// does the raycast and decides what was hit and for how much, so a test using this exercises the
+        /// production damage dispatch instead of standing in for it.</summary>
+        public void DebugFireBullet(Vector3 from, Vector3 dir, float damage = 40f)
+            => SpawnBullet(from, dir.Normalized() * 300f, 60, 0f, damage, damage, damage);
+
         // Step every live bullet exactly like the source (UseableGun.cs:1539-1542): raycast this tick's segment for a
         // hit, else advance pos += vel*0.02 and apply gravity vel.y += g*0.02. Called once per 50 Hz physics tick.
         void StepBullets()
@@ -3787,6 +3810,8 @@ namespace UnturnedGodot
                     else if (collider is PhysicalBone3D pb) { SpawnFleshImpact(point, hdir); pb.ApplyImpulse(hdir * 7f, point - pb.GlobalPosition); }
                     else if (collider is Vehicle veh) { veh.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal, veh); }   // source Vehicle_Damage (35) + metal sparks, hole follows the car
                     else if (collider is Deployable dep && !dep.IsWreck) { dep.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Metal); }   // gunfire damages a placed generator (metal sparks) -- Vehicle_Damage
+                    else if (collider is Door bdoor) { bdoor.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); }   // you can shoot a door open the hard way
+                    else if (collider is Bed bbed) { bbed.TakeDamage(b.VehicleDamage); SpawnSurfaceImpact(point, hit["normal"].AsVector3(), Surf.Wood); }
                     else   // world/prop/terrain -> material impact; terrain samples its splatmap PER-POINT (sand/road/dirt/grass) for the real ground material
                     {
                         Surf sf = Surf.Concrete;

@@ -20,20 +20,26 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
 
             T.Check("a fresh door is shut", !door.IsOpen);
-            T.Check("a shut door blocks the gap", !door.DebugBarrierDisabled);
+
+            // Assert BLOCKING, not a flag. The previous version checked the collider's Disabled property,
+            // which stayed true-looking even though the collider was parented under an intermediate node
+            // and therefore owned by no physics body at all -- the door was never solid and the test could
+            // not tell. A shut door must stop something; an open one must not.
+            var probe = new PhysicsRayQueryParameters3D
+            {
+                From = new Vector3(0f, 1f, 3f), To = new Vector3(0f, 1f, -3f), CollisionMask = 1u << 0,
+            };
+            var space = World.GetWorld3D().DirectSpaceState;
+            T.Check("a shut door actually blocks a ray through the gap", space.IntersectRay(probe).Count > 0);
 
             T.Check("the owner opens it", door.TryToggle(111, 0, 100.0));
-            yield return Ticks(1);
-            T.Check("it reports open", door.IsOpen);
-
-            // The leaf takes time to swing; the barrier must not vanish until it is actually out of the way.
             yield return Until(() => door.DebugSwing > 0.99f, maxSimSeconds: 3);
             T.Check($"the leaf swung fully (got {door.DebugSwing:0.##})", door.DebugSwing > 0.99f);
-            T.Check("an open door stops blocking", door.DebugBarrierDisabled);
+            T.Check("an open door leaves the gap clear", space.IntersectRay(probe).Count == 0);
 
             T.Check("it closes again", door.TryToggle(111, 0, 200.0));
             yield return Until(() => door.DebugSwing < 0.01f, maxSimSeconds: 3);
-            T.Check("a shut door blocks once more", !door.DebugBarrierDisabled);
+            T.Check("a shut door blocks once more", space.IntersectRay(probe).Count > 0);
         }
     }
 
@@ -78,7 +84,10 @@ namespace UnturnedGodot.Testing
 
             var (pos, salience) = z.DebugHeard();
             T.Check($"opening a door is heard (salience {salience:0.##})", salience > 0f);
-            T.Check("and it heard the DOOR's position", pos.DistanceTo(door.GlobalPosition) < 0.01f);
+            // The hinge, not GlobalPosition: the body swings, so its origin moves between the emit and
+            // this read. The doorway is the fixed thing a listener should localise.
+            T.Check($"and it heard the DOORWAY (heard {pos}, hinge {door.DebugHinge})",
+                    pos.DistanceTo(door.DebugHinge) < 0.01f);
         }
     }
 
@@ -296,6 +305,73 @@ namespace UnturnedGodot.Testing
         }
 
         static bool IsInstanceValid(GodotObject o) => GodotObject.IsInstanceValid(o);
+    }
+
+    // Review (cow tools) caught that Health/TakeDamage existed with NO gameplay caller: the only things
+    // invoking them were the tests, which therefore proved the method worked and nothing else. This
+    // fires a REAL bullet and lets StepBullets decide what it hit -- the test shoots, production code
+    // does the damage.
+    public class ShootingABedDestroysItAndTakesTheSpawn : GameTest
+    {
+        public override string Name => "bed.shot_destroys_and_clears_spawn";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            Bed.DebugResetAll();
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            var bed = Bed.Spawn(World, new Vector3(0f, 0f, -6f), 0f);
+            yield return Ticks(4);
+
+            T.Check("claimed", bed.TryClaim(p.PlayerId, 100.0));
+            T.Check("it is the spawn", Bed.TryGetSpawn(p.PlayerId, out _, out _));
+
+            float before = bed.Health;
+            p.DebugFireBullet(new Vector3(0f, 0.2f, 0f), new Vector3(0f, 0f, -1f), 40f);
+            yield return Ticks(6);
+            T.Check($"a bullet hurt it ({before:0} -> {bed.Health:0})", bed.Health < before);
+
+            // Keep shooting until it breaks -- through the same path every time.
+            for (int i = 0; i < 12 && GodotObject.IsInstanceValid(bed) && !bed.IsDestroyed; i++)
+            {
+                p.DebugFireBullet(new Vector3(0f, 0.2f, 0f), new Vector3(0f, 0f, -1f), 40f);
+                yield return Ticks(6);
+            }
+
+            T.Check("gunfire destroyed it", !GodotObject.IsInstanceValid(bed) || bed.IsDestroyed);
+            yield return Ticks(3);
+            T.Check("and the owner lost their spawn", !Bed.TryGetSpawn(p.PlayerId, out _, out _));
+
+            Bed.DebugResetAll();
+        }
+    }
+
+    public class ShootingADoorBreaksIt : GameTest
+    {
+        public override string Name => "door.shot_breaks_down";
+        public override double TimeoutSimSeconds => 25;
+
+        public override IEnumerable<Step> Run()
+        {
+            Rigs.Ground(World);
+            var p = Rigs.Player(World, new Vector3(0f, 1f, 0f));
+            var door = Door.Spawn(World, new Vector3(0f, 0f, -6f), 0f, owner: 999UL);
+            yield return Ticks(4);
+            door.TrySetLocked(999UL, true);
+
+            float before = door.Health;
+            p.DebugFireBullet(new Vector3(0f, 1.0f, 0f), new Vector3(0f, 0f, -1f), 40f);
+            yield return Ticks(6);
+            T.Check($"a bullet hurt the door ({before:0} -> {door.Health:0})", door.Health < before);
+
+            for (int i = 0; i < 12 && GodotObject.IsInstanceValid(door) && !door.IsDestroyed; i++)
+            {
+                p.DebugFireBullet(new Vector3(0f, 1.0f, 0f), new Vector3(0f, 0f, -1f), 40f);
+                yield return Ticks(6);
+            }
+            T.Check("a locked door can be shot down", !GodotObject.IsInstanceValid(door) || door.IsDestroyed);
+        }
     }
 
     public class DeadzoneLeavesCleanGroundAlone : GameTest
