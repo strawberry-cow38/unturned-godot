@@ -69,9 +69,9 @@ namespace UnturnedGodot
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
-                else if (arg.StartsWith("--shot=")) shot = arg["--shot=".Length..];
-                else if (arg.StartsWith("--navshot=")) navShot = arg["--navshot=".Length..];   // verify screenshot: navmesh floor overlay + zombie vision cones, synchronous world, aerial over a pocket
-                else if (arg.StartsWith("--menushot=")) menuShot = arg["--menushot=".Length..];   // render the 3D barn main menu + capture each of the 5 camera anchors (menu_00..04.png)
+                else if (arg.StartsWith("--shot=")) { shot = arg["--shot=".Length..]; _shotRequested = shot; }
+                else if (arg.StartsWith("--navshot=")) { navShot = arg["--navshot=".Length..]; _shotRequested = navShot; }   // verify screenshot: navmesh floor overlay + zombie vision cones, synchronous world, aerial over a pocket
+                else if (arg.StartsWith("--menushot=")) { menuShot = arg["--menushot=".Length..]; _shotRequested = menuShot; }   // render the 3D barn main menu + capture each of the 5 camera anchors (menu_00..04.png)
                 else if (arg == "--bakenav") bakenav = true;   // offline TOOL: sync-load the FULL world + bake all 19 nav pockets -> save the .res files (commit them; the game only LOADS, never gens)
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
@@ -4057,6 +4057,7 @@ namespace UnturnedGodot
                 return;
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
+            if (_shotRequested != null && ShotWatchdogTripped()) return;
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
@@ -4070,10 +4071,73 @@ namespace UnturnedGodot
             else if (++_frame < 6) return; // let the renderer settle
             if (_spotDbg != null && IsInstanceValid(_spotDbg)) GD.Print($"[LAMPDBG] consumerPowered={_spotDbg.DebugConsumerPowered} lampsLit={_spotDbg.DebugLampsLit}");   // plain UG_WIRETEST render: a wired+powered spotlight's lamps must be on
             var img = GetViewport().GetTexture().GetImage();
-            if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(); return; }
+            if (img == null) { GD.PrintErr("[SHOT] null image -- run with a rendering driver (e.g. --rendering-driver vulkan), NOT --headless"); GetTree().Quit(1); return; }
             img.SavePng(_shotPath);
             GD.Print($"[SHOT] saved {_shotPath} ({img.GetWidth()}x{img.GetHeight()})");
             GetTree().Quit();
+        }
+
+        string _shotRequested;       // the capture the COMMAND LINE asked for, set at parse time
+        ulong _shotWaitStartMs;      // wall clock at the first frame with a capture pending
+        ulong _shotLastReportMs;
+        bool _shotTimedOut;
+
+        /// <summary>Bound the wait for a capture, and say what it is waiting ON.
+        ///
+        /// Every gate below this is `if (not ready) return;`, so a prerequisite that never arrives means the
+        /// process sits forever rendering a movie nobody will look at. That is how these harnesses "break":
+        /// not by rotting, but by becoming indistinguishable from a slow render. --navshot with UG_UNTURNED_DIR
+        /// unset waits on _worldReady that WorldBuilder will never set (it returns early with Ready=false when
+        /// the map is missing) -- it printed the hint once at startup and then hung. With the variable set the
+        /// same code captures in 53 s. Nothing was broken; the failure had no voice.
+        ///
+        /// So: a heartbeat naming the blocking gate, then a bounded, non-zero exit. Wall clock rather than
+        /// frames because movie-mode frames are game time -- 30 fps of game time can be any amount of real
+        /// time, which is precisely the confusion being removed. UG_SHOT_TIMEOUT=0 disables for a deliberately
+        /// long capture.</summary>
+        bool ShotWatchdogTripped()
+        {
+            if (_shotTimedOut) return true;
+            ulong now = Godot.Time.GetTicksMsec();
+            if (_shotWaitStartMs == 0) { _shotWaitStartMs = now; _shotLastReportMs = now; return false; }
+
+            ulong budgetSec = 300;
+            var cfg = System.Environment.GetEnvironmentVariable("UG_SHOT_TIMEOUT");
+            if (cfg != null && ulong.TryParse(cfg, out var parsed)) budgetSec = parsed;
+            if (budgetSec == 0) return false;   // opt out
+
+            ulong waited = now - _shotWaitStartMs;
+            if (now - _shotLastReportMs >= 15000)   // heartbeat: even if an OUTER timeout kills us, the log says why
+            {
+                _shotLastReportMs = now;
+                GD.Print($"[SHOT] still waiting after {waited / 1000}s -- {ShotBlockedOn()}");
+            }
+            if (waited < budgetSec * 1000) return false;
+
+            _shotTimedOut = true;
+            GD.PrintErr($"[SHOT] TIMED OUT after {waited / 1000}s without capturing to {_shotRequested}");
+            GD.PrintErr($"[SHOT] blocked on: {ShotBlockedOn()}");
+            GD.PrintErr("[SHOT] most common cause: UG_UNTURNED_DIR is unset, so the map never loads and the "
+                      + "world never reports Ready. Set it (e.g. /home/ec2-user/unturned) and re-run.");
+            GetTree().Quit(1);
+            return true;
+        }
+
+        /// <summary>Which gate is still closed -- the thing the old silent hang never told anyone.</summary>
+        string ShotBlockedOn()
+        {
+            // The nastiest case: the capture was never even ARMED. Several builders assign _shotPath as their
+            // LAST statement, so a builder that bails early (a missing map returns a world with Ready=false)
+            // leaves _shotPath null -- the process then renders happily forever with no capture pending and
+            // nothing to report. Watching the command-line intent instead of the armed path is what makes
+            // this visible at all.
+            if (_shotPath == null) return "capture never armed -- the scene builder bailed before requesting it "
+                                        + "(world/map data almost certainly missing)";
+            if (_worldBuild && !_worldReady) return "async world load (worldReady=false; map data missing or still loading)";
+            if (_peiPlay) return $"peiplay frame budget (frame={_peiFrame})";
+            if (_fireTest) return $"firetest (frame={_ftFrame}, ammo={_ftPlayer?.Ammo.ToString() ?? "no player"})";
+            if (_navShot) return $"navshot settle (frame={_frame})";
+            return $"settle frame budget (frame={_frame})";
         }
     }
 
