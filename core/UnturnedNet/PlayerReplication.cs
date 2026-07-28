@@ -77,6 +77,9 @@ namespace UnturnedGodot.Net
         public const byte CommandToggleDoor = 32;
         public const byte CommandSetDoorLocked = 33;
         public const byte CommandClaimBed = 34;
+        // Sign text is a client INTENT like the door toggle above: the string is proposed, never
+        // trusted. The server re-sanitises and reach-checks it before anything is stored.
+        public const byte CommandSetSignText = 35;
 
         // EventRegistry id space (server -> client, ReliableOrdered)
         public const byte EventJoinSnapshot = 1;   // the join-time FULL snapshot rides the reliable channel (§2.2: fragmentation is safe there)
@@ -114,6 +117,7 @@ namespace UnturnedGodot.Net
         public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
         public const byte EventDoorState = 34;         // SP/MP unify: a door's authoritative open+locked state (both bits, so a lock is visible to everyone rather than only to the server)
         public const byte EventBedClaimed = 35;        // SP/MP unify: a bed's owner changed (0 = released); the loser of a re-claim gets its own event
+        public const byte EventSignText = 36;          // a sign's authoritative text, broadcast to everyone -- a sign only its author can read is not a sign
     }
 
     /// <summary>

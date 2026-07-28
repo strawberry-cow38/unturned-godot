@@ -597,6 +597,10 @@ namespace UnturnedGodot.Net
                 e => DoorStateChanged?.Invoke(e));
             Events.Register<BedClaimedEvent>(ReplicationIds.EventBedClaimed, BedClaimedEvent.TryRead,
                 e => BedClaimed?.Invoke(e));
+            // Same shape for signs: the game side owns the node, so the authoritative text goes
+            // straight out and whoever holds that sign paints it.
+            Events.Register<SignTextEvent>(ReplicationIds.EventSignText, SignTextEvent.TryRead,
+                e => SignTextChanged?.Invoke(e));
         }
 
         public NetSessionState State => Session.State;
@@ -838,6 +842,15 @@ namespace UnturnedGodot.Net
 
         // ---- SP/MP unify: door + bed intent. Reliable, transactional, and never applied locally first --
         // the caller asks, the server answers with DoorState/BedClaimed (or with silence, if refused). ----
+
+        /// <summary>A sign's authoritative text arrived. Carries what the SERVER stored, which may
+        /// differ from what this client proposed -- that is the point, not a bug.</summary>
+        public event System.Action<SignTextEvent> SignTextChanged;
+
+        /// <summary>Propose text for a sign. Intent only: the server sanitises and reach-checks it,
+        /// and the answer comes back via SignTextChanged for everyone including the author.</summary>
+        public bool SendSetSignText(uint netId, string text)
+            => SendCommand(ReplicationIds.CommandSetSignText, new SetSignTextCommand { NetId = netId, Text = text }.Write);
 
         public bool SendToggleDoor(uint netId)
             => SendCommand(ReplicationIds.CommandToggleDoor, new ToggleDoorCommand { NetId = netId }.Write);

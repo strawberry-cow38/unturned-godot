@@ -138,6 +138,8 @@ namespace UnturnedGodot
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Door _focusDoor;              // the door being looked at -> F toggles it
+        Sign _focusSign;              // the sign being looked at -> F opens the writing box
+        public Sign DebugFocusSign => _focusSign;
         Bed _focusBed;                // the bed being looked at -> F claims it as this player's respawn point
         /// <summary>Identity used for door/bed ownership. SP is a single local player; MP overwrites this
         /// per shell so a claim belongs to a person rather than to "the client".</summary>
@@ -178,7 +180,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
-            Door hitDoor = null; Bed hitBed = null;
+            Door hitDoor = null; Bed hitBed = null; Sign hitSign = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -199,6 +201,7 @@ namespace UnturnedGodot
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Door rdoor && IsInstanceValid(rdoor)) hitDoor = rdoor;
+                    else if (rcol is Sign rsign && IsInstanceValid(rsign)) hitSign = rsign;   // look at a sign -> F writes on it
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
@@ -275,6 +278,18 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusDoor)) _focusDoor.SetLookFocused(false);
                 _focusDoor = hitDoor;
                 _focusDoor?.SetLookFocused(true);
+            }
+            if (hitSign != _focusSign) _focusSign = hitSign;   // no outline shader on signs; the prompt is the affordance
+
+            // F on a looked-at sign opens the writing box. Guarded on the box already being open so a
+            // held key does not re-open it every frame and swallow the player's own typing.
+            if (_focusSign != null && IsInstanceValid(_focusSign)
+                && SignWriteBox.Instance is { IsOpen: false } wb
+                && Input.MouseMode == Input.MouseModeEnum.Captured
+                && Input.IsPhysicalKeyPressed(Key.F)
+                && (_focusSign.GlobalPosition - GlobalPosition).Length() <= 4f)
+            {
+                wb.Open(_focusSign);
             }
             if (hitBed != _focusBed)
             {
@@ -2042,6 +2057,13 @@ namespace UnturnedGodot
                 _focusDoor.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
                 return;
             }
+            if (_focusSign != null && IsInstanceValid(_focusSign)
+                && (_focusSign.GlobalPosition - GlobalPosition).Length() < range + 2f)
+            {
+                // A sign nobody can take down is a permanent billboard on someone else's base.
+                _focusSign.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
+                return;
+            }
             if (_focusBed != null && IsInstanceValid(_focusBed)
                 && (_focusBed.GlobalPosition - GlobalPosition).Length() < range + 2f)
             {
@@ -2551,6 +2573,7 @@ namespace UnturnedGodot
         public System.Action<uint> NetToggleDoor;                    // door NetId -> Client.SendToggleDoor
         public System.Action<uint, bool> NetSetDoorLocked;           // (door NetId, locked) -> Client.SendSetDoorLocked
         public System.Action<uint> NetClaimBed;                      // bed NetId -> Client.SendClaimBed
+        public System.Action<uint, string> NetSetSignText;            // sign NetId + proposed text -> Client.SendSetSignText
 
         VehiclePuppet NearestPuppet()
         {

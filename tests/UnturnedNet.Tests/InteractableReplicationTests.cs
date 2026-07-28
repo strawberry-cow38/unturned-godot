@@ -21,7 +21,55 @@ namespace UnturnedNet.Tests
             var s = new ServerInteractables { Now = 1000.0 };
             s.RegisterDoor(1, Vector3.zero, owner: Me);
             s.RegisterBed(2, Vector3.zero);
+            s.AddSign(3, Vector3.zero);
             return s;
+        }
+
+        // --- signs (server-authoritative text) ---
+
+        [Test]
+        public void A_Sign_Stores_Text_Written_By_Someone_In_Reach()
+        {
+            var s = NewServer();
+            Assert.That(s.SetSignText(3, "Trader - knock twice", AtDoor, out string stored), Is.True);
+            Assert.That(stored, Is.EqualTo("Trader - knock twice"));
+            Assert.That(s.TryGetSignText(3, out string held), Is.True);
+            Assert.That(held, Is.EqualTo("Trader - knock twice"), "the SERVER holds it, not just the writer");
+        }
+
+        [Test]
+        public void A_Sign_Refuses_A_Writer_Who_Is_Not_There()
+        {
+            // The reach check is the one thing a client cannot vouch for. Without it any peer could
+            // rewrite every sign on the map from spawn.
+            var s = NewServer();
+            Assert.That(s.SetSignText(3, "griefed", FarAway, out _), Is.False);
+            Assert.That(s.TryGetSignText(3, out string held), Is.True);
+            Assert.That(held, Is.EqualTo(string.Empty), "the text must be untouched by an out-of-reach writer");
+        }
+
+        [Test]
+        public void The_Server_Sanitises_What_A_Client_Proposes()
+        {
+            // A client that cleans its own input protects nobody -- this frame may come from a peer
+            // that is not running our client at all. What the server STORES is what everyone sees.
+            var s = NewServer();
+            var nasty = "shop" + "\u0007" + "\t" + new string('z', 400);
+            Assert.That(s.SetSignText(3, nasty, AtDoor, out string stored), Is.True);
+
+            foreach (char c in stored)
+                Assert.That(char.IsControl(c) && c != '\n', Is.False,
+                    $"a control character (U+{(int)c:X4}) reached server storage");
+            Assert.That(stored.Length, Is.LessThanOrEqualTo(SignText.MaxChars), "and the length cap holds server-side");
+            Assert.That(stored, Does.StartWith("shop"), "the legitimate text survives");
+        }
+
+        [Test]
+        public void An_Unknown_Sign_Is_Refused_Rather_Than_Created()
+        {
+            var s = NewServer();
+            Assert.That(s.SetSignText(999, "ghost", AtDoor, out _), Is.False,
+                "a command naming a sign that does not exist must not conjure one");
         }
 
         // --- doors ---
