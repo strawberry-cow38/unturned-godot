@@ -203,6 +203,35 @@ namespace UnturnedNet.Tests
             Assert.That(a.Destructibles.IsAlive(0), Is.False, "the break replicated to the client's rubble bitmap");
         }
 
+        // ---------------------------------------------------------------- safezones (server-authoritative)
+
+        [Test]
+        public void APlayerInsideASafezoneTakesNoServerAppliedDamage()
+        {
+            // The MP half of the safezone rule. The client has its own check for responsiveness, but a
+            // client-only rule is worthless here: a remote attacker's shot resolves on the SERVER, so if
+            // the gate lived only on the client you could still be killed inside a bubble.
+            var h = new Harness(50191).Connected("victim");
+            var v = h.Clients[0];
+            h.Server.Players.TryGetByOwner(v.PlayerId, out var vpe);
+
+            var zones = new SDG.Unturned.SafezoneSim();
+            int idx = zones.Add(vpe.Pos, 25f);              // a live bubble centred on the victim
+            h.Server.Combat.Safezones = zones;
+
+            h.Server.Combat.DamagePlayerExternal(v.PlayerId, 60f);
+            h.Step(10);
+            Assert.That(h.Server.Combat.HealthOf(v.PlayerId), Is.EqualTo(100),
+                "damage applied to a player inside a live safezone must be refused by the server");
+
+            // ...and the protection is a consequence of power, not permanent: cut it and damage lands.
+            zones.SetActive(idx, false);
+            h.Server.Combat.DamagePlayerExternal(v.PlayerId, 60f);
+            h.Step(10);
+            Assert.That(h.Server.Combat.HealthOf(v.PlayerId), Is.LessThan(100),
+                "once the zone is unpowered the same damage must land -- otherwise the gate fails OPEN forever");
+        }
+
         // ---------------------------------------------------------------- kill credit (the §4 Phase 5 test)
 
         [Test]

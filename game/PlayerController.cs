@@ -3004,6 +3004,12 @@ namespace UnturnedGodot
         // (starvation/infection) which flashes but doesn't kick the camera.
         public void TakeDamage(float amount, Vector3? fromPos = null)
         {
+            // A live safezone refuses damage outright. Gated here rather than at each caller because
+            // "safezone" has to mean the same thing to a zombie swing, a bullet, a blast and a fall --
+            // enforcing it per-caller is exactly how a rule gets applied in two places and forgotten
+            // in a third. SafezoneField is null on worlds that have no zones, so this costs nothing.
+            if (SafezoneField.Instance is { } _sz &&
+                _sz.Sim.BlocksDamageAt(new UnityEngine.Vector3(GlobalPosition.X, GlobalPosition.Y, GlobalPosition.Z))) return;
             // P3b: a server-owned body ROUTES damage to the server sink (zombie melee/acid + vehicle/deployable
             // blast on a NetAvatar follower body; also fall/OOB on the loopback host shell) instead of moving
             // local HP. Must precede the guards below, which would otherwise swallow the hit. The server sink

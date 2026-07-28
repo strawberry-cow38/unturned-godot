@@ -117,6 +117,11 @@ namespace UnturnedGodot.Net
         public CombatWorldRay WorldRay;                       // optional world-geometry occlusion + bullet stops
         // destructible props (rubble): (index, amount, tick) -> destroyed? Set by the host to ServerDestructibles.DamageObject.
         // Null on the L0 default (no world = nothing destructible to hit).
+        /// <summary>Live safezones. Set by the host that owns the world; null on worlds with none.
+        /// Held as the sim type rather than a delegate because SafezoneSim is engine-free and this
+        /// assembly already references it -- no Godot type crosses the boundary.</summary>
+        public SDG.Unturned.SafezoneSim Safezones;
+
         public Func<int, float, long, bool> DamageObject;
 
         /// <summary>SP/MP unify (doors + beds): (from, to, amount, tick) -> did it hit one? Barricades are
@@ -210,6 +215,10 @@ namespace UnturnedGodot.Net
         public ServerGunProfile GunFor(ushort playerId) => _gunByPlayer.TryGetValue(playerId, out var p) ? p : DefaultGun;
 
         public int AmmoOf(ushort playerId) => _state.TryGet(playerId, out var e) ? e.Ammo : -1;
+        /// <summary>Server-authoritative health, or -1 for an unknown player. Same shape as AmmoOf:
+        /// a read-only window onto the server's own state, so a test asserts what the SERVER believes
+        /// rather than what a client was told.</summary>
+        public int HealthOf(ushort playerId) => _state.TryGet(playerId, out var e) ? e.Health : -1;
 
         readonly List<(ushort victim, float damage, ushort attacker)> _externalDamageQueue = new List<(ushort, float, ushort)>();
 
@@ -581,6 +590,13 @@ namespace UnturnedGodot.Net
         {
             killed = false;
             if (!_state.TryGet(victim, out var cs) || !cs.Alive) return;
+            // SAFEZONE, enforced SERVER-SIDE. The client has its own check for responsiveness, but that
+            // one is only a prediction -- if the rule lived solely on the client, a remote player could
+            // still shoot you inside a bubble and the server would happily apply it. This is the single
+            // choke point every damage source funnels through (bullets, melee, blasts, fall, external
+            // queue), which is exactly why the gate belongs here and not at each caller.
+            if (Safezones != null && _players.TryGetByOwner(victim, out var vpe) && Safezones.BlocksDamageAt(vpe.Pos))
+                return;
             cs.HealthExact -= damage;
             cs.Health = (byte)Math.Clamp((int)Math.Ceiling(cs.HealthExact), 0, 100);
             _state.MarkDirty(cs, tick);
