@@ -83,6 +83,49 @@ namespace UnturnedGodot.Net
 
     /// <summary>Server tells everyone what a sign now says. Broadcast rather than answered only to the
     /// writer -- a sign whose text only its author can see is not a sign.</summary>
+    /// <summary>Server announces a supply drop. Carries the landing point and the drop's start clock
+    /// rather than a position: the descent is a closed-form function of elapsed time, so a client that
+    /// joins mid-fall places the crate correctly from these two facts alone. Sending a position each
+    /// tick would cost bandwidth for a value both ends can already compute.</summary>
+    public struct AirdropStartedEvent
+    {
+        public uint NetId;
+        public Vector3 Target;
+        public float StartedAt;
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt32(NetId);
+            w.WriteFloat(Target.x); w.WriteFloat(Target.y); w.WriteFloat(Target.z);
+            w.WriteFloat(StartedAt);
+        }
+        public static bool TryRead(NetPakReader r, out AirdropStartedEvent e)
+        {
+            e = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadFloat(out float x)) return false;
+            if (!r.ReadFloat(out float y)) return false;
+            if (!r.ReadFloat(out float z)) return false;
+            if (!r.ReadFloat(out float t)) return false;
+            e = new AirdropStartedEvent { NetId = id, Target = new Vector3(x, y, z), StartedAt = t };
+            return true;
+        }
+    }
+
+    /// <summary>The crate is down. Separate from the start event so a late joiner is told the phase
+    /// rather than having to infer it from a height comparison that floating point can lose.</summary>
+    public struct AirdropLandedEvent
+    {
+        public uint NetId;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); }
+        public static bool TryRead(NetPakReader r, out AirdropLandedEvent e)
+        {
+            e = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            e = new AirdropLandedEvent { NetId = id };
+            return true;
+        }
+    }
+
     public struct SignTextEvent
     {
         public uint NetId;

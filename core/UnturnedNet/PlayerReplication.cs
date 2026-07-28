@@ -117,6 +117,8 @@ namespace UnturnedGodot.Net
         public const byte EventObjectRestored = 33;    // destructible props: the Rubble_Reset respawn -- alive-bit back on by index
         public const byte EventDoorState = 34;         // SP/MP unify: a door's authoritative open+locked state (both bits, so a lock is visible to everyone rather than only to the server)
         public const byte EventBedClaimed = 35;        // SP/MP unify: a bed's owner changed (0 = released); the loser of a re-claim gets its own event
+        public const byte EventAirdropStarted = 37;    // a supply drop began: net id, landing point, start clock -- clients spawn a crate and let AirdropSim place it
+        public const byte EventAirdropLanded = 38;     // it touched down; cut the chute and let it be looted
         public const byte EventSignText = 36;          // a sign's authoritative text, broadcast to everyone -- a sign only its author can read is not a sign
     }
 

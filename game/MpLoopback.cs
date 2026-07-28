@@ -291,6 +291,10 @@ namespace UnturnedGodot
             // Phase 5: the world's real zombie brains publish into ZombieReplication at 12.5 Hz (§3.5) --
             // every loopback session soaks the zombie wire; the local view renders the brains directly
             // (no ZombiePuppets here -- puppets are for worlds that don't own the brains).
+            // Supply drops: the SERVER owns when and where. Without a picker the schedule stays
+            // silent by design, which is the right behaviour for a world with no terrain to drop onto.
+            Server.PickAirdropTarget = () => AirdropField.Instance?.PickTarget() ?? default;
+
             ZombieSync = new ZombieNetSync(Server, this);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ZombieSync.Tick(), "net.zombies.publish"));
             // A5: the loopback world's wildlife (AnimalField's real AnimalAgents) publish as replicas too -- every

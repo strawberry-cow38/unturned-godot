@@ -203,6 +203,60 @@ namespace UnturnedNet.Tests
             Assert.That(a.Destructibles.IsAlive(0), Is.False, "the break replicated to the client's rubble bitmap");
         }
 
+        // ---------------------------------------------------------------- airdrops (server-driven)
+
+        [Test]
+        public void AServerDrivenAirdropReachesAConnectedClient()
+        {
+            // The MP half: the server owns the schedule and the landing point, and a client learns of
+            // the drop over the wire. Asserting the CLIENT received it, not merely that the server's
+            // own sim changed phase -- a drop nobody is told about is not an airdrop.
+            var h = new Harness(50192).Connected("looter");
+            var c = h.Clients[0];
+
+            var seen = new List<AirdropStartedEvent>();
+            var landed = new List<AirdropLandedEvent>();
+            c.AirdropStarted += seen.Add;
+            c.AirdropLanded += landed.Add;
+
+            var where = new Vector3(40f, 5f, -20f);
+            h.Server.PickAirdropTarget = () => where;
+            h.Server.Airdrops.IntervalSeconds = 1f;
+            h.Server.Airdrops.ScheduleNextIn(0.5);            // the constructor already booked one 10 min out
+            h.Server.Airdrops.DropHeight = 40f;
+            h.Server.Airdrops.FallSpeed = 40f;           // ~1 s of descent, so the test stays quick
+
+            h.Step(400);                                       // 8 s at 50 Hz: start + land both inside
+
+            // Isolate: did the SERVER even fire? If this passes and the next fails, the bug is in
+            // delivery, not scheduling.
+            Assert.That(h.Server.Airdrops.Phase, Is.Not.EqualTo(AirdropPhase.None),
+                "server-side: the drop never started at all");
+            Assert.That(seen.Count, Is.GreaterThanOrEqualTo(1), "the client must be told a drop began");
+            Assert.That(seen[0].Target.x, Is.EqualTo(where.x).Within(0.01f), "and where it lands");
+            Assert.That(seen[0].Target.z, Is.EqualTo(where.z).Within(0.01f));
+            Assert.That(seen[0].NetId, Is.Not.EqualTo(0u), "with an id it can attach a crate to");
+            Assert.That(landed.Count, Is.GreaterThanOrEqualTo(1),
+                "and told when it touched down -- inferring that from a height compare loses to floating point");
+        }
+
+        [Test]
+        public void NoAirdropsHappenWhenTheHostHasNowhereToDropThem()
+        {
+            // PickAirdropTarget null means the world cannot say where a crate should land (no terrain),
+            // and the correct behaviour is silence rather than a crate at the origin.
+            var h = new Harness(50193).Connected("looter");
+            var c = h.Clients[0];
+            var seen = new List<AirdropStartedEvent>();
+            c.AirdropStarted += seen.Add;
+
+            h.Server.Airdrops.IntervalSeconds = 1f;
+            h.Server.Airdrops.ScheduleNextIn(0.5);
+            h.Step(300);
+
+            Assert.That(seen, Is.Empty, "a host with no drop target must not drop crates at the origin");
+        }
+
         // ---------------------------------------------------------------- safezones (server-authoritative)
 
         [Test]

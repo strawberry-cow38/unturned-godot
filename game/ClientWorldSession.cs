@@ -243,6 +243,10 @@ namespace UnturnedGodot
                 if (!Sign.TryGetByNetId(e.NetId, out var sign)) return;
                 sign.SetTextLocal(e.Text);
             };
+            // Supply drops: the server announces WHERE and WHEN, the field derives the descent.
+            Client.AirdropStarted += e =>
+                AirdropField.Instance?.BeginRemote(e.NetId, new Vector3(e.Target.x, e.Target.y, e.Target.z), e.StartedAt);
+            Client.AirdropLanded += e => AirdropField.Instance?.LandRemote(e.NetId);
             // The server sends a release event for the bed a re-claimer left BEFORE the claim itself, and
             // the channel is ordered, so applying each event as it lands is enough -- no need for this
             // client to keep its own who-owns-what index to work out what was freed.
