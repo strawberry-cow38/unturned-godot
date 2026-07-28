@@ -254,4 +254,60 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // Airdrop crate: proves the crate is actually LOOTABLE and actually BREAKABLE, in-engine. Written
+    // after a verifier caught that AirdropCrate.TakeDamage had zero callers and the crate held no loot
+    // at all -- a crate you cannot open is an orange box, and a destruction method nobody calls is the
+    // exact shape of bug this repo has been paying for. L1 rather than L0 because spilling loot means
+    // spawning real WorldItem nodes into a real tree.
+    public class AirdropCrateIsLootableAndBreakable : GameTest
+    {
+        public override string Name => "airdrop.crate_loot_and_break";
+        public override double TimeoutSimSeconds => 20;
+
+        public override IEnumerable<Step> Run()
+        {
+            var crate = AirdropCrate.Spawn(World, new Vector3(0f, 0f, 0f));
+            crate.Contents.AddRange(new ushort[] { 67, 67 });
+            yield return Ticks(2);
+
+            // Still in the air: looting must be refused, or a player could empty a crate mid-descent.
+            T.Check("an airborne crate cannot be looted", crate.Open() == false);
+
+            crate.MarkLanded();
+            yield return Ticks(2);
+
+            int before = CountWorldItems();
+            T.Check("a landed crate opens", crate.Open());
+            yield return Ticks(2);
+            int after = CountWorldItems();
+            T.Check("its contents reached the ground as real items", after > before);
+            T.Check("and it cannot be looted twice", crate.Open() == false);
+
+            // Breaking is a separate path and must also work -- this is the call TakeDamage never had.
+            var other = AirdropCrate.Spawn(World, new Vector3(20f, 0f, 0f));
+            other.Contents.Add(67);
+            other.MarkLanded();
+            yield return Ticks(2);
+            int b2 = CountWorldItems();
+            T.Check("a big hit destroys the crate", other.TakeDamage(9999f));
+            yield return Ticks(2);
+            T.Check("and breaking it spills the supplies rather than deleting them",
+                    CountWorldItems() > b2);
+        }
+
+        int CountWorldItems()
+        {
+            int n = 0;
+            foreach (var c in World.GetChildren()) Count(c, ref n);
+            return n;
+        }
+
+        void Count(Node node, ref int n)
+        {
+            if (node is WorldItem) n++;
+            foreach (var c in node.GetChildren()) Count(c, ref n);
+        }
+    }
+
+
 }

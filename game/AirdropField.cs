@@ -25,6 +25,10 @@ namespace UnturnedGodot
         public AirdropSim Sim { get; } = new AirdropSim();
 
         public Terrain Terr;
+
+        /// <summary>What a crate carries. A field rather than a constant so a map or a server can set
+        /// its own table without touching this class.</summary>
+        public static readonly ushort[] DropLoot = { 67, 67, 4, 5 };
         AirdropCrate _crate;
         bool _driveLocally;
 
@@ -55,6 +59,9 @@ namespace UnturnedGodot
             if (IsInstanceValid(_crate)) _crate.QueueFree();
             var p = Sim.CurrentPosition;
             _crate = AirdropCrate.Spawn(this, new Vector3(p.x, p.y, p.z), netId);
+            // Contents are decided where the crate is built so both machines fill it the same way from
+            // the same drop. An empty crate is not a supply drop, it is an orange box.
+            _crate.Contents.AddRange(DropLoot);
             GD.Print($"[airdrop] crate {netId} inbound at ({p.x:0}, {p.z:0})");
         }
 

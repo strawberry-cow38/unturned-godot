@@ -19,6 +19,14 @@ namespace UnturnedGodot
         /// <summary>Crates are breakable, so a drop cannot become permanent scenery if nobody loots it.</summary>
         public float Health = 120f;
 
+        /// <summary>What is inside. Held as plain item ids rather than a Container because a crate is
+        /// opened once and emptied -- it is a parcel, not a storage box you keep coming back to. The
+        /// contents spill as WorldItems, which reuses the whole existing pickup and replication path
+        /// instead of inventing a second one that would need its own MP story.</summary>
+        public readonly List<ushort> Contents = new();
+
+        public bool Emptied { get; private set; }
+
         public uint NetId { get; set; }
         public bool Landed { get; private set; }
 
@@ -85,12 +93,40 @@ namespace UnturnedGodot
             if (IsInstanceValid(_chute)) _chute.QueueFree();
         }
 
+        /// <summary>Break it open. The contents spill on the ground rather than vanishing with the
+        /// crate: destroying a supply drop should scatter the supplies, not delete them.</summary>
         public bool TakeDamage(float amount)
         {
             Health -= amount;
             if (Health > 0f) return false;
+            SpillContents();
             QueueFree();
             return true;
+        }
+
+        /// <summary>Open it. Same spill as breaking it, minus the crate dying -- so a player can walk
+        /// up and loot rather than having to beat the parcel to death first.</summary>
+        public bool Open()
+        {
+            if (Emptied || !Landed) return false;   // no looting a crate that is still in the air
+            SpillContents();
+            return true;
+        }
+
+        void SpillContents()
+        {
+            if (Emptied) return;
+            Emptied = true;
+            var parent = GetParent();
+            if (parent == null) return;
+            for (int i = 0; i < Contents.Count; i++)
+            {
+                // Fanned out slightly so a five-item drop is not one pile occupying a single point.
+                float a = Contents.Count > 1 ? (float)i / Contents.Count * Mathf.Tau : 0f;
+                var at = GlobalPosition + new Vector3(Mathf.Cos(a) * 0.7f, 0.4f, Mathf.Sin(a) * 0.7f);
+                WorldItem.Spawn(parent, new SDG.Unturned.Item(Contents[i]), at);
+            }
+            Contents.Clear();
         }
     }
 }

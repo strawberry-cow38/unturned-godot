@@ -139,6 +139,8 @@ namespace UnturnedGodot
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Door _focusDoor;              // the door being looked at -> F toggles it
         Sign _focusSign;              // the sign being looked at -> F opens the writing box
+        AirdropCrate _focusCrate;     // the landed supply crate being looked at -> F loots it
+        public AirdropCrate DebugFocusCrate => _focusCrate;
         public Sign DebugFocusSign => _focusSign;
         Bed _focusBed;                // the bed being looked at -> F claims it as this player's respawn point
         /// <summary>Identity used for door/bed ownership. SP is a single local player; MP overwrites this
@@ -180,7 +182,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
-            Door hitDoor = null; Bed hitBed = null; Sign hitSign = null;
+            Door hitDoor = null; Bed hitBed = null; Sign hitSign = null; AirdropCrate hitCrate = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -202,6 +204,7 @@ namespace UnturnedGodot
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Door rdoor && IsInstanceValid(rdoor)) hitDoor = rdoor;
                     else if (rcol is Sign rsign && IsInstanceValid(rsign)) hitSign = rsign;   // look at a sign -> F writes on it
+                    else if (rcol is AirdropCrate rcrate && IsInstanceValid(rcrate)) hitCrate = rcrate;   // look at a landed crate -> F loots it
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
@@ -280,6 +283,17 @@ namespace UnturnedGodot
                 _focusDoor?.SetLookFocused(true);
             }
             if (hitSign != _focusSign) _focusSign = hitSign;   // no outline shader on signs; the prompt is the affordance
+            if (hitCrate != _focusCrate) _focusCrate = hitCrate;
+
+            // F on a landed crate spills its contents as ground items, which the existing pickup path
+            // then handles -- so looting an airdrop needs no new inventory or replication story.
+            if (_focusCrate != null && IsInstanceValid(_focusCrate)
+                && Input.MouseMode == Input.MouseModeEnum.Captured
+                && Input.IsPhysicalKeyPressed(Key.F)
+                && (_focusCrate.GlobalPosition - GlobalPosition).Length() <= 3.5f)
+            {
+                _focusCrate.Open();
+            }
 
             // F on a looked-at sign opens the writing box. Guarded on the box already being open so a
             // held key does not re-open it every frame and swallow the player's own typing.
@@ -2055,6 +2069,14 @@ namespace UnturnedGodot
                 && (_focusDoor.GlobalPosition - GlobalPosition).Length() < range + 2f)
             {
                 _focusDoor.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
+                return;
+            }
+            if (_focusCrate != null && IsInstanceValid(_focusCrate)
+                && (_focusCrate.GlobalPosition - GlobalPosition).Length() < range + 2f)
+            {
+                // Break the crate open. Without this call AirdropCrate.TakeDamage was a fully-written
+                // method with zero callers -- the same shape of bug this repo spent two days on.
+                _focusCrate.TakeDamage((_melee?.VehicleDamage ?? 10f) * mult);
                 return;
             }
             if (_focusSign != null && IsInstanceValid(_focusSign)
