@@ -51,6 +51,17 @@ namespace UnturnedGodot.Net
         // InteractableState block below carries the same state to whoever joined after the change.
         // The game side registers each door/bed as the world builds, then relays a client's intent here.
         public readonly ServerInteractables Interactables = new ServerInteractables();
+
+        /// <summary>Supply drops. The server owns the schedule and the landing point; clients are told
+        /// the start clock and compute the descent themselves, because it is closed-form.</summary>
+        public readonly AirdropSim Airdrops = new AirdropSim();
+
+        /// <summary>Where the next crate lands. Set by the host that owns the world (it knows the map);
+        /// null means drops are disabled, which is the right default for a world with no terrain.</summary>
+        public System.Func<Vector3> PickAirdropTarget;
+
+        uint _nextAirdropNetId = 1;
+        uint _activeAirdropNetId;
         // SP/MP unify: contaminated ground. Also server-only -- the volumes are authored map data every
         // peer already has, and the only thing that crosses the wire is the damage/infection it causes,
         // which the existing vitals + combat paths already replicate.
@@ -279,6 +290,39 @@ namespace UnturnedGodot.Net
             // The door cooldown is measured in sim seconds, so the clock must be current BEFORE this tick's
             // commands are validated against it -- otherwise every toggle is judged against last tick.
             Interactables.Now = Session.CurrentTick * SimClock.FixedDelta;
+
+            // Supply drops. Stepped here rather than on the game side so a dedicated server with no
+            // rendering runs the same schedule, and so the START CLOCK every client integrates from is
+            // the server's own -- the whole reason descent is closed-form.
+            if (PickAirdropTarget != null)
+            {
+                bool startedNew = Airdrops.Step(SimClock.FixedDelta, PickAirdropTarget);
+
+                // The landing is reported INDEPENDENTLY of whether a new drop fired on the same tick.
+                // These were an if/else-if, and that was a real bug: Step resolves the landing before
+                // it considers a new drop, so with a short interval both happen on one tick, the new
+                // drop won the branch, and the crate silently never landed for any client. Broadcast
+                // the landing for the OLD id first, then let the new drop take the id.
+                if (Airdrops.JustLanded && _activeAirdropNetId != 0)
+                {
+                    // Told explicitly rather than left for each client to infer from a height compare,
+                    // which floating point can lose at exactly the moment it matters.
+                    var landedEvt = new AirdropLandedEvent { NetId = _activeAirdropNetId };
+                    BroadcastEvent(NetMessagePak.Pack(ReplicationIds.EventAirdropLanded, landedEvt.Write));
+                }
+
+                if (startedNew)
+                {
+                    _activeAirdropNetId = _nextAirdropNetId++;
+                    var started = new AirdropStartedEvent
+                    {
+                        NetId = _activeAirdropNetId,
+                        Target = Airdrops.Target,
+                        StartedAt = (float)Airdrops.StartedAt,
+                    };
+                    BroadcastEvent(NetMessagePak.Pack(ReplicationIds.EventAirdropStarted, started.Write));
+                }
+            }
             foreach (var peer in Session.Peers)
             {
                 while (peer.TryReceiveReliable(out byte[] msg)) Commands.TryDispatch(msg, peer.PlayerId);
@@ -601,6 +645,11 @@ namespace UnturnedGodot.Net
             // straight out and whoever holds that sign paints it.
             Events.Register<SignTextEvent>(ReplicationIds.EventSignText, SignTextEvent.TryRead,
                 e => SignTextChanged?.Invoke(e));
+            // Supply drops: the client is told WHERE and WHEN, and computes the descent itself.
+            Events.Register<AirdropStartedEvent>(ReplicationIds.EventAirdropStarted, AirdropStartedEvent.TryRead,
+                e => AirdropStarted?.Invoke(e));
+            Events.Register<AirdropLandedEvent>(ReplicationIds.EventAirdropLanded, AirdropLandedEvent.TryRead,
+                e => AirdropLanded?.Invoke(e));
         }
 
         public NetSessionState State => Session.State;
@@ -846,6 +895,12 @@ namespace UnturnedGodot.Net
         /// <summary>A sign's authoritative text arrived. Carries what the SERVER stored, which may
         /// differ from what this client proposed -- that is the point, not a bug.</summary>
         public event System.Action<SignTextEvent> SignTextChanged;
+
+        /// <summary>A supply drop began: landing point + the server's start clock. Enough to place the
+        /// crate correctly even for a client that joined halfway down.</summary>
+        public event System.Action<AirdropStartedEvent> AirdropStarted;
+        /// <summary>The crate is down.</summary>
+        public event System.Action<AirdropLandedEvent> AirdropLanded;
 
         /// <summary>Propose text for a sign. Intent only: the server sanitises and reach-checks it,
         /// and the answer comes back via SignTextChanged for everyone including the author.</summary>

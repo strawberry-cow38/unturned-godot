@@ -837,6 +837,12 @@ namespace UnturnedGodot
                 // without one we are the authority and set it directly. Either way SetTextLocal runs
                 // the same engine-free rules, so a listen-server host cannot store something a
                 // dedicated server would have refused.
+                // Supply drops. Driven locally only when no server session owns the schedule, so SP
+                // and MP share one renderer and cannot disagree about where a crate is.
+                var airdrops = new AirdropField { Terr = null };
+                root.AddChild(airdrops);
+                airdrops.DriveLocally(player.NetSetSignText == null);
+
                 var writeBox = new SignWriteBox();
                 root.AddChild(writeBox);
                 writeBox.Submitted += (sign, text) =>
