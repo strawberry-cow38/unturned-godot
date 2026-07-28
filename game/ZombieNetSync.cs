@@ -1,6 +1,7 @@
 using Godot;
 using System.Collections.Generic;
 using UnturnedGodot.Net;
+using SDG.Unturned;
 
 namespace UnturnedGodot
 {
@@ -29,6 +30,13 @@ namespace UnturnedGodot
             public bool DeadAnnounced;
         }
         readonly Dictionary<ZombieController, Tracked> _tracked = new();
+        // The rewrite's zombies are sim ROWS, so they can never appear in the node group above and were
+        // never replicated at all -- a second player saw an empty world under --newzombies. Tracked
+        // separately, keyed by ZombieId (stable across the sim's swap-removes, unlike a row index),
+        // publishing through the SAME wire calls so the protocol is unchanged.
+        readonly Dictionary<ZombieId, Tracked> _simTracked = new();
+        readonly List<ZombieId> _simStale = new();
+        bool _announcedSimRows;
         readonly Dictionary<uint, Tracked> _byId = new();
         readonly List<ZombieController> _stale = new();
 
@@ -88,6 +96,8 @@ namespace UnturnedGodot
                 }
             }
 
+            PublishSimRows(tick);
+
             // brains freed (pocket despawn / corpse cleanup) -> retire the entity
             _stale.Clear();
             foreach (var kv in _tracked)
@@ -101,10 +111,91 @@ namespace UnturnedGodot
             }
         }
 
+        /// <summary>Publish the rewrite's sim rows over the same wire the node-backed zombies use.
+        /// Position, yaw and the anim byte carry identical meaning; only where the data comes from
+        /// changes, so no client-side or protocol change is needed.</summary>
+        void PublishSimRows(long tick)
+        {
+            var sim = ZombieDirector.Instance?.Sim;
+            if (sim == null) return;
+
+            for (int row = 0; row < sim.Count; row++)
+            {
+                var id = sim.IdOf(row);
+                var pos = sim.PositionOf(row);
+                if (!_simTracked.TryGetValue(id, out var t))
+                {
+                    var netId = _server.Ids.Mint();
+                    t = new Tracked { NetId = netId.Value, Brain = null, LastSwingSeq = 0, DeadAnnounced = sim.IsDead(row) };
+                    _simTracked[id] = t;
+                    _byId[t.NetId] = t;
+                    _server.Zombies.ServerSpawn(netId, 0, pos, tick);   // kind 0: the rewrite has one kind so far
+                    // One line, once, so "are the new zombies actually on the wire?" is answerable from a
+                    // log instead of by reading code. Silence here is what let four whole gameplay
+                    // surfaces address an empty node group for days without anyone noticing.
+                    if (!_announcedSimRows)
+                    {
+                        _announcedSimRows = true;
+                        GD.Print($"[zombienet] publishing SIM ROWS to the wire (--newzombies); first netId {t.NetId}");
+                    }
+                }
+
+                byte anim;
+                if (sim.IsDead(row)) anim = (byte)ZombieNetAnim.Dead;
+                else if (sim.IsSwinging(row)) anim = (byte)ZombieNetAnim.Attack;
+                else
+                {
+                    _server.Zombies.TryGet(new NetId(t.NetId), out var prev);
+                    float speed = prev != null ? (pos - prev.Pos).magnitude / (PublishDivisorTicks * 0.02f) : 0f;
+                    anim = speed > 0.5f ? (byte)ZombieNetAnim.Walk : (byte)ZombieNetAnim.Idle;
+                }
+
+                var face = sim.FacingOf(row);
+                float yaw = Mathf.RadToDeg(Mathf.Atan2(face.x, face.z));
+                _server.Zombies.ServerPublish(new NetId(t.NetId), pos, yaw, anim, tick);
+
+                if (sim.IsDead(row) && !t.DeadAnnounced)
+                {
+                    t.DeadAnnounced = true;
+                    var evt = new ZombieDiedEvent { NetId = t.NetId, Killer = 0 };
+                    _server.BroadcastEvent(NetMessagePak.Pack(ReplicationIds.EventZombieDied, evt.Write));
+                }
+            }
+
+            // Rows the sim has dropped (corpse recycle, despawn) -> retire the entity. IsAlive is the
+            // authority: a ZombieId's generation is bumped on removal, so a recycled slot never matches.
+            _simStale.Clear();
+            foreach (var kv in _simTracked)
+                if (!sim.IsAlive(kv.Key)) _simStale.Add(kv.Key);
+            foreach (var id in _simStale)
+            {
+                var t = _simTracked[id];
+                _server.Zombies.ServerRemove(new NetId(t.NetId), tick);
+                _byId.Remove(t.NetId);
+                _simTracked.Remove(id);
+            }
+        }
+
         // ---- IZombieHost: the wire's damage lands on the real brain (the same DamageHit path SP combat uses) ----
         public bool DamageZombie(uint zombieNetId, float damage, UnityEngine.Vector3 point, UnityEngine.Vector3 dir, ushort attackerPlayerId, bool headshot)
         {
-            if (!_byId.TryGetValue(zombieNetId, out var t) || !GodotObject.IsInstanceValid(t.Brain) || t.Brain.Dead) return false;
+            if (!_byId.TryGetValue(zombieNetId, out var t)) return false;
+            if (t.Brain == null)
+            {
+                // A sim row: no node to damage. Find it by the ZombieId this NetId was minted for.
+                var sim = ZombieDirector.Instance?.Sim;
+                if (sim == null) return false;
+                foreach (var kv in _simTracked)
+                {
+                    if (kv.Value != t) continue;
+                    if (!sim.TryGetRow(kv.Key, out int r) || sim.IsDead(r)) return false;
+                    bool killed = sim.Damage(kv.Key, damage, headshot ? ZombieLimb.Skull : ZombieLimb.Spine);
+                    if (killed) t.DeadAnnounced = true;   // ServerCombat broadcasts the death with kill credit
+                    return killed;
+                }
+                return false;
+            }
+            if (!GodotObject.IsInstanceValid(t.Brain) || t.Brain.Dead) return false;
             t.Brain.DamageHit(damage, ToG(point), ToG(dir));
             if (!t.Brain.Dead) return false;
             t.DeadAnnounced = true;   // ServerCombat broadcasts the ZombieDied (with kill credit) for this path

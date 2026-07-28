@@ -881,6 +881,8 @@ namespace SDG.Unturned
 
         public ZombieState StateOf(int row) => (ZombieState)_state[row];
         public bool IsDead(int row) => (ZombieState)_state[row] == ZombieState.Dead;
+        /// <summary>Is this row mid-swing? The wire sends a swing event, not the animation.</summary>
+        public bool IsSwinging(int row) => _swingPending[row];
         public Vector3 FacingOf(int row) => _face[row];
         public Vector3 DestinationOf(int row) => _dest[row];
         public int WaypointsRemaining(int row) => Math.Max(0, _corridorLen[row] - _corridorAt[row]);
