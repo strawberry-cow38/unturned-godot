@@ -44,7 +44,10 @@ namespace UnturnedNet.Tests
         {
             // The first datagram a fresh session emits if asked to keepalive: seq=1 (0 is reserved),
             // nothing received yet so ack=0/ackBits=0, control type KeepAlive=5. Header + type = 91 bits.
-            // Re-goldened for Version=14 (sp-mp-interactables: SystemInteractables(17) + commands 32-34 +
+            // Re-goldened for Version=15 (signs: CommandSetSignText(35) + EventSignText(36) -- ONLY the
+            // version byte moved 0E->0F; the sign command/event ride the existing command and event
+            // planes and touch nothing in the header, which is exactly what this golden asserts).
+            // Before that Version=14 (sp-mp-interactables: SystemInteractables(17) + commands 32-34 +
             // EventDoorState(34)/EventBedClaimed(35) -- ONLY the version byte moved 0D->0E, which is the
             // whole point of this golden: a wire change that touches anything ELSE in the header is a
             // mistake, and this is where it gets caught); before that Version=13 (destructible-props:
@@ -71,7 +74,7 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750E08000000000000002800"));   // v14: sp-mp-interactables (SystemInteractables 17 + commands 32-34 + events 34/35) -- only the version byte (0D->0E) moves
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750F08000000000000002800"));   // v15: signs (CommandSetSignText 35 + EventSignText 36) -- only the version byte (0E->0F) moves
         }
 
         [Test]

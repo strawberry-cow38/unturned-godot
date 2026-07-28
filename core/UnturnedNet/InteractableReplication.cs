@@ -63,6 +63,41 @@ namespace UnturnedGodot.Net
     /// everyone but the server: the owner got no confirmation and every other client went on drawing an
     /// unlocked door. Carrying both bits costs one bit over a toggle-only event and means one message can
     /// answer "what is this door doing" completely.</summary>
+    /// <summary>Client asks the server to write text on a sign. The text is NOT trusted: the server
+    /// sanitises it again on arrival, because this frame came from a peer that may not be running our
+    /// client at all. The string is length-capped on the wire by the pak writer.</summary>
+    public struct SetSignTextCommand
+    {
+        public uint NetId;
+        public string Text;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteString(Text ?? string.Empty); }
+        public static bool TryRead(NetPakReader r, out SetSignTextCommand cmd)
+        {
+            cmd = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadString(out string text)) return false;
+            cmd = new SetSignTextCommand { NetId = id, Text = text };
+            return true;
+        }
+    }
+
+    /// <summary>Server tells everyone what a sign now says. Broadcast rather than answered only to the
+    /// writer -- a sign whose text only its author can see is not a sign.</summary>
+    public struct SignTextEvent
+    {
+        public uint NetId;
+        public string Text;
+        public void Write(NetPakWriter w) { w.WriteUInt32(NetId); w.WriteString(Text ?? string.Empty); }
+        public static bool TryRead(NetPakReader r, out SignTextEvent e)
+        {
+            e = default;
+            if (!r.ReadUInt32(out uint id)) return false;
+            if (!r.ReadString(out string text)) return false;
+            e = new SignTextEvent { NetId = id, Text = text };
+            return true;
+        }
+    }
+
     public struct DoorStateEvent
     {
         public uint NetId;
@@ -108,6 +143,42 @@ namespace UnturnedGodot.Net
         /// arm's-length interaction the client offers, tight enough that a remote command is refused.</summary>
         public const float InteractReach = 4f;
 
+
+        // --- signs ---------------------------------------------------------------------------------
+
+        public void AddSign(uint netId, Vector3 pos, string text = "")
+            => _signs[netId] = new ServerSign { NetId = netId, Pos = pos, Text = SignText.Sanitize(text) };
+
+        public void RemoveSign(uint netId) => _signs.Remove(netId);
+
+        public bool TryGetSignText(uint netId, out string text)
+        {
+            if (_signs.TryGetValue(netId, out var s)) { text = s.Text; return true; }
+            text = null;
+            return false;
+        }
+
+        public IEnumerable<ServerSign> Signs => _signs.Values;
+
+        /// <summary>Apply a client's proposed sign text. Returns false (silently, like a refused door)
+        /// when the sign is unknown or the writer is out of reach.
+        ///
+        /// The string is sanitised HERE, on arrival, not trusted from the sender: the frame came from a
+        /// peer that may not be running our client, so a client-side clean is a convenience for the
+        /// author and nothing more. `stored` is what was actually kept, which is what gets broadcast --
+        /// so every other player sees the same text the server holds, not the text that was proposed.</summary>
+        public bool SetSignText(uint netId, string proposed, Vector3 writerPos, out string stored)
+        {
+            stored = null;
+            if (!_signs.TryGetValue(netId, out var s)) return false;
+            if ((s.Pos - writerPos).sqrMagnitude > InteractReach * InteractReach) return false;
+            stored = SignText.Sanitize(proposed);
+            s.Text = stored;
+            _signs[netId] = s;
+            Stamp();
+            return true;
+        }
+
         public struct ServerDoor
         {
             public uint NetId;
@@ -115,6 +186,16 @@ namespace UnturnedGodot.Net
             public DoorLogic.DoorState State;
         }
 
+        /// <summary>A sign's authoritative text and where it stands. Position is kept for the same
+        /// reason doors keep one: the reach check is the one thing a client cannot vouch for.</summary>
+        public struct ServerSign
+        {
+            public uint NetId;
+            public Vector3 Pos;
+            public string Text;
+        }
+
+        readonly Dictionary<uint, ServerSign> _signs = new Dictionary<uint, ServerSign>();
         readonly Dictionary<uint, ServerDoor> _doors = new Dictionary<uint, ServerDoor>();
         readonly Dictionary<uint, int> _bedIdByNet = new Dictionary<uint, int>();
         readonly Dictionary<int, uint> _netByBedId = new Dictionary<int, uint>();

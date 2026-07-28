@@ -195,6 +195,8 @@ namespace UnturnedGodot.Net
             // system behaves exactly as before.
             if (_interactables != null)
             {
+                commands.Register<SetSignTextCommand>(ReplicationIds.CommandSetSignText, SetSignTextCommand.TryRead,
+                    (sender, cmd) => OnSetSignText(sender, cmd));
                 commands.Register<ToggleDoorCommand>(ReplicationIds.CommandToggleDoor, ToggleDoorCommand.TryRead,
                     OnToggleDoor,
                     validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
@@ -454,6 +456,20 @@ namespace UnturnedGodot.Net
         {
             if (!_interactables.ToggleDoor(cmd.NetId, out bool open)) return;
             BroadcastDoorState(cmd.NetId, open);
+        }
+
+        void OnSetSignText(ushort sender, SetSignTextCommand cmd)
+        {
+            // The proposed string is never trusted. ServerInteractables re-sanitises it through the
+            // same engine-free rules a dedicated server runs, and reach-checks the writer -- the one
+            // thing a client genuinely cannot vouch for. A refusal is silent, exactly like a door's.
+            if (!_players.TryGetByOwner(sender, out var pe)) return;
+            if (!_interactables.SetSignText(cmd.NetId, cmd.Text, pe.Pos, out string stored)) return;
+
+            // Broadcast what was STORED, not what was proposed: everyone must see the server's text,
+            // including the author, so a client that skipped sanitising still converges.
+            var evt = new SignTextEvent { NetId = cmd.NetId, Text = stored };
+            _broadcast(NetMessagePak.Pack(ReplicationIds.EventSignText, evt.Write));
         }
 
         void OnSetDoorLocked(ushort sender, SetDoorLockedCommand cmd)

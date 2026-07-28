@@ -234,6 +234,15 @@ namespace UnturnedGodot
                 d.ApplyReplicatedLocked(e.Locked);
                 d.ApplyReplicatedToggle(e.Open);
             };
+            // A sign's authoritative text. Applied to whichever sign holds that net id, including on
+            // the machine that proposed it -- the server may have stored something shorter or cleaner
+            // than what was typed, and every client (author included) must show the SERVER's version
+            // rather than its own guess.
+            Client.SignTextChanged += e =>
+            {
+                if (!Sign.TryGetByNetId(e.NetId, out var sign)) return;
+                sign.SetTextLocal(e.Text);
+            };
             // The server sends a release event for the bed a re-claimer left BEFORE the claim itself, and
             // the channel is ordered, so applying each event as it lands is enough -- no need for this
             // client to keep its own who-owns-what index to work out what was freed.
@@ -523,6 +532,7 @@ namespace UnturnedGodot
             // SP/MP unify: doors + beds route as intent. Nothing swings or changes hands locally on send --
             // DoorState/BedClaimed (wired in _Ready) carry the server's answer back to the node.
             shell.NetToggleDoor = netId => Client.SendToggleDoor(netId);
+            shell.NetSetSignText = (netId, text) => Client.SendSetSignText(netId, text);
             shell.NetSetDoorLocked = (netId, locked) => Client.SendSetDoorLocked(netId, locked);
             shell.NetClaimBed = netId => Client.SendClaimBed(netId);
             // owner-grid initial pull (Step 4): the join snapshot's owner block landed before this shell

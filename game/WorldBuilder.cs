@@ -769,6 +769,11 @@ namespace UnturnedGodot
             float H(float x, float z) => terr != null ? terr.SampleHeight(x, z) : 0f;
 
             Door.Spawn(root, new Vector3(ax - 3.0f, H(ax - 3.0f, az + 2.0f), az + 2.0f), 0f, owner: 1UL);
+            // A pair of signs by the same anchor: one already written on, one blank. Two rather than
+            // one because the interesting case is a player CHANGING text someone else wrote, and a
+            // world with a single sign never exercises it.
+            Sign.Spawn(root, new Vector3(ax - 1.2f, H(ax - 1.2f, az + 2.0f) + 1.4f, az + 2.0f), 0f, owner: 1UL, text: "TRADER\nknock twice");
+            Sign.Spawn(root, new Vector3(ax + 1.2f, H(ax + 1.2f, az + 2.0f) + 1.4f, az + 2.0f), 0f, owner: 1UL);
             Bed.Spawn(root, new Vector3(ax - 5.0f, H(ax - 5.0f, az + 2.0f), az + 2.0f), 90f);
 
             var deadzones = new DeadzoneField();
@@ -814,6 +819,23 @@ namespace UnturnedGodot
             root.AddChild(new FpsCounter());   // top-right yellow FPS counter (master 2026-07-11)
             { var hmL = new CanvasLayer { Layer = 98 }; hmL.AddChild(new HitmarkerHUD()); root.AddChild(hmL); }   // hit / headshot markers (master)
             { var pause = new PauseMenu(); root.AddChild(pause); player.PauseMenu = pause; }               // ESC menu (parity with BuildPlayable)
+            {
+                // The sign writing box. Its Submitted handler is the SP/MP fork: with a server session
+                // the text is a proposal that the server sanitises, reach-checks and broadcasts back;
+                // without one we are the authority and set it directly. Either way SetTextLocal runs
+                // the same engine-free rules, so a listen-server host cannot store something a
+                // dedicated server would have refused.
+                var writeBox = new SignWriteBox();
+                root.AddChild(writeBox);
+                writeBox.Submitted += (sign, text) =>
+                {
+                    if (sign == null || !GodotObject.IsInstanceValid(sign)) return;
+                    if (sign.NetId != 0 && player.NetSetSignText != null)
+                        player.NetSetSignText(sign.NetId, text);   // intent; the answer arrives as EventSignText
+                    else
+                        sign.SetTextLocal(text);                   // singleplayer: we are the authority
+                };
+            }
             root.AddChild(new Profiler());   // F3 perf overlay (parity)
             root.AddChild(new ZombieAnimCut());   // F6 -> freeze rig anim (skeletons-cut, parity)
             { var attach = new AttachmentMenu(); root.AddChild(attach); player.AttachMenu = attach; }       // T weapon-attachment menu -- was never wired in PEI drive, so T did nothing (broken since PEI map)

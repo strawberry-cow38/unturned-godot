@@ -73,7 +73,7 @@ namespace UnturnedGodot
 
         void RegisterWorld(Node root)
         {
-            uint doorId = FirstId, bedId = FirstId;
+            uint doorId = FirstId, bedId = FirstId, signId = FirstId;
             foreach (var node in Walk(root))
             {
                 if (node is Door d)
@@ -83,6 +83,15 @@ namespace UnturnedGodot
                     var p = d.GlobalPosition;
                     _server.Interactables.RegisterDoor(d.NetId, new UVector3(p.X, p.Y, p.Z), d.Owner, d.IsLocked);
                 }
+                else if (node is Sign sg)
+                {
+                    // Own counter, like beds: sign ids live in their own client registry and their own
+                    // server dictionary, and travel on their own event, so they cannot collide with a
+                    // door or bed that happens to share a number.
+                    sg.NetId = signId++;
+                    var sp = sg.GlobalPosition;
+                    _server.Interactables.AddSign(sg.NetId, new UVector3(sp.X, sp.Y, sp.Z), sg.Text);
+                }
                 else if (node is Bed b)
                 {
                     b.NetId = bedId++;
@@ -91,7 +100,7 @@ namespace UnturnedGodot
                     _server.Interactables.RegisterBed(b.NetId, new UVector3(p.X, p.Y, p.Z), b.RotationDegrees.Y);
                 }
             }
-            GD.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) as server-authoritative");
+            GD.Print($"[interactables] registered {_doors.Count} door(s) + {_server.Interactables.BedCount} bed(s) + {signId - FirstId} sign(s) as server-authoritative");
         }
 
         void SeedDeadzones(DeadzoneField field)
