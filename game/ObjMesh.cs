@@ -19,8 +19,15 @@ namespace UnturnedGodot
         // normals handle winding/lighting. Placement (Main.cs) + terrain (Terrain.cs) match this (no Z-negate).
         static readonly int CONV = int.TryParse(System.Environment.GetEnvironmentVariable("UG_CONV"), out var _c) ? _c : 1;
 
+        // Load cache: the launch WARMUP preloads every core (vanilla) mesh into here, so the world build reuses
+        // them instead of re-parsing the .obj on first use (kills the first-use hitch). Keyed by absolute path.
+        static readonly Dictionary<string, ArrayMesh> _cache = new();
+        public static int CachedCount => _cache.Count;
+        public static bool IsCached(string globalPath) => _cache.ContainsKey(globalPath);
+
         public static ArrayMesh Load(string globalPath)
         {
+            if (_cache.TryGetValue(globalPath, out var hit)) return hit;
             var pos = new List<Vector3>();
             var col = new List<Color>();   // optional per-vertex colour: "v x y z r g b" (billboard ad geometry baked from its palette)
             var nrm = new List<Vector3>();
@@ -91,6 +98,7 @@ namespace UnturnedGodot
             arr[(int)Mesh.ArrayType.Color] = outC.ToArray();   // white unless the obj carried baked vertex colours
             var m = new ArrayMesh();
             m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            _cache[globalPath] = m;
             return m;
         }
     }

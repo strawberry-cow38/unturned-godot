@@ -497,19 +497,29 @@ namespace UnturnedGodot
 
             if (!smoke)
             {
-                // DEFAULT (the exported build): a tiny main menu -> interactive single-player survival. Maximize to
-                // FILL the screen (a fixed Size while the project opens MAXIMIZED boxed the render into a corner).
-                GetWindow().Mode = Window.ModeEnum.Maximized;
-                var menu = new MainMenu();
-                menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
-                menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; _peiPlayable = true; BuildObjectsTest(); };
-                // Same world, zombie REWRITE enabled. Setting the flag here is exactly what --newzombies
-                // does; the menu route exists because the launcher passes no game arguments at all.
-                menu.OnDriveNewZombies = () => { menu.QueueFree(); ZombieDirector.Enabled = true; _noZombies = false; _peiPlayable = true; BuildObjectsTest(); };
-                menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // in-game MP-test entry (replaces the launcher checkbox): same path as --connect=claw.bitvox.me
-                menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
-                menu.OnNewMap = () => { menu.QueueFree(); BuildEditorNew(); };   // Workshop -> a fresh blank map
-                AddChild(menu);
+                // DEFAULT (the exported build): asset WARMUP -> a tiny main menu -> interactive single-player survival.
+                // The warmup preloads the VANILLA core meshes into the ObjMesh cache (master's two-tier design:
+                // curated maps load their extra assets on-demand later), then the menu shows. Maximize to FILL the
+                // screen (a fixed Size while the project opens MAXIMIZED boxed the render into a corner).
+                bool warmupShot = System.Environment.GetEnvironmentVariable("UG_WARMUPSHOT") == "1";
+                if (warmupShot) GetWindow().Size = new Vector2I(1280, 720);   // render harness: fixed size instead of maximize
+                else GetWindow().Mode = Window.ModeEnum.Maximized;
+                LoadingScreen.NextMode = "launch";
+                var warmLs = new LoadingScreen();
+                AddChild(warmLs);
+                Warmup.Begin(this, warmLs, () =>
+                {
+                    warmLs.QueueFree();
+                    var menu = new MainMenu();
+                    menu.OnPlay = noZombies => { menu.QueueFree(); _noZombies = noZombies; BuildPlayable(null, false, null); };
+                    menu.OnDrivePEI = noZombies => { menu.QueueFree(); _noZombies = noZombies; _peiPlayable = true; BuildObjectsTest(); };
+                    // Same world, zombie REWRITE enabled (== --newzombies); the menu route exists because the launcher passes no game args.
+                    menu.OnDriveNewZombies = () => { menu.QueueFree(); ZombieDirector.Enabled = true; _noZombies = false; _peiPlayable = true; BuildObjectsTest(); };
+                    menu.OnMultiplayer = () => { menu.QueueFree(); _connectHost = "claw.bitvox.me"; _playableClient = true; BuildClient(); };   // in-game MP-test entry
+                    menu.OnEditor = () => { menu.QueueFree(); BuildEditor(); };   // Workshop -> the singleplayer map editor (PEI)
+                    menu.OnNewMap = () => { menu.QueueFree(); BuildEditorNew(); };   // Workshop -> a fresh blank map
+                    AddChild(menu);
+                });
                 return;
             }
 

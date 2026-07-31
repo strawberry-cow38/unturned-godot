@@ -55,6 +55,10 @@ namespace UnturnedGodot
         {
             BuildWorld();
             BuildUI();
+            // --menushot / debug: open the Play submenu at load so a render captures it (UG_MENUOPEN=map|options|advanced)
+            var _open = System.Environment.GetEnvironmentVariable("UG_MENUOPEN");
+            if (_open == "map" || _open == "play" || _open == "options" || _open == "advanced") TogglePlayPanel();
+            if (_open == "advanced") ToggleAdvanced();
             // start the camera pulled back toward the near gable + a touch higher, then slow-pan in
             // (the vanilla intro) -- kept inside the barn so it doesn't clip through the back wall
             var t = Anchors[0];
@@ -189,7 +193,7 @@ namespace UnturnedGodot
             MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ToggleWorkshopPanel());
             MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
 
-            BuildPlayPanel(layer);
+            BuildMapSelector(layer);   // Play -> retail singleplayer map selector + gameplay options (MainMenuPlay.cs)
             BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
         }
@@ -222,23 +226,8 @@ namespace UnturnedGodot
             layer.AddChild(b);
         }
 
-        // Play submenu -- vanilla Play opens Singleplayer; ours offers the two PEI modes we actually ship.
-        void BuildPlayPanel(CanvasLayer layer)
-        {
-            _playPanel = new PanelContainer { Position = new Vector2(240f, 170f), Visible = false };
-            var box = new VBoxContainer();
-            box.AddThemeConstantOverride("separation", 10);
-            ((PanelContainer)_playPanel).AddChild(box);
-            var head = new Label { Text = "SINGLEPLAYER" };
-            head.AddThemeFontSizeOverride("font_size", 22);
-            box.AddChild(head);
-            box.AddChild(SubButton("Prince Edward Island", () => OnDrivePEI?.Invoke(false)));
-            box.AddChild(SubButton("Prince Edward Island — No Zombies", () => OnDrivePEI?.Invoke(true)));
-            // The rewrite (docs/ZOMBIE_REWRITE_PLAN.md), reachable WITHOUT a command line: the launcher
-            // hands off with only `--path game`, so --newzombies was unusable from a normal Play click.
-            box.AddChild(SubButton("Prince Edward Island — New Zombies", () => OnDriveNewZombies?.Invoke()));
-            layer.AddChild(_playPanel);
-        }
+        // Play -> the retail singleplayer map selector + per-map gameplay options lives in MainMenuPlay.cs
+        // (BuildMapSelector assigns _playPanel), so TogglePlayPanel/ShowStub/ToggleWorkshopPanel still drive it.
 
         Button SubButton(string text, System.Action onClick)
         {
@@ -254,6 +243,7 @@ namespace UnturnedGodot
             _playPanel.Visible = show;
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_workshopPanel != null) _workshopPanel.Visible = false;
+            if (_advancedPanel != null) _advancedPanel.Visible = false;   // advanced starts collapsed each open
             _targetTab = 1;   // hold the Play framing while the panel is open
         }
 
@@ -278,6 +268,7 @@ namespace UnturnedGodot
             _workshopPanel.Visible = show;
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
+            if (_advancedPanel != null) _advancedPanel.Visible = false;
             _targetTab = 4;   // hold the Workshop framing while the panel is open
         }
 
@@ -299,6 +290,7 @@ namespace UnturnedGodot
         void ShowStub(string name)
         {
             _playPanel.Visible = false;
+            if (_advancedPanel != null) _advancedPanel.Visible = false;
             _stubPanel.Visible = true;
             ((Label)_stubPanel.GetNode("VBoxContainer/head")).Text = name.ToUpper();
         }
