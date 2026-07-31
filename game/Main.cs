@@ -1663,11 +1663,22 @@ namespace UnturnedGodot
             field.DriveLocally(true);
             // Small map + fast plane so the flight fits in a shot run; the GEOMETRY is unchanged.
             bool close = System.Environment.GetEnvironmentVariable("UG_AIRDROP_CLOSE") == "1";
+            // UG_AIRDROP_FLARE frames the OTHER half of the telegraph: the smoke column the crate
+            // leaves once it is down. Same scene because it is the same event -- a separate scene would
+            // let the plane and the marker drift apart without either shot noticing.
+            _airdropFlareShot = System.Environment.GetEnvironmentVariable("UG_AIRDROP_FLARE") == "1";
             field.Sim.MapHalfSize = close ? 90f : 260f;
             field.Sim.ApproachRunway = close ? 30f : 120f;
             field.Sim.PlaneSpeed = close ? 26f : 70f;
             field.Sim.FlightHeightMin = close ? 34f : 120f;
             field.Sim.FlightHeightMax = close ? 36f : 130f;   // low enough to read on camera
+            if (_airdropFlareShot)
+            {
+                // Drop from low so the crate is on the ground inside a shot run rather than 12 s of
+                // parachute. The marker does not care how far it fell.
+                field.Sim.DropHeight = 30f;
+                field.Sim.FallSpeed = 30f;
+            }
             // Aim the drop at the origin. AirdropField.PickTarget scatters +-120 m regardless of map
             // size, so in close mode the plane was flying to a point up to 120 m away while the capture
             // waited for it within 30 m of the camera -- it never arrived, and the guard correctly
@@ -1685,11 +1696,17 @@ namespace UnturnedGodot
             var cam = new Camera3D { Position = close ? new Vector3(0f, 26f, 34f) : new Vector3(0f, 2f, 40f), Fov = close ? 42f : 70f };
             AddChild(cam);
             cam.LookAt(new Vector3(0f, close ? 34f : 90f, 0f), Vector3.Up);
-            _airdropCam = cam; _airdropField = field; _airdropOrbit = close;
+            if (_airdropFlareShot)
+            {
+                cam.Position = new Vector3(0f, 12f, 46f); cam.Fov = 55f;
+                cam.LookAt(new Vector3(0f, 16f, 0f), Vector3.Up);   // frame the column, not the crate
+            }
+            _airdropCam = cam; _airdropField = field; _airdropOrbit = close && !_airdropFlareShot;
             GD.Print("[AIRDROP-SHOT] scene built; waiting for the plane");
         }
 
         Camera3D _airdropCam; AirdropField _airdropField; bool _airdropOrbit;
+        bool _airdropFlareShot; int _airdropSinceLanded = -1;
 
         /// <summary>Track the plane so the capture cannot miss it, and report what was framed -- a shot
         /// that silently caught empty sky is the failure this scene exists to prevent.
@@ -1703,6 +1720,12 @@ namespace UnturnedGodot
         {
             if (_airdropCam == null || _airdropField == null) return;
             var sim = _airdropField.Sim;
+            if (_airdropFlareShot)
+            {
+                if (sim.JustLanded) _airdropSinceLanded = 0;
+                else if (_airdropSinceLanded >= 0) _airdropSinceLanded++;
+                return;                                   // fixed camera: the column is where the crate is
+            }
             if (sim.Phase != SDG.Unturned.AirdropPhase.Inbound) return;
             var p = sim.PlanePositionAt(sim.Clock);
             var at = new Vector3(p.x, p.y, p.z);
@@ -4206,19 +4229,29 @@ namespace UnturnedGodot
                 var sim = _airdropField?.Sim;
                 if (sim == null) { GD.PrintErr("[AIRDROP-SHOT] no field"); GetTree().Quit(1); return; }
                 if (++_frame > 1800) { GD.PrintErr($"[AIRDROP-SHOT] plane never came into range (phase={sim.Phase})"); GetTree().Quit(1); return; }
-                if (sim.Phase != SDG.Unturned.AirdropPhase.Inbound) return;
-                var pp = sim.PlanePositionAt(sim.Clock);
-                float want = System.Environment.GetEnvironmentVariable("UG_AIRDROP_CLOSE") == "1" ? 30f : 160f;
-                if (pp.x * pp.x + pp.z * pp.z > want * want) return;   // still far out -- wait for the pass
-                // Same reason as the empty-sky guard: a fallback BLOCK in frame is a picture of a plane
-                // to anything that only checks the shot isn't blank. If the real hull didn't load, the
-                // run must fail rather than hand back a box that will be read as the model.
-                if (_airdropField.Plane is { HasModel: false })
+                if (_airdropFlareShot)
                 {
-                    GD.PrintErr("[AIRDROP-SHOT] hull mesh missing -- flying the fallback block; run tools/extract_dropship.py");
-                    GetTree().Quit(1); return;
+                    // Same rule as the plane: no timed fallback. If the crate never lands there is no
+                    // column to photograph, and a frame of empty field would pass any blank-check.
+                    if (_airdropSinceLanded < 600) return;      // ~10 s of emission: enough column to read as one
+                    GD.Print($"[AIRDROP-SHOT] captured the flare {_airdropSinceLanded} frames after touchdown");
                 }
-                GD.Print($"[AIRDROP-SHOT] captured plane at ({pp.x:0}, {pp.y:0}, {pp.z:0}) frame {_frame}");
+                else
+                {
+                    if (sim.Phase != SDG.Unturned.AirdropPhase.Inbound) return;
+                    var pp = sim.PlanePositionAt(sim.Clock);
+                    float want = System.Environment.GetEnvironmentVariable("UG_AIRDROP_CLOSE") == "1" ? 30f : 160f;
+                    if (pp.x * pp.x + pp.z * pp.z > want * want) return;   // still far out -- wait for the pass
+                    // Same reason as the empty-sky guard: a fallback BLOCK in frame is a picture of a
+                    // plane to anything that only checks the shot isn't blank. If the real hull didn't
+                    // load, the run must fail rather than hand back a box read as the model.
+                    if (_airdropField.Plane is { HasModel: false })
+                    {
+                        GD.PrintErr("[AIRDROP-SHOT] hull mesh missing -- flying the fallback block; run tools/extract_dropship.py");
+                        GetTree().Quit(1); return;
+                    }
+                    GD.Print($"[AIRDROP-SHOT] captured plane at ({pp.x:0}, {pp.y:0}, {pp.z:0}) frame {_frame}");
+                }
             }
             else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
