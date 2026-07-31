@@ -3839,12 +3839,18 @@ namespace UnturnedGodot
         // decals/blood. The server's bullet is the authority; impact fx render from the broadcast ImpactFx
         // event (single fx authority -- otherwise the shooter would render both its local impact AND the echo)
         // and the hitmarker moves to HitConfirmed so it only ever tells the truth. Never set in SP.
-        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; }
+        sealed class Bullet { public Vector3 Pos, Vel, Origin; public int StepsLeft; public float Gravity, Damage, VehicleDamage, ObjectDamage; public bool Cosmetic; public MeshInstance3D Tracer; public Node3D RocketVis; public Vector3 MuzzleAnchor; public bool HasAnchor; }
         readonly System.Collections.Generic.List<Bullet> _bullets = new();
 
         void SpawnBullet(Vector3 pos, Vector3 vel, int steps, float gravity, float damage, float vehicleDamage, float objectDamage)
         {
             var b = new Bullet { Pos = pos, Origin = pos, Vel = vel, StepsLeft = Mathf.Max(1, steps), Gravity = gravity, Damage = damage, VehicleDamage = vehicleDamage, ObjectDamage = objectDamage, Cosmetic = NetFire != null, Tracer = MakeTracer() };
+            // LOCAL first-person only: anchor the tracer's near end at the VIEWMODEL MUZZLE (screen-bridged to the world
+            // via the viewmodel cam -> world cam), so it looks like it leaves the barrel; it then BENDS onto the real
+            // trajectory (which fires from the EYE). Remote/3p bullets have no on-screen viewmodel muzzle, so they keep
+            // the straight-from-origin streak (HasAnchor stays false; a point behind the cam fails the guard).
+            if (!NetAvatar && _viewmodel != null && _cam != null && _viewmodel.TryMuzzleScreenPos(out var _mpx))
+            { b.MuzzleAnchor = _cam.ProjectPosition(_mpx, 1.5f); b.HasAnchor = true; }   // a bit down the barrel line: the muzzle reference for the tracer's teardrop axis
             if (b.Tracer != null) { GetTree().CurrentScene?.AddChild(b.Tracer); UpdateTracer(b); }
             if (Gun?.Action == "Rocket") b.RocketVis = SpawnRocketVis(pos);   // launcher: the rocket is a VISIBLE flying projectile, not an invisible bullet
             _bullets.Add(b);
@@ -3855,6 +3861,15 @@ namespace UnturnedGodot
         /// production damage dispatch instead of standing in for it.</summary>
         public void DebugFireBullet(Vector3 from, Vector3 dir, float damage = 40f)
             => SpawnBullet(from, dir.Normalized() * 300f, 60, 0f, damage, damage, damage);
+
+        /// <summary>Test seam (UG_TRACERANGLE firetest): fire a tracer at an angle ACROSS the view so the stretched
+        /// streak is seen side-on. First-person centred fire is end-on, which foreshortens the stretch to a dot.</summary>
+        public void DebugFireAngled(float yawDeg)
+        {
+            if (_cam == null) return;
+            var basis = _cam.GlobalTransform.Basis;
+            SpawnBullet(_cam.GlobalPosition, (-basis.Z) * 90f, 220, 0f, 40f, 40f, 40f);   // DEAD forward -> tracer streaks muzzle -> down-range aim (visible via the muzzle offset)
+        }
 
         // Step every live bullet exactly like the source (UseableGun.cs:1539-1542): raycast this tick's segment for a
         // hit, else advance pos += vel*0.02 and apply gravity vel.y += g*0.02. Called once per 50 Hz physics tick.
@@ -4083,14 +4098,15 @@ namespace UnturnedGodot
             if (System.Environment.GetEnvironmentVariable("UG_IMPACTDEBUG") == "1") GD.Print($"[impactaudio] played @ {pos.Round()}");
         }
 
-        // The traveling tracer: a thin additive "Bullet"-textured streak that rides with the bullet, oriented along
-        // its velocity (the Military_30's Trail_0). Made once per bullet; UpdateTracer re-places it each step.
+        // The traveling tracer: a CROSSED QUAD (two perpendicular teardrop planes sharing the flight axis, so it reads solid
+        // from ANY angle -- never edge-on flat) textured with the soft circle sprite, riding the bullet along its velocity.
         MeshInstance3D MakeTracer()
         {
             if (!_tracerTexTried)
             {
                 _tracerTexTried = true;
-                string p = ProjectSettings.GlobalizePath("res://content/bullet.png");
+                string p = ProjectSettings.GlobalizePath("res://content/tracer.png");
+                if (!System.IO.File.Exists(p)) p = ProjectSettings.GlobalizePath("res://content/bullet.png");
                 if (System.IO.File.Exists(p)) { var img = Image.LoadFromFile(p); if (img != null) _tracerTex = ImageTexture.CreateFromImage(img); }
             }
             var mat = new StandardMaterial3D
@@ -4099,27 +4115,51 @@ namespace UnturnedGodot
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                // HDR albedo (>1) so the additive streak crosses the world glow HDR threshold (0.9) and BLOOMS -> a
-                // glowing tracer day+night. Modest x2.2 to stay tasteful (thin 0.05m box, won't wash). No glow = just brighter.
-                AlbedoColor = new Color(2.2f, 1.98f, 1.21f),
+                AlbedoColor = new Color(1.9f, 0.85f, 0.2f),    // ORANGE HDR -> additive orange glow, blooms warm (R>G>>B keeps it orange, not white)
             };
             if (_tracerTex != null) mat.AlbedoTexture = _tracerTex;
-            return new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.05f, 5f) }, MaterialOverride = mat };
+            return new MeshInstance3D { Mesh = new ImmediateMesh(), MaterialOverride = mat };
         }
 
+        // The tracer: a CROSSED QUAD (two perpendicular planes sharing the flight axis, so it reads solid from ANY angle --
+        // never edge-on flat) whose geometry is a TEARDROP: round fat nose at the bullet, tapering to a point at the tail,
+        // textured with the soft circle sprite. Rides the round along its velocity; starts at the muzzle while young.
         void UpdateTracer(Bullet b)
         {
-            if (b.Tracer == null) return;
-            Vector3 axis = b.Vel.LengthSquared() > 1e-6f ? b.Vel.Normalized() : Vector3.Forward;
-            // the streak trails from the MUZZLE (Origin) up to the bullet, capped at 5 m -- so it never extends behind
-            // the barrel toward the camera (master: tracer should come from the barrel, not the eye).
-            float len = Mathf.Min(5f, b.Pos.DistanceTo(b.Origin));
-            if (len < 0.02f) { b.Tracer.Visible = false; return; }
+            if (b.Tracer == null || b.Tracer.Mesh is not ImmediateMesh im) return;
+            im.ClearSurfaces();
+            const float MaxLen = 40f, MaxW = 0.09f, tHead = 0.55f;   // teardrop: pointed tail (muzzle) -> round nose (bullet)
+            Vector3 head = b.Pos;                                      // round fat nose = the bullet, leading
+            Vector3 muzzle = b.HasAnchor ? b.MuzzleAnchor : b.Origin;
+            Vector3 seg = head - muzzle;
+            float dist = seg.Length();
+            if (dist < 0.1f) { b.Tracer.Visible = false; return; }
             b.Tracer.Visible = true;
-            Vector3 back = b.Pos - axis * len;
-            Vector3 up = Mathf.Abs(axis.Dot(Vector3.Up)) > 0.99f ? Vector3.Right : Vector3.Up;
-            b.Tracer.LookAtFromPosition((back + b.Pos) * 0.5f, b.Pos, up);   // centred between muzzle-side + head
-            b.Tracer.Scale = new Vector3(1f, 1f, len / 5f);                   // shrink the 5 m box to the trail length
+            Vector3 dir = seg / dist;                                  // muzzle->bullet axis: OFF the view axis, so the crossed quad never sits fully edge-on
+            float len = Mathf.Min(MaxLen, dist);
+            Vector3 tail = head - dir * len;                           // pointed tail toward the muzzle
+            // two FIXED perpendicular axes -> the crossed quad (camera-independent, so it never collapses edge-on)
+            Vector3 aux = Mathf.Abs(dir.Dot(Vector3.Up)) > 0.95f ? Vector3.Right : Vector3.Up;
+            Vector3 perp1 = dir.Cross(aux).Normalized();
+            Vector3 perp2 = dir.Cross(perp1).Normalized();
+            const int N = 16;
+            for (int plane = 0; plane < 2; plane++)
+            {
+                Vector3 perp = plane == 0 ? perp1 : perp2;
+                im.SurfaceBegin(Mesh.PrimitiveType.TriangleStrip);
+                for (int i = 0; i <= N; i++)
+                {
+                    float t = (float)i / N;                            // 0 = tail point, 1 = nose tip
+                    float w = t < tHead
+                        ? MaxW * (t / tHead)                                                            // taper up from the pointed tail
+                        : MaxW * Mathf.Sqrt(Mathf.Max(0f, 1f - ((t - tHead) / (1f - tHead)) * ((t - tHead) / (1f - tHead))));  // round nose cap
+                    Vector3 p = tail.Lerp(head, t);
+                    Vector3 off = perp * w;
+                    im.SurfaceSetUV(new Vector2(t, 0f)); im.SurfaceAddVertex(p - off);
+                    im.SurfaceSetUV(new Vector2(t, 1f)); im.SurfaceAddVertex(p + off);
+                }
+                im.SurfaceEnd();
+            }
         }
 
         // Flesh impact — the REAL source Flesh_Dynamic effect (impact ID 5), extracted texture + params: a 16-particle

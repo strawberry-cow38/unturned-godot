@@ -398,6 +398,20 @@ namespace UnturnedGodot
             _recoilRotSpring.CurrentPosition += new Vector3(recoilPitch, -recoilYaw, -recoilYaw);
         }
 
+        // The muzzle has NO world position -- the viewmodel is an isolated SubViewport (OwnWorld3D) at a DIFFERENT
+        // FOV, so _muzzleFlash.GlobalPosition is a point in the sub-world, not where the barrel is drawn on the main
+        // screen. Screen space is the bridge (the SubViewport is sized to the main viewport's rect, so a pixel here =
+        // a pixel there): unproject the muzzle through the viewmodel cam; the caller re-projects it through the WORLD
+        // camera. Guard behind-camera first (unprojecting a point behind the cam mirrors it across the screen). Used
+        // to anchor the bent bullet tracer's near end at the barrel.
+        public bool TryMuzzleScreenPos(out Vector2 px)
+        {
+            px = default;
+            if (_cam == null || _muzzleFlash == null || _cam.IsPositionBehind(_muzzleFlash.GlobalPosition)) return false;
+            px = _cam.UnprojectPosition(_muzzleFlash.GlobalPosition);
+            return true;
+        }
+
         // Driven each physics frame by PlayerController: whether the player is moving + their stance, so the
         // walk bob uses the right frequency (SPEED_*) + amplitude (BOB_*) and switches off when standing still.
         public void SetLocomotion(bool moving, EPlayerStance stance) { _moving = moving; _stance = stance; }
@@ -794,7 +808,11 @@ namespace UnturnedGodot
                 // FOR FREE (the gun follows the bone, so no bone-delta compensation, no barrel-forward shortcut, no magic
                 // per-gun pitch). Only the per-shot recoil spring is layered on top, in camera space.
                 Basis basis = att.GlobalTransform.Basis * Basis.FromEuler(new Vector3(0f, 0f, Mathf.DegToRad(90f)));
-                Vector3 rr = _recoilRotSpring.CurrentPosition;   // (pitch, yaw, roll) degrees -- muzzle climb, spring-decayed
+                // gun-model muzzle-climb ANIM, faded OUT under ADS (master: kill the recoil ANIM while aiming, keep it
+                // at the hip). Fade (not a branch) so bringing the sights up mid-shot settles the tilt out instead of
+                // snapping it while the spring still rings. The aim-PUNCH recoil (the mouse-upwards push) is in
+                // PlayerController (_recoilPending) and is deliberately untouched.
+                Vector3 rr = _recoilRotSpring.CurrentPosition * (1f - _aimAlpha);
                 Basis cb = _cam.GlobalTransform.Basis;
                 basis = basis.Rotated(cb.X, Mathf.DegToRad(rr.X))     // pitch -> muzzle climb
                              .Rotated(cb.Y, Mathf.DegToRad(rr.Y))     // yaw
