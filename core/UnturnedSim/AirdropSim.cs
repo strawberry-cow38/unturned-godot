@@ -70,6 +70,16 @@ namespace SDG.Unturned
         /// JustLanded: the caller must not have to infer a transition it can miss.</summary>
         public bool JustReleased { get; private set; }
 
+        /// <summary>Whether the aircraft still exists.
+        ///
+        /// Deliberately NOT derived from Phase, which was the bug: drawing the plane only while Inbound
+        /// made it blink out of existence at the exact instant it dropped the crate, in full view of
+        /// anyone who had followed it across the map. Retail keeps flying and removes the model only
+        /// once it has passed clean off the far side -- state.x * sign(velocity.x) beyond
+        /// (Level.size / 2) + 2048, and likewise for z. The crate's phase and the plane's lifetime are
+        /// two different clocks and this one outlives the other.</summary>
+        public bool PlaneVisible { get; private set; }
+
         /// <summary>Where the current (or last) drop is headed. Meaningless until the crate is released
         /// -- during Inbound this is the PREDICTED landing point, which is exactly what a player is
         /// trying to work out by watching the plane.</summary>
@@ -137,6 +147,8 @@ namespace SDG.Unturned
                 JustLanded = true;
             }
 
+            if (PlaneVisible && HasLeftTheLevel(PlanePositionAt(_clock))) PlaneVisible = false;
+
             if (_clock < _nextAt) return false;
             _nextAt = _clock + IntervalSeconds;          // reschedule regardless, so a suppressed drop
                                                           // does not fire the instant the sky clears
@@ -191,10 +203,22 @@ namespace SDG.Unturned
 
             Target = target;            // provisional: the true landing point is re-derived on release
             Phase = AirdropPhase.Inbound;
+            PlaneVisible = true;
         }
 
         /// <summary>Half the playable extent, used to place the plane's entry edge.</summary>
         public float MapHalfSize = 1024f;
+
+        /// <summary>Retail's exit test, verbatim in effect: the aircraft is gone once its position along
+        /// EITHER axis, measured in the direction it is travelling, is past the map's half-extent plus
+        /// the approach runway. Comparing the signed coordinate rather than a distance is what makes the
+        /// test one-sided -- a plane that entered at -3000 heading east is not "far away" at +2000, it
+        /// has crossed, and only then does it count as having left.</summary>
+        bool HasLeftTheLevel(Vector3 at)
+        {
+            float edge = MapHalfSize + ApproachRunway;
+            return at.x * Sign(PlaneVelocity.x) > edge || at.z * Sign(PlaneVelocity.z) > edge;
+        }
 
         static float Sign(float v) => v < 0f ? -1f : 1f;
         static float Magnitude(Vector3 v) => (float)Math.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
@@ -233,6 +257,7 @@ namespace SDG.Unturned
             ReleaseAt = releaseAt;
             Target = new Vector3(0f, groundY, 0f);
             Phase = AirdropPhase.Inbound;
+            PlaneVisible = true;
         }
 
         /// <summary>Reschedule the NEXT drop, relative to now.

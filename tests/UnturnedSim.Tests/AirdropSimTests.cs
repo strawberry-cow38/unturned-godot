@@ -170,6 +170,75 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
+        public void The_Plane_Keeps_Flying_After_It_Drops_The_Crate()
+        {
+            // The renderer used to draw the plane only while Phase == Inbound, so it blinked out of
+            // existence on the very tick it released -- watched by whoever had been tracking it to work
+            // out where the drop was going. Retail keeps the model until it is clean off the far side.
+            var s = NewSim(first: 0.0);
+            s.Step(0.1, () => Where);
+            Assert.That(s.PlaneVisible, Is.True, "test setup: the plane launched");
+            FlyToRelease(s);
+            Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Falling), "test setup: the crate is away");
+            Assert.That(s.PlaneVisible, Is.True, "the aircraft does not evaporate when it lets go");
+
+            // Still flying a good while later, and still moving.
+            var justAfter = s.PlanePositionAt(s.Clock);
+            StepBy(s, 5.0);
+            Assert.That(s.PlaneVisible, Is.True, "still overhead five seconds past the release");
+            var later = s.PlanePositionAt(s.Clock);
+            Assert.That((later - justAfter).magnitude, Is.GreaterThan(1f), "and it is still moving");
+        }
+
+        [Test]
+        public void The_Plane_Survives_The_Whole_Inbound_Leg_And_Then_Leaves_Past_The_Edge()
+        {
+            var s = new AirdropSim(0.0) { IntervalSeconds = 100000f, MapHalfSize = 200f, ApproachRunway = 50f };
+            s.Step(0.1, () => Where);
+            Assert.That(s.PlaneVisible, Is.True, "test setup");
+
+            float edge = s.MapHalfSize + s.ApproachRunway;
+            var v = s.PlaneVelocity;
+            while (s.Phase == AirdropPhase.Inbound)
+            {
+                s.Step(0.02, () => Where);
+                Assert.That(s.PlaneVisible, Is.True, "it must not vanish on the way in");
+            }
+
+            int guard = 0;                                   // bounded so a broken exit test fails, not hangs
+            while (s.PlaneVisible && guard++ < 200000) s.Step(0.02, () => Where);
+            Assert.That(s.PlaneVisible, Is.False, "the plane must eventually leave");
+
+            var at = s.PlanePositionAt(s.Clock);
+            float alongX = at.x * (v.x < 0f ? -1f : 1f), alongZ = at.z * (v.z < 0f ? -1f : 1f);
+            Assert.That(alongX > edge || alongZ > edge, Is.True,
+                        $"it left at ({at.x:0}, {at.z:0}) heading ({v.x:0.00}, {v.z:0.00}) -- edge {edge:0}");
+        }
+
+        [Test]
+        public void A_Plane_Adopted_From_Outside_The_Map_Is_Not_Deleted_On_Arrival()
+        {
+            // Why the exit test measures position ALONG the heading rather than as a distance.
+            //
+            // For a plane this sim launched the two forms agree -- LaunchPlaneToward never starts one
+            // further out than half-the-map plus the runway, so the coordinate only exceeds the edge on
+            // the way OUT. AdoptPlane is the case where they part company: a client joining mid-event is
+            // handed the server's plane wherever it is, and on a big map retail's own comment notes the
+            // aircraft starts 2 km outside the coordinate range. A symmetric |x| > edge check deletes
+            // that plane the instant the client adopts it -- it is far away, but on the wrong side --
+            // and the joiner sees a crate materialise out of an empty sky.
+            var s = new AirdropSim(100000.0) { MapHalfSize = 200f, ApproachRunway = 50f };
+            float edge = s.MapHalfSize + s.ApproachRunway;
+            s.AdoptPlane(new Vector3(-(edge + 400f), 300f, 0f), new Vector3(80f, 0f, 0f),
+                         launchedAt: 0.0, releaseAt: 20.0, groundY: 0f);
+
+            Assert.That(s.PlaneVisible, Is.True, "adopted while still outside the map, heading in");
+            s.Step(0.02, () => Where);
+            Assert.That(s.PlaneVisible, Is.True,
+                        $"still inbound at x={s.PlanePositionAt(s.Clock).x:0} (edge {edge:0}) -- it has not crossed");
+        }
+
+        [Test]
         public void ForceDrop_Works_But_Refuses_While_One_Is_Airborne()
         {
             var s = NewSim(first: 1000.0);    // nothing scheduled soon

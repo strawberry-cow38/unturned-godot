@@ -86,7 +86,10 @@ namespace UnturnedGodot
             if (Sim.JustReleased) SpawnCrate(_driveLocally ? 0 : _pendingNetId);
             if (Sim.JustLanded) _crate?.MarkLanded();
 
-            if (Sim.Phase == AirdropPhase.Inbound) ShowPlane(Sim.PlanePositionAt(Sim.Clock));
+            // PlaneVisible, not Phase: the aircraft keeps flying after it lets go, and gating on the
+            // crate's phase made it vanish at the instant of release -- in front of whoever had just
+            // tracked it across the map to work out where the drop was going.
+            if (Sim.PlaneVisible) ShowPlane(Sim.PlanePositionAt(Sim.Clock));
             else HidePlane();
 
             if (IsInstanceValid(_crate) && !_crate.Landed)
