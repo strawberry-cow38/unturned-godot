@@ -61,7 +61,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
             bool zperf = false;
             bool zbody = false;
-            bool deployTest = false;
+            bool deployTest = false, airdropShot = false;
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
@@ -82,6 +82,7 @@ namespace UnturnedGodot
                 else if (arg.StartsWith("--croptest=")) croptest = arg["--croptest=".Length..];   // spawn a farm crop (young + grown) on a ground plane -> validate mesh/tex/orientation (UG_CROPROT tunes rot)
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
+                else if (arg == "--airdropshot") airdropShot = true;   // summon a drop and catch the PLANE mid-flight
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
@@ -278,6 +279,14 @@ namespace UnturnedGodot
 
             if (zbody) { BuildZBody(); return; }
             if (zperf) { BuildZPerf(); return; }
+            if (airdropShot)   // the supply-drop telegraph: a cargo plane crossing, seen from the ground
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildAirdropShot();
+                return;
+            }
+
             if (deployTest)   // deployables showcase: both placed on a ground plane + a valid(blue)/invalid(red) ghost
             {
                 GetWindow().Size = new Vector2I(1280, 720);
@@ -1624,6 +1633,58 @@ namespace UnturnedGodot
         {
             if (root is GeometryInstance3D gi) gi.CastShadow = on ? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
             foreach (var c in root.GetChildren()) SetZombieShadows(c, on);
+        }
+
+        /// <summary>The airdrop telegraph, rendered from the ground looking up.
+        ///
+        /// Exists as a named scene rather than a one-off because a plane is only visible for the few
+        /// seconds it is overhead -- reproducing that by hand means guessing a frame, and a guessed
+        /// frame that comes back empty is indistinguishable from a plane that never spawned.</summary>
+        void BuildAirdropShot()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.56f, 0.74f),      // daylight sky, so a dark plane reads
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.80f, 0.82f, 0.88f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, -30f, 0f), LightEnergy = 1.25f });
+            AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(600f, 600f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.32f, 0.40f, 0.26f), Roughness = 1f },
+            });
+
+            var field = new AirdropField();
+            AddChild(field);
+            field.DriveLocally(true);
+            // Small map + fast plane so the flight fits in a shot run; the GEOMETRY is unchanged.
+            field.Sim.MapHalfSize = 260f;
+            field.Sim.ApproachRunway = 120f;
+            field.Sim.PlaneSpeed = 70f;
+            field.Sim.FlightHeightMin = 120f; field.Sim.FlightHeightMax = 130f;   // low enough to read on camera
+            field.Sim.ScheduleNextIn(0.0);
+
+            var cam = new Camera3D { Position = new Vector3(0f, 2f, 40f), Fov = 70f };
+            AddChild(cam);
+            cam.LookAt(new Vector3(0f, 90f, 0f), Vector3.Up);
+            _airdropCam = cam; _airdropField = field;
+            GD.Print("[AIRDROP-SHOT] scene built; waiting for the plane");
+        }
+
+        Camera3D _airdropCam; AirdropField _airdropField;
+
+        /// <summary>Track the plane so the capture cannot miss it, and report what was framed -- a shot
+        /// that silently caught empty sky is the failure this scene exists to prevent.</summary>
+        void TickAirdropShot()
+        {
+            if (_airdropCam == null || _airdropField == null) return;
+            var sim = _airdropField.Sim;
+            if (sim.Phase != SDG.Unturned.AirdropPhase.Inbound) return;
+            var p = sim.PlanePositionAt(sim.Clock);
+            _airdropCam.LookAt(new Vector3(p.x, p.y, p.z), Vector3.Up);
         }
 
         void BuildDeployTest()
@@ -4099,12 +4160,27 @@ namespace UnturnedGodot
                 return;
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
+            if (_airdropCam != null) TickAirdropShot();
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot
             else if (_driveTest) { if (++_frame < 120) return; }   // drivetest: let the car spawn+enter+drive (+ --demo damage->explosion) play out before the shot
             else if (_fireTest) { if (System.Environment.GetEnvironmentVariable("UG_ADS") == "1") { if (_ftFrame < 70) return; } else if (_ftPlayer == null || _ftPlayer.Ammo > 20 || _ftFrame < 75) return; }   // firetest: capture once ~10 shots fired (high-cap: Ammo<=20); the _ftFrame>=75 floor lets a low-cap gun (launcher = 1 rocket at frame 60) actually fire + impact before the quit. UG_ADS: capture the settled aim frame (70) instead
             else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
+            else if (_airdropCam != null)
+            {
+                // Capture only once the plane is genuinely in front of the camera and still carrying the
+                // crate. Waiting a fixed number of frames would sometimes catch empty sky, and empty sky
+                // is exactly what a broken plane also looks like.
+                if (_airdropField == null || _airdropField.Sim.Phase != SDG.Unturned.AirdropPhase.Inbound) { if (++_frame < 600) return; }
+                else
+                {
+                    var pp = _airdropField.Sim.PlanePositionAt(_airdropField.Sim.Clock);
+                    float dx = pp.x, dz = pp.z;
+                    if (dx * dx + dz * dz > 160f * 160f) { ++_frame; return; }   // still far out -- wait for the pass
+                    GD.Print($"[AIRDROP-SHOT] plane at ({pp.x:0}, {pp.y:0}, {pp.z:0}) frame {_frame}");
+                }
+            }
             else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
             else if (System.Environment.GetEnvironmentVariable("UG_WIREWRECK") == "1") { if (++_frame < 20) return; }   // shatter: catch the debris collapsing toward the ground
