@@ -91,6 +91,12 @@ namespace UnturnedGodot
             if (Landed) return;
             Landed = true;
             if (IsInstanceValid(_chute)) _chute.QueueFree();
+            // Retail fires the Carepackage Flare from the crate's own collision, at INSANE relevant
+            // distance -- so it belongs here rather than in whatever noticed the landing. The crate
+            // stays; the marker is a separate node that outlives being looted, which is the point: the
+            // column is what tells the rest of the map a drop came down over there.
+            var parent = GetParent();
+            if (parent != null) CarepackageFlare.Spawn(parent, GlobalPosition);
         }
 
         /// <summary>Break it open. The contents spill on the ground rather than vanishing with the

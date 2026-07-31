@@ -1,0 +1,43 @@
+{
+ "source": "assets/coremasterbundle/effects/explosions/carepackage/effect.prefab",
+ "duration": 60.0,
+ "looping": false,
+ "max_particles": 200,
+ "lifetime": [
+  20.0,
+  20.0
+ ],
+ "start_speed": [
+  0.0,
+  0.0
+ ],
+ "size": [
+  1.5,
+  3.0
+ ],
+ "rate_per_second": 10.0,
+ "cone_angle": 45.0,
+ "cone_radius": 0.25,
+ "rise": [
+  1.7999999523162842,
+  2.200000047683716
+ ],
+ "drift": [
+  -0.02500000037252903,
+  0.02500000037252903
+ ],
+ "spin_rad_per_sec": [
+  -0.2617993950843811,
+  0.2617993950843811
+ ],
+ "audio": {
+  "volume": 0.5,
+  "pitch": 1.0,
+  "min_distance": 1.0,
+  "max_distance": 32.0
+ },
+ "smoke_size": [
+  32,
+  32
+ ]
+}
