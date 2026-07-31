@@ -73,6 +73,11 @@ namespace UnturnedGodot
             AddStatus(root, 0, "hud_bleeding.png", () => Player != null && Player.Bleeding);
             AddStatus(root, 1, "hud_broken.png",   () => Player != null && Player.Broken);
             AddStatus(root, 2, "hud_starved.png",  () => Player != null && (Player.Food <= 0f || Player.Water <= 0f));
+            // Temperature is ONE box whose icon swaps with the state, not six boxes -- retail's
+            // PlayerLifeUI.temperatureBox is a single SleekBoxIcon that reassigns its texture and hides
+            // itself entirely while the state is NONE. Six separate status entries would let two show at
+            // once, which cannot happen: you are exactly one temperature.
+            AddTemperatureStatus(root, 3);
             // virus is now the situational infection METER in the vitals (above), not a binary status icon (master)
 
             // ammo count, bottom-right
@@ -175,6 +180,49 @@ namespace UnturnedGodot
         }
 
         // a 40x40 status box (SleekBoxIcon): dark background + centred icon, shown only on its condition
+        /// <summary>Render-harness probe: is the temperature icon showing, and which one. A UI element
+        /// that is built but never displayed looks identical to one that works, from the code.</summary>
+        public bool DebugTempIconVisible => _tempBox != null && IsInstanceValid(_tempBox) && _tempBox.Visible;
+        public string DebugTempIconName { get; private set; } = "";
+        Control _tempBox;
+
+        /// <summary>The temperature box: same 40x40 slot as the other status icons, but its texture
+        /// follows the state instead of being fixed. Hidden while NONE, which is most of the time --
+        /// retail treats "no temperature" as nothing to say rather than a neutral icon.</summary>
+        void AddTemperatureStatus(Control root, int i)
+        {
+            var box = new Control();
+            Anchor(box, 8f + i * 46f, 132f, 40f, 40f);
+            var bg = new ColorRect { Color = new Color(0f, 0f, 0f, 0.5f) };
+            bg.SetAnchorsPreset(Control.LayoutPreset.FullRect); bg.MouseFilter = Control.MouseFilterEnum.Ignore;
+            box.AddChild(bg);
+            var ic = new TextureRect { StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered };
+            ic.SetAnchorsPreset(Control.LayoutPreset.FullRect); ic.MouseFilter = Control.MouseFilterEnum.Ignore;
+            box.AddChild(ic);
+            box.Visible = false;
+            root.AddChild(box);
+            _tempBox = box;
+
+            var cache = new System.Collections.Generic.Dictionary<SDG.Unturned.PlayerTemperature, Texture2D>();
+            var last = SDG.Unturned.PlayerTemperature.None;
+            _status.Add((box, () =>
+            {
+                if (Player == null) return false;
+                var t = Player.Temperature;
+                if (t == SDG.Unturned.PlayerTemperature.None) return false;
+                if (t != last || ic.Texture == null)
+                {
+                    last = t;
+                    string file = $"hud_temp_{t.ToString().ToLowerInvariant()}.png";
+                    if (!cache.TryGetValue(t, out var tex))
+                        cache[t] = tex = LoadTex($"res://content/{file}");
+                    ic.Texture = tex;
+                    DebugTempIconName = tex != null ? file : "";   // empty = the texture failed to load
+                }
+                return true;
+            }));
+        }
+
         void AddStatus(Control root, int i, string icon, System.Func<bool> on)
         {
             var box = new Control();
