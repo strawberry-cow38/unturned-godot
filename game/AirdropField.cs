@@ -97,9 +97,19 @@ namespace UnturnedGodot
         }
 
         readonly RandomNumberGenerator _rng = new();
-        double Roll() { return _rng.Randf(); }
 
-        MeshInstance3D _plane;
+        /// <summary>Lets a shot scene fix the approach. Without it the heading is drawn fresh every run,
+        /// so a render can't be compared with the last one and "the nav lights are on the correct
+        /// wingtips" isn't a claim anyone can check twice.</summary>
+        public System.Func<double> RollOverride;
+
+        double Roll() => RollOverride != null ? RollOverride() : _rng.Randf();
+
+        Dropship _plane;
+
+        /// <summary>The plane, once it exists. Null before the first drop -- a shot scene checks
+        /// <c>HasModel</c> on it rather than assuming the content was there.</summary>
+        public Dropship Plane => _plane;
 
         /// <summary>The telegraph. A drop that simply appears at altitude is a loot spawn; the plane is
         /// what makes it an event you can see coming from across the map and move on.</summary>
@@ -107,18 +117,13 @@ namespace UnturnedGodot
         {
             if (!IsInstanceValid(_plane))
             {
-                _plane = new MeshInstance3D
-                {
-                    Mesh = new BoxMesh { Size = new Vector3(14f, 3f, 4f) },
-                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.22f, 0.26f) },
-                };
+                _plane = Dropship.Build();
                 AddChild(_plane);
             }
             _plane.Visible = true;
             _plane.GlobalPosition = new Vector3(at.x, at.y, at.z);
             var v = Sim.PlaneVelocity;
-            if (v.x * v.x + v.z * v.z > 0.01f)
-                _plane.LookAt(_plane.GlobalPosition + new Vector3(v.x, 0f, v.z), Vector3.Up);
+            _plane.FaceVelocity(new Vector3(v.x, v.y, v.z));
         }
 
         void HidePlane() { if (IsInstanceValid(_plane)) _plane.Visible = false; }
@@ -126,8 +131,12 @@ namespace UnturnedGodot
         /// <summary>Somewhere on the terrain near the origin. Deliberately simple: the interesting part
         /// of an airdrop is the event, and a smarter site picker can replace this without touching
         /// anything else.</summary>
+        /// <summary>Lets a test or shot scene pin the landing spot instead of scattering it.</summary>
+        public System.Func<UVector3> TargetOverride;
+
         public UVector3 PickTarget()
         {
+            if (TargetOverride != null) return TargetOverride();
             var rng = new RandomNumberGenerator();
             rng.Randomize();
             float x = rng.RandfRange(-120f, 120f), z = rng.RandfRange(-120f, 120f);
