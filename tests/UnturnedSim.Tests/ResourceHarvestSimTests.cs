@@ -123,6 +123,42 @@ namespace UnturnedSim.Tests
         }
 
         [Test]
+        public void OnlyAWeaponCarryingTheRightBladeCanChop()
+        {
+            // The gate that is easy to skip entirely, because skipping it looks fine in play: every melee
+            // weapon fells everything. Trees declare no BladeID at all, so they default to 0, and a weapon
+            // has to list 0 to cut one.
+            var birch = Birch();   // BladeId 0, not vulnerable to all melee
+            System.Func<int, bool> axe = id => id == 0 || id == 1;   // an axe carries blade 0
+            System.Func<int, bool> knife = id => id == 3;            // a knife does not
+
+            Assert.That(ResourceHarvestSim.CanChop(birch, axe), Is.True, "the axe lists blade 0");
+            Assert.That(ResourceHarvestSim.CanChop(birch, knife), Is.False, "the knife does not");
+            Assert.That(ResourceHarvestSim.CanChop(birch, null), Is.False, "no blades at all chops nothing");
+        }
+
+        [Test]
+        public void VulnerableToAllMeleeSkipsTheBladeCheckEntirely()
+        {
+            var soft = Birch();
+            soft.VulnerableToAllMelee = true;
+            System.Func<int, bool> knife = id => id == 3;
+            Assert.That(ResourceHarvestSim.CanChop(soft, knife), Is.True);
+        }
+
+        [Test]
+        public void FistsTakeTheirOwnRouteNotTheBladeList()
+        {
+            // Retail gates bare hands on Vulnerable_To_Fists, not on a blade list -- a fist has no blades,
+            // so running it through hasBladeID would make every resource punchable-proof by accident.
+            var birch = Birch();
+            Assert.That(ResourceHarvestSim.CanChop(birch, null, isFists: true), Is.False,
+                        "a birch is not vulnerable to fists");
+            birch.VulnerableToFists = true;
+            Assert.That(ResourceHarvestSim.CanChop(birch, null, isFists: true), Is.True);
+        }
+
+        [Test]
         public void AnUnregisteredInstanceIsNotHarvestable()
         {
             // Every index the replication knows about is not necessarily a resource we have a def for.
