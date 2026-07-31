@@ -26,7 +26,9 @@ namespace UnturnedGodot
         LineEdit _dcHost, _dcPort, _dcPass;
         Button _refreshBtn;
         bool _serversAutoRefreshed;
-        readonly System.Collections.Generic.List<(ServerEntry sv, Label ping, Label players)> _serverRows = new();
+        readonly System.Collections.Generic.List<(ServerEntry sv, Button row, Label name, Label ping, Label players)> _serverRows = new();
+        readonly System.Collections.Generic.HashSet<ServerEntry> _mismatched = new();   // servers whose content version != ours -> grayed, join blocked
+        Button _joinBtn;
         static int _statusNonce;
 
         void BuildServersPanel(CanvasLayer layer)
@@ -95,10 +97,10 @@ namespace UnturnedGodot
             _svInfoDetail.AddThemeFontSizeOverride("font_size", 14);
             right.AddChild(_svInfoDetail);
 
-            var joinSel = new Button { Text = "JOIN", CustomMinimumSize = new Vector2(320f, 48f) };
-            joinSel.AddThemeFontSizeOverride("font_size", 22);
-            joinSel.Pressed += () => { if (_selectedServer != null) OnJoinServer?.Invoke(_selectedServer.Host, _selectedServer.Port); };
-            right.AddChild(joinSel);
+            _joinBtn = new Button { Text = "JOIN", CustomMinimumSize = new Vector2(320f, 48f) };
+            _joinBtn.AddThemeFontSizeOverride("font_size", 22);
+            _joinBtn.Pressed += () => { if (_selectedServer != null && !_mismatched.Contains(_selectedServer)) OnJoinServer?.Invoke(_selectedServer.Host, _selectedServer.Port); };
+            right.AddChild(_joinBtn);
 
             right.AddChild(new HSeparator());
             right.AddChild(Header("DIRECT CONNECT", 16));
@@ -152,7 +154,7 @@ namespace UnturnedGodot
             var pingL = InfoBox("—", 60);
             row.AddChild(playersL);
             row.AddChild(pingL);
-            _serverRows.Add((sv, pingL, playersL));   // Refresh updates this row's live ping + player count
+            _serverRows.Add((sv, b, name, pingL, playersL));   // Refresh updates this row's live ping/count + version-mismatch state
             b.AddChild(row);
             return b;
         }
@@ -176,7 +178,10 @@ namespace UnturnedGodot
             _selectedServer = sv;
             if (_svInfoName != null) _svInfoName.Text = sv.Name;
             if (_svInfoDetail != null)
-                _svInfoDetail.Text = $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}     Max players:  {sv.Max}\nStatus:  press ⟳ Refresh for live ping + players";
+                _svInfoDetail.Text = _mismatched.Contains(sv)
+                    ? $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  ⚠ VERSION MISMATCH — cannot join"
+                    : $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}     Max players:  {sv.Max}\nStatus:  press ⟳ Refresh for live ping + players";
+            RefreshJoinButton();
         }
 
         LineEdit DcField(string label, string def, VBoxContainer parent, bool isPassword = false)
@@ -206,32 +211,37 @@ namespace UnturnedGodot
                 _refreshBtn.Text = "Refreshing…";
                 GetTree().CreateTimer(5.0).Timeout += () => { if (IsInstanceValid(_refreshBtn)) { _refreshBtn.Disabled = false; _refreshBtn.Text = "⟳ Refresh"; } };
             }
-            foreach (var (sv, pingL, playersL) in _serverRows)
+            foreach (var (sv, row, name, pingL, playersL) in _serverRows)
             {
                 if (IsInstanceValid(pingL)) pingL.Text = "…";
                 if (IsInstanceValid(playersL)) playersL.Text = "…";
-                QueryServer(sv, pingL, playersL);
+                QueryServer(sv, row, name, pingL, playersL);
             }
         }
 
-        void QueryServer(ServerEntry sv, Label pingL, Label playersL)
+        void QueryServer(ServerEntry sv, Button row, Label name, Label pingL, Label playersL)
         {
             uint nonce = (uint)System.Threading.Interlocked.Increment(ref _statusNonce) ^ (uint)System.Environment.TickCount;
             System.Threading.Tasks.Task.Run(() =>
             {
-                var (ok, ping, players, max) = StatusQuery(sv.Host, sv.Port, nonce);
+                var (ok, ping, players, max, ver) = StatusQuery(sv.Host, sv.Port, nonce);
+                bool mismatch = ok && ver != NetContent.Hash;   // our content identity vs the server's
                 Callable.From(() =>
                 {
-                    if (IsInstanceValid(pingL)) pingL.Text = ok ? $"{ping} ms" : "—";
-                    if (IsInstanceValid(playersL)) playersL.Text = ok ? $"{players}/{(max > 0 ? max : sv.Max)}" : "offline";
-                    if (_selectedServer == sv) UpdateSelectedLive(ok, ping, players, max > 0 ? max : sv.Max);
+                    if (mismatch) _mismatched.Add(sv); else _mismatched.Remove(sv);
+                    var dim = new Color(0.5f, 0.5f, 0.5f);
+                    var lit = new Color(0.9f, 0.9f, 0.88f);
+                    if (IsInstanceValid(pingL)) { pingL.Text = ok ? $"{ping} ms" : "—"; pingL.AddThemeColorOverride("font_color", mismatch ? dim : lit); }
+                    if (IsInstanceValid(playersL)) { playersL.Text = mismatch ? "mismatch" : (ok ? $"{players}/{(max > 0 ? max : sv.Max)}" : "offline"); playersL.AddThemeColorOverride("font_color", mismatch ? dim : lit); }
+                    if (IsInstanceValid(name)) name.AddThemeColorOverride("font_color", mismatch ? dim : new Color(0.95f, 0.95f, 0.95f));
+                    if (_selectedServer == sv) { UpdateSelectedLive(ok, ping, players, max > 0 ? max : sv.Max, mismatch); RefreshJoinButton(); }
                 }).CallDeferred();
             });
         }
 
         // blocking UDP status query, run on a worker thread. Sends UGSQ + nonce (padded so req >= resp), waits up to
         // 1.5 s for UGSR + the echoed nonce + players(u16) + max(u16); ping = the measured round-trip time.
-        static (bool ok, int ping, int players, int max) StatusQuery(string host, ushort port, uint nonce)
+        static (bool ok, int ping, int players, int max, ulong version) StatusQuery(string host, ushort port, uint nonce)
         {
             try
             {
@@ -250,20 +260,33 @@ namespace UnturnedGodot
                 var from = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
                 byte[] r = udp.Receive(ref from);   // SocketException on timeout -> caught below
                 sw.Stop();
-                if (r.Length >= 12 && r[0] == (byte)'U' && r[1] == (byte)'G' && r[2] == (byte)'S' && r[3] == (byte)'R'
+                if (r.Length >= 20 && r[0] == (byte)'U' && r[1] == (byte)'G' && r[2] == (byte)'S' && r[3] == (byte)'R'
                     && r[4] == req[4] && r[5] == req[5] && r[6] == req[6] && r[7] == req[7])
-                    return (true, (int)sw.ElapsedMilliseconds, r[8] | (r[9] << 8), r[10] | (r[11] << 8));
-                return (false, 0, 0, 0);
+                {
+                    ulong ver = 0;
+                    for (int i = 0; i < 8; i++) ver |= (ulong)r[12 + i] << (8 * i);   // content version (little-endian)
+                    return (true, (int)sw.ElapsedMilliseconds, r[8] | (r[9] << 8), r[10] | (r[11] << 8), ver);
+                }
+                return (false, 0, 0, 0, 0);
             }
-            catch { return (false, 0, 0, 0); }
+            catch { return (false, 0, 0, 0, 0); }
         }
 
-        void UpdateSelectedLive(bool ok, int ping, int players, int max)
+        void UpdateSelectedLive(bool ok, int ping, int players, int max, bool mismatch)
         {
             if (_selectedServer == null || _svInfoDetail == null) return;
             var sv = _selectedServer;
-            string status = ok ? $"{players}/{max} players  ·  {ping} ms" : "offline / no response";
+            string status = mismatch ? "⚠ VERSION MISMATCH — cannot join" : (ok ? $"{players}/{max} players  ·  {ping} ms" : "offline / no response");
             _svInfoDetail.Text = $"Map:  {sv.Map}\nAddress:  {sv.Host}:{sv.Port}\nMode:  {(sv.Pvp ? "PvP" : "PvE")}\nStatus:  {status}";
+        }
+
+        // Row gray-out is per-row (QueryServer); the JOIN button tracks whichever server is currently selected.
+        void RefreshJoinButton()
+        {
+            if (_joinBtn == null) return;
+            bool blocked = _selectedServer != null && _mismatched.Contains(_selectedServer);
+            _joinBtn.Disabled = blocked;
+            _joinBtn.Text = blocked ? "VERSION MISMATCH" : "JOIN";
         }
     }
 }

@@ -54,6 +54,7 @@ namespace SDG.NetTransport.Udp
         const long StatusMinIntervalMs = 1000;    // per-source-IP rate limit
         public volatile int StatusPlayerCount;    // live player count, pushed by the host each tick
         public volatile int StatusMaxPlayers = 24;
+        public ulong StatusVersion;               // server content identity (NetContent.Hash); the browser grays + blocks join on a mismatch
         readonly System.Collections.Generic.Dictionary<uint, long> _statusLastMs = new();
         long _statusPruneMs;
 
@@ -99,11 +100,13 @@ namespace SDG.NetTransport.Udp
             if (now - _statusPruneMs > 10000) { _statusPruneMs = now; PruneStatus(now); }
             int players = StatusPlayerCount < 0 ? 0 : (StatusPlayerCount > 65535 ? 65535 : StatusPlayerCount);
             int max = StatusMaxPlayers < 0 ? 0 : (StatusMaxPlayers > 65535 ? 65535 : StatusMaxPlayers);
-            var resp = new byte[12];
+            ulong ver = StatusVersion;
+            var resp = new byte[20];   // magic(4)+nonce(4)+players(2)+max(2)+version(8) = 20 B, still < the 24 B request (no amplification)
             resp[0] = StatusRespMagic[0]; resp[1] = StatusRespMagic[1]; resp[2] = StatusRespMagic[2]; resp[3] = StatusRespMagic[3];
             resp[4] = req[4]; resp[5] = req[5]; resp[6] = req[6]; resp[7] = req[7];   // echo the nonce (client rejects spoofed / stale replies)
             resp[8] = (byte)(players & 0xFF); resp[9] = (byte)((players >> 8) & 0xFF);
             resp[10] = (byte)(max & 0xFF); resp[11] = (byte)((max >> 8) & 0xFF);
+            for (int i = 0; i < 8; i++) resp[12 + i] = (byte)((ver >> (8 * i)) & 0xFF);   // content version (little-endian)
             try { _socket.SendTo(resp, 0, resp.Length, SocketFlags.None, remote); } catch (SocketException) { }
         }
 

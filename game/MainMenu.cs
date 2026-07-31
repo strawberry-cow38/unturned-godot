@@ -262,6 +262,7 @@ namespace UnturnedGodot
             if (_workshopPanel != null) _workshopPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
             _targetTab = 1;   // hold the Play framing while the browser is open
+            if (show && _selectedServer == null && OfficialServers.Length > 0) SelectServer(OfficialServers[0]);   // highlight the top row so info/JOIN reflect it
             if (show && !_serversAutoRefreshed) { _serversAutoRefreshed = true; RefreshServers(); }   // auto-query live ping/count on first open
         }
 

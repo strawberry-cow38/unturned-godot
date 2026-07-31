@@ -68,6 +68,7 @@ namespace UnturnedGodot
 
             var srvTransport = TransportOverride ?? new UdpServerTransport(Port);
             _statusTransport = srvTransport as UdpServerTransport;   // null under a test MemTransport; else answers browser status-reqs
+            if (_statusTransport != null) _statusTransport.StatusVersion = NetContent.Hash;   // browser grays + blocks join on a version mismatch
             Server = new NetWorldServer(srvTransport,
                 (conn, reason, isError) => GD.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
