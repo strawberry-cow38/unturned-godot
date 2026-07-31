@@ -51,6 +51,9 @@ SCENES = {
     # generator rig would hand back a confident, wrong picture -- the failure mode this whole
     # tool exists to stop. A scene is here only when it renders the thing it is named after.
     "deploy":   (["--deploytest", "--shot={OUT}"], {}, False, 120, "generator + spotlight rig (the golden scene)"),
+    # The supply-drop telegraph. Waits for the plane to actually be overhead rather than a fixed
+    # frame, because a fixed frame that catches empty sky looks exactly like a plane that never spawned.
+    "airdrop":  (["--airdropshot", "--shot={OUT}"], {}, False, 240, "cargo plane crossing overhead, seen from the ground"),
     "vehicle":  (["--vehicle={TMP}"], {"UG_QUICK": "1", "UG_VSIDE": "2"}, False, 180, "jeep beauty shot"),
     "menu":     (["--menushot={TMP}"], {}, False, 300, "the 3D barn main menu, 5 camera anchors"),
     "nav":      (["--navshot={OUT}"], {}, True, 300, "close-up: one nav pocket + zombie vision cones"),
