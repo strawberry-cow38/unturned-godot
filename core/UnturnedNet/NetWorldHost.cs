@@ -282,6 +282,54 @@ namespace UnturnedGodot.Net
             Session.FindPeer(playerId)?.SendReliable(message);
         }
 
+        readonly TemperatureSim _heat = new TemperatureSim();
+        readonly System.Collections.Generic.Dictionary<ushort, PlayerTemperatureSim> _playerHeat = new System.Collections.Generic.Dictionary<ushort, PlayerTemperatureSim>();
+
+        /// <summary>What each player is currently standing in, server-side. Exposed for tests and for any
+        /// future owner-block that wants to send the state rather than let the client re-derive it.</summary>
+        public PlayerTemperature TemperatureOf(ushort playerId) =>
+            _playerHeat.TryGetValue(playerId, out var s) ? s.Temperature : PlayerTemperature.None;
+
+        /// <summary>
+        /// Burning hurts, and damage is the server's call -- so the server has to resolve temperature
+        /// itself rather than trust a client that says it is standing in a fire.
+        ///
+        /// The bubble field is rebuilt from the replicated deployables each tick instead of being kept
+        /// incrementally in step with places/removes/destroys. Deployables are few and a rebuild is a
+        /// couple of dictionary walks; an incremental field has to be correct across every path that can
+        /// remove one, and getting that wrong leaves an invisible patch of ground that burns people with
+        /// nothing standing on it.
+        /// </summary>
+        void StepTemperature()
+        {
+            _heat.Clear();
+            bool any = false;
+            foreach (var d in Deployables.All)
+            {
+                if (!Deployables.Schema.TryGet(d.DefId, out var def)) continue;
+                if (def.HeatWarmRadius <= 0f && def.HeatBurnRadius <= 0f) continue;
+                any = true;
+                // Warm first, then the burning core: Resolve is last-wins among non-burning bubbles and
+                // burning is sticky, so this is the order that lets the core beat the sphere it sits in.
+                if (def.HeatWarmRadius > 0f) _heat.Register(d.Pos, def.HeatWarmRadius, PlayerTemperature.Warm);
+                if (def.HeatBurnRadius > 0f) _heat.Register(d.Pos, def.HeatBurnRadius, PlayerTemperature.Burning);
+            }
+
+            foreach (var p in Players.All)
+            {
+                ushort id = p.OwnerPlayerId;
+                if (!_playerHeat.TryGetValue(id, out var sim))
+                {
+                    if (!any) continue;                       // nothing hot in the world: don't allocate per player
+                    _playerHeat[id] = sim = new PlayerTemperatureSim();
+                }
+                sim.Step((float)SimClock.FixedDelta, _heat.Resolve(p.Pos, fireproof: false));
+                // Through the same funnel every other damage source uses, so armour, death and the kill
+                // broadcast all behave identically to taking a bullet.
+                if (sim.Damage > 0f) Combat.DamagePlayerExternal(id, sim.Damage);
+            }
+        }
+
         /// <summary>Receive + input-apply + player sim + combat step (§2.5 order: input-apply, player sim,
         /// then combat/projectiles).</summary>
         public void TickSimulation()
@@ -290,6 +338,8 @@ namespace UnturnedGodot.Net
             // The door cooldown is measured in sim seconds, so the clock must be current BEFORE this tick's
             // commands are validated against it -- otherwise every toggle is judged against last tick.
             Interactables.Now = Session.CurrentTick * SimClock.FixedDelta;
+
+            StepTemperature();
 
             // Supply drops. Stepped here rather than on the game side so a dedicated server with no
             // rendering runs the same schedule, and so the START CLOCK every client integrates from is

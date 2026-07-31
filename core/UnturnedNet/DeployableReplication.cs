@@ -46,6 +46,12 @@ namespace UnturnedGodot.Net
         public DeployablePortSpec[] Ports = System.Array.Empty<DeployablePortSpec>();
         public ushort SalvageItemId; // what a blowtorched wreck breaks into (Deployable.Salvage; 0 = nothing)
         public byte SalvageCount;
+        // Heat volumes, metres, 0 = none. Retail authors these as Burning/Warm child transforms on the
+        // barricade prefab (a campfire = 10 m warm, 0.75 m burning core). They live on the DEF rather than
+        // the wire for the same reason as everything else here -- both ends register the same defs, so only
+        // the defId travels. The server needs them because BURNING does damage, and damage is its call.
+        public float HeatWarmRadius;
+        public float HeatBurnRadius;
     }
 
     /// <summary>Instance-scoped def registry (no static state -- test isolation for free).</summary>

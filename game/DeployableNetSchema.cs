@@ -31,6 +31,8 @@ namespace UnturnedGodot
                     // Deployable.Salvage yields 2x Metal Scrap (67); a ShatterOnDeath def leaves no wreck to salvage
                     SalvageItemId = def.ShatterOnDeath ? (ushort)0 : (ushort)67,
                     SalvageCount = def.ShatterOnDeath ? (byte)0 : (byte)2,
+                    HeatWarmRadius = def.HeatWarmRadius,   // campfire: 10 m warm sphere, 0.75 m burning core
+                    HeatBurnRadius = def.HeatBurnRadius,
                 });
             }
         }
