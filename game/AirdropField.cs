@@ -137,14 +137,45 @@ namespace UnturnedGodot
         /// <summary>Lets a test or shot scene pin the landing spot instead of scattering it.</summary>
         public System.Func<UVector3> TargetOverride;
 
+        /// <summary>A ONE-SHOT landing spot, consumed by the next drop. The console's summon verbs use
+        /// this rather than TargetOverride so that calling `airdrop` at your feet doesn't permanently
+        /// nail every future scheduled drop to that spot.</summary>
+        public UVector3? TargetOnce;
+
+        /// <summary>Where the next crate lands.
+        ///
+        /// Retail picks a map-authored airdrop node uniformly at random -- NOT the player's position,
+        /// and not the nearest one (LevelManager: airdropNodes[Random.Range(0, count)]). PEI has 14 of
+        /// them spread across the island.
+        ///
+        /// The old behaviour was a random point within 120 m of the WORLD ORIGIN, which is why every
+        /// drop landed in roughly the same corner of the map. That was a placeholder from when the
+        /// plane went in; the nodes were always there, just in Level.hierarchy rather than the
+        /// Nodes.dat the port already parsed.</summary>
         public UVector3 PickTarget()
         {
             if (TargetOverride != null) return TargetOverride();
+            if (TargetOnce.HasValue) { var t = TargetOnce.Value; TargetOnce = null; return Grounded(t); }
+
+            var nodes = MapNodes.AirdropNodes;
             var rng = new RandomNumberGenerator();
             rng.Randomize();
+            if (nodes.Count > 0)
+            {
+                var n = nodes[rng.RandiRange(0, nodes.Count - 1)];
+                return Grounded(new UVector3(n.X, n.Y, n.Z));
+            }
+            // No node data (a map we haven't extracted, or a bare test scene) -- fall back to the old
+            // scatter rather than refusing to drop at all.
             float x = rng.RandfRange(-120f, 120f), z = rng.RandfRange(-120f, 120f);
-            float y = Terr != null ? Terr.SampleHeight(x, z) : 0f;
-            return new UVector3(x, y, z);
+            return new UVector3(x, Terr != null ? Terr.SampleHeight(x, z) : 0f, z);
         }
+
+        /// <summary>Put a target on the actual ground. The authored node height is the map author's, and
+        /// our terrain is rebuilt from the retail heightmap rather than being the same mesh -- sampling
+        /// keeps the crate flush instead of buried or hovering. Falls back to the authored Y when there
+        /// is no terrain to ask.</summary>
+        UVector3 Grounded(UVector3 p) =>
+            Terr != null ? new UVector3(p.x, Terr.SampleHeight(p.x, p.z), p.z) : p;
     }
 }

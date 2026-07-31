@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid", "airdrop" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid", "airdrop", "airdropClose", "airdropRandom" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -135,15 +135,72 @@ namespace UnturnedGodot
                 Log($"sim speed = {x:0.##}x (whole simulation)");
                 return;
             }
-            if (verb == "airdrop")
+            if (verb == "airdrop" || verb == "airdropclose" || verb == "airdroprand" || verb == "airdroprandom")
             {
                 var field = AirdropField.Instance;
                 if (field == null) { Log("no airdrop field in this scene"); return; }
+                var nodes = MapNodes.AirdropNodes;
+                Vector3 here = Player != null && GodotObject.IsInstanceValid(Player) ? Player.GlobalPosition : Vector3.Zero;
+                Vector3 target;
+                string what;
+
+                if (verb == "airdropclose")
+                {
+                    if (nodes.Count == 0) { Log("no airdrop nodes loaded (run tools/extract_airdrop_nodes.py)"); return; }
+                    int best = 0;
+                    float bestD = float.MaxValue;
+                    for (int i = 0; i < nodes.Count; i++)
+                    {
+                        // Horizontal distance: the nodes sit at their own ground heights, and a node on a
+                        // hill 90 m up is not "further away" than one on the flat at the same map spot.
+                        float dx = nodes[i].X - here.X, dz = nodes[i].Z - here.Z;
+                        float d = dx * dx + dz * dz;
+                        if (d < bestD) { bestD = d; best = i; }
+                    }
+                    target = nodes[best];
+                    what = $"nearest node #{best} ({Mathf.Sqrt(bestD):0} m away)";
+                }
+                else if (verb == "airdroprand" || verb == "airdroprandom")
+                {
+                    if (nodes.Count == 0) { Log("no airdrop nodes loaded (run tools/extract_airdrop_nodes.py)"); return; }
+                    var rng = new RandomNumberGenerator(); rng.Randomize();
+                    int i = rng.RandiRange(0, nodes.Count - 1);
+                    target = nodes[i];
+                    what = $"random node #{i} of {nodes.Count}";
+                }
+                else if (arg.Length == 0)
+                {
+                    target = here;
+                    what = "your position";
+                }
+                else if (TryCoords(arg, out var coord))
+                {
+                    target = coord;
+                    what = "the given coordinates";
+                }
+                else
+                {
+                    // A town name -- prefix-matched the same way `teleport` does, shortest match wins, so
+                    // "sum" finds Summerside without needing the full "Summerside Military Base".
+                    string key = arg.Replace(" ", "");
+                    var hit = MapNodes.Locations
+                        .Where(n => n.Name.Replace(" ", "").StartsWith(key, System.StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(n => n.Name.Length).FirstOrDefault();
+                    if (hit.Name == null)
+                    {
+                        Log($"no town matching '{arg}'. usage: airdrop [x z | x y z | town name]  ·  airdropClose  ·  airdropRandom");
+                        return;
+                    }
+                    target = hit.Pos;
+                    what = hit.Name;
+                }
+
                 // Retail's CommandAirdrop sets the frequency to zero rather than spawning a crate, so
                 // the summoned drop takes the SAME path as a scheduled one -- plane, flight and all.
                 // Teleporting a crate in would test a path players never see.
+                field.TargetOnce = new UnityEngine.Vector3(target.X, target.Y, target.Z);
                 field.Sim.ScheduleNextIn(0.0);
-                Log("airdrop inbound — a plane is crossing the map; watch it to see where it drops");
+                Log($"airdrop inbound → {what} ({target.X:0}, {target.Z:0}) — the plane is crossing now");
                 return;
             }
             if (verb == "time" || verb == "timeset" || verb == "timeadd" || verb == "timespeed" || verb == "daylength")
@@ -606,6 +663,23 @@ namespace UnturnedGodot
             return $"{H:00}:{M:00}{name}";
         }
 
+        /// <summary>"x z" or "x y z", space- or comma-separated. Two numbers means a map position with the
+        /// height left to the terrain, which is what you want when reading coordinates off the map -- nobody
+        /// knows the ground height at a spot they are pointing at.</summary>
+        static bool TryCoords(string s, out Vector3 v)
+        {
+            v = Vector3.Zero;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            var p = s.Replace(",", " ").Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+            if (p.Length != 2 && p.Length != 3) return false;
+            if (!float.TryParse(p[0], System.Globalization.NumberStyles.Float, ci, out float x)) return false;
+            if (!float.TryParse(p[^1], System.Globalization.NumberStyles.Float, ci, out float z)) return false;
+            float y = 0f;
+            if (p.Length == 3 && !float.TryParse(p[1], System.Globalization.NumberStyles.Float, ci, out y)) return false;
+            v = new Vector3(x, y, z);
+            return true;
+        }
+
         void Log(string msg) { _log.Text = msg; GD.Print("[console] " + msg); }
     }
 
@@ -614,6 +688,34 @@ namespace UnturnedGodot
     public static class MapNodes
     {
         public static readonly System.Collections.Generic.List<(string Name, Vector3 Pos)> Locations = Load();
+
+        /// <summary>The map author's AIRDROP nodes -- where retail actually drops care packages
+        /// (LevelManager: airdropNodes[Random.Range(0, count)]). PEI has 14.
+        ///
+        /// A separate file from nodes.tsv because they come from a different SOURCE: Nodes.dat holds
+        /// only the named LOCATION nodes, and the airdrops live in Level.hierarchy as devkit nodes.
+        /// Reading the absence of airdrops in nodes.tsv as "this map has none" is the mistake that kept
+        /// drops landing on the world origin. tools/extract_airdrop_nodes.py writes it.</summary>
+        public static readonly System.Collections.Generic.List<Vector3> AirdropNodes = LoadAirdrops();
+
+        static System.Collections.Generic.List<Vector3> LoadAirdrops()
+        {
+            var list = new System.Collections.Generic.List<Vector3>();
+            string path = ProjectSettings.GlobalizePath("res://content/airdrop_nodes.tsv");
+            if (!System.IO.File.Exists(path)) return list;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            foreach (var line in System.IO.File.ReadAllLines(path))
+            {
+                var q = line.Split(',');
+                if (q.Length < 3) continue;
+                if (float.TryParse(q[0], System.Globalization.NumberStyles.Float, ci, out float x)
+                 && float.TryParse(q[1], System.Globalization.NumberStyles.Float, ci, out float y)
+                 && float.TryParse(q[2], System.Globalization.NumberStyles.Float, ci, out float z))
+                    list.Add(new Vector3(x, y, z));
+            }
+            return list;
+        }
+
         static System.Collections.Generic.List<(string, Vector3)> Load()
         {
             var list = new System.Collections.Generic.List<(string, Vector3)>();
