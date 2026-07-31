@@ -80,6 +80,26 @@ namespace UnturnedGodot
         //     Godot SpotAngle is the HALF-angle so it's src m_SpotAngle/2. ---
         public struct DeployLight { public bool Spot; public Vector3 Pos; public Vector3 Dir; public float Range; public float AngleDeg; public float Energy; public Color Color; }
         public DeployLight[] Lights = System.Array.Empty<DeployLight>();
+
+        // Heat volumes, in metres, 0 = none. Kept as two radii rather than a list because retail only
+        // ever authors these two children (Burning / Warm) and both sit at the barricade's origin --
+        // a general volume list would be structure with nothing to put in it.
+        public float HeatWarmRadius;
+        public float HeatBurnRadius;
+
+        /// <summary>Whether players are blocked by this thing -- the .dat's `Has_Clip_Prefab`.
+        ///
+        /// Defaults true because almost everything has one. The campfire is the exception, and it is not
+        /// a detail: its burning core is a 0.75 m sphere at the object's base, so if the body blocked
+        /// movement you could never get inside it and BURNING would be unreachable. Retail says
+        /// `Has_Clip_Prefab false` and the item description says "Don't step on it!" -- stepping on it
+        /// is the mechanic.</summary>
+        public bool HasClip = true;
+
+        /// <summary>Collision bit for a no-clip deployable: its own, so player movement (mask 0|6)
+        /// walks straight through while the look ray still finds it. NOT WorldItem's bit -- sharing that
+        /// would put campfires in the pickup look-sphere's results.</summary>
+        public const uint NoClipLayer = 1u << 12;
         static readonly Color LampWarm = new Color(0.9706f, 0.9612f, 0.835f);   // src Lamp m_Color (warm white)
 
         // src Generator_Small.dat: id 458, Useable Barricade, Build Generator, footprint 2x2x0.5, Offset 0.75
@@ -308,14 +328,33 @@ namespace UnturnedGodot
             PlaceSound = "metalplacement",
         };
 
+        // src Campfire.dat: id 362, Useable Barricade, Build Campfire, footprint 2x1x0.4, Offset 0.7,
+        // Radius 0.6, Range 4, Health 200. Real ripped Model_0 (tools/extract_barricade.py); its albedo
+        // is a 2x1 grey placeholder, so charred grey is the authored look and not a missing texture.
+        //
+        // The two radii are the whole reason this exists. They are not in the .dat -- BarricadeManager
+        // attaches a TemperatureTrigger to any child named Burning/Warm and uses its localScale.x, so
+        // the prefab is the only place they are written down: a 10 m warm sphere with a 0.75 m burning
+        // core. Warm up beside it, burn if you stand in it.
+        public static readonly DeployableDef Campfire = new()
+        {
+            Id = 362, Name = "Campfire", Model = "Campfire",
+            Size = new Vector3(2f, 1f, 0.4f), Offset = 0.7f, Radius = 0.6f, Range = 4f, Health = 200f,
+            HeatWarmRadius = 10f, HeatBurnRadius = 0.75f, HasClip = false,   // src Campfire.dat Has_Clip_Prefab false
+            // No Lights entry: those are CONSUMER lamps and stay dark until something powers them. A
+            // campfire's glow comes from the fire rig every deployable already carries, switched on at
+            // spawn instead of on death.
+        };
+
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike, Charge, Barbedwire };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike, Charge, Barbedwire, Campfire };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
             385 => Spike,
             1241 => Charge,
             386 => Barbedwire,
+            362 => Campfire,
             458 => Generator,
             459 => Spotlight,
             9101 => Splitter2,

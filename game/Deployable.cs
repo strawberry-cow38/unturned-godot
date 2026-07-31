@@ -30,6 +30,12 @@ namespace UnturnedGodot
         MeshInstance3D _mesh;      // the body mesh (charred on explode)
         MeshInstance3D _switchLight;   // a Power Switch's on/off state light (green = on, red = off)
         Vector3 _firePos;          // world-space fire/smoke origin (top of the object); particles are TopLevel so they rise in WORLD up despite the stood-up body basis
+        (int Warm, int Burn) _heat;   // this object's heat bubbles, if it has any (campfire); handed back on death
+
+        /// <summary>Take the heat away when the object goes. A bubble that outlives its fire is a patch
+        /// of ground that burns you with nothing standing on it -- and it is invisible, so the only
+        /// symptom is a player dying in an empty field.</summary>
+        public override void _ExitTree() => TemperatureField.Detach(_heat);
         const float ExplodeDelay = 4f, SmokeFrac = 0.45f, HeavyFrac = 0.22f;   // light smoke < 45% HP, heavy < 22% (vehicle uses ~200/100 of ~600)
 
         // --- power (src InteractableGenerator: F toggles isPowered; while on + fuelled the "Engine" node is active =
@@ -173,6 +179,7 @@ namespace UnturnedGodot
                 Shape = new BoxShape3D { Size = ab.Size == Vector3.Zero ? def.Size : ab.Size },
                 Position = ab.GetCenter(),
             });
+            if (!def.HasClip) d.CollisionLayer = DeployableDef.NoClipLayer;   // walk-through: the player's movement mask omits this bit
             d.Position = surface + Vector3.Up * (def.Upright ? -ab.Position.Y : DeployableDef.GroundLift(ab));   // base sits on the surface (upright models skip the stand-up lift)
             d.Basis = def.Upright ? new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) : DeployableDef.StandBasis(yawDeg);   // yaw (+ the stand-up for flat-authored ripped models)
             if (def.IsWindTurbine) d._bladeHub = mi.FindChild("BladeHub", true, false) as Node3D;   // the spinning blade hub
@@ -234,6 +241,17 @@ namespace UnturnedGodot
             if (def.Fuel > 0f && !def.IsBattery)   // a fuel generator gets a fluid FUEL hose input -> plumb a fuel line to it instead of hand-carrying cans (strawberry)
                 d.AddChild(FluidFuelInlet.Make(d));
             foreach (var p in new Node3D[] { d._smoke, d._smoke0, d._fire, d._fireLight }) p.GlobalPosition = d._firePos;   // TopLevel: set world pos after entering the tree
+            if (def.HeatWarmRadius > 0f || def.HeatBurnRadius > 0f)
+            {
+                // Bubbles anchor on the SURFACE, not on d.Position: the body is lifted so its base sits
+                // on the ground, and retail's volumes hang off the barricade root at local zero.
+                d._heat = TemperatureField.Attach(def, surface);
+                if (def.HeatBurnRadius > 0f)   // a campfire is on fire; that is the object, not a state
+                {
+                    if (d._fire != null) d._fire.Emitting = true;
+                    if (d._fireLight != null) { d._fireLight.Visible = true; d._fireLight.LightEnergy = 2.6f; }
+                }
+            }
             if (d.GetTree() is SceneTree t && t.GetNodesInGroup("powermgr").Count == 0)   // one PowerManager ticks the whole power net
             { var pm = new PowerManager(); pm.AddToGroup("powermgr"); parent.AddChild(pm); }
             return d;
