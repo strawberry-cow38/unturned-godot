@@ -109,11 +109,16 @@ for folder in sorted(os.listdir(trees_root)):
         key(txt, "Reward_Min", "0"), key(txt, "Reward_Max", "0"),
         "1" if flag(txt, "Has_Debris") else "0",
         "1" if flag(txt, "Forage") else "0",
+        # BladeID is ABSENT on most trees and defaults to 0 -- that default IS the gate, since a melee
+        # weapon must list blade 0 to fell them. Emitting it explicitly beats re-deriving the default.
+        key(txt, "BladeID", "0"),
+        "1" if (key(txt, "Vulnerable_To_All_Melee_Weapons", "false") or "").lower() == "true" else "0",
+        "1" if (key(txt, "Vulnerable_To_Fists", "false") or "").lower() == "true" else "0",
         "|".join("%d:%d" % (i, w) for i, w in drops),
     ))
 
 with open(OUT, "w", encoding="utf-8") as f:
-    f.write("name\tassetId\thealth\trewardXp\tresetSec\trewardMin\trewardMax\thasDebris\tisForage\tdrops\n")
+    f.write("name\tassetId\thealth\trewardXp\tresetSec\trewardMin\trewardMax\thasDebris\tisForage\tbladeId\tvulnAllMelee\tvulnFists\tdrops\n")
     for r in rows:
         f.write("\t".join(str(x) for x in r) + "\n")
 
@@ -121,5 +126,7 @@ harvestable = [r for r in rows if r[-1]]
 print("wrote %d resources -> %s (%d with a resolved drop table)" % (len(rows), OUT, len(harvestable)))
 for r in rows:
     if r[0].split("_")[0] in ("Birch", "Maple", "Pine") and r[0].endswith("_0"):
-        print("  %-10s hp=%-5s xp=%-3s reset=%-4s rewards=%s-%s drops=%s"
-              % (r[0], r[2], r[3], r[4], r[5], r[6], r[9]))
+        # index by NAME, not position -- inserting a column silently repointed this at bladeId and the
+        # summary cheerfully reported "drops=0" for a tree whose table was fine.
+        print("  %-10s hp=%-5s xp=%-3s reset=%-4s rewards=%s-%s blade=%s drops=%s"
+              % (r[0], r[2], r[3], r[4], r[5], r[6], r[9], r[-1]))

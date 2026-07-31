@@ -18,6 +18,20 @@ namespace UnturnedGodot
         public bool Repeated;   // .dat "Repeated": a continuous HOLD-to-use tool (blowtorch, chainsaw). Source ItemMeleeAsset: "'Repeated' melee weapons don't have strong attacks" -> LMB = continuous use (no weak click / no punch), RMB = nothing.
         public bool Repair;     // .dat "Repair": the continuous action REPAIRS the target (blowtorch) rather than damaging it.
 
+        /// <summary>The blade ids this weapon carries (.dat BladeIDs / BladeID_&lt;i&gt;).
+        ///
+        /// This is the gate on chopping, and it is easy to miss: UseableMelee only damages a resource if
+        /// `asset.vulnerableToAllMeleeWeapons || meleeAsset.hasBladeID(asset.bladeID)`. Trees default to
+        /// blade 0, so whether a given weapon fells one depends on whether it lists 0 -- an axe does, a
+        /// weapon meant for people may not. Empty = chops nothing.</summary>
+        public int[] BladeIds = System.Array.Empty<int>();
+
+        public bool HasBladeId(int id)
+        {
+            for (int i = 0; i < BladeIds.Length; i++) if (BladeIds[i] == id) return true;
+            return false;
+        }
+
         // Bare FISTS = the src's hardcoded empty-hand punch (PlayerEquipment.simulate_PunchInput): LMB left / RMB right,
         // 15 base dmg (x hit-zone), 1.75 m reach, ~every 0.1 s, no strong-swing multiplier (both fists equal).
         public static MeleeDef Fists => new()
@@ -45,7 +59,20 @@ namespace UnturnedGodot
                 Alert = d.ParseFloat("Alert_Radius", 0f),
                 Repeated = d.ContainsKey("Repeated"),   // blowtorch/chainsaw: continuous hold, no weak/strong swings
                 Repair = d.ContainsKey("Repair"),       // blowtorch: continuous action heals instead of damaging
+                BladeIds = ParseBladeIds(d),
             };
+        }
+
+        /// <summary>`BladeIDs &lt;n&gt;` followed by `BladeID_0..n-1`. The count is read first rather than
+        /// scanning for keys, so a .dat that declares 2 and lists 3 yields the 2 retail would use.</summary>
+        static int[] ParseBladeIds(IDatDictionary d)
+        {
+            int n = d.ParseInt32("BladeIDs", 0);
+            if (n <= 0) return System.Array.Empty<int>();
+            var ids = new System.Collections.Generic.List<int>(n);
+            for (int i = 0; i < n; i++)
+                if (d.ContainsKey("BladeID_" + i)) ids.Add(d.ParseInt32("BladeID_" + i, 0));
+            return ids.ToArray();
         }
     }
 }

@@ -15,6 +15,11 @@ namespace SDG.Unturned
         public bool HasDebris;
         public bool IsForage;
 
+        /// <summary>Which blade cuts it (.dat BladeID, ABSENT on most trees so it defaults to 0).</summary>
+        public byte BladeId;
+        public bool VulnerableToAllMelee;   // .dat Vulnerable_To_All_Melee_Weapons
+        public bool VulnerableToFists;      // .dat Vulnerable_To_Fists
+
         /// <summary>The reward SPAWN TABLE, already resolved to item ids with their weights. Retail's
         /// Reward_ID is a legacy spawn-table id, not an item id -- birch's 515 is a table, while item 515
         /// is Cooked Venison. Resolving it is the extractor's job so the sim never has to know.</summary>
@@ -62,6 +67,20 @@ namespace SDG.Unturned
         public int HealthOf(int index) =>
             _health.TryGetValue(index, out int h) ? h
             : TryGetDefForInstance(index, out var d) ? d.Health : 0;
+
+        /// <summary>Whether a swing can hurt this resource at all.
+        ///
+        /// Retail: `vulnerableToAllMeleeWeapons || meleeAsset.hasBladeID(asset.bladeID)`. Skipping this and
+        /// letting any melee weapon chop is the easy mistake -- it looks correct in play and quietly
+        /// deletes a real gate, since trees default to blade 0 and a weapon has to declare 0 to fell one.
+        /// Fists take the separate Vulnerable_To_Fists route rather than a blade list.</summary>
+        public static bool CanChop(ResourceHarvestDef def, System.Func<int, bool> weaponHasBlade, bool isFists = false)
+        {
+            if (def == null) return false;
+            if (isFists) return def.VulnerableToFists;
+            if (def.VulnerableToAllMelee) return true;
+            return weaponHasBlade != null && weaponHasBlade(def.BladeId);
+        }
 
         /// <summary>Hit a resource. Returns true if THIS hit felled it.
         ///
