@@ -97,6 +97,11 @@ namespace SDG.Unturned
         // Source PlayerEquipment:2274: OVERKILL boosts melee damage by up to 50% at max level.
         public float OverkillMeleeMultiplier() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.OVERKILL) * 0.5f;
 
+        // Source UseableMelee's RESOURCE branch: OUTDOORS multiplies BOTH the chop damage (`times`) and
+        // the drop count (`drops`) by the same 1 + mastery*0.5 -- a maxed player fells trees ~50% faster
+        // AND gets ~50% more logs. Applying it to only one of the two is the easy half-port.
+        public float OutdoorsHarvestMultiplier() => Mastery((int)EPlayerSpeciality.SUPPORT, (int)EPlayerSupport.OUTDOORS) * 0.5f;
+
         // Source UseableGun:2979/3046: DEXTERITY speeds the reload animation (speed += mastery*0.5), up to 1.5x at max. Reload TIME = duration / this.
         public float DexterityReloadSpeed() => 1f + Mastery((int)EPlayerSpeciality.OFFENSE, (int)EPlayerOffense.DEXTERITY) * 0.5f;
 

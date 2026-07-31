@@ -30,6 +30,7 @@ namespace UnturnedGodot
             public StaticBody3D Trunk;      // trees only
             public uint TrunkLayer;
             public bool Alive = true;
+            public string TypeName;         // "Birch_0" etc -- the key into the harvest table
         }
         readonly List<InstanceRec> _instances = new();
 
@@ -37,6 +38,19 @@ namespace UnturnedGodot
         public int InstanceCount => _instances.Count;
 
         public bool IsAlive(int index) => index >= 0 && index < _instances.Count && _instances[index].Alive;
+
+        /// <summary>Meta key stamped on every trunk collider carrying its load-order index -- the same id
+        /// space the replication and the harvest sim use.</summary>
+        public const string ResourceIndexMeta = "ug_res_index";
+
+        /// <summary>The resource TYPE of an instance ("Birch_0"), or null. The harvest table is keyed by
+        /// this, so it is the join between a world instance and what it drops.</summary>
+        public string TypeNameOf(int index) =>
+            index >= 0 && index < _instances.Count ? _instances[index].TypeName : null;
+
+        /// <summary>The instance index behind a collider a ray hit, or -1 if it is not a resource.</summary>
+        public static int IndexOfCollider(GodotObject collider) =>
+            collider is Node n && n.HasMeta(ResourceIndexMeta) ? (int)n.GetMeta(ResourceIndexMeta) : -1;
 
         /// <summary>Test seam: the tree-trunk StaticBody3D for an instance (null for non-trees) -- L1s
         /// assert the §7-risk-7 collider toggle without reaching into the registry.</summary>
@@ -78,7 +92,7 @@ namespace UnturnedGodot
                 var recs = new List<InstanceRec>(xf.Count);
                 foreach (var t in xf)
                 {
-                    var rec = new InstanceRec { Xf = t };
+                    var rec = new InstanceRec { Xf = t, TypeName = name };
                     recs.Add(rec);
                     _instances.Add(rec);
                 }
@@ -95,6 +109,10 @@ namespace UnturnedGodot
                         var body = new StaticBody3D { CollisionLayer = 1u << 0, Transform = new Transform3D(t.Basis.Orthonormalized(), t.Origin) };
                         body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Wood);
                         body.AddToGroup("tree");   // for the UG_TREECHECK raycast self-test
+                        // The trunk has to know WHICH resource it is. The registry maps index -> body, but
+                        // a raycast hands you the body, and without this the melee path can find a tree it
+                        // cannot name -- so it could never tell the server which one was chopped.
+                        body.SetMeta(ResourceIndexMeta, k);
                         body.AddChild(new CollisionShape3D { Shape = new CylinderShape3D { Radius = 0.5f * sr, Height = 8f * sh }, Position = new Vector3(0f, 2.5f * sh, 0f) });
                         AddChild(body);
                         recs[k].Trunk = body;

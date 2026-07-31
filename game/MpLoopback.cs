@@ -328,6 +328,18 @@ namespace UnturnedGodot
             // manifest is registered before the first replication send (net.server.replicate is LAST).
             ContainerSync = new ContainerNetSync(Server, this, Containers);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ContainerSync.Tick(), "net.containers.publish"));
+            // Trees become choppable HERE, not in the world build: felling is a server transaction, and
+            // this is where the loopback's server exists. Without these three lines the melee branch, the
+            // harvest sim and ChopResource are all correct and all unreachable -- exactly the failure this
+            // repo keeps hitting.
+            if (Resources != null && Player != null)
+            {
+                int bound = ResourceHarvestTable.Bind(Server.Transactions.Harvest, Resources);
+                Player.ResourceFieldRef = Resources;
+                Player.ChopRequest = (index, damage, hasBlade, isFists, dropMult) =>
+                    Server.Transactions.ChopResource(Client.PlayerId, index, damage, hasBlade, isFists, dropMult);
+                GD.Print($"[resources] {bound} instances bound to the harvest table -- trees are choppable");
+            }
             ResourceSync = new ResourceNetSync(Server, Resources);
             Driver.Sim.Add(new DelegateSimStep((t, dt) => ResourceSync.Tick(), "net.resources.sync"));
             DestructibleSync = new DestructibleNetSync(Server, Destructibles);   // seed health/respawn + mirror rubble alive-bits
