@@ -49,6 +49,7 @@ namespace UnturnedGodot
         public InteractableNetSync InteractableSync { get; private set; }   // SP/MP unify: doors + beds registered as server-authoritative, deadzones seeded
 
         long _lastStatusTick;
+        UdpServerTransport _statusTransport;   // browser status-query responder; fed the live player count each tick
 
         public override void _Ready()
         {
@@ -65,7 +66,9 @@ namespace UnturnedGodot
             NetLog.ErrorSink = s => GD.PrintErr(s);
             if (System.Environment.GetEnvironmentVariable("UG_NETLOG") == "1") NetLog.Enabled = true;
 
-            Server = new NetWorldServer(TransportOverride ?? new UdpServerTransport(Port),
+            var srvTransport = TransportOverride ?? new UdpServerTransport(Port);
+            _statusTransport = srvTransport as UdpServerTransport;   // null under a test MemTransport; else answers browser status-reqs
+            Server = new NetWorldServer(srvTransport,
                 (conn, reason, isError) => GD.Print($"[DEDICATED] connection dropped ({conn.GetAddressString(true)}): {reason}"),
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
                 activeHoliday: ActiveHoliday);   // P3: joiners build THIS world's holiday props/colliders, not their own clock's
@@ -220,6 +223,7 @@ namespace UnturnedGodot
         void Replicate(long tick)
         {
             Server.TickReplication();
+            if (_statusTransport != null) _statusTransport.StatusPlayerCount = Server.Session.Peers.Count;   // feed the browser status-query responder
             if (tick - _lastStatusTick >= 500)   // 10 s heartbeat so a headless console shows life
             {
                 _lastStatusTick = tick;

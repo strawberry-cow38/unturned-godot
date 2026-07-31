@@ -18,7 +18,8 @@ namespace UnturnedGodot
         public System.Action<bool> OnPlay;        // legacy flat-terrain survival build (test flags only)
         public System.Action<bool> OnDrivePEI;    // bool = noZombies -- the real PEI world; the dashboard's Play opens this
         public System.Action OnDriveNewZombies;   // the same PEI world with the zombie REWRITE enabled (equivalent to --newzombies)
-        public System.Action OnMultiplayer;       // top-level "Multiplayer": connect to the MP test server (VoX: always our test server for now; server browser later)
+        public System.Action OnMultiplayer;       // legacy top-level hard-connect to the MP test server (kept as a fallback)
+        public System.Action<string, ushort> OnJoinServer;   // server browser JOIN / direct-connect: real client join to host:port
         public System.Action OnEditor;            // Workshop -> the singleplayer map editor (PEI)
         public System.Action OnNewMap;            // Workshop -> a fresh blank map in the editor
 
@@ -48,6 +49,7 @@ namespace UnturnedGodot
         Control _stubPanel;          // the "coming to Cow.0" placeholder for unimplemented tabs
         Control _playPanel;          // Play submenu: PEI / PEI no-zombies (our real modes)
         Control _workshopPanel;      // Workshop submenu: Editor (PEI)
+        Control _serversPanel;       // Multiplayer submenu: the server browser (MainMenuServers.cs)
 
         static string G(string res) => ProjectSettings.GlobalizePath(res);
 
@@ -58,6 +60,7 @@ namespace UnturnedGodot
             // --menushot / debug: open the Play submenu at load so a render captures it (UG_MENUOPEN=map|options|advanced)
             var _open = System.Environment.GetEnvironmentVariable("UG_MENUOPEN");
             if (_open == "map" || _open == "play" || _open == "options" || _open == "advanced") TogglePlayPanel();
+            if (_open == "servers") ToggleServersPanel();
             if (_open == "advanced") ToggleAdvanced();
             // start the camera pulled back toward the near gable + a touch higher, then slow-pan in
             // (the vanilla intro) -- kept inside the barn so it doesn't clip through the back wall
@@ -187,13 +190,14 @@ namespace UnturnedGodot
             // Configuration 290, Workshop 350; Exit anchored to the bottom). Hover glides the camera to that
             // tab's anchor; click runs the action.
             MenuButton(layer, "play",          "Play",          170f, false, 1, () => TogglePlayPanel());
-            MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, 1, () => OnMultiplayer?.Invoke());   // connect straight to the MP test server (no panel; server browser later)
+            MenuButton(layer, "multiplayer",   "Multiplayer",   230f, false, 1, () => ToggleServersPanel());   // -> the server browser (MainMenuServers.cs)
             MenuButton(layer, "survivors",     "Survivors",     290f, false, 2, () => ShowStub("Survivors"));
             MenuButton(layer, "configuration", "Configuration", 350f, false, 3, () => ShowStub("Configuration"));
             MenuButton(layer, "workshop",      "Workshop",      410f, false, 4, () => ToggleWorkshopPanel());
             MenuButton(layer, "exit",          "Exit",          -70f, true,  0, () => GetTree().Quit());
 
             BuildMapSelector(layer);   // Play -> retail singleplayer map selector + gameplay options (MainMenuPlay.cs)
+            BuildServersPanel(layer);  // Multiplayer -> the server browser (MainMenuServers.cs)
             BuildWorkshopPanel(layer);
             BuildStubPanel(layer);
         }
@@ -243,8 +247,22 @@ namespace UnturnedGodot
             _playPanel.Visible = show;
             if (_stubPanel != null) _stubPanel.Visible = false;
             if (_workshopPanel != null) _workshopPanel.Visible = false;
+            if (_serversPanel != null) _serversPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;   // advanced starts collapsed each open
             _targetTab = 1;   // hold the Play framing while the panel is open
+        }
+
+        // Multiplayer -> the server browser (MainMenuServers.cs; BuildServersPanel assigns _serversPanel).
+        void ToggleServersPanel()
+        {
+            bool show = !_serversPanel.Visible;
+            _serversPanel.Visible = show;
+            if (_playPanel != null) _playPanel.Visible = false;
+            if (_stubPanel != null) _stubPanel.Visible = false;
+            if (_workshopPanel != null) _workshopPanel.Visible = false;
+            if (_advancedPanel != null) _advancedPanel.Visible = false;
+            _targetTab = 1;   // hold the Play framing while the browser is open
+            if (show && !_serversAutoRefreshed) { _serversAutoRefreshed = true; RefreshServers(); }   // auto-query live ping/count on first open
         }
 
         // Workshop submenu -- vanilla has Editor / Manage / browse; ours ships the Editor (PEI) for now.
@@ -268,6 +286,7 @@ namespace UnturnedGodot
             _workshopPanel.Visible = show;
             if (_playPanel != null) _playPanel.Visible = false;
             if (_stubPanel != null) _stubPanel.Visible = false;
+            if (_serversPanel != null) _serversPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
             _targetTab = 4;   // hold the Workshop framing while the panel is open
         }
@@ -290,6 +309,7 @@ namespace UnturnedGodot
         void ShowStub(string name)
         {
             _playPanel.Visible = false;
+            if (_serversPanel != null) _serversPanel.Visible = false;
             if (_advancedPanel != null) _advancedPanel.Visible = false;
             _stubPanel.Visible = true;
             ((Label)_stubPanel.GetNode("VBoxContainer/head")).Text = name.ToUpper();

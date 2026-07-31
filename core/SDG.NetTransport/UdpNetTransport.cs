@@ -42,6 +42,21 @@ namespace SDG.NetTransport.Udp
         readonly ushort _port;
         Socket _socket;
 
+        // --- server-browser status query (unconnected, pre-handshake ping + player count) ---
+        // A client that hasn't joined can't read Session.Peers or the session RTT, so it sends a tiny status-req and
+        // we answer it HERE in the transport, below the session (no NetWorldHost involvement). Anti-abuse: the reply
+        // (12 B) is smaller than the padded request (>= 24 B) so it can't be an amplification vector, and replies are
+        // rate-limited to one per source IP per StatusMinIntervalMs. StatusPlayerCount is pushed in by the host each
+        // tick (DedicatedServer). A status-req is swallowed -- never surfaced to the session.
+        static readonly byte[] StatusReqMagic = { (byte)'U', (byte)'G', (byte)'S', (byte)'Q' };
+        static readonly byte[] StatusRespMagic = { (byte)'U', (byte)'G', (byte)'S', (byte)'R' };
+        const int StatusReqMinSize = 24;          // 4 magic + 4 nonce + 16 pad -> req >= resp (no amplification)
+        const long StatusMinIntervalMs = 1000;    // per-source-IP rate limit
+        public volatile int StatusPlayerCount;    // live player count, pushed by the host each tick
+        public volatile int StatusMaxPlayers = 24;
+        readonly System.Collections.Generic.Dictionary<uint, long> _statusLastMs = new();
+        long _statusPruneMs;
+
         public UdpServerTransport(ushort port) { _port = port; }
 
         public void Initialize(ServerTransportConnectionFailureCallback connectionFailureCallback)
@@ -55,15 +70,48 @@ namespace SDG.NetTransport.Udp
         {
             size = 0; transportConnection = null;
             if (_socket == null) return false;
-            try
+            // A status-req is answered + swallowed here; keep polling until a real game datagram or the socket drains.
+            while (true)
             {
                 EndPoint remote = new IPEndPoint(IPAddress.Any, 0);
-                int n = _socket.ReceiveFrom(buffer, 0, buffer.Length, SocketFlags.None, ref remote);
+                int n;
+                try { n = _socket.ReceiveFrom(buffer, 0, buffer.Length, SocketFlags.None, ref remote); }
+                catch (SocketException) { return false; }   // WouldBlock == no datagram pending
+                if (n >= StatusReqMinSize && buffer[0] == StatusReqMagic[0] && buffer[1] == StatusReqMagic[1]
+                    && buffer[2] == StatusReqMagic[2] && buffer[3] == StatusReqMagic[3])
+                {
+                    ReplyStatus(buffer, (IPEndPoint)remote);
+                    continue;   // swallow it; the session never sees a status-req
+                }
                 size = n;
                 transportConnection = new UdpTransportConnection(_socket, (IPEndPoint)remote);
                 return true;
             }
-            catch (SocketException) { return false; } // WouldBlock == no datagram pending
+        }
+
+        void ReplyStatus(byte[] req, IPEndPoint remote)
+        {
+            long now = System.Environment.TickCount64;
+            byte[] ab = remote.Address.MapToIPv4().GetAddressBytes();
+            uint ip = (uint)((ab[0] << 24) | (ab[1] << 16) | (ab[2] << 8) | ab[3]);
+            if (_statusLastMs.TryGetValue(ip, out long last) && now - last < StatusMinIntervalMs) return;   // rate limit per source
+            _statusLastMs[ip] = now;
+            if (now - _statusPruneMs > 10000) { _statusPruneMs = now; PruneStatus(now); }
+            int players = StatusPlayerCount < 0 ? 0 : (StatusPlayerCount > 65535 ? 65535 : StatusPlayerCount);
+            int max = StatusMaxPlayers < 0 ? 0 : (StatusMaxPlayers > 65535 ? 65535 : StatusMaxPlayers);
+            var resp = new byte[12];
+            resp[0] = StatusRespMagic[0]; resp[1] = StatusRespMagic[1]; resp[2] = StatusRespMagic[2]; resp[3] = StatusRespMagic[3];
+            resp[4] = req[4]; resp[5] = req[5]; resp[6] = req[6]; resp[7] = req[7];   // echo the nonce (client rejects spoofed / stale replies)
+            resp[8] = (byte)(players & 0xFF); resp[9] = (byte)((players >> 8) & 0xFF);
+            resp[10] = (byte)(max & 0xFF); resp[11] = (byte)((max >> 8) & 0xFF);
+            try { _socket.SendTo(resp, 0, resp.Length, SocketFlags.None, remote); } catch (SocketException) { }
+        }
+
+        void PruneStatus(long now)
+        {
+            System.Collections.Generic.List<uint> stale = null;
+            foreach (var kv in _statusLastMs) if (now - kv.Value > 10000) (stale ??= new()).Add(kv.Key);
+            if (stale != null) foreach (uint k in stale) _statusLastMs.Remove(k);
         }
     }
 
