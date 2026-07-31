@@ -183,6 +183,7 @@ namespace UnturnedGodot
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
             Door hitDoor = null; Bed hitBed = null; Sign hitSign = null; AirdropCrate hitCrate = null;
+            int hitResource = -1;   // a tree trunk under the crosshair, by its load-order index (-1 = none)
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -212,6 +213,9 @@ namespace UnturnedGodot
                     else if (rcol is Node grn2 && grn2.HasMeta("gridpower") && grn2.GetMeta("gridpower").As<GridPowerSource>() is GridPowerSource gsn && IsInstanceValid(gsn)) hitGrid = gsn;   // grid-power box collider tagged in SpawnEditorGridPower
                     else if (rcol is ShelfItemBody sibr && IsInstanceValid(sibr)) hitShelfItem = sibr;   // ray hit an item on a shelf directly -> lock onto it (the orb is a backup)
                     else if (rcol is Node rn && ShelfOf(rn) is StoreShelf rshelf) hitShelf = rshelf;   // looked-at shelf -> whole-shelf outline + F-open (look-based, not proximity)
+                    // LAST in the chain on purpose: a tree trunk is plain world geometry on layer 0, so it
+                    // must not shadow any of the typed hits above it.
+                    else hitResource = ResourceField.IndexOfCollider(rcol);
                 }
                 // 2) sphere at the ray end -> nearest ITEM (bit 7) or VEHICLE (bit 5) it overlaps is focusable
                 _lookSphereQ ??= new PhysicsShapeQueryParameters3D { Shape = new SphereShape3D { Radius = LookSphereR }, CollisionMask = WorldItem.ItemHitLayer | (1u << 5) | StoreShelf.ShelfItemHitLayer, Exclude = _lookExclude };
@@ -284,6 +288,7 @@ namespace UnturnedGodot
             }
             if (hitSign != _focusSign) _focusSign = hitSign;   // no outline shader on signs; the prompt is the affordance
             if (hitCrate != _focusCrate) _focusCrate = hitCrate;
+            _focusResource = hitResource;
 
             // F on a landed crate spills its contents as ground items, which the existing pickup path
             // then handles -- so looting an airdrop needs no new inventory or replication story.
@@ -2093,6 +2098,12 @@ namespace UnturnedGodot
                 return;
             }
 
+            // Trees. Placed AFTER the built things and BEFORE zombies: a barricade in front of a trunk
+            // should take the hit, but a tree must not swallow a swing aimed at a zombie standing behind
+            // it -- the focus ray already stopped at whichever is nearer, so reaching here means the trunk
+            // really is what is under the crosshair.
+            if (_focusResource >= 0 && ChopFocusedResource(mult)) return;
+
             float dmg = (_melee?.ZombieDamage ?? 45f) * mult * Skills.OverkillMeleeMultiplier();   // weapon .dat Zombie_Damage x OVERKILL skill
             Vector3 origin = GlobalPosition + Vector3.Up * 1.2f, fwd = -_cam.GlobalTransform.Basis.Z;
             // The rewrite's zombies are sim ROWS, not nodes, so the group sweep below cannot see them --
@@ -3259,6 +3270,44 @@ namespace UnturnedGodot
         //
         // Damage is applied HERE rather than inside the sim because the sim does not own health -- what
         // damage means (armour, death, a kill feed) is the shell's business, and TakeDamage already knows it.
+        /// <summary>The resource instance under the crosshair, or -1. Its index is the SAME id space the
+        /// replication and the harvest sim use, so it can be named to the server directly.</summary>
+        int _focusResource = -1;
+        public int FocusResourceIndex => _focusResource;
+
+        /// <summary>Swing at the trunk under the crosshair. Returns true if the swing was SPENT on it --
+        /// including a swing that hit but did not fell, since that is still a hit.
+        ///
+        /// Retail: damage is the weapon's Resource_Damage, and OUTDOORS mastery multiplies BOTH the damage
+        /// and the drop count (times and drops each get 1 + mastery*0.5). Whether the weapon can cut at all
+        /// is the blade gate, decided server-side -- this only reports what was swung with.</summary>
+        bool ChopFocusedResource(float strongMult)
+        {
+            var field = ResourceFieldRef;
+            if (field == null || !field.IsAlive(_focusResource)) return false;
+            var trunk = field.DebugTrunk(_focusResource);
+            float reach = (_melee?.Range ?? 2.2f) + 1.5f;   // trunks are wide; the ray already proved line of sight
+            if (trunk == null || (trunk.GlobalPosition - GlobalPosition).Length() > reach) return false;
+
+            float outdoors = 1f + Skills.OutdoorsHarvestMultiplier();
+            int damage = Mathf.RoundToInt((_melee?.ResourceDamage ?? 5f) * strongMult * outdoors);
+            var blades = _melee?.BladeIds;
+            System.Func<int, bool> hasBlade = id =>
+            {
+                if (blades == null) return false;
+                for (int i = 0; i < blades.Length; i++) if (blades[i] == id) return true;
+                return false;
+            };
+            return ChopRequest?.Invoke(_focusResource, damage, hasBlade, _melee == null, outdoors) ?? false;
+        }
+
+        /// <summary>Where the swing goes. SP binds this straight to the local ServerTransactions; a joined
+        /// client sends a command instead. Null = no resource system in this scene (a shot rig, a test).</summary>
+        public System.Func<int, int, System.Func<int, bool>, bool, float, bool> ChopRequest;
+
+        /// <summary>The world's resource field, if this scene has one.</summary>
+        public ResourceField ResourceFieldRef;
+
         readonly PlayerTemperatureSim _temp = new();
         public PlayerTemperature Temperature => _temp.Temperature;
         public event System.Action<PlayerTemperature> TemperatureChanged;
