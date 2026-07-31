@@ -340,6 +340,10 @@ namespace UnturnedGodot.Net
             Interactables.Now = Session.CurrentTick * SimClock.FixedDelta;
 
             StepTemperature();
+            // Trees grow back on the server's clock, and the regrow flip broadcasts through the same
+            // authoritative entry point a felling does -- so a client that missed the felling still ends
+            // up agreeing about which trees are standing.
+            Transactions.StepResourceRegrowth((float)SimClock.FixedDelta);
 
             // Supply drops. Stepped here rather than on the game side so a dedicated server with no
             // rendering runs the same schedule, and so the START CLOCK every client integrates from is

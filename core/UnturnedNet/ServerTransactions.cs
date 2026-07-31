@@ -629,8 +629,63 @@ namespace UnturnedGodot.Net
             return true;
         }
 
-        /// <summary>Resource (tree) alive-bit flip + its broadcast fact (§3.7). No game mechanic fells
-        /// trees yet (SP has none either) -- this is the authoritative entry point for when one lands.</summary>
+        /// <summary>The felling sim: per-instance health, the weighted reward tables and the regrow
+        /// timers. Populated by the game layer from content/resources_harvest.tsv.</summary>
+        public readonly ResourceHarvestSim Harvest = new ResourceHarvestSim();
+
+        /// <summary>
+        /// Chop a resource. Returns true if this swing felled it.
+        ///
+        /// Server-authoritative end to end: the client says "I swung at index N with this weapon", and
+        /// everything that matters -- whether the weapon can even cut it, how much health is left, what
+        /// drops, how much XP -- is decided here. A client that could name its own drops would be naming
+        /// its own loot.
+        ///
+        /// `damage` is the caller's weapon maths (resourceDamage x times), matching retail, which computes
+        /// it at the call site and passes a total.
+        /// </summary>
+        public bool ChopResource(ushort sender, int index, int damage, System.Func<int, bool> weaponHasBlade,
+                                 bool isFists = false, float dropMultiplier = 1f)
+        {
+            if (_resources == null || !_resources.IsAlive(index)) return false;
+            if (!Harvest.TryGetDefForInstance(index, out var def)) return false;
+            // The blade gate BEFORE the damage: retail checks vulnerability first, so a weapon that cannot
+            // cut a tree does not quietly chip it either.
+            if (!ResourceHarvestSim.CanChop(def, weaponHasBlade, isFists)) return false;
+            if (!Harvest.Damage(index, damage, out def)) return false;
+
+            // Felled. Drops first, then XP, then the alive bit -- the flip is what clients render, so
+            // anything that must exist by the time the tree visibly falls has to already be spawned.
+            if (!def.IsForage && def.Drops.Length > 0)
+            {
+                var at = _players.TryGetByOwner(sender, out var chopper) ? chopper.Pos : Vector3.zero;
+                int count = ResourceHarvestSim.RewardCount(def, Rand(), dropMultiplier);
+                for (int i = 0; i < count; i++)
+                {
+                    ushort item = ResourceHarvestSim.RollDrop(def, Rand());   // rolled PER item, not once
+                    if (item == 0) continue;
+                    // Retail lays them out from the trunk along the chop direction; without a direction on
+                    // the wire yet they land in a short ring by the chopper, which is close enough to pick
+                    // up and honest about being an approximation.
+                    float a = (float)(Rand() * System.Math.PI * 2.0);
+                    var spot = at + new Vector3((float)System.Math.Sin(a) * 1.5f, 0.5f, (float)System.Math.Cos(a) * 1.5f);
+                    SpawnWorldItem(new Item(item), spot, Vector3.zero);
+                }
+            }
+            if (def.RewardXp > 0) AwardXp(sender, def.RewardXp);
+            SetResourceAlive(index, false);
+            return true;
+        }
+
+        /// <summary>Advance regrow timers and stand back up whatever is due. Driven from the host tick.</summary>
+        public void StepResourceRegrowth(float dt)
+        {
+            foreach (int index in Harvest.Step(dt)) SetResourceAlive(index, true);
+        }
+
+        /// <summary>Resource (tree) alive-bit flip + its broadcast fact (§3.7). ChopResource is the game
+        /// mechanic that drives it; this stays the authoritative entry point for anything else that fells
+        /// one (an explosion, an admin command).</summary>
         public bool SetResourceAlive(int index, bool alive)
         {
             if (_resources == null || !_resources.ServerSetAlive(index, alive, _tick())) return false;
