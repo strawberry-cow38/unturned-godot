@@ -70,6 +70,15 @@ namespace UnturnedGodot
                 contentHash: NetContent.Hash,    // §2.2: joiners with a different content identity are rejected
                 activeHoliday: ActiveHoliday);   // P3: joiners build THIS world's holiday props/colliders, not their own clock's
             Server.EnableSyncCheck();   // hardening Part C: 1 Hz rolling StateHash block -> clients self-check for desync
+            // Supply drops. NetWorldHost skips the airdrop schedule ENTIRELY while this is null, and only
+            // MpLoopback (the listen-server host) was ever setting it -- so a real dedicated server never
+            // ran a single drop. Nothing errored; the event simply did not exist, which is the kind of
+            // absence you find by asking "who sets this" rather than by playing.
+            //
+            // It deliberately does NOT route through AirdropField.PickTarget like the loopback does:
+            // that is a render node built by AttachPlayerShell, and a dedicated server has no player
+            // shell to build it. Reading the node table directly is the thing both ends can do.
+            Server.PickAirdropTarget = PickAirdropNode;
             Server.Vitals.SurvivalDrain = SurvivalDrain;   // B5: default false = the coarse-HP path is byte-untouched (no starvation, no passive regen)
             Server.Session.PeerConnected += peer => GD.Print($"[DEDICATED] player {peer.PlayerId} '{peer.Name}' joined ({Server.Session.Peers.Count} online)");
             Server.Session.PeerDisconnected += (peer, reason) => GD.Print($"[DEDICATED] player {peer.PlayerId} left ({reason})");
@@ -197,6 +206,28 @@ namespace UnturnedGodot
                 InteractableSync.DamageAlong(from, to, amount, GetViewport()?.World3D?.DirectSpaceState);
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => InteractableSync.Tick(), "net.interactables.sync"));
             Driver.Sim.Add(new DelegateSimStep((tick, dt) => Replicate(tick), "net.server.replicate"));   // LAST (MP_PLAN §2.5)
+        }
+
+        readonly RandomNumberGenerator _airdropRng = new();
+
+        /// <summary>Where the server drops the next care package: a uniformly random map-authored airdrop
+        /// node, which is what retail does (airdropNodes[Random.Range(0, count)]).
+        ///
+        /// Height comes off the server's own terrain rather than the authored node Y, so the crate lands
+        /// flush on the same ground the server collides against. Falls back to the authored height, and
+        /// then to a spread around the origin, so a map with no node data still drops SOMETHING rather
+        /// than silently having no airdrops -- which is the failure this method exists to fix.</summary>
+        UnityEngine.Vector3 PickAirdropNode()
+        {
+            var nodes = MapNodes.AirdropNodes;
+            if (nodes.Count > 0)
+            {
+                var n = nodes[_airdropRng.RandiRange(0, nodes.Count - 1)];
+                float y = Terr != null ? Terr.SampleHeight(n.X, n.Z) : n.Y;
+                return new UnityEngine.Vector3(n.X, y, n.Z);
+            }
+            float x = _airdropRng.RandfRange(-120f, 120f), z = _airdropRng.RandfRange(-120f, 120f);
+            return new UnityEngine.Vector3(x, Terr != null ? Terr.SampleHeight(x, z) : 0f, z);
         }
 
         // Server-side bullet/LoS raycast against static world geometry (terrain/buildings on layer 0,
