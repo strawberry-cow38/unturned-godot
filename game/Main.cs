@@ -1661,30 +1661,58 @@ namespace UnturnedGodot
             AddChild(field);
             field.DriveLocally(true);
             // Small map + fast plane so the flight fits in a shot run; the GEOMETRY is unchanged.
-            field.Sim.MapHalfSize = 260f;
-            field.Sim.ApproachRunway = 120f;
-            field.Sim.PlaneSpeed = 70f;
-            field.Sim.FlightHeightMin = 120f; field.Sim.FlightHeightMax = 130f;   // low enough to read on camera
+            bool close = System.Environment.GetEnvironmentVariable("UG_AIRDROP_CLOSE") == "1";
+            field.Sim.MapHalfSize = close ? 90f : 260f;
+            field.Sim.ApproachRunway = close ? 30f : 120f;
+            field.Sim.PlaneSpeed = close ? 26f : 70f;
+            field.Sim.FlightHeightMin = close ? 34f : 120f;
+            field.Sim.FlightHeightMax = close ? 36f : 130f;   // low enough to read on camera
+            // Aim the drop at the origin. AirdropField.PickTarget scatters +-120 m regardless of map
+            // size, so in close mode the plane was flying to a point up to 120 m away while the capture
+            // waited for it within 30 m of the camera -- it never arrived, and the guard correctly
+            // reported that rather than saving empty sky.
+            field.TargetOverride = () => new UnityEngine.Vector3(0f, 0f, 0f);
+            // Fix the approach too. LaunchPlaneToward takes three rolls -- approach axis, cross-axis
+            // offset, cruise height -- and a random heading means every run frames the aircraft from a
+            // different side, which makes "the red light is on the port wingtip" unverifiable. These put
+            // it on a heading of roughly (+0.86, 0, +0.51): crossing left to right, coming toward the
+            // camera, so both wingtips and the top of the airframe are in shot.
+            var approach = new System.Collections.Generic.Queue<double>(new[] { 0.2, 0.6, 0.5 });
+            field.RollOverride = () => approach.Count > 0 ? approach.Dequeue() : 0.5;
             field.Sim.ScheduleNextIn(0.0);
 
-            var cam = new Camera3D { Position = new Vector3(0f, 2f, 40f), Fov = 70f };
+            var cam = new Camera3D { Position = close ? new Vector3(0f, 26f, 34f) : new Vector3(0f, 2f, 40f), Fov = close ? 42f : 70f };
             AddChild(cam);
-            cam.LookAt(new Vector3(0f, 90f, 0f), Vector3.Up);
-            _airdropCam = cam; _airdropField = field;
+            cam.LookAt(new Vector3(0f, close ? 34f : 90f, 0f), Vector3.Up);
+            _airdropCam = cam; _airdropField = field; _airdropOrbit = close;
             GD.Print("[AIRDROP-SHOT] scene built; waiting for the plane");
         }
 
-        Camera3D _airdropCam; AirdropField _airdropField;
+        Camera3D _airdropCam; AirdropField _airdropField; bool _airdropOrbit;
 
         /// <summary>Track the plane so the capture cannot miss it, and report what was framed -- a shot
-        /// that silently caught empty sky is the failure this scene exists to prevent.</summary>
+        /// that silently caught empty sky is the failure this scene exists to prevent.
+        ///
+        /// In closeup mode the camera also RIDES the aircraft rather than standing on the ground: it
+        /// holds a fixed offset off the starboard beam and slightly above, so the frame is the same
+        /// three-quarter view wherever along the pass the capture happens to trigger. A ground camera
+        /// looking up gets a belly at whatever angle the timing lands on, which is a fine picture of an
+        /// aeroplane and a useless one for checking that the fin points up.</summary>
         void TickAirdropShot()
         {
             if (_airdropCam == null || _airdropField == null) return;
             var sim = _airdropField.Sim;
             if (sim.Phase != SDG.Unturned.AirdropPhase.Inbound) return;
             var p = sim.PlanePositionAt(sim.Clock);
-            _airdropCam.LookAt(new Vector3(p.x, p.y, p.z), Vector3.Up);
+            var at = new Vector3(p.x, p.y, p.z);
+            if (_airdropOrbit)
+            {
+                var v = sim.PlaneVelocity;
+                var fwd = new Vector3(v.x, 0f, v.z).Normalized();
+                var beam = fwd.Cross(Vector3.Up);          // starboard, so the green wingtip is nearest
+                _airdropCam.GlobalPosition = at + beam * 34f + Vector3.Up * 11f - fwd * 8f;
+            }
+            _airdropCam.LookAt(at, Vector3.Up);
         }
 
         void BuildDeployTest()
@@ -4169,17 +4197,26 @@ namespace UnturnedGodot
             else if (_worldBuild) { if (!_worldReady || ++_frame < 45) return; }   // objects/peidrive: WAIT for the async world (terrain..trees) to finish + settle before the shot
             else if (_airdropCam != null)
             {
-                // Capture only once the plane is genuinely in front of the camera and still carrying the
-                // crate. Waiting a fixed number of frames would sometimes catch empty sky, and empty sky
-                // is exactly what a broken plane also looks like.
-                if (_airdropField == null || _airdropField.Sim.Phase != SDG.Unturned.AirdropPhase.Inbound) { if (++_frame < 600) return; }
-                else
+                // NEVER fall through to a frame counter here. A timed capture that misses the plane
+                // produces empty sky -- which is pixel-identical to a plane that never spawned, so the
+                // run would report OK while proving nothing. If the plane does not present itself,
+                // say so and quit non-zero instead of saving a picture of nothing.
+                var sim = _airdropField?.Sim;
+                if (sim == null) { GD.PrintErr("[AIRDROP-SHOT] no field"); GetTree().Quit(1); return; }
+                if (++_frame > 1800) { GD.PrintErr($"[AIRDROP-SHOT] plane never came into range (phase={sim.Phase})"); GetTree().Quit(1); return; }
+                if (sim.Phase != SDG.Unturned.AirdropPhase.Inbound) return;
+                var pp = sim.PlanePositionAt(sim.Clock);
+                float want = System.Environment.GetEnvironmentVariable("UG_AIRDROP_CLOSE") == "1" ? 30f : 160f;
+                if (pp.x * pp.x + pp.z * pp.z > want * want) return;   // still far out -- wait for the pass
+                // Same reason as the empty-sky guard: a fallback BLOCK in frame is a picture of a plane
+                // to anything that only checks the shot isn't blank. If the real hull didn't load, the
+                // run must fail rather than hand back a box that will be read as the model.
+                if (_airdropField.Plane is { HasModel: false })
                 {
-                    var pp = _airdropField.Sim.PlanePositionAt(_airdropField.Sim.Clock);
-                    float dx = pp.x, dz = pp.z;
-                    if (dx * dx + dz * dz > 160f * 160f) { ++_frame; return; }   // still far out -- wait for the pass
-                    GD.Print($"[AIRDROP-SHOT] plane at ({pp.x:0}, {pp.y:0}, {pp.z:0}) frame {_frame}");
+                    GD.PrintErr("[AIRDROP-SHOT] hull mesh missing -- flying the fallback block; run tools/extract_dropship.py");
+                    GetTree().Quit(1); return;
                 }
+                GD.Print($"[AIRDROP-SHOT] captured plane at ({pp.x:0}, {pp.y:0}, {pp.z:0}) frame {_frame}");
             }
             else if (_navShot) { if (++_frame < 24) return; }   // navshot: let lighting/shadows + the overlay settle before capture
             else if (System.Environment.GetEnvironmentVariable("UG_DEPLOYDMG") != null) { if (++_frame < 45) return; }   // deploytest damage: let smoke/fire particles accumulate before the shot
