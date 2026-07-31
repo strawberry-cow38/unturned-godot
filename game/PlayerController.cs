@@ -3232,6 +3232,7 @@ namespace UnturnedGodot
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
+            TemperatureTick(dt);
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
             bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
             {
@@ -3246,6 +3247,25 @@ namespace UnturnedGodot
             if (NetVitalsAdopted) { Health = _netAdoptedHealth; return; }
             if (_pendServerVitals) return;   // P3b (review finding 5): no local starvation death in the pre-adoption spawn window (server owns HP the moment it adopts)
             if (died) { Deaths++; Die(); }
+        }
+
+        // TEMPERATURE. The field says what this spot is doing to you; PlayerTemperatureSim turns that into a
+        // state and, when it is fire or acid, damage on retail's fixed cadence rather than every frame.
+        //
+        // Damage is applied HERE rather than inside the sim because the sim does not own health -- what
+        // damage means (armour, death, a kill feed) is the shell's business, and TakeDamage already knows it.
+        readonly PlayerTemperatureSim _temp = new();
+        public PlayerTemperature Temperature => _temp.Temperature;
+        public event System.Action<PlayerTemperature> TemperatureChanged;
+
+        /// <summary>Extra warmth carried on you (a heat item). Overrides a cold ambient while it lasts.</summary>
+        public void AddWarmth(float seconds) => _temp.AddWarmth(seconds);
+
+        void TemperatureTick(float dt)
+        {
+            _temp.Step(dt, TemperatureField.At(GlobalPosition));
+            if (_temp.JustChanged) TemperatureChanged?.Invoke(_temp.Temperature);
+            if (_temp.Damage > 0f) TakeDamage(_temp.Damage);
         }
 
         // AUTODRINK (strawberry): while hydration sits below the floor, passively sip 50 mL from a bag bottle whose
