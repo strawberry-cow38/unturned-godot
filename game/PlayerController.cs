@@ -3226,13 +3226,18 @@ namespace UnturnedGodot
             // owner-block adoption (AdoptReplicatedFineVitals) is their SOLE writer -- SKIP the local sim's
             // fine mutation entirely (running it would re-introduce the shipped bug: local food draining to 0
             // while the server owns the real drain + death). HP stays pinned to the coarse adopted value.
+            // Temperature runs BEFORE the server-owned-vitals early-return. It was below it, and that
+            // meant a joined client -- whose fine vitals the server owns -- never stepped it at all, so
+            // the whole mechanic was invisible in multiplayer: no HUD icon, no state, nothing. The field
+            // itself was always right on a client, because replicated deployables materialise through
+            // Deployable.Spawn and register their bubbles like any other; only the tick was missing.
+            TemperatureTick(dt);
             if (NetFineVitalsAdopted)
             {
                 if (NetVitalsAdopted) Health = _netAdoptedHealth;
                 return;
             }
             AutoDrinkTick(dt);   // passively sip a SAFE bottle to top up hydration BEFORE the drain/death check (strawberry)
-            TemperatureTick(dt);
             bool sprinting = moving && _move.Stance == EPlayerStance.SPRINT;
             bool died = _vitals.Step(sprinting, SurvivalDrain, dt, new PlayerVitalsSim.Multipliers
             {
@@ -3265,7 +3270,11 @@ namespace UnturnedGodot
         {
             _temp.Step(dt, TemperatureField.At(GlobalPosition));
             if (_temp.JustChanged) TemperatureChanged?.Invoke(_temp.Temperature);
-            if (_temp.Damage > 0f) TakeDamage(_temp.Damage);
+            // The STATE is computed everywhere -- it drives the HUD, and a client that could not work out
+            // it was standing in a fire would be lied to by its own screen. The DAMAGE is applied only
+            // where we are the authority on health. Burning a server-owned client locally would fight the
+            // replicated value and lose, which shows up as health flickering rather than as an error.
+            if (_temp.Damage > 0f && !NetVitalsAdopted) TakeDamage(_temp.Damage);
         }
 
         // AUTODRINK (strawberry): while hydration sits below the floor, passively sip 50 mL from a bag bottle whose
