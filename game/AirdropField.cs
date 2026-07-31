@@ -38,15 +38,24 @@ namespace UnturnedGodot
         /// <summary>Singleplayer: this machine decides when and where, and steps the schedule itself.</summary>
         public void DriveLocally(bool on) => _driveLocally = on;
 
-        /// <summary>A drop the server announced. `startedAt` is the SERVER's clock for the drop, which
-        /// this client adopts wholesale -- adjusting it to local time would reintroduce exactly the
-        /// drift the closed-form trajectory exists to avoid.</summary>
-        public void BeginRemote(uint netId, Vector3 target, float startedAt)
+        /// <summary>A plane the server announced. Clocks are adopted wholesale rather than re-based to
+        /// local time -- the whole point of a closed-form trajectory is that both machines integrate
+        /// from the SAME origin.
+        ///
+        /// No crate is spawned here. The client is not told where the drop lands; it flies the plane it
+        /// was given and the crate appears when the plane reaches its mark, same as it does on the
+        /// server. That is the mechanic, not a limitation.</summary>
+        public void BeginRemote(uint netId, Vector3 planeStart, Vector3 planeVelocity,
+                                float launchedAt, float releaseAt, float groundY)
         {
-            Sim.ForceDrop(new UVector3(target.X, target.Y, target.Z));
-            Sim.AdoptStart(startedAt);
-            SpawnCrate(netId);
+            Sim.AdoptPlane(new UVector3(planeStart.X, planeStart.Y, planeStart.Z),
+                           new UVector3(planeVelocity.X, planeVelocity.Y, planeVelocity.Z),
+                           launchedAt, releaseAt, groundY);
+            _pendingNetId = netId;
+            if (IsInstanceValid(_crate)) { _crate.QueueFree(); _crate = null; }
         }
+
+        uint _pendingNetId;
 
         public void LandRemote(uint netId)
         {
@@ -67,20 +76,18 @@ namespace UnturnedGodot
 
         public override void _PhysicsProcess(double delta)
         {
-            if (_driveLocally)
-            {
-                bool began = Sim.Step(delta, PickTarget);
-                if (began) SpawnCrate(0);
-                if (Sim.JustLanded) _crate?.MarkLanded();
-            }
-            else
-            {
-                // Remote: the schedule is the server's, but the CLOCK still has to advance or the
-                // closed-form position never moves. Stepping with a null picker advances time without
-                // ever starting a drop of our own.
-                Sim.Step(delta, null);
-                if (Sim.JustLanded) _crate?.MarkLanded();
-            }
+            // SP drives the schedule; MP only advances the clock, because the closed-form position is
+            // a function of time and a stalled clock freezes the plane mid-air.
+            if (_driveLocally) Sim.Step(delta, PickTarget, Roll);
+            else Sim.Step(delta, null);
+
+            // The crate is created by the plane reaching its mark, on BOTH machines, from the same two
+            // facts. Nobody is told a landing point.
+            if (Sim.JustReleased) SpawnCrate(_driveLocally ? 0 : _pendingNetId);
+            if (Sim.JustLanded) _crate?.MarkLanded();
+
+            if (Sim.Phase == AirdropPhase.Inbound) ShowPlane(Sim.PlanePositionAt(Sim.Clock));
+            else HidePlane();
 
             if (IsInstanceValid(_crate) && !_crate.Landed)
             {
@@ -88,6 +95,33 @@ namespace UnturnedGodot
                 _crate.ApplyPosition(new Vector3(p.x, p.y, p.z));
             }
         }
+
+        readonly RandomNumberGenerator _rng = new();
+        double Roll() { return _rng.Randf(); }
+
+        MeshInstance3D _plane;
+
+        /// <summary>The telegraph. A drop that simply appears at altitude is a loot spawn; the plane is
+        /// what makes it an event you can see coming from across the map and move on.</summary>
+        void ShowPlane(UVector3 at)
+        {
+            if (!IsInstanceValid(_plane))
+            {
+                _plane = new MeshInstance3D
+                {
+                    Mesh = new BoxMesh { Size = new Vector3(14f, 3f, 4f) },
+                    MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.22f, 0.26f) },
+                };
+                AddChild(_plane);
+            }
+            _plane.Visible = true;
+            _plane.GlobalPosition = new Vector3(at.x, at.y, at.z);
+            var v = Sim.PlaneVelocity;
+            if (v.x * v.x + v.z * v.z > 0.01f)
+                _plane.LookAt(_plane.GlobalPosition + new Vector3(v.x, 0f, v.z), Vector3.Up);
+        }
+
+        void HidePlane() { if (IsInstanceValid(_plane)) _plane.Visible = false; }
 
         /// <summary>Somewhere on the terrain near the origin. Deliberately simple: the interesting part
         /// of an airdrop is the event, and a smarter site picker can replace this without touching

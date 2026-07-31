@@ -14,6 +14,15 @@ namespace UnturnedSim.Tests
         static readonly Vector3 Where = new Vector3(100f, 30f, -50f);
         static AirdropSim NewSim(double first = 10.0) => new AirdropSim(first) { IntervalSeconds = 100f };
 
+        /// <summary>Advance until the plane releases the crate. A drop now begins with a FLIGHT, so a
+        /// test about the fall has to get past the flight first -- and asserting the release happened
+        /// is itself a check that the plane arrives at all.</summary>
+        static void FlyToRelease(AirdropSim s, double dt = 0.02)
+        {
+            for (int i = 0; i < 200000 && s.Phase == AirdropPhase.Inbound; i++) s.Step(dt, () => Where);
+            Assert.That(s.Phase, Is.Not.EqualTo(AirdropPhase.Inbound), "plane never released the crate");
+        }
+
         static bool StepBy(AirdropSim s, double seconds, double dt = 0.02)
         {
             bool fired = false;
@@ -35,8 +44,12 @@ namespace UnturnedSim.Tests
         {
             var s = NewSim(first: 10.0);
             Assert.That(StepBy(s, 11.0), Is.True, "the drop should have begun");
+            Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Inbound), "a drop begins as a PLANE, not a crate");
+            Assert.That(s.PlaneVelocity, Is.Not.EqualTo(UnityEngine.Vector3.zero), "the plane must be moving");
+            FlyToRelease(s);
             Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Falling));
-            Assert.That(s.Target, Is.EqualTo(Where));
+            Assert.That(s.Target.x, Is.EqualTo(Where.x).Within(1.0f), "released over the target");
+            Assert.That(s.Target.z, Is.EqualTo(Where.z).Within(1.0f));
         }
 
         [Test]
@@ -65,7 +78,8 @@ namespace UnturnedSim.Tests
                 if (s.Step(0.02, () => Where)) fires++;
 
             Assert.That(fires, Is.EqualTo(1), "only one drop may be in the air");
-            Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Falling));
+            Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Inbound).Or.EqualTo(AirdropPhase.Falling),
+                "suppression must cover the plane phase too, not just the fall");
         }
 
         [Test]
@@ -73,6 +87,7 @@ namespace UnturnedSim.Tests
         {
             var s = NewSim(first: 0.5);
             StepBy(s, 1.0);
+            FlyToRelease(s);
             Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Falling), "test setup");
 
             // Sampled at the drop's OWN start instant, not at "now". The first version of this test
@@ -99,6 +114,7 @@ namespace UnturnedSim.Tests
             var fine = NewSim(first: 0.0);
             coarse.Step(0.1, () => Where);
             fine.Step(0.1, () => Where);
+            FlyToRelease(coarse); FlyToRelease(fine);
 
             StepBy(coarse, 6.0, dt: 0.5);      // 12 big steps
             StepBy(fine, 6.0, dt: 0.01);       // 600 small ones
@@ -112,6 +128,7 @@ namespace UnturnedSim.Tests
         {
             var s = NewSim(first: 0.0);
             s.Step(0.1, () => Where);
+            FlyToRelease(s);
             StepBy(s, s.FallSeconds * 3.0);   // long past landing
             Assert.That(s.CurrentPosition.y, Is.GreaterThanOrEqualTo(Where.y - 0.001f),
                 "an unclamped descent would sink the crate through the world forever");
@@ -127,7 +144,8 @@ namespace UnturnedSim.Tests
             // the crate never lands for a client. JustLanded exists so the transition cannot be missed.
             var s = new AirdropSim(0.0) { IntervalSeconds = 1f, DropHeight = 40f, FallSpeed = 40f };
             var where = new Vector3(5f, 0f, 5f);
-            s.Step(0.02, () => where);                       // drop 1 begins
+            s.Step(0.02, () => where);                       // drop 1 begins (plane launches)
+            for (int i = 0; i < 200000 && s.Phase == AirdropPhase.Inbound; i++) s.Step(0.02, () => where);
             Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Falling), "test setup");
 
             bool sawLanding = false;
@@ -156,7 +174,7 @@ namespace UnturnedSim.Tests
         {
             var s = NewSim(first: 1000.0);    // nothing scheduled soon
             Assert.That(s.ForceDrop(Where), Is.True);
-            Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Falling));
+            Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Falling), "ForceDrop skips the flight on purpose");
             Assert.That(s.ForceDrop(Where), Is.False, "no second crate while one is still coming down");
         }
 
@@ -165,6 +183,7 @@ namespace UnturnedSim.Tests
         {
             var s = NewSim(first: 0.0);
             s.Step(0.1, () => Where);
+            FlyToRelease(s);
             StepBy(s, s.FallSeconds + 1.0);
             Assert.That(s.Phase, Is.EqualTo(AirdropPhase.Landed));
             s.Clear();

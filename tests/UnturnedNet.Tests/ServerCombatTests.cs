@@ -225,17 +225,28 @@ namespace UnturnedNet.Tests
             h.Server.Airdrops.ScheduleNextIn(0.5);            // the constructor already booked one 10 min out
             h.Server.Airdrops.DropHeight = 40f;
             h.Server.Airdrops.FallSpeed = 40f;           // ~1 s of descent, so the test stays quick
+            h.Server.Airdrops.PlaneSpeed = 2000f;        // and a fast plane, so the flight fits too
+            h.Server.Airdrops.ApproachRunway = 100f;
 
-            h.Step(400);                                       // 8 s at 50 Hz: start + land both inside
+            h.Step(400);                                       // 8 s at 50 Hz: flight + fall + land
 
             // Isolate: did the SERVER even fire? If this passes and the next fails, the bug is in
             // delivery, not scheduling.
             Assert.That(h.Server.Airdrops.Phase, Is.Not.EqualTo(AirdropPhase.None),
                 "server-side: the drop never started at all");
             Assert.That(seen.Count, Is.GreaterThanOrEqualTo(1), "the client must be told a drop began");
-            Assert.That(seen[0].Target.x, Is.EqualTo(where.x).Within(0.01f), "and where it lands");
-            Assert.That(seen[0].Target.z, Is.EqualTo(where.z).Within(0.01f));
             Assert.That(seen[0].NetId, Is.Not.EqualTo(0u), "with an id it can attach a crate to");
+            Assert.That(seen[0].PlaneVelocity, Is.Not.EqualTo(Vector3.zero), "a plane that does not move is not inbound");
+
+            // The load-bearing claim: the landing point is NOT on the wire, so the client has to DERIVE
+            // it by flying the plane it was told about. If this passes, a player watching the plane can
+            // work out where the crate is going -- which is the entire mechanic.
+            var mirror = new AirdropSim();
+            mirror.PlaneSpeed = 2000f;
+            mirror.AdoptPlane(seen[0].PlaneStart, seen[0].PlaneVelocity, seen[0].LaunchedAt, seen[0].ReleaseAt, seen[0].GroundY);
+            var derived = mirror.PlanePositionAt(seen[0].ReleaseAt);
+            Assert.That(derived.x, Is.EqualTo(where.x).Within(1.0f), "client-derived release point must match the server's target");
+            Assert.That(derived.z, Is.EqualTo(where.z).Within(1.0f));
             Assert.That(landed.Count, Is.GreaterThanOrEqualTo(1),
                 "and told when it touched down -- inferring that from a height compare loses to floating point");
         }

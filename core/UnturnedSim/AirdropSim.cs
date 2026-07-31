@@ -8,6 +8,9 @@ namespace SDG.Unturned
     public enum AirdropPhase : byte
     {
         None = 0,
+        /// <summary>A cargo plane is crossing the map toward the release point. The crate does not
+        /// exist yet -- this phase IS the telegraph, and it is the whole point of the event.</summary>
+        Inbound = 3,
         Falling = 1,
         Landed = 2,
     }
@@ -38,6 +41,17 @@ namespace SDG.Unturned
         /// rob the event of the thing that makes it interesting: everyone can see it coming.</summary>
         public float FallSpeed = 18f;
 
+        /// <summary>How fast the cargo plane crosses the map, m/s.</summary>
+        public float PlaneSpeed = 90f;
+
+        /// <summary>How far above the release point the plane flies. Retail randomises 450-475 m; the
+        /// server rolls it and SENDS it, so a client never has to reproduce the roll.</summary>
+        public float FlightHeightMin = 450f, FlightHeightMax = 475f;
+
+        /// <summary>How far back from the map edge the plane is spawned, so it is already at cruising
+        /// speed and altitude when it becomes visible rather than popping into existence.</summary>
+        public float ApproachRunway = 2048f;
+
         double _clock;
         double _nextAt;
 
@@ -51,10 +65,29 @@ namespace SDG.Unturned
         /// comparison sees Falling -> Falling and silently loses the landing, so the crate never lands
         /// for any client. The sim owns the transition, so the sim reports it.</summary>
         public bool JustLanded { get; private set; }
-        /// <summary>Where the current (or last) drop is headed. Meaningless while Phase is None.</summary>
+
+        /// <summary>True for the single Step in which the plane let go of the crate. Same reasoning as
+        /// JustLanded: the caller must not have to infer a transition it can miss.</summary>
+        public bool JustReleased { get; private set; }
+
+        /// <summary>Where the current (or last) drop is headed. Meaningless until the crate is released
+        /// -- during Inbound this is the PREDICTED landing point, which is exactly what a player is
+        /// trying to work out by watching the plane.</summary>
         public Vector3 Target { get; private set; }
-        /// <summary>When the active drop began, in sim clock seconds.</summary>
+        /// <summary>When the crate was released, in sim clock seconds.</summary>
         public double StartedAt { get; private set; }
+
+        /// <summary>Where the plane entered, its velocity, and when it releases. These three are the
+        /// ENTIRE wire payload for a drop.
+        ///
+        /// Retail does not send the landing coordinate, and the source says why in one line -- "delay
+        /// is calculated here because we don't send the drop coordinate". The client is told a plane
+        /// and a timer, and has to watch it to learn where the crate is going. Sending the target would
+        /// be less bandwidth and would quietly delete the mechanic.</summary>
+        public Vector3 PlaneStart { get; private set; }
+        public Vector3 PlaneVelocity { get; private set; }
+        /// <summary>Sim-clock instant the crate detaches.</summary>
+        public double ReleaseAt { get; private set; }
 
         /// <summary>Seconds until the next drop begins. Negative is clamped to 0 rather than reported,
         /// because "overdue" is not a state a caller can do anything useful with.</summary>
@@ -74,10 +107,29 @@ namespace SDG.Unturned
         /// the sky at once reads as a bug, and an unbounded queue would let a paused server dump a
         /// dozen crates the moment it resumes.
         /// </summary>
-        public bool Step(double dt, Func<Vector3> pickTarget)
+        public bool Step(double dt, Func<Vector3> pickTarget) => Step(dt, pickTarget, null);
+
+        /// <summary>
+        /// Advance the clock. Returns true on the tick a NEW drop begins -- meaning the PLANE launches,
+        /// not the crate. `roll` supplies the two server-side random choices (approach axis, flight
+        /// height); pass null for a deterministic centre-of-range plane, which is what tests want.
+        /// </summary>
+        public bool Step(double dt, Func<Vector3> pickTarget, Func<double> roll)
         {
             _clock += dt;
             JustLanded = false;
+            JustReleased = false;
+
+            // Release comes first: the plane reaching its mark is what creates the crate.
+            if (Phase == AirdropPhase.Inbound && _clock >= ReleaseAt)
+            {
+                var at = PlanePositionAt(ReleaseAt);
+                Target = new Vector3(at.x, Target.y, at.z);   // keep the ground height picked at launch
+                StartedAt = ReleaseAt;                        // NOT _clock: the crate left on the mark,
+                                                              // so a late tick must not shift the fall
+                Phase = AirdropPhase.Falling;
+                JustReleased = true;
+            }
 
             if (Phase == AirdropPhase.Falling && _clock - StartedAt >= FallSeconds)
             {
@@ -88,12 +140,99 @@ namespace SDG.Unturned
             if (_clock < _nextAt) return false;
             _nextAt = _clock + IntervalSeconds;          // reschedule regardless, so a suppressed drop
                                                           // does not fire the instant the sky clears
-            if (Phase == AirdropPhase.Falling) return false;
+            if (Phase == AirdropPhase.Inbound || Phase == AirdropPhase.Falling) return false;
 
-            Target = pickTarget != null ? pickTarget() : Vector3.zero;
-            StartedAt = _clock;
-            Phase = AirdropPhase.Falling;
+            var target = pickTarget != null ? pickTarget() : Vector3.zero;
+            LaunchPlaneToward(target, roll);
             return true;
+        }
+
+        /// <summary>
+        /// Work out the plane's entry point, heading and release instant for a given landing spot.
+        ///
+        /// Mirrors retail's geometry: a coin-flip between a horizontal and a vertical approach, an
+        /// entry on the opposite side of the map from the target, a cruising height 450-475 m above it,
+        /// and the entry pushed a further ApproachRunway metres back along the heading so the plane is
+        /// already up to speed before anyone can see it.
+        /// </summary>
+        void LaunchPlaneToward(Vector3 target, Func<double> roll)
+        {
+            double r1 = roll != null ? roll() : 0.75;   // >=0.5 -> vertical approach when undetermined
+            double r2 = roll != null ? roll() : 0.5;
+            double r3 = roll != null ? roll() : 0.5;
+
+            float half = MapHalfSize;
+            var start = new Vector3(0f, 0f, 0f);
+            if (r1 < 0.5)                                // horizontal, e.g. east -> west
+            {
+                start.x = half * -Sign(target.x);
+                start.z = (float)(r2 * half) * -Sign(target.z);
+            }
+            else                                         // vertical, e.g. north -> south
+            {
+                start.x = (float)(r2 * half) * -Sign(target.x);
+                start.z = half * -Sign(target.z);
+            }
+
+            float flightHeight = target.y + FlightHeightMin + (float)(r3 * (FlightHeightMax - FlightHeightMin));
+
+            // Heading is computed on the FLAT plane so the plane cruises level; the height is applied
+            // to both ends afterwards. Mixing the climb into the heading would tilt the whole approach.
+            var flatTarget = new Vector3(target.x, 0f, target.z);
+            var flatStart = new Vector3(start.x, 0f, start.z);
+            var dir = Normalize(flatTarget - flatStart);
+            flatStart -= dir * ApproachRunway;
+
+            PlaneStart = new Vector3(flatStart.x, flightHeight, flatStart.z);
+            LaunchedAt = _clock;
+            PlaneVelocity = dir * PlaneSpeed;
+            double distance = Magnitude(new Vector3(flatTarget.x - flatStart.x, 0f, flatTarget.z - flatStart.z));
+            ReleaseAt = _clock + (PlaneSpeed > 0.001f ? distance / PlaneSpeed : 0.0);
+
+            Target = target;            // provisional: the true landing point is re-derived on release
+            Phase = AirdropPhase.Inbound;
+        }
+
+        /// <summary>Half the playable extent, used to place the plane's entry edge.</summary>
+        public float MapHalfSize = 1024f;
+
+        static float Sign(float v) => v < 0f ? -1f : 1f;
+        static float Magnitude(Vector3 v) => (float)Math.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        static Vector3 Normalize(Vector3 v)
+        {
+            float m = Magnitude(v);
+            return m < 1e-5f ? new Vector3(1f, 0f, 0f) : new Vector3(v.x / m, v.y / m, v.z / m);
+        }
+
+        /// <summary>When the plane entered. Stored rather than derived from ReleaseAt minus a flight
+        /// time, because Target moves on release and deriving it from Target would make the plane's
+        /// own past depend on something that changes underneath it.</summary>
+        public double LaunchedAt { get; private set; }
+
+        /// <summary>Where the plane is at a given clock. Closed-form for the same reason the descent is:
+        /// a client that joins mid-flight must draw it exactly where the server has it. Keeps flying
+        /// past the release point -- the plane does not stop when the crate leaves.</summary>
+        public Vector3 PlanePositionAt(double clock)
+        {
+            float t = (float)Math.Max(0.0, clock - LaunchedAt);
+            return new Vector3(PlaneStart.x + PlaneVelocity.x * t,
+                               PlaneStart.y + PlaneVelocity.y * t,
+                               PlaneStart.z + PlaneVelocity.z * t);
+        }
+
+        /// <summary>Seconds of flight before the crate detaches.</summary>
+        public double FlightSeconds => Math.Max(0.0, ReleaseAt - LaunchedAt);
+
+        /// <summary>Adopt a plane the server announced. The client is given exactly these facts and
+        /// derives everything else, including where the crate will land.</summary>
+        public void AdoptPlane(Vector3 start, Vector3 velocity, double launchedAt, double releaseAt, float groundY)
+        {
+            PlaneStart = start;
+            PlaneVelocity = velocity;
+            LaunchedAt = launchedAt;
+            ReleaseAt = releaseAt;
+            Target = new Vector3(0f, groundY, 0f);
+            Phase = AirdropPhase.Inbound;
         }
 
         /// <summary>Reschedule the NEXT drop, relative to now.
@@ -126,7 +265,8 @@ namespace SDG.Unturned
         /// between machines and a late joiner can be placed correctly from the start time alone.</summary>
         public Vector3 PositionAt(double clock)
         {
-            if (Phase == AirdropPhase.None) return Vector3.zero;
+            // No crate exists during None or Inbound -- the plane still has it.
+            if (Phase == AirdropPhase.None || Phase == AirdropPhase.Inbound) return Vector3.zero;
             float elapsed = (float)Math.Max(0.0, clock - StartedAt);
             float fallen = Math.Min(elapsed * FallSpeed, DropHeight);
             return new Vector3(Target.x, Target.y + (DropHeight - fallen), Target.z);

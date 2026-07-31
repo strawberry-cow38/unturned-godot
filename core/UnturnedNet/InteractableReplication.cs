@@ -87,26 +87,51 @@ namespace UnturnedGodot.Net
     /// rather than a position: the descent is a closed-form function of elapsed time, so a client that
     /// joins mid-fall places the crate correctly from these two facts alone. Sending a position each
     /// tick would cost bandwidth for a value both ends can already compute.</summary>
+    /// <summary>A cargo plane is inbound.
+    ///
+    /// Deliberately does NOT carry the landing coordinate. Retail's own source explains why in one
+    /// line -- "delay is calculated here because we don't send the drop coordinate" -- and it is the
+    /// mechanic, not an optimisation: a client is given a plane and a clock, and a player has to watch
+    /// the plane to work out where the crate will come down. Sending Target would be four bytes
+    /// cheaper and would silently delete the only reason the event is interesting.
+    ///
+    /// GroundY is the one thing about the destination that IS sent, because a client cannot sample the
+    /// server's terrain height and the crate has to stop somewhere.</summary>
     public struct AirdropStartedEvent
     {
         public uint NetId;
-        public Vector3 Target;
-        public float StartedAt;
+        public Vector3 PlaneStart;
+        public Vector3 PlaneVelocity;
+        public float LaunchedAt;
+        public float ReleaseAt;
+        public float GroundY;
         public void Write(NetPakWriter w)
         {
             w.WriteUInt32(NetId);
-            w.WriteFloat(Target.x); w.WriteFloat(Target.y); w.WriteFloat(Target.z);
-            w.WriteFloat(StartedAt);
+            w.WriteFloat(PlaneStart.x); w.WriteFloat(PlaneStart.y); w.WriteFloat(PlaneStart.z);
+            w.WriteFloat(PlaneVelocity.x); w.WriteFloat(PlaneVelocity.y); w.WriteFloat(PlaneVelocity.z);
+            w.WriteFloat(LaunchedAt); w.WriteFloat(ReleaseAt); w.WriteFloat(GroundY);
         }
         public static bool TryRead(NetPakReader r, out AirdropStartedEvent e)
         {
             e = default;
             if (!r.ReadUInt32(out uint id)) return false;
-            if (!r.ReadFloat(out float x)) return false;
-            if (!r.ReadFloat(out float y)) return false;
-            if (!r.ReadFloat(out float z)) return false;
-            if (!r.ReadFloat(out float t)) return false;
-            e = new AirdropStartedEvent { NetId = id, Target = new Vector3(x, y, z), StartedAt = t };
+            if (!r.ReadFloat(out float sx)) return false;
+            if (!r.ReadFloat(out float sy)) return false;
+            if (!r.ReadFloat(out float sz)) return false;
+            if (!r.ReadFloat(out float vx)) return false;
+            if (!r.ReadFloat(out float vy)) return false;
+            if (!r.ReadFloat(out float vz)) return false;
+            if (!r.ReadFloat(out float launched)) return false;
+            if (!r.ReadFloat(out float release)) return false;
+            if (!r.ReadFloat(out float groundY)) return false;
+            e = new AirdropStartedEvent
+            {
+                NetId = id,
+                PlaneStart = new Vector3(sx, sy, sz),
+                PlaneVelocity = new Vector3(vx, vy, vz),
+                LaunchedAt = launched, ReleaseAt = release, GroundY = groundY,
+            };
             return true;
         }
     }

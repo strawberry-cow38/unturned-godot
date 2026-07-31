@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid", "airdrop" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -133,6 +133,17 @@ namespace UnturnedGodot
                 if (!float.TryParse(arg, out float x) || x < 0f) { Log("usage: simSpeed <multiplier>  (e.g. 0.5, 1, 5)"); return; }
                 Engine.TimeScale = x;
                 Log($"sim speed = {x:0.##}x (whole simulation)");
+                return;
+            }
+            if (verb == "airdrop")
+            {
+                var field = AirdropField.Instance;
+                if (field == null) { Log("no airdrop field in this scene"); return; }
+                // Retail's CommandAirdrop sets the frequency to zero rather than spawning a crate, so
+                // the summoned drop takes the SAME path as a scheduled one -- plane, flight and all.
+                // Teleporting a crate in would test a path players never see.
+                field.Sim.ScheduleNextIn(0.0);
+                Log("airdrop inbound — a plane is crossing the map; watch it to see where it drops");
                 return;
             }
             if (verb == "time" || verb == "timeset" || verb == "timeadd" || verb == "timespeed" || verb == "daylength")
