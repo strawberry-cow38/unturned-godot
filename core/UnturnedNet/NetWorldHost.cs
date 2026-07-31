@@ -317,8 +317,11 @@ namespace UnturnedGodot.Net
                     var started = new AirdropStartedEvent
                     {
                         NetId = _activeAirdropNetId,
-                        Target = Airdrops.Target,
-                        StartedAt = (float)Airdrops.StartedAt,
+                        PlaneStart = Airdrops.PlaneStart,
+                        PlaneVelocity = Airdrops.PlaneVelocity,
+                        LaunchedAt = (float)Airdrops.LaunchedAt,
+                        ReleaseAt = (float)Airdrops.ReleaseAt,
+                        GroundY = Airdrops.Target.y,
                     };
                     BroadcastEvent(NetMessagePak.Pack(ReplicationIds.EventAirdropStarted, started.Write));
                 }
@@ -645,7 +648,9 @@ namespace UnturnedGodot.Net
             // straight out and whoever holds that sign paints it.
             Events.Register<SignTextEvent>(ReplicationIds.EventSignText, SignTextEvent.TryRead,
                 e => SignTextChanged?.Invoke(e));
-            // Supply drops: the client is told WHERE and WHEN, and computes the descent itself.
+            // Supply drops: the client is told about a PLANE, not a destination, and derives both the
+            // release point and the descent from it. See AirdropStartedEvent for why the landing
+            // coordinate is deliberately absent from the wire.
             Events.Register<AirdropStartedEvent>(ReplicationIds.EventAirdropStarted, AirdropStartedEvent.TryRead,
                 e => AirdropStarted?.Invoke(e));
             Events.Register<AirdropLandedEvent>(ReplicationIds.EventAirdropLanded, AirdropLandedEvent.TryRead,
