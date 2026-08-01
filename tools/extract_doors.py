@@ -55,8 +55,11 @@ Per-leaf pipeline (proven on Fridge_0, unchanged in substance):
   python extract_doors.py Fridge_0        -> 1 leaf  (legacy naming, unchanged)
   python extract_doors.py Wardrobe_0      -> 2 leaves (Left_Hinge_0 / Right_Hinge_0, leaf-qualified naming)
 
-doors.txt line format (unchanged, 11 space-separated fields; multiple lines may share field 0):
-  <propName> <doorObjFile> px py pz ax ay az angleDeg durationSec defaultOpen(0/1)
+doors.txt line format (11 or 12 space-separated fields; multiple lines may share field 0):
+  <propName> <doorObjFile> px py pz ax ay az angleDeg durationSec defaultOpen(0/1) [soundClipStem]
+  The 12th field (soundClipStem, e.g. "DoorHandle"/"HeavyMetalDoor") is OMITTED entirely for a prop with no
+  AudioSource -- WorldBuilder.LoadDoorCatalog treats a missing 12th field as backward-compatible/silent, not
+  an error.
 """
 import UnityPy, os, glob, re, struct, math, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -154,6 +157,28 @@ def qX(v): return v.X if hasattr(v, "X") else v.x
 def qY(v): return v.Y if hasattr(v, "Y") else v.y
 def qZ(v): return v.Z if hasattr(v, "Z") else v.z
 def qW(v): return v.W if hasattr(v, "W") else v.w
+
+# ---- door open/close SOUND (retail InteractableObjectBinaryState.updateAudioSourceComponent: plays the
+# prop's OWN AudioSource clip on every TOGGLE -- same clip for open + close, NOT on load/snap; see
+# game/ObjectDoor.cs's Toggle()). One clip per PROP (not per leaf) -- confirmed via
+# tools/check_door_sounds.py against every prop currently in doors.txt: DoorHandle (furniture doors) /
+# HeavyMetalDoor (Container_*), both m_Volume=0.125 linear. Reuses the SAME comps() walk already defined
+# above (verbatim logic from the working reader in _ilspy_scratch/dump_audio.py, just against this file's
+# own component-walk helper instead of re-deriving it) ----
+def find_audio_clip_name(go):
+    """This prop's AudioSource -> m_audioClip -> m_Name, or None if the prefab has no AudioSource (a
+    silent door -- doors.txt simply gets no 12th field for it, which WorldBuilder.LoadDoorCatalog already
+    treats as backward-compatible/absent)."""
+    for co in comps(go.read_typetree()):
+        if co.type.name == "AudioSource":
+            ast = co.read_typetree()
+            clippid = ast.get("m_audioClip", {}).get("m_PathID")
+            clipo = by_id.get(clippid)
+            if clipo: return clipo.read().m_Name
+    return None
+
+soundName = find_audio_clip_name(prefab)
+print(f"door sound (AudioSource m_audioClip on {TARGET}'s prefab root): {soundName!r}")
 
 # ---- ONE comprehensive walk: every node's (name -> go) and (name -> accumulated root-relative scenegraph
 # matrix), PLUS every SkinnedMeshRenderer-bearing node (a door leaf), discovered generically -- no hardcoded
@@ -491,10 +516,14 @@ if not entries:
     print(f"NO door leaf catalog entries produced for {TARGET} -- doors.txt not modified")
 else:
     catPath = os.path.join(OUT, "doors.txt")
-    lines = ["%s %s %.6f %.6f %.6f %.6f %.6f %.6f %.4f %.4f %d" % (
-        TARGET, e["meshFile"], e["pivot"][0], e["pivot"][1], e["pivot"][2],
-        e["axis"][0], e["axis"][1], e["axis"][2], e["angleDeg"], e["durationSec"], 1 if e["defaultOpen"] else 0)
-        for e in entries]
+    lines = []
+    for e in entries:
+        line = "%s %s %.6f %.6f %.6f %.6f %.6f %.6f %.4f %.4f %d" % (
+            TARGET, e["meshFile"], e["pivot"][0], e["pivot"][1], e["pivot"][2],
+            e["axis"][0], e["axis"][1], e["axis"][2], e["angleDeg"], e["durationSec"], 1 if e["defaultOpen"] else 0)
+        if soundName:   # 12th field, OMITTED (not a placeholder) when this prop has no AudioSource -- matches
+            line += " " + soundName   # WorldBuilder.LoadDoorCatalog's backward-compatible p.Length>=12 check
+        lines.append(line)
     existing = []
     if os.path.exists(catPath):
         existing = [ln for ln in open(catPath).read().splitlines() if ln.strip() and not ln.split()[0] == TARGET]

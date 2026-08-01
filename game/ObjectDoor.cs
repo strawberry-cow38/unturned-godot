@@ -25,6 +25,8 @@ namespace UnturnedGodot
         Mesh _leafMesh;
         Material _leafMaterial;
         bool _initialOpen;
+        string _soundName;             // catalog-supplied AudioSource clip stem (e.g. "DoorHandle"/"HeavyMetalDoor"), content/sounds/<name>.wav -- null = silent door
+        AudioStreamPlayer3D _audio;    // built once in _Ready if _soundName is set; replayed (not reloaded) on every Toggle -- retail plays the SAME clip for open + close, on toggle only, never on load/snap
         // retail legacy Animation clip easing curves (tools/extract_doors.py samples Root's "Open"/"Close"
         // clips for the Hinge bone's rotation-vs-time, normalized to (t_norm, frac) pairs where frac = angle /
         // finalAngle -- frac sweeps 0..~1 with the clip's own real overshoot, NOT a procedural smoothstep).
@@ -59,7 +61,8 @@ namespace UnturnedGodot
         /// WorldBuilder.LoadDoorCurve); either may be null to fall back to a procedural smoothstep.</summary>
         public static ObjectDoor Spawn(Node parent, Transform3D propXform, Vector3 pivotLocal, Vector3 axisLocal,
             float angleDeg, float durationSec, Mesh leafMesh, Material leafMaterial, bool startOpen = false,
-            System.Collections.Generic.List<Vector2> openCurve = null, System.Collections.Generic.List<Vector2> closeCurve = null)
+            System.Collections.Generic.List<Vector2> openCurve = null, System.Collections.Generic.List<Vector2> closeCurve = null,
+            string soundName = null)
         {
             var d = new ObjectDoor
             {
@@ -73,6 +76,7 @@ namespace UnturnedGodot
                 _initialOpen = startOpen,
                 _openCurve = openCurve,
                 _closeCurve = closeCurve,
+                _soundName = soundName,
             };
             parent.AddChild(d);
             return d;
@@ -112,6 +116,22 @@ namespace UnturnedGodot
                 });
             }
 
+            if (!string.IsNullOrEmpty(_soundName))
+            {
+                // Same runtime WAV loader the consumables use (PlayerController.LoadWavOneShot walks the RIFF
+                // chunks rather than assuming a fixed 44-byte header, which the UnityPy-exported WAVs need).
+                // Built ONCE here and replayed (not reloaded from disk) on every Toggle.
+                var stream = PlayerController.LoadWavOneShot($"res://content/sounds/{_soundName}.wav");
+                if (stream != null)
+                {
+                    // Retail InteractableObjectBinaryState plays this AudioSource at its authored m_Volume,
+                    // which is 0.125 (linear) for BOTH DoorHandle and HeavyMetalDoor -- confirmed against
+                    // every prop currently in doors.txt via tools/check_door_sounds.py. LinearToDb(0.125) ~= -18 dB.
+                    _audio = new AudioStreamPlayer3D { Stream = stream, VolumeDb = Mathf.LinearToDb(0.125f), UnitSize = 6f };
+                    AddChild(_audio);
+                }
+            }
+
             if (_initialOpen) SetInitialState(true);
         }
 
@@ -125,6 +145,11 @@ namespace UnturnedGodot
             _lastToggleSec = now;
             IsOpen = !IsOpen;
             SyncGroup();
+            // Retail plays the door's AudioSource clip on every TOGGLE (open AND close, same clip) -- NOT on
+            // load/snap (SetInitialState never touches _audio). Only THIS directly-toggled leaf plays: a
+            // multi-leaf prop's other leaves are brought along by SyncGroup() above, which sets IsOpen
+            // directly and never calls Play() -- so a double door fires exactly one sound per F-press, not two.
+            _audio?.Play();
             return true;
         }
 
@@ -216,5 +241,6 @@ namespace UnturnedGodot
         // --- test/debug seams ---
         public float DebugSwing => _swing;
         public float DebugSampleEasing(float swing) => SampleEasing(swing);
+        public bool DebugHasAudio => _audio != null;   // test: the catalog's sound field resolved to a WAV that actually parsed
     }
 }

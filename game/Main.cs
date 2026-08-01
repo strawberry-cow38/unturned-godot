@@ -1350,11 +1350,11 @@ namespace UnturnedGodot
                 string curveBase = doorCfg.MeshFile.EndsWith("_door.obj") ? doorCfg.MeshFile.Substring(0, doorCfg.MeshFile.Length - "_door.obj".Length) : name;
                 var openCurve = WorldBuilder.LoadDoorCurve(dir, curveBase, "open");
                 var closeCurve = WorldBuilder.LoadDoorCurve(dir, curveBase, "close");
-                var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen, openCurve: openCurve, closeCurve: closeCurve);
+                var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen, openCurve: openCurve, closeCurve: closeCurve, soundName: doorCfg.Sound);
                 if (spawnedDoors.Count == 0) { repDuration = doorCfg.DurationSec; repStartOpen = startOpen; }
                 spawnedDoors.Add(door);
                 pivotSum += doorCfg.Pivot;
-                GD.Print($"[DOORTEST] {name} leaf mesh={doorCfg.MeshFile} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing}");
+                GD.Print($"[DOORTEST] {name} leaf mesh={doorCfg.MeshFile} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing} sound={doorCfg.Sound} hasAudio={door.DebugHasAudio}");
             }
             if (spawnedDoors.Count == 0) { GD.Print($"[DOORTEST] no door leaves could be spawned for {name}"); GetTree().Quit(1); return; }
             if (spawnedDoors.Count > 1)

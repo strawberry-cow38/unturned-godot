@@ -125,6 +125,7 @@ namespace UnturnedGodot
             public float AngleDeg;    // total swing sweep (SIGNED -- flip this one field if a render shows the door opening the wrong way; see extract_doors.py)
             public float DurationSec;
             public bool DefaultOpen;   // retail InteractableObjectBinaryState default-state fix: true if a fresh/untouched prop should SPAWN open (see extract_doors.py's defaultOpen derivation) -- Fridge_0's clip names are inverted vs geometry, so this is true for it
+            public string Sound;   // AudioSource m_audioClip stem (e.g. "DoorHandle"/"HeavyMetalDoor"), content/sounds/<name>.wav -- retail plays it on every TOGGLE (see ObjectDoor.Toggle), same clip for open+close. Null on a doors.txt line with no 12th field (backward compatible -- door is just silent)
         }
 
         // Retail legacy Animation clip easing curve (tools/extract_doors.py's door_curves/<name>_open.txt /
@@ -167,6 +168,7 @@ namespace UnturnedGodot
                     AngleDeg = F(p[8]),
                     DurationSec = F(p[9]),
                     DefaultOpen = p.Length >= 11 && p[10] == "1",
+                    Sound = p.Length >= 12 ? p[11] : null,
                 };
                 if (!cat.TryGetValue(p[0], out var list)) { list = new System.Collections.Generic.List<DoorCatalogEntry>(); cat[p[0]] = list; }
                 list.Add(entry);
@@ -493,7 +495,7 @@ namespace UnturnedGodot
                         string curveBase = doorCfg.MeshFile.EndsWith("_door.obj") ? doorCfg.MeshFile.Substring(0, doorCfg.MeshFile.Length - "_door.obj".Length) : name;
                         var openCurve = LoadDoorCurve(dir, curveBase, "open");
                         var closeCurve = LoadDoorCurve(dir, curveBase, "close");
-                        spawnedDoors.Add(ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), startOpen: doorCfg.DefaultOpen, openCurve: openCurve, closeCurve: closeCurve));
+                        spawnedDoors.Add(ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), startOpen: doorCfg.DefaultOpen, openCurve: openCurve, closeCurve: closeCurve, soundName: doorCfg.Sound));
                     }
                     if (spawnedDoors.Count > 1)
                         foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
