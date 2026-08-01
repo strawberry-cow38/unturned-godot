@@ -6,7 +6,7 @@ A from-scratch reimplementation of **Unturned** in **Godot 4.6 (mono/C#, net8.0,
 
 Private project. Working log / decision history lives in **PROGRESS.md** — read it for the story behind any subsystem.
 
-**Before writing any helper, check `docs/FUNCTION_INDEX.md`.** It is the shared-function reference, organised by *what you are trying to do* rather than by file, plus two tables worth reading once on their own: the sentinel values that are indistinguishable from real results (§2), and the wire encoding budgets (§4). The recurring failure in this codebase is not "I could not find the function" — it is "it did not occur to me that one existed", which is how `Clamp1` ended up with five copies and the yaw→forward conversion shipped inverted. Known duplicate implementations and their status live in `docs/DUPLICATE_AUDIT.md`; add to it rather than re-deriving the list.
+**Before writing any helper, check `docs/FUNCTION_INDEX.md`.** It is the shared-function reference, organised by *what you are trying to do* rather than by file, plus two tables worth reading once on their own: the sentinel values that are indistinguishable from real results (§2), and the wire encoding budgets (§4). The recurring failure in this codebase is not "I could not find the function" — it is "it did not occur to me that one existed", which is how `Clamp1` ended up with five copies and the yaw→forward conversion shipped inverted. `docs/FUNCTION_REFERENCE.md` has the per-function detail behind it — signature, inputs with units and sentinels, failure path, and a verified example call site for 675 functions. Known duplicate implementations and their status live in `docs/DUPLICATE_AUDIT.md`; add to it rather than re-deriving the list.
 
 ## Repo layout
 

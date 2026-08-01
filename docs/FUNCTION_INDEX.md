@@ -266,5 +266,9 @@ When you add a function that another subsystem could plausibly want, add a row t
 it returns a sentinel, add a row to §2 — that table is the one that earns its keep.
 
 Companion documents:
+- `docs/FUNCTION_REFERENCE.md` — the per-function detail behind this index: signature,
+  inputs with units and sentinels, failure path, and a verified example call site, for 675
+  functions. This file is the front door; that one is what you read once you know which
+  function you want.
 - `docs/DUPLICATE_AUDIT.md` — known duplicate implementations and their status.
 - `docs/SP_MP_PARITY_GAPS.md` — where the SP and MP paths knowingly differ.
