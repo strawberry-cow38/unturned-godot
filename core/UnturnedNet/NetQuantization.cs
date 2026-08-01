@@ -31,18 +31,54 @@ namespace UnturnedGodot.Net
         /// eventually gets a full snapshot regardless.</summary>
         public const long DirtyRingDepthTicks = 64;
 
+        // Every Quantize* below is the same six lines -- allocate a writer + an 8-byte buffer + a reader,
+        // encode, decode -- differing only in which Write/Read pair they call (DUPLICATE_AUDIT 1.11). That
+        // is three allocations to round-trip ONE float, on a path that runs per replicated field per entity
+        // per tick.
+        //
+        // The scratch is [ThreadStatic] rather than plain static: NetPak's own writer already has shared
+        // mutable state (see WriteString's static buffer), and a per-thread instance keeps a server tick and
+        // a test runner off each other. None of these functions call each other, so there is no re-entrancy
+        // to worry about.
+        //
+        // Reusing a writer means the buffer carries stale bytes from the previous call instead of the zeros
+        // a fresh `new byte[8]` gives. That is safe because Reset() rewinds the bit cursor and the reader is
+        // bounded by writeByteIndex -- but "should be safe" is not good enough for the encoding every
+        // replicated float and every StateHash goes through, so NetQuantizationScratchTests asserts the
+        // shared path is bit-identical to a fresh-allocation path across the ranges and edges.
+        [System.ThreadStatic] static NetPakWriter _scratchW;
+        [System.ThreadStatic] static NetPakReader _scratchR;
+
+        static NetPakWriter ScratchWriter()
+        {
+            _scratchW ??= new NetPakWriter { buffer = new byte[8] };
+            _scratchW.Reset();
+            return _scratchW;
+        }
+        static NetPakReader ScratchReader(NetPakWriter w)
+        {
+            _scratchR ??= new NetPakReader();
+            // Reset() BEFORE SetBufferSegment is load-bearing and was not obvious: SetBufferSegment does not
+            // rewind the read cursor, so a reused reader carries on from where the last decode stopped and
+            // every call after the first reads past the data -- decoding the all-zeros pattern, which for a
+            // ClampedFloat is the under-range sentinel (-1024 at 11 int bits), not an obviously wrong number.
+            // The fresh-allocation versions never needed it because a new reader starts at zero.
+            // WorldReplication.QuantizeBase, the one hand-inlined copy of this round-trip, already called
+            // Reset() here -- DUPLICATE_AUDIT 1.11 noted that as an oddity; this is why it was there.
+            _scratchR.Reset();
+            _scratchR.SetBufferSegment(w.buffer, w.writeByteIndex);
+            return _scratchR;
+        }
+
         /// <summary>Round a value through the exact wire quantization (encode then decode) so a value stored
         /// authoritatively is already bit-identical to what every client reconstructs after the wire
         /// round-trip -- StateHash comparisons then need no tolerance, they're exact equality.</summary>
         public static float QuantizeClampedFloat(float value, int intBits, int fracBits)
         {
-            var w = new NetPakWriter { buffer = new byte[8] };
-            w.Reset();
+            var w = ScratchWriter();
             w.WriteClampedFloat(value, intBits, fracBits);
             w.Flush();
-            var r = new NetPakReader();
-            r.SetBufferSegment(w.buffer, w.writeByteIndex);
-            r.ReadClampedFloat(intBits, fracBits, out float result);
+            ScratchReader(w).ReadClampedFloat(intBits, fracBits, out float result);
             return result;
         }
 
@@ -51,13 +87,10 @@ namespace UnturnedGodot.Net
         /// before integrating, so it consumes exactly the bytes the server will read (MP_PLAN §2.5b).</summary>
         public static float QuantizeSignedNormalizedFloat(float value, int bitCount)
         {
-            var w = new NetPakWriter { buffer = new byte[8] };
-            w.Reset();
+            var w = ScratchWriter();
             w.WriteSignedNormalizedFloat(value, bitCount);
             w.Flush();
-            var r = new NetPakReader();
-            r.SetBufferSegment(w.buffer, w.writeByteIndex);
-            r.ReadSignedNormalizedFloat(bitCount, out float result);
+            ScratchReader(w).ReadSignedNormalizedFloat(bitCount, out float result);
             return result;
         }
 
@@ -68,26 +101,20 @@ namespace UnturnedGodot.Net
         /// mirror above, unsigned.</summary>
         public static float QuantizeUnsignedNormalizedFloat(float value, int bitCount)
         {
-            var w = new NetPakWriter { buffer = new byte[8] };
-            w.Reset();
+            var w = ScratchWriter();
             w.WriteUnsignedNormalizedFloat(value, bitCount);
             w.Flush();
-            var r = new NetPakReader();
-            r.SetBufferSegment(w.buffer, w.writeByteIndex);
-            r.ReadUnsignedNormalizedFloat(bitCount, out float result);
+            ScratchReader(w).ReadUnsignedNormalizedFloat(bitCount, out float result);
             return result;
         }
 
         /// <summary>Same idea as QuantizeClampedFloat, for WriteDegrees/ReadDegrees.</summary>
         public static float QuantizeDegrees(float value, int bitCount)
         {
-            var w = new NetPakWriter { buffer = new byte[4] };
-            w.Reset();
+            var w = ScratchWriter();
             w.WriteDegrees(value, bitCount);
             w.Flush();
-            var r = new NetPakReader();
-            r.SetBufferSegment(w.buffer, w.writeByteIndex);
-            r.ReadDegrees(out float result, bitCount);
+            ScratchReader(w).ReadDegrees(out float result, bitCount);
             return result;
         }
     }

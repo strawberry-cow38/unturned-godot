@@ -54,18 +54,13 @@ namespace UnturnedGodot.Net
             return t - Mathf.Floor(t);
         }
 
+        /// <summary>Wrap a time-of-day fraction into [0,1) and round it through the 16-bit wire encoding.
+        /// The round-trip was hand-inlined here (the fifth copy, DUPLICATE_AUDIT 1.11); the wrap is the only
+        /// part that is actually this function's own.</summary>
         public static float QuantizeBase(float value01)
         {
             float v = value01 - Mathf.Floor(value01);
-            var w = new NetPakWriter { buffer = new byte[4] };
-            w.Reset();
-            w.WriteUnsignedNormalizedFloat(v, BaseTimeBits);
-            w.Flush();
-            var r = new NetPakReader();
-            r.Reset();
-            r.SetBufferSegment(w.buffer, w.writeByteIndex);
-            r.ReadUnsignedNormalizedFloat(BaseTimeBits, out float result);
-            return result;
+            return NetQuantization.QuantizeUnsignedNormalizedFloat(v, BaseTimeBits);
         }
 
         public void WriteFull(NetPakWriter w, in ReplicationContext ctx)

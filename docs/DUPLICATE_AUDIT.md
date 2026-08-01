@@ -39,7 +39,7 @@ the edit, not in the decision.
 | 1.8 | `Kind(DeployableDef.PortKind)` → `PowerPortKind` | `PowerNet.cs:84`, `DeployableNetSchema.cs:38` — byte-identical switches | OPEN |
 | 1.9 | Polyline length | `Wire.cs:50` + `Hose.cs:50` (**both uncalled**) and the live private `PolyLen` in `PlayerController.cs:392` | **FIXED** ae3e2c7d — `NodeGeometry.PolylineLength` |
 | 1.10 | `Stamp(tick) => tick + 1` | 8 private copies + 2 inlined; `ZombieReplication`/`AnimalReplication`/`VehicleReplication`/`PlayerReplication` stamp the **raw** tick with no +1 — that inconsistency is load-bearing and undocumented | OPEN |
-| 1.11 | `NetQuantization.Quantize*` — 4 copies of one writer→reader round-trip, **2 allocations per call to quantize one float**; `WorldReplication.cs:57` is a 5th, inlined | OPEN |
+| 1.11 | `NetQuantization.Quantize*` — 4 copies of one writer→reader round-trip, **2 allocations per call to quantize one float**; `WorldReplication.cs:57` is a 5th, inlined | **FIXED** — shared [ThreadStatic] scratch, zero allocations; 5th copy folded in |
 | 1.12 | `DirtyRingDepthTicks` declared twice | `NetQuantization.cs:32`, `SnapshotComposer.cs:54` (explicit alias) | OPEN |
 | 1.13 | Trigger-sense threshold `Live >= 1f` as a bare literal | `Deployable:588`, `FluidPump:58` + `:59`, `FluidValve:33` + `:34` | OPEN |
 
