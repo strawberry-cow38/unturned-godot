@@ -961,7 +961,7 @@ namespace UnturnedGodot
                                     HorizontalAlignment = HorizontalAlignment.Center,
                                     VerticalAlignment = VerticalAlignment.Center };
                 t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.78f, 0.82f, 0.88f));
-                t.AddThemeFontSizeOverride("font_size", 19);
+                t.AddThemeFontSizeOverride("font_size", 32);
                 _dash.AddChild(t);
                 tx2 += tabW;
 
@@ -1534,7 +1534,7 @@ namespace UnturnedGodot
                                    VerticalAlignment = VerticalAlignment.Center,
                                    MouseFilter = Control.MouseFilterEnum.Ignore };
             name.AddThemeColorOverride("font_color", new Color(0.88f, 0.88f, 0.91f));
-            name.AddThemeFontSizeOverride("font_size", 18);
+            name.AddThemeFontSizeOverride("font_size", 34);
             bar.AddChild(name);
 
             if (worn != null)
@@ -1544,7 +1544,7 @@ namespace UnturnedGodot
                                       VerticalAlignment = VerticalAlignment.Center,
                                       MouseFilter = Control.MouseFilterEnum.Ignore };
                 pct.AddThemeColorOverride("font_color", new Color(0.95f, 0.72f, 0.25f));
-                pct.AddThemeFontSizeOverride("font_size", 17);
+                pct.AddThemeFontSizeOverride("font_size", 30);
                 bar.AddChild(pct);
             }
             return bar;
