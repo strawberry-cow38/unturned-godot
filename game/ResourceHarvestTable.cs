@@ -17,9 +17,19 @@ namespace UnturnedGodot
     public static class ResourceHarvestTable
     {
         static Dictionary<string, ResourceHarvestDef> _byName;
+        static readonly Dictionary<string, string> _labels = new Dictionary<string, string>();
 
         /// <summary>Defs keyed by resource type name ("Birch_0"), loaded once.</summary>
         public static IReadOnlyDictionary<string, ResourceHarvestDef> ByName => _byName ??= Load();
+
+        /// <summary>The asset's displayed name from English.dat ("Birch #1"), or "" if unknown. Kept OUT of
+        /// ResourceHarvestDef on purpose: the def is the engine-free sim's, and what a tree is called has no
+        /// bearing on what it drops.</summary>
+        public static string LabelFor(string typeName)
+        {
+            _ = ByName;   // force the load; the labels fill alongside it
+            return typeName != null && _labels.TryGetValue(typeName, out var s) ? s : "";
+        }
 
         static Dictionary<string, ResourceHarvestDef> Load()
         {
@@ -49,6 +59,7 @@ namespace UnturnedGodot
                     Drops = ParseDrops(c[12]),
                 };
                 map[c[0]] = def;
+                if (c.Length > 13) _labels[c[0]] = c[13];   // appended column: absent in an older bake, not an error
             }
             return map;
         }
@@ -81,7 +92,10 @@ namespace UnturnedGodot
             {
                 string name = field.TypeNameOf(i);
                 if (name == null || !ByName.TryGetValue(name, out var def)) continue;
-                sim.RegisterInstance(i, def.AssetId);
+                // The position rides along so the server can lay drops out FROM THE TRUNK the way retail
+                // does, instead of around whoever swung. The sim needs nothing else about the world.
+                var p = field.PositionOf(i);
+                sim.RegisterInstance(i, def.AssetId, new UnityEngine.Vector3(p.X, p.Y, p.Z));
                 bound++;
             }
             return bound;

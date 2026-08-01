@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;   // Vector3 only (the engine-free shim in core/SDG.Compat)
 
 namespace SDG.Unturned
 {
@@ -48,13 +49,27 @@ namespace SDG.Unturned
         readonly Dictionary<int, ushort> _assetOf = new Dictionary<int, ushort>();   // instance index -> asset id
         readonly Dictionary<int, int> _health = new Dictionary<int, int>();          // only for damaged instances
         readonly Dictionary<int, float> _regrow = new Dictionary<int, float>();      // felled index -> seconds left
+        readonly Dictionary<int, Vector3> _posOf = new Dictionary<int, Vector3>();   // optional: where the drops lay out from
 
         public void RegisterDef(ResourceHarvestDef def) => _defs[def.AssetId] = def;
         public bool TryGetDef(ushort assetId, out ResourceHarvestDef def) => _defs.TryGetValue(assetId, out def);
         public int DefCount => _defs.Count;
 
-        /// <summary>Bind a world instance to its type. Called once per placed resource at world build.</summary>
+        /// <summary>Bind a world instance to its type. Called once per placed resource at world build.
+        ///
+        /// The position is optional and exists for ONE reason: retail lays a felled tree's logs out in a
+        /// line FROM THE TRUNK along the swing, which the server cannot do if it only knows indices. The
+        /// sim does not otherwise care where anything is, and a caller that omits it still gets correct
+        /// felling -- just drops placed relative to the chopper instead.</summary>
         public void RegisterInstance(int index, ushort assetId) => _assetOf[index] = assetId;
+
+        public void RegisterInstance(int index, ushort assetId, Vector3 position)
+        {
+            _assetOf[index] = assetId;
+            _posOf[index] = position;
+        }
+
+        public bool TryGetPosition(int index, out Vector3 pos) => _posOf.TryGetValue(index, out pos);
 
         public bool TryGetDefForInstance(int index, out ResourceHarvestDef def)
         {

@@ -413,12 +413,24 @@ namespace UnturnedGodot.Net
     public struct ResourceHarvestedEvent
     {
         public ushort Index;
-        public void Write(NetPakWriter w) => w.WriteUInt16(Index);
+        /// <summary>The shove the falling tree gets: retail's `direction * totalDamage`, sent on this same
+        /// message (ResourceManager.ServerSetResourceDead). It is what makes a felled tree topple AWAY from
+        /// the swing instead of dropping straight down, so it has to be the SERVER's number -- every client
+        /// watching must see the same tree fall the same way.</summary>
+        public Vector3 Ragdoll;
+        public void Write(NetPakWriter w)
+        {
+            w.WriteUInt16(Index);
+            w.WriteFloat(Ragdoll.x); w.WriteFloat(Ragdoll.y); w.WriteFloat(Ragdoll.z);
+        }
         public static bool TryRead(NetPakReader r, out ResourceHarvestedEvent evt)
         {
             evt = default;
             if (!r.ReadUInt16(out ushort index)) return false;
-            evt = new ResourceHarvestedEvent { Index = index };
+            if (!r.ReadFloat(out float rx)) return false;
+            if (!r.ReadFloat(out float ry)) return false;
+            if (!r.ReadFloat(out float rz)) return false;
+            evt = new ResourceHarvestedEvent { Index = index, Ragdoll = new Vector3(rx, ry, rz) };
             return true;
         }
     }
@@ -432,6 +444,32 @@ namespace UnturnedGodot.Net
             evt = default;
             if (!r.ReadUInt16(out ushort index)) return false;
             evt = new ResourceRespawnedEvent { Index = index };
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// What a chopper's own axe left standing -- UNICAST to the swinger, never broadcast.
+    ///
+    /// A tree's health is deliberately NOT replicated state. ResourceReplication carries one alive-bit per
+    /// resource precisely because a map has thousands of them, and putting a health word on each would cost
+    /// the whole world's worth of bandwidth to show one player one bar. So health rides as a fact addressed
+    /// to the only peer who just earned it: you learn a tree's health by hitting it, which is also the honest
+    /// answer to "how does the client know" -- it doesn't, until it swings.
+    /// </summary>
+    public struct ResourceHealthEvent
+    {
+        public ushort Index;
+        public ushort Health;
+        public ushort Max;
+        public void Write(NetPakWriter w) { w.WriteUInt16(Index); w.WriteUInt16(Health); w.WriteUInt16(Max); }
+        public static bool TryRead(NetPakReader r, out ResourceHealthEvent evt)
+        {
+            evt = default;
+            if (!r.ReadUInt16(out ushort index)) return false;
+            if (!r.ReadUInt16(out ushort health)) return false;
+            if (!r.ReadUInt16(out ushort max)) return false;
+            evt = new ResourceHealthEvent { Index = index, Health = health, Max = max };
             return true;
         }
     }

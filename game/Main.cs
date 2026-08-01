@@ -61,7 +61,7 @@ namespace UnturnedGodot
             string catalog = null, shot = null, picks = null, gun = null, rig = null, anim = "Walk", vm = null, bakeIcon = null, veh = null, drivetest = null, proptest = null, animrig = null, rottest = null, itemtest = null, navShot = null, croptest = null, menuShot = null, clothtest = null;
             bool zperf = false;
             bool zbody = false;
-            bool deployTest = false, airdropShot = false;
+            bool deployTest = false, airdropShot = false, treeShot = false;
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
@@ -83,6 +83,7 @@ namespace UnturnedGodot
                 else if (arg == "--zperf") zperf = true;   // GPU perf probe: N zombies, render counters ON vs OFF (MUST run with a rendering driver, not --headless)
                 else if (arg == "--zbody") zbody = true;   // MECHANISM probe: N bare kinematic capsules, moving vs parked -> is the physics cost the BODIES?
                 else if (arg == "--airdropshot") airdropShot = true;   // summon a drop and catch the PLANE mid-flight
+                else if (arg == "--treeshot") treeShot = true;         // a real placed tree with the look-at health bar on it (UG_TREE_HP=n/max, UG_TREE_TYPE=Pine)
                 else if (arg == "--deploytest") deployTest = true;   // both deployables placed on a ground plane + a valid(blue)+invalid(red) ghost -> verify models/palette/stand-up/ghost materials
                 else if (arg == "--skillsui") skillsui = true;   // render the skills menu (showcase/validate the SkillsUI)
                 else if (arg.StartsWith("--itemtest=")) itemtest = arg["--itemtest=".Length..];   // drop a row of loot items (ids) as physics WorldItems -> validate real mesh/tex/scale/settle
@@ -284,6 +285,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot;
                 BuildAirdropShot();
+                return;
+            }
+
+            if (treeShot)     // the look-at tree panel on a REAL placed tree (not a stand-in cylinder)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot;
+                BuildTreeShot();
                 return;
             }
 
@@ -1641,6 +1650,94 @@ namespace UnturnedGodot
         /// Exists as a named scene rather than a one-off because a plane is only visible for the few
         /// seconds it is overhead -- reproducing that by hand means guessing a frame, and a guessed
         /// frame that comes back empty is indistinguishable from a plane that never spawned.</summary>
+        /// <summary>
+        /// One real tree from the placed ResourceField, framed at chopping distance with the look-at panel
+        /// up. A REAL instance rather than a stand-in cylinder on purpose: the panel hangs off the trunk
+        /// body and scales with the instance, so a hand-placed prop would prove the widget draws and prove
+        /// nothing about where it lands on the trees the map actually has.
+        ///
+        /// UG_TREE_HP=500/800 sets what the server "said" (default: unknown, the never-hit state).
+        /// UG_TREE_TYPE=Pine picks the species.
+        /// </summary>
+        void BuildTreeShot()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.42f, 0.56f, 0.74f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.78f, 0.80f, 0.86f), AmbientLightEnergy = 1.0f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-48f, -35f, 0f), LightEnergy = 1.2f });
+
+            var field = new ResourceField();
+            AddChild(field);
+            field.LoadResources("NONE");
+
+            string want = System.Environment.GetEnvironmentVariable("UG_TREE_TYPE") ?? "Birch";
+            int pick = -1;
+            for (int i = 0; i < field.InstanceCount; i++)
+            {
+                if (field.DebugTrunk(i) == null) continue;
+                if ((field.TypeNameOf(i) ?? "").StartsWith(want)) { pick = i; break; }
+            }
+            if (pick < 0) { GD.PrintErr($"[treeshot] no {want} in the placed field"); return; }
+            var trunk = field.DebugTrunk(pick);
+            GD.Print($"[treeshot] instance {pick} = {field.TypeNameOf(pick)} at {trunk.GlobalPosition}");
+
+            // Ground under THAT tree (the field is placed on PEI terrain we are not loading, so without
+            // this the trunk floats and the shot cannot tell you whether the bar sits at a sane height).
+            // It needs a COLLIDER, not just a mesh: a felled tree topples because its base catches on the
+            // ground while the shove carries the top over. With scenery-only ground the debris fell through
+            // the world at a constant attitude, which read as "the physics is dead" when the physics was
+            // fine and the floor was imaginary.
+            var floor = new StaticBody3D { Position = trunk.GlobalPosition, CollisionLayer = 1u << 0 };
+            floor.AddChild(new MeshInstance3D
+            {
+                Mesh = new PlaneMesh { Size = new Vector2(120f, 120f) },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.30f, 0.38f, 0.24f), Roughness = 1f },
+            });
+            floor.AddChild(new CollisionShape3D
+            {
+                Shape = new BoxShape3D { Size = new Vector3(120f, 2f, 120f) },
+                Position = new Vector3(0f, -1f, 0f),
+            });
+            AddChild(floor);
+
+            var hp = System.Environment.GetEnvironmentVariable("UG_TREE_HP");
+            if (!string.IsNullOrEmpty(hp))
+            {
+                var p = hp.Split('/');
+                if (p.Length == 2 && int.TryParse(p[0], out int cur) && int.TryParse(p[1], out int max))
+                    field.SetKnownHealth(pick, cur, max);
+            }
+            field.ShowInfoFor(pick);
+
+            // Where a chopper stands: melee range from the trunk, eye height, looking at the panel.
+            var basePos = trunk.GlobalPosition;
+            var cam = new Camera3D { Position = basePos + new Vector3(2.6f, 1.7f, 2.6f), Fov = 62f };
+            AddChild(cam);
+            cam.LookAt(basePos + new Vector3(0f, 3.0f, 0f), Vector3.Up);
+
+            // UG_TREE_FELL=<frame> chops it and captures the topple partway through. Stand well back --
+            // a tree at arm's length fills the frame and you cannot tell a fall from a jitter.
+            var fellAt = System.Environment.GetEnvironmentVariable("UG_TREE_FELL");
+            if (!string.IsNullOrEmpty(fellAt) && int.TryParse(fellAt, out int frame))
+            {
+                ResourceField.DebrisEnabled = true;   // this rig exists to look at the gib; the game keeps it off for now
+                _treeShotField = field; _treeShotIndex = pick; _treeShotFellFrame = frame;
+                field.HideInfo();
+                // A birch is ~15 m of canopy. At chopping distance the camera sits INSIDE it and every
+                // frame is a wall of leaves, which tells you nothing about whether it fell.
+                cam.Position = basePos + new Vector3(-16f, 8f, 26f); cam.Fov = 55f;
+                cam.LookAt(basePos + new Vector3(0f, 6f, 0f), Vector3.Up);
+            }
+        }
+
+        ResourceField _treeShotField;
+        int _treeShotIndex = -1, _treeShotFellFrame = -1, _treeShotFrame;
+
         void BuildAirdropShot()
         {
             var env = new Godot.Environment
@@ -4214,6 +4311,31 @@ namespace UnturnedGodot
             }
             if (_worldReady && !_treeChecked && System.Environment.GetEnvironmentVariable("UG_TREECHECK") == "1" && ++_treeCheckFrame > 15) { _treeChecked = true; DoTreeCheck(); }
             if (_airdropCam != null) TickAirdropShot();
+            if (_treeShotField != null)
+            {
+                // Fell it on frame 1 (physics running), then let the topple play out for the requested
+                // number of frames before the capture -- a shot on the fell frame is a standing tree.
+                // A REAL swing's ragdoll: direction * the weapon's Resource_Damage (an axe is ~25), NOT
+                // the tree's health. The first version of this shot passed 700 and launched the trunk
+                // clean out of frame -- which was the harness lying about the mechanic, not the mechanic
+                // being wrong. Retail's +-16 jitter is on the same order as the swing at these magnitudes,
+                // so a felled tree mostly topples and only leans away from you.
+                if (_treeShotFrame == 1 && _treeShotFellFrame > 1)
+                {
+                    float mag = float.TryParse(System.Environment.GetEnvironmentVariable("UG_TREE_FORCE"), out var m) ? m : 25f;
+                    _treeShotField.Fell(_treeShotIndex, new Vector3(0.8f, 0f, 0.6f) * mag);
+                    GD.Print($"[treeshot] felled {_treeShotIndex} at frame {_treeShotFrame}; alive={_treeShotField.IsAlive(_treeShotIndex)}");
+                }
+                if (_treeShotFrame > 1 && _treeShotFrame % 10 == 0)
+                {
+                    ResourceDebris gib = null;
+                    foreach (var c in _treeShotField.GetChildren()) if (c is ResourceDebris d) { gib = d; break; }
+                    GD.Print(gib == null
+                        ? $"[treeshot] frame {_treeShotFrame}: NO debris body"
+                        : $"[treeshot] frame {_treeShotFrame}: gib at {gib.GlobalPosition} v={gib.LinearVelocity} sleeping={gib.Sleeping} freeze={gib.Freeze} rot={gib.GlobalRotationDegrees}");
+                }
+                if (++_treeShotFrame < _treeShotFellFrame) return;
+            }
             if (_shotPath == null) return;
             if (_peiPlay) { if (_peiFrame < (_peiHorde ? 130 : 160)) return; }   // peiplay: drop(~25f)+enter(50f)+drive(55f+); --horde captures mid-plow through the zombie field
             else if (_itemTest) { if (++_frame < 90) return; }   // itemtest: let the dropped items FALL + settle onto the plane before the shot

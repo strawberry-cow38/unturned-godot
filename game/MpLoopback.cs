@@ -336,8 +336,15 @@ namespace UnturnedGodot
             {
                 int bound = ResourceHarvestTable.Bind(Server.Transactions.Harvest, Resources);
                 Player.ResourceFieldRef = Resources;
-                Player.ChopRequest = (index, damage, hasBlade, isFists, dropMult) =>
-                    Server.Transactions.ChopResource(Client.PlayerId, index, damage, hasBlade, isFists, dropMult);
+                Player.ChopRequest = (index, damage, hasBlade, isFists, dropMult, dir) =>
+                    Server.Transactions.ChopResource(Client.PlayerId, index, damage, hasBlade, isFists, dropMult, dir);
+                // ...and the answers coming back. The bar is drawn from THIS, never from the local sim: even
+                // on a loopback the server owns tree health, so reading it locally would be a second source
+                // of truth that happens to agree today and quietly stops agreeing on a dedicated server.
+                Client.ResourceHealth += e => Resources.SetKnownHealth(e.Index, e.Health, e.Max);
+                // The tree falling over. Every peer runs this off the SERVER's ragdoll, including the one
+                // who swung -- a locally-guessed topple would leave each machine watching a different tree.
+                Client.ResourceHarvested += e => Resources.Fell(e.Index, new Vector3(e.Ragdoll.x, e.Ragdoll.y, e.Ragdoll.z));
                 GD.Print($"[resources] {bound} instances bound to the harvest table -- trees are choppable");
             }
             ResourceSync = new ResourceNetSync(Server, Resources);

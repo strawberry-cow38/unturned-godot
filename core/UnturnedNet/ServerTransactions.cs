@@ -645,36 +645,73 @@ namespace UnturnedGodot.Net
         /// it at the call site and passes a total.
         /// </summary>
         public bool ChopResource(ushort sender, int index, int damage, System.Func<int, bool> weaponHasBlade,
-                                 bool isFists = false, float dropMultiplier = 1f)
+                                 bool isFists = false, float dropMultiplier = 1f, Vector3 direction = default)
         {
             if (_resources == null || !_resources.IsAlive(index)) return false;
             if (!Harvest.TryGetDefForInstance(index, out var def)) return false;
             // The blade gate BEFORE the damage: retail checks vulnerability first, so a weapon that cannot
             // cut a tree does not quietly chip it either.
             if (!ResourceHarvestSim.CanChop(def, weaponHasBlade, isFists)) return false;
-            if (!Harvest.Damage(index, damage, out def)) return false;
+            bool felled = Harvest.Damage(index, damage, out _);   // same def instance we already hold
+            // Tell the swinger what is left, whether or not it fell. Sent on BOTH paths on purpose: a bar
+            // that only updates while the tree survives never reaches empty -- it stops at some arbitrary
+            // sliver and vanishes, on the one swing the player is watching most closely. HealthOf reports
+            // FULL for a felled instance (its row is gone), hence the explicit zero.
+            ReportResourceHealth(sender, index, felled ? 0 : Harvest.HealthOf(index), def.Health);
+            if (!felled) return false;
 
             // Felled. Drops first, then XP, then the alive bit -- the flip is what clients render, so
             // anything that must exist by the time the tree visibly falls has to already be spawned.
+            // Where the swing came from, flattened. Retail takes the chop direction into the tree's local
+            // frame, zeroes Y and normalizes, which for an upright tree is just "the horizontal heading of
+            // the swing" -- the logs then lie in a LINE away from the trunk, roughly where the trunk
+            // itself fell. A ring around the chopper's feet (what this did before a direction existed)
+            // reads as loot dropped by a kill, not as a felled tree.
+            var flat = new Vector3(direction.x, 0f, direction.z);
+            float len = flat.magnitude;
+            Vector3 dropDir = len > 0.0001f ? flat / len : Vector3.zero;
+
+            bool haveTree = Harvest.TryGetPosition(index, out var treePos);
+            if (!haveTree) treePos = _players.TryGetByOwner(sender, out var atChopper) ? atChopper.Pos : Vector3.zero;
+
             if (!def.IsForage && def.Drops.Length > 0)
             {
-                var at = _players.TryGetByOwner(sender, out var chopper) ? chopper.Pos : Vector3.zero;
                 int count = ResourceHarvestSim.RewardCount(def, Rand(), dropMultiplier);
                 for (int i = 0; i < count; i++)
                 {
                     ushort item = ResourceHarvestSim.RollDrop(def, Rand());   // rolled PER item, not once
                     if (item == 0) continue;
-                    // Retail lays them out from the trunk along the chop direction; without a direction on
-                    // the wire yet they land in a short ring by the chopper, which is close enough to pick
-                    // up and honest about being an approximation.
-                    float a = (float)(Rand() * System.Math.PI * 2.0);
-                    var spot = at + new Vector3((float)System.Math.Sin(a) * 1.5f, 0.5f, (float)System.Math.Cos(a) * 1.5f);
+                    Vector3 spot;
+                    if (def.HasDebris && dropDir != Vector3.zero)
+                        spot = treePos + dropDir * (2f + i) + new Vector3(0f, 2f, 0f);   // retail: dir*(2+reward) + up*2
+                    else
+                    {
+                        // Retail's no-debris branch (bushes, and our fallback when nothing told us which
+                        // way the swing went): scattered +-2 around the stump rather than a line.
+                        float a = (float)(Rand() * System.Math.PI * 2.0);
+                        spot = treePos + new Vector3((float)System.Math.Sin(a) * 2f, 2f, (float)System.Math.Cos(a) * 2f);
+                    }
                     SpawnWorldItem(new Item(item), spot, Vector3.zero);
                 }
             }
             if (def.RewardXp > 0) AwardXp(sender, def.RewardXp);
-            SetResourceAlive(index, false);
+            // The shove every client applies to the falling tree, exactly retail's `direction * totalDamage`.
+            SetResourceAlive(index, false, direction * damage);
             return true;
+        }
+
+        /// <summary>Unicast a resource's remaining health to one player (ReplicationIds.EventResourceHealth).
+        /// Only the peer who swung gets it -- see ResourceHealthEvent for why this is not replicated state.</summary>
+        public void ReportResourceHealth(ushort to, int index, int health, int max)
+        {
+            if (index < 0 || index > ushort.MaxValue || max <= 0) return;
+            var evt = new ResourceHealthEvent
+            {
+                Index = (ushort)index,
+                Health = (ushort)System.Math.Clamp(health, 0, ushort.MaxValue),
+                Max = (ushort)System.Math.Clamp(max, 0, ushort.MaxValue),
+            };
+            _sendTo(to, NetMessagePak.Pack(ReplicationIds.EventResourceHealth, evt.Write));
         }
 
         /// <summary>Advance regrow timers and stand back up whatever is due. Driven from the host tick.</summary>
@@ -686,7 +723,7 @@ namespace UnturnedGodot.Net
         /// <summary>Resource (tree) alive-bit flip + its broadcast fact (§3.7). ChopResource is the game
         /// mechanic that drives it; this stays the authoritative entry point for anything else that fells
         /// one (an explosion, an admin command).</summary>
-        public bool SetResourceAlive(int index, bool alive)
+        public bool SetResourceAlive(int index, bool alive, Vector3 ragdoll = default)
         {
             if (_resources == null || !_resources.ServerSetAlive(index, alive, _tick())) return false;
             if (alive)
@@ -696,7 +733,9 @@ namespace UnturnedGodot.Net
             }
             else
             {
-                var evt = new ResourceHarvestedEvent { Index = (ushort)index };
+                // The ragdoll rides along so every client's copy of the tree falls the same way. A zero
+                // vector is legitimate (an explosion, an admin command): the tree just drops where it stood.
+                var evt = new ResourceHarvestedEvent { Index = (ushort)index, Ragdoll = ragdoll };
                 _broadcast(NetMessagePak.Pack(ReplicationIds.EventResourceHarvested, evt.Write));
             }
             return true;

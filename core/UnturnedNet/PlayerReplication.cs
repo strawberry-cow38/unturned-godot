@@ -120,6 +120,7 @@ namespace UnturnedGodot.Net
         public const byte EventAirdropStarted = 37;    // a supply drop began: net id, landing point, start clock -- clients spawn a crate and let AirdropSim place it
         public const byte EventAirdropLanded = 38;     // it touched down; cut the chute and let it be looted
         public const byte EventSignText = 36;          // a sign's authoritative text, broadcast to everyone -- a sign only its author can read is not a sign
+        public const byte EventResourceHealth = 39;    // to the CHOPPER only: what their swing left standing (index, health, max). Unicast on purpose -- see ResourceHealthEvent; a broadcast would put a health word on every tree on the map to draw one player one bar. No protocol bump: an unrecognised event id is counted and skipped (EventRegistry.UnknownIdSkipped), so an older client simply never sees a tree bar.
     }
 
     /// <summary>

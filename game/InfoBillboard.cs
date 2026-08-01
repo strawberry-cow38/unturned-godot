@@ -12,7 +12,10 @@ namespace UnturnedGodot
         public static readonly Color HealthColor = new Color(0xbf / 255f, 0x1f / 255f, 0x1f / 255f);   // Palette.COLOR_R
         public static readonly Color FuelColor = new Color(0xdc / 255f, 0xb4 / 255f, 0x13 / 255f);     // Palette.COLOR_Y
         public static readonly Color LoadColor = new Color(0x35 / 255f, 0xc0 / 255f, 0xe0 / 255f);     // electric cyan: generator power draw
-        static readonly Color BgColor = new Color(0f, 0f, 0f, 0.55f);   // SleekProgress background box
+        // SleekProgress background box. 0.85 rather than the old 0.55: at 0.55 the EMPTY part of a bar is
+        // 45% whatever is behind it, which against a pale surface (a birch trunk) came out light grey and
+        // read as background rather than as the missing fraction -- a half-chopped tree looked full.
+        static readonly Color BgColor = new Color(0f, 0f, 0f, 0.85f);
 
         const int VW = 320, VH = 232, BarW = 210, BarH = 22, Pad = 14, IconSz = 26;
 
@@ -84,6 +87,14 @@ namespace UnturnedGodot
 
         public void SetName(string text, Color color) { if (_name != null) { _name.Text = text; _name.Modulate = color; } }
         public void SetPrompt(string text, Color color) { if (_prompt != null) { _prompt.Text = text ?? ""; _prompt.Modulate = color; } }
+
+        // Test seams: what the panel is actually SHOWING. Asserting on the caller's own mirror of these
+        // would only prove the caller agrees with itself.
+        public bool DebugActive => _sprite != null && _sprite.Visible;
+        public string DebugName => _name?.Text ?? "";
+        public string DebugPrompt => _prompt?.Text ?? "";
+        public bool DebugBarVisible(int i) => i >= 0 && i <= 2 && _rows[i].Root != null && _rows[i].Root.Visible;
+        public float DebugBarValue(int i) => i >= 0 && i <= 2 && _rows[i].Fill != null ? _rows[i].Fill.Size.X / BarW : 0f;
 
         // index 0=health, 1=fuel, 2=battery. value 0..1. visible=false hides the row.
         public void SetBar(int i, float value, Color color, bool visible = true)

@@ -175,6 +175,12 @@ namespace UnturnedGodot
             // the singleplayer path and swing a door the server never agreed to) and paints the join state.
             AddChild(new InteractableStateView { Client = Client, WorldRoot = GetParent() ?? (Node)this });
             if (Destructibles != null) Client.ObjectDestroyed += e => Destructibles.PlayBreakEffect(e.Index);   // break VFX (debris + dust) on a LIVE break broadcast (the view above hides the mesh)
+            // A joined client cannot chop yet (the swing needs a wire command, which needs the still-open
+            // HeldItemId gap so the server can name the weapon), but it must still SEE trees fall -- and a
+            // tree someone else felled is exactly the case the alive-bitmap view renders as a silent blink.
+            // The ragdoll is the server's, so every spectator watches the same trunk go the same way.
+            if (Resources != null)
+                Client.ResourceHarvested += e => Resources.Fell(e.Index, new Vector3(e.Ragdoll.x, e.Ragdoll.y, e.Ragdoll.z));
             AddChild(new ProjectileReplicaView { Client = Client });   // D1: server-flown grenades render while fused
 
             // D1 combat facts -> render consumers (PEI_COMBAT_PLAN §3 D1). All read-only fx/HUD -- nothing

@@ -289,6 +289,21 @@ namespace UnturnedGodot
             if (hitSign != _focusSign) _focusSign = hitSign;   // no outline shader on signs; the prompt is the affordance
             if (hitCrate != _focusCrate) _focusCrate = hitCrate;
             _focusResource = hitResource;
+            // The tree bar. Driven every frame rather than on the focus EDGE: while you are chopping, the
+            // index never changes but the health does, so an edge-only refresh would freeze the bar at the
+            // value it had when you first looked at the trunk.
+            //
+            // Gated on being able to DO something about it, because a forest is wall-to-wall trunks and a
+            // name tag popping up on every one you brush past is noise, not information: you get the panel
+            // while a chopping tool is out, or on a tree you have already started on.
+            if (ResourceFieldRef != null)
+            {
+                bool relevant = _focusResource >= 0
+                                && ((_melee != null && _melee.ResourceDamage > 0f)
+                                    || ResourceFieldRef.TryGetKnownHealth(_focusResource, out _, out _));
+                if (relevant) ResourceFieldRef.ShowInfoFor(_focusResource);
+                else ResourceFieldRef.HideInfo();
+            }
 
             // F on a landed crate spills its contents as ground items, which the existing pickup path
             // then handles -- so looting an airdrop needs no new inventory or replication story.
@@ -3298,12 +3313,18 @@ namespace UnturnedGodot
                 for (int i = 0; i < blades.Length; i++) if (blades[i] == id) return true;
                 return false;
             };
-            return ChopRequest?.Invoke(_focusResource, damage, hasBlade, _melee == null, outdoors) ?? false;
+            // Which way the swing went. Retail passes the melee ray's direction straight through, and it
+            // decides two visible things: where the logs lie, and which way the tree topples. The camera's
+            // forward IS that ray -- the same one that found this trunk a moment ago.
+            Vector3 fwd = _cam != null ? -_cam.GlobalTransform.Basis.Z : -GlobalTransform.Basis.Z;
+            return ChopRequest?.Invoke(_focusResource, damage, hasBlade, _melee == null, outdoors,
+                                       new UnityEngine.Vector3(fwd.X, fwd.Y, fwd.Z)) ?? false;
         }
 
         /// <summary>Where the swing goes. SP binds this straight to the local ServerTransactions; a joined
-        /// client sends a command instead. Null = no resource system in this scene (a shot rig, a test).</summary>
-        public System.Func<int, int, System.Func<int, bool>, bool, float, bool> ChopRequest;
+        /// client sends a command instead. Null = no resource system in this scene (a shot rig, a test).
+        /// Args: instance index, damage, blade predicate, isFists, drop multiplier, swing direction.</summary>
+        public System.Func<int, int, System.Func<int, bool>, bool, float, UnityEngine.Vector3, bool> ChopRequest;
 
         /// <summary>The world's resource field, if this scene has one.</summary>
         public ResourceField ResourceFieldRef;

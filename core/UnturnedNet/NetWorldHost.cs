@@ -600,6 +600,10 @@ namespace UnturnedGodot.Net
         public event System.Action<CropHarvestedEvent> CropHarvested;
         public event System.Action<ResourceHarvestedEvent> ResourceHarvested;
         public event System.Action<ResourceRespawnedEvent> ResourceRespawned;
+        /// <summary>Unicast to this client alone: a tree it just chopped, and what is left of it. Nothing
+        /// replicated moves -- resource health is not replicated state -- so this is the ONLY way the local
+        /// player learns a tree's health, and only for trees it has personally hit.</summary>
+        public event System.Action<ResourceHealthEvent> ResourceHealth;
         // destructible props (rubble): a placed object broke / respawned (already applied to the bitmap when these fire)
         public event System.Action<ObjectDestroyedEvent> ObjectDestroyed;
         public event System.Action<ObjectRestoredEvent> ObjectRestored;
@@ -687,6 +691,8 @@ namespace UnturnedGodot.Net
                 e => { Resources.ApplyHarvested(e, Applier.LastAppliedServerTick); ResourceHarvested?.Invoke(e); });
             Events.Register<ResourceRespawnedEvent>(ReplicationIds.EventResourceRespawned, ResourceRespawnedEvent.TryRead,
                 e => { Resources.ApplyRespawned(e, Applier.LastAppliedServerTick); ResourceRespawned?.Invoke(e); });
+            Events.Register<ResourceHealthEvent>(ReplicationIds.EventResourceHealth, ResourceHealthEvent.TryRead,
+                e => ResourceHealth?.Invoke(e));   // no replica to touch: health is a fact for this player's HUD, not world state
             // destructible props (rubble): apply the alive-bit flip straight onto the bitmap, then surface for the break/respawn fx + node hide
             Events.Register<ObjectDestroyedEvent>(ReplicationIds.EventObjectDestroyed, ObjectDestroyedEvent.TryRead,
                 e => { Destructibles.ApplyDestroyed(e, Applier.LastAppliedServerTick); ObjectDestroyed?.Invoke(e); });

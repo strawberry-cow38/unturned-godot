@@ -40,6 +40,16 @@ def dat_of(folder):
     return best
 
 
+def label_of(folder):
+    """The asset's displayed name from English.dat ("Birch #1"). Verbatim -- the variant marker is part of
+    the retail string, and trimming it is the UI's decision to make, not the bake's."""
+    p = os.path.join(folder, "English.dat")
+    if not os.path.exists(p):
+        return ""
+    m = re.search(r"(?m)^\s*Name\s+(.+?)\s*$", open(p, encoding="utf-8-sig", errors="ignore").read())
+    return m.group(1) if m else ""
+
+
 def key(txt, name, default=None):
     m = re.search(r"(?m)^\s*%s\s+(\S+)" % re.escape(name), txt)
     return m.group(1) if m else default
@@ -103,6 +113,8 @@ for folder in sorted(os.listdir(trees_root)):
         # map/mod asset can, and a silently-empty drop list is worse than an explicit one.
         drops = [(i, 1) for i in (log_id, stick_id) if i]
 
+    # APPENDED at the end, never inserted: the reader indexes drops at c[12], and shifting a column is
+    # exactly the silent-wrong-value bug this file's summary print already ate once.
     rows.append((
         folder, aid,
         key(txt, "Health", "0"), key(txt, "Reward_XP", "0"), key(txt, "Reset", "0"),
@@ -115,18 +127,21 @@ for folder in sorted(os.listdir(trees_root)):
         "1" if (key(txt, "Vulnerable_To_All_Melee_Weapons", "false") or "").lower() == "true" else "0",
         "1" if (key(txt, "Vulnerable_To_Fists", "false") or "").lower() == "true" else "0",
         "|".join("%d:%d" % (i, w) for i, w in drops),
+        label_of(d),
     ))
 
 with open(OUT, "w", encoding="utf-8") as f:
-    f.write("name\tassetId\thealth\trewardXp\tresetSec\trewardMin\trewardMax\thasDebris\tisForage\tbladeId\tvulnAllMelee\tvulnFists\tdrops\n")
+    f.write("name\tassetId\thealth\trewardXp\tresetSec\trewardMin\trewardMax\thasDebris\tisForage\tbladeId\tvulnAllMelee\tvulnFists\tdrops\tlabel\n")
     for r in rows:
         f.write("\t".join(str(x) for x in r) + "\n")
 
-harvestable = [r for r in rows if r[-1]]
+DROPS, LABEL = 12, 13
+harvestable = [r for r in rows if r[DROPS]]
 print("wrote %d resources -> %s (%d with a resolved drop table)" % (len(rows), OUT, len(harvestable)))
 for r in rows:
     if r[0].split("_")[0] in ("Birch", "Maple", "Pine") and r[0].endswith("_0"):
-        # index by NAME, not position -- inserting a column silently repointed this at bladeId and the
-        # summary cheerfully reported "drops=0" for a tree whose table was fine.
-        print("  %-10s hp=%-5s xp=%-3s reset=%-4s rewards=%s-%s blade=%s drops=%s"
-              % (r[0], r[2], r[3], r[4], r[5], r[6], r[9], r[-1]))
+        # index by a NAMED constant, not by position and not by r[-1] -- appending the label column moved
+        # r[-1] off drops, which is the same class of silent repoint that made this print say "drops=0"
+        # for a tree whose table was fine.
+        print("  %-10s %-12s hp=%-5s xp=%-3s reset=%-4s rewards=%s-%s blade=%s drops=%s"
+              % (r[0], r[LABEL], r[2], r[3], r[4], r[5], r[6], r[9], r[DROPS]))

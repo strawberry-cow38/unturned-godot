@@ -55,6 +55,9 @@ SCENES = {
     # frame, because a fixed frame that catches empty sky looks exactly like a plane that never spawned.
     "airdrop":  (["--airdropshot", "--shot={OUT}"], {}, False, 240, "cargo plane crossing overhead, seen from the ground"),
     "flare":    (["--airdropshot", "--shot={OUT}"], {"UG_AIRDROP_FLARE": "1", "UG_AIRDROP_CLOSE": "1"}, False, 600, "the smoke column a landed supply drop leaves"),
+    "tree":     (["--treeshot", "--shot={OUT}"], {"UG_TREE_HP": "500/800"}, False, 300, "the look-at health bar on a real chopped tree"),
+    "treenew":  (["--treeshot", "--shot={OUT}"], {}, False, 300, "the same tree BEFORE any swing: name only, no bar"),
+    "treefell": (["--treeshot", "--shot={OUT}"], {"UG_TREE_FELL": "40"}, False, 300, "a felled tree mid-topple (physics debris, not an animation)"),
     "vehicle":  (["--vehicle={TMP}"], {"UG_QUICK": "1", "UG_VSIDE": "2"}, False, 180, "jeep beauty shot"),
     "menu":     (["--menushot={TMP}"], {}, False, 300, "the 3D barn main menu, 5 camera anchors"),
     "nav":      (["--navshot={OUT}"], {}, True, 300, "close-up: one nav pocket + zombie vision cones"),

@@ -74,7 +74,7 @@ namespace UnturnedNet.Tests
             session.SendControl(NetControlType.KeepAlive);
             Assert.That(captured, Is.Not.Null);
             Assert.That(capturedLen, Is.EqualTo(12));
-            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("750F08000000000000002800"));   // v15: signs (CommandSetSignText 35 + EventSignText 36) -- only the version byte (0E->0F) moves
+            Assert.That(ToHex(captured, capturedLen), Is.EqualTo("751008000000000000002800"));   // v16: tree-felling (EventResourceHarvested 27 gains the ragdoll Vector3, EventResourceHealth 39) -- only the version byte (0F->10) moves; before that v15: signs (CommandSetSignText 35 + EventSignText 36)
         }
 
         [Test]
