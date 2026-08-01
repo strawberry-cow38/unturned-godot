@@ -23,7 +23,7 @@ namespace UnturnedGodot
         float _angleDeg = 90f;
         float _duration = 0.5f;
         Mesh _leafMesh;
-        Material _leafMaterial;
+        Material _leafMaterial; float _cull;
         bool _initialOpen;
         string _soundName;             // catalog-supplied AudioSource clip stem (e.g. "DoorHandle"/"HeavyMetalDoor"), content/sounds/<name>.wav -- null = silent door
         AudioStreamPlayer3D _audio;    // built once in _Ready if _soundName is set; replayed (not reloaded) on every Toggle -- retail plays the SAME clip for open + close, on toggle only, never on load/snap
@@ -62,7 +62,7 @@ namespace UnturnedGodot
         public static ObjectDoor Spawn(Node parent, Transform3D propXform, Vector3 pivotLocal, Vector3 axisLocal,
             float angleDeg, float durationSec, Mesh leafMesh, Material leafMaterial, bool startOpen = false,
             System.Collections.Generic.List<Vector2> openCurve = null, System.Collections.Generic.List<Vector2> closeCurve = null,
-            string soundName = null)
+            string soundName = null, float cullDistance = 0f)
         {
             var d = new ObjectDoor
             {
@@ -76,7 +76,7 @@ namespace UnturnedGodot
                 _initialOpen = startOpen,
                 _openCurve = openCurve,
                 _closeCurve = closeCurve,
-                _soundName = soundName,
+                _soundName = soundName, _cull = cullDistance,
             };
             parent.AddChild(d);
             return d;
@@ -101,7 +101,7 @@ namespace UnturnedGodot
                 // Ripped mesh: MUST disable backface culling or it renders inside-out under real (non-ambient)
                 // lighting -- same rule every other extracted prop material follows (WorldBuilder.MatFor).
                 _leafMatInstance.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-                var leafMi = new MeshInstance3D { Mesh = _leafMesh, MaterialOverride = _leafMatInstance, Position = -_pivotLocal };
+                var leafMi = new MeshInstance3D { Mesh = _leafMesh, MaterialOverride = _leafMatInstance, Position = -_pivotLocal }; if (_cull > 0f) { leafMi.VisibilityRangeEnd = _cull; leafMi.VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled; }
                 _pivot.AddChild(leafMi);
 
                 // A fixed (non-swinging) box collider sized from the leaf's OWN closed-pose AABB -- which is

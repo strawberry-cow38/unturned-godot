@@ -495,7 +495,7 @@ namespace UnturnedGodot
                         string curveBase = doorCfg.MeshFile.EndsWith("_door.obj") ? doorCfg.MeshFile.Substring(0, doorCfg.MeshFile.Length - "_door.obj".Length) : name;
                         var openCurve = LoadDoorCurve(dir, curveBase, "open");
                         var closeCurve = LoadDoorCurve(dir, curveBase, "close");
-                        spawnedDoors.Add(ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), startOpen: doorCfg.DefaultOpen, openCurve: openCurve, closeCurve: closeCurve, soundName: doorCfg.Sound));
+                        spawnedDoors.Add(ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), startOpen: doorCfg.DefaultOpen, openCurve: openCurve, closeCurve: closeCurve, soundName: doorCfg.Sound, cullDistance: cull));
                     }
                     if (spawnedDoors.Count > 1)
                         foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
