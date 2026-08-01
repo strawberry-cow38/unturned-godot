@@ -3234,7 +3234,7 @@ namespace UnturnedGodot
             if (Inventory == null) return;
             if (GetTree().GetFirstNodeInGroup("daynight") is not DayNightCycle dnc) return;
             if (_lastSpoilDay < 0) { _lastSpoilDay = dnc.Day; return; }   // baseline on first observation -- don't spoil the moment you spawn
-            while (_lastSpoilDay < dnc.Day) { FoodSpoil.TickDay(Inventory); _lastSpoilDay++; }
+            while (_lastSpoilDay < dnc.Day) { FoodSpoil.TickDay(Inventory); FoodSpoil.TickDayCrates(GetTree()); _lastSpoilDay++; }
         }
         // test seam: drive one day of food spoilage from a headless test
         public void DebugFoodSpoilTick() => FoodSpoil.TickDay(Inventory);

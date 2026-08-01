@@ -125,4 +125,42 @@ namespace UnturnedGodot.Testing
             yield break;
         }
     }
+
+    // Fridge / food preservation (strawberry): placed storage crates spoil their food over days like the bag, EXCEPT a
+    // Refrigerator, which preserves its contents while the town grid is live (PowerNet.GlobalPower). Cut the grid and the
+    // fridge warms up -- its food spoils too. Needs the scene tree (crates live in the "crates" group), so it's Tier 1.
+    public class FridgePreservesFood : GameTest
+    {
+        public override string Name => "survival.fridge_preserves";
+        public override IEnumerable<Step> Run()
+        {
+            ItemCatalog.RegisterAll();
+            Assets.add(new ItemAsset { id = 64030, type = EItemType.FOOD, itemName = "Test Steak" });   // meat -> FoodSpoil rate 22/day
+            bool wasPowered = PowerNet.GlobalPower;
+            PowerNet.SetGlobalPower(true);
+
+            var fridge = Refrigerator.Spawn(World, Vector3.Zero);
+            var crate  = StorageCrate.Spawn(World, new Vector3(3f, 0f, 0f));
+            yield return Ticks(2);   // _Ready builds each Storage grid + joins the "crates" group
+
+            fridge.Add(new Item(64030, 1, 100));   // a fresh steak in the fridge
+            crate.Add(new Item(64030, 1, 100));    // a fresh steak in a plain crate
+
+            T.Check("a plain crate never preserves", !crate.Preserves);
+            T.Check("a powered fridge preserves", fridge.Preserves);
+
+            FoodSpoil.TickDayCrates(Tree);   // one in-game day of world-container spoilage (the PlayerController.FoodSpoilTick path)
+            T.Check("steak in a plain crate spoils (100 -> 78, meat rate 22)", crate.Storage.getItem(0)?.item.quality == 78);
+            T.Check("steak in a powered fridge stays fresh (100)", fridge.Storage.getItem(0)?.item.quality == 100);
+
+            PowerNet.SetGlobalPower(false);   // pull the grid -- the fridge warms up
+            T.Check("an unpowered fridge stops preserving", !fridge.Preserves);
+            FoodSpoil.TickDayCrates(Tree);
+            T.Check("fridge food spoils once the grid dies (100 -> 78)", fridge.Storage.getItem(0)?.item.quality == 78);
+
+            fridge.QueueFree(); crate.QueueFree();
+            PowerNet.SetGlobalPower(wasPowered);   // leave the suite's global as we found it
+            yield break;
+        }
+    }
 }

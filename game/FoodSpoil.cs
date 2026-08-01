@@ -47,20 +47,40 @@ namespace UnturnedGodot
         {
             if (inv == null) return 0;
             int n = 0;
-            for (byte pg = 0; pg < PlayerInventory.PAGES; pg++)
+            for (byte pg = 0; pg < PlayerInventory.PAGES; pg++) n += TickDayItems(inv.items[pg]);
+            return n;
+        }
+
+        // Advance one in-game day of spoilage across a SINGLE grid -- a bag page OR a placed storage crate's contents:
+        // each unpreserved FOOD item loses PerDay% of its condition, clamped to 0. Preserved items (a powered fridge)
+        // are skipped. Returns how many items dropped a step (HUD hint / logging).
+        public static int TickDayItems(Items page)
+        {
+            if (page == null) return 0;
+            int n = 0;
+            for (byte i = 0; i < page.getItemCount(); i++)
             {
-                var page = inv.items[pg];
-                for (byte i = 0; i < page.getItemCount(); i++)
-                {
-                    var it = page.getItem(i)?.item; var a = it?.GetAsset();
-                    if (a == null || a.type != EItemType.FOOD || it.preserved) continue;
-                    float rate = PerDay(a);
-                    if (rate <= 0f) continue;
-                    int before = it.quality;
-                    it.quality = (byte)Mathf.Max(0, it.quality - Mathf.RoundToInt(rate));
-                    if (it.quality < before) n++;
-                }
+                var it = page.getItem(i)?.item; var a = it?.GetAsset();
+                if (a == null || a.type != EItemType.FOOD || it.preserved) continue;
+                float rate = PerDay(a);
+                if (rate <= 0f) continue;
+                int before = it.quality;
+                it.quality = (byte)Mathf.Max(0, it.quality - Mathf.RoundToInt(rate));
+                if (it.quality < before) n++;
             }
+            return n;
+        }
+
+        // Spoil one day across every PLACED storage crate in the world. A fridge (StorageCrate.Preserves -- true only
+        // while it's powered) is skipped, so its food stays fresh; a plain crate spoils like the bag. Driven once per
+        // in-game day from PlayerController.FoodSpoilTick, beside the bag sweep. SP-local (MP world-container spoilage =
+        // fast-follow, like the bag). Returns how many items spoiled a step.
+        public static int TickDayCrates(SceneTree tree)
+        {
+            if (tree == null) return 0;
+            int n = 0;
+            foreach (var node in tree.GetNodesInGroup("crates"))
+                if (node is StorageCrate c && GodotObject.IsInstanceValid(c) && !c.Preserves) n += TickDayItems(c.Storage);
             return n;
         }
     }
