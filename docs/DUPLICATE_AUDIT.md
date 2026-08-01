@@ -61,7 +61,7 @@ meant to agree and no longer do.
 | 2.9 | **Limb banding in three files** | `ZombieCombat.LimbAt:95` (0.82/0.45 fractions), `ZombieController.cs:166` (own hardcoded `h`), `ServerCombat.cs:105` (`ZombieHeadFrac`). Players use *absolute metres* (`PlayerHeadMinY 1.45`) where zombies use fractions | OPEN |
 | 2.10 | **Zombie attack reach maintained twice** | `ZombieSim` (`AttackRange` 1.75 m from the kind record) vs `ZombieController.cs:42` (`ATTACK_PLAYER_SQ = 2f` ⇒ √2 ≈ 1.41 m). Vertical 2.1 matches; horizontal does not. Two complete zombie combat brains | OPEN |
 | 2.11 | **yaw→forward copied 3×, one shipped inverted** | `ServerTransactions.cs:848` (wrapped in a method), `:534`, `ServerCombat.cs:453`. The melee copy was `(+sin, +cos)` and hit 180° **behind** the attacker until fixed | **FIXED** — `NetGeometry.ForwardFromYaw`, guarded by a sign test |
-| 2.12 | **Two `BedClaims` tables for the same beds** | static `Bed.Claims` (SP + client) and `ServerInteractables._beds` (authority), keyed differently (`BedId` int vs `NetId`), bridged only by `ApplyReplicatedClaim` | OPEN |
+| 2.12 | **Two `BedClaims` tables for the same beds** | static `Bed.Claims` (SP + client) and `ServerInteractables._beds` (authority), keyed differently (`BedId` int vs `NetId`), bridged only by `ApplyReplicatedClaim` | **NOT A DEFECT** — authority + replica, correctly routed; see note |
 | 2.13 | **Vehicle exit-spot basis derived twice** | `VehicleReplication.cs:928` and `ClientWorldSession.cs:560`. The client copy going stale against a frozen replica is the documented root cause of `docs/EXIT_POSITION_ROOTCAUSE.md`; `VehicleExitedEvent.Pos` exists because of it, and the client copy is still there as a fallback | **FIXED** — `NetGeometry.ExitSpotBeside`, formula + offsets shared |
 | 2.14 | **Station fill percent computed twice** | `GasStationServer.Percent:36` and `ServerTransactions.cs:427` re-derive the identical clamp. `Percent` consequently has no callers | **KEEP + shared** — the recompute is deliberate (see below); only the formula is now shared |
 | 2.15 | **Extract-fuel implemented twice** | `GasPump.Extract:109` (SP, relies on `FluidTank.Drain`'s internal clamp) vs `ServerTransactions.OnExtractFuel:399` (computes the `min` explicitly, plus its own "which can" scan) | OPEN |
@@ -252,3 +252,24 @@ the wind clock, the yaw inversion, `GodotCompat` — were all real and worth fix
 
 So: **check each row before acting on it.** The document is a good list of places to look and a
 bad list of things to change. Anything still marked OPEN has not been verified.
+
+## 2.12 checked and dropped
+
+"Two `BedClaims` tables for the same beds" describes the normal authority/replica split, not a
+duplicate. `PlayerController.RequestClaimBed` routes a replicated bed to the server and returns
+before the SP path ever runs:
+
+```
+if (b.NetId != 0 && NetClaimBed != null) { NetClaimBed(b.NetId); return true; }
+if (b.TryClaim(PlayerId, _interactClock)) { ... }
+```
+
+So `Bed.Claims` is the *replica* on a client (painted by `ApplyReplicatedClaim`) and the authority
+only in pure SP, where there is no server to disagree with. `ServerInteractables._beds` is the
+authority. Every replicated system in this codebase has exactly that pair; beds differ only in
+holding the client side in a static, which `Bed.ResetForNewWorld` already manages.
+
+Worth noting what a real version of this hazard looks like, since one exists nearby:
+`CropReplicaView` carries a "DOUBLE-AUTHORITY GUARD: this view is CLIENT-ONLY. Do NOT attach it on
+MpLoopback" comment. That is the failure 2.12 imagined — and beds avoid it by routing at the
+request, before any local mutation.
