@@ -1121,7 +1121,7 @@ namespace UnturnedGodot
             Aabb ab = mi.GlobalTransform * mi.GetAabb();          // world-space bounds of the body mesh
             if (ab.Size.Y < 0.1f) return;                         // not skinned/built yet -> wait a frame
             float cy = ab.Position.Y + ab.Size.Y * 0.5f;          // vertical centre of the body
-            float frameH = ab.Size.Y * 1.36f;                     // ~85% fill after the tightening
+            float frameH = ab.Size.Y * 1.51f;                     // master: paperdoll scaled ~10% smaller -> ~76% fill (was 1.36f)
             float dist = frameH * 0.5f / Mathf.Tan(Mathf.DegToRad(_pdCam.Fov * 0.5f));
             float aimY = cy - 0.15f;
             _pdCam.Position = new Vector3(0f, aimY, dist);
