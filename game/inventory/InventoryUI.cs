@@ -1362,7 +1362,7 @@ namespace UnturnedGodot
             var img = Image.CreateEmpty(N, N, false, Image.Format.Rgba8);
             img.Fill(new Color(1f, 1f, 1f, 0f));
             var col = new Color(0.97f, 0.99f, 1f);
-            float c = (N - 1) / 2f, len = 16f;
+            float c = (N - 1) / 2f, len = 13f;
             void Dot(float x, float y)
             {
                 int xi = Mathf.RoundToInt(x), yi = Mathf.RoundToInt(y);
@@ -1378,7 +1378,7 @@ namespace UnturnedGodot
                     {
                         float bx = c + dx * len * f, by = c + dy * len * f, ba = ang + s * 0.85f;
                         float bdx = Mathf.Cos(ba), bdy = Mathf.Sin(ba);
-                        for (float t = 0; t <= 5f; t += 0.5f) Dot(bx + bdx * t, by + bdy * t);
+                        for (float t = 0; t <= 4f; t += 0.5f) Dot(bx + bdx * t, by + bdy * t);
                     }
             }
             _snowTex = ImageTexture.CreateFromImage(img);
