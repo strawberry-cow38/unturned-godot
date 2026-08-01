@@ -203,18 +203,27 @@ namespace UnturnedGodot
             }
             var timings = new System.Collections.Generic.Dictionary<string, double>();
             string curPhase = null; var phaseSw = System.Diagnostics.Stopwatch.StartNew();
+            var wallSw = System.Diagnostics.Stopwatch.StartNew();   // total incl. the per-phase frame yields, so WORK vs WAIT is visible
+            var yields = new System.Collections.Generic.Dictionary<string, double>();   // what each phase spent WAITING for a drawn frame
             async System.Threading.Tasks.Task Phase(string name)
             {
                 if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading?.Advance(); }
-                curPhase = name; loading?.SetStatus(name + "…"); phaseSw.Restart();
+                curPhase = name; loading?.SetStatus(name + "…");
                 // Wait for a real DRAWN frame (not just process_frame, which resumes before the present) so
                 // each bar/status update is actually visible before this phase's blocking work runs.
                 // --bakenav: skip the frame-yield so the WHOLE world loads synchronously -> we can bake offline.
                 if (!syncLoad)
                 {
+                    var ySw = System.Diagnostics.Stopwatch.StartNew();
                     await root.ToSignal(root.GetTree(), SceneTree.SignalName.ProcessFrame);
                     await root.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    yields[name] = ySw.Elapsed.TotalMilliseconds;
                 }
+                // Restart AFTER the yields, so a phase measures its own WORK. Restarting before them charged each
+                // phase for rendering a frame of everything built so far -- which grows as the world fills, so the
+                // late phases looked expensive purely for being late. That is a per-phase cost of one full frame at
+                // whatever the current scene costs to draw, and on a software rasteriser it dwarfed the real work.
+                phaseSw.Restart();
             }
             // REAL PEI lighting via DayNightCycle (src Lighting.dat: ported sky shader + warm ambient + sun per time-of-day)
             // -- replaces the ProceduralSky + sky-tinted ambient that didn't match the source palette. "Drive PEI"
@@ -850,9 +859,14 @@ namespace UnturnedGodot
                 // and Dedicated builds no overlay at all, so this was the one mode whose load cost was invisible.
                 // NB each phase includes its two frame-yields (the stopwatch restarts BEFORE the awaits), so a phase
                 // never reads below one frame; compare phases to each other, not to an absolute budget.
-                var parts = new System.Collections.Generic.List<string>(); double sum = 0;
-                foreach (var kv in timings) { parts.Add($"{kv.Key} {kv.Value:F0}"); sum += kv.Value; }
-                GD.Print($"[loadprof] {string.Join(" | ", parts)} | TOTAL {sum:F0} ms");
+                var parts = new System.Collections.Generic.List<string>(); double sum = 0, ysum = 0;
+                foreach (var kv in timings)
+                {
+                    yields.TryGetValue(kv.Key, out double y);
+                    parts.Add($"{kv.Key} {kv.Value:F0}(+{y:F0}y)"); sum += kv.Value; ysum += y;
+                }
+                GD.Print($"[loadprof] {string.Join(" | ", parts)}");
+                GD.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
             }
             // Zombie navmesh POCKETS -- bake NOW, in the FULL world, so the BUILDINGS (layer 1<<0) carve the mesh and
             // zombies route around them. This full-world bake is the CANONICAL one (save:true -> pei_pocket_N.res);
