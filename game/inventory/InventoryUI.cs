@@ -1352,6 +1352,39 @@ namespace UnturnedGodot
         }
 
         // one item tile: dark rarity-tinted background + rarity border + real ICON (name fallback) + amount badge
+        // A 6-arm snowflake drawn CENTERED into a small texture -- so the "cold" badge never depends on a font glyph's
+        // off-centre metrics (U+2744 seats crooked in its line box; no offset nudge centres it cleanly). One-time build.
+        static ImageTexture _snowTex;
+        static ImageTexture SnowflakeTex()
+        {
+            if (_snowTex != null) return _snowTex;
+            const int N = 40;
+            var img = Image.CreateEmpty(N, N, false, Image.Format.Rgba8);
+            img.Fill(new Color(1f, 1f, 1f, 0f));
+            var col = new Color(0.97f, 0.99f, 1f);
+            float c = (N - 1) / 2f, len = 16f;
+            void Dot(float x, float y)
+            {
+                int xi = Mathf.RoundToInt(x), yi = Mathf.RoundToInt(y);
+                for (int oy = 0; oy <= 1; oy++) for (int ox = 0; ox <= 1; ox++)
+                { int px = xi + ox, py = yi + oy; if (px >= 0 && px < N && py >= 0 && py < N) img.SetPixel(px, py, col); }
+            }
+            for (int a = 0; a < 6; a++)
+            {
+                float ang = a * Mathf.Pi / 3f, dx = Mathf.Cos(ang), dy = Mathf.Sin(ang);
+                for (float t = 0; t <= len; t += 0.5f) Dot(c + dx * t, c + dy * t);
+                foreach (float f in new[] { 0.5f, 0.78f })
+                    foreach (int s in new[] { 1, -1 })
+                    {
+                        float bx = c + dx * len * f, by = c + dy * len * f, ba = ang + s * 0.85f;
+                        float bdx = Mathf.Cos(ba), bdy = Mathf.Sin(ba);
+                        for (float t = 0; t <= 5f; t += 0.5f) Dot(bx + bdx * t, by + bdy * t);
+                    }
+            }
+            _snowTex = ImageTexture.CreateFromImage(img);
+            return _snowTex;
+        }
+
         Control MakeTile(ItemJar jar, int w, int h, int rotParam = -1)
         {
             var asset = jar.GetAsset();
@@ -1468,8 +1501,8 @@ namespace UnturnedGodot
                 var bs = new StyleBoxFlat { BgColor = new Color(0.14f, 0.44f, 0.86f) };
                 bs.BorderColor = new Color(0f, 0f, 0f, 0.85f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(3);
                 badge.AddThemeStyleboxOverride("panel", bs);
-                var snow = new Label { Text = "\u2744", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
-                snow.SetAnchorsPreset(Control.LayoutPreset.FullRect); snow.OffsetTop = 1.5f; snow.OffsetBottom = 1.5f; snow.OffsetLeft = 1f; snow.OffsetRight = 1f;   // the font sits the snowflake HIGH-left in its line box -> nudge the centered glyph down+right
+                var snow = new TextureRect { Texture = SnowflakeTex(), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, MouseFilter = Control.MouseFilterEnum.Ignore };
+                snow.SetAnchorsPreset(Control.LayoutPreset.FullRect);
                 snow.AddThemeColorOverride("font_color", new Color(0.97f, 0.99f, 1f));
                 snow.AddThemeFontSizeOverride("font_size", 13);
                 badge.AddChild(snow);
