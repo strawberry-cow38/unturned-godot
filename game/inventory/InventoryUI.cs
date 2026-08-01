@@ -24,7 +24,7 @@ namespace UnturnedGodot
         static readonly Color UI_TAB_ON  = new Color(0.55f, 0.62f, 0.70f, 0.72f);   // lit/open tab
         static readonly Color UI_TAB_OFF = new Color(0.22f, 0.29f, 0.37f, 0.62f);   // the other tabs + icon buttons
         static readonly Color UI_STAGE = new Color(0.08f, 0.11f, 0.15f, 0.30f);   // paperdoll backing
-        const int CELL = 63;         // SleekItems cell size
+        const int CELL = 72;         // SleekItems cell size
         const int HEADER = 30;       // legacy per-page strip (kept for the char-panel slots)
         // --- the source's ACTUAL page-stacking metrics (PlayerDashboardInventoryUI.updateBoxAreas) ---
         // Each visible page is a HEADER BAR with its grid directly beneath it -- strawberry's annotation
@@ -35,8 +35,8 @@ namespace UnturnedGodot
         const int HDRGAP = 70;       // grid sits 70px below its own header
         const int PAGEADV = 80;      // advance = gridHeight + 80 (=> 10px between grid bottom and next header)
         const int GRIDPAD = 30;      // SleekItems.SizeOffset_Y = rows*50 + 30
-        const int BOXX = 430;        // box.PositionOffset_X = 430 (410 char panel + margins)
-        const int BOXINSET = 440;    // box.SizeOffset_X = -440
+        const int BOXX = 530;        // box.PositionOffset_X = 430 (410 char panel + margins)
+        const int BOXINSET = 540;    // box.SizeOffset_X = -440
         const int SPLITMIN = 1350;   // isSplitClothingArea kicks in at this screen width
         const int PAD = 12;
         // SOURCE-ACCURATE layout (PlayerDashboardInventoryUI): top navbar (60px), a fixed 410px CHARACTER panel on
@@ -45,7 +45,7 @@ namespace UnturnedGodot
         // NOT a centred blob.
         const int NAVH = 60;         // top navbar strip (source backdropBox starts at Y=60, below the nav)
         const int MARGIN = 12;       // screen-edge margin
-        const int CHARW = 410;       // character panel width (source characterBox SizeOffset_X = 410)
+        const int CHARW = 510;       // character panel width (source characterBox SizeOffset_X = 410)
         const int GUTTER = 20;       // gap between the character panel and the storage box
         const int PDTOP = 58;        // paperdoll y inside the character panel (below the name/faction badge)
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
