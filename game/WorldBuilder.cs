@@ -120,6 +120,7 @@ namespace UnturnedGodot
             public Vector3 Axis;      // local swing axis, already rotated into prop-local space by the extractor
             public float AngleDeg;    // total swing sweep (SIGNED -- flip this one field if a render shows the door opening the wrong way; see extract_doors.py)
             public float DurationSec;
+            public bool DefaultOpen;   // retail InteractableObjectBinaryState default-state fix: true if a fresh/untouched prop should SPAWN open (see extract_doors.py's defaultOpen derivation) -- Fridge_0's clip names are inverted vs geometry, so this is true for it
         }
 
         // Retail legacy Animation clip easing curve (tools/extract_doors.py's door_curves/<name>_open.txt /
@@ -158,6 +159,7 @@ namespace UnturnedGodot
                     Axis = new Vector3(F(p[5]), F(p[6]), F(p[7])),
                     AngleDeg = F(p[8]),
                     DurationSec = F(p[9]),
+                    DefaultOpen = p.Length >= 11 && p[10] == "1",
                 };
             }
             return cat;
@@ -416,7 +418,7 @@ namespace UnturnedGodot
                     {
                         var openCurve = LoadDoorCurve(dir, name, "open");
                         var closeCurve = LoadDoorCurve(dir, name, "close");
-                        ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), openCurve: openCurve, closeCurve: closeCurve);
+                        ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), startOpen: doorCfg.DefaultOpen, openCurve: openCurve, closeCurve: closeCurve);
                     }
                 }
                 StaticBody3D destBody = null;

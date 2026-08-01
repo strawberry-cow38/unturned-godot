@@ -303,6 +303,7 @@ def qW(v): return v.W if hasattr(v, "W") else v.w
 
 BONE_NAME = "Hinge"
 curveDir = os.path.join(OUT, "door_curves")
+defaultOpen = False   # safe default (closed) if clip sampling below can't determine it for any reason -- overwritten only when clip data is actually found
 hinge_go = find_go_by_name(BONE_NAME, prefab.path_id, root_local_inv4)
 root_go = find_go_by_name("Root", prefab.path_id, root_local_inv4)
 if not hinge_go or not root_go:
@@ -369,6 +370,18 @@ else:
             for r, (nm, samples) in role.items():
                 print(f"  ROLE {r}: unity clip name {nm!r} ({len(samples)} samples), first={samples[0][1]:.3f} last={samples[-1][1]:.3f}")
 
+            # DEFAULT STATE (retail InteractableObjectBinaryState.updateState): boots at isUsed=false, and
+            # updateAnimationComponent(applyInstantly=true) jumps normalizedTime to 1 (the clip's END) on the
+            # clip NAMED "Close" (animation = isUsed ? "Open" : "Close"). So a fresh/untouched prop shows
+            # whichever pose the "Close"-NAMED clip ends at -- for most props that IS the closed pose (matching
+            # the name), but Fridge_0's clip names are inverted vs their geometry (established above): its
+            # "Close"-named clip is actually the OPENING motion, so a fresh Fridge_0 displays OPEN in retail,
+            # and F-toggling (isUsed->true, plays "Open"-named clip to ITS end) CLOSES it. Recorded generically
+            # (not hardcoded "fridges start open"): true exactly when the clip literally named "Close" is the
+            # one this script classified as the "open" role.
+            defaultOpen = role.get("open", (None, None))[0] == "Close"
+            print(f"  defaultOpen = {defaultOpen}  (True iff the clip named 'Close' is the opening motion -- retail InteractableObjectBinaryState boots isUsed=false -> plays 'Close'-named clip to its end)")
+
             def write_curve(path, samples):
                 farAng = max((samples[0][1], samples[-1][1]), key=abs)
                 length = samples[-1][0]
@@ -389,8 +402,13 @@ if clip is None:
     print(f"NOTE: no DOOR_CLIP entry for {TARGET} -- add its sampled retail angle/duration to this script's DOOR_CLIP dict before cataloging it")
 else:
     catPath = os.path.join(OUT, "doors.txt")
-    line = "%s %s %.6f %.6f %.6f %.6f %.6f %.6f %.4f %.4f" % (
-        TARGET, doorObjName, pivot[0], pivot[1], pivot[2], axis[0], axis[1], axis[2], clip["angle"], clip["duration"])
+    # 11th field, defaultOpen (1/0): retail InteractableObjectBinaryState boots isUsed=false and jumps
+    # (applyInstantly) to the END of the clip literally NAMED "Close" -- true iff THAT named clip is the one
+    # this script classified as the opening motion (see the defaultOpen derivation above). Per-prop, not
+    # hardcoded -- most Binary_State props will read 0 (their "Close" clip's name matches its geometry); only
+    # ones with inverted clip names like Fridge_0 read 1.
+    line = "%s %s %.6f %.6f %.6f %.6f %.6f %.6f %.4f %.4f %d" % (
+        TARGET, doorObjName, pivot[0], pivot[1], pivot[2], axis[0], axis[1], axis[2], clip["angle"], clip["duration"], 1 if defaultOpen else 0)
     existing = []
     if os.path.exists(catPath):
         existing = [ln for ln in open(catPath).read().splitlines() if ln.strip() and not ln.split()[0] == TARGET]

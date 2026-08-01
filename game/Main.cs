@@ -1327,7 +1327,14 @@ namespace UnturnedGodot
             AddChild(new MeshInstance3D { Mesh = bodyMesh, MaterialOverride = mat, Transform = xform });
 
             bool doorAnim = System.Environment.GetEnvironmentVariable("UG_DOOR_ANIM") == "1";
-            bool startOpen = !doorAnim && System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN") == "1";
+            string doorOpenEnv = System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN");
+            // Retail default-state fix: InteractableObjectBinaryState boots isUsed=false and (applyInstantly)
+            // jumps straight to the END of the clip literally named "Close" -- for Fridge_0 that IS the
+            // opening motion (its clip names are inverted vs geometry), so a fresh fridge is OPEN in retail.
+            // doorCfg.DefaultOpen carries that per-prop (see WorldBuilder.LoadDoorCatalog / extract_doors.py).
+            // UG_DOOR_OPEN, if EXPLICITLY set (0 or 1), overrides the catalog default for testing; UG_DOOR_ANIM
+            // always starts closed regardless (it wants to demonstrate the full swing from scratch).
+            bool startOpen = doorAnim ? false : (doorOpenEnv != null ? doorOpenEnv == "1" : doorCfg.DefaultOpen);
             var openCurve = WorldBuilder.LoadDoorCurve(dir, name, "open");
             var closeCurve = WorldBuilder.LoadDoorCurve(dir, name, "close");
             var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen, openCurve: openCurve, closeCurve: closeCurve);
