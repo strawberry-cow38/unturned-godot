@@ -54,7 +54,7 @@ meant to agree and no longer do.
 | 2.2 | **A Power Switch toggled OFF still conducts server-side** | `PowerNet.cs:45` passes `Conducting = d.PowerConducting`; `DeployableReplication.cs:520` leaves it at its `true` default. Everything downstream of an off switch reads powered in MP and dark in SP. `DeployableEntity.ToggledOn` exists and would carry it — nothing maps it | **FIXED** — `Conducting = !def.IsSwitch \|\| e.ToggledOn` in `Solve()` |
 | 2.3 | **A Power Switch can never be toggled through the server** | `Deployable.CanTogglePower:52` has an `IsSwitch` branch; `DeployableReplication.CanToggle:394` requires `FuelCapacity > 0`, which a switch (`Fuel = 0`) never has | **FIXED** — `CanToggle` accepts `def.IsSwitch` |
 | 2.4 | **Battery + wind turbine "producing" is fuel-generator logic only** | `Deployable.IsPowered:53` is a 3-way family rule (battery on `Energy`, turbine on `_windFactor`); `DeployableEntity.Producing:295` is `ToggledOn && !OnFire && (FuelCapacity <= 0 \|\| Fuel > 0)`. Battery `Fuel = 0` ⇒ produces whenever toggled; its whole charge/discharge economy is SP-only | OPEN |
-| 2.5 | **Wire legality: same 5 rules, incompatible reach** | SP `PlayerController.cs:418` = 5.5 m look reach + 40 m/20-node polyline cap. Server `DeployableReplication.cs:371` = 16 m per endpoint, **no length cap**. A wire the SP UI refuses is accepted by the server | OPEN |
+| 2.5 | **Wire legality: same 5 rules, incompatible reach** | SP `PlayerController.cs:418` = 5.5 m look reach + 40 m/20-node polyline cap. Server `DeployableReplication.cs:371` = 16 m per endpoint, **no length cap**. A wire the SP UI refuses is accepted by the server | **NOT A DEFECT** — the polyline is never replicated; see note |
 | 2.6 | **Door arc-block test is SP-only** | `Door.cs:96` passes the real physics `blocked`; `InteractableReplication.cs:217` hardcodes `arcBlocked: false`. A close the SP client refuses is accepted by the server. (Documented as deliberate — the server has no arc test and letting a client veto other people's doors is worse — but it *is* the one genuine rule divergence in the door path) | OPEN |
 | 2.7 | **`IsAlive` out-of-range fails opposite ways** | `DestructibleReplication.cs:60` → `false` (dead); `DestructibleField.cs:49` → `true` (alive) | OPEN |
 | 2.8 | **Two hit-geometry implementations that disagree** | `ZombieCombat.RayCapsule` (real capsule caps) vs `ServerCombat.SegmentHitsCylinder` (cylinder + `[-0.1, top+0.15]` fudge). The latter decides MP damage, so SP and MP disagree at the shoulders and at point-blank | OPEN |
@@ -67,7 +67,7 @@ meant to agree and no longer do.
 | 2.15 | **Extract-fuel implemented twice** | `GasPump.Extract:109` (SP, relies on `FluidTank.Drain`'s internal clamp) vs `ServerTransactions.OnExtractFuel:399` (computes the `min` explicitly, plus its own "which can" scan) | OPEN |
 | 2.16 | **Salvage yield encoded in 3 places** | `Deployable.cs:496` (2× item 67 hardcoded), `Vehicle.cs:1820` (3× hardcoded), `DeployableNetSchema.cs:32` (`SalvageItemId`/`SalvageCount`) | **FIXED** — yield lives on `DeployableDef`; `ScrapItemId` shared |
 | 2.17 | **`DisconnectWires` — 4 copies, 3 of which fix a bug the 4th has** | `Deployable.cs:504`, `FluidPump.cs:85`, `FluidPurifier.cs:53`, `FluidValve.cs:40`. The three fluid versions `RemoveFromGroup("wires")` before `QueueFree()` so the group is correct *this frame*; `Deployable.DisconnectWires` does **not**, and `PlayerController.cs:1016` explicitly documents needing that | **FIXED** — `RemoveFromGroup("wires")` before `QueueFree` |
-| 2.18 | **`SetLookFocused` mesh collection differs** | `Vehicle` and `VehiclePuppet` re-collect on every focus; `Deployable` collects once and never refreshes — so a `Deployable` that gains a mesh after first focus (battery label, split turbine hub) is missed | OPEN |
+| 2.18 | **`SetLookFocused` mesh collection differs** | `Vehicle` and `VehiclePuppet` re-collect on every focus; `Deployable` collects once and never refreshes — so a `Deployable` that gains a mesh after first focus (battery label, split turbine hub) is missed | **NOT A DEFECT** — a Deployable's mesh set is fixed at spawn; see note |
 | 2.19 | **Pump-lift ceiling propagation written twice** | `FluidNet.cs:83` (inside `WouldNeedPump`) and `:153` (inside `Tick`); any change to the conduction rule must be made in both | **FIXED** — `FluidNet.PropagateCeilings` |
 | 2.20 | **Deadzone host loop duplicated** | The *sim* is correctly shared, but the volume list, `TryGetVolume` scan, per-player dictionary and enter/exit bookkeeping are near line-for-line in `game/DeployableField`-side `DeadzoneField.cs` and `core/UnturnedNet/ServerDeadzones.cs` | OPEN |
 | 2.21 | **`GodotCompat.cs` — the documented handedness-flip adapter — has exactly ONE call site** (`Main.cs:534`) while everything else converts inline. Either every inline conversion is a latent sign bug, or the adapter is dead code. **This either/or should be resolved before more cross-boundary code is written** | **RESOLVED** — it was dead code with a WRONG convention; corrected to match practice |
@@ -223,3 +223,32 @@ against, and inventing a convention with no consumer is how this became wrong or
 **Follow-up worth doing (not done here):** the five `ToU` helpers are now duplicates of a correct
 shared adapter and could consolidate onto it. Left open because it touches several `game/` files
 including render/UI lanes.
+
+## 2.5 and 2.18 checked and dropped
+
+**2.5 (wire reach)** compared two things that are not the same rule. `WriteWire` sends
+`NetId, SrcId, SrcPort, DstId, DstPort` and nothing else — **the polyline never crosses the
+wire**. The 40 m / 20-node budget is a client-side *routing* limit on a path the server does not
+know and could not enforce. SP's `WireReach = 5.5` is an eye-ray reach for selecting a port cube;
+the server's `WireReach = 16` is player-to-endpoint distance, and the server has no eye ray. The
+one residual is a policy question, not a duplicate: 16 m is looser than SP's 6 m `WirePlaceReach`,
+deliberately, in line with every other server bound here.
+
+**2.18 (`SetLookFocused`)** claimed a `Deployable` that gains a mesh after first focus is missed.
+It cannot: every `AddChild` of a `MeshInstance3D` happens inside `Spawn()` — the model, the
+battery label, the turbine tower/hub/blades — so the mesh set is fixed before anything can focus
+it. The *loss* case (freed refs) is handled by the `IsInstanceValid(mi)` guard at use. `Vehicle`
+re-collects for a different reason its own comment gives: a settled wreck drops its wheels. Both
+are right for their situation.
+
+## A pattern in this document worth stating plainly
+
+This audit was generated from an LLM sweep, and its **tier 2 over-claims**. Verified so far:
+2.14 (deliberate, documented in the interface it flagged), 2.5 (compares a client routing budget
+to a server authority bound), 2.18 (describes a mesh gain that cannot happen), the `Deg2Rad`
+"not bit-identical" claim (it is bit-identical, measured), and three of sixteen dead-code entries.
+Against that, the tier-2 items that WERE real — the power switch pair, the same-frame wire group,
+the wind clock, the yaw inversion, `GodotCompat` — were all real and worth fixing.
+
+So: **check each row before acting on it.** The document is a good list of places to look and a
+bad list of things to change. Anything still marked OPEN has not been verified.
