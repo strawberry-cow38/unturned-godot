@@ -64,7 +64,7 @@ meant to agree and no longer do.
 | 2.12 | **Two `BedClaims` tables for the same beds** | static `Bed.Claims` (SP + client) and `ServerInteractables._beds` (authority), keyed differently (`BedId` int vs `NetId`), bridged only by `ApplyReplicatedClaim` | **NOT A DEFECT** — authority + replica, correctly routed; see note |
 | 2.13 | **Vehicle exit-spot basis derived twice** | `VehicleReplication.cs:928` and `ClientWorldSession.cs:560`. The client copy going stale against a frozen replica is the documented root cause of `docs/EXIT_POSITION_ROOTCAUSE.md`; `VehicleExitedEvent.Pos` exists because of it, and the client copy is still there as a fallback | **FIXED** — `NetGeometry.ExitSpotBeside`, formula + offsets shared |
 | 2.14 | **Station fill percent computed twice** | `GasStationServer.Percent:36` and `ServerTransactions.cs:427` re-derive the identical clamp. `Percent` consequently has no callers | **KEEP + shared** — the recompute is deliberate (see below); only the formula is now shared |
-| 2.15 | **Extract-fuel implemented twice** | `GasPump.Extract:109` (SP, relies on `FluidTank.Drain`'s internal clamp) vs `ServerTransactions.OnExtractFuel:399` (computes the `min` explicitly, plus its own "which can" scan) | OPEN |
+| 2.15 | **Extract-fuel implemented twice** | `GasPump.Extract:109` (SP, relies on `FluidTank.Drain`'s internal clamp) vs `ServerTransactions.OnExtractFuel:399` (computes the `min` explicitly, plus its own "which can" scan) | **NOT A DEFECT** — SP-direct / MP-routed, same as 2.12 |
 | 2.16 | **Salvage yield encoded in 3 places** | `Deployable.cs:496` (2× item 67 hardcoded), `Vehicle.cs:1820` (3× hardcoded), `DeployableNetSchema.cs:32` (`SalvageItemId`/`SalvageCount`) | **FIXED** — yield lives on `DeployableDef`; `ScrapItemId` shared |
 | 2.17 | **`DisconnectWires` — 4 copies, 3 of which fix a bug the 4th has** | `Deployable.cs:504`, `FluidPump.cs:85`, `FluidPurifier.cs:53`, `FluidValve.cs:40`. The three fluid versions `RemoveFromGroup("wires")` before `QueueFree()` so the group is correct *this frame*; `Deployable.DisconnectWires` does **not**, and `PlayerController.cs:1016` explicitly documents needing that | **FIXED** — `RemoveFromGroup("wires")` before `QueueFree` |
 | 2.18 | **`SetLookFocused` mesh collection differs** | `Vehicle` and `VehiclePuppet` re-collect on every focus; `Deployable` collects once and never refreshes — so a `Deployable` that gains a mesh after first focus (battery label, split turbine hub) is missed | **NOT A DEFECT** — a Deployable's mesh set is fixed at spawn; see note |
@@ -288,3 +288,27 @@ The field's fail-to-alive is also deliberate and documented at the call site: a 
 slot (an out-of-season holiday prop) "reads as ALIVE/intact — there's no prop to break, and the
 server bitmap keeps it alive too, so the net-sync mirror skips it instead of churning." Making it
 fail closed would invert exactly the behaviour that comment is protecting.
+
+## The shape most of these "cross-dir duplicates" actually are
+
+2.12 (beds), 2.15 (extract fuel) and — in its own way — 2.14 (fuel percent) are all the same thing,
+and it is the architecture rather than a defect:
+
+> An action has a **direct SP path** on the node and an **intent routed to the server** when the
+> thing is replicated. The request checks `NetId != 0` and RETURNS before the local path can run.
+
+```
+if (_focusGasPump.NetId != 0) { NetExtractFuel?.Invoke(_focusGasPump.NetId); return; }
+...local Extract below, for NetId == 0 only
+if (b.NetId != 0 && NetClaimBed != null) { NetClaimBed(b.NetId); return true; }
+...local TryClaim below
+```
+
+The gas-pump site spells out the consequence of getting it wrong: "NO local Extract/fuelLevel add
+(the direct tank-drain is DISABLED under consume; a local add would double-count + desync)."
+
+So the two implementations are not two answers to one question — they are the SP answer and the MP
+answer, with a gate that guarantees only one runs. **Collapsing them would mean putting choke-point
+logic into a node or node logic into the choke point, which is what the gate exists to prevent.**
+Anything in this document that looks like "X is implemented twice, once in `game/` and once in
+`core/UnturnedNet/`" should be checked against this shape first.
