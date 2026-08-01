@@ -40,7 +40,12 @@ namespace UnturnedGodot.Net
     {
         public ushort DefId;
         public float Health;
-        public float FuelCapacity;   // 0 = no tank (not a generator; toggle commands are rejected)
+        public float FuelCapacity;   // 0 = no tank (not a generator)
+        /// <summary>A Power Switch: the F-toggle gates its Passthrough. Mirrors DeployableDef.IsSwitch, and
+        /// like FixtureKind it is def-table only, never on the wire. Without it the server could not tell a
+        /// switch from any other fuel-less device, so a switch toggled OFF still conducted (its Passthrough
+        /// stayed live for every downstream consumer) and CanToggle refused to flip it at all.</summary>
+        public bool IsSwitch;
         public float Range;          // placement reach (ItemBarricadeAsset Range) -- the server's range check
         public FixtureKind FixtureKind;   // A3/A2: a server-placed world fixture kind (None = a normal player-placeable deployable). Def-table only, never on the wire.
         public DeployablePortSpec[] Ports = System.Array.Empty<DeployablePortSpec>();
@@ -394,9 +399,14 @@ namespace UnturnedGodot.Net
         public bool CanToggle(uint netId, out DeployableEntity e)
         {
             // The SP gate minus the cosmetic warmup-ramp buffer (client-side feel, not authority):
-            // a fuelled, not-on-fire generator toggles (Deployable.CanTogglePower).
+            // SP is `Def.IsSwitch || (Def.Fuel > 0f && PowerSettled)` -- a switch ALWAYS toggles, a generator
+            // only when it has a tank. Requiring a tank unconditionally meant a switch (Fuel = 0) could never
+            // be flipped through the server at all (DUPLICATE_AUDIT 2.3).
+            // Note the generator arm tests the def HAVING a tank, not the entity's current fuel: an empty
+            // generator toggles fine and simply does not Produce -- that is Producing()'s job, not this gate's.
             if (!TryGet(netId, out e)) return false;
-            if (!Schema.TryGet(e.DefId, out var def) || def.FuelCapacity <= 0f) return false;
+            if (!Schema.TryGet(e.DefId, out var def)) return false;
+            if (!def.IsSwitch && def.FuelCapacity <= 0f) return false;
             return !e.OnFire;
         }
 
@@ -517,7 +527,15 @@ namespace UnturnedGodot.Net
             foreach (var e in All)
             {
                 if (!Schema.TryGet(e.DefId, out var def)) continue;
-                var dev = new PowerDevice { Producing = e.Producing(def), OnFire = e.OnFire };
+                // Conducting mirrors SP's Deployable.PowerConducting (`!Def.IsSwitch || _switchOn`): a Power
+                // Switch toggled OFF must stop passing power through. Leaving it at its `true` default kept
+                // every downstream consumer lit on the server while SP had them dark (DUPLICATE_AUDIT 2.2).
+                var dev = new PowerDevice
+                {
+                    Producing = e.Producing(def),
+                    OnFire = e.OnFire,
+                    Conducting = !def.IsSwitch || e.ToggledOn,
+                };
                 for (byte i = 0; i < def.Ports.Length; i++)
                     portMap[(e.NetIdValue, i)] = dev.AddPort((PowerPortKind)def.Ports[i].Kind, def.Ports[i].Watts);
                 devices.Add(dev);

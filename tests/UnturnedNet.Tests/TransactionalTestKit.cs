@@ -111,6 +111,7 @@ namespace UnturnedNet.Tests
         // 67 metal scrap, 13 canned beans (consumable), 4 eaglefire (4x2), 900/901 craft-fixture items
         public const ushort GeneratorId = 458;
         public const ushort SpotlightId = 459;
+        public const ushort SwitchId = 9105;       // the Power Switch: Consumer relay + Passthrough the toggle GATES (DeployableDef.Switch)
         public const ushort GridSourceId = 9200;   // A3: the grid-power mains SOURCE fixture (a 10kW Output, FixtureKind.GridSource)
         public const ushort GasPumpId = 9201;       // A2: the gas-station PUMP fixture (a 750W Consumer, FixtureKind.GasPump)
         public const ushort GasCanId = 28;          // A2: a Portable Gas Can -- a fuel container (IsFuelContainer) the extract fills
@@ -129,6 +130,7 @@ namespace UnturnedNet.Tests
             Assets.clear();
             Assets.add(new ItemAsset { id = GeneratorId, itemName = "Generator", size_x = 2, size_y = 2 });
             Assets.add(new ItemAsset { id = SpotlightId, itemName = "Spotlight", size_x = 2, size_y = 2 });
+            Assets.add(new ItemAsset { id = SwitchId, itemName = "Power Switch", size_x = 1, size_y = 1 });
             Assets.add(new ItemAsset { id = ScrapId, itemName = "Metal Scrap", size_x = 1, size_y = 1 });
             Assets.add(new ItemAsset { id = BeansId, itemName = "Canned Beans", size_x = 1, size_y = 1, type = EItemType.FOOD, useHealth = 10, useFood = 55 });
             Assets.add(new ItemAsset { id = RifleId, itemName = "Eaglefire", size_x = 4, size_y = 2, type = EItemType.GUN });
@@ -157,6 +159,18 @@ namespace UnturnedNet.Tests
                 {
                     new DeployablePortSpec { Kind = (byte)PowerPortKind.Consumer, Watts = 250f },
                     new DeployablePortSpec { Kind = (byte)PowerPortKind.Passthrough, Watts = 0f },
+                },
+            });
+            // The Power Switch (DeployableDef.Switch, id 9105): a 0 W Consumer relay IN and a Passthrough OUT
+            // that the toggle GATES. Fuel-less on purpose -- which is exactly what used to make the server
+            // treat it as un-toggleable and permanently conducting.
+            schema.Register(new DeployableNetDef
+            {
+                DefId = SwitchId, Health = 200f, FuelCapacity = 0f, IsSwitch = true, Range = 4f,
+                Ports = new[]
+                {
+                    new DeployablePortSpec { Kind = (byte)PowerPortKind.Consumer, Watts = 0f },      // IN relay
+                    new DeployablePortSpec { Kind = (byte)PowerPortKind.Passthrough, Watts = 0f },   // OUT, gated by the toggle
                 },
             });
             // A3: the grid-power mains SOURCE -- a server-placed fixture with one 10kW Output port. FixtureKind.
