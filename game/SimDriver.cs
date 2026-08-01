@@ -13,6 +13,15 @@ namespace UnturnedGodot
         public long Tick => Sim.Clock.Tick;
         public double SimTime => Sim.Clock.SimTime;
 
+        // Anything deriving world state from "how long has it been" must derive it from the SIM tick, not
+        // from a process's own wall clock, or two machines disagree about it while nothing looks broken.
+        // WindField was doing the latter (Time.GetTicksMsec()), so a server and its clients sampled
+        // different wind at the same tick and the turbine's output cap silently diverged in MP.
+        // A joined CLIENT overrides this with the applied SERVER tick (WorldClockView) -- its own sim clock
+        // is not the server's.
+        public override void _Ready() => WindField.UseTickClock(() => Tick);
+        public override void _ExitTree() => WindField.UseLocalClock();
+
         public override void _PhysicsProcess(double delta)
         {
             Sim.Frame(delta);

@@ -342,6 +342,49 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // DUPLICATE_AUDIT 2.1 (wind half). WindField.SampleWind drifted the noise map by Time.GetTicksMsec() --
+    // each PROCESS's own wall clock since ITS launch. The noise map itself is identical everywhere (fixed
+    // seed + frequency), so wind agreed across machines exactly when that offset agreed, which it never did:
+    // a server and its clients sampled different wind at the same tick. Nothing surfaced it, because the
+    // wind value is never replicated or hashed -- it just quietly fed the turbine's output cap.
+    //
+    // The offset now comes from the SIM TICK, which both sides already agree on (the server owns it; a
+    // joined client reads LastAppliedServerTick off the applied snapshot -- the same derivation the day/night
+    // clock uses). No wire field and no protocol bump: it is a pure function of a tick that is already there.
+    public class PowerWindIsTickDeterministic : GameTest
+    {
+        public override string Name => "power.wind_is_tick_deterministic";
+        public override IEnumerable<Step> Run()
+        {
+            WindField.TestWind = null;                       // live noise, not the L1 override
+            var pos = new Vector3(120f, 0f, -80f);
+
+            // 1. the mechanism: drift is tick * FixedDelta, not "seconds since this process booted".
+            //    A wall-clock offset would be elapsed-ms/1000 here, nowhere near 20.0.
+            WindField.UseTickClock(() => 1000L);
+            double drift = WindField.DriftSeconds;
+            T.Check($"drift derives from the tick (got {drift:0.000}, want 20.000)",
+                    System.Math.Abs(drift - 1000L * SDG.Unturned.SimClock.FixedDelta) < 1e-6);
+
+            // 2. the property that matters: same tick -> same wind, however much real time passes between
+            //    the two samples. This is what makes two machines agree.
+            float a = WindField.SampleWind(pos);
+            yield return Ticks(30);
+            float b = WindField.SampleWind(pos);
+            T.Check($"same tick -> same wind across frames (a={a:0.0000} b={b:0.0000})",
+                    Mathf.Abs(a - b) < 1e-6f);
+
+            // 3. and it is not merely frozen -- a DIFFERENT tick must move it, or a SampleWind stuck at a
+            //    constant would sail through check 2.
+            WindField.UseTickClock(() => 60000L);
+            float c = WindField.SampleWind(pos);
+            T.Check($"a different tick gives different wind (a={a:0.0000} c={c:0.0000})",
+                    Mathf.Abs(a - c) > 1e-4f);
+
+            WindField.UseLocalClock();                       // restore for anything after us
+        }
+    }
+
     // DUPLICATE_AUDIT 2.17. Deployable.DisconnectWires called QueueFree() WITHOUT RemoveFromGroup("wires"),
     // while all three fluid copies of the same teardown do both -- and PlayerController.cs:1016 spells out
     // why ("drop the group THIS frame so power + PortWired update immediately").

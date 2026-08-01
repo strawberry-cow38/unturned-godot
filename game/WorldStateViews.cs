@@ -22,6 +22,13 @@ namespace UnturnedGodot
 
         const float DriftEpsilon = 0.001f;   // ~0.3 s of a 300 s day -- the WorldClockNetSync threshold
 
+        // Wind drifts off the SERVER's tick on a joined client, for the same reason the sky does: the noise
+        // map is identical everywhere, so wind agrees exactly when the drift offset agrees. This overrides
+        // SimDriver's default (the client's OWN sim tick, which is not the server's). Nothing goes on the
+        // wire for it -- LastAppliedServerTick is already there.
+        public override void _Ready() => WindField.UseTickClock(() => Client?.Applier?.LastAppliedServerTick ?? 0L);
+        public override void _ExitTree() => WindField.UseLocalClock();
+
         // Re-anchor on the PHYSICS tick, not _Process: the derived time changes with the applied snapshot
         // tick (a physics-tick quantity), and adopting here runs in lock-step with replication + the L1
         // harness's Ticks() advance -- an idle-frame _Process is decoupled from physics in headless, so the

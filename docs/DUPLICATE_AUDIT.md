@@ -50,7 +50,7 @@ meant to agree and no longer do.
 
 | # | Divergence | Detail | Status |
 |---|---|---|---|
-| 2.1 | **Power `PowerScale` is SP-only** | `PowerNet.cs:50` scales output ports by `d.PowerScale`; `DeployableReplication.cs:522` does not scale at all. A generator mid-spin-up produces full 4000 W server-side and `4000 × _powerLevel` in SP; a wind turbine produces a flat 2500 W server-side vs `2500 × _windFactor` (0..2) in SP | **BLOCKED** — needs a decision, see note below |
+| 2.1 | **Power `PowerScale` is SP-only** | `PowerNet.cs:50` scales output ports by `d.PowerScale`; `DeployableReplication.cs:522` does not scale at all. A generator mid-spin-up produces full 4000 W server-side and `4000 × _powerLevel` in SP; a wind turbine produces a flat 2500 W server-side vs `2500 × _windFactor` (0..2) in SP | **FIXED (wind half)** — drift derives from the sim tick; ramp half still open |
 | 2.2 | **A Power Switch toggled OFF still conducts server-side** | `PowerNet.cs:45` passes `Conducting = d.PowerConducting`; `DeployableReplication.cs:520` leaves it at its `true` default. Everything downstream of an off switch reads powered in MP and dark in SP. `DeployableEntity.ToggledOn` exists and would carry it — nothing maps it | **FIXED** — `Conducting = !def.IsSwitch \|\| e.ToggledOn` in `Solve()` |
 | 2.3 | **A Power Switch can never be toggled through the server** | `Deployable.CanTogglePower:52` has an `IsSwitch` branch; `DeployableReplication.CanToggle:394` requires `FuelCapacity > 0`, which a switch (`Fuel = 0`) never has | **FIXED** — `CanToggle` accepts `def.IsSwitch` |
 | 2.4 | **Battery + wind turbine "producing" is fuel-generator logic only** | `Deployable.IsPowered:53` is a 3-way family rule (battery on `Energy`, turbine on `_windFactor`); `DeployableEntity.Producing:295` is `ToggledOn && !OnFire && (FuelCapacity <= 0 \|\| Fuel > 0)`. Battery `Fuel = 0` ⇒ produces whenever toggled; its whole charge/discharge economy is SP-only | OPEN |
@@ -177,3 +177,15 @@ So there are two coherent designs and they are not equivalent:
 
 Option 2 is smaller and matches the existing precedent; option 1 preserves the feature. Either
 way it is a call for the people who own the feel, not a mechanical dedup.
+
+## Found while fixing 2.1: `power.wind_turbine` is order-dependent
+
+`./test.sh --l1 --only 'power.wind_turbine'` **fails**; the same test inside
+`--only 'power.*'` **passes**. Reproduced with the wind changes stashed, so it predates
+them — it depends on state some earlier power test leaves behind, and the check that
+fails is `wind 0.6 at sea level -> ~0.6 factor, producing`.
+
+Not fixed here (it is not a duplicate and not what this branch is about) but worth its own
+pass: a test that only passes with company is a test that is not really asserting what it
+says. `PowerNet.ResetForTests()` forcing `_globalPower = false` while the production default
+is `true` (noted in 3.18's neighbourhood) is the first place to look.
