@@ -31,9 +31,9 @@ namespace UnturnedGodot
         // "clothing slots show above the storage slots they provide" is literally this loop:
         //     header.PositionOffset_Y = y;  items.PositionOffset_Y = y + 70;  y += gridHeight + 80;
         // Bare clothing (hat/mask/glasses) has no grid and advances only 70.
-        const int HDRH = 60;         // headers[i].SizeOffset_Y = 60
-        const int HDRGAP = 70;       // grid sits 70px below its own header
-        const int PAGEADV = 80;      // advance = gridHeight + 80 (=> 10px between grid bottom and next header)
+        const int HDRH = 76;         // headers[i].SizeOffset_Y = 60
+        const int HDRGAP = 86;       // grid sits 70px below its own header
+        const int PAGEADV = 96;      // advance = gridHeight + 80 (=> 10px between grid bottom and next header)
         const int GRIDPAD = 30;      // SleekItems.SizeOffset_Y = rows*50 + 30
         const int BOXX = 530;        // box.PositionOffset_X = 430 (410 char panel + margins)
         const int BOXINSET = 540;    // box.SizeOffset_X = -440
@@ -961,7 +961,7 @@ namespace UnturnedGodot
                                     HorizontalAlignment = HorizontalAlignment.Center,
                                     VerticalAlignment = VerticalAlignment.Center };
                 t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.78f, 0.82f, 0.88f));
-                t.AddThemeFontSizeOverride("font_size", 15);
+                t.AddThemeFontSizeOverride("font_size", 19);
                 _dash.AddChild(t);
                 tx2 += tabW;
 
@@ -1534,7 +1534,7 @@ namespace UnturnedGodot
                                    VerticalAlignment = VerticalAlignment.Center,
                                    MouseFilter = Control.MouseFilterEnum.Ignore };
             name.AddThemeColorOverride("font_color", new Color(0.88f, 0.88f, 0.91f));
-            name.AddThemeFontSizeOverride("font_size", 15);
+            name.AddThemeFontSizeOverride("font_size", 18);
             bar.AddChild(name);
 
             if (worn != null)
@@ -1544,7 +1544,7 @@ namespace UnturnedGodot
                                       VerticalAlignment = VerticalAlignment.Center,
                                       MouseFilter = Control.MouseFilterEnum.Ignore };
                 pct.AddThemeColorOverride("font_color", new Color(0.95f, 0.72f, 0.25f));
-                pct.AddThemeFontSizeOverride("font_size", 13);
+                pct.AddThemeFontSizeOverride("font_size", 17);
                 bar.AddChild(pct);
             }
             return bar;
