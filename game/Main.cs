@@ -54,7 +54,7 @@ namespace UnturnedGodot
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
-        bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimOpenAt, _doorAnimCloseAt, _doorAnimDoneAt; bool _doorAnimOpened, _doorAnimClosed;   // --doortest UG_DOOR_ANIM=1: real-time closed->open->closed cycle for a --write-movie capture
+        bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimToggle1At, _doorAnimToggle2At, _doorAnimDoneAt; bool _doorAnimToggle1Done, _doorAnimToggle2Done;   // --doortest UG_DOOR_ANIM=1: real-time DEFAULT->away->DEFAULT cycle for a --write-movie capture
 
         public override void _Ready()
         {
@@ -1332,9 +1332,10 @@ namespace UnturnedGodot
             // jumps straight to the END of the clip literally named "Close" -- for Fridge_0 that IS the
             // opening motion (its clip names are inverted vs geometry), so a fresh fridge is OPEN in retail.
             // doorCfg.DefaultOpen carries that per-prop (see WorldBuilder.LoadDoorCatalog / extract_doors.py).
-            // UG_DOOR_OPEN, if EXPLICITLY set (0 or 1), overrides the catalog default for testing; UG_DOOR_ANIM
-            // always starts closed regardless (it wants to demonstrate the full swing from scratch).
-            bool startOpen = doorAnim ? false : (doorOpenEnv != null ? doorOpenEnv == "1" : doorCfg.DefaultOpen);
+            // UG_DOOR_OPEN, if EXPLICITLY set (0 or 1), overrides the catalog default for testing.
+            // UG_DOOR_ANIM always spawns at the catalog default (ignores UG_DOOR_OPEN) -- it wants the movie
+            // to open on the real default rotation, then demonstrate both transitions from there.
+            bool startOpen = (!doorAnim && doorOpenEnv != null) ? (doorOpenEnv == "1") : doorCfg.DefaultOpen;
             var openCurve = WorldBuilder.LoadDoorCurve(dir, name, "open");
             var closeCurve = WorldBuilder.LoadDoorCurve(dir, name, "close");
             var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen, openCurve: openCurve, closeCurve: closeCurve);
@@ -1342,19 +1343,22 @@ namespace UnturnedGodot
 
             if (doorAnim)
             {
-                // Real (not fast-forwarded) closed -> open -> closed cycle, driven by REAL elapsed time in
-                // _Process (see the UG_DOOR_ANIM block there) -- wait 0.4s closed, Toggle open (plays the
-                // retail Open curve including its ~1.8% overshoot), hold open 0.5s past the full swing,
-                // Toggle closed (plays the retail Close curve including its undershoot), then a short
-                // trailing hold before quitting -- so a --write-movie capture shows the actual eased swing
-                // played out at real speed, not a static frame or a fast-forwarded jump.
-                const float WaitClosed = 0.4f, HoldOpen = 0.5f, TrailHold = 0.4f;
+                // Real (not fast-forwarded) DEFAULT -> away -> DEFAULT cycle, driven by REAL elapsed time in
+                // _Process (see the UG_DOOR_ANIM block there). Spawns SNAPPED at the catalog default (startOpen,
+                // above) rather than forcing closed, so the movie opens on the real default rotation. Hold
+                // ~0.5s, Toggle AWAY from default (animates through whichever curve that is), hold ~0.5s past
+                // settle, Toggle BACK to default (the other curve), hold ~0.4s past settle, then quit. Toggle()
+                // is state-relative, so this sequence is correct regardless of which state the catalog default
+                // actually is -- not hardcoded to "closed-then-open".
+                const float HoldDefault = 0.5f, HoldAway = 0.5f, TrailHold = 0.4f;
                 _doorAnimDoor = door;
-                _doorAnimOpenAt = WaitClosed;
-                _doorAnimCloseAt = _doorAnimOpenAt + doorCfg.DurationSec + HoldOpen;
-                _doorAnimDoneAt = _doorAnimCloseAt + doorCfg.DurationSec + TrailHold;
+                _doorAnimToggle1At = HoldDefault;
+                _doorAnimToggle2At = _doorAnimToggle1At + doorCfg.DurationSec + HoldAway;
+                _doorAnimDoneAt = _doorAnimToggle2At + doorCfg.DurationSec + TrailHold;
                 _doorAnim = true;
-                GD.Print($"[DOORANIM] timeline (s): closed 0.000-{_doorAnimOpenAt:0.000}, OPEN toggle @{_doorAnimOpenAt:0.000}, swing settles ~{_doorAnimOpenAt + doorCfg.DurationSec:0.000}, holds open to {_doorAnimCloseAt:0.000}, CLOSE toggle @{_doorAnimCloseAt:0.000}, swing settles ~{_doorAnimCloseAt + doorCfg.DurationSec:0.000}, quits @{_doorAnimDoneAt:0.000}");
+                string awayWord = startOpen ? "CLOSE" : "OPEN";
+                string backWord = startOpen ? "OPEN" : "CLOSE";
+                GD.Print($"[DOORANIM] default={(startOpen ? "OPEN" : "CLOSED")}; timeline (s): hold default 0.000-{_doorAnimToggle1At:0.000}, {awayWord} toggle @{_doorAnimToggle1At:0.000}, settles ~{_doorAnimToggle1At + doorCfg.DurationSec:0.000}, holds to {_doorAnimToggle2At:0.000}, {backWord} toggle @{_doorAnimToggle2At:0.000}, settles ~{_doorAnimToggle2At + doorCfg.DurationSec:0.000}, quits @{_doorAnimDoneAt:0.000}");
             }
 
 
@@ -4044,20 +4048,20 @@ namespace UnturnedGodot
             // FIRST, because several capture modes below own the frame and return before the main
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
             if (_shotRequested != null && ShotWatchdogTripped()) return;
-            if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real closed->open->closed cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing (see BuildDoorTest for the timeline setup)
+            if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real DEFAULT->away->DEFAULT cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing from the real default state (see BuildDoorTest for the timeline setup)
             {
                 _doorAnimElapsed += delta;
-                if (!_doorAnimOpened && _doorAnimElapsed >= _doorAnimOpenAt)
+                if (!_doorAnimToggle1Done && _doorAnimElapsed >= _doorAnimToggle1At)
                 {
-                    _doorAnimDoor.Toggle(); _doorAnimOpened = true;
-                    GD.Print($"[DOORANIM] OPEN toggle fired at t={_doorAnimElapsed:0.000}s");
+                    _doorAnimDoor.Toggle(); _doorAnimToggle1Done = true;
+                    GD.Print($"[DOORANIM] toggle 1 (away from default) fired at t={_doorAnimElapsed:0.000}s");
                 }
-                else if (_doorAnimOpened && !_doorAnimClosed && _doorAnimElapsed >= _doorAnimCloseAt)
+                else if (_doorAnimToggle1Done && !_doorAnimToggle2Done && _doorAnimElapsed >= _doorAnimToggle2At)
                 {
-                    _doorAnimDoor.Toggle(); _doorAnimClosed = true;
-                    GD.Print($"[DOORANIM] CLOSE toggle fired at t={_doorAnimElapsed:0.000}s");
+                    _doorAnimDoor.Toggle(); _doorAnimToggle2Done = true;
+                    GD.Print($"[DOORANIM] toggle 2 (back to default) fired at t={_doorAnimElapsed:0.000}s");
                 }
-                else if (_doorAnimClosed && _doorAnimElapsed >= _doorAnimDoneAt)
+                else if (_doorAnimToggle2Done && _doorAnimElapsed >= _doorAnimDoneAt)
                 {
                     GD.Print($"[DOORANIM] sequence done at t={_doorAnimElapsed:0.000}s -- quitting");
                     GetTree().Quit();
