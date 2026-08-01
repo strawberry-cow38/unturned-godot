@@ -149,8 +149,8 @@ namespace UnturnedGodot.Net
             var input = new MoveInput
             {
                 Seq = seq,
-                MoveX = NetQuantization.QuantizeSignedNormalizedFloat(Clamp1(moveX), 8),
-                MoveY = NetQuantization.QuantizeSignedNormalizedFloat(Clamp1(moveY), 8),
+                MoveX = NetQuantization.QuantizeSignedNormalizedFloat(Mathf.Clamp(moveX, -1f, 1f), 8),
+                MoveY = NetQuantization.QuantizeSignedNormalizedFloat(Mathf.Clamp(moveY, -1f, 1f), 8),
                 YawDegrees = NetQuantization.QuantizeDegrees(yawDegrees, NetQuantization.YawBits),
             };
             Pos = PlayerReplication.IntegrateFlat(Sim, in input, Pos, dt);
@@ -187,7 +187,5 @@ namespace UnturnedGodot.Net
                 Reconciler.NoteCorrectionApplied(Pos - before);
             }
         }
-
-        static float Clamp1(float v) => v < -1f ? -1f : (v > 1f ? 1f : v);
     }
 }

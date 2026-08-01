@@ -1708,7 +1708,7 @@ namespace UnturnedGodot
             if (on || _outlineMeshes == null)   // (re)collect on FOCUS -- a settled wreck dropped its wheels, so a stale cached list would hold FREED refs
             {
                 _outlineMeshes = new System.Collections.Generic.List<MeshInstance3D>();
-                CollectMeshes(this, _outlineMeshes);
+                NodeGeometry.CollectMeshes(this, _outlineMeshes);
             }
             foreach (var mi in _outlineMeshes)
                 if (IsInstanceValid(mi))   // guard freed husk meshes -- else the loop threw + aborted, leaving later meshes stuck ON the layer (outline "never reset", master)
@@ -1717,14 +1717,6 @@ namespace UnturnedGodot
             _info?.SetActive(on);
         }
 
-        static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)
-        {
-            foreach (var c in n.GetChildren())
-            {
-                if (c is MeshInstance3D mi) list.Add(mi);   // ALL meshes incl. seats + steering wheel -> they're part of the one combined silhouette outline now (master)
-                CollectMeshes(c, list);
-            }
-        }
 
         // Union of every mesh's AABB (incl. seats/steering) in WORLD space -> the look-at can focus the whole visual
         // bounds, so looking at a seat/wheel through a window still selects the car even though they have no collider (master).
@@ -1734,7 +1726,7 @@ namespace UnturnedGodot
             if (!_localAabbCached)   // the mesh set is fixed after build -> compute the VEHICLE-LOCAL union ONCE (walking the tree every frame was the look-at perf regression)
             {
                 var list = new System.Collections.Generic.List<MeshInstance3D>();
-                CollectMeshes(this, list);
+                NodeGeometry.CollectMeshes(this, list);
                 var inv = GlobalTransform.AffineInverse();
                 Aabb acc = default; bool any = false;
                 foreach (var mi in list)

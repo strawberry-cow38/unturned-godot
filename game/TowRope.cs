@@ -51,17 +51,10 @@ namespace UnturnedGodot
                 if (len < 1e-4f) { _segs[i].Visible = false; continue; }
                 _segs[i].Visible = true;
                 // rotate the cylinder's local +Y along the segment, THEN stretch its local Y to the length (see Wire.cs).
-                _segs[i].GlobalTransform = new Transform3D(RotateYTo(dir / len) * Basis.FromScale(new Vector3(1f, len, 1f)), (p0 + p1) * 0.5f);
+                _segs[i].GlobalTransform = new Transform3D(NodeGeometry.RotateYTo(dir / len) * Basis.FromScale(new Vector3(1f, len, 1f)), (p0 + p1) * 0.5f);
             }
         }
 
         // orthonormal rotation mapping the mesh's +Y axis onto the unit direction u (axis-angle) -- copy of Wire.RotateYTo
-        static Basis RotateYTo(Vector3 u)
-        {
-            float d = Vector3.Up.Dot(u);
-            if (d > 0.9999f) return Basis.Identity;
-            if (d < -0.9999f) return new Basis(Vector3.Right, Mathf.Pi);
-            return new Basis(Vector3.Up.Cross(u).Normalized(), Mathf.Acos(Mathf.Clamp(d, -1f, 1f)));
-        }
     }
 }

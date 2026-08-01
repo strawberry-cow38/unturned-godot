@@ -1072,7 +1072,7 @@ namespace UnturnedGodot
             return hit.Count > 0 ? (Vector3)hit["position"] : from + fwd * WirePlaceReach;
         }
 
-        static float PolyLen(System.Collections.Generic.List<Vector3> pts) { float s = 0f; for (int i = 0; i + 1 < pts.Count; i++) s += pts[i].DistanceTo(pts[i + 1]); return s; }
+        static float PolyLen(System.Collections.Generic.List<Vector3> pts) => NodeGeometry.PolylineLength(pts);
 
         void WireHudSet(string text)
         {

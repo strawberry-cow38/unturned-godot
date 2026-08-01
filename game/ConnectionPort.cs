@@ -139,7 +139,7 @@ namespace UnturnedGodot
             // two crossed quads sharing the flow axis (grass "X"): the flat arrow reads from any viewing angle. The quad
             // texture points +Y in quad-local; RotateYTo aims that +Y along `flow`. Double-sided (material CullMode off).
             const float W = 0.17f, L = 0.24f;
-            var root = new Node3D { Position = basePos + outDir * 0.20f, Basis = RotateYTo(flow) };
+            var root = new Node3D { Position = basePos + outDir * 0.20f, Basis = NodeGeometry.RotateYTo(flow) };
             root.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(W, L) }, MaterialOverride = mat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
             root.AddChild(new MeshInstance3D { Mesh = new QuadMesh { Size = new Vector2(W, L) }, MaterialOverride = mat, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Basis = new Basis(Vector3.Up, Mathf.Pi / 2f) });
             return root;
@@ -158,13 +158,6 @@ namespace UnturnedGodot
         }
 
         // rotation mapping the cone's +Y (apex) onto unit direction u (axis-angle)
-        static Basis RotateYTo(Vector3 u)
-        {
-            float d = Vector3.Up.Dot(u);
-            if (d > 0.9999f) return Basis.Identity;
-            if (d < -0.9999f) return new Basis(Vector3.Right, Mathf.Pi);
-            return new Basis(Vector3.Up.Cross(u).Normalized(), Mathf.Acos(Mathf.Clamp(d, -1f, 1f)));
-        }
 
         // Info line for the wire-tool look-at HUD -- reflects the LIVE power flowing through this port.
         public string InfoLine() => Kind switch

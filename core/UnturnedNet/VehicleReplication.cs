@@ -293,7 +293,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt16((ushort)removed.Count);
             foreach (uint id in removed) w.WriteUInt32(id);
 
-            PruneTombstones(ctx.ServerTick);
+            ReplicationUtil.PruneTombstones(_removedAtTick, ctx.ServerTick);
         }
 
         public void ReadSnapshot(NetPakReader r, bool full)
@@ -409,22 +409,8 @@ namespace UnturnedGodot.Net
             return true;
         }
 
-        void PruneTombstones(long serverTick)
-        {
-            List<uint> stale = null;
-            foreach (var kv in _removedAtTick)
-                if (serverTick - kv.Value > NetQuantization.DirtyRingDepthTicks)
-                    (stale ??= new List<uint>()).Add(kv.Key);
-            if (stale != null) foreach (uint id in stale) _removedAtTick.Remove(id);
-        }
 
-        List<uint> SortedIds()
-        {
-            var ids = new List<uint>();
-            foreach (var id in _vehicles.Ids) ids.Add(id.Value);
-            ids.Sort();
-            return ids;
-        }
+        List<uint> SortedIds() => ReplicationUtil.SortedIds(_vehicles);
     }
 
     // ---------------------------------------------------------------------------------------------------
@@ -444,8 +430,8 @@ namespace UnturnedGodot.Net
         {
             w.WriteUInt16(Seq);
             w.WriteUInt32(NetId);
-            w.WriteSignedNormalizedFloat(Clamp1(Throttle), 8);
-            w.WriteSignedNormalizedFloat(Clamp1(Steer), 8);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(Throttle, -1f, 1f), 8);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(Steer, -1f, 1f), 8);
             w.WriteBit(Handbrake);
         }
 
@@ -460,8 +446,6 @@ namespace UnturnedGodot.Net
             cmd = new DriveInputCommand { Seq = seq, NetId = netId, Throttle = throttle, Steer = steer, Handbrake = handbrake };
             return true;
         }
-
-        static float Clamp1(float v) => v < -1f ? -1f : (v > 1f ? 1f : v);
     }
 
     /// <summary>
@@ -500,8 +484,8 @@ namespace UnturnedGodot.Net
             NetWire.WriteVel(w, LinVel);
             NetWire.WriteVel(w, AngVel);
             w.WriteDegrees(SteerDegrees, VehicleReplication.SteerBits);
-            w.WriteSignedNormalizedFloat(Clamp1(Throttle), 8);
-            w.WriteSignedNormalizedFloat(Clamp1(Steer), 8);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(Throttle, -1f, 1f), 8);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(Steer, -1f, 1f), 8);
             w.WriteBit(Handbrake);
             w.WriteUInt8(Flags);
         }
@@ -532,8 +516,6 @@ namespace UnturnedGodot.Net
             };
             return true;
         }
-
-        static float Clamp1(float v) => v < -1f ? -1f : (v > 1f ? 1f : v);
     }
 
     /// <summary>

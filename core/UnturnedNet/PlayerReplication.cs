@@ -177,8 +177,8 @@ namespace UnturnedGodot.Net
         public void Write(NetPakWriter w)
         {
             w.WriteUInt16(Seq);
-            w.WriteSignedNormalizedFloat(Clamp1(MoveX), 8);
-            w.WriteSignedNormalizedFloat(Clamp1(MoveY), 8);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(MoveX, -1f, 1f), 8);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(MoveY, -1f, 1f), 8);
             w.WriteDegrees(YawDegrees, NetQuantization.YawBits);
             w.WriteUInt8(Buttons);   // v2 (NetProtocol.Version 3): the buttons byte -- v2 peers version-reject before ever parsing this
         }
@@ -194,8 +194,6 @@ namespace UnturnedGodot.Net
             cmd = new MoveInput { Seq = seq, MoveX = mx, MoveY = my, YawDegrees = yaw, Buttons = buttons };
             return true;
         }
-
-        static float Clamp1(float v) => v < -1f ? -1f : (v > 1f ? 1f : v);
     }
 
     /// <summary>
@@ -495,7 +493,7 @@ namespace UnturnedGodot.Net
             foreach (uint id in removed) w.WriteUInt32(id);
 
             // prune tombstones older than the dirty ring: any client that stale gets a full snapshot anyway
-            PruneTombstones(ctx.ServerTick);
+            ReplicationUtil.PruneTombstones(_removedAtTick, ctx.ServerTick);
         }
 
         public void ReadSnapshot(NetPakReader r, bool full)
@@ -577,21 +575,7 @@ namespace UnturnedGodot.Net
             return true;
         }
 
-        void PruneTombstones(long serverTick)
-        {
-            List<uint> stale = null;
-            foreach (var kv in _removedAtTick)
-                if (serverTick - kv.Value > NetQuantization.DirtyRingDepthTicks)
-                    (stale ??= new List<uint>()).Add(kv.Key);
-            if (stale != null) foreach (uint id in stale) _removedAtTick.Remove(id);
-        }
 
-        List<uint> SortedIds()
-        {
-            var ids = new List<uint>();
-            foreach (var id in _players.Ids) ids.Add(id.Value);
-            ids.Sort();
-            return ids;
-        }
+        List<uint> SortedIds() => ReplicationUtil.SortedIds(_players);
     }
 }

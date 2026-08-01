@@ -357,9 +357,9 @@ namespace UnturnedGodot.Net
 
         public static void WriteDir(NetPakWriter w, Vector3 d)
         {
-            w.WriteSignedNormalizedFloat(Clamp1(d.x), DirBits);
-            w.WriteSignedNormalizedFloat(Clamp1(d.y), DirBits);
-            w.WriteSignedNormalizedFloat(Clamp1(d.z), DirBits);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(d.x, -1f, 1f), DirBits);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(d.y, -1f, 1f), DirBits);
+            w.WriteSignedNormalizedFloat(Mathf.Clamp(d.z, -1f, 1f), DirBits);
         }
 
         public static bool ReadDir(NetPakReader r, out Vector3 d)
@@ -374,7 +374,7 @@ namespace UnturnedGodot.Net
 
         public static void WriteVel(NetPakWriter w, Vector3 v)
         {
-            w.WriteClampedFloat(v.x, 6, 6);   // ±64 m/s, 1/64 m/s grain -- plenty for a thrown grenade
+            w.WriteClampedFloat(v.x, 6, 6);   // 6 int bits => ±32 m/s (NOT ±64), 1/64 m/s grain
             w.WriteClampedFloat(v.y, 6, 6);
             w.WriteClampedFloat(v.z, 6, 6);
         }
@@ -391,8 +391,6 @@ namespace UnturnedGodot.Net
 
         public static void WriteDamage(NetPakWriter w, float damage) => w.WriteClampedFloat(damage, 9, 4);   // ±512, 1/16 grain
         public static bool ReadDamage(NetPakReader r, out float damage) => r.ReadClampedFloat(9, 4, out damage);
-
-        static float Clamp1(float v) => v < -1f ? -1f : (v > 1f ? 1f : v);
     }
 
     // ---------------------------------------------------------------------------------------------------
@@ -492,7 +490,7 @@ namespace UnturnedGodot.Net
             w.WriteUInt16((ushort)removed.Count);
             foreach (ushort id in removed) w.WriteUInt16(id);
 
-            PruneTombstones(ctx.ServerTick);
+            ReplicationUtil.PruneTombstones(_removedAtTick, ctx.ServerTick);
         }
 
         public void ReadSnapshot(NetPakReader r, bool full)
@@ -562,20 +560,7 @@ namespace UnturnedGodot.Net
             return true;
         }
 
-        void PruneTombstones(long serverTick)
-        {
-            List<ushort> stale = null;
-            foreach (var kv in _removedAtTick)
-                if (serverTick - kv.Value > NetQuantization.DirtyRingDepthTicks)
-                    (stale ??= new List<ushort>()).Add(kv.Key);
-            if (stale != null) foreach (ushort id in stale) _removedAtTick.Remove(id);
-        }
 
-        List<ushort> SortedOwners()
-        {
-            var ids = new List<ushort>(_byOwner.Keys);
-            ids.Sort();
-            return ids;
-        }
+        List<ushort> SortedOwners() => ReplicationUtil.SortedKeys(_byOwner);
     }
 }

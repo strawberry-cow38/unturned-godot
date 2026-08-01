@@ -43,24 +43,12 @@ namespace UnturnedGodot
                 _segs[i].Visible = true;
                 // rotate the cylinder's local +Y to point along the segment, THEN stretch its local Y to the length.
                 // `rot * FromScale` scales in the cylinder's OWN frame (Basis.Scaled would scale in world axes -> wrong).
-                _segs[i].GlobalTransform = new Transform3D(RotateYTo(dir / len) * Basis.FromScale(new Vector3(1f, len, 1f)), (a + b) * 0.5f);
+                _segs[i].GlobalTransform = new Transform3D(NodeGeometry.RotateYTo(dir / len) * Basis.FromScale(new Vector3(1f, len, 1f)), (a + b) * 0.5f);
             }
         }
 
-        public float TotalLength()
-        {
-            float s = 0f;
-            for (int i = 0; i + 1 < Points.Count; i++) s += Points[i].DistanceTo(Points[i + 1]);
-            return s;
-        }
+        public float TotalLength() => NodeGeometry.PolylineLength(Points);
 
         // orthonormal rotation mapping the mesh's +Y axis onto the unit direction `u` (axis-angle, unambiguous)
-        static Basis RotateYTo(Vector3 u)
-        {
-            float d = Vector3.Up.Dot(u);
-            if (d > 0.9999f) return Basis.Identity;
-            if (d < -0.9999f) return new Basis(Vector3.Right, Mathf.Pi);
-            return new Basis(Vector3.Up.Cross(u).Normalized(), Mathf.Acos(Mathf.Clamp(d, -1f, 1f)));
-        }
     }
 }

@@ -700,20 +700,9 @@ namespace UnturnedGodot.Net
         }
 
         static void PruneTombstones(Dictionary<uint, long> tombstones, long serverTick)
-        {
-            List<uint> stale = null;
-            foreach (var kv in tombstones)
-                if (serverTick - kv.Value > NetQuantization.DirtyRingDepthTicks)
-                    (stale ??= new List<uint>()).Add(kv.Key);
-            if (stale != null) foreach (uint id in stale) tombstones.Remove(id);
-        }
+            => ReplicationUtil.PruneTombstones(tombstones, serverTick);
 
         static List<uint> SortedIds<T>(NetEntityRegistry<T> registry)
-        {
-            var ids = new List<uint>();
-            foreach (var id in registry.Ids) ids.Add(id.Value);
-            ids.Sort();
-            return ids;
-        }
+            => ReplicationUtil.SortedIds(registry);
     }
 }

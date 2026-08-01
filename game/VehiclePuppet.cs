@@ -98,7 +98,7 @@ namespace UnturnedGodot
             if (on || _outlineMeshes == null)   // (re)collect on FOCUS so newly-dressed wheel meshes are covered
             {
                 _outlineMeshes = new System.Collections.Generic.List<MeshInstance3D>();
-                CollectMeshes(this, _outlineMeshes);
+                NodeGeometry.CollectMeshes(this, _outlineMeshes);
             }
             foreach (var mi in _outlineMeshes)
                 if (IsInstanceValid(mi))
@@ -107,14 +107,6 @@ namespace UnturnedGodot
             if (_nameLabel != null && IsInstanceValid(_nameLabel)) _nameLabel.Visible = on;
         }
 
-        static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)
-        {
-            foreach (var c in n.GetChildren())
-            {
-                if (c is MeshInstance3D mi) list.Add(mi);   // body + wheels -> one combined silhouette
-                CollectMeshes(c, list);
-            }
-        }
 
         // C6 ride mode (PEI_CLIENT_PLAN §3 C6): the puppet is the shell's ENTER TARGET and drive-cam anchor.
         public uint NetId;                    // the replicated vehicle entity id (set by VehicleReplicaView at spawn) -- what SendEnterVehicle takes

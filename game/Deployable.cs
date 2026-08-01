@@ -239,14 +239,6 @@ namespace UnturnedGodot
             return d;
         }
 
-        static void CollectMeshes(Node n, System.Collections.Generic.List<MeshInstance3D> list)
-        {
-            foreach (var c in n.GetChildren())
-            {
-                if (c is MeshInstance3D mi) list.Add(mi);
-                CollectMeshes(c, list);
-            }
-        }
 
         // Look-at focus (same system as vehicles/items): put the mesh silhouette on OutlineLayer so the
         // OutlineOverlay draws a rim, and show/hide the info billboard.
@@ -257,7 +249,7 @@ namespace UnturnedGodot
             if (_outlineMeshes == null)
             {
                 _outlineMeshes = new System.Collections.Generic.List<MeshInstance3D>();
-                CollectMeshes(this, _outlineMeshes);
+                NodeGeometry.CollectMeshes(this, _outlineMeshes);
             }
             foreach (var mi in _outlineMeshes)
                 if (IsInstanceValid(mi))
