@@ -47,7 +47,7 @@ namespace UnturnedGodot
         const int MARGIN = 12;       // screen-edge margin
         const int CHARW = 510;       // character panel width (source characterBox SizeOffset_X = 410)
         const int GUTTER = 20;       // gap between the character panel and the storage box
-        const int PDTOP = 58;        // paperdoll y inside the character panel (below the name/faction badge)
+        const int PDTOP = 88;        // paperdoll y inside the character panel (below the name/faction badge)
         const int PDW = CHARW - 40;  // paperdoll fills the panel width (370)
         const int PDH = 440;         // paperdoll display height (portrait, fills the upper panel)
         const int COSMH = 44;        // reserved strip under the paperdoll: rotation slider + cosmetic-swap buttons
@@ -941,14 +941,14 @@ namespace UnturnedGodot
             StyleBox(nav, UI_NAV);
             _dash.AddChild(nav);
             // Retail's navbar is four WIDE TAB BUTTONS spanning the bar with their keybind in the label
-            // ("Inventory [G]"), separated by small square icon buttons -- not left-aligned plain text.
+            // ("Inventory [G]"), evenly filling the nav bar -- not left-aligned plain text.
             (string label, string key)[] tabs =
             {
                 ("Inventory", "G"), ("Craft", "Y"), ("Skills", "U"), ("Information", "M"),
             };
             float vpw = GetViewport().GetVisibleRect().Size.X;
-            const float ICONW = 44f;                                  // the little square buttons between tabs
-            float tabW = (vpw - MARGIN * 2 - ICONW * tabs.Length) / tabs.Length;
+            const float TABGAP = 8f;                                  // slim gap between tabs (square icon buttons removed)
+            float tabW = (vpw - MARGIN * 2 - TABGAP * (tabs.Length - 1)) / tabs.Length;
             float tx2 = MARGIN;
             for (int i = 0; i < tabs.Length; i++)
             {
@@ -963,12 +963,7 @@ namespace UnturnedGodot
                 t.AddThemeColorOverride("font_color", i == 0 ? new Color(1f, 1f, 1f) : new Color(0.78f, 0.82f, 0.88f));
                 t.AddThemeFontSizeOverride("font_size", 32);
                 _dash.AddChild(t);
-                tx2 += tabW;
-
-                var ico = new Panel { Position = new Vector2(tx2 + 4, 8), Size = new Vector2(ICONW - 8, NAVH - 16) };
-                StyleBox(ico, UI_TAB_OFF);
-                _dash.AddChild(ico);
-                tx2 += ICONW;
+                tx2 += tabW + TABGAP;
             }
         }
 
@@ -976,20 +971,20 @@ namespace UnturnedGodot
         // an avatar chip, username (yellow), faction "Neutral [0]" under it, and a yellow + on the right. Themed to match.
         void BuildNameBadge(Panel box)
         {
-            var badge = new Panel { Position = new Vector2(8, 6), Size = new Vector2(CHARW - 16, 46) };
+            var badge = new Panel { Position = new Vector2(8, 6), Size = new Vector2(CHARW - 16, 76) };
             StyleBox(badge, UI_BAR);
             box.AddChild(badge);
-            var av = new Panel { Position = new Vector2(8, 7), Size = new Vector2(32, 32) };
+            var av = new Panel { Position = new Vector2(10, 10), Size = new Vector2(56, 56) };
             StyleBox(av, UI_TAB_OFF);
             badge.AddChild(av);
-            var uname = new Label { Text = "Survivor", Position = new Vector2(50, 4) };
-            uname.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f));   // yellow username
+            var uname = new Label { Text = "Survivor", Position = new Vector2(78, 13) };
+            uname.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f)); uname.AddThemeFontSizeOverride("font_size", 28);   // yellow username
             badge.AddChild(uname);
-            var fac = new Label { Text = "Neutral [0]", Position = new Vector2(50, 23) };
-            fac.AddThemeColorOverride("font_color", new Color(0.72f, 0.77f, 0.83f));
+            var fac = new Label { Text = "Neutral [0]", Position = new Vector2(78, 45) };
+            fac.AddThemeColorOverride("font_color", new Color(0.72f, 0.77f, 0.83f)); fac.AddThemeFontSizeOverride("font_size", 18);
             badge.AddChild(fac);
-            var plus = new Label { Text = "+", Position = new Vector2(CHARW - 44, 12) };
-            plus.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f));
+            var plus = new Label { Text = "+", Position = new Vector2(CHARW - 56, 20) };
+            plus.AddThemeColorOverride("font_color", new Color(1f, 0.84f, 0.22f)); plus.AddThemeFontSizeOverride("font_size", 30);
             badge.AddChild(plus);
         }
 
@@ -1539,11 +1534,11 @@ namespace UnturnedGodot
 
             if (worn != null)
             {
-                var pct = new Label { Text = $"{worn.quality}%", Position = new Vector2(width - 74, 0),
-                                      Size = new Vector2(64, HDRH), HorizontalAlignment = HorizontalAlignment.Right,
+                var pct = new Label { Text = $"{worn.quality}%", Position = new Vector2(width - 116, 0),
+                                      Size = new Vector2(94, HDRH), HorizontalAlignment = HorizontalAlignment.Right,
                                       VerticalAlignment = VerticalAlignment.Center,
                                       MouseFilter = Control.MouseFilterEnum.Ignore };
-                pct.AddThemeColorOverride("font_color", new Color(0.95f, 0.72f, 0.25f));
+                pct.AddThemeColorOverride("font_color", ItemTool.QualityColor(worn.quality / 100f).Lerp(Colors.White, 0.3f));
                 pct.AddThemeFontSizeOverride("font_size", 30);
                 bar.AddChild(pct);
             }
