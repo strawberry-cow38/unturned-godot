@@ -25,6 +25,9 @@ namespace UnturnedGodot
         public bool OnFire => _deadTimer >= 0f || _exploded;   // caught fire at 0 HP (burning toward explosion) or a wreck -> engine is DEAD + unfixable (master)
         VehicleWheel3D[] _wNodes; MeshInstance3D[] _wMeshes;   // wheels: VehicleWheel3D auto-rolls its node (mesh child inherits it), so no manual spin. _wMeshes kept for debris/hide.
         Mesh _wheelMeshRef; Material _wheelMatRef; float _wheelR;   // kept so the wheels can fly off as debris on explode
+        /// <summary>Scrap a blowtorched wreck yields — more than a deployable husk's, on purpose.</summary>
+        public const int WreckSalvageCount = 3;
+
         public static float GlobalMass = 900f;   // all vehicles share one mass (the source does: Rigidbody mass = 2.0 for every vehicle)
         float[] _gears; float _reverseGear, _shiftUpRpm; float _engineRpm = 1000f; int _gear = 1;   // engine RPM + gear sim
         AudioStreamPlayer3D _engineAudio; float _idlePitch = 1f, _maxPitch = 2f, _idleVol = 0.75f, _maxVol = 1f;   // EngineRPMSimple sound
@@ -1809,8 +1812,10 @@ namespace UnturnedGodot
         {
             var parent = GetParent();
             if (parent != null)
-                for (int i = 0; i < 3; i++)   // a wreck yields a few Metal Scrap (item 67)
-                    WorldItem.Spawn(parent, new SDG.Unturned.Item(67), GlobalPosition + new Vector3((i - 1) * 0.6f, 0.5f, 0f));
+                // a wreck yields MORE than a deployable husk -- deliberately its own number, but the scrap
+                // item id is the shared one rather than a third bare 67 (DUPLICATE_AUDIT 2.16)
+                for (int i = 0; i < WreckSalvageCount; i++)
+                    WorldItem.Spawn(parent, new SDG.Unturned.Item(DeployableDef.ScrapItemId), GlobalPosition + new Vector3((i - 1) * 0.6f, 0.5f, 0f));
             QueueFree();
         }
 

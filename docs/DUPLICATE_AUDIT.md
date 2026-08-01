@@ -63,12 +63,12 @@ meant to agree and no longer do.
 | 2.11 | **yaw→forward copied 3×, one shipped inverted** | `ServerTransactions.cs:848` (wrapped in a method), `:534`, `ServerCombat.cs:453`. The melee copy was `(+sin, +cos)` and hit 180° **behind** the attacker until fixed | **FIXED** — `NetGeometry.ForwardFromYaw`, guarded by a sign test |
 | 2.12 | **Two `BedClaims` tables for the same beds** | static `Bed.Claims` (SP + client) and `ServerInteractables._beds` (authority), keyed differently (`BedId` int vs `NetId`), bridged only by `ApplyReplicatedClaim` | OPEN |
 | 2.13 | **Vehicle exit-spot basis derived twice** | `VehicleReplication.cs:928` and `ClientWorldSession.cs:560`. The client copy going stale against a frozen replica is the documented root cause of `docs/EXIT_POSITION_ROOTCAUSE.md`; `VehicleExitedEvent.Pos` exists because of it, and the client copy is still there as a fallback | **FIXED** — `NetGeometry.ExitSpotBeside`, formula + offsets shared |
-| 2.14 | **Station fill percent computed twice** | `GasStationServer.Percent:36` and `ServerTransactions.cs:427` re-derive the identical clamp. `Percent` consequently has no callers | OPEN |
+| 2.14 | **Station fill percent computed twice** | `GasStationServer.Percent:36` and `ServerTransactions.cs:427` re-derive the identical clamp. `Percent` consequently has no callers | **KEEP + shared** — the recompute is deliberate (see below); only the formula is now shared |
 | 2.15 | **Extract-fuel implemented twice** | `GasPump.Extract:109` (SP, relies on `FluidTank.Drain`'s internal clamp) vs `ServerTransactions.OnExtractFuel:399` (computes the `min` explicitly, plus its own "which can" scan) | OPEN |
-| 2.16 | **Salvage yield encoded in 3 places** | `Deployable.cs:496` (2× item 67 hardcoded), `Vehicle.cs:1820` (3× hardcoded), `DeployableNetSchema.cs:32` (`SalvageItemId`/`SalvageCount`) | OPEN |
+| 2.16 | **Salvage yield encoded in 3 places** | `Deployable.cs:496` (2× item 67 hardcoded), `Vehicle.cs:1820` (3× hardcoded), `DeployableNetSchema.cs:32` (`SalvageItemId`/`SalvageCount`) | **FIXED** — yield lives on `DeployableDef`; `ScrapItemId` shared |
 | 2.17 | **`DisconnectWires` — 4 copies, 3 of which fix a bug the 4th has** | `Deployable.cs:504`, `FluidPump.cs:85`, `FluidPurifier.cs:53`, `FluidValve.cs:40`. The three fluid versions `RemoveFromGroup("wires")` before `QueueFree()` so the group is correct *this frame*; `Deployable.DisconnectWires` does **not**, and `PlayerController.cs:1016` explicitly documents needing that | **FIXED** — `RemoveFromGroup("wires")` before `QueueFree` |
 | 2.18 | **`SetLookFocused` mesh collection differs** | `Vehicle` and `VehiclePuppet` re-collect on every focus; `Deployable` collects once and never refreshes — so a `Deployable` that gains a mesh after first focus (battery label, split turbine hub) is missed | OPEN |
-| 2.19 | **Pump-lift ceiling propagation written twice** | `FluidNet.cs:83` (inside `WouldNeedPump`) and `:153` (inside `Tick`); any change to the conduction rule must be made in both | OPEN |
+| 2.19 | **Pump-lift ceiling propagation written twice** | `FluidNet.cs:83` (inside `WouldNeedPump`) and `:153` (inside `Tick`); any change to the conduction rule must be made in both | **FIXED** — `FluidNet.PropagateCeilings` |
 | 2.20 | **Deadzone host loop duplicated** | The *sim* is correctly shared, but the volume list, `TryGetVolume` scan, per-player dictionary and enter/exit bookkeeping are near line-for-line in `game/DeployableField`-side `DeadzoneField.cs` and `core/UnturnedNet/ServerDeadzones.cs` | OPEN |
 | 2.21 | **`GodotCompat.cs` — the documented handedness-flip adapter — has exactly ONE call site** (`Main.cs:534`) while everything else converts inline. Either every inline conversion is a latent sign bug, or the adapter is dead code. **This either/or should be resolved before more cross-boundary code is written** | OPEN |
 
@@ -189,3 +189,14 @@ Not fixed here (it is not a duplicate and not what this branch is about) but wor
 pass: a test that only passes with company is a test that is not really asserting what it
 says. `PowerNet.ResetForTests()` forcing `_globalPower = false` while the production default
 is `true` (noted in 3.18's neighbourhood) is the first place to look.
+
+## 2.14 was not a defect — corrected
+
+`IFuelStation`'s own comment states the design: the percent is recomputed at the choke point
+*on purpose*, so a fake station installed by a test cannot hide a bug in that arithmetic. That
+property is worth keeping and this audit was wrong to list it as a duplicate to collapse.
+
+What was real is narrower: the same clamp was **typed** twice, so the two could drift while both
+looked right. `FuelStationMath.Percent` is now the one definition and both sides call it — the
+seam stays dumb (a fake still supplies only Remaining/Capacity, the choke still does the
+computing) and drift is impossible.

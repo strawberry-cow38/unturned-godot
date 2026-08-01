@@ -33,8 +33,12 @@ namespace UnturnedGodot
 
         // The current 0..100 fill percent of a station (Remaining / Capacity). Used to seed pumps on placement;
         // OnExtractFuel recomputes it identically after a drain and fans it out.
+        // Shares the choke point's definition (UnturnedGodot.Net.FuelStationMath) rather than retyping the
+        // clamp -- the seam stays dumb, but the two can no longer drift. See DUPLICATE_AUDIT 2.14.
         public float Percent(int stationId)
-            => _tanks.TryGetValue(stationId, out var t) && t.Capacity > 0f ? Mathf.Clamp(t.Amount / t.Capacity * 100f, 0f, 100f) : 0f;
+            => _tanks.TryGetValue(stationId, out var t)
+                 ? UnturnedGodot.Net.FuelStationMath.Percent(t.Amount, t.Capacity)
+                 : 0f;
 
         // ---- IFuelStation (the extract choke reads through these) ----
         public bool TryGetStation(uint pumpNetId, out int stationId) => _pumpStation.TryGetValue(pumpNetId, out stationId);

@@ -390,8 +390,7 @@ namespace UnturnedGodot.Net
             // (5) recompute the 0..100 percent + fan it out onto EVERY same-station pump in ONE tick (same
             // LastChangedTick) so no two pumps ever replicate divergent fill. entity.Fuel IS the percent (the
             // absolute litres never leave the server); the pump has no HP/fire, so Health/OnFire pass through.
-            float cap = FuelStations.Capacity(stationId);
-            float percent = cap > 0f ? Mathf.Clamp(FuelStations.Remaining(stationId) / cap * 100f, 0f, 100f) : 0f;
+            float percent = FuelStationMath.Percent(FuelStations.Remaining(stationId), FuelStations.Capacity(stationId));
             long tick = _tick();
             foreach (uint pid in FuelStations.Pumps(stationId))
                 if (_deployables.TryGet(pid, out var pe))

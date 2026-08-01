@@ -484,9 +484,11 @@ namespace UnturnedGodot
         public void Salvage()   // blowtorch teardown: the cold husk breaks into Metal Scrap (item 67), then despawns
         {
             var parent = GetParent();
+            int count = Def?.SalvageCount ?? 2;                             // the yield lives on the def, so the
+            ushort item = Def?.SalvageItemId ?? DeployableDef.ScrapItemId;  // replicated schema reads the same number
             if (parent != null)
-                for (int i = 0; i < 2; i++)   // a generator yields a couple of Metal Scrap (fewer than a car)
-                    WorldItem.Spawn(parent, new SDG.Unturned.Item(67), GlobalPosition + new Vector3((i - 0.5f) * 0.6f, 0.5f, 0f));
+                for (int i = 0; i < count; i++)
+                    WorldItem.Spawn(parent, new SDG.Unturned.Item(item), GlobalPosition + new Vector3((i - 0.5f) * 0.6f, 0.5f, 0f));
             DisconnectWires();
             QueueFree();
         }

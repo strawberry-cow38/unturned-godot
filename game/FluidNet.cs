@@ -70,6 +70,49 @@ namespace UnturnedGodot
         // reaches the consumer end. Same gate FluidNet.Tick applies (below) — reused so the hose-tool "needs a pump" hint
         // can't disagree with actual flow. The proposed hose is added to the ceiling propagation so a pump on the source
         // side counts. Small networks -> cheap to recompute per aimed frame.
+        /// <summary>Every committed hose as an unordered device pair.</summary>
+        static System.Collections.Generic.List<(FluidContainer A, FluidContainer B)> HoseLinks(SceneTree tree)
+        {
+            var links = new System.Collections.Generic.List<(FluidContainer A, FluidContainer B)>();
+            foreach (var n in tree.GetNodesInGroup("hoses"))
+                if (n is Hose h && h.Source?.Owner is FluidContainer a && h.Consumer?.Owner is FluidContainer b)
+                    links.Add((a, b));
+            return links;
+        }
+
+        /// <summary>
+        /// How high a powered pump can push fluid, relaxed across the hose graph. A pump's ceiling is its own
+        /// Y + HeadLift; it passes THROUGH an IsFlowRelay device (splitter/combiner/pump/open valve) and stops
+        /// at a tank or transformer — "up to a source/consumer, not through it". Devices with no pump reaching
+        /// them sit at -infinity, i.e. gravity-only.
+        ///
+        /// This ran twice with the same rule: once in Tick (the committed graph) and once in WouldNeedPump
+        /// (the committed graph PLUS the hose being aimed at), so any change to the conduction rule had to be
+        /// made in both or the tool would promise a flow the solver then refused (DUPLICATE_AUDIT 2.19). The
+        /// ContainsKey guard is what lets one body serve both: WouldNeedPump appends a proposed link whose
+        /// endpoints may not be in the device list, and for Tick every device is present so it never fires.
+        /// </summary>
+        static System.Collections.Generic.Dictionary<FluidContainer, float> PropagateCeilings(
+            System.Collections.Generic.IEnumerable<FluidContainer> devices,
+            System.Collections.Generic.List<(FluidContainer A, FluidContainer B)> links)
+        {
+            var ceiling = new System.Collections.Generic.Dictionary<FluidContainer, float>();
+            foreach (var c in devices)
+                ceiling[c] = (c is FluidPump p && p.IsPowered) ? c.GlobalPosition.Y + p.HeadLift : float.NegativeInfinity;
+            for (int pass = 0; pass <= links.Count; pass++)   // n+1 passes settles any chain
+            {
+                bool changed = false;
+                foreach (var (a, b) in links)
+                {
+                    if (!ceiling.ContainsKey(a) || !ceiling.ContainsKey(b)) continue;
+                    if (a.IsFlowRelay && ceiling[a] > ceiling[b]) { ceiling[b] = ceiling[a]; changed = true; }   // through a
+                    if (b.IsFlowRelay && ceiling[b] > ceiling[a]) { ceiling[a] = ceiling[b]; changed = true; }   // ...and through b
+                }
+                if (!changed) break;
+            }
+            return ceiling;
+        }
+
         public static bool WouldNeedPump(SceneTree tree, HosePort srcPort, HosePort consPort)
         {
             if (srcPort?.Owner == null || consPort?.Owner == null) return false;
@@ -80,26 +123,13 @@ namespace UnturnedGodot
             if (!srcO.NoHead && consY < srcY - HeadEps) return false;
             // else: does an EXISTING powered pump already lift the consumer end? Propagate pump ceilings over the committed
             // hose graph PLUS this proposed hose, through relay fittings only (the same rule Tick uses).
-            var ceiling = new System.Collections.Generic.Dictionary<FluidContainer, float>();
+            var devices = new System.Collections.Generic.List<FluidContainer>();
             foreach (var n in tree.GetNodesInGroup("fluid_devices"))
-                if (n is FluidContainer c && GodotObject.IsInstanceValid(c))
-                    ceiling[c] = (c is FluidPump pp && pp.IsPowered) ? c.GlobalPosition.Y + pp.HeadLift : float.NegativeInfinity;
+                if (n is FluidContainer c && GodotObject.IsInstanceValid(c)) devices.Add(c);
+            var links = HoseLinks(tree);
+            links.Add((srcO, consO));   // the PROPOSED hose -- the whole question is what it would change
+            var ceiling = PropagateCeilings(devices, links);
             if (!ceiling.ContainsKey(srcO) || !ceiling.ContainsKey(consO)) return true;
-            var links = new System.Collections.Generic.List<(FluidContainer A, FluidContainer B)>();
-            foreach (var n in tree.GetNodesInGroup("hoses"))
-                if (n is Hose h && h.Source?.Owner is FluidContainer a && h.Consumer?.Owner is FluidContainer b) links.Add((a, b));
-            links.Add((srcO, consO));   // the proposed hose
-            for (int pass = 0; pass <= links.Count; pass++)
-            {
-                bool changed = false;
-                foreach (var (a, b) in links)
-                {
-                    if (!ceiling.ContainsKey(a) || !ceiling.ContainsKey(b)) continue;
-                    if (a.IsFlowRelay && ceiling[a] > ceiling[b]) { ceiling[b] = ceiling[a]; changed = true; }
-                    if (b.IsFlowRelay && ceiling[b] > ceiling[a]) { ceiling[a] = ceiling[b]; changed = true; }
-                }
-                if (!changed) break;
-            }
             float reach = Mathf.Max(ceiling[srcO], ceiling[consO]);
             return !(consY < reach - HeadEps);   // within a pump's reach -> no NEW pump needed; else it needs one
         }
@@ -150,22 +180,8 @@ namespace UnturnedGodot
             //    Gated here (not in the type-agnostic solver) since elevation is a world concept.
             const float HeadEps = 0.05f;   // ignore sub-5cm height noise (same-level tanks don't dribble)
             const float PumpBoost = 5f;    // a powered pump runs its connected line at 5x the gravity rate
-            var ceiling = new System.Collections.Generic.Dictionary<FluidContainer, float>();
-            foreach (var c in allC) ceiling[c] = (c is FluidPump p && p.IsPowered) ? c.GlobalPosition.Y + p.HeadLift : float.NegativeInfinity;
-            var rawHoses = new System.Collections.Generic.List<(FluidContainer A, FluidContainer B)>();
-            foreach (var n in tree.GetNodesInGroup("hoses"))
-                if (n is Hose h && h.Source?.Owner is FluidContainer a && h.Consumer?.Owner is FluidContainer b)
-                    rawHoses.Add((a, b));
-            for (int pass = 0; pass <= rawHoses.Count; pass++)
-            {
-                bool changed = false;
-                foreach (var (a, b) in rawHoses)
-                {
-                    if (a.IsFlowRelay && ceiling[a] > ceiling[b]) { ceiling[b] = ceiling[a]; changed = true; }   // ceiling passes THROUGH a
-                    if (b.IsFlowRelay && ceiling[b] > ceiling[a]) { ceiling[a] = ceiling[b]; changed = true; }   // ...and through b
-                }
-                if (!changed) break;
-            }
+            var rawHoses = HoseLinks(tree);
+            var ceiling = PropagateCeilings(allC, rawHoses);
 
             // 3) build the solver devices/ports. A pumped-line device's base rate is boosted BEFORE the amount/space clamp,
             //    so the clamp still empties a near-dry source (and fills a near-full tank) cleanly at the boosted pace.

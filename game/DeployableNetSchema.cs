@@ -29,9 +29,10 @@ namespace UnturnedGodot
                     Range = def.Range,
                     FixtureKind = def.Fixture,   // A3/A2: carry the server-placed world-fixture kind onto the net def table
                     Ports = ports,
-                    // Deployable.Salvage yields 2x Metal Scrap (67); a ShatterOnDeath def leaves no wreck to salvage
-                    SalvageItemId = def.ShatterOnDeath ? (ushort)0 : (ushort)67,
-                    SalvageCount = def.ShatterOnDeath ? (byte)0 : (byte)2,
+                    // straight off the def -- the same numbers Deployable.Salvage spawns. A ShatterOnDeath def
+                    // leaves no wreck to salvage, so it yields nothing regardless of what the def carries.
+                    SalvageItemId = def.ShatterOnDeath ? (ushort)0 : def.SalvageItemId,
+                    SalvageCount = def.ShatterOnDeath ? (byte)0 : def.SalvageCount,
                 });
             }
         }

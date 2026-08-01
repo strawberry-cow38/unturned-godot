@@ -28,4 +28,25 @@ namespace UnturnedGodot.Net
         // ONE tick (atomic fan-out; a divergent per-pump fill would desync). Stable order (placement order).
         IReadOnlyList<uint> Pumps(int stationId);
     }
+
+    /// <summary>
+    /// The one definition of a station's replicated fill percent.
+    ///
+    /// DUPLICATE_AUDIT 2.14 listed the two copies of this expression as a defect. It is not: the interface
+    /// above deliberately keeps the percent OUT of the seam so a fake IFuelStation cannot hide a bug in the
+    /// choke point's arithmetic, and that property is worth keeping. What was worth fixing is narrower --
+    /// the same clamp was TYPED twice (ServerTransactions.OnExtractFuel and GasStationServer.Percent), so
+    /// the two could drift while both looked right.
+    ///
+    /// Sharing the pure function keeps the seam dumb (a fake still supplies only Remaining/Capacity, and the
+    /// choke still does the computing) while making drift impossible.
+    /// </summary>
+    public static class FuelStationMath
+    {
+        /// <summary>Litres -> the replicated 0..100 percent. A zero/negative capacity reads as empty rather
+        /// than dividing -- an unregistered station and a drained one both report 0, which the callers
+        /// already treat identically.</summary>
+        public static float Percent(float remaining, float capacity)
+            => capacity > 0f ? UnityEngine.Mathf.Clamp(remaining / capacity * 100f, 0f, 100f) : 0f;
+    }
 }
