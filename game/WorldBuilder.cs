@@ -332,7 +332,8 @@ namespace UnturnedGodot
             }
             var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
-            Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0;
+            Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
+            var lodMis = new System.Collections.Generic.List<MeshInstance3D>();   // this placement's extra LOD instances, reused per prop
             // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
             // measuring what the retail distances actually changed, in the same binary.
             if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1") LodTable.Load(dir + "lods.txt");
@@ -382,6 +383,39 @@ namespace UnturnedGodot
                 var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 root.AddChild(mainMi);
+                // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port
+                // never extracted. Each level draws in its own distance band, LOD0 nearest, so a prop gets CHEAPER
+                // with distance instead of only vanishing at the end of one.
+                //
+                // A level whose .obj is absent must NOT shorten the prop: its band is handed back to the previous
+                // level by extending that level's End, otherwise a prop with an unextracted LOD1 would pop out of
+                // existence at the LOD0->LOD1 distance instead of at its cull distance.
+                lodMis.Clear();
+                var ranges = mesh != null ? LodTable.LevelRanges(p[0], LodCullFov) : null;
+                if (ranges != null && ranges.Length > 1)
+                {
+                    mainMi.VisibilityRangeEnd = ranges[0].End;
+                    var last = mainMi;
+                    for (int lv = 1; lv < ranges.Length; lv++)
+                    {
+                        var (b, e2) = ranges[lv];
+                        if (e2 <= b) continue;                       // band collapsed by the layer cull: level never draws
+                        string lodKey = name + "_lod" + lv;
+                        if (!cache.TryGetValue(lodKey, out var lmesh))
+                        {
+                            string lp = dir + lodKey + ".obj";
+                            lmesh = System.IO.File.Exists(lp) ? ObjMesh.Load(lp) : null;
+                            cache[lodKey] = lmesh;
+                        }
+                        if (lmesh == null) { last.VisibilityRangeEnd = e2; continue; }   // absorb the band into the level before it
+                        var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                            VisibilityRangeBegin = b, VisibilityRangeEnd = e2, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                        root.AddChild(lmi);
+                        lodMis.Add(lmi);
+                        last = lmi;
+                    }
+                    lodLevels += lodMis.Count;
+                }
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
                 if (!folCache.TryGetValue(name, out var fmesh))
                 {
@@ -484,7 +518,13 @@ namespace UnturnedGodot
                 if (destIndex >= 0 && destBody != null && rubbleCat.TryGetValue(p[0].ToLowerInvariant(), out var rub))
                 {
                     destBody.SetMeta(DestructibleField.MetaKey, destIndex);
-                    var mis = folMi != null ? new[] { mainMi, folMi } : new[] { mainMi };
+                    // EVERY visual instance, including the LOD levels -- DestructibleField hides these when the
+                    // prop breaks, so omitting the LOD meshes would leave a destroyed building still standing at
+                    // distance while its LOD0 vanished up close.
+                    var all = new System.Collections.Generic.List<MeshInstance3D>(lodMis.Count + 2) { mainMi };
+                    all.AddRange(lodMis);
+                    if (folMi != null) all.Add(folMi);
+                    var mis = all.ToArray();
                     destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId);
                 }
                 placed++;
@@ -526,7 +566,7 @@ namespace UnturnedGodot
             if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
-            GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m");
+            GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
 
             // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static
             // so the dedicated server's SpawnProvider reads the SAME points -- behavior-identical here).

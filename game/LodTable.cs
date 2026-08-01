@@ -98,6 +98,29 @@ namespace UnturnedGodot
             return Mathf.Min(layer, DistanceForHeight(e.Size, e.Heights[e.Heights.Length - 1], fovDeg));
         }
 
+        /// <summary>The visible distance band for each LOD level, LOD0 first: level i draws in [Begin, End).
+        /// Bands are contiguous and monotone, and the LAST End is the cull distance, so this is a superset of
+        /// CullDistance. Null for an unknown GUID. A band with Begin == End never draws -- the layer cull
+        /// already ended the prop before that level would have started -- and the caller skips it.</summary>
+        public static (float Begin, float End)[] LevelRanges(string guid, float fovDeg)
+        {
+            if (!_byGuid.TryGetValue(guid.ToLowerInvariant(), out var e)) return null;
+            float layer = LayerCull(e.Layer);
+            if (e.Heights == null || e.Heights.Length == 0 || e.Size <= 0f)
+                return new[] { (0f, layer) };
+            var r = new (float, float)[e.Heights.Length];
+            float prev = 0f;
+            for (int i = 0; i < e.Heights.Length; i++)
+            {
+                float d = Mathf.Min(layer, DistanceForHeight(e.Size, e.Heights[i], fovDeg));
+                if (d < prev) d = prev;   // heights are authored descending, but clamping to `layer` can flatten
+                                          // two levels onto the same distance; keep the bands monotone regardless
+                r[i] = (prev, d);
+                prev = d;
+            }
+            return r;
+        }
+
         public static bool TryGet(string guid, out Entry e) => _byGuid.TryGetValue(guid.ToLowerInvariant(), out e);
     }
 }
