@@ -95,6 +95,19 @@ if not prefab:
     print("prefab not in core.masterbundle:", cont); sys.exit(1)
 
 # ---- find the door leaf's SkinnedMeshRenderer by walking the typetree hierarchy (name-based, like v1) ----
+# ALSO record every node's own accumulated scene-graph matrix while we walk (root-relative, via the same
+# parentM = inv(root_local) de-rooting extract_objects_v2.py uses) -- needed below to compute the ROTATIONAL
+# frame correction between the door leaf renderer's own (uncancelled) hierarchy chain and "prop space" (the
+# frame the body / WorldBuilder's placement basis actually use).
+def trs(pos, q, s):
+    x, y, z, w = q["x"], q["y"], q["z"], q["w"]
+    R = [[1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)],
+         [2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w)],
+         [2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)]]
+    M = [[R[r][0]*s["x"], R[r][1]*s["y"], R[r][2]*s["z"], [pos["x"], pos["y"], pos["z"]][r]] for r in range(3)] + [[0, 0, 0, 1]]
+    return M
+def mat4_mul(A, B):
+    return [[sum(A[i][k]*B[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
 def comps(tt):
     for comp in tt.get("m_Component", []):
         c = comp.get("component", comp) if isinstance(comp, dict) else comp
@@ -105,23 +118,30 @@ def comp_of(tt, names):
     for co in comps(tt):
         if co.type.name in names: return co
     return None
-def find_go_by_name(target_name, go_pid):
+scenegraph_M = {}   # name -> accumulated 4x4 (root-relative), populated by find_go_by_name's walk
+def find_go_by_name(target_name, go_pid, parentM):
     go = by_id.get(go_pid)
     if not go: return None
     tt = go.read_typetree()
-    if (tt.get("m_Name", "") or "") == target_name: return go
+    name = tt.get("m_Name", "") or ""
     tr = comp_of(tt, ("Transform", "RectTransform"))
     if not tr: return None
     trt = tr.read_typetree()
+    M = mat4_mul(parentM, trs(trt["m_LocalPosition"], trt["m_LocalRotation"], trt["m_LocalScale"]))
+    if name not in scenegraph_M: scenegraph_M[name] = M
+    if name == target_name: return go
     for ch in trt.get("m_Children", []):
         ct = by_id.get(ch.get("m_PathID"))
         if ct:
-            found = find_go_by_name(target_name, ct.read_typetree().get("m_GameObject", {}).get("m_PathID"))
+            found = find_go_by_name(target_name, ct.read_typetree().get("m_GameObject", {}).get("m_PathID"), M)
             if found: return found
     return None
 
+rt = comp_of(prefab.read_typetree(), ("Transform", "RectTransform")).read_typetree()
+root_local = trs(rt["m_LocalPosition"], rt["m_LocalRotation"], rt["m_LocalScale"])
+root_local_inv4 = mat_inv_affine(root_local)   # plain affine inverse (mat_inv_affine only reads rows 0-2, a 4-row input is fine) -- de-roots the walk exactly like extract_objects_v2.py's parentM=inv(root_local) start
 LEAF_NAME = "Hinge_0"
-leaf_go = find_go_by_name(LEAF_NAME, prefab.path_id)
+leaf_go = find_go_by_name(LEAF_NAME, prefab.path_id, root_local_inv4)
 if not leaf_go:
     print(f"NO DOOR LEAF NODE named {LEAF_NAME!r} under {TARGET}"); sys.exit(1)
 leaf_tt = leaf_go.read_typetree()
@@ -149,22 +169,42 @@ def mat_of(bp):
     d = list(bp); return [[d[r*4+c] for c in range(4)] for r in range(4)]
 bindposes = [mat_of(bp) for bp in mesh.m_BindPose]
 
-# ---- hinge pivot + swing axis: bone = inverse(bindpose) (rig_extract.py rule). NOT zflipped -- see NEGATE_TEST
-# below: this codebase's ObjMesh loader (game/ObjMesh.cs) defaults to UG_CONV=1 (raw Unity passthrough, no
-# z-negate) for anything it loads, matching how extract_objects_v2.py already writes the body (Model_0.obj,
-# proven correct by render). Numerically verified against WorldBuilder's own ex=270 placement basis: the
-# zflipped pivot lands at final Y=-1.0 (underground, off the body's own Y=[0,2.5] range); the UN-flipped one
-# lands at final Y=+1.0 (inside that range) AND matches the investigation's originally given ground-truth
-# number (0.6130, 0.2979, 1.0000) exactly. The axis is an equally clean cardinal (0,~-1,0) either way (zflip
-# only flips ITS sign, already absorbed by the angleDeg flip escape hatch) -- so skipping zflip fixes the
-# real bug (bindpose vs scene-Transform frame) without breaking position alignment with the body.
+# ---- hinge pivot: bone = inverse(bindpose) (rig_extract.py rule), NOT zflipped -- game/ObjMesh.cs's loader
+# defaults to UG_CONV=1 (raw Unity passthrough, no z-negate), matching how extract_objects_v2.py already
+# writes the body (Model_0.obj, proven correct by render). Numerically verified against WorldBuilder's actual
+# ex=270 placement basis: the zflipped pivot lands at final Y=-1.0 (underground, off the body's own Y=[0,2.5]
+# range); this UN-flipped one lands at final Y=+1.0 (inside that range) AND matches the investigation's
+# originally given ground-truth number (0.6130, 0.2979, 1.0000) exactly.
 bone_rest = mat_inv_affine(bindposes[0])
 pivot = [bone_rest[0][3], bone_rest[1][3], bone_rest[2][3]]
-axis_raw = [bone_rest[0][2], bone_rest[1][2], bone_rest[2][2]]   # 3rd column = local Z axis rotated into this frame
-axisLen = math.sqrt(sum(a*a for a in axis_raw))
-axis = [a/axisLen for a in axis_raw] if axisLen > 1e-9 else [0.0, 0.0, 1.0]
+
+# ---- swing axis: the bindpose-derived rotation (3rd column of bone_rest = the bone's local Z) is expressed
+# relative to the LEAF RENDERER's (Hinge_0's) own scene-graph frame -- NOT "prop space" (the frame the body
+# mesh / doors.txt pivot / WorldBuilder's placement basis all use). Confirmed by direct diagnostic: Hinge_0's
+# own local rotation is IDENTITY, unlike Model_0/Skeleton which carry their OWN self-cancelling -90X local
+# rotation (so THEIR accumulated scene matrix reduces to identity in prop space; Hinge_0's does not). Using
+# the raw bindpose axis directly reproduces exactly the reported bug: run through WorldBuilder's real ex=270
+# placement basis it lands as a HORIZONTAL world axis (a "drawbridge" swing) instead of vertical.
+# Fix: rotate the axis from the leaf renderer's own frame into prop space by the INVERSE of the leaf
+# renderer's own accumulated scene rotation. This is DERIVED per-prop (from whatever that prop's own leaf
+# GameObject's actual hierarchy is), not a hardcoded "assume vertical" -- a horizontally-hinged lid (e.g.
+# Cooler_0) would get its own correct correction from ITS OWN leaf renderer's scene rotation the same way.
+# The PIVOT (translation, above) deliberately does NOT get this same correction: verified it is already
+# exactly right as bindpose gives it (matches the investigation's ground truth, and Root's own local position
+# is exactly zero so the two frames' origins coincide regardless of their rotational difference); applying
+# the identical rotation correction to the translation moves it outside the body's own bounds -- provably
+# wrong for the pivot even though the same correction is provably right for the axis.
+leaf_R = [row[:3] for row in scenegraph_M[LEAF_NAME][:3]]   # 3x3 rotation/scale part of the leaf renderer's OWN scene-graph matrix (not the bone's)
+leaf_R_inv = mat3_inv(leaf_R)
+axis_leaf_frame = [bone_rest[0][2], bone_rest[1][2], bone_rest[2][2]]   # 3rd column of bindpose-inverse = local Z, in the leaf renderer's own frame
+axis_propspace = [sum(leaf_R_inv[r][k]*axis_leaf_frame[k] for k in range(3)) for r in range(3)]
+axisLen = math.sqrt(sum(a*a for a in axis_propspace))
+axis = [a/axisLen for a in axis_propspace] if axisLen > 1e-9 else [0.0, 0.0, 1.0]
 print(f"pivot (bind-pose-derived, godot-convention) = ({pivot[0]:.4f}, {pivot[1]:.4f}, {pivot[2]:.4f})")
-print(f"swing axis (bind-pose-derived, godot-convention, unit) = ({axis[0]:.4f}, {axis[1]:.4f}, {axis[2]:.4f})")
+print(f"leaf renderer ({LEAF_NAME}) own scene rotation (frame the raw bindpose axis is expressed in):")
+for row in leaf_R: print("   ", ["%.4f" % v for v in row])
+print(f"swing axis, raw bindpose frame (leaf-renderer-relative) = ({axis_leaf_frame[0]:.4f}, {axis_leaf_frame[1]:.4f}, {axis_leaf_frame[2]:.4f})")
+print(f"swing axis, corrected to prop-space frame, unit = ({axis[0]:.4f}, {axis[1]:.4f}, {axis[2]:.4f})")
 
 # ---- mesh geometry: RAW packed m_VertexData (verbatim channel/stride logic from deer_rig_extract.py) ----
 vd = mesh.m_VertexData
