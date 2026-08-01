@@ -68,9 +68,6 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
-        // Vertical FOV the retail LOD math is evaluated at -- OptionsSettings.DesiredVerticalFieldOfView /
-        // PreferenceData Field_Of_View_Hip, which is what Viewmodel.SourceFov already ports.
-        const float LodCullFov = 60f;
         // Leaves cull closer than the trunk. The old flat pair was 240/320, so keep that 0.75 ratio now the
         // trunk distance is per-prop instead of constant.
         const float FoliageCullFraction = 0.75f;
@@ -378,7 +375,7 @@ namespace UnturnedGodot
                 // alike: the tighter of its render-layer cull (LARGE 512 / MEDIUM 256 / SMALL 64 at default draw
                 // distance) and its Unity LODGroup threshold. See LodTable. A GUID missing from the table keeps the
                 // old flat cutoff -- better to draw an unknown prop too long than to pop a landmark out of the world.
-                float cull = LodTable.CullDistance(p[0], LodCullFov);
+                float cull = LodTable.CullDistance(p[0], LodTable.SourceFov);
                 if (cull <= 0f) { cull = 320f; lodMissing++; }
                 var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
@@ -391,7 +388,7 @@ namespace UnturnedGodot
                 // level by extending that level's End, otherwise a prop with an unextracted LOD1 would pop out of
                 // existence at the LOD0->LOD1 distance instead of at its cull distance.
                 lodMis.Clear();
-                var ranges = mesh != null ? LodTable.LevelRanges(p[0], LodCullFov) : null;
+                var ranges = mesh != null ? LodTable.LevelRanges(p[0], LodTable.SourceFov) : null;
                 if (ranges != null && ranges.Length > 1)
                 {
                     mainMi.VisibilityRangeEnd = ranges[0].End;

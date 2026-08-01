@@ -41,15 +41,29 @@ namespace UnturnedGodot
         /// <summary>Retail's normalized draw-distance preference [0,1]. Default 1.0 = GraphicsSettingsData's default.</summary>
         public static float DrawDistance = 1f;
 
+        /// <summary>Vertical FOV the LOD math is evaluated at -- OptionsSettings.DesiredVerticalFieldOfView /
+        /// PreferenceData Field_Of_View_Hip, the same 60 Viewmodel.SourceFov ports.</summary>
+        public const float SourceFov = 60f;
+
         public static float DefaultCullDistance => 256f + Mathf.Clamp(DrawDistance, 0f, 1f) * 256f;
         public static float LodBias => 2f + Mathf.Clamp(DrawDistance, 0f, 1f) * 3f;
 
-        public static float LayerCull(string layer) => layer switch
+        /// <summary>Hard cap on how far placed objects and trees exist at all, independent of the per-layer
+        /// cull: retail streams them by REGION and only keeps 3.5 regions of 128m in each direction --
+        /// `RegularObjectMaxDistance = Mathf.Min(defaultCullDistance, 447)`, and RegularTreeMaxDistance is
+        /// assigned from it. So nothing placed draws past this no matter what its layer or LODGroup says.</summary>
+        public const float RegionMaxDistance = 447f;
+
+        public static float LayerCull(string layer) => Mathf.Min(RegionMaxDistance, layer switch
         {
             "SMALL" => DefaultCullDistance * 0.125f,
             "MEDIUM" => DefaultCullDistance * 0.5f,
-            _ => DefaultCullDistance,       // LARGE (landmarkExtraDistance not modelled: it needs the far-clip setting)
-        };
+            _ => DefaultCullDistance,       // LARGE -- the 447m region cap is what actually bites here, not the 512m layer
+        });
+        // NB the landmark extension (landmarkExtraDistance, and the skybox billboards past the cap) is NOT
+        // modelled, and does not need to be at retail defaults: LandmarkQuality defaults to OFF and
+        // LandmarkDistance to 0.0, so SkyboxTreeMaxDistance/SkyboxObjectMaxDistance both evaluate to 0 and
+        // landmarkExtraDistance to 0. The billboards are opt-in, not the default experience.
 
         public static void Load(string path)
         {
@@ -122,5 +136,52 @@ namespace UnturnedGodot
         }
 
         public static bool TryGet(string guid, out Entry e) => _byGuid.TryGetValue(guid.ToLowerInvariant(), out e);
+
+        // ---- RESOURCES (trees / bushes / rocks) -------------------------------------------------
+        // Same two rules as props, different layer. Retail puts resources on LayerMasks.RESOURCE, whose
+        // cull is the full defaultCullDistance (256-512m) -- so a tree draws as far as a building, not the
+        // 320m the port used to hardcode. Which rule binds flips with size: a 21m birch's LODGroup computes
+        // to ~3000m so the LAYER stops it, while a small bush's LODGroup bites well inside 512m.
+        static readonly System.Collections.Generic.Dictionary<string, Entry> _byResource = new();
+        public static int ResourceCount => _byResource.Count;
+
+        public static void LoadResources(string path)
+        {
+            _byResource.Clear();
+            if (!System.IO.File.Exists(path)) { GD.Print($"[lod] no resource table at {path} -- trees keep the built-in fallback"); return; }
+            foreach (var raw in System.IO.File.ReadAllLines(path))
+            {
+                if (raw.Length == 0 || raw[0] == '#') continue;
+                var p = raw.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 3) continue;
+                float[] hs = null;
+                if (p[2] != "-")
+                {
+                    var hp = p[2].Split(',', System.StringSplitOptions.RemoveEmptyEntries);
+                    hs = new float[hp.Length];
+                    for (int i = 0; i < hp.Length; i++) hs[i] = float.Parse(hp[i], System.Globalization.CultureInfo.InvariantCulture);
+                }
+                // bundle dirs are lowercase (birch_0), the port's content is cased (Birch_0) -- key on lower
+                _byResource[p[0].ToLowerInvariant()] = new Entry
+                {
+                    Layer = "RESOURCE",
+                    Size = float.Parse(p[1], System.Globalization.CultureInfo.InvariantCulture),
+                    Heights = hs,
+                };
+            }
+            GD.Print($"[lod] {_byResource.Count} resources, layer cull {DefaultCullDistance:0}m");
+        }
+
+        /// <summary>Draw distance for a resource by asset name (case-insensitive). 0 = unknown, caller keeps
+        /// its own fallback rather than inventing one.</summary>
+        public static float ResourceCull(string name, float fovDeg)
+        {
+            if (string.IsNullOrEmpty(name) || !_byResource.TryGetValue(name.ToLowerInvariant(), out var e)) return 0f;
+            // LayerMasks.RESOURCE gets the full distance, but RegularTreeMaxDistance caps it at the same
+            // 447m region limit as objects -- so a big tree stops there, not at the 512m layer distance.
+            float layer = Mathf.Min(RegionMaxDistance, DefaultCullDistance);
+            if (e.Heights == null || e.Heights.Length == 0 || e.Size <= 0f) return layer;
+            return Mathf.Min(layer, DistanceForHeight(e.Size, e.Heights[e.Heights.Length - 1], fovDeg));
+        }
     }
 }

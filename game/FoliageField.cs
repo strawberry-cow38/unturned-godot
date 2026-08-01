@@ -64,7 +64,13 @@ namespace UnturnedGodot
             if (count <= 0) { GD.Print($"[foliage] {nm}: 0 instances"); return; }
             // Bucket into spatial CELLS -> one MultiMesh per cell, each with a distance cutoff, so foliage far from
             // the camera stops rendering (master: cull grass far from the player). Trees aren't foliage, untouched.
-            const float Cell = 96f, CullRange = 170f;
+            // Retail draws foliage in 32m TILES out to FoliageSettings.drawDistance tiles, set per quality:
+            // LOW 2, MEDIUM 3, HIGH 4, ULTRA 5 (GraphicsSettings.ApplyFoliageQuality) -- so ULTRA is
+            // 5 * FoliageSystem.TILE_SIZE(32) = 160m. The old hand-picked 170 was already almost exactly
+            // retail's max; this just makes it the source's number rather than a coincidence.
+            // (Foliage sits on the SKY render layer in retail so the per-layer cull does NOT bound it --
+            // the tile draw distance is the whole rule.)
+            const float Cell = 96f, CullRange = 5 * 32f;
             var byCell = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<Transform3D>>();
             for (int i = 0; i < count; i++)
             {
