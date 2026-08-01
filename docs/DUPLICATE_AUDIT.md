@@ -56,7 +56,7 @@ meant to agree and no longer do.
 | 2.4 | **Battery + wind turbine "producing" is fuel-generator logic only** | `Deployable.IsPowered:53` is a 3-way family rule (battery on `Energy`, turbine on `_windFactor`); `DeployableEntity.Producing:295` is `ToggledOn && !OnFire && (FuelCapacity <= 0 \|\| Fuel > 0)`. Battery `Fuel = 0` ⇒ produces whenever toggled; its whole charge/discharge economy is SP-only | OPEN |
 | 2.5 | **Wire legality: same 5 rules, incompatible reach** | SP `PlayerController.cs:418` = 5.5 m look reach + 40 m/20-node polyline cap. Server `DeployableReplication.cs:371` = 16 m per endpoint, **no length cap**. A wire the SP UI refuses is accepted by the server | **NOT A DEFECT** — the polyline is never replicated; see note |
 | 2.6 | **Door arc-block test is SP-only** | `Door.cs:96` passes the real physics `blocked`; `InteractableReplication.cs:217` hardcodes `arcBlocked: false`. A close the SP client refuses is accepted by the server. (Documented as deliberate — the server has no arc test and letting a client veto other people's doors is worse — but it *is* the one genuine rule divergence in the door path) | OPEN |
-| 2.7 | **`IsAlive` out-of-range fails opposite ways** | `DestructibleReplication.cs:60` → `false` (dead); `DestructibleField.cs:49` → `true` (alive) | OPEN |
+| 2.7 | **`IsAlive` out-of-range fails opposite ways** | `DestructibleReplication.cs:60` → `false` (dead); `DestructibleField.cs:49` → `true` (alive) | **NOT A DEFECT** — unreachable; both mirrors bound by Min(). See note |
 | 2.8 | **Two hit-geometry implementations that disagree** | `ZombieCombat.RayCapsule` (real capsule caps) vs `ServerCombat.SegmentHitsCylinder` (cylinder + `[-0.1, top+0.15]` fudge). The latter decides MP damage, so SP and MP disagree at the shoulders and at point-blank | OPEN |
 | 2.9 | **Limb banding in three files** | `ZombieCombat.LimbAt:95` (0.82/0.45 fractions), `ZombieController.cs:166` (own hardcoded `h`), `ServerCombat.cs:105` (`ZombieHeadFrac`). Players use *absolute metres* (`PlayerHeadMinY 1.45`) where zombies use fractions | OPEN |
 | 2.10 | **Zombie attack reach maintained twice** | `ZombieSim` (`AttackRange` 1.75 m from the kind record) vs `ZombieController.cs:42` (`ATTACK_PLAYER_SQ = 2f` ⇒ √2 ≈ 1.41 m). Vertical 2.1 matches; horizontal does not. Two complete zombie combat brains | OPEN |
@@ -273,3 +273,18 @@ Worth noting what a real version of this hazard looks like, since one exists nea
 `CropReplicaView` carries a "DOUBLE-AUTHORITY GUARD: this view is CLIENT-ONLY. Do NOT attach it on
 MpLoopback" comment. That is the failure 2.12 imagined — and beds avoid it by routing at the
 request, before any local mutation.
+
+## 2.7 checked and dropped
+
+The two `IsAlive` implementations do disagree out of range — `DestructibleReplication` fails to
+**dead**, `DestructibleField` to **alive** — but nothing can reach that branch:
+
+- both mirror loops bound themselves with `int n = Mathf.Min(Count, InstanceCount)` (WorldNetSync
+  for the server, WorldStateViews for the client), so neither is ever asked about an index the
+  other does not have;
+- and the server bitmap is sized from the field anyway: `ServerInit(field.InstanceCount, ...)`.
+
+The field's fail-to-alive is also deliberate and documented at the call site: a reserved-but-unbuilt
+slot (an out-of-season holiday prop) "reads as ALIVE/intact — there's no prop to break, and the
+server bitmap keeps it alive too, so the net-sync mirror skips it instead of churning." Making it
+fail closed would invert exactly the behaviour that comment is protecting.
