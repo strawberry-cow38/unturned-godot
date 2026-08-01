@@ -1469,9 +1469,9 @@ namespace UnturnedGodot
                 bs.BorderColor = new Color(0f, 0f, 0f, 0.85f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(3);
                 badge.AddThemeStyleboxOverride("panel", bs);
                 var snow = new Label { Text = "\u2744", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
-                snow.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                snow.SetAnchorsPreset(Control.LayoutPreset.FullRect); snow.OffsetTop = 1.5f; snow.OffsetBottom = 1.5f; snow.OffsetLeft = 1f; snow.OffsetRight = 1f;   // the font sits the snowflake HIGH-left in its line box -> nudge the centered glyph down+right
                 snow.AddThemeColorOverride("font_color", new Color(0.97f, 0.99f, 1f));
-                snow.AddThemeFontSizeOverride("font_size", 17);
+                snow.AddThemeFontSizeOverride("font_size", 13);
                 badge.AddChild(snow);
                 tile.AddChild(badge);
             }
