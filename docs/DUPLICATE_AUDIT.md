@@ -69,7 +69,7 @@ meant to agree and no longer do.
 | 2.17 | **`DisconnectWires` — 4 copies, 3 of which fix a bug the 4th has** | `Deployable.cs:504`, `FluidPump.cs:85`, `FluidPurifier.cs:53`, `FluidValve.cs:40`. The three fluid versions `RemoveFromGroup("wires")` before `QueueFree()` so the group is correct *this frame*; `Deployable.DisconnectWires` does **not**, and `PlayerController.cs:1016` explicitly documents needing that | **FIXED** — `RemoveFromGroup("wires")` before `QueueFree` |
 | 2.18 | **`SetLookFocused` mesh collection differs** | `Vehicle` and `VehiclePuppet` re-collect on every focus; `Deployable` collects once and never refreshes — so a `Deployable` that gains a mesh after first focus (battery label, split turbine hub) is missed | **NOT A DEFECT** — a Deployable's mesh set is fixed at spawn; see note |
 | 2.19 | **Pump-lift ceiling propagation written twice** | `FluidNet.cs:83` (inside `WouldNeedPump`) and `:153` (inside `Tick`); any change to the conduction rule must be made in both | **FIXED** — `FluidNet.PropagateCeilings` |
-| 2.20 | **Deadzone host loop duplicated** | The *sim* is correctly shared, but the volume list, `TryGetVolume` scan, per-player dictionary and enter/exit bookkeeping are near line-for-line in `game/DeployableField`-side `DeadzoneField.cs` and `core/UnturnedNet/ServerDeadzones.cs` | OPEN |
+| 2.20 | **Deadzone host loop duplicated** | The *sim* is correctly shared, but the volume list, `TryGetVolume` scan, per-player dictionary and enter/exit bookkeeping are near line-for-line in `game/DeployableField`-side `DeadzoneField.cs` and `core/UnturnedNet/ServerDeadzones.cs` | **NOT A DEFECT** — two hosts for two deployment modes, mutually exclusive |
 | 2.21 | **`GodotCompat.cs` — the documented handedness-flip adapter — has exactly ONE call site** (`Main.cs:534`) while everything else converts inline. Either every inline conversion is a latent sign bug, or the adapter is dead code. **This either/or should be resolved before more cross-boundary code is written** | **RESOLVED** — it was dead code with a WRONG convention; corrected to match practice |
 
 ## Tier 3 — probably deliberate; confirm before touching
@@ -312,3 +312,26 @@ answer, with a gate that guarantees only one runs. **Collapsing them would mean 
 logic into a node or node logic into the choke point, which is what the gate exists to prevent.**
 Anything in this document that looks like "X is implemented twice, once in `game/` and once in
 `core/UnturnedNet/`" should be checked against this shape first.
+
+## 2.20 checked and dropped -- and it is the strongest example of the shape above
+
+"The deadzone host loop is duplicated" is two hosts for two deployment modes, and only ever one
+runs. `MpLoopback` says so where it decides not to register them:
+
+> DOORS / BEDS / DEADZONES are deliberately NOT registered here. On a loopback the local player IS
+> the world's PlayerController, so the direct singleplayer paths already run: DoorLogic and
+> BedClaims on the nodes themselves, and DeadzoneField's own `_PhysicsProcess` over PlayerRegistry.
+> Registering them would ... have the loopback server and the local node both acting on the same
+> press. ... see InteractableNetSync, which the DEDICATED server does register (it has no
+> PlayerControllers to run the direct paths).
+
+So: **loopback** runs `DeadzoneField` only (the server side never receives volumes, because
+`ServerDeadzones.AddVolume` is called only from `InteractableNetSync`, which loopback does not
+construct); **dedicated** runs `ServerDeadzones` only (`DeadzoneField` iterates `PlayerRegistry`,
+which is empty there). Merging them would recreate exactly the double-application that comment
+exists to prevent.
+
+That makes four rows (2.12, 2.14, 2.15, 2.20) which are the SP-direct / MP-routed architecture,
+not duplication. When two bodies look alike here, the question to ask first is not "which is
+canonical" but **"can both run at once?"** — the answer is usually no, and it is usually written
+down within a few lines.
