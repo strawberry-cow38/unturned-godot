@@ -1,39 +1,62 @@
-"""Extract an openable-prop DOOR LEAF (Binary_State object, e.g. Fridge_0's Hinge_0 SkinnedMeshRenderer)
-that extract_objects_v2 / extract_object_named cannot see: their walk() only reads MeshFilter, and a door
-leaf is a SkinnedMeshRenderer (single-bone rig) with no MeshFilter at all.
+"""Extract openable-prop DOOR LEAVES (Binary_State objects: fridges, wardrobes, cabinets...) that
+extract_objects_v2 / extract_object_named cannot see: their walk() only reads MeshFilter, and a door leaf is
+a SkinnedMeshRenderer (single-bone rig) with no MeshFilter at all.
 
-CORRECTED approach (v2): a SkinnedMeshRenderer's raw vertex buffer is in BIND-POSE space, NOT the renderer
-GameObject's own Transform-hierarchy space -- treating it like a static MeshFilter mesh (baking the leaf/bone
-Transform hierarchy chain into the vertices, as v1 of this script did) lands ~90 degrees off with a diagonal,
-non-cardinal hinge axis. This follows the port's EXISTING, proven skinned-mesh convention instead -- the same
-one tools/rig_extract.py and tools/deer_rig_extract.py use for the player/animal rigs:
-  - mesh vertices: read RAW from mesh.m_VertexData (packed buffer), z-negated, NO renderer/bone transform
+GENERALIZED (v3) for MULTI-LEAF props (e.g. Wardrobe_0's two doors): discovers every SkinnedMeshRenderer under
+the prefab generically (no hardcoded "Hinge_0" name), and for EACH one runs the full per-leaf pipeline
+independently. Single-leaf props (Fridge_0) keep the exact legacy file naming (<name>_door.obj, _open.txt,
+_close.txt) for byte-identical backward compatibility; multi-leaf props get leaf-qualified names
+(<name>_<leafNodeName>_door.obj etc.) so each leaf's files are unambiguous. doors.txt keys ALL of a prop's
+leaves under the SAME first-field prop name (one line per leaf) -- WorldBuilder.LoadDoorCatalog groups them
+into a List<DoorCatalogEntry> per prop, so a single-leaf line is a list of 1 and nothing about the file format
+changes for the fridge.
+
+Per-leaf pipeline (proven on Fridge_0, unchanged in substance):
+  - mesh vertices: read RAW from mesh.m_VertexData (packed buffer), NO z-negate, NO renderer/bone transform
     applied at all (Unity's bindpose definition makes the renderer transform cancel out at rest pose, so the
-    raw buffer data already IS the correct rest-pose geometry -- see deer_rig_extract.py's `positions.append`).
-  - hinge pivot + swing axis: from `zflip(inverse(mesh.m_BindPose[0]))` (single-bone rig: exactly one bone,
-    one bindpose) -- rig_extract.py's rule "bone = inverse(bindpose)" -- NOT from the "Hinge" bone GameObject's
-    own scene Transform (which is a DIFFERENT, incompatible frame; confirmed by direct diagnostic: using it
-    gave axis (-0.7071,0.7071,0), a diagonal 45-degree direction with zero component on the mesh's own height
-    axis -- physically impossible for a hinge meant to swing a floor-to-ceiling door sideways).
-  - winding / UV: UNLIKE deer_rig_extract.py (whose output feeds a different consumer that does its own
-    single reversal/V-flip), this script's .obj output goes through ObjMesh.Load, which ALREADY reverses
-    winding once (unconditionally) and V-flips UVs once at load time -- same as how extract_objects_v2.py's
-    write_obj leaves winding/UV raw and lets the loader do it exactly once. So here: z-negate POSITIONS and
-    NORMALS (the one genuinely different convention for bind-pose data, confirmed by the coordinator against
-    a render), but leave winding order and UV raw/unflipped -- matching the body mesh's own single-reversal
-    treatment, not double-applying.
+    raw buffer data already IS the correct rest-pose geometry -- see deer_rig_extract.py's `positions.append`
+    for the source convention this follows). Winding/UV left RAW (game/ObjMesh.cs's loader reverses/V-flips
+    exactly once at load time, same as extract_objects_v2.py's write_obj; do not also do it here).
+  - hinge pivot: `inverse(mesh.m_BindPose[0])`'s translation (rig_extract.py's rule "bone = inverse(bindpose)"),
+    NOT zflipped, NOT further corrected -- matches "prop space" (the frame the body mesh / WorldBuilder's
+    placement basis use) directly; verified against Fridge_0's investigation ground truth to the given
+    precision, and against WorldBuilder's real placement basis (lands within the body's own bounds).
+  - swing axis: derived from the SAME per-clip rotation delta already computed for angleDeg (NOT from the
+    bindpose's rest-pose rotation column -- see below for why that was wrong). Take the shared refAxis
+    (largest-magnitude delta across this leaf's own clips, expressed in the bone's own bind-rest-local frame)
+    and rotate it into prop space via qrot(Q_rest, refAxis), Q_rest = the bone's own m_LocalRotation. Works
+    because Skeleton's own local rotation cancels Root's exactly (the same mechanism that lands Model_0 at
+    identity), so "Skeleton-local" -- the frame Q_rest/refAxis live in -- IS prop space directly, no further
+    correction needed. Verified to reproduce the identical direction the old bindpose-column formula gave for
+    Fridge_0's Hinge and Wardrobe_0's Left_Hinge, but Wardrobe_0's Right_Hinge proved the old formula wrong:
+    its bindpose rest-pose column-2 is not actually its hinge axis (authored differently from Left's -- NOT a
+    mirroring issue: the leaf renderer's own accumulated scene rotation, what the old formula corrected by, is
+    a pure rotation about a FIXED axis for every leaf checked on this prop, confirmed det=+1, so no correction
+    built purely from that matrix could ever move a raw axis sitting exactly on its own fixed axis). Deriving
+    straight from the clip's own rotation sidesteps the bad assumption entirely and needs no per-prop or
+    per-leaf special-casing for mirrored geometry.
+  - angleDeg / durationSec: DERIVED from the retail clip data itself (the settled/final angle magnitude and
+    clip length of the "open"-role curve), NOT hardcoded per-prop -- for Fridge_0 this reproduces 135.00/0.4667
+    exactly. The SIGN is whatever the clip data naturally gives; a rotation's handedness can still invert
+    through this pipeline (confirmed on Fridge_0, which needed angleDeg flipped to -135 after render
+    verification -- a gimbal-lock artifact of its Hinge bone resting at pitch=90), so treat the sign as
+    unverified until rendered, and flip that ONE field in doors.txt if a leaf swings the wrong way (no
+    re-extract needed).
+  - defaultOpen: retail InteractableObjectBinaryState boots isUsed=false and (applyInstantly) jumps to the END
+    of the clip literally NAMED "Close" -- true iff THAT named clip is the one classified as the opening
+    motion for this leaf (per leaf: a prop with clip names inverted vs geometry, like Fridge_0, reads 1;
+    normal-named props read 0).
+  - clip ROLE classification is by DATA, not by Unity's clip name (see Fridge_0's inverted-name finding):
+    whichever clip's endpoint is farther from the bone's own rest rotation is the "open" role, regardless of
+    what Unity calls it.
   - Do NOT apply extract_objects_v2's "half position swap" hack here -- it exists to patch STATIC multi-part
     mesh offsets and would double-correct bind-pose-space data.
 
-  python extract_doors.py Fridge_0
--> content/objects/Fridge_0_door.obj (leaf mesh, bind-pose convention, lands flush with the body when loaded
-   through ObjMesh same as it)
--> a line appended to content/objects/doors.txt:
-     <name> <doorObjFile> px py pz ax ay az angleDeg durationSec
-   angleDeg/durationSec for Fridge_0 are the investigation's sampled retail clip values (135.00 deg over
-   0.4667s) -- NOT re-derived from the clip by this script; written as an easily hand-flippable signed number
-   since a rotation's handedness can still invert through this pipeline -- if the render swings the door INTO
-   the fridge instead of outward, flip this ONE number's sign (no code change, no re-extract).
+  python extract_doors.py Fridge_0        -> 1 leaf  (legacy naming, unchanged)
+  python extract_doors.py Wardrobe_0      -> 2 leaves (Left_Hinge_0 / Right_Hinge_0, leaf-qualified naming)
+
+doors.txt line format (unchanged, 11 space-separated fields; multiple lines may share field 0):
+  <propName> <doorObjFile> px py pz ax ay az angleDeg durationSec defaultOpen(0/1)
 """
 import UnityPy, os, glob, re, struct, math, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,10 +65,6 @@ import ug_paths
 BUND = ug_paths.bundles()
 OUT = ug_paths.objects_out()
 TARGET = (sys.argv[1] if len(sys.argv) > 1 else "Fridge_0")
-
-DOOR_CLIP = {
-    "Fridge_0": {"angle": 135.0, "duration": 0.4667},
-}
 
 # ---- rig_extract.py / deer_rig_extract.py math (verbatim -- proven skinned-mesh convention) ----
 def mat3_inv(m):
@@ -66,8 +85,28 @@ def mat_inv_affine(M):
             [Li[1][0], Li[1][1], Li[1][2], nt[1]],
             [Li[2][0], Li[2][1], Li[2][2], nt[2]],
             [0, 0, 0, 1]]
-S = [1, 1, -1, 1]   # Unity -> Godot z-flip
-def zflip(M): return [[M[i][j]*S[i]*S[j] for j in range(4)] for i in range(4)]
+def trs(pos, q, s):
+    x, y, z, w = q["x"], q["y"], q["z"], q["w"]
+    R = [[1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)],
+         [2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w)],
+         [2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)]]
+    M = [[R[r][0]*s["x"], R[r][1]*s["y"], R[r][2]*s["z"], [pos["x"], pos["y"], pos["z"]][r]] for r in range(3)] + [[0, 0, 0, 1]]
+    return M
+def mat4_mul(A, B):
+    return [[sum(A[i][k]*B[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+def qmul(a, b):
+    ax, ay, az, aw = a; bx, by, bz, bw = b
+    return (aw*bx+ax*bw+ay*bz-az*by, aw*by-ax*bz+ay*bw+az*bx,
+            aw*bz+ax*by-ay*bx+az*bw, aw*bw-ax*bx-ay*by-az*bz)
+def qinv(q):
+    x, y, z, w = q; return (-x, -y, -z, w)
+def qrot(q, v):
+    """Rotate 3-vector v by unit quaternion q=(x,y,z,w)."""
+    qv = (q[0], q[1], q[2])
+    uv = (qv[1]*v[2]-qv[2]*v[1], qv[2]*v[0]-qv[0]*v[2], qv[0]*v[1]-qv[1]*v[0])
+    uuv = (qv[1]*uv[2]-qv[2]*uv[1], qv[2]*uv[0]-qv[0]*uv[2], qv[0]*uv[1]-qv[1]*uv[0])
+    w = q[3]
+    return tuple(v[i] + 2.0*(w*uv[i] + uuv[i]) for i in range(3))
 
 # ---- GUID + prefab container path, keyed by Bundles/Objects folder name (verbatim from extract_object_named.py) ----
 name2info = {}
@@ -94,20 +133,6 @@ for path, obj in env.container.items():
 if not prefab:
     print("prefab not in core.masterbundle:", cont); sys.exit(1)
 
-# ---- find the door leaf's SkinnedMeshRenderer by walking the typetree hierarchy (name-based, like v1) ----
-# ALSO record every node's own accumulated scene-graph matrix while we walk (root-relative, via the same
-# parentM = inv(root_local) de-rooting extract_objects_v2.py uses) -- needed below to compute the ROTATIONAL
-# frame correction between the door leaf renderer's own (uncancelled) hierarchy chain and "prop space" (the
-# frame the body / WorldBuilder's placement basis actually use).
-def trs(pos, q, s):
-    x, y, z, w = q["x"], q["y"], q["z"], q["w"]
-    R = [[1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)],
-         [2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w)],
-         [2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)]]
-    M = [[R[r][0]*s["x"], R[r][1]*s["y"], R[r][2]*s["z"], [pos["x"], pos["y"], pos["z"]][r]] for r in range(3)] + [[0, 0, 0, 1]]
-    return M
-def mat4_mul(A, B):
-    return [[sum(A[i][k]*B[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
 def comps(tt):
     for comp in tt.get("m_Component", []):
         c = comp.get("component", comp) if isinstance(comp, dict) else comp
@@ -118,177 +143,6 @@ def comp_of(tt, names):
     for co in comps(tt):
         if co.type.name in names: return co
     return None
-scenegraph_M = {}   # name -> accumulated 4x4 (root-relative), populated by find_go_by_name's walk
-def find_go_by_name(target_name, go_pid, parentM):
-    go = by_id.get(go_pid)
-    if not go: return None
-    tt = go.read_typetree()
-    name = tt.get("m_Name", "") or ""
-    tr = comp_of(tt, ("Transform", "RectTransform"))
-    if not tr: return None
-    trt = tr.read_typetree()
-    M = mat4_mul(parentM, trs(trt["m_LocalPosition"], trt["m_LocalRotation"], trt["m_LocalScale"]))
-    if name not in scenegraph_M: scenegraph_M[name] = M
-    if name == target_name: return go
-    for ch in trt.get("m_Children", []):
-        ct = by_id.get(ch.get("m_PathID"))
-        if ct:
-            found = find_go_by_name(target_name, ct.read_typetree().get("m_GameObject", {}).get("m_PathID"), M)
-            if found: return found
-    return None
-
-rt = comp_of(prefab.read_typetree(), ("Transform", "RectTransform")).read_typetree()
-root_local = trs(rt["m_LocalPosition"], rt["m_LocalRotation"], rt["m_LocalScale"])
-root_local_inv4 = mat_inv_affine(root_local)   # plain affine inverse (mat_inv_affine only reads rows 0-2, a 4-row input is fine) -- de-roots the walk exactly like extract_objects_v2.py's parentM=inv(root_local) start
-LEAF_NAME = "Hinge_0"
-leaf_go = find_go_by_name(LEAF_NAME, prefab.path_id, root_local_inv4)
-if not leaf_go:
-    print(f"NO DOOR LEAF NODE named {LEAF_NAME!r} under {TARGET}"); sys.exit(1)
-leaf_tt = leaf_go.read_typetree()
-smr_co = comp_of(leaf_tt, ("SkinnedMeshRenderer",))
-if not smr_co:
-    print(f"{LEAF_NAME} has no SkinnedMeshRenderer component"); sys.exit(1)
-
-# ---- switch to UnityPy's object-attribute API (matches deer_rig_extract.py) for m_Bones / m_Mesh / m_BindPose / m_VertexData ----
-smr = smr_co.read()
-mesh = smr.m_Mesh.read()
-NB = len(smr.m_Bones)
-VC = mesh.m_VertexData.m_VertexCount
-print(f"bones={NB} verts={VC} bindposes={len(mesh.m_BindPose)}")
-bone_names = []
-for i, pp in enumerate(smr.m_Bones):
-    t = pp.read()
-    nm = t.m_GameObject.read().m_Name
-    bone_names.append(nm)
-    print(f"  bone[{i}] = {nm}")
-if NB != 1:
-    print(f"WARNING: expected a single-bone rig (NB=1), got NB={NB} -- this script only handles bone[0]; verify {TARGET} is really single-bone before trusting the result")
-
-def mat_of(bp):
-    if hasattr(bp, "e00"): return [[getattr(bp, "e%d%d" % (r, c)) for c in range(4)] for r in range(4)]
-    d = list(bp); return [[d[r*4+c] for c in range(4)] for r in range(4)]
-bindposes = [mat_of(bp) for bp in mesh.m_BindPose]
-
-# ---- hinge pivot: bone = inverse(bindpose) (rig_extract.py rule), NOT zflipped -- game/ObjMesh.cs's loader
-# defaults to UG_CONV=1 (raw Unity passthrough, no z-negate), matching how extract_objects_v2.py already
-# writes the body (Model_0.obj, proven correct by render). Numerically verified against WorldBuilder's actual
-# ex=270 placement basis: the zflipped pivot lands at final Y=-1.0 (underground, off the body's own Y=[0,2.5]
-# range); this UN-flipped one lands at final Y=+1.0 (inside that range) AND matches the investigation's
-# originally given ground-truth number (0.6130, 0.2979, 1.0000) exactly.
-bone_rest = mat_inv_affine(bindposes[0])
-pivot = [bone_rest[0][3], bone_rest[1][3], bone_rest[2][3]]
-
-# ---- swing axis: the bindpose-derived rotation (3rd column of bone_rest = the bone's local Z) is expressed
-# relative to the LEAF RENDERER's (Hinge_0's) own scene-graph frame -- NOT "prop space" (the frame the body
-# mesh / doors.txt pivot / WorldBuilder's placement basis all use). Confirmed by direct diagnostic: Hinge_0's
-# own local rotation is IDENTITY, unlike Model_0/Skeleton which carry their OWN self-cancelling -90X local
-# rotation (so THEIR accumulated scene matrix reduces to identity in prop space; Hinge_0's does not). Using
-# the raw bindpose axis directly reproduces exactly the reported bug: run through WorldBuilder's real ex=270
-# placement basis it lands as a HORIZONTAL world axis (a "drawbridge" swing) instead of vertical.
-# Fix: rotate the axis from the leaf renderer's own frame into prop space by the INVERSE of the leaf
-# renderer's own accumulated scene rotation. This is DERIVED per-prop (from whatever that prop's own leaf
-# GameObject's actual hierarchy is), not a hardcoded "assume vertical" -- a horizontally-hinged lid (e.g.
-# Cooler_0) would get its own correct correction from ITS OWN leaf renderer's scene rotation the same way.
-# The PIVOT (translation, above) deliberately does NOT get this same correction: verified it is already
-# exactly right as bindpose gives it (matches the investigation's ground truth, and Root's own local position
-# is exactly zero so the two frames' origins coincide regardless of their rotational difference); applying
-# the identical rotation correction to the translation moves it outside the body's own bounds -- provably
-# wrong for the pivot even though the same correction is provably right for the axis.
-leaf_R = [row[:3] for row in scenegraph_M[LEAF_NAME][:3]]   # 3x3 rotation/scale part of the leaf renderer's OWN scene-graph matrix (not the bone's)
-leaf_R_inv = mat3_inv(leaf_R)
-axis_leaf_frame = [bone_rest[0][2], bone_rest[1][2], bone_rest[2][2]]   # 3rd column of bindpose-inverse = local Z, in the leaf renderer's own frame
-axis_propspace = [sum(leaf_R_inv[r][k]*axis_leaf_frame[k] for k in range(3)) for r in range(3)]
-axisLen = math.sqrt(sum(a*a for a in axis_propspace))
-axis = [a/axisLen for a in axis_propspace] if axisLen > 1e-9 else [0.0, 0.0, 1.0]
-print(f"pivot (bind-pose-derived, godot-convention) = ({pivot[0]:.4f}, {pivot[1]:.4f}, {pivot[2]:.4f})")
-print(f"leaf renderer ({LEAF_NAME}) own scene rotation (frame the raw bindpose axis is expressed in):")
-for row in leaf_R: print("   ", ["%.4f" % v for v in row])
-print(f"swing axis, raw bindpose frame (leaf-renderer-relative) = ({axis_leaf_frame[0]:.4f}, {axis_leaf_frame[1]:.4f}, {axis_leaf_frame[2]:.4f})")
-print(f"swing axis, corrected to prop-space frame, unit = ({axis[0]:.4f}, {axis[1]:.4f}, {axis[2]:.4f})")
-
-# ---- mesh geometry: RAW packed m_VertexData (verbatim channel/stride logic from deer_rig_extract.py) ----
-vd = mesh.m_VertexData
-data = bytes(vd.m_DataSize)
-FSZ = {0: 4, 1: 2, 2: 1, 3: 1, 4: 2, 5: 2, 6: 1, 7: 1, 8: 2, 9: 2, 10: 4, 11: 4}
-def chd(ch):
-    v = getattr(ch, "dimension", getattr(ch, "m_Dimension", getattr(ch, "m_RawDimension", 0)))
-    return v & 0xF if isinstance(v, int) else 0
-chans = vd.m_Channels
-def cget(ch, a, *alts):
-    for nm in (a,) + alts:
-        if hasattr(ch, nm): return getattr(ch, nm)
-    return 0
-strides = {}
-for ch in chans:
-    dim = chd(ch)
-    if dim == 0: continue
-    s = cget(ch, "stream", "m_Stream"); off = cget(ch, "offset", "m_Offset"); fmt = cget(ch, "format", "m_Format")
-    strides[s] = max(strides.get(s, 0), off + dim*FSZ[fmt])
-def align(x, a=16): return (x+a-1)//a*a
-starts = {}; cur = 0
-for s in sorted(strides):
-    starts[s] = cur; cur = align(cur + strides[s]*VC)
-def choff(idx):
-    c = chans[idx]; return cget(c, "stream", "m_Stream"), cget(c, "offset", "m_Offset")
-s0, o0 = choff(0); s1n, o1 = choff(1); s4s, o4 = choff(4)
-
-positions = []; normals = []; uvs = []
-for v in range(VC):
-    b0 = starts[s0] + v*strides[s0]
-    px, py, pz = struct.unpack_from("<3f", data, b0+o0)
-    nx, ny, nz = struct.unpack_from("<3f", data, b0+o1)
-    b1 = starts[s4s] + v*strides[s4s]
-    u, uvv = struct.unpack_from("<2f", data, b1+o4)
-    positions.append((px, py, pz))      # RAW, no z-negate -- see the pivot comment above: matches the body's own convention, verified numerically
-    normals.append((nx, ny, nz))
-    uvs.append((u, uvv))                # RAW, no V-flip here -- ObjMesh.Load V-flips once at load (matches write_obj's own convention)
-
-# ---- triangles: RAW winding (ObjMesh.Load reverses once at load -- matches write_obj's own convention; do
-# NOT also reverse here like deer_rig_extract.py does for its own, different, non-ObjMesh consumer) ----
-ib = bytes(mesh.m_IndexBuffer)
-tris = list(struct.unpack("<%dH" % (len(ib)//2), ib))
-faces = [(tris[k]+1, tris[k+1]+1, tris[k+2]+1) for k in range(0, len(tris), 3)]   # OBJ is 1-indexed
-
-if not positions:
-    print("NO GEOMETRY extracted for", LEAF_NAME); sys.exit(1)
-L = ["v %.6f %.6f %.6f" % v for v in positions]
-L += ["vt %.6f %.6f" % t for t in uvs]
-L += ["vn %.6f %.6f %.6f" % n for n in normals]
-for (a, b, c) in faces:
-    L.append("f %d/%d/%d %d/%d/%d %d/%d/%d" % (a, a, a, b, b, b, c, c, c))
-doorObjName = TARGET + "_door.obj"
-open(os.path.join(OUT, doorObjName), "w").write("\n".join(L) + "\n")
-print(f"wrote {doorObjName}  verts={len(positions)} faces={len(faces)}")
-
-bodyPath = os.path.join(OUT, TARGET + ".obj")
-if os.path.exists(bodyPath):
-    bodyVerts = sum(1 for ln in open(bodyPath) if ln.startswith("v "))
-    print(f"body {TARGET}.obj (unchanged by this script) verts={bodyVerts}")
-else:
-    print(f"NOTE: {TARGET}.obj (body) not found -- run extract_objects_v2.py / extract_object_named.py first")
-
-# ---- retail "Open"/"Close" legacy clip easing curves (source-accuracy: play the REAL keyframe timing, not
-# a procedural smoothstep). Sampled from Root's Animation component, for the "Hinge" bone's rotation curve,
-# relative to Hinge's own saved local rotation (Q_rest) -- confirmed to correspond to this port's "closed"
-# rest pose via the standard bindpose cancellation property (bone AT its bind-time rotation -> skinning
-# collapses to the raw mesh-local vertex data, which is exactly what the mesh section above uses unmodified).
-#
-# COUNTERINTUITIVE finding, worth flagging explicitly: by DATA (not by Unity's clip NAME), the clip that
-# actually sweeps 0 -> ~135 deg (matching this port's already-verified "closed=0, open=135 about the fixed
-# axis" behavior) is the one Unity calls "Close"; the clip sweeping ~135 -> 0 is the one Unity calls "Open".
-# Rather than trust the names, this script determines each clip's ROLE from its OWN data (whichever endpoint
-# is farther from Q_rest is that clip's "fully open" end) and labels the OUTPUT files by behavior (open/close
-# as THIS PORT uses them), not by the asset's internal clip name -- printed below so it can be sanity-checked.
-# Verified NOT a simple time-reversal of each other (Close(t) vs Open(duration-t): diffs up to ~120 deg
-# mid-swing); same-index mirrored (Close(t) vs 135-Open(t)) is close but not exact (up to ~7.6 deg apart near
-# the overshoot peak) -- genuinely distinct curves, both sampled and written separately, not derived from one
-# another.
-def qmul(a, b):
-    ax, ay, az, aw = a; bx, by, bz, bw = b
-    return (aw*bx+ax*bw+ay*bz-az*by, aw*by-ax*bz+ay*bw+az*bx,
-            aw*bz+ax*by-ay*bx+az*bw, aw*bw-ax*bx-ay*by-az*bz)
-def qinv(q):
-    x, y, z, w = q; return (-x, -y, -z, w)
 def cl_(go): return getattr(go, "m_Components", None) or getattr(go, "m_Component", [])
 def rd_(c):
     cp = c.component if hasattr(c, "component") else c
@@ -301,58 +155,250 @@ def qY(v): return v.Y if hasattr(v, "Y") else v.y
 def qZ(v): return v.Z if hasattr(v, "Z") else v.z
 def qW(v): return v.W if hasattr(v, "W") else v.w
 
-BONE_NAME = "Hinge"
-curveDir = os.path.join(OUT, "door_curves")
-defaultOpen = False   # safe default (closed) if clip sampling below can't determine it for any reason -- overwritten only when clip data is actually found
-hinge_go = find_go_by_name(BONE_NAME, prefab.path_id, root_local_inv4)
-root_go = find_go_by_name("Root", prefab.path_id, root_local_inv4)
-if not hinge_go or not root_go:
-    print(f"NOTE: could not find {BONE_NAME!r}/Root nodes for clip sampling -- door will fall back to procedural easing")
-else:
-    hinge_tr = comp_of(hinge_go.read_typetree(), ("Transform", "RectTransform")).read_typetree()
-    Qr = hinge_tr["m_LocalRotation"]
-    Q_rest = (Qr["x"], Qr["y"], Qr["z"], Qr["w"])
+# ---- ONE comprehensive walk: every node's (name -> go) and (name -> accumulated root-relative scenegraph
+# matrix), PLUS every SkinnedMeshRenderer-bearing node (a door leaf), discovered generically -- no hardcoded
+# "Hinge_0" / "Hinge" names, so this works for Fridge_0 (one leaf) and Wardrobe_0 (Left_Hinge_0/Right_Hinge_0)
+# alike, and for whatever a future door prop's leaves happen to be named.
+nodes_by_name = {}
+scenegraph_M = {}
+skinned_leaf_names = []
+def walk_all(go_pid, parentM):
+    go = by_id.get(go_pid)
+    if not go: return
+    tt = go.read_typetree()
+    name = tt.get("m_Name", "") or ""
+    tr = comp_of(tt, ("Transform", "RectTransform"))
+    if not tr: return
+    trt = tr.read_typetree()
+    M = mat4_mul(parentM, trs(trt["m_LocalPosition"], trt["m_LocalRotation"], trt["m_LocalScale"]))
+    if name not in nodes_by_name:
+        nodes_by_name[name] = go
+        scenegraph_M[name] = M
+        if comp_of(tt, ("SkinnedMeshRenderer",)):
+            skinned_leaf_names.append(name)
+    for ch in trt.get("m_Children", []):
+        ct = by_id.get(ch.get("m_PathID"))
+        if ct: walk_all(ct.read_typetree().get("m_GameObject", {}).get("m_PathID"), M)
+
+rt = comp_of(prefab.read_typetree(), ("Transform", "RectTransform")).read_typetree()
+root_local = trs(rt["m_LocalPosition"], rt["m_LocalRotation"], rt["m_LocalScale"])
+root_local_inv4 = mat_inv_affine(root_local)   # de-roots the walk exactly like extract_objects_v2.py's parentM=inv(root_local) start
+walk_all(prefab.path_id, root_local_inv4)
+print(f"skinned door leaves found under {TARGET}: {skinned_leaf_names}")
+if not skinned_leaf_names:
+    print(f"NO SkinnedMeshRenderer leaves found under {TARGET} -- not a Binary_State door prop, or structured differently"); sys.exit(1)
+
+# ---- Root's Animation component -> "Open"/"Close" legacy clips (shared by every leaf of this prop) ----
+root_go = nodes_by_name.get("Root")
+anim = None
+if root_go is not None:
     root_obj = root_go.read()
-    anim = None
     for c in cl_(root_obj):
         if tn_(rd_(c)) == "Animation":
             anim = rd_(c); break
-    if anim is None:
-        print("NOTE: no Animation component on Root -- door will fall back to procedural easing")
+clips_by_name = {}
+if anim is not None:
+    for pp in (getattr(anim, "m_Animations", []) or []):
+        try: clip_ = pp.read()
+        except Exception: continue
+        clips_by_name[clip_.m_Name] = clip_
+    print(f"clips on Root: {list(clips_by_name.keys())}")
+else:
+    print("NOTE: no Root/Animation component found -- every leaf falls back to procedural easing (no curves, no derived angle/duration)")
+
+def hinge_rot_keyframes(clip_, bone_name):
+    for rcu in clip_.m_RotationCurves:
+        if rcu.path.split("/")[-1] == bone_name:
+            return [(k.time, (qX(k.value), qY(k.value), qZ(k.value), qW(k.value))) for k in rcu.curve.m_Curve]
+    return None
+
+def mat_of(bp):
+    if hasattr(bp, "e00"): return [[getattr(bp, "e%d%d" % (r, c)) for c in range(4)] for r in range(4)]
+    d = list(bp); return [[d[r*4+c] for c in range(4)] for r in range(4)]
+
+curveDir = os.path.join(OUT, "door_curves")
+
+def write_curve(path, samples):
+    """Writes the normalized (t_norm, frac) curve; returns (farAng, length) -- the DERIVED angle magnitude
+    and clip duration -- or None if the samples are degenerate (caller then has no angle/duration to catalog)."""
+    farAng = max((samples[0][1], samples[-1][1]), key=abs)
+    length = samples[-1][0]
+    if abs(farAng) < 1e-6 or length < 1e-6:
+        print(f"    SKIP {path}: degenerate (farAng={farAng} length={length})"); return None
+    lines = ["%.6f %.6f" % (t/length, ang/farAng) for t, ang in samples]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").write("\n".join(lines) + "\n")
+    print(f"    wrote {path}: {len(lines)} samples, farAng={farAng:.3f} length={length:.4f}")
+    for t, ang in samples:
+        print(f"      t={t:.4f} t_norm={t/length:.4f}  angle={ang:8.3f}  frac={ang/farAng:7.4f}")
+    return farAng, length
+
+def process_leaf(leaf_name):
+    """Full per-leaf extraction: mesh + pivot + prop-space axis + open/close curves + defaultOpen + derived
+    angle/duration. Returns a result dict, or None if this leaf cannot be cataloged (reported, not fatal --
+    lets OTHER leaves of a multi-leaf prop still succeed; mesh/mirror geometry is still written even if the
+    clip data needed for the catalog line could not be derived)."""
+    print(f"--- leaf {leaf_name!r} ---")
+    leaf_go = nodes_by_name[leaf_name]
+    smr_co = comp_of(leaf_go.read_typetree(), ("SkinnedMeshRenderer",))
+    if not smr_co:
+        print(f"  {leaf_name} has no SkinnedMeshRenderer component (unexpected)"); return None
+    smr = smr_co.read()
+    mesh = smr.m_Mesh.read()
+    NB = len(smr.m_Bones)
+    VC = mesh.m_VertexData.m_VertexCount
+    print(f"  bones={NB} verts={VC} bindposes={len(mesh.m_BindPose)}")
+    if NB < 1:
+        print(f"  {leaf_name}: no bones -- cannot derive a pivot/axis"); return None
+
+    # ---- mesh geometry + skin index: RAW packed m_VertexData (verbatim channel/stride logic from
+    # deer_rig_extract.py). Reading the skin index is NEW vs the single-bone Fridge_0 case: a multi-leaf prop's
+    # SkinnedMeshRenderer.m_Bones array can be SHARED/padded across leaves -- confirmed on Wardrobe_0: BOTH
+    # Left_Hinge_0 and Right_Hinge_0 report bones=2, and naively using bone[0] resolves to 'Left_Hinge' for
+    # BOTH leaves (blindly trusting it would bind the right door to the left hinge). The actual per-vertex
+    # blend index (channel 13, alongside blend weight in channel 12) tells us which bone slot THIS leaf's
+    # geometry is really rigidly bound to.
+    vd = mesh.m_VertexData
+    data = bytes(vd.m_DataSize)
+    FSZ = {0: 4, 1: 2, 2: 1, 3: 1, 4: 2, 5: 2, 6: 1, 7: 1, 8: 2, 9: 2, 10: 4, 11: 4}
+    def chd(ch):
+        v = getattr(ch, "dimension", getattr(ch, "m_Dimension", getattr(ch, "m_RawDimension", 0)))
+        return v & 0xF if isinstance(v, int) else 0
+    chans = vd.m_Channels
+    def cget(ch, a, *alts):
+        for nm in (a,) + alts:
+            if hasattr(ch, nm): return getattr(ch, nm)
+        return 0
+    strides = {}
+    for ch in chans:
+        dim = chd(ch)
+        if dim == 0: continue
+        s = cget(ch, "stream", "m_Stream"); off = cget(ch, "offset", "m_Offset"); fmt = cget(ch, "format", "m_Format")
+        strides[s] = max(strides.get(s, 0), off + dim*FSZ[fmt])
+    def align(x, a=16): return (x+a-1)//a*a
+    starts = {}; cur = 0
+    for s in sorted(strides):
+        starts[s] = cur; cur = align(cur + strides[s]*VC)
+    def choff(idx):
+        c = chans[idx]; return cget(c, "stream", "m_Stream"), cget(c, "offset", "m_Offset")
+    s0, o0 = choff(0); s1n, o1 = choff(1); s4s, o4 = choff(4)
+
+    positions = []; normals = []; uvs = []
+    for v in range(VC):
+        b0 = starts[s0] + v*strides[s0]
+        px, py, pz = struct.unpack_from("<3f", data, b0+o0)
+        nx, ny, nz = struct.unpack_from("<3f", data, b0+o1)
+        b1 = starts[s4s] + v*strides[s4s]
+        u, uvv = struct.unpack_from("<2f", data, b1+o4)
+        positions.append((px, py, pz))      # RAW, no z-negate -- matches the body mesh's own convention
+        normals.append((nx, ny, nz))
+        uvs.append((u, uvv))                # RAW, no V-flip -- ObjMesh.Load V-flips once at load
+
+    if not positions:
+        print(f"  NO GEOMETRY extracted for {leaf_name}"); return None
+
+    # which bone slot is THIS leaf's mesh actually bound to? NOT read from per-vertex skin weights: this mesh
+    # uses Unity's newer "variable bone count weights" format (confirmed via direct diagnostic on Wardrobe_0 --
+    # m_VariableBoneCountWeights present, and the classic fixed blendweight/blendindices vertex channels
+    # (12/13) are either absent or a different, non-fixed-width layout), so the deer_rig_extract.py-style
+    # channel-12/13 byte read that works for the player/animal rigs does not apply here. Instead: match by
+    # NAME, using the confirmed convention every Binary_State door leaf follows (Fridge_0's "Hinge_0" leaf /
+    # "Hinge" bone; Wardrobe_0's "Left_Hinge_0"/"Right_Hinge_0" leaves / "Left_Hinge"/"Right_Hinge" bones) --
+    # the leaf's own name IS its bone's name plus a "_0" suffix. Robust and avoids the binary format entirely;
+    # confirmed necessary on Wardrobe_0, where BOTH leaves share one 2-bone array and bone[0] is 'Left_Hinge'
+    # for both -- blindly trusting index 0 would bind the right door to the left hinge.
+    expected_bone_name = leaf_name[:-2] if leaf_name.endswith("_0") else leaf_name
+    boneIdx = 0
+    bone_name = None
+    for i in range(NB):
+        bi_name = smr.m_Bones[i].read().m_GameObject.read().m_Name
+        if bi_name == expected_bone_name:
+            boneIdx = i; bone_name = bi_name; break
+    if bone_name is None:
+        bone_name = smr.m_Bones[0].read().m_GameObject.read().m_Name
+        print(f"  WARNING: no bone named {expected_bone_name!r} (expected from leaf name {leaf_name!r}) found among this leaf's {NB} bones -- defaulting to bone[0]={bone_name!r} (may be WRONG)")
+    print(f"  bone[{boneIdx}] = {bone_name!r} (matched by name from leaf {leaf_name!r})" + (f"  [{NB} bones on this leaf's array]" if NB != 1 else ""))
+
+    bindposes = [mat_of(bp) for bp in mesh.m_BindPose]
+    bone_rest = mat_inv_affine(bindposes[boneIdx])
+    pivot = [bone_rest[0][3], bone_rest[1][3], bone_rest[2][3]]
+    print(f"  pivot = ({pivot[0]:.4f}, {pivot[1]:.4f}, {pivot[2]:.4f})")
+    # Swing axis used to be derived here from the bindpose's rest-pose rotation column (3rd column) corrected
+    # by the leaf renderer's own scene rotation -- REMOVED, see the axis derivation inside the clip-sampling
+    # block below (near refAxis) for why that broke on Wardrobe_0's Right_Hinge (a "mirrored double-door"
+    # symptom that turned out NOT to be a mirror at all -- det(leaf_R)=+1 for every leaf checked) and what
+    # replaced it: the axis is now derived from the same clip rotation data already needed for angleDeg, not
+    # from bindpose rest-pose bookkeeping.
+    axis = None
+
+    ib = bytes(mesh.m_IndexBuffer)
+    tris = list(struct.unpack("<%dH" % (len(ib)//2), ib))
+    faces = [(tris[k]+1, tris[k+1]+1, tris[k+2]+1) for k in range(0, len(tris), 3)]   # RAW winding, OBJ 1-indexed
+
+    # naming: exact legacy convention when this prop has exactly one leaf (Fridge_0 byte-identical);
+    # leaf-qualified for multi-leaf props so Left/Right never collide.
+    base = TARGET if len(skinned_leaf_names) == 1 else f"{TARGET}_{leaf_name}"
+    doorObjName = base + "_door.obj"
+
+    Lw = ["v %.6f %.6f %.6f" % v for v in positions]
+    Lw += ["vt %.6f %.6f" % t for t in uvs]
+    Lw += ["vn %.6f %.6f %.6f" % n for n in normals]
+    for (a, b, c) in faces:
+        Lw.append("f %d/%d/%d %d/%d/%d %d/%d/%d" % (a, a, a, b, b, b, c, c, c))
+    open(os.path.join(OUT, doorObjName), "w").write("\n".join(Lw) + "\n")
+    print(f"  wrote {doorObjName}  verts={len(positions)} faces={len(faces)}")
+
+    # retail clip sampling for THIS leaf's own bone, deriving angleDeg/durationSec + defaultOpen from the data
+    # (not hardcoded) -- see module docstring for the full rationale (role-by-data, sign caveat, etc.)
+    defaultOpen = False
+    angleDeg = None
+    durationSec = None
+    if bone_name not in nodes_by_name:
+        print(f"  NOTE: bone {bone_name!r} not found in scene graph -- cannot read its rest rotation; no curve/angle derived")
+    elif not clips_by_name:
+        print("  NOTE: no clips available -- no curve/angle derived")
     else:
-        clips_by_name = {}
-        for pp in (getattr(anim, "m_Animations", []) or []):
-            try: clip_ = pp.read()
-            except Exception: continue
-            clips_by_name[clip_.m_Name] = clip_
-        print(f"clips on Root: {list(clips_by_name.keys())}")
+        bone_tr = comp_of(nodes_by_name[bone_name].read_typetree(), ("Transform", "RectTransform")).read_typetree()
+        Qr = bone_tr["m_LocalRotation"]
+        Q_rest = (Qr["x"], Qr["y"], Qr["z"], Qr["w"])
 
-        def hinge_rot_keyframes(clip_):
-            for rcu in clip_.m_RotationCurves:
-                if rcu.path.split("/")[-1] == BONE_NAME:
-                    return [(k.time, (qX(k.value), qY(k.value), qZ(k.value), qW(k.value))) for k in rcu.curve.m_Curve]
-            return None
-
-        deltas_by_clip = {}   # unity clip name -> [(t, (dx,dy,dz,dw)), ...]
+        deltas_by_clip = {}
         for nm, clip_ in clips_by_name.items():
-            kf = hinge_rot_keyframes(clip_)
+            kf = hinge_rot_keyframes(clip_, bone_name)
             if not kf: continue
             deltas_by_clip[nm] = [(t, qmul(qinv(Q_rest), Qk)) for t, Qk in kf]
 
-        # shared reference axis: the SINGLE largest-magnitude delta across ALL clips (avoids the near-zero-
-        # delta noise a naive "use each clip's own last keyframe" pick hits for whichever clip ends near
-        # Q_rest -- confirmed empirically: that naive approach gave garbage, non-matching axes per clip).
+        # shared reference axis for THIS leaf: the single largest-magnitude delta across its own clips (avoids
+        # the near-zero-delta noise a naive "use each clip's own last keyframe" pick hits for whichever clip
+        # ends near Q_rest -- confirmed on Fridge_0: that naive approach gave a garbage non-matching axis).
         best = None
         for nm, deltas in deltas_by_clip.items():
             for t, d in deltas:
                 mag = math.sqrt(d[0]**2 + d[1]**2 + d[2]**2)
                 if best is None or mag > best[0]: best = (mag, d)
         if best is None:
-            print("NOTE: no non-trivial Hinge rotation keyframes found -- door will fall back to procedural easing")
+            print(f"  NOTE: no non-trivial {bone_name!r} rotation keyframes found in any clip -- no curve/angle derived")
         else:
             refAxis = (best[1][0], best[1][1], best[1][2])
             rlen = math.sqrt(sum(c*c for c in refAxis))
             refAxis = tuple(c/rlen for c in refAxis)
+
+            # Swing axis, prop-space: rotate refAxis (still expressed in the bone's own bind-rest-local frame
+            # -- see qmul(qinv(Q_rest), Qk) above) into its PARENT's frame (Skeleton) via the bone's own rest
+            # rotation Q_rest. Skeleton's own local rotation cancels Root's exactly (the same mechanism that
+            # lands Model_0 at identity -- verified for both Fridge_0 and Wardrobe_0), so "Skeleton-local" IS
+            # prop space directly and no further correction is needed. Verified to reproduce the EXACT same
+            # direction as the old bindpose-column formula for Fridge_0's Hinge (dot product 1.0000) and
+            # Wardrobe_0's Left_Hinge (same axis, opposite sign) -- and to FIX Wardrobe_0's Right_Hinge, whose
+            # bindpose rest-pose column-2 is not its actual hinge axis (authored differently from Left's;
+            # nothing to do with mirroring -- leaf_R is a pure rotation about a fixed axis for every leaf here,
+            # so no correction built purely from it could ever have moved a raw axis sitting on that same
+            # fixed axis, regardless of which leaf it came from).
+            axis_raw = qrot(Q_rest, refAxis)
+            axisLen = math.sqrt(sum(a*a for a in axis_raw))
+            axis = list(axis_raw) if axisLen < 1e-9 else [a/axisLen for a in axis_raw]
+            print(f"    axis (prop-space, unit, from clip data) = ({axis[0]:.4f}, {axis[1]:.4f}, {axis[2]:.4f})")
+
             raw = {}
             for nm, deltas in deltas_by_clip.items():
                 samples = []
@@ -368,51 +414,50 @@ else:
                 key = "open" if abs(lastAng) >= abs(firstAng) else "close"
                 role.setdefault(key, (nm, samples))
             for r, (nm, samples) in role.items():
-                print(f"  ROLE {r}: unity clip name {nm!r} ({len(samples)} samples), first={samples[0][1]:.3f} last={samples[-1][1]:.3f}")
+                print(f"    ROLE {r}: unity clip name {nm!r} ({len(samples)} samples), first={samples[0][1]:.3f} last={samples[-1][1]:.3f}")
 
-            # DEFAULT STATE (retail InteractableObjectBinaryState.updateState): boots at isUsed=false, and
-            # updateAnimationComponent(applyInstantly=true) jumps normalizedTime to 1 (the clip's END) on the
-            # clip NAMED "Close" (animation = isUsed ? "Open" : "Close"). So a fresh/untouched prop shows
-            # whichever pose the "Close"-NAMED clip ends at -- for most props that IS the closed pose (matching
-            # the name), but Fridge_0's clip names are inverted vs their geometry (established above): its
-            # "Close"-named clip is actually the OPENING motion, so a fresh Fridge_0 displays OPEN in retail,
-            # and F-toggling (isUsed->true, plays "Open"-named clip to ITS end) CLOSES it. Recorded generically
-            # (not hardcoded "fridges start open"): true exactly when the clip literally named "Close" is the
-            # one this script classified as the "open" role.
             defaultOpen = role.get("open", (None, None))[0] == "Close"
-            print(f"  defaultOpen = {defaultOpen}  (True iff the clip named 'Close' is the opening motion -- retail InteractableObjectBinaryState boots isUsed=false -> plays 'Close'-named clip to its end)")
+            print(f"    defaultOpen = {defaultOpen}  (True iff the clip named 'Close' is the opening motion for THIS leaf)")
 
-            def write_curve(path, samples):
-                farAng = max((samples[0][1], samples[-1][1]), key=abs)
-                length = samples[-1][0]
-                if abs(farAng) < 1e-6 or length < 1e-6:
-                    print(f"  SKIP {path}: degenerate (farAng={farAng} length={length})"); return
-                lines = ["%.6f %.6f" % (t/length, ang/farAng) for t, ang in samples]
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                open(path, "w").write("\n".join(lines) + "\n")
-                print(f"  wrote {path}: {len(lines)} samples, farAng={farAng:.3f} length={length:.4f}")
-                for t, ang in samples:
-                    print(f"    t={t:.4f} t_norm={t/length:.4f}  angle={ang:8.3f}  frac={ang/farAng:7.4f}")
+            if "open" in role:
+                r = write_curve(os.path.join(curveDir, base + "_open.txt"), role["open"][1])
+                if r: angleDeg, durationSec = r
+            if "close" in role:
+                write_curve(os.path.join(curveDir, base + "_close.txt"), role["close"][1])
 
-            if "open" in role: write_curve(os.path.join(curveDir, TARGET + "_open.txt"), role["open"][1])
-            if "close" in role: write_curve(os.path.join(curveDir, TARGET + "_close.txt"), role["close"][1])
+    if angleDeg is None or durationSec is None or axis is None:
+        print(f"  NOTE: could not derive angle/duration/axis for {leaf_name} from clip data -- no doors.txt entry for this leaf (mesh/curves already written above, if any)")
+        return None
 
-clip = DOOR_CLIP.get(TARGET)
-if clip is None:
-    print(f"NOTE: no DOOR_CLIP entry for {TARGET} -- add its sampled retail angle/duration to this script's DOOR_CLIP dict before cataloging it")
+    return {"leaf": leaf_name, "meshFile": doorObjName, "pivot": pivot, "axis": axis,
+            "angleDeg": angleDeg, "durationSec": durationSec, "defaultOpen": defaultOpen}
+
+bodyPath = os.path.join(OUT, TARGET + ".obj")
+if os.path.exists(bodyPath):
+    bodyVerts = sum(1 for ln in open(bodyPath) if ln.startswith("v "))
+    print(f"body {TARGET}.obj (unchanged by this script) verts={bodyVerts}")
+else:
+    print(f"NOTE: {TARGET}.obj (body) not found -- run extract_objects_v2.py / extract_object_named.py first")
+
+entries = []
+for leaf_name in skinned_leaf_names:
+    r = process_leaf(leaf_name)
+    if r: entries.append(r)
+
+if not entries:
+    print(f"NO door leaf catalog entries produced for {TARGET} -- doors.txt not modified")
 else:
     catPath = os.path.join(OUT, "doors.txt")
-    # 11th field, defaultOpen (1/0): retail InteractableObjectBinaryState boots isUsed=false and jumps
-    # (applyInstantly) to the END of the clip literally NAMED "Close" -- true iff THAT named clip is the one
-    # this script classified as the opening motion (see the defaultOpen derivation above). Per-prop, not
-    # hardcoded -- most Binary_State props will read 0 (their "Close" clip's name matches its geometry); only
-    # ones with inverted clip names like Fridge_0 read 1.
-    line = "%s %s %.6f %.6f %.6f %.6f %.6f %.6f %.4f %.4f %d" % (
-        TARGET, doorObjName, pivot[0], pivot[1], pivot[2], axis[0], axis[1], axis[2], clip["angle"], clip["duration"], 1 if defaultOpen else 0)
+    lines = ["%s %s %.6f %.6f %.6f %.6f %.6f %.6f %.4f %.4f %d" % (
+        TARGET, e["meshFile"], e["pivot"][0], e["pivot"][1], e["pivot"][2],
+        e["axis"][0], e["axis"][1], e["axis"][2], e["angleDeg"], e["durationSec"], 1 if e["defaultOpen"] else 0)
+        for e in entries]
     existing = []
     if os.path.exists(catPath):
         existing = [ln for ln in open(catPath).read().splitlines() if ln.strip() and not ln.split()[0] == TARGET]
-    existing.append(line)
+    existing.extend(lines)
     open(catPath, "w").write("\n".join(existing) + "\n")
-    print(f"wrote doors.txt entry: {line}")
-    print("  (angleDeg is the easy-to-flip sign if the render shows the door swinging the wrong way -- see module docstring)")
+    print(f"wrote {len(lines)} doors.txt entries for {TARGET}:")
+    for e, ln in zip(entries, lines):
+        print(f"  [{e['leaf']}] {ln}")
+    print("  (angleDeg is the easy-to-flip sign per leaf if the render shows a door swinging the wrong way -- no re-extract needed)")

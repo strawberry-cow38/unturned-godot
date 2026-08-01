@@ -142,9 +142,12 @@ namespace UnturnedGodot
             return list.Count > 0 ? list : null;
         }
 
-        public static System.Collections.Generic.Dictionary<string, DoorCatalogEntry> LoadDoorCatalog(string dir)
+        // A prop can have MULTIPLE door leaves (Wardrobe_0's Left/Right doors) sharing the SAME
+        // first-field prop name in doors.txt -- one line per leaf, grouped here into a list per prop.
+        // A single-leaf prop (Fridge_0) is simply a list of one; nothing about the file format changes.
+        public static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<DoorCatalogEntry>> LoadDoorCatalog(string dir)
         {
-            var cat = new System.Collections.Generic.Dictionary<string, DoorCatalogEntry>();
+            var cat = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<DoorCatalogEntry>>();
             string path = dir + "doors.txt";
             if (!System.IO.File.Exists(path)) return cat;
             float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
@@ -152,7 +155,7 @@ namespace UnturnedGodot
             {
                 var p = line.Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
                 if (p.Length < 10) continue;
-                cat[p[0]] = new DoorCatalogEntry
+                var entry = new DoorCatalogEntry
                 {
                     MeshFile = p[1],
                     Pivot = new Vector3(F(p[2]), F(p[3]), F(p[4])),
@@ -161,6 +164,8 @@ namespace UnturnedGodot
                     DurationSec = F(p[9]),
                     DefaultOpen = p.Length >= 11 && p[10] == "1",
                 };
+                if (!cat.TryGetValue(p[0], out var list)) { list = new System.Collections.Generic.List<DoorCatalogEntry>(); cat[p[0]] = list; }
+                list.Add(entry);
             }
             return cat;
         }
@@ -401,25 +406,32 @@ namespace UnturnedGodot
                     var lampWorld = gpos + basis * new Vector3(0f, 2.35f, 6.48f);
                     root.AddChild(StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y)));
                 }
-                // OPENABLE PROP DOORS (MVP: Fridge_0 only, SP-local -- mirrors the Tower_Water_0 Playable-only
-                // gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py) catalogs the
-                // door leaf mesh plus hinge pivot/axis/angle/duration per prop name -- the combined-mesh loader
-                // above cannot see a door leaf at all (SkinnedMeshRenderer, no MeshFilter). F toggles it
-                // (ObjectDoor.Toggle, wired into PlayerController look-focus).
+                // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
+                // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
+                // catalogs the door leaf mesh plus hinge pivot/axis/angle/duration per LEAF -- a prop can
+                // have MULTIPLE leaves (Wardrobe_0's Left/Right doors), grouped by LoadDoorCatalog into a
+                // list under the same prop name. Spawns one ObjectDoor per leaf and, for a multi-leaf prop,
+                // groups them (ObjectDoor.SetGroup) so F toggles every leaf together (a wardrobe opens
+                // both doors at once) -- see ObjectDoor.Toggle's group-sync.
                 // KNOWN GAP: the Fridge_0 guid is ALSO in ContainerShelf above -- on the real PEI world every
                 // placed Fridge_0 is intercepted by TryContainer (loot-shelf conversion) and never reaches
                 // PlaceObject at all, so this branch currently only fires for a prop placed outside that table
                 // (or a standalone --doortest spawn, which calls ObjectDoor.Spawn directly). Reconciling the two
                 // (a lootable fridge that is ALSO an openable door) is unscoped follow-up, not part of this MVP.
-                if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorCfg))
+                if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorLeaves))
                 {
-                    if (!doorMeshCache.TryGetValue(name, out var doorMesh)) { doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile); doorMeshCache[name] = doorMesh; }
-                    if (doorMesh != null)
+                    var spawnedDoors = new System.Collections.Generic.List<ObjectDoor>();
+                    foreach (var doorCfg in doorLeaves)
                     {
-                        var openCurve = LoadDoorCurve(dir, name, "open");
-                        var closeCurve = LoadDoorCurve(dir, name, "close");
-                        ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), startOpen: doorCfg.DefaultOpen, openCurve: openCurve, closeCurve: closeCurve);
+                        if (!doorMeshCache.TryGetValue(doorCfg.MeshFile, out var doorMesh)) { doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile); doorMeshCache[doorCfg.MeshFile] = doorMesh; }
+                        if (doorMesh == null) continue;
+                        string curveBase = doorCfg.MeshFile.EndsWith("_door.obj") ? doorCfg.MeshFile.Substring(0, doorCfg.MeshFile.Length - "_door.obj".Length) : name;
+                        var openCurve = LoadDoorCurve(dir, curveBase, "open");
+                        var closeCurve = LoadDoorCurve(dir, curveBase, "close");
+                        spawnedDoors.Add(ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), startOpen: doorCfg.DefaultOpen, openCurve: openCurve, closeCurve: closeCurve));
                     }
+                    if (spawnedDoors.Count > 1)
+                        foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
                 }
                 StaticBody3D destBody = null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)

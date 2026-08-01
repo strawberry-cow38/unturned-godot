@@ -40,6 +40,17 @@ namespace UnturnedGodot
         double _lastToggleSec = double.NegativeInfinity;
         const double CooldownSec = 0.35;   // re-toggle cooldown, like IOBS's interactabilityDelay gate (checkCanReset/isUsable) -- just enough to swallow key-repeat spam, not to block a mid-swing reversal
 
+        // Other ObjectDoor leaves belonging to the SAME prop instance (including this one) -- e.g.
+        // Wardrobe_0's Left/Right doors. Set by WorldBuilder.PlaceObject for a multi-leaf prop; null for
+        // a single-leaf prop (Fridge_0), which never needs to sync anything. Toggling any one leaf syncs
+        // every OTHER leaf in the group to the SAME open/closed target (a wardrobe opens both doors).
+        System.Collections.Generic.List<ObjectDoor> _group;
+
+        /// <summary>Wire this door into a set of siblings that open/close together. Pass the SAME list
+        /// instance to every leaf of one prop (this leaf may or may not be included in it -- both are
+        /// handled).</summary>
+        public void SetGroup(System.Collections.Generic.List<ObjectDoor> group) => _group = group;
+
         /// <summary>Build a door on prop <paramref name="propXform"/> (the SAME placement Transform3D the
         /// prop's own body mesh uses -- pivot/leaf/collider are all expressed in that prop-local space, matching
         /// the catalog's coordinates). <paramref name="startOpen"/> is the --doortest UG_DOOR_OPEN hook: sets
@@ -113,7 +124,24 @@ namespace UnturnedGodot
             if (now - _lastToggleSec < CooldownSec) return false;
             _lastToggleSec = now;
             IsOpen = !IsOpen;
+            SyncGroup();
             return true;
+        }
+
+        /// <summary>Bring every OTHER door in this leaf's group to the SAME open/closed state THIS one
+        /// just toggled to -- directly (no cooldown check, no recursive Toggle/SyncGroup call): the
+        /// trigger already passed the cooldown gate, and re-entering Toggle on a sibling would try to
+        /// sync the group AGAIN, including back to this door. A private setter write is fine here since
+        /// C# access control is per-CLASS, not per-instance -- any ObjectDoor can set IsOpen on any other.</summary>
+        void SyncGroup()
+        {
+            if (_group == null) return;
+            foreach (var sib in _group)
+            {
+                if (sib == this || !IsInstanceValid(sib) || sib.IsOpen == IsOpen) continue;
+                sib.IsOpen = IsOpen;
+                sib._lastToggleSec = Time.GetTicksMsec() / 1000.0;
+            }
         }
 
         /// <summary>Test/render hook (--doortest UG_DOOR_OPEN=1): jump straight to the open (or closed) pose,

@@ -67,6 +67,7 @@ namespace UnturnedGodot
             bool skillsui = false;
             bool fluidTest = false;
             bool doorTest = false;
+            string doorTestName = null;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -78,7 +79,8 @@ namespace UnturnedGodot
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
-                else if (arg == "--doortest") doorTest = true;   // openable prop door MVP (Fridge_0): place one a few metres from the camera; UG_DOOR_OPEN=1 spawns it already open
+                else if (arg == "--doortest") { doorTest = true; doorTestName = "Fridge_0"; }   // openable prop door MVP: place one a few metres from the camera; UG_DOOR_OPEN=1 spawns it already open
+                else if (arg.StartsWith("--doortest=")) { doorTest = true; doorTestName = arg["--doortest=".Length..]; }   // e.g. --doortest=Wardrobe_0 -- any prop with a doors.txt entry
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
@@ -260,7 +262,7 @@ namespace UnturnedGodot
             {
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot; _shotRequested = shot;
-                BuildDoorTest();
+                BuildDoorTest(doorTestName);
                 return;
             }
 
@@ -1285,15 +1287,17 @@ namespace UnturnedGodot
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
         }
 
-        // --doortest: openable prop door MVP render harness (Fridge_0 only). Builds the body (Model_0, 94v)
-        // plus the door leaf (ObjectDoor, from extract_doors.py's Fridge_0_door.obj / doors.txt) standalone --
-        // like BuildPropTest, NOT through WorldBuilder.PlaceObject (which is a BuildFullWorld-local closure and
-        // cannot be called from here; also the Fridge_0 guid is in WorldBuilder.ContainerShelf, so the real PEI
+        // --doortest[=NAME]: openable prop door MVP render harness (default Fridge_0). Builds the body mesh
+        // plus EVERY one of the prop's door leaves (one ObjectDoor per leaf, grouped via ObjectDoor.SetGroup so
+        // a multi-leaf prop like Wardrobe_0 opens/closes both doors together) standalone -- like BuildPropTest,
+        // NOT through WorldBuilder.PlaceObject (which is a BuildFullWorld-local closure and cannot be called
+        // from here; also the Fridge_0/Wardrobe_0 guids are in WorldBuilder.ContainerShelf, so the real PEI
         // placement path never reaches the PlaceObject door branch at all right now -- see its comment there).
-        // UG_DOOR_OPEN=1 spawns with the door already open (no animation to wait out) so --shot can capture
+        // UG_DOOR_OPEN=1 spawns with the door(s) already open (no animation to wait out) so --shot can capture
         // open vs closed from two separate runs.
-        void BuildDoorTest()
+        void BuildDoorTest(string name)
         {
+            if (string.IsNullOrEmpty(name)) name = "Fridge_0";
             var env = new Godot.Environment
             {
                 BackgroundMode = Godot.Environment.BGMode.Color,
@@ -1305,23 +1309,20 @@ namespace UnturnedGodot
             AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
 
             string dir = ProjectSettings.GlobalizePath("res://content/objects/");
-            const string name = "Fridge_0";
             var bodyMesh = ObjMesh.Load(dir + name + ".obj");
             if (bodyMesh == null) { GD.Print($"[DOORTEST] no body mesh {name}"); GetTree().Quit(1); return; }
             var doorCatalog = WorldBuilder.LoadDoorCatalog(dir);
-            if (!doorCatalog.TryGetValue(name, out var doorCfg)) { GD.Print($"[DOORTEST] no doors.txt entry for {name} -- run tools/extract_doors.py {name}"); GetTree().Quit(1); return; }
-            var doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile);
-            if (doorMesh == null) { GD.Print($"[DOORTEST] no door mesh {doorCfg.MeshFile}"); GetTree().Quit(1); return; }
+            if (!doorCatalog.TryGetValue(name, out var doorLeaves) || doorLeaves.Count == 0) { GD.Print($"[DOORTEST] no doors.txt entries for {name} -- run tools/extract_doors.py {name}"); GetTree().Quit(1); return; }
 
             var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
             string tp = dir + name + "_tex.png";
             if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
 
             // Upright placement basis: ex=270/ez=0 is the map own convention for standing a flat-authored
-            // interior prop up (see WorldBuilder.TryContainer -- Fridge_0 is itself a ContainerShelf entry,
-            // authored the same way every other upright interior prop on PEI is); yaw=180 is an arbitrary
-            // pick, harmless either way since the camera below is aimed from the ACTUAL resulting geometry,
-            // not a hardcoded direction.
+            // interior prop up (see WorldBuilder.TryContainer -- Fridge_0/Wardrobe_0 are themselves
+            // ContainerShelf entries, authored the same way every other upright interior prop on PEI is);
+            // yaw=180 is an arbitrary pick, harmless either way since the camera below is aimed from the
+            // ACTUAL resulting geometry, not a hardcoded direction.
             var basis = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f));
             var xform = new Transform3D(basis, Vector3.Zero);
             AddChild(new MeshInstance3D { Mesh = bodyMesh, MaterialOverride = mat, Transform = xform });
@@ -1329,45 +1330,64 @@ namespace UnturnedGodot
             bool doorAnim = System.Environment.GetEnvironmentVariable("UG_DOOR_ANIM") == "1";
             string doorOpenEnv = System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN");
             // Retail default-state fix: InteractableObjectBinaryState boots isUsed=false and (applyInstantly)
-            // jumps straight to the END of the clip literally named "Close" -- for Fridge_0 that IS the
-            // opening motion (its clip names are inverted vs geometry), so a fresh fridge is OPEN in retail.
-            // doorCfg.DefaultOpen carries that per-prop (see WorldBuilder.LoadDoorCatalog / extract_doors.py).
+            // jumps straight to the END of the clip literally named "Close" -- for Fridge_0/Wardrobe_0 that IS
+            // the opening motion (their clip names are inverted vs geometry), so a fresh prop is OPEN in
+            // retail. doorCfg.DefaultOpen carries that per LEAF (see WorldBuilder.LoadDoorCatalog /
+            // extract_doors.py); every leaf of one prop is expected to agree, but each is honored on its own.
             // UG_DOOR_OPEN, if EXPLICITLY set (0 or 1), overrides the catalog default for testing.
             // UG_DOOR_ANIM always spawns at the catalog default (ignores UG_DOOR_OPEN) -- it wants the movie
             // to open on the real default rotation, then demonstrate both transitions from there.
-            bool startOpen = (!doorAnim && doorOpenEnv != null) ? (doorOpenEnv == "1") : doorCfg.DefaultOpen;
-            var openCurve = WorldBuilder.LoadDoorCurve(dir, name, "open");
-            var closeCurve = WorldBuilder.LoadDoorCurve(dir, name, "close");
-            var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen, openCurve: openCurve, closeCurve: closeCurve);
-            GD.Print($"[DOORTEST] {name} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing}");
+            var spawnedDoors = new System.Collections.Generic.List<ObjectDoor>();
+            Vector3 pivotSum = Vector3.Zero;
+            float repDuration = 0f; bool repStartOpen = false;
+            foreach (var doorCfg in doorLeaves)
+            {
+                var doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile);
+                if (doorMesh == null) { GD.Print($"[DOORTEST] no door mesh {doorCfg.MeshFile}"); continue; }
+                bool startOpen = (!doorAnim && doorOpenEnv != null) ? (doorOpenEnv == "1") : doorCfg.DefaultOpen;
+                string curveBase = doorCfg.MeshFile.EndsWith("_door.obj") ? doorCfg.MeshFile.Substring(0, doorCfg.MeshFile.Length - "_door.obj".Length) : name;
+                var openCurve = WorldBuilder.LoadDoorCurve(dir, curveBase, "open");
+                var closeCurve = WorldBuilder.LoadDoorCurve(dir, curveBase, "close");
+                var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen, openCurve: openCurve, closeCurve: closeCurve);
+                if (spawnedDoors.Count == 0) { repDuration = doorCfg.DurationSec; repStartOpen = startOpen; }
+                spawnedDoors.Add(door);
+                pivotSum += doorCfg.Pivot;
+                GD.Print($"[DOORTEST] {name} leaf mesh={doorCfg.MeshFile} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing}");
+            }
+            if (spawnedDoors.Count == 0) { GD.Print($"[DOORTEST] no door leaves could be spawned for {name}"); GetTree().Quit(1); return; }
+            if (spawnedDoors.Count > 1)
+                foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
 
             if (doorAnim)
             {
                 // Real (not fast-forwarded) DEFAULT -> away -> DEFAULT cycle, driven by REAL elapsed time in
-                // _Process (see the UG_DOOR_ANIM block there). Spawns SNAPPED at the catalog default (startOpen,
-                // above) rather than forcing closed, so the movie opens on the real default rotation. Hold
-                // ~0.5s, Toggle AWAY from default (animates through whichever curve that is), hold ~0.5s past
-                // settle, Toggle BACK to default (the other curve), hold ~0.4s past settle, then quit. Toggle()
-                // is state-relative, so this sequence is correct regardless of which state the catalog default
-                // actually is -- not hardcoded to "closed-then-open".
+                // _Process (see the UG_DOOR_ANIM block there). Spawns SNAPPED at the catalog default
+                // (repStartOpen, above) rather than forcing closed, so the movie opens on the real default
+                // rotation. Hold ~0.5s, Toggle AWAY from default (animates through whichever curve that is --
+                // for a multi-leaf prop, ALL of its leaves together via ObjectDoor's group-sync), hold ~0.5s
+                // past settle, Toggle BACK to default (the other curve), hold ~0.4s past settle, then quit.
+                // Toggle() is state-relative, so this sequence is correct regardless of which state the
+                // catalog default actually is, and regardless of leaf count -- toggling ANY one door in the
+                // group brings every other leaf of this prop along, so tracking just the first spawned door
+                // (spawnedDoors[0]) is enough to drive the whole prop.
                 const float HoldDefault = 0.5f, HoldAway = 0.5f, TrailHold = 0.4f;
-                _doorAnimDoor = door;
+                _doorAnimDoor = spawnedDoors[0];
                 _doorAnimToggle1At = HoldDefault;
-                _doorAnimToggle2At = _doorAnimToggle1At + doorCfg.DurationSec + HoldAway;
-                _doorAnimDoneAt = _doorAnimToggle2At + doorCfg.DurationSec + TrailHold;
+                _doorAnimToggle2At = _doorAnimToggle1At + repDuration + HoldAway;
+                _doorAnimDoneAt = _doorAnimToggle2At + repDuration + TrailHold;
                 _doorAnim = true;
-                string awayWord = startOpen ? "CLOSE" : "OPEN";
-                string backWord = startOpen ? "OPEN" : "CLOSE";
-                GD.Print($"[DOORANIM] default={(startOpen ? "OPEN" : "CLOSED")}; timeline (s): hold default 0.000-{_doorAnimToggle1At:0.000}, {awayWord} toggle @{_doorAnimToggle1At:0.000}, settles ~{_doorAnimToggle1At + doorCfg.DurationSec:0.000}, holds to {_doorAnimToggle2At:0.000}, {backWord} toggle @{_doorAnimToggle2At:0.000}, settles ~{_doorAnimToggle2At + doorCfg.DurationSec:0.000}, quits @{_doorAnimDoneAt:0.000}");
+                string awayWord = repStartOpen ? "CLOSE" : "OPEN";
+                string backWord = repStartOpen ? "OPEN" : "CLOSE";
+                GD.Print($"[DOORANIM] default={(repStartOpen ? "OPEN" : "CLOSED")}; timeline (s): hold default 0.000-{_doorAnimToggle1At:0.000}, {awayWord} toggle @{_doorAnimToggle1At:0.000}, settles ~{_doorAnimToggle1At + repDuration:0.000}, holds to {_doorAnimToggle2At:0.000}, {backWord} toggle @{_doorAnimToggle2At:0.000}, settles ~{_doorAnimToggle2At + repDuration:0.000}, quits @{_doorAnimDoneAt:0.000}");
             }
 
-
-            // Camera: a few metres out along the direction the door actually faces, computed from the real
-            // placed geometry (the pivot world offset from the body center) rather than assumed, 3/4-elevated
-            // so the leaf peeling away from the body reads clearly in both the closed and open shot.
+            // Camera: a few metres out along the direction the door(s) actually face, computed from the real
+            // placed geometry (the AVERAGE leaf pivot's world offset from the body center) rather than
+            // assumed, 3/4-elevated so the leaf peeling away from the body reads clearly in both the closed
+            // and open shot -- averaging keeps a multi-leaf prop framed across all of its doors.
             var bodyAabb = bodyMesh.GetAabb();
             Vector3 bodyCenterWorld = xform * bodyAabb.GetCenter();
-            Vector3 pivotWorld = xform * doorCfg.Pivot;
+            Vector3 pivotWorld = xform * (pivotSum / (float)spawnedDoors.Count);
             Vector3 outward = pivotWorld - bodyCenterWorld; outward.Y = 0f;
             if (outward.LengthSquared() < 0.01f) outward = -xform.Basis.Z;   // degenerate fallback: straight back
             outward = outward.Normalized();
