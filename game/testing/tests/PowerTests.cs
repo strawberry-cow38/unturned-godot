@@ -342,6 +342,59 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // DUPLICATE_AUDIT 2.1 (ramp half). A generator's output cap used to be scaled by _powerLevel, the visual
+    // spin-up ramp, so during the 1.3 s warmup SP produced a fraction of the rated watts. The replicated
+    // Solve() has no ramp to mirror and never did -- the ramp is local wall-clock timing off a toggle instant
+    // that is not on the wire -- so SP and MP disagreed for the whole warmup.
+    //
+    // strawberry's call (2026-08-01): "gen ramp up/down is visual. generator state is binary on/off. server
+    // authoritative." So the ramp still runs, it just drives audio/shake/lamps instead of the output cap.
+    //
+    // This pins BOTH halves of that, because either one alone is satisfiable by a mistake: full watts
+    // immediately (else the cap is still ramped) AND a ramp still mid-flight at that moment (else someone
+    // "simplified" by deleting the ramp, which would take the engine audio and shake with it).
+    public class PowerGeneratorOutputIsBinary : GameTest
+    {
+        public override string Name => "power.generator_output_is_binary";
+        public override IEnumerable<Step> Run()
+        {
+            Deployable.InstantRampForTests = false;   // the REAL ramp -- the whole point is that it is running
+            var gen = Deployable.Spawn(World, DeployableDef.Generator, new Vector3(-3f, 0f, 0f), 0f);
+            var spot = Deployable.Spawn(World, DeployableDef.Spotlight, new Vector3(3f, 0f, 0f), 0f);
+            var genOut = gen.Ports.Find(p => p.Kind == DeployableDef.PortKind.Output);
+            var cons = spot.Ports.Find(p => p.Kind == DeployableDef.PortKind.Consumer);
+            yield return Ticks(1);
+            PowerRig.Connect(World, genOut, cons);
+
+            gen.TogglePower();
+            yield return Ticks(1);                     // ONE tick: far inside the 1.3 s warmup
+            PowerNet.Recompute(Tree);
+
+            T.Check($"full rated watts one tick after toggle, not a ramped fraction (got {genOut.Live:0} of 4000)",
+                    PowerRig.Approx(genOut.Live, 4000f));
+            T.Check("consumer is powered immediately", cons.Powered);
+            T.Check("generator reads as producing immediately", gen.IsPowered);
+
+            T.Check($"...and the visual ramp is still mid-flight (level {gen.PowerLevelForTest:0.00} < 1) -- it was " +
+                    "kept for audio/shake, not deleted", gen.PowerLevelForTest < 0.99f);
+
+            // Toggling OFF needs the warmup to settle first -- CanTogglePower gates a generator on
+            // PowerSettled, which is the deliberate anti-spam buffer, NOT part of the output rule. (An
+            // earlier version of this test toggled straight back off one tick later and failed: the buffer
+            // refused the toggle and the generator was still, correctly, on.)
+            yield return Until(() => gen.CanTogglePower, 10);
+            gen.TogglePower();
+            yield return Ticks(1);
+            PowerNet.Recompute(Tree);
+            T.Check("output cuts on the same tick as the toggle OFF, not over a 1.1 s wind-down",
+                    !gen.IsPowered && !cons.Powered);
+            T.Check($"while the ramp winds down visually (level {gen.PowerLevelForTest:0.00} still > 0)",
+                    gen.PowerLevelForTest > 0.01f);
+
+            Deployable.InstantRampForTests = true;      // restore the suite default
+        }
+    }
+
     // DUPLICATE_AUDIT 2.1 (wind half). WindField.SampleWind drifted the noise map by Time.GetTicksMsec() --
     // each PROCESS's own wall clock since ITS launch. The noise map itself is identical everywhere (fixed
     // seed + frequency), so wind agreed across machines exactly when that offset agreed, which it never did:

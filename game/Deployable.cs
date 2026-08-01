@@ -15,7 +15,14 @@ namespace UnturnedGodot
         public bool PowerProducing => IsPowered;
         public bool PowerOnFire => OnFire;
         public bool PowerConducting => Def == null || !Def.IsSwitch || _switchOn;   // a switch OFF stops conducting -> its passthrough dies
-        public float PowerScale => Def == null ? 1f : Def.IsWindTurbine ? _windFactor : (Def.Fuel > 0f && !Def.IsBattery) ? _powerLevel : 1f;   // generator ramps 0..1 with the engine spin-up; wind turbine = live wind x height (0..2); battery + others = full
+        // A generator's output is BINARY -- IsPowered gates it and the cap is the full rated watts (strawberry,
+        // 2026-08-01: "gen ramp up/down is visual. generator state is binary on/off. server authoritative").
+        // The spin-up ramp still runs, it just drives the engine audio, the shake and the lamp envelope rather
+        // than the authoritative output cap. That is also what makes SP agree with MP for free: the replicated
+        // Solve() has no ramp to mirror and never did (DUPLICATE_AUDIT 2.1, ramp half).
+        // The wind turbine keeps its scale -- _windFactor is live wind (0..2), a gameplay value, not a
+        // transient, and that half is parked pending its own call.
+        public float PowerScale => Def != null && Def.IsWindTurbine ? _windFactor : 1f;
         public uint PowerNetId => NetId;
         public System.Collections.Generic.IReadOnlyList<ConnectionPort> PowerPorts => Ports;
         public float Health, HealthMax;
@@ -50,7 +57,13 @@ namespace UnturnedGodot
         float RunTarget => (_powered && !OnFire && FuelMax > 0f && Fuel > 0f) ? 1f : 0f;   // the engine's effective on/off: needs power ON, not on fire, and fuel left
         bool PowerSettled => Mathf.Abs(_powerLevel - RunTarget) < 0.001f;   // ramp reached its EFFECTIVE target (so a fuel-dry/on-fire gen still settles -> no toggle deadlock)
         public bool CanTogglePower => !OnFire && Def != null && (Def.IsSwitch || (Def.Fuel > 0f && PowerSettled));   // a switch always toggles; a generator only when fuelled + ramp-settled (buffer)
-        public bool IsPowered => Def == null ? (!OnFire && _powerLevel > 0.02f) : Def.IsBattery ? (Energy > 0f && !OnFire) : Def.IsWindTurbine ? (!OnFire && _windFactor > 0.03f) : (!OnFire && _powerLevel > 0.02f);   // battery: charged; wind turbine: wind present; generator: engine spun up (_powerLevel); a FIRE kills output instantly -- PowerNet reads this
+        // battery: charged; wind turbine: wind present; generator: BINARY on/off (RunTarget = toggled on, fuelled,
+        // not burning) -- deliberately the same predicate the server's DeployableEntity.Producing(def) uses, so SP
+        // and MP answer "is this producing" identically. It used to read `_powerLevel > 0.02f`, i.e. the visual
+        // ramp, which MP has no counterpart for. A FIRE kills output instantly -- PowerNet reads this.
+        public bool IsPowered => Def != null && Def.IsBattery ? (Energy > 0f && !OnFire)
+                               : Def != null && Def.IsWindTurbine ? (!OnFire && _windFactor > 0.03f)
+                               : (!OnFire && RunTarget > 0f);
         public float Energy;   // battery: stored energy (watt-SECONDS); the OUT produces while > 0, the IN charges it up to Def.EnergyMax
 
         // --- consumer lamps (spotlight): src InteractableSpot.updateLights turns the "Spots" lights on when wired+powered ---
@@ -399,6 +412,7 @@ namespace UnturnedGodot
         public bool PoweredTarget => _powered;   // the F-toggle TARGET state (IsPowered adds fuel/fire gating) -- what an MP toggle request inverts
         internal static bool InstantRampForTests;   // L1 (set by TestHost): skip the spin-up/cooldown ramp so a gen produces/stops instantly for power-flow checks; the gradual ramp is gameplay-verified in-render
         public float WindFactorForTest => _windFactor;   // L1 probe for power.wind_turbine
+        public float PowerLevelForTest => _powerLevel;   // L1 probe: the VISUAL spin-up ramp (not the output cap)
 
         void Explode()   // src explode: blast nearby, then either shatter into pieces (spotlight) or become a burning salvageable wreck (generator)
         {
