@@ -50,7 +50,7 @@ meant to agree and no longer do.
 
 | # | Divergence | Detail | Status |
 |---|---|---|---|
-| 2.1 | **Power `PowerScale` is SP-only** | `PowerNet.cs:50` scales output ports by `d.PowerScale`; `DeployableReplication.cs:522` does not scale at all. A generator mid-spin-up produces full 4000 W server-side and `4000 × _powerLevel` in SP; a wind turbine produces a flat 2500 W server-side vs `2500 × _windFactor` (0..2) in SP | OPEN |
+| 2.1 | **Power `PowerScale` is SP-only** | `PowerNet.cs:50` scales output ports by `d.PowerScale`; `DeployableReplication.cs:522` does not scale at all. A generator mid-spin-up produces full 4000 W server-side and `4000 × _powerLevel` in SP; a wind turbine produces a flat 2500 W server-side vs `2500 × _windFactor` (0..2) in SP | **BLOCKED** — needs a decision, see note below |
 | 2.2 | **A Power Switch toggled OFF still conducts server-side** | `PowerNet.cs:45` passes `Conducting = d.PowerConducting`; `DeployableReplication.cs:520` leaves it at its `true` default. Everything downstream of an off switch reads powered in MP and dark in SP. `DeployableEntity.ToggledOn` exists and would carry it — nothing maps it | **FIXED** — `Conducting = !def.IsSwitch \|\| e.ToggledOn` in `Solve()` |
 | 2.3 | **A Power Switch can never be toggled through the server** | `Deployable.CanTogglePower:52` has an `IsSwitch` branch; `DeployableReplication.CanToggle:394` requires `FuelCapacity > 0`, which a switch (`Fuel = 0`) never has | **FIXED** — `CanToggle` accepts `def.IsSwitch` |
 | 2.4 | **Battery + wind turbine "producing" is fuel-generator logic only** | `Deployable.IsPowered:53` is a 3-way family rule (battery on `Energy`, turbine on `_windFactor`); `DeployableEntity.Producing:295` is `ToggledOn && !OnFire && (FuelCapacity <= 0 \|\| Fuel > 0)`. Battery `Fuel = 0` ⇒ produces whenever toggled; its whole charge/discharge economy is SP-only | OPEN |
@@ -66,7 +66,7 @@ meant to agree and no longer do.
 | 2.14 | **Station fill percent computed twice** | `GasStationServer.Percent:36` and `ServerTransactions.cs:427` re-derive the identical clamp. `Percent` consequently has no callers | OPEN |
 | 2.15 | **Extract-fuel implemented twice** | `GasPump.Extract:109` (SP, relies on `FluidTank.Drain`'s internal clamp) vs `ServerTransactions.OnExtractFuel:399` (computes the `min` explicitly, plus its own "which can" scan) | OPEN |
 | 2.16 | **Salvage yield encoded in 3 places** | `Deployable.cs:496` (2× item 67 hardcoded), `Vehicle.cs:1820` (3× hardcoded), `DeployableNetSchema.cs:32` (`SalvageItemId`/`SalvageCount`) | OPEN |
-| 2.17 | **`DisconnectWires` — 4 copies, 3 of which fix a bug the 4th has** | `Deployable.cs:504`, `FluidPump.cs:85`, `FluidPurifier.cs:53`, `FluidValve.cs:40`. The three fluid versions `RemoveFromGroup("wires")` before `QueueFree()` so the group is correct *this frame*; `Deployable.DisconnectWires` does **not**, and `PlayerController.cs:1016` explicitly documents needing that | OPEN |
+| 2.17 | **`DisconnectWires` — 4 copies, 3 of which fix a bug the 4th has** | `Deployable.cs:504`, `FluidPump.cs:85`, `FluidPurifier.cs:53`, `FluidValve.cs:40`. The three fluid versions `RemoveFromGroup("wires")` before `QueueFree()` so the group is correct *this frame*; `Deployable.DisconnectWires` does **not**, and `PlayerController.cs:1016` explicitly documents needing that | **FIXED** — `RemoveFromGroup("wires")` before `QueueFree` |
 | 2.18 | **`SetLookFocused` mesh collection differs** | `Vehicle` and `VehiclePuppet` re-collect on every focus; `Deployable` collects once and never refreshes — so a `Deployable` that gains a mesh after first focus (battery label, split turbine hub) is missed | OPEN |
 | 2.19 | **Pump-lift ceiling propagation written twice** | `FluidNet.cs:83` (inside `WouldNeedPump`) and `:153` (inside `Tick`); any change to the conduction rule must be made in both | OPEN |
 | 2.20 | **Deadzone host loop duplicated** | The *sim* is correctly shared, but the volume list, `TryGetVolume` scan, per-player dictionary and enter/exit bookkeeping are near line-for-line in `game/DeployableField`-side `DeadzoneField.cs` and `core/UnturnedNet/ServerDeadzones.cs` | OPEN |
@@ -148,3 +148,32 @@ mechanical scan, the mechanical scan was right every time: `Crafting.CanCraft` (
 `game/inventory/BlueprintRegistry.cs:36`), `ItemAsset.IsConsumable` (five live sites incl.
 `PlayerController.cs:1410`), and `WorldItem.BuildItemPuppet` (live at
 `game/WorldItemReplicaView.cs:75`) were each reported as callerless and are not.
+
+---
+
+## 2.1 is blocked on a decision, not on effort
+
+`PowerScale` cannot be mirrored server-side the way `Conducting` was, because neither input
+to it is replicated or derivable today:
+
+- **generator ramp** (`_powerLevel`, 0..1 over `WarmupTime`) is local wall-clock timing. It
+  *could* be derived from `LastChangedTick`, which the server already has — no wire change.
+- **wind turbine** (`_windFactor`, 0..2) is `WindField.SampleWind`, which samples Perlin noise
+  at `Time.GetTicksMsec()` — **local wall clock, not the sim tick**. Server and every client
+  therefore sample different wind at the same instant. It is not derivable until that noise is
+  re-based on the replicated tick.
+
+So there are two coherent designs and they are not equivalent:
+
+1. **Make the ramp authoritative.** Derive `_powerLevel` server-side from `LastChangedTick`,
+   and re-base `WindField` on the sim tick so wind is deterministic across machines. No wire
+   change either way. Costs: `WindField` is a shared world system, and a deterministic wind
+   clock is a behaviour change for everything else that reads it.
+2. **Declare the ramp cosmetic.** Keep it for audio/shake/blade-spin and stop scaling the
+   *authoritative* output cap with it, in SP as well as MP. There is precedent in this file:
+   `CanToggle` already drops the warmup buffer server-side as "client-side feel, not
+   authority". Costs: an SP generator would reach full output instantly, which is a gameplay
+   feel change, and the wind turbine would lose its wind-strength coupling entirely.
+
+Option 2 is smaller and matches the existing precedent; option 1 preserves the feature. Either
+way it is a call for the people who own the feel, not a mechanical dedup.

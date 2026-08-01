@@ -499,7 +499,10 @@ namespace UnturnedGodot
             if (tree == null) return;
             foreach (var n in tree.GetNodesInGroup("wires"))
                 if (n is Wire w && IsInstanceValid(w) && (Ports.Contains(w.Source) || Ports.Contains(w.Consumer)))
-                    w.QueueFree();
+                { w.RemoveFromGroup("wires"); w.QueueFree(); }   // drop the group THIS frame: QueueFree is deferred, and
+                                                                 // PowerNet.Recompute walks the group -- a solve before the
+                                                                 // free lands would still count the dead wire. The three
+                                                                 // fluid OnPickup copies already did both (AUDIT 2.17).
             PowerNet.MarkDirty();
         }
 

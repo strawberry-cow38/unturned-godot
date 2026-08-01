@@ -342,6 +342,37 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // DUPLICATE_AUDIT 2.17. Deployable.DisconnectWires called QueueFree() WITHOUT RemoveFromGroup("wires"),
+    // while all three fluid copies of the same teardown do both -- and PlayerController.cs:1016 spells out
+    // why ("drop the group THIS frame so power + PortWired update immediately").
+    //
+    // QueueFree is deferred to end-of-frame, so between the pickup and the flush the dead wire is STILL in
+    // the "wires" group that PowerNet.Recompute walks. power.pickup_frees_wires cannot catch this: it does
+    // `yield return Ticks(2)` first, explicitly to let the QueueFrees land. This one deliberately does not
+    // tick at all -- the whole bug lives inside the frame the other test skips past.
+    public class PowerPickupDropsWireGroupSameFrame : GameTest
+    {
+        public override string Name => "power.pickup_drops_wire_group_same_frame";
+        public override IEnumerable<Step> Run()
+        {
+            var r = PowerRig.Build(World);
+            yield return Ticks(1);
+            r.Gen.TogglePower(); PowerNet.Recompute(Tree);
+            T.Check("powered before pickup", r.ConsA.Powered);
+            T.Check($"one wire in the group to begin with (got {Tree.GetNodesInGroup("wires").Count})",
+                    Tree.GetNodesInGroup("wires").Count == 1);
+
+            r.Spot.Pickup();   // NO tick after this: the deferred free has NOT happened yet
+
+            int inGroup = Tree.GetNodesInGroup("wires").Count;
+            T.Check($"wire left the wires group in the SAME frame (got {inGroup})", inGroup == 0);
+
+            // and the consequence that makes it matter: a solve in this same frame must already see no load
+            PowerNet.Recompute(Tree);
+            T.Check($"same-frame solve sees 0w load (got {r.GenOut.Draw:0})", PowerRig.Approx(r.GenOut.Draw, 0f));
+        }
+    }
+
     // Gas pump power input (master): a Gas_Pump_0 world FIXTURE (not a Deployable -- an IPowerDevice) joins the power
     // net with a 750w consumer port. Wire a running generator to it and its On/Off flag (IsPowered) flips true; the
     // generator's load reflects the 750w. Proves the power net keys on the interface, not the concrete Deployable.
