@@ -331,6 +331,7 @@ namespace UnturnedGodot
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             var lodMis = new System.Collections.Generic.List<MeshInstance3D>();   // this placement's extra LOD instances, reused per prop
+            var lodLoadSw = System.Diagnostics.Stopwatch.StartNew(); long lodLoadTicks = 0; int lodMeshesLoaded = 0;   // isolated cost of the LOD mesh parses
             // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
             // measuring what the retail distances actually changed, in the same binary.
             if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1") LodTable.Load(dir + "lods.txt");
@@ -400,8 +401,16 @@ namespace UnturnedGodot
                         string lodKey = name + "_lod" + lv;
                         if (!cache.TryGetValue(lodKey, out var lmesh))
                         {
+                            // Time the LOD mesh parse DIRECTLY. Measuring it as a delta on the whole Objects
+                            // phase failed on a loaded box -- two paired runs disagreed 4x (+249ms vs +1070ms)
+                            // because the phase carries everything else too. Summing just these parses is a
+                            // direct measurement instead of a difference of two noisy numbers, so it survives
+                            // a busy machine. Each file is parsed ONCE (cache), so this totals the real cost.
                             string lp = dir + lodKey + ".obj";
+                            long t0 = lodLoadSw.ElapsedTicks;
                             lmesh = System.IO.File.Exists(lp) ? ObjMesh.Load(lp) : null;
+                            lodLoadTicks += lodLoadSw.ElapsedTicks - t0;
+                            if (lmesh != null) lodMeshesLoaded++;
                             cache[lodKey] = lmesh;
                         }
                         if (lmesh == null) { last.VisibilityRangeEnd = e2; continue; }   // absorb the band into the level before it
@@ -564,6 +573,7 @@ namespace UnturnedGodot
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
+            GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");
 
             // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static
             // so the dedicated server's SpawnProvider reads the SAME points -- behavior-identical here).
