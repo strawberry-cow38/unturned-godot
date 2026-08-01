@@ -198,11 +198,21 @@ if root_go is not None:
             anim = rd_(c); break
 clips_by_name = {}
 if anim is not None:
+    all_clip_names = []
     for pp in (getattr(anim, "m_Animations", []) or []):
         try: clip_ = pp.read()
         except Exception: continue
-        clips_by_name[clip_.m_Name] = clip_
-    print(f"clips on Root: {list(clips_by_name.keys())}")
+        all_clip_names.append(clip_.m_Name)
+        # ONLY the door clips -- tinyclaw found Dryer_0/Washer_0/Cooler_0's category of prop can carry an
+        # EXTRA clip (idle/appliance-running/drum-spin) beyond the door's Open/Close pair. Not literally what
+        # broke Dryer_0/Washer_0 here (see the sign-canonicalization fix below for the actual mechanism --
+        # every one of these three only ever had exactly Open+Close on Root, confirmed), but a real prop
+        # could plausibly have a genuine extra clip, and there is no reason to ever consider one: door swing
+        # data only ever lives on clips literally named "Open"/"Close".
+        if clip_.m_Name in ("Open", "Close"):
+            clips_by_name[clip_.m_Name] = clip_
+    extra = [n for n in all_clip_names if n not in ("Open", "Close")]
+    print(f"clips on Root: {all_clip_names}" + (f"  (IGNORING non-door clip(s): {extra})" if extra else ""))
 else:
     print("NOTE: no Root/Animation component found -- every leaf falls back to procedural easing (no curves, no derived angle/duration)")
 
@@ -315,8 +325,23 @@ def process_leaf(leaf_name):
         if bi_name == expected_bone_name:
             boneIdx = i; bone_name = bi_name; break
     if bone_name is None:
-        bone_name = smr.m_Bones[0].read().m_GameObject.read().m_Name
-        print(f"  WARNING: no bone named {expected_bone_name!r} (expected from leaf name {leaf_name!r}) found among this leaf's {NB} bones -- defaulting to bone[0]={bone_name!r} (may be WRONG)")
+        # Used to default to bone[0] and continue -- REMOVED: confirmed on Cooler_0 that this is exactly what
+        # turns a non-door SkinnedMeshRenderer leaf into a bogus doors.txt entry. Cooler_0 has TWO leaves,
+        # 'Glass_0' (a window panel, no bone named 'Glass' anywhere in its rig) and 'Hinge_0' (the real door);
+        # Glass_0's own m_Bones array is ['Hinge'] (shared/padded, same array Hinge_0 uses), so the old
+        # fallback silently bound the glass panel to the door's OWN hinge bone/bindpose, producing a second,
+        # spurious "Glass_0 door" entry with IDENTICAL pivot/axis/angle to the real one. Every confirmed real
+        # door leaf checked so far (Fridge_0, Wardrobe_0 x2, Dryer_0, Washer_0, Cooler_0's own Hinge_0) hits
+        # an EXACT name match; a leaf that doesn't is evidence it is NOT a hinge-door leaf at all, not a
+        # reason to guess. Skip cleanly instead of fabricating geometry from an unrelated bone.
+        #
+        # NOTE for future maintainers: Container_0's 'Left_Hinge_1'/'Right_Hinge_1' leaves (out of scope here,
+        # NOT re-extracted by this change) currently rely on this exact fallback (their own m_Bones also lack
+        # an exact-name match) -- flagged separately, not fixed here; re-extracting Container_0 in the future
+        # would now skip those two leaves instead of guessing bone[0].
+        all_bone_names = [smr.m_Bones[i].read().m_GameObject.read().m_Name for i in range(NB)]
+        print(f"  SKIP {leaf_name!r}: no bone named {expected_bone_name!r} found among this leaf's {NB} bones ({all_bone_names}) -- not a hinge-door leaf, no catalog entry, no mesh written")
+        return None
     print(f"  bone[{boneIdx}] = {bone_name!r} (matched by name from leaf {leaf_name!r})" + (f"  [{NB} bones on this leaf's array]" if NB != 1 else ""))
 
     bindposes = [mat_of(bp) for bp in mesh.m_BindPose]
@@ -366,7 +391,25 @@ def process_leaf(leaf_name):
         for nm, clip_ in clips_by_name.items():
             kf = hinge_rot_keyframes(clip_, bone_name)
             if not kf: continue
-            deltas_by_clip[nm] = [(t, qmul(qinv(Q_rest), Qk)) for t, Qk in kf]
+            ds = []
+            for t, Qk in kf:
+                d = qmul(qinv(Q_rest), Qk)
+                # Canonicalize the quaternion double-cover: q and -q represent the IDENTICAL rotation, but
+                # Unity/the exporter is free to pick either sign per-keyframe with no guaranteed consistency
+                # against Q_rest (read independently, from the Transform component, not the animation curve).
+                # Confirmed on Dryer_0/Washer_0: their 'Close' clip's first keyframe is the exact negation of
+                # Q_rest, so this delta came out as -Identity=(0,0,0,-1) instead of Identity=(0,0,0,1) --
+                # 2*atan2(proj,w) then read a ~360 degree "rotation" for what is actually a ~0 degree one (the
+                # reported "rotating-DRUM idle animation" symptom; there is in fact no such clip on either prop
+                # -- both only ever have Open+Close -- this sign flip alone fully explains the observed farAng
+                # and the missing "open" role in the role-classification dict below). Safe for every other
+                # door checked (Fridge_0/Wardrobe_0/Cooler_0 all already have w>=0 everywhere -- a no-op
+                # there), and safe in general as long as no door swings more than 180 degrees in one clip
+                # (true for every prop seen so far: 80-135 degrees).
+                if d[3] < 0:
+                    d = (-d[0], -d[1], -d[2], -d[3])
+                ds.append((t, d))
+            deltas_by_clip[nm] = ds
 
         # shared reference axis for THIS leaf: the single largest-magnitude delta across its own clips (avoids
         # the near-zero-delta noise a naive "use each clip's own last keyframe" pick hits for whichever clip
