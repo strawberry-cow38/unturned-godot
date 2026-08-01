@@ -163,8 +163,28 @@ void sky() {
         public override void _Process(double delta)
         {
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
-            if (VisualsEnabled) Apply();
+            if (VisualsEnabled) { Apply(); DriveStreetlights(); }
         }
+
+        // Street lamps light dusk->dawn AND only while the town grid is live (auto-grid municipal consumers -- the
+        // console `toggleGlobalPower` darkens the town). Edge-triggered: the group sweep runs only when night OR grid
+        // flips (a handful of times per session), never per-frame -- PEI has hundreds of lamps. Dedicated skips it
+        // (VisualsEnabled is false; no visual lamps there anyway).
+        bool? _lampsNight, _lampsGrid;
+        void DriveStreetlights()
+        {
+            var tree = GetTree();
+            if (tree == null) return;   // out-of-tree _Process (some headless harnesses) -> nothing to sweep
+            bool night = IsNightTime(Time);
+            bool grid = PowerNet.GlobalPower;
+            if (_lampsNight == night && _lampsGrid == grid) return;
+            _lampsNight = night; _lampsGrid = grid;
+            foreach (Node n in tree.GetNodesInGroup("streetlights"))
+                if (n is StreetLight sl) { sl.SetNight(night); sl.SetPowered(grid); }
+        }
+
+        // Sun sits at the horizon at t=0.25 (dawn) / 0.75 (dusk); lamps are lit while it's below, with a small dusk margin.
+        public static bool IsNightTime(float t) => t < 0.26f || t > 0.74f;
 
         // Advance the day/night clock by `frac` cycles (delta/DayLength per frame, or timeAdd's hours/24). Wraps Time into
         // [0,1) exactly as before AND bumps the running Day counter on each forward midnight crossing (frac can exceed 1

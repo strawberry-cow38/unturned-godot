@@ -163,6 +163,7 @@ namespace UnturnedGodot
             var sun = new DirectionalLight3D { LightEnergy = 1.2f, ShadowEnabled = mode != WorldMode.Dedicated, DirectionalShadowMaxDistance = 40f };   // cap shadow cascade reach (was Godot-default 100m): the high, pulled-back 3p vehicle cam stretched the 100m cascades to blanket a whole POI -> every zombie/building re-rendered into the shadow map every frame (strawberry: 3p-car-in-POI gpu tank). Demos cap at 14m; 40m keeps gameplay shadows.
             root.AddChild(sun);
             var dayNight = new DayNightCycle { Sun = sun, Env = env, DayLength = 300f, VisualsEnabled = mode != WorldMode.Dedicated };
+            { var _tod = System.Environment.GetEnvironmentVariable("UG_TIME"); if (_tod != null && float.TryParse(_tod, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _todv)) { dayNight.Time = _todv; dayNight.Speed = 0f; } }   // UG_TIME=0..1 freezes time-of-day for a render (0 midnight / 0.75 dusk) -- streetlight night demo
             root.AddChild(dayNight);
             result.DayNight = dayNight;
             result.Sun = sun;
@@ -328,6 +329,17 @@ namespace UnturnedGodot
                     tower.RotationDegrees = new Vector3(0f, 180f - ey, 0f);
                     root.AddChild(tower);
                     if (tower.GetTree() != null && tower.GetTree().GetNodesInGroup("fluid_managers").Count == 0) root.AddChild(new FluidManager());
+                }
+                // STREETLIGHTS (strawberry): each Street_Light_0 gets a cheap + pretty downward sodium light (StreetLight) --
+                // shadowless spotlight + fake additive cone + glowing lens, placed in WORLD space at the lamp head (the raw
+                // mesh lies flat, pole along +Z, lamp at local (0,2.35,6.48)) so it aims straight down regardless of the tilt.
+                // Colour temperature is tweakable (StreetLight.ColorTempK: warm sodium default; a city map sets it cold LED).
+                // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
+                // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
+                if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
+                {
+                    var lampWorld = gpos + basis * new Vector3(0f, 2.35f, 6.48f);
+                    root.AddChild(StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y)));
                 }
                 StaticBody3D destBody = null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
