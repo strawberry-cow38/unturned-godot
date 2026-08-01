@@ -1840,6 +1840,31 @@ namespace UnturnedGodot
                 _placeTimer -= dt;
                 if (_placeTimer <= 0f)
                 {
+                    if (_deployable.IsStorage)   // STORAGE device (fridge): spawn a Refrigerator LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
+                    {
+                        FridgeDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);
+                        PlayPlaceSound(_deployable.PlaceSound, _placePoint);
+                        GD.Print($"[storage] placed {_deployable.Name} at {_placePoint}");
+                        if (_deployItem != null && Inventory != null)
+                        {
+                            ushort id = _deployItem.id;
+                            if (NetPlaceDeployable != null)
+                            {   // net seam active (loopback/MP): the SERVER spends the item -- OnPlaceDeployable removes it,
+                                // then ServerPlace no-ops the storage id (filtered from the schema) so NO phantom replica spawns.
+                                // SKIP the local mutation (P1 invariant): else the owner-inventory re-adopt would restore the
+                                // item (the dupe-on-any-inv-move bug fluid hit -- strawberry). Predict the echo.
+                                NetPlaceDeployable(_deployable.Id, _placePoint, _placeYaw);
+                                if (Inventory.getItemCount(id) <= 1) { (_revertEquip ?? EquipUnarmed)(); return; }   // last one just went over the wire -> revert
+                            }
+                            else
+                            {
+                                Inventory.removeItemAmount(id, 1);   // pure SP (no seam): consume locally
+                                if (Inventory.getItemCount(id) <= 0) { (_revertEquip ?? EquipUnarmed)(); return; }
+                            }
+                        }
+                        _viewmodel?.PlayDeployHold();
+                        return;
+                    }
                     if (_deployable.Fluid != null)   // FLUID device: spawn a FluidContainer LOCALLY (rides the ghost/place flow; device MP replication = fast-follow)
                     {
                         FluidDeploy.SpawnFor(_deployable, GetParent(), _placePoint, _placeYaw);

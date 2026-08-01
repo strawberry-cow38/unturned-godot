@@ -236,13 +236,21 @@ namespace UnturnedGodot
                     Log($"gave {asset.itemName} (#{asset.id}) -> bag");
                 else { Player?.DropWorldItem(item, at + Vector3.Up * 2f); Log($"gave {asset.itemName} (#{asset.id}) -> dropped in the air above the orb"); }   // else spawn it in the air over the look-orb
             }
-            else if (verb == "fridge")   // demo: a Refrigerator + a plain Crate, each seeded with perishables, to see preservation
+            else if (verb == "fridge")   // demo: a Refrigerator wired + powered by its own generator + a plain Crate, each seeded with perishables, to see preservation
             {
                 var world = Player?.GetParent() ?? GetTree().Root;
                 var fridge = Refrigerator.Spawn(world, at + Vector3.Right * 0.8f);
                 var crate  = StorageCrate.Spawn(world, at - Vector3.Right * 0.8f);
+                var gen = Deployable.Spawn(world, DeployableDef.Generator, at + Vector3.Back * 3f, 0f);   // a generator to power the fridge
+                var genOut = gen.Ports.Find(pp => pp.Kind == DeployableDef.PortKind.Output);
+                if (genOut != null && fridge.ConsumerPort != null)
+                {
+                    var wr = new Wire(); world.AddChild(wr); wr.Source = genOut; wr.Consumer = fridge.ConsumerPort; wr.AddToGroup("wires");
+                    wr.SetPoints(new System.Collections.Generic.List<Vector3> { genOut.GlobalPosition, fridge.ConsumerPort.GlobalPosition }, valid: true);
+                }
+                gen.TogglePower(); PowerNet.Recompute(GetTree());
                 for (int i = 0; i < 3; i++) { fridge.Add(new SDG.Unturned.Item(329, 1, 100)); crate.Add(new SDG.Unturned.Item(329, 1, 100)); }   // 3 fresh carrots each
-                Log($"spawned a Refrigerator (preserving={PowerNet.GlobalPower}) + a plain Crate, each with 3 fresh carrots. timeAdd 240 then F-open both: the crate's rot, the fridge's stay fresh (toggleGlobalPower cuts the grid and the fridge spoils too).");
+                Log($"spawned a Refrigerator wired to + powered by a generator (powered={fridge.Preserves}) + a plain Crate, each with 3 fresh carrots. timeAdd 240 then F-open both: the crate's rot, the fridge's stay fresh (F the generator to cut its power and the fridge spoils too).");
             }
             else if (verb == "vehicle" || verb == "veh")
             {

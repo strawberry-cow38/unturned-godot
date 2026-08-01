@@ -23,6 +23,7 @@ namespace UnturnedGodot
         public bool IsSwitch;      // a power switch: an F-toggle gates its Passthrough (PowerConducting). Remembers state; a light shows on/off
         public float EnergyMax, ChargeWatts;   // battery: stored-energy capacity (watt-SECONDS) + the IN charge rate (W)
         public bool IsWindTurbine;    // a wind turbine: output ramps with WindField wind x a height-above-sea multiplier; blades spin ~ wind
+        public bool IsStorage;        // a placeable storage container with its own IPowerDevice consumer port (the fridge): spawns via FridgeDeploy, not a plain Deployable body
         public bool Upright;          // build the mesh already-vertical (skip the flat->stand-up rotation) -- for procedural models like the turbine
         public string PlaceSound;  // src .dat PlacementAudioClip stem (content/sounds/<stem>.wav) played when planted; null = silent
         public string HoldMesh, HoldAlbedo;   // content/<mesh>.obj + palette for the 1st-person carry model (item.prefab); null -> EmptyHands fallback (ghost only)
@@ -250,6 +251,18 @@ namespace UnturnedGodot
         public static readonly DeployableDef WaterInlet    = MakeFluid(9119, "Fluid Inlet", FluidRole.Source, d => { d.FluidType = FluidType.Water; d.FluidInfinite = true; d.FluidNoHead = true; d.FluidCapacity = 1000f; d.FluidQuality = WaterQuality.Tainted; d.WaterDepthMin = 0.6f; d.WaterDepthMax = 5f; });   // river/ocean water = TAINTED
         public static readonly DeployableDef WaterOutlet   = MakeFluid(9120, "Fluid Drain",      FluidRole.Consumer);
 
+        // A powered storage container (strawberry): places like any power deployable (an IPowerDevice, NOT a Fluid
+        // marker), but IsStorage routes it through FridgeDeploy into a Refrigerator (StorageCrate subclass) instead of
+        // a plain Deployable body. Its single Consumer port must be wired + powered for Refrigerator.Preserves to hold
+        // (its Storage contents skip the daily food-spoilage sweep); unpowered/unwired it spoils like any crate.
+        public static readonly DeployableDef Refrigerator = new()
+        {
+            Id = 9130, Name = "Refrigerator", IsStorage = true, ProcBox = true, PlaceSound = "metalplacement",
+            Size = new Vector3(0.75f, 0.75f, 1.75f), Offset = 0.9f, Radius = 0.5f, Range = 4.5f, Health = 300f,
+            // NB: fully-qualified so the CLASS UnturnedGodot.Refrigerator wins over this DeployableDef.Refrigerator field.
+            Ports = new[] { new Port { Kind = PortKind.Consumer, Pos = new Vector3(0f, 0.25f, -0.36f), Watts = UnturnedGodot.Refrigerator.Watts } },
+        };
+
         // Merge (SP/MP-unify -> main): union of both sides' devices. main's Battery/Switch/WindTurbine +
         // the unification's GridSource/GasPump fixtures. Switch is defined above (auto-merged from main).
         // SOURCE-EXACT from retail Landmine.dat (Bundles/Items/Barricades/Landmine) -- read directly; .dat is text, the
@@ -309,7 +322,7 @@ namespace UnturnedGodot
         };
 
         public static readonly DeployableDef[] All = { Generator, Spotlight, Splitter2, Splitter3, Splitter4, Combiner2, Battery, Switch, WindTurbine, GridSource, GasPump,
-            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Landmine, Spike, Charge, Barbedwire };
+            FluidTank, WaterSource, FluidSplitter, FluidCombiner, FluidPumpDef, FluidValve, Refinery, Sluice, WaterInlet, WaterOutlet, Purifier, Refrigerator, Landmine, Spike, Charge, Barbedwire };
         public static DeployableDef ById(ushort id) => id switch
         {
             1101 => Landmine,
@@ -336,6 +349,7 @@ namespace UnturnedGodot
             9119 => WaterInlet,
             9120 => WaterOutlet,
             9121 => Purifier,
+            9130 => Refrigerator,
             9200 => GridSource,
             9201 => GasPump,
             _ => null,

@@ -1430,7 +1430,7 @@ namespace UnturnedGodot
                 // autodrink bottle (first enabled+safe+non-empty), so exactly one bottle is marked at a time.
                 if (ReferenceEquals(jar.item, FluidItem.ActiveAutoDrink(Inv)))
                 {
-                    var badge = new Panel { Position = new Vector2(3, 3), Size = new Vector2(15, 15), MouseFilter = Control.MouseFilterEnum.Ignore };
+                    var badge = new Panel { Position = new Vector2(2, 2), Size = new Vector2(21, 21), MouseFilter = Control.MouseFilterEnum.Ignore };
                     var bs = new StyleBoxFlat { BgColor = new Color(0.25f, 0.72f, 0.95f) };
                     bs.BorderColor = new Color(0f, 0f, 0f, 0.85f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(7);   // ~circular droplet-dot
                     badge.AddThemeStyleboxOverride("panel", bs);
@@ -1460,6 +1460,20 @@ namespace UnturnedGodot
                 card.GrowHorizontal = Control.GrowDirection.Begin;         // growing LEFT / UP as the text widens so it never clips the icon edge
                 card.GrowVertical = Control.GrowDirection.Begin;
                 card.OffsetRight = -2; card.OffsetBottom = -2;             // 2 px inset from the corner
+            }
+
+            if (asset?.type == EItemType.FOOD && jar.item != null && jar.item.preserved)   // a snowflake badge marks food actively preserved by a powered fridge
+            {
+                var badge = new Panel { Position = new Vector2(2, 2), Size = new Vector2(21, 21), MouseFilter = Control.MouseFilterEnum.Ignore };
+                var bs = new StyleBoxFlat { BgColor = new Color(0.14f, 0.44f, 0.86f) };
+                bs.BorderColor = new Color(0f, 0f, 0f, 0.85f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(3);
+                badge.AddThemeStyleboxOverride("panel", bs);
+                var snow = new Label { Text = "\u2744", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
+                snow.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                snow.AddThemeColorOverride("font_color", new Color(0.97f, 0.99f, 1f));
+                snow.AddThemeFontSizeOverride("font_size", 17);
+                badge.AddChild(snow);
+                tile.AddChild(badge);
             }
             return tile;
         }

@@ -80,7 +80,19 @@ namespace UnturnedGodot
             if (tree == null) return 0;
             int n = 0;
             foreach (var node in tree.GetNodesInGroup("crates"))
-                if (node is StorageCrate c && GodotObject.IsInstanceValid(c) && !c.Preserves) n += TickDayItems(c.Storage);
+            {
+                if (node is not StorageCrate c || !GodotObject.IsInstanceValid(c)) continue;
+                bool preserving = c.Preserves;   // live: a fridge's own powered port (always false for a plain crate)
+                // Reconcile each FOOD item's `preserved` to the crate's CURRENT power state, so the daily sweep is
+                // AUTHORITATIVE and doesn't depend on the fridge's per-frame _Process having caught up: a just-unpowered
+                // fridge's food spoils this tick, a powered fridge's shows the cold ❄ + is skipped.
+                for (byte i = 0; i < c.Storage.getItemCount(); i++)
+                {
+                    var it = c.Storage.getItem(i)?.item;
+                    if (it != null && it.GetAsset()?.type == EItemType.FOOD) it.preserved = preserving;
+                }
+                if (!preserving) n += TickDayItems(c.Storage);
+            }
             return n;
         }
     }
