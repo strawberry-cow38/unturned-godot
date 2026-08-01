@@ -1499,7 +1499,7 @@ namespace UnturnedGodot
             {
                 var badge = new Panel { Position = new Vector2(2, 2), Size = new Vector2(21, 21), MouseFilter = Control.MouseFilterEnum.Ignore };
                 var bs = new StyleBoxFlat { BgColor = new Color(0.14f, 0.44f, 0.86f) };
-                bs.BorderColor = new Color(0f, 0f, 0f, 0.85f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(3);
+                bs.BorderColor = new Color(0.05f, 0.16f, 0.38f); bs.SetBorderWidthAll(2); bs.SetCornerRadiusAll(3);
                 badge.AddThemeStyleboxOverride("panel", bs);
                 var snow = new TextureRect { Texture = SnowflakeTex(), StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, MouseFilter = Control.MouseFilterEnum.Ignore };
                 snow.SetAnchorsPreset(Control.LayoutPreset.FullRect);
