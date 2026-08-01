@@ -68,6 +68,13 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        // Vertical FOV the retail LOD math is evaluated at -- OptionsSettings.DesiredVerticalFieldOfView /
+        // PreferenceData Field_Of_View_Hip, which is what Viewmodel.SourceFov already ports.
+        const float LodCullFov = 60f;
+        // Leaves cull closer than the trunk. The old flat pair was 240/320, so keep that 0.75 ratio now the
+        // trunk distance is per-prop instead of constant.
+        const float FoliageCullFraction = 0.75f;
+
         // Map-load loot distribution (master's "loot distribution on shelves"): certain PLACED props become lootable
         // CONTAINERS in singleplayer instead of plain decoration -- a StoreShelf spawns at the placement transform and
         // the decoration mesh is skipped. Registry = object guid -> PEI item table. First pass: the Shelf_1 store shelf
@@ -325,7 +332,10 @@ namespace UnturnedGodot
             }
             var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
-            Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0;
+            Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0;
+            // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
+            // measuring what the retail distances actually changed, in the same binary.
+            if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1") LodTable.Load(dir + "lods.txt");
             // holiday gate: PEI's Objects.dat has ~285 Christmas/Halloween props placed that only show in-season
             // (src: ObjectAsset.holidayRestriction + HolidayUtil schedule). Skip any whose holiday != the active one.
             var holidayOf = new System.Collections.Generic.Dictionary<string, string>();
@@ -363,8 +373,14 @@ namespace UnturnedGodot
                 // term is identity), so the whole map except the handful of rolled props is byte-identical -- no regression.
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
+                // Draw distance comes from RETAIL now, per prop, instead of one flat 320m for a book and a harbor
+                // alike: the tighter of its render-layer cull (LARGE 512 / MEDIUM 256 / SMALL 64 at default draw
+                // distance) and its Unity LODGroup threshold. See LodTable. A GUID missing from the table keeps the
+                // old flat cutoff -- better to draw an unknown prop too long than to pop a landmark out of the world.
+                float cull = LodTable.CullDistance(p[0], LodCullFov);
+                if (cull <= 0f) { cull = 320f; lodMissing++; }
                 var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
-                    VisibilityRangeEnd = 320f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
+                    VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 root.AddChild(mainMi);
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
                 if (!folCache.TryGetValue(name, out var fmesh))
@@ -375,7 +391,7 @@ namespace UnturnedGodot
                 }
                 MeshInstance3D folMi = null;
                 if (fmesh != null) { folMi = new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
-                    VisibilityRangeEnd = 240f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // leaves cull closer
+                    VisibilityRangeEnd = cull * FoliageCullFraction, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // leaves cull closer, same 0.75 ratio the flat 240/320 pair used
                     root.AddChild(folMi); }
                 // gas pumps (A2): every Gas_Pump_0 is a 750W-consumer fuel PUMP over a shared station tank. RECORD
                 // it in EVERY mode (the mesh + collider below stay byte-identical); the caller realizes it -- the
@@ -510,6 +526,7 @@ namespace UnturnedGodot
             if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
+            GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m");
 
             // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static
             // so the dedicated server's SpawnProvider reads the SAME points -- behavior-identical here).
