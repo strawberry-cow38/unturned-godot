@@ -4,7 +4,7 @@ namespace UnturnedGodot
 {
     // An openable PROP door -- retail's InteractableObjectBinaryState (Binary_State objects: fridges,
     // cabinets, lockers), not a building Door. MVP: Fridge_0 only, SP-local, no power/owner/lock/MP -- see
-    // Door.cs for the full-featured building door this steals its swing-EASING technique from (_PhysicsProcess
+    // Door.cs for the full-featured building door this steals its swing state machine from (_PhysicsProcess
     // + Mathf.MoveToward a 0..1 _swing toward target). Unlike Door, there is no whole-body swing: a retail
     // Binary_State door leaf is a SINGLE-BONE skinned rig (one "Hinge" bone, weight 1.0 on every vertex), which
     // is a RIGID transform -- reproduced here as a pivoted MeshInstance3D rather than real Godot skeletal
@@ -25,10 +25,16 @@ namespace UnturnedGodot
         Mesh _leafMesh;
         Material _leafMaterial;
         bool _initialOpen;
+        // retail legacy Animation clip easing curves (tools/extract_doors.py samples Root's "Open"/"Close"
+        // clips for the Hinge bone's rotation-vs-time, normalized to (t_norm, frac) pairs where frac = angle /
+        // finalAngle -- frac sweeps 0..~1 with the clip's own real overshoot, NOT a procedural smoothstep).
+        // Either can be null (a prop with no sampled clip yet) -- SampleEasing falls back to smoothstep then.
+        System.Collections.Generic.List<Vector2> _openCurve;
+        System.Collections.Generic.List<Vector2> _closeCurve;
 
         Node3D _pivot;
         StandardMaterial3D _leafMatInstance;   // a PER-DOOR instance (Duplicate of the shared prop material) so SetLookFocused's emission glow doesn't light up every fridge that shares the cached material
-        float _swing;                          // 0 = closed, 1 = fully open
+        float _swing;                          // 0 = closed, 1 = fully open -- also doubles as the curve's t_norm (see SampleEasing)
 
         public bool IsOpen { get; private set; }
         double _lastToggleSec = double.NegativeInfinity;
@@ -37,9 +43,12 @@ namespace UnturnedGodot
         /// <summary>Build a door on prop <paramref name="propXform"/> (the SAME placement Transform3D the
         /// prop's own body mesh uses -- pivot/leaf/collider are all expressed in that prop-local space, matching
         /// the catalog's coordinates). <paramref name="startOpen"/> is the --doortest UG_DOOR_OPEN hook: sets
-        /// the leaf to its open pose on the FIRST frame with no animation to wait out.</summary>
+        /// the leaf to its open pose on the FIRST frame with no animation to wait out. <paramref name="openCurve"/>
+        /// / <paramref name="closeCurve"/> are the sampled retail easing curves (door_curves/*.txt via
+        /// WorldBuilder.LoadDoorCurve); either may be null to fall back to a procedural smoothstep.</summary>
         public static ObjectDoor Spawn(Node parent, Transform3D propXform, Vector3 pivotLocal, Vector3 axisLocal,
-            float angleDeg, float durationSec, Mesh leafMesh, Material leafMaterial, bool startOpen = false)
+            float angleDeg, float durationSec, Mesh leafMesh, Material leafMaterial, bool startOpen = false,
+            System.Collections.Generic.List<Vector2> openCurve = null, System.Collections.Generic.List<Vector2> closeCurve = null)
         {
             var d = new ObjectDoor
             {
@@ -51,6 +60,8 @@ namespace UnturnedGodot
                 _leafMesh = leafMesh,
                 _leafMaterial = leafMaterial,
                 _initialOpen = startOpen,
+                _openCurve = openCurve,
+                _closeCurve = closeCurve,
             };
             parent.AddChild(d);
             return d;
@@ -124,17 +135,46 @@ namespace UnturnedGodot
             ApplySwing(_swing);
         }
 
-        // Smoothstep on _swing for the eased feel the retail clip samples show (per-step deltas 3.05deg,
-        // 9.86deg, 18.07deg... -- slow in, slow out, not linear), then rotate the pivot angle*eased about its
-        // local axis. NOTE (unverified -- flag for the render): the extractor's raw/no-negate convention can
-        // still invert a rotation's handedness through the parent chain, so this may swing the door INTO the
-        // fridge instead of outward. If so, flip the SIGN of the angle in doors.txt (one number, no rebuild
-        // of the mesh/pivot) -- see tools/extract_doors.py's module docstring.
+        // Sample the retail clip's OWN easing (SampleEasing) instead of a procedural formula, then rotate the
+        // pivot angle*frac about its local axis. NOTE (unverified -- flag for the render): the extractor's
+        // raw/no-negate convention can still invert a rotation's handedness through the parent chain, so this
+        // may swing the door INTO the fridge instead of outward. If so, flip the SIGN of the angle in doors.txt
+        // (one number, no rebuild of the mesh/pivot) -- see tools/extract_doors.py's module docstring.
         void ApplySwing(float t)
         {
             if (_pivot == null) return;
-            float eased = t * t * (3f - 2f * t);
-            _pivot.Basis = new Basis(_axis, Mathf.DegToRad(_angleDeg) * eased);
+            float frac = SampleEasing(t);
+            _pivot.Basis = new Basis(_axis, Mathf.DegToRad(_angleDeg) * frac);
+        }
+
+        /// <summary>_swing (0=closed..1=open) doubles as the curve's t_norm: OPENING plays _openCurve directly
+        /// (_swing counts 0-&gt;1 exactly matching that curve's own recorded t_norm -- see extract_doors.py's
+        /// "ROLE open" derivation). CLOSING plays _closeCurve at (1-_swing): that curve's own t_norm=0 is
+        /// "just started closing" (_swing was at 1) and t_norm=1 is "fully closed" (_swing=0), so as _swing
+        /// falls 1-&gt;0 during a close, (1-_swing) correctly rises 0-&gt;1 through the close curve. Falls back to
+        /// a plain smoothstep if this prop has no sampled clip for the current direction (graceful
+        /// degradation, not a hard requirement that every door prop ships curve data).</summary>
+        float SampleEasing(float swing)
+        {
+            bool opening = IsOpen;
+            var curve = opening ? _openCurve : _closeCurve;
+            float sampleAt = opening ? swing : (1f - swing);
+            if (curve == null || curve.Count == 0) return swing * swing * (3f - 2f * swing);
+            if (curve.Count == 1) return curve[0].Y;
+            if (sampleAt <= curve[0].X) return curve[0].Y;
+            int last = curve.Count - 1;
+            if (sampleAt >= curve[last].X) return curve[last].Y;
+            for (int i = 0; i < last; i++)
+            {
+                Vector2 a = curve[i], b = curve[i + 1];
+                if (sampleAt >= a.X && sampleAt <= b.X)
+                {
+                    float span = b.X - a.X;
+                    float u = span > 1e-6f ? (sampleAt - a.X) / span : 0f;
+                    return Mathf.Lerp(a.Y, b.Y, u);
+                }
+            }
+            return curve[last].Y;
         }
 
         /// <summary>Look-focus highlight (F-focus outline), matching Door.SetLookFocused.</summary>
@@ -147,5 +187,6 @@ namespace UnturnedGodot
 
         // --- test/debug seams ---
         public float DebugSwing => _swing;
+        public float DebugSampleEasing(float swing) => SampleEasing(swing);
     }
 }

@@ -267,6 +267,123 @@ if os.path.exists(bodyPath):
 else:
     print(f"NOTE: {TARGET}.obj (body) not found -- run extract_objects_v2.py / extract_object_named.py first")
 
+# ---- retail "Open"/"Close" legacy clip easing curves (source-accuracy: play the REAL keyframe timing, not
+# a procedural smoothstep). Sampled from Root's Animation component, for the "Hinge" bone's rotation curve,
+# relative to Hinge's own saved local rotation (Q_rest) -- confirmed to correspond to this port's "closed"
+# rest pose via the standard bindpose cancellation property (bone AT its bind-time rotation -> skinning
+# collapses to the raw mesh-local vertex data, which is exactly what the mesh section above uses unmodified).
+#
+# COUNTERINTUITIVE finding, worth flagging explicitly: by DATA (not by Unity's clip NAME), the clip that
+# actually sweeps 0 -> ~135 deg (matching this port's already-verified "closed=0, open=135 about the fixed
+# axis" behavior) is the one Unity calls "Close"; the clip sweeping ~135 -> 0 is the one Unity calls "Open".
+# Rather than trust the names, this script determines each clip's ROLE from its OWN data (whichever endpoint
+# is farther from Q_rest is that clip's "fully open" end) and labels the OUTPUT files by behavior (open/close
+# as THIS PORT uses them), not by the asset's internal clip name -- printed below so it can be sanity-checked.
+# Verified NOT a simple time-reversal of each other (Close(t) vs Open(duration-t): diffs up to ~120 deg
+# mid-swing); same-index mirrored (Close(t) vs 135-Open(t)) is close but not exact (up to ~7.6 deg apart near
+# the overshoot peak) -- genuinely distinct curves, both sampled and written separately, not derived from one
+# another.
+def qmul(a, b):
+    ax, ay, az, aw = a; bx, by, bz, bw = b
+    return (aw*bx+ax*bw+ay*bz-az*by, aw*by-ax*bz+ay*bw+az*bx,
+            aw*bz+ax*by-ay*bx+az*bw, aw*bw-ax*bx-ay*by-az*bz)
+def qinv(q):
+    x, y, z, w = q; return (-x, -y, -z, w)
+def cl_(go): return getattr(go, "m_Components", None) or getattr(go, "m_Component", [])
+def rd_(c):
+    cp = c.component if hasattr(c, "component") else c
+    return cp.read()
+def tn_(co):
+    try: return co.object_reader.type.name
+    except Exception: return type(co).__name__
+def qX(v): return v.X if hasattr(v, "X") else v.x
+def qY(v): return v.Y if hasattr(v, "Y") else v.y
+def qZ(v): return v.Z if hasattr(v, "Z") else v.z
+def qW(v): return v.W if hasattr(v, "W") else v.w
+
+BONE_NAME = "Hinge"
+curveDir = os.path.join(OUT, "door_curves")
+hinge_go = find_go_by_name(BONE_NAME, prefab.path_id, root_local_inv4)
+root_go = find_go_by_name("Root", prefab.path_id, root_local_inv4)
+if not hinge_go or not root_go:
+    print(f"NOTE: could not find {BONE_NAME!r}/Root nodes for clip sampling -- door will fall back to procedural easing")
+else:
+    hinge_tr = comp_of(hinge_go.read_typetree(), ("Transform", "RectTransform")).read_typetree()
+    Qr = hinge_tr["m_LocalRotation"]
+    Q_rest = (Qr["x"], Qr["y"], Qr["z"], Qr["w"])
+    root_obj = root_go.read()
+    anim = None
+    for c in cl_(root_obj):
+        if tn_(rd_(c)) == "Animation":
+            anim = rd_(c); break
+    if anim is None:
+        print("NOTE: no Animation component on Root -- door will fall back to procedural easing")
+    else:
+        clips_by_name = {}
+        for pp in (getattr(anim, "m_Animations", []) or []):
+            try: clip_ = pp.read()
+            except Exception: continue
+            clips_by_name[clip_.m_Name] = clip_
+        print(f"clips on Root: {list(clips_by_name.keys())}")
+
+        def hinge_rot_keyframes(clip_):
+            for rcu in clip_.m_RotationCurves:
+                if rcu.path.split("/")[-1] == BONE_NAME:
+                    return [(k.time, (qX(k.value), qY(k.value), qZ(k.value), qW(k.value))) for k in rcu.curve.m_Curve]
+            return None
+
+        deltas_by_clip = {}   # unity clip name -> [(t, (dx,dy,dz,dw)), ...]
+        for nm, clip_ in clips_by_name.items():
+            kf = hinge_rot_keyframes(clip_)
+            if not kf: continue
+            deltas_by_clip[nm] = [(t, qmul(qinv(Q_rest), Qk)) for t, Qk in kf]
+
+        # shared reference axis: the SINGLE largest-magnitude delta across ALL clips (avoids the near-zero-
+        # delta noise a naive "use each clip's own last keyframe" pick hits for whichever clip ends near
+        # Q_rest -- confirmed empirically: that naive approach gave garbage, non-matching axes per clip).
+        best = None
+        for nm, deltas in deltas_by_clip.items():
+            for t, d in deltas:
+                mag = math.sqrt(d[0]**2 + d[1]**2 + d[2]**2)
+                if best is None or mag > best[0]: best = (mag, d)
+        if best is None:
+            print("NOTE: no non-trivial Hinge rotation keyframes found -- door will fall back to procedural easing")
+        else:
+            refAxis = (best[1][0], best[1][1], best[1][2])
+            rlen = math.sqrt(sum(c*c for c in refAxis))
+            refAxis = tuple(c/rlen for c in refAxis)
+            raw = {}
+            for nm, deltas in deltas_by_clip.items():
+                samples = []
+                for t, d in deltas:
+                    proj = d[0]*refAxis[0] + d[1]*refAxis[1] + d[2]*refAxis[2]
+                    ang = math.degrees(2.0 * math.atan2(proj, d[3]))
+                    samples.append((t, ang))
+                raw[nm] = samples
+
+            role = {}   # 'open' / 'close' -> (unity clip name, samples)
+            for nm, samples in raw.items():
+                firstAng, lastAng = samples[0][1], samples[-1][1]
+                key = "open" if abs(lastAng) >= abs(firstAng) else "close"
+                role.setdefault(key, (nm, samples))
+            for r, (nm, samples) in role.items():
+                print(f"  ROLE {r}: unity clip name {nm!r} ({len(samples)} samples), first={samples[0][1]:.3f} last={samples[-1][1]:.3f}")
+
+            def write_curve(path, samples):
+                farAng = max((samples[0][1], samples[-1][1]), key=abs)
+                length = samples[-1][0]
+                if abs(farAng) < 1e-6 or length < 1e-6:
+                    print(f"  SKIP {path}: degenerate (farAng={farAng} length={length})"); return
+                lines = ["%.6f %.6f" % (t/length, ang/farAng) for t, ang in samples]
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, "w").write("\n".join(lines) + "\n")
+                print(f"  wrote {path}: {len(lines)} samples, farAng={farAng:.3f} length={length:.4f}")
+                for t, ang in samples:
+                    print(f"    t={t:.4f} t_norm={t/length:.4f}  angle={ang:8.3f}  frac={ang/farAng:7.4f}")
+
+            if "open" in role: write_curve(os.path.join(curveDir, TARGET + "_open.txt"), role["open"][1])
+            if "close" in role: write_curve(os.path.join(curveDir, TARGET + "_close.txt"), role["close"][1])
+
 clip = DOOR_CLIP.get(TARGET)
 if clip is None:
     print(f"NOTE: no DOOR_CLIP entry for {TARGET} -- add its sampled retail angle/duration to this script's DOOR_CLIP dict before cataloging it")

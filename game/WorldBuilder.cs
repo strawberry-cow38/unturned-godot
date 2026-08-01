@@ -122,6 +122,25 @@ namespace UnturnedGodot
             public float DurationSec;
         }
 
+        // Retail legacy Animation clip easing curve (tools/extract_doors.py's door_curves/<name>_open.txt /
+        // _close.txt): (t_norm, frac) samples, frac = angle-at-that-keyframe / final-angle, capturing the
+        // clip's own real overshoot instead of a procedural smoothstep. Returns null if this prop has no
+        // sampled curve for that direction yet (ObjectDoor.SampleEasing falls back to smoothstep).
+        public static System.Collections.Generic.List<Vector2> LoadDoorCurve(string dir, string name, string suffix)
+        {
+            string path = dir + "door_curves/" + name + "_" + suffix + ".txt";
+            if (!System.IO.File.Exists(path)) return null;
+            float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            var list = new System.Collections.Generic.List<Vector2>();
+            foreach (var line in System.IO.File.ReadLines(path))
+            {
+                var p = line.Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 2) continue;
+                list.Add(new Vector2(F(p[0]), F(p[1])));
+            }
+            return list.Count > 0 ? list : null;
+        }
+
         public static System.Collections.Generic.Dictionary<string, DoorCatalogEntry> LoadDoorCatalog(string dir)
         {
             var cat = new System.Collections.Generic.Dictionary<string, DoorCatalogEntry>();
@@ -394,7 +413,11 @@ namespace UnturnedGodot
                 {
                     if (!doorMeshCache.TryGetValue(name, out var doorMesh)) { doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile); doorMeshCache[name] = doorMesh; }
                     if (doorMesh != null)
-                        ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName));
+                    {
+                        var openCurve = LoadDoorCurve(dir, name, "open");
+                        var closeCurve = LoadDoorCurve(dir, name, "close");
+                        ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName), openCurve: openCurve, closeCurve: closeCurve);
+                    }
                 }
                 StaticBody3D destBody = null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)

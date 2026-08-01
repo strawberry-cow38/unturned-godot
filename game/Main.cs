@@ -54,6 +54,7 @@ namespace UnturnedGodot
         int _treeCheckFrame; bool _treeChecked;   // UG_TREECHECK: raycast self-test that tree trunk colliders are actually hittable
         float _perfT;   // UG_PERF: throttle the perf log
         bool _itemTest;   // --itemtest=ID,ID,... : drop those items as physics WorldItems onto a ground plane -> validate mesh/tex/scale/settle
+        bool _doorAnim; ObjectDoor _doorAnimDoor; double _doorAnimElapsed; float _doorAnimOpenAt, _doorAnimCloseAt, _doorAnimDoneAt; bool _doorAnimOpened, _doorAnimClosed;   // --doortest UG_DOOR_ANIM=1: real-time closed->open->closed cycle for a --write-movie capture
 
         public override void _Ready()
         {
@@ -1325,9 +1326,30 @@ namespace UnturnedGodot
             var xform = new Transform3D(basis, Vector3.Zero);
             AddChild(new MeshInstance3D { Mesh = bodyMesh, MaterialOverride = mat, Transform = xform });
 
-            bool startOpen = System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN") == "1";
-            var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen);
+            bool doorAnim = System.Environment.GetEnvironmentVariable("UG_DOOR_ANIM") == "1";
+            bool startOpen = !doorAnim && System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN") == "1";
+            var openCurve = WorldBuilder.LoadDoorCurve(dir, name, "open");
+            var closeCurve = WorldBuilder.LoadDoorCurve(dir, name, "close");
+            var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen, openCurve: openCurve, closeCurve: closeCurve);
             GD.Print($"[DOORTEST] {name} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing}");
+
+            if (doorAnim)
+            {
+                // Real (not fast-forwarded) closed -> open -> closed cycle, driven by REAL elapsed time in
+                // _Process (see the UG_DOOR_ANIM block there) -- wait 0.4s closed, Toggle open (plays the
+                // retail Open curve including its ~1.8% overshoot), hold open 0.5s past the full swing,
+                // Toggle closed (plays the retail Close curve including its undershoot), then a short
+                // trailing hold before quitting -- so a --write-movie capture shows the actual eased swing
+                // played out at real speed, not a static frame or a fast-forwarded jump.
+                const float WaitClosed = 0.4f, HoldOpen = 0.5f, TrailHold = 0.4f;
+                _doorAnimDoor = door;
+                _doorAnimOpenAt = WaitClosed;
+                _doorAnimCloseAt = _doorAnimOpenAt + doorCfg.DurationSec + HoldOpen;
+                _doorAnimDoneAt = _doorAnimCloseAt + doorCfg.DurationSec + TrailHold;
+                _doorAnim = true;
+                GD.Print($"[DOORANIM] timeline (s): closed 0.000-{_doorAnimOpenAt:0.000}, OPEN toggle @{_doorAnimOpenAt:0.000}, swing settles ~{_doorAnimOpenAt + doorCfg.DurationSec:0.000}, holds open to {_doorAnimCloseAt:0.000}, CLOSE toggle @{_doorAnimCloseAt:0.000}, swing settles ~{_doorAnimCloseAt + doorCfg.DurationSec:0.000}, quits @{_doorAnimDoneAt:0.000}");
+            }
+
 
             // Camera: a few metres out along the direction the door actually faces, computed from the real
             // placed geometry (the pivot world offset from the body center) rather than assumed, 3/4-elevated
@@ -4015,6 +4037,26 @@ namespace UnturnedGodot
             // FIRST, because several capture modes below own the frame and return before the main
             // capture gate -- a watchdog placed at that gate never runs for --vehicle/--rig/--menushot.
             if (_shotRequested != null && ShotWatchdogTripped()) return;
+            if (_doorAnim && _doorAnimDoor != null)   // --doortest UG_DOOR_ANIM=1: drive a real closed->open->closed cycle at REAL elapsed time (never fast-forwarded), so a --write-movie capture shows the actual retail-curve swing (see BuildDoorTest for the timeline setup)
+            {
+                _doorAnimElapsed += delta;
+                if (!_doorAnimOpened && _doorAnimElapsed >= _doorAnimOpenAt)
+                {
+                    _doorAnimDoor.Toggle(); _doorAnimOpened = true;
+                    GD.Print($"[DOORANIM] OPEN toggle fired at t={_doorAnimElapsed:0.000}s");
+                }
+                else if (_doorAnimOpened && !_doorAnimClosed && _doorAnimElapsed >= _doorAnimCloseAt)
+                {
+                    _doorAnimDoor.Toggle(); _doorAnimClosed = true;
+                    GD.Print($"[DOORANIM] CLOSE toggle fired at t={_doorAnimElapsed:0.000}s");
+                }
+                else if (_doorAnimClosed && _doorAnimElapsed >= _doorAnimDoneAt)
+                {
+                    GD.Print($"[DOORANIM] sequence done at t={_doorAnimElapsed:0.000}s -- quitting");
+                    GetTree().Quit();
+                }
+                return;
+            }
             if (_zbMode) { ZBodyTick(delta); return; }                                                  // --zbody probe owns the frame
             if (_zpZombies.Count > 0) { if (_zaiMode) ZAITick(delta); else ZPerfTick(delta); return; }   // --zperf probe owns the frame
             if (_menuShotDir != null && _menuShotMenu != null)   // step the menu camera through its 5 anchors, capture each
