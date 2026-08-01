@@ -269,8 +269,43 @@ void fragment() {
             {
                 var body = _chunkBody[cxi, cyi];
                 if (body == null) { body = new StaticBody3D { CollisionLayer = 1u << 0 }; body.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Grass); body.AddToGroup("terrain"); body.AddChild(new CollisionShape3D()); _chunkBody[cxi, cyi] = body; AddChild(body); }
-                foreach (var c in body.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = mesh.CreateTrimeshShape();
+                foreach (var c in body.GetChildren()) if (c is CollisionShape3D cs) ApplyChunkShape(cs, cxi, cyi);
             }
+        }
+
+        // The terrain IS a regular height grid, so a trimesh threw away the one property that makes it cheap: it made
+        // Jolt build a BVH over ~4600 loose triangles PER CHUNK (484 chunks on PEI). HeightMapShape3D hands Jolt the
+        // heights directly and needs no BVH -- measured on PEI, the collider build went ~5340ms -> ~117ms (~45x), and
+        // 78 MB of triangle soup became 4.6 MB of floats. Both paths were verified to produce identical geometry
+        // (terrain.collider_matches_sampled_height, which probes chunk seams and phantom walls too).
+        //
+        // Two indexing traps, both of which produce a collider that LOOKS placed but is mirrored or transposed --
+        // it renders correctly and drops the player through the world, and NOTHING else in the suite notices:
+        //   1. HeightMapShape3D is ROW-MAJOR IN Z: data[z * width + x]. The mesh verts above are X-MAJOR
+        //      (i = lx * ny + ly). Copying the vert order across transposes the chunk.
+        //   2. This port NEGATES Z (vert z = -(_bz + gy * UNIT)), so world Z DECREASES as the grid index gy rises.
+        //      The shape's local +Z must therefore walk gy DOWNWARD: gy = y1 - hz.
+        // Both are covered by the test -- it was confirmed to FAIL against each bug injected deliberately.
+        //
+        // Sample spacing is fixed at 1 unit by the shape, so the node carries scale (UNIT, 1, UNIT) -- Jolt requires
+        // X and Z scale to match on a heightfield, which they do. Heights are already absolute world Y, so the body
+        // stays at Y=0 and only X/Z get centred.
+        void ApplyChunkShape(CollisionShape3D cs, int cxi, int cyi)
+        {
+            int x0 = cxi * CHUNK, y0 = cyi * CHUNK;
+            int x1 = System.Math.Min(x0 + CHUNK, _gw - 1), y1 = System.Math.Min(y0 + CHUNK, _gh - 1);
+            int nx = x1 - x0 + 1, ny = y1 - y0 + 1;
+            if (nx < 2 || ny < 2) return;
+            var data = new float[nx * ny];
+            for (int hz = 0; hz < ny; hz++)
+            {
+                int gy = y1 - hz;   // trap 2: local +Z walks the grid backwards
+                for (int hx = 0; hx < nx; hx++)
+                    data[hz * nx + hx] = _grid[x0 + hx, gy] * TILE_HEIGHT - TILE_HEIGHT / 2f;   // same height expression as the mesh verts
+            }
+            cs.Shape = new HeightMapShape3D { MapWidth = nx, MapDepth = ny, MapData = data };
+            cs.Scale = new Vector3(UNIT, 1f, UNIT);
+            cs.Position = new Vector3(_bx + x0 * UNIT + UNIT * (nx - 1) / 2f, 0f, -_bz - y1 * UNIT + UNIT * (ny - 1) / 2f);
         }
 
         // Rebuild every chunk overlapping a grid cell range (a brush edit) -- 1-chunk margin so shared edges/normals update.
@@ -284,14 +319,18 @@ void fragment() {
 
         public void RebuildAll() { if (_chunkMi != null) for (int cx = 0; cx < _chunksX; cx++) for (int cy = 0; cy < _chunksY; cy++) RebuildChunk(cx, cy, true); }   // full build (mesh + collider)
 
-        public void FlushColliders()   // stroke end (mouse-up): rebuild trimesh colliders only for the chunks the drag touched
+        /// <summary>World-space XZ extent the grid covers. Z is negated relative to the grid, so grid y=0 is maxZ.</summary>
+        public (float MinX, float MaxX, float MinZ, float MaxZ) WorldBoundsXZ()
+            => _grid == null ? (0f, 0f, 0f, 0f) : (_bx, _bx + (_gw - 1) * UNIT, -(_bz + (_gh - 1) * UNIT), -_bz);
+
+        public void FlushColliders()   // stroke end (mouse-up): rebuild colliders only for the chunks the drag touched
         {
             if (_withCollider)
                 foreach (var (cx, cy) in _dirtyChunks)
                 {
                     var body = _chunkBody[cx, cy];
-                    if (_chunkMi[cx, cy]?.Mesh is ArrayMesh am && body != null)
-                        foreach (var c in body.GetChildren()) if (c is CollisionShape3D cs) cs.Shape = am.CreateTrimeshShape();
+                    if (body != null)
+                        foreach (var c in body.GetChildren()) if (c is CollisionShape3D cs) ApplyChunkShape(cs, cx, cy);
                 }
             _dirtyChunks.Clear();
         }
@@ -432,6 +471,12 @@ void fragment() {
                 GD.PrintErr($"[map] Unturned map terrain not found at '{heightmapsDir}'. Install Unturned via Steam, or set the UG_UNTURNED_DIR env var to your Unturned folder if it's in a non-default location.");
                 return null;
             }
+            // UG_TERRAIN_PROF=1 breaks the load down by phase. Off by default (it is noise in a normal boot), but the
+            // [loadprof] line only reports Terrain as ONE number, so this is the way in when that number moves.
+            // Each _phase() call records the time since the PREVIOUS call -- so it belongs AFTER the work it names.
+            bool _prof = System.Environment.GetEnvironmentVariable("UG_TERRAIN_PROF") == "1";
+            var _sw = System.Diagnostics.Stopwatch.StartNew(); long _last = 0;
+            void _phase(string n) { long ms = _sw.ElapsedMilliseconds; if (_prof) GD.Print($"[terrain-prof] {n,-22} {ms - _last,6} ms"); _last = ms; }
             var tiles = new System.Collections.Generic.Dictionary<(int, int), float[,]>();
             var splats = new System.Collections.Generic.Dictionary<(int, int), byte[,]>();   // dominant splatmap layer per 256x256 texel
             var splatRaw = new System.Collections.Generic.Dictionary<(int, int), byte[]>();   // raw 256x256x8 layer weights per tile, for the blend shader
@@ -455,6 +500,7 @@ void fragment() {
                     splats[(cx, cy)] = dm; splatRaw[(cx, cy)] = sd;
                 }
             }
+            _phase("read+decode tiles");
             var terr = new Terrain { Name = "Terrain" };
             Active = terr;
             if (tiles.Count == 0) return terr;
@@ -467,6 +513,7 @@ void fragment() {
                 for (int x = 0; x < RES; x++) for (int y = 0; y < RES; y++) g[ox + y, oy + x] = kv.Value[x, y];   // heightmap y-index = world X, x-index = world Z (verified: adjacent tiles' edges only match swapped) -> shared edges coincide, seamless
             }
 
+            _phase("merge heightmaps");
             int GWs = (maxX - minX + 1) * SRES, GHs = (maxY - minY + 1) * SRES;   // global splatmap grid (256/tile, no shared edge)
             var dom = new byte[GWs, GHs];
             foreach (var kv in splats)
@@ -476,6 +523,7 @@ void fragment() {
             }
 
             // bake the 8 raw layer weights into 2 RGBA8 textures (splat0 = layers 0-3, splat1 = 4-7) for the blend shader
+            _phase("merge dominant");
             byte[] sbuf0 = new byte[GWs * GHs * 4], sbuf1 = new byte[GWs * GHs * 4];
             foreach (var kv in splatRaw)
             {
@@ -487,6 +535,7 @@ void fragment() {
                     sbuf1[di] = sd[b + 4]; sbuf1[di + 1] = sd[b + 5]; sbuf1[di + 2] = sd[b + 6]; sbuf1[di + 3] = sd[b + 7];
                 }
             }
+            _phase("bake splat buffers");
             var splat0Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf0);
             var splat1Img = Image.CreateFromData(GWs, GHs, false, Image.Format.Rgba8, sbuf1);
 
@@ -495,6 +544,7 @@ void fragment() {
             ImageTexture s1t = splats.Count > 0 ? ImageTexture.CreateFromImage(splat1Img) : null;
             var texMat = splats.Count > 0 ? BuildTerrainMaterial(s0t, s1t) : null;   // real per-layer albedos, blended by per-texel splat weights
             GD.Print(texMat != null ? "[TERRAIN] weight-blended albedo shader ACTIVE" : "[TERRAIN] vertex-colour fallback");
+            _phase("images+textures");
             terr._grid = g; terr._gw = GW; terr._gh = GH; terr._bx = baseX; terr._bz = baseZ;   // SampleHeight (spawns) + chunk sculpt
             terr._dom = dom; terr._dw = GWs; terr._dh = GHs;   // SampleDominantLayer + chunk vertex colours
             terr._s0Img = splat0Img; terr._s1Img = splat1Img; terr._s0Tex = s0t; terr._s1Tex = s1t;   // live splat paint
@@ -504,7 +554,9 @@ void fragment() {
             terr._chunksX = (GW - 2) / CHUNK + 1; terr._chunksY = (GH - 2) / CHUNK + 1;
             terr._chunkMi = new MeshInstance3D[terr._chunksX, terr._chunksY];
             terr._chunkBody = new StaticBody3D[terr._chunksX, terr._chunksY];
+            _phase("setup");
             terr.RebuildAll();   // builds every chunk's mesh + collider from _grid
+            _phase($"RebuildAll ({terr._chunksX}x{terr._chunksY} chunks, collider={withCollider})");
 
             // translucent ocean surface at PEI's REAL sea level (source: Environment/Lighting.dat seaLevel float @+18, v12 = 0.1)
             // UG_NOWATER=1 skips the water plane -> see a map's raw terrain/textures from above (esp. flat custom maps below sea level)
@@ -528,6 +580,8 @@ void fragment() {
                 wbody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = new Vector3(wsize.X, 0.2f, wsize.Y) } });
                 terr.AddChild(wbody);
             }
+            _phase("water plane");
+            if (_prof) GD.Print($"[terrain-prof] TOTAL {_sw.ElapsedMilliseconds} ms");
             return terr;   // (grid/dom/material/chunks all stored above, before RebuildAll)
         }
     }
