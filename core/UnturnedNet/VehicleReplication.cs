@@ -905,10 +905,7 @@ namespace UnturnedGodot.Net
             {
                 _vehicles.ServerSetDriver(new NetId(netId), 0, tick);
                 _vehicles.ServerClearInput(new NetId(netId));
-                float yawRad = v.YawDegrees * (Mathf.PI / 180f);
-                // Godot yaw basis: right (basis.X) = (cos yaw, 0, -sin yaw)
-                var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
-                spot = v.Pos + right * 2.4f + new Vector3(0f, 1.0f, 0f);
+                spot = NetGeometry.ExitSpotBeside(v.Pos, v.YawDegrees);
                 if (AdjustExitSpot != null) spot = AdjustExitSpot(spot);   // §7 risk 6: terrain-snap a below-ground slope exit
                 _players.ServerTeleport(playerId, spot, tick);
             }

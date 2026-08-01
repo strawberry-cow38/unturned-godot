@@ -556,9 +556,10 @@ namespace UnturnedGodot
                 exit = new Vector3(evt.Pos.x, evt.Pos.y, evt.Pos.z);
             else if (Client.Vehicles.TryGet(evt.NetId, out var v))
             {
-                float yawRad = Mathf.DegToRad(v.YawDegrees);
-                var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));   // Godot yaw basis: right = (cos, 0, -sin)
-                exit = new Vector3(v.Pos.x, v.Pos.y, v.Pos.z) + right * 2.4f + Vector3.Up * 1.0f;
+                // the FALLBACK spot (no authoritative one in the event). Shares the server's formula so the
+                // fallback cannot geometrically disagree with it -- see EXIT_POSITION_ROOTCAUSE.md.
+                var s = UnturnedGodot.Net.NetGeometry.ExitSpotBeside(v.Pos, v.YawDegrees);
+                exit = new Vector3(s.x, s.y, s.z);
             }
             else exit = Shell.GlobalPosition;   // no spot, no replica -- exit in place (the shell rode along)
             if (Terr != null)

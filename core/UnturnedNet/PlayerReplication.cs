@@ -391,7 +391,7 @@ namespace UnturnedGodot.Net
         public static Vector3 IntegrateFlat(PlayerMovementSim sim, in MoveInput input, Vector3 pos, float dt)
         {
             var vel = sim.Step(new Vector2(input.MoveX, input.MoveY), wantJump: false, grounded: true, dt);
-            float yawRad = input.YawDegrees * (Mathf.PI / 180f);
+            float yawRad = input.YawDegrees * Mathf.Deg2Rad;   // bit-identical to PI/180f; see ReplicationUtil.ForwardFromYaw
             float sin = Mathf.Sin(yawRad), cos = Mathf.Cos(yawRad);
             var worldDelta = new Vector3(
                 (vel.x * cos + vel.z * sin) * dt,

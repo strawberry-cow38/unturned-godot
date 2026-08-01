@@ -497,8 +497,7 @@ namespace UnturnedGodot.Net
             // the SAME frame SenderFacingItem uses. (Still latent -- no client sends DropItem yet -- but aligned so a
             // toss lands in FRONT of the player, not behind, when the seam wires up.)
             _players.TryGetByOwner(sender, out var p);
-            float yawRad = (p?.YawDegrees ?? 0f) * (Mathf.PI / 180f);
-            var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
+            var fwd = NetGeometry.ForwardFromYaw(p?.YawDegrees ?? 0f);
             var origin = (p?.Pos ?? Vector3.zero) + fwd * 1.2f + new Vector3(0f, 1.0f, 0f);
             SpawnWorldItem(jar.item, origin, fwd * 2.5f + new Vector3(0f, 2f, 0f));
         }
@@ -811,8 +810,7 @@ namespace UnturnedGodot.Net
             flat.y = 0f;
             float dist = flat.magnitude;
             if (dist < PickupFacingSkipRange) return true;   // at-feet: bearing unstable, cone skipped
-            float yawRad = p.YawDegrees * (Mathf.PI / 180f);
-            var fwd = new Vector3(-Mathf.Sin(yawRad), 0f, -Mathf.Cos(yawRad));
+            var fwd = NetGeometry.ForwardFromYaw(p.YawDegrees);
             return Vector3.Dot(fwd, flat / dist) >= PickupFacingMinDot;
         }
 
