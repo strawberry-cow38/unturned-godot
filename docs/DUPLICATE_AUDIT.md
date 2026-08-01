@@ -70,7 +70,7 @@ meant to agree and no longer do.
 | 2.18 | **`SetLookFocused` mesh collection differs** | `Vehicle` and `VehiclePuppet` re-collect on every focus; `Deployable` collects once and never refreshes — so a `Deployable` that gains a mesh after first focus (battery label, split turbine hub) is missed | OPEN |
 | 2.19 | **Pump-lift ceiling propagation written twice** | `FluidNet.cs:83` (inside `WouldNeedPump`) and `:153` (inside `Tick`); any change to the conduction rule must be made in both | **FIXED** — `FluidNet.PropagateCeilings` |
 | 2.20 | **Deadzone host loop duplicated** | The *sim* is correctly shared, but the volume list, `TryGetVolume` scan, per-player dictionary and enter/exit bookkeeping are near line-for-line in `game/DeployableField`-side `DeadzoneField.cs` and `core/UnturnedNet/ServerDeadzones.cs` | OPEN |
-| 2.21 | **`GodotCompat.cs` — the documented handedness-flip adapter — has exactly ONE call site** (`Main.cs:534`) while everything else converts inline. Either every inline conversion is a latent sign bug, or the adapter is dead code. **This either/or should be resolved before more cross-boundary code is written** | OPEN |
+| 2.21 | **`GodotCompat.cs` — the documented handedness-flip adapter — has exactly ONE call site** (`Main.cs:534`) while everything else converts inline. Either every inline conversion is a latent sign bug, or the adapter is dead code. **This either/or should be resolved before more cross-boundary code is written** | **RESOLVED** — it was dead code with a WRONG convention; corrected to match practice |
 
 ## Tier 3 — probably deliberate; confirm before touching
 
@@ -200,3 +200,26 @@ What was real is narrower: the same clamp was **typed** twice, so the two could 
 looked right. `FuelStationMath.Percent` is now the one definition and both sides call it — the
 seam stays dumb (a fake still supplies only Remaining/Capacity, the choke still does the
 computing) and drift is impossible.
+
+## 2.21 resolved: the adapter was wrong, not the call sites
+
+The either/or was "every inline conversion is a latent sign bug, or the adapter is dead code".
+It is the second, with a sting: the adapter was not merely unused, it was **wrong**.
+
+`GodotCompat` negated Z and described itself as "the ONLY boundary crossing ... one handedness
+convention" for the whole port. Its only caller was a Phase 0c boot smoke-print that converts
+(1,2,3) and prints it. Every real conversion — five private `ToU` helpers (ClientWorldSession,
+ContainerNetSync, VehicleNetSync, AnimalNetSync, MpLoopback) plus dozens of inline
+`new Vector3(e.Pos.x, e.Pos.y, e.Pos.z)` — copies components straight through.
+
+The port works, which is the proof: a systematic Z mirror would misplace every replicated
+position, and it does not. The file's own comment asked someone to "revisit once the first ripped
+mesh lands to confirm the sign". The meshes landed; nobody did.
+
+Corrected to match practice and pinned by `review.godotcompat_no_z_flip`. The Quaternion/Color
+overloads were **removed** rather than corrected: zero callers meant nothing to check a guess
+against, and inventing a convention with no consumer is how this became wrong originally.
+
+**Follow-up worth doing (not done here):** the five `ToU` helpers are now duplicates of a correct
+shared adapter and could consolidate onto it. Left open because it touches several `game/` files
+including render/UI lanes.

@@ -90,4 +90,33 @@ namespace UnturnedGodot.Testing
                     spy.Heard > 0);
         }
     }
+
+    // DUPLICATE_AUDIT 2.21. GodotCompat used to negate Z, while calling itself "the ONLY boundary crossing"
+    // and "one handedness convention" for the whole port. It had exactly one caller -- a Phase 0c boot
+    // smoke-print -- and every REAL conversion in the codebase (five private ToU helpers plus dozens of
+    // inline copies) does the opposite: a straight component copy, no flip.
+    //
+    // So the adapter was a trap, not a convention: anything that reached for it would have silently
+    // mirrored every position it converted, and a mirrored Z still looks like a plausible position. It now
+    // matches practice, and this pins that so it cannot drift back.
+    public class GodotCompatDoesNotFlipZ : GameTest
+    {
+        public override string Name => "review.godotcompat_no_z_flip";
+        public override IEnumerable<Step> Run()
+        {
+            var u = new UnityEngine.Vector3(1f, 2f, 3f);
+            Godot.Vector3 g = u.ToGodot();
+            T.Check($"ToGodot copies Z, does not negate it (got {g.Z}, want 3)", Mathf.Abs(g.Z - 3f) < 1e-6f);
+            T.Check("x/y pass through", Mathf.Abs(g.X - 1f) < 1e-6f && Mathf.Abs(g.Y - 2f) < 1e-6f);
+
+            var back = g.ToSdg();
+            T.Check($"round trip is identity, not a double flip (got {back.z}, want 3)",
+                    Mathf.Abs(back.z - 3f) < 1e-6f);
+
+            // and it must agree with what the rest of the port actually does inline
+            var inline = new Godot.Vector3(u.x, u.y, u.z);
+            T.Check("agrees with the inline convention the five ToU helpers use", g == inline);
+            yield break;
+        }
+    }
 }
