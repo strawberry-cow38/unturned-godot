@@ -22,6 +22,15 @@ namespace UnturnedGodot
         public const uint PortLayer = 1u << 8;   // wire look-ray raycasts this layer only
         const float CubeSize = 0.13f;
 
+        /// <summary>A 0-watt SENSE port (SwitchRole.TurnOn/TurnOff) fires once it is fed at least this much.
+        /// It was a bare `>= 1f` in five places -- Deployable's remote-trigger loop (as the inverse `< 1f`),
+        /// and both triggers on each of FluidPump and FluidValve (DUPLICATE_AUDIT 1.13). One literal with no
+        /// name is one nobody can grep for and everybody can retype slightly differently.</summary>
+        public const float TriggerWatts = 1f;
+
+        /// <summary>Is this sense port currently energised enough to fire its trigger?</summary>
+        public bool TriggerFired => Live >= TriggerWatts;
+
         public IPowerDevice Owner;   // the deployable or fixture this port sits on (was Deployable; now any IPowerDevice, e.g. a gas pump)
         public DeployableDef.PortKind Kind;
         public DeployableDef.SwitchRole Role;   // a switch trigger port (TurnOn/TurnOff), else None

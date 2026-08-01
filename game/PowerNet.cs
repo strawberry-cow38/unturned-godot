@@ -81,12 +81,7 @@ namespace UnturnedGodot
                 if (n is ConnectionPort p && GodotObject.IsInstanceValid(p)) p.SetArrowState(show, false);
         }
 
-        static PowerPortKind Kind(DeployableDef.PortKind k) => k switch
-        {
-            DeployableDef.PortKind.Output => PowerPortKind.Output,
-            DeployableDef.PortKind.Consumer => PowerPortKind.Consumer,
-            _ => PowerPortKind.Passthrough,
-        };
+        static PowerPortKind Kind(DeployableDef.PortKind k) => DeployableDef.ToSolverKind(k);
     }
 
     // Ticks the power net once a frame. One instance is created lazily by the first placed deployable.

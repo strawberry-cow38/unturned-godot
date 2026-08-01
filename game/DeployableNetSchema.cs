@@ -37,11 +37,6 @@ namespace UnturnedGodot
             }
         }
 
-        static PowerPortKind Kind(DeployableDef.PortKind k) => k switch
-        {
-            DeployableDef.PortKind.Output => PowerPortKind.Output,
-            DeployableDef.PortKind.Consumer => PowerPortKind.Consumer,
-            _ => PowerPortKind.Passthrough,
-        };
+        static PowerPortKind Kind(DeployableDef.PortKind k) => DeployableDef.ToSolverKind(k);
     }
 }

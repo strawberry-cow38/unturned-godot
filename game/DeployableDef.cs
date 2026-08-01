@@ -379,6 +379,17 @@ namespace UnturnedGodot
 
         // The world rotation the src applies: yaw about world-up, then the -90 X stand-up
         // (BarricadeManager.getRotation: Quaternion.Euler(0,yaw,0) * Quaternion.Euler(-90,0,0)).
+        /// <summary>A def's PortKind mapped onto the solver's PowerPortKind. This switch existed twice --
+        /// PowerNet (the SP node adapter) and DeployableNetSchema (the replicated def table) -- so a fourth
+        /// PortKind would have had to be added in both or SP and MP would silently disagree about a port's
+        /// role (DUPLICATE_AUDIT 1.8).</summary>
+        public static SDG.Unturned.PowerPortKind ToSolverKind(PortKind k) => k switch
+        {
+            PortKind.Output => SDG.Unturned.PowerPortKind.Output,
+            PortKind.Consumer => SDG.Unturned.PowerPortKind.Consumer,
+            _ => SDG.Unturned.PowerPortKind.Passthrough,
+        };
+
         public static Basis StandBasis(float yawDeg) =>
             new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)) * new Basis(Vector3.Right, Mathf.DegToRad(StandRotX));
 

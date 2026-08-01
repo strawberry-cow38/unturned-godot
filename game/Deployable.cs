@@ -596,7 +596,7 @@ namespace UnturnedGodot
             {
                 foreach (var port in Ports)
                 {
-                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Role == DeployableDef.SwitchRole.None || port.Live < 1f) continue;
+                    if (port == null || !GodotObject.IsInstanceValid(port) || port.Role == DeployableDef.SwitchRole.None || !port.TriggerFired) continue;
                     bool wantOn = port.Role == DeployableDef.SwitchRole.TurnOn;
                     if (Def.IsSwitch) { if (_switchOn != wantOn) { _switchOn = wantOn; UpdateSwitchLight(); PowerNet.MarkDirty(); } }
                     else if (wantOn && !_powered && Fuel > 0f) { _powered = true; PowerNet.MarkDirty(); }   // remote START -> engine spins UP (needs fuel); the ramp forces the startup

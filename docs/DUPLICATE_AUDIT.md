@@ -36,12 +36,12 @@ the edit, not in the decision.
 | 1.5 | `RotateYTo(Vector3)` | `ConnectionPort.cs:161`, `Wire.cs:58`, `Hose.cs:58` | **FIXED** ae3e2c7d — `NodeGeometry.RotateYTo` (4th copy in TowRope.cs, found by cow tools) |
 | 1.6 | `CollectMeshes(Node, List)` | `Deployable.cs:242`, `Vehicle.cs:1720`, `VehiclePuppet.cs:110` | **FIXED** ae3e2c7d — `NodeGeometry.CollectMeshes` |
 | 1.7 | Lazy world-manager creation | `PowerManager` **5×** (`Deployable:237`, `GasPump:62` + `:86`, `GridPowerSource:93` + `:120`); `FluidManager` 2× (`FluidDeploy:37`, `FluidFuelInlet:35`) | OPEN |
-| 1.8 | `Kind(DeployableDef.PortKind)` → `PowerPortKind` | `PowerNet.cs:84`, `DeployableNetSchema.cs:38` — byte-identical switches | OPEN |
+| 1.8 | `Kind(DeployableDef.PortKind)` → `PowerPortKind` | `PowerNet.cs:84`, `DeployableNetSchema.cs:38` — byte-identical switches | **FIXED** — `DeployableDef.ToSolverKind` |
 | 1.9 | Polyline length | `Wire.cs:50` + `Hose.cs:50` (**both uncalled**) and the live private `PolyLen` in `PlayerController.cs:392` | **FIXED** ae3e2c7d — `NodeGeometry.PolylineLength` |
 | 1.10 | `Stamp(tick) => tick + 1` | 8 private copies + 2 inlined; `ZombieReplication`/`AnimalReplication`/`VehicleReplication`/`PlayerReplication` stamp the **raw** tick with no +1 — that inconsistency is load-bearing and undocumented | OPEN |
 | 1.11 | `NetQuantization.Quantize*` — 4 copies of one writer→reader round-trip, **2 allocations per call to quantize one float**; `WorldReplication.cs:57` is a 5th, inlined | **FIXED** — shared [ThreadStatic] scratch, zero allocations; 5th copy folded in |
 | 1.12 | `DirtyRingDepthTicks` declared twice | `NetQuantization.cs:32`, `SnapshotComposer.cs:54` (explicit alias) | OPEN |
-| 1.13 | Trigger-sense threshold `Live >= 1f` as a bare literal | `Deployable:588`, `FluidPump:58` + `:59`, `FluidValve:33` + `:34` | OPEN |
+| 1.13 | Trigger-sense threshold `Live >= 1f` as a bare literal | `Deployable:588`, `FluidPump:58` + `:59`, `FluidValve:33` + `:34` | **FIXED** — `ConnectionPort.TriggerWatts` / `TriggerFired` |
 
 ## Tier 2 — the same idea, written twice, and they have **drifted**
 

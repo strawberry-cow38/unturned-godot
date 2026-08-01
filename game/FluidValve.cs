@@ -30,8 +30,8 @@ namespace UnturnedGodot
         {
             base._Process(delta);
             // a wired >=1w sense on a trigger opens/closes the valve (SetValveOpen no-ops if already in that state)
-            if (_onTrigger != null && GodotObject.IsInstanceValid(_onTrigger) && _onTrigger.Live >= 1f) SetValveOpen(true);
-            else if (_offTrigger != null && GodotObject.IsInstanceValid(_offTrigger) && _offTrigger.Live >= 1f) SetValveOpen(false);
+            if (_onTrigger != null && GodotObject.IsInstanceValid(_onTrigger) && _onTrigger.TriggerFired) SetValveOpen(true);
+            else if (_offTrigger != null && GodotObject.IsInstanceValid(_offTrigger) && _offTrigger.TriggerFired) SetValveOpen(false);
         }
 
         // picked up -> free any wires plugged into either trigger, then re-solve the net (base frees its hoses)
