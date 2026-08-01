@@ -61,6 +61,9 @@ namespace UnturnedGodot
             string dir = ProjectSettings.GlobalizePath("res://content/resources/");
             string manifest = dir + "resources.txt";
             if (!File.Exists(manifest)) { GD.Print("[resources] no resources.txt -- skipping"); return; }
+            // UG_NOLOD=1 keeps the old hardcoded 320/180 -- the A/B control for what retail's distances changed.
+            if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1")
+                LodTable.LoadResources(dir + "lods.txt");   // retail per-asset LODGroup; layer cull is LodTable.DefaultCullDistance
             int total = 0, types = 0, treeCols = 0;
             foreach (var line in File.ReadAllLines(manifest))
             {
@@ -107,7 +110,13 @@ namespace UnturnedGodot
                     // Bucket instances into spatial CELLS so each chunk frustum-culls independently (behind the player) + distance-culls,
                     // instead of one map-wide MultiMesh that's never culled. Trees keep their shadows within range (master); props cull closer.
                     const float Cell = 64f;
-                    float cullRange = isTree ? 320f : 180f;
+                    // Retail draw distance for this asset: LayerMasks.RESOURCE gets the full defaultCullDistance
+                    // (512m at the default draw-distance setting), tightened by the asset's own LODGroup. Trees
+                    // compute to ~3000m so the layer stops them; small bushes/rocks bite well inside it. The old
+                    // hardcoded 320/180 split is the fallback for anything missing from the table.
+                    // NB the cull is per 64m CELL, so a cell's instances survive to roughly cullRange + Cell.
+                    float cullRange = LodTable.ResourceCull(name, LodTable.SourceFov);
+                    if (cullRange <= 0f) cullRange = isTree ? 320f : 180f;
                     var byCell = new Dictionary<(int, int), List<int>>();
                     for (int k = 0; k < xf.Count; k++)
                     {

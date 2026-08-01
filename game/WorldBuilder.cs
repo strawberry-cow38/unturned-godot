@@ -68,6 +68,10 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        // Leaves cull closer than the trunk. The old flat pair was 240/320, so keep that 0.75 ratio now the
+        // trunk distance is per-prop instead of constant.
+        const float FoliageCullFraction = 0.75f;
+
         // Map-load loot distribution (master's "loot distribution on shelves"): certain PLACED props become lootable
         // CONTAINERS in singleplayer instead of plain decoration -- a StoreShelf spawns at the placement transform and
         // the decoration mesh is skipped. Registry = object guid -> PEI item table. First pass: the Shelf_1 store shelf
@@ -203,18 +207,27 @@ namespace UnturnedGodot
             }
             var timings = new System.Collections.Generic.Dictionary<string, double>();
             string curPhase = null; var phaseSw = System.Diagnostics.Stopwatch.StartNew();
+            var wallSw = System.Diagnostics.Stopwatch.StartNew();   // total incl. the per-phase frame yields, so WORK vs WAIT is visible
+            var yields = new System.Collections.Generic.Dictionary<string, double>();   // what each phase spent WAITING for a drawn frame
             async System.Threading.Tasks.Task Phase(string name)
             {
                 if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading?.Advance(); }
-                curPhase = name; loading?.SetStatus(name + "…"); phaseSw.Restart();
+                curPhase = name; loading?.SetStatus(name + "…");
                 // Wait for a real DRAWN frame (not just process_frame, which resumes before the present) so
                 // each bar/status update is actually visible before this phase's blocking work runs.
                 // --bakenav: skip the frame-yield so the WHOLE world loads synchronously -> we can bake offline.
                 if (!syncLoad)
                 {
+                    var ySw = System.Diagnostics.Stopwatch.StartNew();
                     await root.ToSignal(root.GetTree(), SceneTree.SignalName.ProcessFrame);
                     await root.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    yields[name] = ySw.Elapsed.TotalMilliseconds;
                 }
+                // Restart AFTER the yields, so a phase measures its own WORK. Restarting before them charged each
+                // phase for rendering a frame of everything built so far -- which grows as the world fills, so the
+                // late phases looked expensive purely for being late. That is a per-phase cost of one full frame at
+                // whatever the current scene costs to draw, and on a software rasteriser it dwarfed the real work.
+                phaseSw.Restart();
             }
             // REAL PEI lighting via DayNightCycle (src Lighting.dat: ported sky shader + warm ambient + sun per time-of-day)
             // -- replaces the ProceduralSky + sky-tinted ambient that didn't match the source palette. "Drive PEI"
@@ -316,7 +329,12 @@ namespace UnturnedGodot
             }
             var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
-            Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0;
+            Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
+            var lodMis = new System.Collections.Generic.List<MeshInstance3D>();   // this placement's extra LOD instances, reused per prop
+            var lodLoadSw = System.Diagnostics.Stopwatch.StartNew(); long lodLoadTicks = 0; int lodMeshesLoaded = 0;   // isolated cost of the LOD mesh parses
+            // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
+            // measuring what the retail distances actually changed, in the same binary.
+            if (System.Environment.GetEnvironmentVariable("UG_NOLOD") != "1") LodTable.Load(dir + "lods.txt");
             // holiday gate: PEI's Objects.dat has ~285 Christmas/Halloween props placed that only show in-season
             // (src: ObjectAsset.holidayRestriction + HolidayUtil schedule). Skip any whose holiday != the active one.
             var holidayOf = new System.Collections.Generic.Dictionary<string, string>();
@@ -354,9 +372,56 @@ namespace UnturnedGodot
                 // term is identity), so the whole map except the handful of rolled props is byte-identical -- no regression.
                 var rot = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f - ey)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(ex)) * new Basis(new Vector3(0, 0, 1), Mathf.DegToRad(-ez));
                 var basis = rot.Scaled(new Vector3(sx, sy, sz));
+                // Draw distance comes from RETAIL now, per prop, instead of one flat 320m for a book and a harbor
+                // alike: the tighter of its render-layer cull (LARGE 512 / MEDIUM 256 / SMALL 64 at default draw
+                // distance) and its Unity LODGroup threshold. See LodTable. A GUID missing from the table keeps the
+                // old flat cutoff -- better to draw an unknown prop too long than to pop a landmark out of the world.
+                float cull = LodTable.CullDistance(p[0], LodTable.SourceFov);
+                if (cull <= 0f) { cull = 320f; lodMissing++; }
                 var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
-                    VisibilityRangeEnd = 320f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
+                    VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 root.AddChild(mainMi);
+                // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port
+                // never extracted. Each level draws in its own distance band, LOD0 nearest, so a prop gets CHEAPER
+                // with distance instead of only vanishing at the end of one.
+                //
+                // A level whose .obj is absent must NOT shorten the prop: its band is handed back to the previous
+                // level by extending that level's End, otherwise a prop with an unextracted LOD1 would pop out of
+                // existence at the LOD0->LOD1 distance instead of at its cull distance.
+                lodMis.Clear();
+                var ranges = mesh != null ? LodTable.LevelRanges(p[0], LodTable.SourceFov) : null;
+                if (ranges != null && ranges.Length > 1)
+                {
+                    mainMi.VisibilityRangeEnd = ranges[0].End;
+                    var last = mainMi;
+                    for (int lv = 1; lv < ranges.Length; lv++)
+                    {
+                        var (b, e2) = ranges[lv];
+                        if (e2 <= b) continue;                       // band collapsed by the layer cull: level never draws
+                        string lodKey = name + "_lod" + lv;
+                        if (!cache.TryGetValue(lodKey, out var lmesh))
+                        {
+                            // Time the LOD mesh parse DIRECTLY. Measuring it as a delta on the whole Objects
+                            // phase failed on a loaded box -- two paired runs disagreed 4x (+249ms vs +1070ms)
+                            // because the phase carries everything else too. Summing just these parses is a
+                            // direct measurement instead of a difference of two noisy numbers, so it survives
+                            // a busy machine. Each file is parsed ONCE (cache), so this totals the real cost.
+                            string lp = dir + lodKey + ".obj";
+                            long t0 = lodLoadSw.ElapsedTicks;
+                            lmesh = System.IO.File.Exists(lp) ? ObjMesh.Load(lp) : null;
+                            lodLoadTicks += lodLoadSw.ElapsedTicks - t0;
+                            if (lmesh != null) lodMeshesLoaded++;
+                            cache[lodKey] = lmesh;
+                        }
+                        if (lmesh == null) { last.VisibilityRangeEnd = e2; continue; }   // absorb the band into the level before it
+                        var lmi = new MeshInstance3D { Mesh = lmesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                            VisibilityRangeBegin = b, VisibilityRangeEnd = e2, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                        root.AddChild(lmi);
+                        lodMis.Add(lmi);
+                        last = lmi;
+                    }
+                    lodLevels += lodMis.Count;
+                }
                 // tree foliage: a SEPARATE leaf mesh with its own leaf material (so the trunk keeps its bark texture)
                 if (!folCache.TryGetValue(name, out var fmesh))
                 {
@@ -366,7 +431,7 @@ namespace UnturnedGodot
                 }
                 MeshInstance3D folMi = null;
                 if (fmesh != null) { folMi = new MeshInstance3D { Mesh = fmesh, MaterialOverride = MatFor(name + "_foliage"), Transform = new Transform3D(basis, gpos),
-                    VisibilityRangeEnd = 240f, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // leaves cull closer
+                    VisibilityRangeEnd = cull * FoliageCullFraction, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // leaves cull closer, same 0.75 ratio the flat 240/320 pair used
                     root.AddChild(folMi); }
                 // gas pumps (A2): every Gas_Pump_0 is a 750W-consumer fuel PUMP over a shared station tank. RECORD
                 // it in EVERY mode (the mesh + collider below stay byte-identical); the caller realizes it -- the
@@ -459,7 +524,13 @@ namespace UnturnedGodot
                 if (destIndex >= 0 && destBody != null && rubbleCat.TryGetValue(p[0].ToLowerInvariant(), out var rub))
                 {
                     destBody.SetMeta(DestructibleField.MetaKey, destIndex);
-                    var mis = folMi != null ? new[] { mainMi, folMi } : new[] { mainMi };
+                    // EVERY visual instance, including the LOD levels -- DestructibleField hides these when the
+                    // prop breaks, so omitting the LOD meshes would leave a destroyed building still standing at
+                    // distance while its LOD0 vanished up close.
+                    var all = new System.Collections.Generic.List<MeshInstance3D>(lodMis.Count + 2) { mainMi };
+                    all.AddRange(lodMis);
+                    if (folMi != null) all.Add(folMi);
+                    var mis = all.ToArray();
                     destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId);
                 }
                 placed++;
@@ -501,6 +572,8 @@ namespace UnturnedGodot
             if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
+            GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
+            GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");
 
             // Player spawn points: LevelSpawns.PlayerSpawns (C2 promoted the C1 local parse to a shared static
             // so the dedicated server's SpawnProvider reads the SAME points -- behavior-identical here).
@@ -845,6 +918,20 @@ namespace UnturnedGodot
             NearestFilter.Apply(root);   // Unturned point-filters level/object textures (FilterMode.Point) -- match it scene-wide (crisp pixel look)
             if (curPhase != null) { timings[curPhase] = phaseSw.Elapsed.TotalMilliseconds; loading?.Advance(); }   // record the final phase
             loading?.Finish(timings);   // hide the overlay + show the per-category timing breakdown top-left for a few seconds (master)
+            {
+                // Same numbers as the overlay, on stdout -- the overlay is unreadable in a headless/xvfb profiling run,
+                // and Dedicated builds no overlay at all, so this was the one mode whose load cost was invisible.
+                // NB each phase includes its two frame-yields (the stopwatch restarts BEFORE the awaits), so a phase
+                // never reads below one frame; compare phases to each other, not to an absolute budget.
+                var parts = new System.Collections.Generic.List<string>(); double sum = 0, ysum = 0;
+                foreach (var kv in timings)
+                {
+                    yields.TryGetValue(kv.Key, out double y);
+                    parts.Add($"{kv.Key} {kv.Value:F0}(+{y:F0}y)"); sum += kv.Value; ysum += y;
+                }
+                GD.Print($"[loadprof] {string.Join(" | ", parts)}");
+                GD.Print($"[loadprof] WORK {sum:F0} ms | YIELD {ysum:F0} ms | WALL {wallSw.Elapsed.TotalMilliseconds:F0} ms   (Ny = ms spent waiting for a drawn frame, NOT that phase's work)");
+            }
             // Zombie navmesh POCKETS -- bake NOW, in the FULL world, so the BUILDINGS (layer 1<<0) carve the mesh and
             // zombies route around them. This full-world bake is the CANONICAL one (save:true -> pei_pocket_N.res);
             // the terrain-only peiplay/navshot verify modes pass save:false so they never overwrite it.
