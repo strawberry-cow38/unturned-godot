@@ -59,6 +59,29 @@ namespace UnturnedGodot.Net
         /// server would flip this off (admin gating is deferred policy, the choke point is the mechanism).</summary>
         public bool AllowCheats = true;
 
+        /// <summary>
+        /// Gate base edits on who placed the thing: salvage, pickup, wire connect/remove and toggle.
+        ///
+        /// DEFAULT OFF, which is exactly today's behaviour -- this server is a friendly co-op box where
+        /// editing each other's bases is the point, and flipping that by surprise would be a worse bug than
+        /// the hole it closes. What changes is that the mechanism now EXISTS and is tested, so opening the
+        /// server to strangers is one flag rather than a security project. The server browser landing today
+        /// is what makes that difference matter.
+        ///
+        /// Ownership means OwnerPlayerId, which is already stamped at placement, already on the wire and
+        /// already in the state hash -- nothing new is replicated for this.
+        /// </summary>
+        public bool EnforceOwnership;
+
+        /// <summary>May `sender` modify this deployable? Owner-placed things answer to their owner.
+        ///
+        /// Owner 0 is the WORLD -- map fixtures placed by the level build, not by a player: street lamps,
+        /// gas pumps, grid sources. Those must stay usable by everyone or enforcing ownership would silently
+        /// make every municipal light and pump un-toggleable, which is the kind of "fix" that reads as a
+        /// regression. A player's own base is the only thing this protects.</summary>
+        public bool MayModify(ushort sender, DeployableReplication.DeployableEntity e) =>
+            !EnforceOwnership || e == null || e.OwnerPlayerId == 0 || e.OwnerPlayerId == sender;
+
         /// <summary>A2 (SP/MP-unify): the authoritative gas-station tanks the ExtractFuel choke drains, behind
         /// the IFuelStation seam. The HOST supplies it (game: GasStationServer built from the placed gas-pump
         /// fixtures; tests: a fake). Null on a world with no gas pumps -> ExtractFuel is a no-op. Set after
@@ -128,27 +151,30 @@ namespace UnturnedGodot.Net
                                         && _deployables.CanPlace(cmd.DefId, cmd.Pos, pos)
                                         && SenderInventory(sender)?.getItemCount(cmd.DefId) > 0);   // placing spends the held item
 
-            // TODO(mp-security): salvage/wire/toggle are reach-gated only -- no e.OwnerPlayerId == sender
-            // (or group) check (review M2). DELIBERATELY deferred while this is a friendly co-op test
-            // server (editing each other's bases is convenient); add the ownership gate to these three
-            // validators before any public/untrusted hosting. See MP_PLAN "Security posture".
+            // Ownership (review M2, previously a TODO here): salvage/pickup/wire/toggle now run through
+            // MayModify, which is a no-op until EnforceOwnership is set -- see that flag for why it defaults
+            // off. The gate lives in the validators rather than the handlers so a rejected attempt is counted
+            // as a validation rejection and never reaches authoritative state at all.
             commands.Register<SalvageDeployableCommand>(ReplicationIds.CommandSalvageDeployable, SalvageDeployableCommand.TryRead,
                 OnSalvageDeployable,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _deployables.TryGet(cmd.NetId, out var e)
+                                        && MayModify(sender, e)
                                         && e.OnFire   // only a dead/burning wreck tears down (SP: blowtorch a cooled wreck)
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
 
             // B2: hold-F pickup returns the LIVE deployable to the bag (distinct intent from Salvage's scrap --
-            // the client gates hold-F on !IsWreck/!OnFire, so this never collides with a wreck salvage). The
-            // validator only guarantees the handler's derefs are safe; ownership + reach + wreck-gating are
-            // deferred TODO(mp-security) alongside the salvage/wire/toggle M2 deferral above.
+            // the client gates hold-F on !IsWreck/!OnFire, so this never collides with a wreck salvage).
+            // This is the one that mattered most: salvage at least requires the target to be ON FIRE first,
+            // but pickup takes a healthy deployable straight into your bag, so an ungated pickup let anyone
+            // walk a base away piece by piece.
             commands.Register<PickupDeployableCommand>(ReplicationIds.CommandPickupDeployable, PickupDeployableCommand.TryRead,
                 OnPickupDeployable,
                 validate: (sender, cmd) => _inventories.TryGet(sender, out _)
                                         && TryGetSenderPos(sender, out var pos)
                                         && _deployables.TryGet(cmd.NetId, out var e)
-                                        && (e.Pos - pos).magnitude <= DeployableReplication.WireReach   // review H2: reach-gate like salvage (ownership stays the deferred TODO above)
+                                        && MayModify(sender, e)
+                                        && (e.Pos - pos).magnitude <= DeployableReplication.WireReach   // review H2: reach-gate like salvage
                                         && _deployables.Schema.TryGet(e.DefId, out var def)
                                         && def.FixtureKind == FixtureKind.None);   // review M4: world fixtures (gas pump / grid source) are NOT pickup-able -- they'd be unreplaceable
 
@@ -168,25 +194,32 @@ namespace UnturnedGodot.Net
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach
                                         && SenderInventory(sender) != null);
 
-            // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
+            // BOTH ends are checked, not just the one you are standing at -- wiring your own generator into
+            // someone else's grid is the same trespass as wiring theirs into yours.
             commands.Register<ConnectWireCommand>(ReplicationIds.CommandConnectWire, ConnectWireCommand.TryRead,
                 OnConnectWire,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
+                                        && (!EnforceOwnership
+                                            || (_deployables.TryGet(cmd.SrcId, out var s) && MayModify(sender, s)
+                                             && _deployables.TryGet(cmd.DstId, out var d) && MayModify(sender, d)))
                                         && _deployables.CanConnectWire(cmd.SrcId, cmd.SrcPort, cmd.DstId, cmd.DstPort, pos));
 
-            // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
+            // Cutting a wire is gated on the SOURCE, which is the end the reach check already uses.
             commands.Register<RemoveWireCommand>(ReplicationIds.CommandRemoveWire, RemoveWireCommand.TryRead,
                 OnRemoveWire,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _deployables.TryGetWire(cmd.WireId, out var w)
                                         && _deployables.TryGet(w.SrcId, out var src)
+                                        && MayModify(sender, src)
                                         && (src.Pos - pos).magnitude <= DeployableReplication.WireReach);
 
-            // TODO(mp-security): no ownership check, reach-gated only (review M2 deferral -- see above)
+            // Toggle is the one that stays open on world fixtures: OwnerPlayerId 0 means the level placed it,
+            // so the street lamps and the grid mains keep answering to everybody (see MayModify).
             commands.Register<ToggleDeployableCommand>(ReplicationIds.CommandToggleDeployable, ToggleDeployableCommand.TryRead,
                 OnToggleDeployable,
                 validate: (sender, cmd) => TryGetSenderPos(sender, out var pos)
                                         && _deployables.CanToggle(cmd.NetId, out var e)
+                                        && MayModify(sender, e)
                                         && (e.Pos - pos).magnitude <= DeployableReplication.WireReach);
 
             // SP/MP unify: doors + beds. Validation is reach (the server's business) plus the SAME
