@@ -90,19 +90,51 @@ meant to agree and no longer do.
 
 ## Dead code found along the way
 
-Not duplicates, but surfaced by the same sweep and worth a decision:
+Not duplicates, but surfaced by the same sweep and worth a decision.
+
+**Provenance:** every claim below was re-verified mechanically after the sweep — comment
+lines stripped, tests excluded, declaration lines excluded, and receiver-typed where the
+name is declared on more than one class. Four entries in the first draft of this list were
+wrong and are corrected here; the reader-reported "no callers" claims they came from turn
+out to be unreliable in both directions (see the note at the end of this section).
+
+Confirmed dead — no non-comment production reference anywhere:
 
 - `core/UnturnedSim/Layers.cs` — the full verified 32-slot retail layer table, **zero
-  callers**, while the game uses an unrelated ad-hoc numbering. Looks authoritative; is
-  not used. Adopt or delete.
-- `Mathf.Deg2Rad`, `Mathf.Clamp01`, `Mathf.Repeat` — zero callers each, while 5+ sites
-  hand-write the equivalent (and the `Repeat` hand-writes are *wrong* for negatives).
-- `NetLength` / `NetMaxValue` — entirely unused, and `new NetLength(0)` gives bitCount 0
-  so every list reads as length 0. A footgun with no users.
+  non-comment references outside its own file**, while the game uses an unrelated ad-hoc
+  numbering. Looks authoritative; is not used. Adopt or delete.
+- `Mathf.Repeat` — no callers, and it is the *correct* positive modulo while
+  `game/WorldItemReplicaView.cs:79` hand-writes a plain `%` that is wrong for negatives.
+- `NetMaxValue` — no references.
 - `ItemAsset.ParseSize` — no callers anywhere, tests included.
-- `Items.checkSpaceEmpty`, `Wire.TotalLength`, `Hose.TotalLength`, `HosePort.Deactivate`,
-  `GridPowerSource.IsPowered`, `GridPowerSource.Tooltip`, `Deployable.SwitchOn`,
-  `GasStationServer.Percent` — no callers.
-- `Read/WriteRadians` — identical to the Degrees pair modulo one constant; zero callers.
+- `Items.checkSpaceEmpty`, `Wire.TotalLength`, `Hose.TotalLength`,
+  `GridPowerSource.IsPowered`, `GridPowerSource.Tooltip`, `Deployable.SwitchOn`.
+- `HosePort.Deactivate` — dead. Note its twin `ConnectionPort.Deactivate` **is** live
+  (`game/Deployable.cs:519`); the two share a name, so an untyped grep reports the pair
+  as reached and hides this one.
+- `Read/WriteRadians` — identical to the Degrees pair modulo one constant; no callers.
 - `ReadEnum`/`WriteEnum`/`NetEnumAttribute` are inside `#if UNITY_EDITOR` — **not
   compiled**.
+
+Corrected — these were listed as dead and are not:
+
+- `Mathf.Clamp01` — **used**, 4 sites, all inside `core/SDG.Compat/UnityMath.cs`'s own
+  `Lerp` overloads. The accurate statement is "no callers *outside the shim*", which is
+  still the point: `PlayerVitalsReplication.cs:215` hand-rolls a private copy in a file
+  that already imports the shim.
+- `Mathf.Deg2Rad` — **used**, `UnityMath.cs:106-108` (`Quaternion.Euler`). Again the real
+  finding is external: 5 gameplay sites write `Mathf.PI / 180f` instead.
+- `NetLength` — **used as a parameter type** on the `ReadList`/`WriteList` overloads. What
+  is true is narrower and stranger: `new NetLength(...)` appears **nowhere in the repo,
+  tests included**, so those overloads can never have been called. The `bitCount 0` footgun
+  is real but unreachable.
+- `GasStationServer.Percent` — **used** at `GasStationServer.cs:31`, in its own file. The
+  finding is that `ServerTransactions.cs:427` re-derives the identical expression rather
+  than calling it (see 2.14), not that it is dead.
+
+**Do not trust a bare "no callers" claim in a review without re-running the check.** Of the
+cleanly-adjudicable disagreements between the readers that produced this document and a
+mechanical scan, the mechanical scan was right every time: `Crafting.CanCraft` (live at
+`game/inventory/BlueprintRegistry.cs:36`), `ItemAsset.IsConsumable` (five live sites incl.
+`PlayerController.cs:1410`), and `WorldItem.BuildItemPuppet` (live at
+`game/WorldItemReplicaView.cs:75`) were each reported as callerless and are not.
