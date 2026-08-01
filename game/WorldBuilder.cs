@@ -107,6 +107,43 @@ namespace UnturnedGodot
             return seen;
         }
 
+        // Openable PROP DOORS (MVP: Fridge_0 only): one line per door-bearing prop name, produced by
+        // tools/extract_doors.py (a door leaf is a SkinnedMeshRenderer with no MeshFilter -- the combined-mesh
+        // loader in PlaceObject cannot see it at all, which is the whole reason that extractor exists).
+        // Consulted by the PlaceObject name-match branch below (same precedent as Gas_Pump_0/Circuit_0/
+        // Tower_Water_0/Street_Light_0) and reused as-is by the --doortest harness in Main.cs, so the render
+        // test exercises the same catalog data production does.
+        public struct DoorCatalogEntry
+        {
+            public string MeshFile;   // e.g. "Fridge_0_door.obj", relative to content/objects/
+            public Vector3 Pivot;     // hinge pivot, in the same prop-local (raw, ObjMesh-convention) space as the body/leaf .obj vertices
+            public Vector3 Axis;      // local swing axis, already rotated into prop-local space by the extractor
+            public float AngleDeg;    // total swing sweep (SIGNED -- flip this one field if a render shows the door opening the wrong way; see extract_doors.py)
+            public float DurationSec;
+        }
+
+        public static System.Collections.Generic.Dictionary<string, DoorCatalogEntry> LoadDoorCatalog(string dir)
+        {
+            var cat = new System.Collections.Generic.Dictionary<string, DoorCatalogEntry>();
+            string path = dir + "doors.txt";
+            if (!System.IO.File.Exists(path)) return cat;
+            float F(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+            foreach (var line in System.IO.File.ReadLines(path))
+            {
+                var p = line.Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 10) continue;
+                cat[p[0]] = new DoorCatalogEntry
+                {
+                    MeshFile = p[1],
+                    Pivot = new Vector3(F(p[2]), F(p[3]), F(p[4])),
+                    Axis = new Vector3(F(p[5]), F(p[6]), F(p[7])),
+                    AngleDeg = F(p[8]),
+                    DurationSec = F(p[9]),
+                };
+            }
+            return cat;
+        }
+
         // The full placed world (terrain + Objects.dat + spawns). syncLoad skips every frame-yield so the
         // whole build runs synchronously inside one _Ready (the --bakenav/--navpathtest/--zombietest tools
         // and the dedicated server use this); bakeNav additionally re-bakes + saves the canonical navmesh.
@@ -199,6 +236,8 @@ namespace UnturnedGodot
                 if (p.Length >= 2) g2m[p[0]] = p[1];
             }
             var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
+            var doorCatalog = LoadDoorCatalog(dir);   // openable prop doors (MVP: Fridge_0) -- tools/extract_doors.py doors.txt
+            var doorMeshCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
             var folCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();   // separate tree-leaf meshes (own leaf material)
             var shapeCache = new System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D>();   // one trimesh collider per unique prop mesh, shared across instances
             var matCache = new System.Collections.Generic.Dictionary<string, StandardMaterial3D>();
@@ -340,6 +379,22 @@ namespace UnturnedGodot
                 {
                     var lampWorld = gpos + basis * new Vector3(0f, 2.35f, 6.48f);
                     root.AddChild(StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y)));
+                }
+                // OPENABLE PROP DOORS (MVP: Fridge_0 only, SP-local -- mirrors the Tower_Water_0 Playable-only
+                // gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py) catalogs the
+                // door leaf mesh plus hinge pivot/axis/angle/duration per prop name -- the combined-mesh loader
+                // above cannot see a door leaf at all (SkinnedMeshRenderer, no MeshFilter). F toggles it
+                // (ObjectDoor.Toggle, wired into PlayerController look-focus).
+                // KNOWN GAP: the Fridge_0 guid is ALSO in ContainerShelf above -- on the real PEI world every
+                // placed Fridge_0 is intercepted by TryContainer (loot-shelf conversion) and never reaches
+                // PlaceObject at all, so this branch currently only fires for a prop placed outside that table
+                // (or a standalone --doortest spawn, which calls ObjectDoor.Spawn directly). Reconciling the two
+                // (a lootable fridge that is ALSO an openable door) is unscoped follow-up, not part of this MVP.
+                if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorCfg))
+                {
+                    if (!doorMeshCache.TryGetValue(name, out var doorMesh)) { doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile); doorMeshCache[name] = doorMesh; }
+                    if (doorMesh != null)
+                        ObjectDoor.Spawn(root, new Transform3D(basis, gpos), doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, MatFor(matName));
                 }
                 StaticBody3D destBody = null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)

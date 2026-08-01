@@ -138,6 +138,7 @@ namespace UnturnedGodot
         Vehicle _focusVehicle;  // the vehicle the player is LOOKING AT (outlined + info panel), enter target for E
         Deployable _focusDeployable;  // the placed deployable (generator) the player is LOOKING AT (outlined + HP/fuel billboard)
         Door _focusDoor;              // the door being looked at -> F toggles it
+        ObjectDoor _focusObjectDoor;   // an openable prop door (fridge etc.) being looked at -> F toggles it
         Bed _focusBed;                // the bed being looked at -> F claims it as this player's respawn point
         /// <summary>Identity used for door/bed ownership. SP is a single local player; MP overwrites this
         /// per shell so a claim belongs to a person rather than to "the client".</summary>
@@ -178,7 +179,7 @@ namespace UnturnedGodot
         void UpdateLookFocus()
         {
             WorldItem hitItem = null; Vehicle hitVeh = null; Deployable hitDeploy = null; GasPump hitGasPump = null; GridPowerSource hitGrid = null; FluidContainer hitFluid = null;
-            Door hitDoor = null; Bed hitBed = null;
+            Door hitDoor = null; Bed hitBed = null; ObjectDoor hitObjectDoor = null;
             ShelfItemBody hitShelfItem = null; StoreShelf hitShelf = null;   // shelf display item / its shelf under the look-sphere
             IPuppetFocusable hitPuppet = null;   // MP ONLY: nearest replicated car/item puppet under the look-sphere (SP hits real Vehicle/WorldItem instead)
             if (!_dead && _driving == null && _riding == null && _cam != null && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -199,6 +200,7 @@ namespace UnturnedGodot
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Door rdoor && IsInstanceValid(rdoor)) hitDoor = rdoor;
+                    else if (rcol is ObjectDoor rod && IsInstanceValid(rod)) hitObjectDoor = rod;
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup
@@ -275,6 +277,12 @@ namespace UnturnedGodot
                 if (IsInstanceValid(_focusDoor)) _focusDoor.SetLookFocused(false);
                 _focusDoor = hitDoor;
                 _focusDoor?.SetLookFocused(true);
+            }
+            if (hitObjectDoor != _focusObjectDoor)   // openable prop door (fridge etc.) look-focus, mirrors the _focusDoor block above
+            {
+                if (IsInstanceValid(_focusObjectDoor)) _focusObjectDoor.SetLookFocused(false);
+                _focusObjectDoor = hitObjectDoor;
+                _focusObjectDoor?.SetLookFocused(true);
             }
             if (hitBed != _focusBed)
             {
@@ -3096,6 +3104,16 @@ namespace UnturnedGodot
             return false;
         }
 
+        /// <summary>Open or close a prop door (ObjectDoor) as this player. Simpler than RequestToggleDoor: no
+        /// SP/MP net branch (SP-local MVP, no NetId) and no lock/refusal messaging -- the ObjectDoor cooldown
+        /// is the only thing that can refuse a tap, and refusing silently (no HUD line) is fine for a slow
+        /// appliance door mid-swing.</summary>
+        public bool RequestToggleObjectDoor(ObjectDoor d)
+        {
+            if (d == null || !IsInstanceValid(d)) return false;
+            return d.Toggle();
+        }
+
         /// <summary>Claim a bed as this player's respawn point, releasing whichever they held.</summary>
         public bool RequestClaimBed(Bed b)
         {
@@ -3533,6 +3551,7 @@ namespace UnturnedGodot
                 }
                 else if (_focusFluid != null && IsInstanceValid(_focusFluid)) { _fHeldFluid = _focusFluid; _fluidPickupTimer = 0f; }   // hold F on a placed fluid device -> pick it up (UpdateFluidPickup)
                 else if (_focusDoor != null && IsInstanceValid(_focusDoor)) { _fHeldDoor = _focusDoor; _doorLockTimer = 0f; }   // looking at a door: F starts a HOLD -> lock/unlock (UpdateDoorLockHold); a quick TAP opens/closes it (fired on release)
+                else if (_focusObjectDoor != null && IsInstanceValid(_focusObjectDoor)) RequestToggleObjectDoor(_focusObjectDoor);   // looking at an openable prop door (fridge): F toggles it directly, no hold/lock semantics for this MVP (unlike a building Door)
                 else if (_focusBed != null && IsInstanceValid(_focusBed)) ClaimFocusedBed();       // looking at a bed: claim it as your respawn point
                 else if (RequestHarvestNearestCrop()) { }                  // MP shell near a GROWN replicated crop: ask the server to harvest it (A4; false in SP -- no NetHarvestCrop seam)
                 else if (CropManager.NearestGrown(GlobalPosition) is CropNode grownCrop) CropManager.Harvest(grownCrop, this);  // harvest a nearby fully-grown crop (source InteractableFarm harvest)

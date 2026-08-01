@@ -65,6 +65,7 @@ namespace UnturnedGodot
             bool wearcloth = false;
             bool skillsui = false;
             bool fluidTest = false;
+            bool doorTest = false;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -76,6 +77,7 @@ namespace UnturnedGodot
                 else if (arg == "--navpathtest") navPathTest = true;   // OFFLINE verify: sync world -> query the navmesh -> log whether zombie paths ROUTE AROUND buildings (not through)
                 else if (arg == "--editor") editorMode = true;   // boot straight into the map editor (the Workshop entry); --editor --shot=OUT captures a loaded frame
                 else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
+                else if (arg == "--doortest") doorTest = true;   // openable prop door MVP (Fridge_0): place one a few metres from the camera; UG_DOOR_OPEN=1 spawns it already open
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
@@ -252,6 +254,16 @@ namespace UnturnedGodot
             }
 
             if (fluidTest) { RunFluidTest(); return; }   // F2: spawn source->hose->storage, tick the fluid net, log the fill, quit
+
+            if (doorTest)   // openable prop door MVP: Fridge_0 a few metres from the camera; UG_DOOR_OPEN=1 spawns it already open (so I can shot open vs closed)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot; _shotRequested = shot;
+                BuildDoorTest();
+                return;
+            }
+
+
 
             if (navPathTest) { _bakeNav = true; _peiPlayable = true; BuildObjectsTest(); _navPathTest = true; return; }   // sync-load; RunNavPathTest fires after a few frames (the nav map merges its regions on a physics tick, not in _Ready)
             if (zombieTest) { _bakeNav = true; _peiPlayable = true; _zombieTest = true; BuildObjectsTest(); return; }   // sync-load (creates the ZombieField + buckets spawns); RunZombieTest fires at frame 25 once the nav map has synced
@@ -1270,6 +1282,69 @@ namespace UnturnedGodot
             cam.Position = c + new Vector3(r * 1.15f, r * 0.85f, r * 1.15f);
             cam.LookAt(c, Vector3.Up);
             GD.Print($"[PROPTEST] {name} aabb size={aabb.Size} center={c}");
+        }
+
+        // --doortest: openable prop door MVP render harness (Fridge_0 only). Builds the body (Model_0, 94v)
+        // plus the door leaf (ObjectDoor, from extract_doors.py's Fridge_0_door.obj / doors.txt) standalone --
+        // like BuildPropTest, NOT through WorldBuilder.PlaceObject (which is a BuildFullWorld-local closure and
+        // cannot be called from here; also the Fridge_0 guid is in WorldBuilder.ContainerShelf, so the real PEI
+        // placement path never reaches the PlaceObject door branch at all right now -- see its comment there).
+        // UG_DOOR_OPEN=1 spawns with the door already open (no animation to wait out) so --shot can capture
+        // open vs closed from two separate runs.
+        void BuildDoorTest()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.32f, 0.36f, 0.44f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            const string name = "Fridge_0";
+            var bodyMesh = ObjMesh.Load(dir + name + ".obj");
+            if (bodyMesh == null) { GD.Print($"[DOORTEST] no body mesh {name}"); GetTree().Quit(1); return; }
+            var doorCatalog = WorldBuilder.LoadDoorCatalog(dir);
+            if (!doorCatalog.TryGetValue(name, out var doorCfg)) { GD.Print($"[DOORTEST] no doors.txt entry for {name} -- run tools/extract_doors.py {name}"); GetTree().Quit(1); return; }
+            var doorMesh = ObjMesh.Load(dir + doorCfg.MeshFile);
+            if (doorMesh == null) { GD.Print($"[DOORTEST] no door mesh {doorCfg.MeshFile}"); GetTree().Quit(1); return; }
+
+            var mat = new StandardMaterial3D { Roughness = 1f, CullMode = BaseMaterial3D.CullModeEnum.Disabled, VertexColorUseAsAlbedo = true };
+            string tp = dir + name + "_tex.png";
+            if (System.IO.File.Exists(tp)) { var img = new Image(); if (img.Load(tp) == Error.Ok) { img.GenerateMipmaps(); mat.AlbedoTexture = ImageTexture.CreateFromImage(img); } }
+
+            // Upright placement basis: ex=270/ez=0 is the map own convention for standing a flat-authored
+            // interior prop up (see WorldBuilder.TryContainer -- Fridge_0 is itself a ContainerShelf entry,
+            // authored the same way every other upright interior prop on PEI is); yaw=180 is an arbitrary
+            // pick, harmless either way since the camera below is aimed from the ACTUAL resulting geometry,
+            // not a hardcoded direction.
+            var basis = new Basis(new Vector3(0, 1, 0), Mathf.DegToRad(180f)) * new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f));
+            var xform = new Transform3D(basis, Vector3.Zero);
+            AddChild(new MeshInstance3D { Mesh = bodyMesh, MaterialOverride = mat, Transform = xform });
+
+            bool startOpen = System.Environment.GetEnvironmentVariable("UG_DOOR_OPEN") == "1";
+            var door = ObjectDoor.Spawn(this, xform, doorCfg.Pivot, doorCfg.Axis, doorCfg.AngleDeg, doorCfg.DurationSec, doorMesh, mat, startOpen);
+            GD.Print($"[DOORTEST] {name} pivot={doorCfg.Pivot} axis={doorCfg.Axis} angle={doorCfg.AngleDeg} dur={doorCfg.DurationSec} startOpen={startOpen} swing={door.DebugSwing}");
+
+            // Camera: a few metres out along the direction the door actually faces, computed from the real
+            // placed geometry (the pivot world offset from the body center) rather than assumed, 3/4-elevated
+            // so the leaf peeling away from the body reads clearly in both the closed and open shot.
+            var bodyAabb = bodyMesh.GetAabb();
+            Vector3 bodyCenterWorld = xform * bodyAabb.GetCenter();
+            Vector3 pivotWorld = xform * doorCfg.Pivot;
+            Vector3 outward = pivotWorld - bodyCenterWorld; outward.Y = 0f;
+            if (outward.LengthSquared() < 0.01f) outward = -xform.Basis.Z;   // degenerate fallback: straight back
+            outward = outward.Normalized();
+            float r = Mathf.Max(bodyAabb.Size.X, Mathf.Max(bodyAabb.Size.Y, bodyAabb.Size.Z));
+            if (r < 0.01f) r = 1f;
+            Vector3 lookAt = bodyCenterWorld + Vector3.Up * (r * 0.15f);
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
+            cam.LookAt(lookAt, Vector3.Up);
         }
 
         // --deploytest: both deployables PLACED on a ground plane (back row) + a BLUE-valid and RED-invalid
