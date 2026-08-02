@@ -199,8 +199,8 @@ void sky() {
                 if (n is StreetLight sl) sl.FlickerPulse(durationSec);
             foreach (Node n in tree.GetNodesInGroup("gridlights"))
                 if (n is GridLight gl) gl.FlickerPulse(durationSec);   // indoor lamps ride the same brownout pulse
-            foreach (Node n in tree.GetNodesInGroup("traffic_lights"))
-                if (n is TrafficLight tl) tl.FlickerPulse(durationSec);   // signals stutter too -- the one grid consumer that ignored a brownout looked like a bug
+            // NOT traffic signals: their cabinets carry a battery back-up system, so a sag never reaches the lamps
+            // (strawberry). TrafficLight.FlickerPulse is an explicit no-op documenting that.
         }
 
         // Fire each scheduled warning brownout as its evening-time arrives (once), then kill the grid for good on the

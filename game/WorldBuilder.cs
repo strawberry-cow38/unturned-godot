@@ -74,6 +74,15 @@ namespace UnturnedGodot
         /// to +1.0 with roughly half of it buried, so this cut leaves a ~1m square stump standing.</summary>
         const float StreetLightBaseCut = 1.0f;
 
+        /// <summary>Key a placed signal against traffic_side_roads.txt. NOTE THE -gpos.Z: the file is keyed in
+        /// placements.txt coordinates so a line can be copied straight out of it, but gpos has already had Z negated
+        /// for Unity->Godot. Matching on gpos.Z directly finds NOTHING and every junction silently falls back to
+        /// flashing amber -- the exact failure the file exists to prevent, and indistinguishable from "no file".
+        /// It shipped that way once; only a placement-count print caught it. Public and shared with the test so the
+        /// test exercises THIS transform rather than re-deriving one that agrees with itself.</summary>
+        public static (int, int) SideRoadKey(Vector3 gpos)
+            => (Mathf.RoundToInt(gpos.X * 10f), Mathf.RoundToInt(-gpos.Z * 10f));
+
         // Leaves cull closer than the trunk. The old flat pair was 240/320, so keep that 0.75 ratio now the
         // trunk distance is per-prop instead of constant.
         const float FoliageCullFraction = 0.75f;
@@ -353,6 +362,7 @@ namespace UnturnedGodot
             var cellCount = new System.Collections.Generic.Dictionary<Vector2I, int>();
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
+            int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
             var lodMis = new System.Collections.Generic.List<MeshInstance3D>();   // this placement's extra LOD instances, reused per prop
             var lodLoadSw = System.Diagnostics.Stopwatch.StartNew(); long lodLoadTicks = 0; int lodMeshesLoaded = 0;   // isolated cost of the LOD mesh parses
             // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
@@ -599,7 +609,8 @@ namespace UnturnedGodot
                 if (trafficLenses != null)
                 {
                     var tl = TrafficLight.Make(gpos, ey, trafficLenses[0], trafficLenses[1], trafficLenses[2]);
-                    tl.SideRoad = sideRoads.Contains((Mathf.RoundToInt(gpos.X * 10f), Mathf.RoundToInt(gpos.Z * 10f)));
+                    tl.SideRoad = sideRoads.Contains(SideRoadKey(gpos));
+                    signals++; if (tl.SideRoad) signalsSide++;
                     root.AddChild(tl);
                 }
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
@@ -723,6 +734,7 @@ namespace UnturnedGodot
             if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
+            if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
             GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");
 

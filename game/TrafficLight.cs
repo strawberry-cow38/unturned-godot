@@ -130,10 +130,13 @@ namespace UnturnedGodot
         public void ForcePhase(Phase p) { Frozen = true; _phase = p; Apply(); }
         public bool Frozen;
 
-        float _flickerT;
-        /// <summary>A warning brownout: the aspect stutters briefly without the grid actually dropping.</summary>
-        public void FlickerPulse(float durationSec = 0.6f) => _flickerT = Mathf.Max(_flickerT, durationSec);
-        public bool FlickeringForTest => _flickerT > 0f;
+        /// <summary>DELIBERATELY DOES NOTHING (strawberry: "should they flicker in brownouts? they are on a battery
+        /// for a reason"). She's right, and this is the opposite of the streetlight/lamp behaviour on purpose: the
+        /// cabinet's battery back-up system sits between the grid and the signal, so a sag rides straight through it.
+        /// A junction that stutters during a brownout would be advertising that its BBS does not work. Kept as an
+        /// explicit no-op rather than by omission, so the next person sweeping grid consumers for FlickerPulse finds
+        /// the reason instead of assuming it was missed.</summary>
+        public void FlickerPulse(float durationSec = 0.6f) { }
 
         public override void _Process(double delta)
         {
@@ -149,15 +152,6 @@ namespace UnturnedGodot
                 // flash mode: side roads blink RED (stop), main roads blink AMBER (caution). Off-beat is dark.
                 bool on = Mathf.PosMod(t * FlashHz, 1f) < 0.5f;
                 p = !on ? Phase.Off : SideRoad ? Phase.FlashRed : Phase.FlashAmber;
-            }
-            // Brownout stutter (master's TriggerGlobalBrownout). A signal is NOT a GridLight -- that base models a
-            // fixture as binary on/off, while an unpowered signal is in an ACTIVE state (the backup flash), so it
-            // cannot inherit `Lit` without corrupting it. But it is still a grid consumer, and being the one thing in
-            // town that ignores a brownout reads as a bug. Fast irregular dropout, then straight back to the cycle.
-            if (_flickerT > 0f)
-            {
-                _flickerT -= (float)delta;
-                if (Mathf.PosMod(t * 11f, 1f) < 0.45f) p = Phase.Off;
             }
             if (p != _phase) { _phase = p; Apply(); }
         }

@@ -105,6 +105,60 @@ namespace UnturnedGodot.Testing
         }
     }
 
+    // The side-road flags are DATA matched by POSITION, and the failure mode is silent: a key mismatch flags nothing,
+    // every junction flashes amber, and that is indistinguishable from the file being absent. It shipped that way --
+    // placements.txt stores raw Unity coordinates while WorldBuilder negates Z for Godot, so the lookup matched 0 of
+    // 21 and only a placement-count print caught it.
+    //
+    // So this asserts against the REAL files using the SAME key transform WorldBuilder uses. A change that
+    // reintroduces the bug drops the intersection to zero and fails here, rather than in a screenshot nobody takes at
+    // the exact moment of a blackout.
+    public sealed class TrafficLightSideRoadDataTests : GameTest
+    {
+        public override string Name => "props.traffic_light_side_road_data";
+
+        public override IEnumerable<Step> Run()
+        {
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            const string Guid = "42229938f39b4ccd9f0228c4d0ef972c";   // Traffic_Light_0, from guid_mesh.txt
+
+            // Each placement is turned into a key the way WORLDBUILDER does it: build the same gpos it builds
+            // (px, py, -pz) and hand it to WorldBuilder.SideRoadKey. Re-deriving the transform here instead would
+            // produce a test that agrees with itself and passed happily against the shipped bug.
+            var placed = new HashSet<(int, int)>();
+            foreach (var line in System.IO.File.ReadLines(dir + "placements.txt"))
+            {
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length < 4 || p[0] != Guid) continue;
+                if (float.TryParse(p[1], out var x) && float.TryParse(p[2], out var y) && float.TryParse(p[3], out var z))
+                    placed.Add(WorldBuilder.SideRoadKey(new Vector3(x, y, -z)));   // -z: exactly what PlaceObject does
+            }
+            T.Check($"placements.txt carries the 21 traffic signals ({placed.Count})", placed.Count == 21);
+
+            var flagged = new HashSet<(int, int)>();
+            string sideFile = dir + "traffic_side_roads.txt";
+            T.Check("the side-road data file ships", System.IO.File.Exists(sideFile));
+            if (!System.IO.File.Exists(sideFile)) yield break;
+            foreach (var line in System.IO.File.ReadLines(sideFile))
+            {
+                if (line.Length == 0 || line[0] == '#') continue;
+                var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (p.Length >= 2 && float.TryParse(p[0], out var sx) && float.TryParse(p[1], out var sz))
+                    flagged.Add((Mathf.RoundToInt(sx * 10f), Mathf.RoundToInt(sz * 10f)));
+            }
+
+            int matched = 0;
+            foreach (var k in flagged) if (placed.Contains(k)) matched++;
+            // The teeth: with the Z-convention bug this is 0.
+            T.Check($"every flagged coordinate matches a real placement ({matched}/{flagged.Count})",
+                flagged.Count > 0 && matched == flagged.Count);
+            // ...and not ALL of them, or the flag carries no information and every junction flashes red instead.
+            T.Check($"the flags are a proper subset -- both aspects exist ({matched} of {placed.Count})",
+                matched > 0 && matched < placed.Count);
+            yield break;
+        }
+    }
+
     // The signal's own logic: a dumb per-prop timer (strawberry's explicit call -- no junction sync), a backup flash
     // when the grid dies, and a battery that eventually gives out.
     public sealed class TrafficLightCycleTests : GameTest
@@ -241,23 +295,22 @@ namespace UnturnedGodot.Testing
             T.Check("restoring power recharges the battery", !tl.BatteryDeadForTest);
             T.Check("...and the signal resumes its cycle", TrafficLight.LensIndexFor(tl.CurrentPhase) >= 0);
 
-            // BROWNOUT. Driven through DayNightCycle.TriggerGlobalBrownout rather than by calling FlickerPulse
-            // directly -- the failure this guards against is the sweep line being absent, which a direct call passes
-            // happily. A signal that ignores a brownout while every other grid consumer stutters reads as a bug.
-            T.Check("not flickering to begin with", !tl.FlickeringForTest);
+            // BROWNOUT: a signal must RIDE IT THROUGH, unlike every other grid consumer (strawberry: "they are on a
+            // battery for a reason"). The cabinet's BBS sits between the grid and the lamps, so a sag never reaches
+            // them -- a stuttering junction would be advertising that its battery doesn't work. Driven through
+            // DayNightCycle.TriggerGlobalBrownout, because the thing that would break this is someone adding a
+            // traffic_lights line to that sweep alongside the streetlights and lamps.
+            var beforeBrownout = tl.CurrentPhase;
             cycle.TriggerGlobalBrownout(0.6f);
-            T.Check("a global brownout reaches traffic signals", tl.FlickeringForTest);
-            bool droppedOut = false;
-            for (int i = 0; i < 120 && tl.FlickeringForTest; i++)
+            bool wentDark = false;
+            for (int i = 0; i < 90; i++)
             {
-                cycle.Time += 0.02f / cycle.DayLength;
+                cycle.Time += 0.005f / cycle.DayLength;   // small steps: stay inside one aspect so a phase CHANGE isn't mistaken for a flicker
                 yield return Ticks(1);
-                if (tl.CurrentPhase == TrafficLight.Phase.Off) droppedOut = true;
+                if (tl.CurrentPhase == TrafficLight.Phase.Off) wentDark = true;
             }
-            T.Check("...and the aspect actually stutters out during it", droppedOut);
-            // It must RECOVER. A brownout is a flicker signal, not a power cut -- the grid never went down.
-            for (int i = 0; i < 60; i++) { cycle.Time += 0.02f / cycle.DayLength; yield return Ticks(1); }
-            T.Check("...then the signal returns to its cycle", !tl.FlickeringForTest && TrafficLight.LensIndexFor(tl.CurrentPhase) >= 0);
+            T.Check("a brownout does NOT make a signal stutter -- the cabinet battery rides it through", !wentDark);
+            T.Check("...and it is still showing a real aspect afterwards", TrafficLight.LensIndexFor(tl.CurrentPhase) >= 0);
 
             // A SMASHED signal is dark even with the grid up -- no power and no fixture are different states.
             tl.SetBroken(true);
