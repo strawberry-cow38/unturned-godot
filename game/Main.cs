@@ -2458,11 +2458,14 @@ namespace UnturnedGodot
         {
             if (res?.Containers == null || res.Containers.Count == 0) return;
             LootTables.Load(_mapRoot + "/Spawns/Items.dat");
-            foreach (var c in res.Containers)
+            for (int _ci = 0; _ci < res.Containers.Count; _ci++)
+            {
+                var c = res.Containers[_ci];
                 if (c.display && c.mesh == "Shelf_1")   // double-sided store gondola: stock BOTH aisles (front + back), each its own openable container
                     StoreShelf.SpawnDouble(this, c.pos, c.mesh, c.table, c.table, c.yaw, c.label);
                 else
-                    StoreShelf.Spawn(this, c.pos, c.mesh, c.table, c.yaw, c.display, c.label);
+                    StoreShelf.Spawn(this, c.pos, c.mesh, c.table, c.yaw, c.display, c.label, rot: res.ContainerRots[_ci]);
+            }
             GD.Print($"[containers] spawned {res.Containers.Count} map containers post-build (asset DB ready)");
         }
 

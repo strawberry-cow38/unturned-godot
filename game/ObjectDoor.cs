@@ -38,6 +38,12 @@ namespace UnturnedGodot
         StandardMaterial3D _leafMatInstance;   // a PER-DOOR instance (Duplicate of the shared prop material) so SetLookFocused's emission glow doesn't light up every fridge that shares the cached material
         float _swing;                          // 0 = closed, 1 = fully open -- also doubles as the curve's t_norm (see SampleEasing)
 
+        // Whole-PROP outline silhouette (the BODY mesh on OutlineOverlay's layer), built + assigned by
+        // WorldBuilder.PlaceObject for a standalone doored prop. SetLookFocused toggles it alongside the leaf
+        // glow, so looking anywhere on the prop highlights the WHOLE thing, not just the door (master). Null for
+        // a container door (StoreShelf owns its own outline) or --doortest.
+        public MeshInstance3D BodyOutline;
+
         public bool IsOpen { get; private set; }
         double _lastToggleSec = double.NegativeInfinity;
         const double CooldownSec = 0.35;   // re-toggle cooldown, like IOBS's interactabilityDelay gate (checkCanReset/isUsable) -- just enough to swallow key-repeat spam, not to block a mid-swing reversal
@@ -246,6 +252,7 @@ namespace UnturnedGodot
         /// <summary>Look-focus highlight (F-focus outline), matching Door.SetLookFocused.</summary>
         public void SetLookFocused(bool on)
         {
+            if (BodyOutline != null && IsInstanceValid(BodyOutline)) BodyOutline.Visible = on;   // issue 5: whole-prop white rim silhouette (the body), toggled with the leaf glow below
             if (_leafMatInstance == null) return;
             _leafMatInstance.EmissionEnabled = on;
             _leafMatInstance.Emission = new Color(0.35f, 0.30f, 0.12f);

@@ -201,6 +201,7 @@ namespace UnturnedGodot
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Door rdoor && IsInstanceValid(rdoor)) hitDoor = rdoor;
                     else if (rcol is ObjectDoor rod && IsInstanceValid(rod)) hitObjectDoor = rod;
+                else if (rcol is Node bdn && bdn.HasMeta("objectdoor") && bdn.GetMeta("objectdoor").As<ObjectDoor>() is ObjectDoor bod && IsInstanceValid(bod)) hitObjectDoor = bod;   // issue 3: the PROP BODY collider (meta-linked by WorldBuilder.PlaceObject) resolves to its door -> look anywhere on a doored prop to toggle + whole-prop highlight, not just the leaf
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
                     else if (rcol is FluidContainer fcr && IsInstanceValid(fcr)) hitFluid = fcr;   // a placed fluid device body (solid since batch A) -> hold-F pickup

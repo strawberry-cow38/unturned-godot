@@ -50,6 +50,7 @@ namespace UnturnedGodot
         // spawns the real StoreShelves AFTER the build, once the asset DB is loaded -- else the roll's tryAddItem
         // can't size the items + the containers come out EMPTY (looked stocked, weren't). (mesh,table,display,label,pos,yaw)
         public System.Collections.Generic.List<(string mesh, int table, bool display, string label, Vector3 pos, float yaw)> Containers = new();
+        public System.Collections.Generic.List<Basis> ContainerRots = new();   // parallel to Containers: FULL placement basis per container (SP full-rotation fix; MP path stays yaw-only)
         // A3: world power fixtures (Circuit_0 grid sources) recorded in EVERY mode, spawned by the caller (see
         // FixtureRecord). Recorded, never inline-spawned, so the mesh/collider draw stays byte-identical to worldgen.
         public System.Collections.Generic.List<FixtureRecord> Fixtures = new();
@@ -519,6 +520,7 @@ namespace UnturnedGodot
                 // PlaceObject at all, so this branch currently only fires for a prop placed outside that table
                 // (or a standalone --doortest spawn, which calls ObjectDoor.Spawn directly). Reconciling the two
                 // (a lootable fridge that is ALSO an openable door) is unscoped follow-up, not part of this MVP.
+                ObjectDoor doorForBody = null;   // issue 3/5: carry the first door out of this branch to link the prop BODY collider to it
                 if (mode == WorldMode.Playable && doorCatalog.TryGetValue(name, out var doorLeaves))
                 {
                     var spawnedDoors = new System.Collections.Generic.List<ObjectDoor>();
@@ -533,6 +535,13 @@ namespace UnturnedGodot
                     }
                     if (spawnedDoors.Count > 1)
                         foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
+                    if (spawnedDoors.Count > 0)   // issue 3/5: link the prop body + a whole-prop outline to the door(s)
+                    {
+                        doorForBody = spawnedDoors[0];
+                        var bodyGlow = new MeshInstance3D { Mesh = mesh, Transform = new Transform3D(basis, gpos), Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                        root.AddChild(bodyGlow);
+                        foreach (var d in spawnedDoors) d.BodyOutline = bodyGlow;
+                    }
                 }
                 StaticBody3D destBody = null;
                 if (colliders)   // walkable collision: trimesh of the VISUAL mesh (trees collide on the trunk only; the separate leaf mesh has no collider, so you walk through foliage)
@@ -556,6 +565,7 @@ namespace UnturnedGodot
                         // whether it hit the BULB (StreetLight.IsBulbHit) and shoot it out instead of just chipping
                         // the post. One trimesh covers the whole prop, so the lens bounds are what tell them apart.
                         if (placedLamp != null) body.SetMeta(StreetLight.HitMeta, placedLamp);
+                        if (doorForBody != null) body.SetMeta("objectdoor", doorForBody);   // issue 3: look-at the body resolves to the door (PlayerController)
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the
@@ -592,7 +602,8 @@ namespace UnturnedGodot
             {
                 if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
-                result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));   // ex=270/ez=0 upright -> yaw only
+                result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));
+                result.ContainerRots.Add(new Basis(new Vector3(0,1,0), Mathf.DegToRad(180f - F(q[5]))) * new Basis(new Vector3(1,0,0), Mathf.DegToRad(F(q[4]))) * new Basis(new Vector3(0,0,1), Mathf.DegToRad(-F(q[6]))));   // ex=270/ez=0 upright -> yaw only
                 converted++;
                 return true;
             }

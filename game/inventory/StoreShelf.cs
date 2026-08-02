@@ -113,14 +113,18 @@ namespace UnturnedGodot
 
         public StoreShelf() { Width = 8; Height = 6; }   // roomier grid than a crate
 
-        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf", bool renderMesh = true, bool serverOwned = false)
+        public static StoreShelf Spawn(Node parent, Vector3 pos, string meshName, int table, float yawDeg = 0f, bool showItems = true, string label = "Store Shelf", bool renderMesh = true, bool serverOwned = false, Basis? rot = null)
         {
             var pr = Prof(meshName);
             var s = new StoreShelf { MeshName = meshName, TableIndex = table, MinItems = pr.Min, MaxItems = pr.Max, ShowItems = showItems, LabelText = label, RenderMesh = renderMesh, ServerOwned = serverOwned,
                                      // a DISPLAY shelf's grid mirrors its tiers 1:1 (UI pos == shelf pos); a SOLID container (fridge/counter/crate) has no visual mirror -> keep normal 8x6 storage
                                      Width = showItems ? (byte)pr.PerTier : (byte)8, Height = showItems ? (byte)pr.TierY.Length : (byte)6 };
             parent.AddChild(s);   // _Ready fires here (skips the local roll when serverOwned)
-            s.GlobalTransform = new Transform3D(new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
+            // rot = the FULL placement basis (WorldBuilder.TryContainer). A prop placed upside-down / rolled used to
+            // render UPRIGHT because only yaw was applied (master). rot * _upright.Inverse() puts the body at the full
+            // orientation while the mesh (and the door frame layered on it) keep their _upright frame: body world =
+            // (rot * _upright^-1) * _upright = rot. Falls back to yaw-only when rot is null (MP replica / harness).
+            s.GlobalTransform = new Transform3D(rot.HasValue ? rot.Value * s._upright.Inverse() : new Basis(Vector3.Up, Mathf.DegToRad(yawDeg)), pos);
             return s;
         }
 
