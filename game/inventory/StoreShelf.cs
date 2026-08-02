@@ -247,7 +247,12 @@ namespace UnturnedGodot
                     openCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "open"),
                     closeCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "close"),
                     soundName: e.Sound);
-                d.CollisionLayer = 0;   // the shelf body owns the F-interact; the door just follows the inventory
+                // The leaf KEEPS its default solid look-focus layer (bit 6, set in ObjectDoor._Ready): the player
+                // can't walk through the doorway anymore AND a look-ray on the door front actually lands (before, the
+                // leaf was CollisionLayer=0 -> a walk-through hole + a dead look-zone, since the body mesh has a
+                // door-shaped gap the ray also passed through). PlayerController routes an ObjectDoor-hit whose owner
+                // is a StoreShelf back to the shelf, so the shelf still owns F-open + the whole-prop highlight
+                // (master: "the doors arent solid").
                 _doors.Add(d);
             }
             if (_doors.Count > 1) foreach (var d in _doors) d.SetGroup(_doors);   // wardrobe/double-door: both leaves swing together, one sound

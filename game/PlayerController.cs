@@ -200,7 +200,11 @@ namespace UnturnedGodot
                 {
                     var rcol = rhit["collider"].As<GodotObject>();
                     if (rcol is Door rdoor && IsInstanceValid(rdoor)) hitDoor = rdoor;
-                    else if (rcol is ObjectDoor rod && IsInstanceValid(rod)) hitObjectDoor = rod;
+                    else if (rcol is ObjectDoor rod && IsInstanceValid(rod))
+                    {
+                        if (ShelfOf(rod) is StoreShelf rodShelf) hitShelf = rodShelf;   // a CONTAINER's now-solid door leaf -> focus the whole shelf (F opens the inventory + whole-prop highlight), not the leaf alone
+                        else hitObjectDoor = rod;                                        // a standalone doored prop -> the door itself (F toggles it)
+                    }
                 else if (rcol is Node bdn && bdn.HasMeta("objectdoor") && bdn.GetMeta("objectdoor").As<ObjectDoor>() is ObjectDoor bod && IsInstanceValid(bod)) hitObjectDoor = bod;   // issue 3: the PROP BODY collider (meta-linked by WorldBuilder.PlaceObject) resolves to its door -> look anywhere on a doored prop to toggle + whole-prop highlight, not just the leaf
                     else if (rcol is Bed rbed && IsInstanceValid(rbed)) hitBed = rbed;
                     else if (rcol is Deployable dep && IsInstanceValid(dep)) hitDeploy = dep;
