@@ -509,6 +509,7 @@ namespace UnturnedGodot
                 else _panel.Visible = lit;   // the stand-in disc is pure glow -- there is nothing to show when dark
             }
             if (_cone != null) _cone.Visible = lit;
+            if (_motes != null) _motes.Visible = lit;   // motes hide/show INSTANTLY in sync with the (flickering) light, not a fade (master); ApplyMoteFade re-derives the steady-state fade at settle
         }
 
         // The grid or the day/night clock flipped this lamp and asked to ANIMATE it: don't snap. Wait a per-lamp
@@ -524,6 +525,7 @@ namespace UnturnedGodot
                 _transitioning = true;
                 _transT = 0f; _flickT = 0f; _flickShow = _shownLit;
                 _reaction = ReactionMax * (0.15f + 0.85f * _reactionFrac);
+                if (_motes != null) _motes.Emitting = true;   // keep particles spawning through the flicker so there's a cloud to blink on/off with the light
                 SetProcess(true);
             }
             // already mid-transition (the grid flapped): keep the running delay, just re-aim at the new target.
