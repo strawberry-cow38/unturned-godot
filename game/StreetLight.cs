@@ -301,6 +301,16 @@ namespace UnturnedGodot
                                                                        // second faint layer rather than double-darkening.
                     DisableReceiveShadows = true,
                     TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
+                    // CLAMP, do not repeat (strawberry: "maybe the gradient is looping to the top"). ConeGradient is
+                    // 1x64 sampled LINEARLY, so with the default repeat wrap the v=0 edge blends texel 0 (alpha 0)
+                    // with its wrapped neighbour texel 63 (alpha 1) -- the top of the shaft sampled ~0.5 alpha
+                    // instead of ~0. That put a bright band right under the lens with a dark gap beneath it, which
+                    // reads as a second cone stacked on the beam. Measured: R hit 40 at the top, collapsed to 5
+                    // eight pixels down, then climbed again with the real gradient.
+                    //
+                    // This is a MATERIAL bug, not a mesh one -- it predates the loft and was in the old cone too,
+                    // which is why killing the geometric pinch did not kill the artefact.
+                    TextureRepeat = false,
                 },
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             };
