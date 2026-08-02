@@ -3782,27 +3782,61 @@ namespace UnturnedGodot
             gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.20f, 0.19f), Roughness = 1f };
             AddChild(gmesh);
 
-            var pole = new MeshInstance3D { Position = new Vector3(0f, 3f, 0f), Mesh = new CylinderMesh { TopRadius = 0.08f, BottomRadius = 0.10f, Height = 6f, RadialSegments = 8 } };
-            pole.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.16f, 0.16f, 0.17f), Roughness = 0.8f };
-            AddChild(pole);
+            // The REAL Street_Light_0, placed the way WorldBuilder places it, so this harness exercises the emissive
+            // lens split rather than the bare-lamp fallback. The raw mesh lies flat with the pole along +Z, so ex=270
+            // (Rx -90) stands it up -- the same basis the placement files carry for these props -- which puts the head
+            // 6.48m up and 2.35m out along -Z.
+            var propBasis = new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f));
+            var lampLocal = new Vector3(0f, 2.35f, 6.48f);   // replaced by the lens centre once the prop mesh is split
+            MeshInstance3D lensMi = null;
+            var propMesh = ObjMesh.Load(ProjectSettings.GlobalizePath("res://content/objects/") + "Street_Light_0.obj");
+            if (propMesh != null)
+            {
+                var (bodyMesh, lensMesh) = ObjMesh.SplitLens(propMesh);
+                var bodyMat = new StandardMaterial3D { AlbedoColor = new Color(0.17f, 0.17f, 0.18f), Roughness = 0.8f,
+                                                       CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                AddChild(new MeshInstance3D { Mesh = bodyMesh ?? propMesh, MaterialOverride = bodyMat, Basis = propBasis });
+                if (lensMesh != null)
+                {
+                    lensMi = new MeshInstance3D { Mesh = lensMesh, Basis = propBasis, Visible = false };
+                    AddChild(lensMi);
+                    lampLocal = lensMesh.GetAabb().GetCenter();   // emit from the bulb, same as WorldBuilder
+                }
+                GD.Print($"[LIGHTTEST] prop lens split: lens={(lensMesh != null ? "yes" : "NONE")} localCentre={lampLocal}");
+            }
+            else
+            {
+                // no extracted prop on this box: fall back to the old stand-in pole so the harness still runs
+                var pole = new MeshInstance3D { Position = new Vector3(0f, 3f, 0f), Mesh = new CylinderMesh { TopRadius = 0.08f, BottomRadius = 0.10f, Height = 6f, RadialSegments = 8 } };
+                pole.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.16f, 0.16f, 0.17f), Roughness = 0.8f };
+                AddChild(pole);
+            }
 
-            var lamp = StreetLight.Make(new Vector3(0f, 6f, 0f), 6f);
+            var lampPos = propBasis * lampLocal;
+            var lamp = StreetLight.Make(lampPos, Mathf.Max(4f, lampPos.Y), lensMi);
             AddChild(lamp);
             lamp.SetNight(true); lamp.SetPowered(true);
 
             var cam = new Camera3D { Current = true, Fov = 60f };
             AddChild(cam);
-            if (System.Environment.GetEnvironmentVariable("UG_LIGHTCAM") == "under")
+            string camMode = System.Environment.GetEnvironmentVariable("UG_LIGHTCAM") ?? "side";
+            if (camMode == "under")
             {
-                cam.Position = new Vector3(0.6f, 0.9f, 0.6f);      // standing under it, looking up into the cone
-                cam.LookAt(new Vector3(0f, 6f, 0f), Vector3.Up);
+                cam.Position = new Vector3(0.6f, 0.9f, -1.8f);     // standing under it, looking up into the cone
+                cam.LookAt(lampPos, Vector3.Up);
+            }
+            else if (camMode == "lens")
+            {
+                cam.Position = new Vector3(1.5f, 5.2f, -0.55f);    // close on the fixture: is the BULB what glows?
+                cam.LookAt(lampPos + new Vector3(0f, -0.08f, 0f), Vector3.Up);
+                cam.Fov = 38f;
             }
             else
             {
-                cam.Position = new Vector3(7.5f, 3.2f, 7.5f);      // side-on: cone shaft + ground pool together
-                cam.LookAt(new Vector3(0f, 3.4f, 0f), Vector3.Up);
+                cam.Position = new Vector3(7.5f, 3.2f, 5.2f);      // side-on: cone shaft + ground pool together
+                cam.LookAt(new Vector3(0f, 3.4f, -1.2f), Vector3.Up);
             }
-            GD.Print($"[LIGHTTEST] one streetlight, motes={StreetLight.MoteCount}, cam={(System.Environment.GetEnvironmentVariable("UG_LIGHTCAM") ?? "side")}");
+            GD.Print($"[LIGHTTEST] one streetlight, motes={StreetLight.MoteCount}, cam={camMode}");
         }
 
         void BuildDayNightDemo()

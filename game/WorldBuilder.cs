@@ -380,7 +380,27 @@ namespace UnturnedGodot
                 // old flat cutoff -- better to draw an unknown prop too long than to pop a landmark out of the world.
                 float cull = LodTable.CullDistance(p[0], LodTable.SourceFov);
                 if (cull <= 0f) { cull = 320f; lodMissing++; }
-                var mainMi = new MeshInstance3D { Mesh = mesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
+                // EMISSIVE LENS (strawberry): a streetlight's bulb is already in the prop mesh -- a warm-tan box inside
+                // the head -- it was just drawn with the same grey material as the pole while a stand-in disc under the
+                // fixture did the glowing. Split those triangles onto their own instance so the REAL lens lights up.
+                // Only the visual is split: collision and the AABB below still use the whole `mesh`, since the bulb sits
+                // inside the housing's extent and there is no reason to perturb physics for a cosmetic change.
+                var visMesh = mesh;
+                MeshInstance3D lensMi = null;
+                if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
+                {
+                    var (bodyMesh, lensMesh) = ObjMesh.SplitLens(mesh);
+                    if (lensMesh != null && bodyMesh != null)
+                    {
+                        visMesh = bodyMesh;
+                        // Starts hidden and material-less: StreetLight._Ready owns both, and an unstyled lens showing
+                        // for the frame before that would flash a white box on every lamp in the town.
+                        lensMi = new MeshInstance3D { Mesh = lensMesh, Transform = new Transform3D(basis, gpos), Visible = false,
+                            VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                        root.AddChild(lensMi);
+                    }
+                }
+                var mainMi = new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 root.AddChild(mainMi);
                 // MESH LOD: retail ships lower-detail meshes (mean 55% fewer triangles, some 98%) that the port
@@ -395,6 +415,10 @@ namespace UnturnedGodot
                 if (ranges != null && ranges.Length > 1)
                 {
                     mainMi.VisibilityRangeEnd = ranges[0].End;
+                    // The lens belongs to LOD0 -- the coarser levels keep the bulb in their body mesh, unsplit -- so it
+                    // has to retire on LOD0's band, not the prop's full cull distance, or a lit box hangs in the air
+                    // after the detailed mesh it was cut from has already swapped out.
+                    if (lensMi != null) lensMi.VisibilityRangeEnd = ranges[0].End;
                     var last = mainMi;
                     for (int lv = 1; lv < ranges.Length; lv++)
                     {
@@ -471,8 +495,15 @@ namespace UnturnedGodot
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
                 {
-                    var lampWorld = gpos + basis * new Vector3(0f, 2.35f, 6.48f);
-                    placedLamp = StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y));
+                    // Emit from the BULB, not from a hand-measured point. (0, 2.35, 6.48) was eyeballed off the far
+                    // end of the housing back when the glow was a stand-in disc placed at the same spot -- so the
+                    // pairing looked right even though both sat ~0.5m along the arm from the actual bulb, which is
+                    // centred at (0, 1.839, 6.412). With the real lens lighting up, that offset shows: the cone and
+                    // ground pool hang off the end of the fixture instead of under the lamp. The lens mesh knows
+                    // where it is, so ask it.
+                    var lampLocal = lensMi?.Mesh != null ? lensMi.Mesh.GetAabb().GetCenter() : new Vector3(0f, 2.35f, 6.48f);
+                    var lampWorld = gpos + basis * lampLocal;
+                    placedLamp = StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y), lensMi);
                     root.AddChild(placedLamp);
                 }
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0

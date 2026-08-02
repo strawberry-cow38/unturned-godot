@@ -101,5 +101,123 @@ namespace UnturnedGodot
             _cache[globalPath] = m;
             return m;
         }
+
+        // ---- emissive lens split -------------------------------------------------------------------------
+        // A lamp's glowing part is geometry the prop mesh already HAS, it just gets drawn with the same grey
+        // material as the pole. SplitLens carves those triangles onto their own surface so the caller can hand
+        // them an emissive material, and hands back the remainder for the body -- so the glow sits on the real
+        // lens instead of a stand-in disc floating under the fixture.
+        static readonly Dictionary<ArrayMesh, (ArrayMesh Body, ArrayMesh Lens)> _lensCache = new();
+
+        // Which triangles are "the lens" is decided by PALETTE TEXEL, not by a typed-in bounding box. The
+        // extracted props share a tiny palette texture (Street_Light_0's is 2x2) and the bulb is the only
+        // geometry on its warm tan entry, so the texel IS the identity -- a box of hardcoded coordinates would
+        // silently select the wrong faces the moment the mesh is re-extracted. Load() V-flips UVs, which puts
+        // that entry in the u>0.5, v>0.5 quadrant.
+        static bool LensUv(Vector2 a, Vector2 b, Vector2 c)
+            => a.X > 0.5f && a.Y > 0.5f && b.X > 0.5f && b.Y > 0.5f && c.X > 0.5f && c.Y > 0.5f;
+
+        public static (ArrayMesh Body, ArrayMesh Lens) SplitLens(ArrayMesh src)
+        {
+            if (src == null) return (null, null);
+            if (_lensCache.TryGetValue(src, out var hit)) return hit;
+            if (src.GetSurfaceCount() < 1) return _lensCache[src] = (src, null);
+
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3 || U.Length != V.Length) return _lensCache[src] = (src, null);
+
+            var bv = new List<Vector3>(); var bn = new List<Vector3>(); var bu = new List<Vector2>(); var bc = new List<Color>();
+            var lv = new List<Vector3>(); var ln = new List<Vector3>(); var lu = new List<Vector2>(); var lc = new List<Color>();
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                bool lens = LensUv(U[i], U[i + 1], U[i + 2]);
+                var dv = lens ? lv : bv; var dn = lens ? ln : bn; var du = lens ? lu : bu; var dc = lens ? lc : bc;
+                for (int k = 0; k < 3; k++)
+                {
+                    dv.Add(V[i + k]);
+                    dn.Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    du.Add(U[i + k]);
+                    dc.Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            if (lv.Count == 0) return _lensCache[src] = (src, null);   // no lens on this prop: leave it whole
+
+            CapHoles(lv, ln, lu, lc);
+            var res = (Build(bv, bn, bu, bc), Build(lv, ln, lu, lc));
+            _lensCache[src] = res;
+            return res;
+        }
+
+        static ArrayMesh Build(List<Vector3> v, List<Vector3> n, List<Vector2> u, List<Color> c)
+        {
+            if (v.Count == 0) return null;
+            var arr = new Godot.Collections.Array();
+            arr.Resize((int)Mesh.ArrayType.Max);
+            arr[(int)Mesh.ArrayType.Vertex] = v.ToArray();
+            arr[(int)Mesh.ArrayType.Normal] = n.ToArray();
+            arr[(int)Mesh.ArrayType.TexUV] = u.ToArray();
+            arr[(int)Mesh.ArrayType.Color] = c.ToArray();
+            var m = new ArrayMesh();
+            m.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            return m;
+        }
+
+        // The extracted bulb is an OPEN box -- 5 quads, not 6. Its top face points up into the housing shell, so
+        // the artist deleted it as an interior face nobody could see. Harmless while it was shaded like the pole;
+        // an emissive lens with a hole in it is not, since the hole shows the unlit inside of the far wall.
+        //
+        // The missing face is found by BOUNDARY EDGE (one used by a single triangle) rather than by assuming which
+        // side is absent, so this closes whatever the split actually leaves open, on any prop, in any orientation.
+        static (int, int, int) Key(Vector3 p)
+            => ((int)Mathf.Round(p.X * 10000f), (int)Mathf.Round(p.Y * 10000f), (int)Mathf.Round(p.Z * 10000f));
+
+        static void CapHoles(List<Vector3> v, List<Vector3> n, List<Vector2> u, List<Color> c)
+        {
+            var pos = new Dictionary<(int, int, int), Vector3>();
+            var uvs = new Dictionary<(int, int, int), Vector2>();
+            var dir = new HashSet<((int, int, int), (int, int, int))>();
+            for (int i = 0; i + 2 < v.Count; i += 3)
+                for (int k = 0; k < 3; k++)
+                {
+                    var ka = Key(v[i + k]); var kb = Key(v[i + (k + 1) % 3]);
+                    pos[ka] = v[i + k]; uvs[ka] = u[i + k];
+                    dir.Add((ka, kb));
+                }
+            // an interior edge is walked once in each direction; a boundary edge only one way
+            var open = new Dictionary<(int, int, int), (int, int, int)>();
+            foreach (var (a, b) in dir) if (!dir.Contains((b, a)) && !open.ContainsKey(a)) open[a] = b;
+
+            int guard = 0;
+            while (open.Count > 0 && guard++ < 64)
+            {
+                var loop = new List<(int, int, int)>();
+                var start = open.Keys.GetEnumerator(); start.MoveNext();
+                var cur = start.Current;
+                while (open.TryGetValue(cur, out var nxt))
+                {
+                    loop.Add(cur); open.Remove(cur); cur = nxt;
+                    if (cur.Equals(loop[0])) break;
+                }
+                if (loop.Count < 3) continue;
+                // Fan the hole with the winding REVERSED relative to the boundary walk, so the cap faces outward
+                // like the shell around it rather than inward.
+                for (int i = 1; i + 1 < loop.Count; i++)
+                {
+                    var t = new[] { pos[loop[0]], pos[loop[i + 1]], pos[loop[i]] };
+                    var fn = (t[1] - t[0]).Cross(t[2] - t[0]).Normalized();
+                    for (int k = 0; k < 3; k++)
+                    {
+                        v.Add(t[k]);
+                        n.Add(fn);
+                        u.Add(uvs[k == 0 ? loop[0] : (k == 1 ? loop[i + 1] : loop[i])]);
+                        c.Add(Colors.White);
+                    }
+                }
+            }
+        }
     }
 }

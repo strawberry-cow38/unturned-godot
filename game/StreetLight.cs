@@ -24,6 +24,7 @@ namespace UnturnedGodot
         SpotLight3D _spot;
         CpuParticles3D _motes;   // dust/bugs drifting in the beam (strawberry); null when MoteCount is 0
         MeshInstance3D _cone, _panel;
+        MeshInstance3D _lens;    // the prop's real bulb geometry, owned by the placement, adopted as _panel when present
         float _reach = 12f;
         float _worn = 1f;   // per-lamp brightness jitter (±5%) so fixtures read old/worn, not identical
         bool _night = false;    // dark enough to be lit (driven by DayNightCycle); starts off, self-inits in _Ready
@@ -42,13 +43,17 @@ namespace UnturnedGodot
             return new Color(Mathf.Clamp(r, 0f, 255f) / 255f, Mathf.Clamp(g, 0f, 255f) / 255f, Mathf.Clamp(b, 0f, 255f) / 255f);
         }
 
-        public static StreetLight Make(Vector3 lampWorldPos, float reach)
+        /// <param name="lens">The prop's OWN bulb geometry, already split onto its own MeshInstance3D by
+        /// WorldBuilder (ObjMesh.SplitLens). When supplied the lamp drives that instead of building its stand-in
+        /// disc, so the glow lands on the real lens. The node stays parented to the prop -- it has to keep the
+        /// placement's basis to sit inside the fixture -- and this only owns its material + visibility.</param>
+        public static StreetLight Make(Vector3 lampWorldPos, float reach, MeshInstance3D lens = null)
         {
             // master: ±5% per-lamp brightness so they read old/worn. DETERMINISTIC (a stable hash of the world position),
             // so a given fixture is always the same brightness -- identical every load and for every MP player, no flicker.
             float h = Mathf.Sin(lampWorldPos.X * 12.9898f + lampWorldPos.Z * 78.233f) * 43758.5453f;
             float worn = 0.95f + (h - Mathf.Floor(h)) * 0.10f;   // 0.95 .. 1.05
-            return new StreetLight { Position = lampWorldPos, TopLevel = true, _reach = Mathf.Max(4f, reach), _worn = worn };
+            return new StreetLight { Position = lampWorldPos, TopLevel = true, _reach = Mathf.Max(4f, reach), _worn = worn, _lens = lens };
         }
 
         // Vertical fade for the cone: bright at the lamp end, transparent by the base -- so the shaft dissolves into the
@@ -148,19 +153,37 @@ namespace UnturnedGodot
             };
             AddChild(_spot);
 
-            // 2) EMISSIVE UNDERSIDE PANEL: a flat disc on the head's underside that glows when on (the fixture reads as lit).
-            _panel = new MeshInstance3D
+            // 2) THE EMISSIVE LENS: the part of the fixture that visibly glows when the lamp is on.
+            //
+            //    Preferred form is the prop's OWN bulb geometry (strawberry), split off the mesh by ObjMesh.SplitLens
+            //    and handed in. It is a real box inside the head, and the housing has no floor under it, so its
+            //    underside genuinely reads from the street. Same warm sodium colour + intensity as the disc it
+            //    replaces, so the night tuning that was built against the old look still holds.
+            //
+            //    Fallback is the old flat disc on the head's underside, for callers with no prop mesh to split --
+            //    the --lighttest harness and the L1 tests build bare lamps with no Street_Light_0 behind them.
+            var lensMat = new StandardMaterial3D
             {
-                Position = under,
-                Mesh = new CylinderMesh { TopRadius = 0.26f, BottomRadius = 0.26f, Height = 0.03f, RadialSegments = 14, CapTop = true, CapBottom = true },
-                MaterialOverride = new StandardMaterial3D
-                {
-                    AlbedoColor = col, EmissionEnabled = true, Emission = col, EmissionEnergyMultiplier = 4.5f * _worn,
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                },
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                AlbedoColor = col, EmissionEnabled = true, Emission = col, EmissionEnergyMultiplier = 4.5f * _worn,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             };
-            AddChild(_panel);
+            if (_lens != null)
+            {
+                _lens.MaterialOverride = lensMat;
+                _lens.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+                _panel = _lens;   // adopted, NOT reparented: it keeps the placement basis that puts it in the fixture
+            }
+            else
+            {
+                _panel = new MeshInstance3D
+                {
+                    Position = under,
+                    Mesh = new CylinderMesh { TopRadius = 0.26f, BottomRadius = 0.26f, Height = 0.03f, RadialSegments = 14, CapTop = true, CapBottom = true },
+                    MaterialOverride = lensMat,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                };
+                AddChild(_panel);
+            }
 
             // 3) THE FAKE CONE: a WIDE truncated cone that fades (gradient) from the lamp to transparent by the base, soft +
             //    additive. Wider at the base per master; the fade dissolves it into the ground pool.
