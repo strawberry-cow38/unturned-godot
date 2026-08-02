@@ -220,4 +220,79 @@ namespace UnturnedGodot.Testing
             T.Check("and a respawned pole has a working bulb again", lamp.LitSpotForTest && lens.Visible);
         }
     }
+
+    // "fully destroying a streetlight should leave the base piece where it once stood" (strawberry). Breaking a
+    // prop hides every mesh in the destructible's list, so the fixture used to vanish off the pavement entirely.
+    // ObjMesh.SplitBelow carves the plinth off so WorldBuilder can keep it OUT of that list.
+    //
+    // The property worth asserting is that the cut is a PARTITION and that what survives is a sealed solid -- a
+    // stump with a slice missing out of it would render as an open shell you can see inside, and a triangle count
+    // alone would not notice. The pole's side faces are full-height quads that cross the cut line, so "all verts
+    // below" has to send them upward; if that rule ever flips, the base gains ragged half-quads and this fails.
+    public sealed class StreetLightStumpTests : GameTest
+    {
+        public override string Name => "props.streetlight_leaves_a_stump";
+
+        static int Tris(ArrayMesh m) => m == null ? 0 : m.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length / 3;
+
+        public override IEnumerable<Step> Run()
+        {
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var src = ObjMesh.Load(dir + "Street_Light_0.obj");
+            T.Check("the prop mesh loads", src != null);
+            if (src == null) yield break;
+
+            var (body, _) = ObjMesh.SplitLens(src);
+            var (baseMesh, upper) = ObjMesh.SplitBelow(body, 1.0f);
+            T.Check("the cut yields a base piece", baseMesh != null);
+            T.Check("...and the part that falls", upper != null);
+            if (baseMesh == null || upper == null) yield break;
+
+            T.Check($"the cut is a partition ({Tris(baseMesh)} + {Tris(upper)} = {Tris(body)})",
+                    Tris(baseMesh) + Tris(upper) == Tris(body));
+            T.Check("the base is not the whole prop", Tris(upper) > 0 && Tris(baseMesh) > 0);
+
+            var bv = baseMesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            float topZ = float.MinValue;
+            foreach (var v in bv) if (v.Z > topZ) topZ = v.Z;
+            T.Check($"nothing in the base reaches above the cut (max Z {topZ:0.##})", topZ <= 1.0f + 1e-3f);
+
+            var uv = upper.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            float upTop = float.MinValue;
+            foreach (var v in uv) if (v.Z > upTop) upTop = v.Z;
+            T.Check($"the part that falls carries the lamp head ({upTop:0.##} up)", upTop > 6f);
+
+            // The stump has to be SEALED: every edge shared by exactly two triangles. This is what a "cut" that
+            // sliced through the pole quads would break, and what a triangle count would sail past.
+            var edges = new Dictionary<(int, int, int, int, int, int), int>();
+            (int, int, int) K(Vector3 p) => ((int)Mathf.Round(p.X * 10000f), (int)Mathf.Round(p.Y * 10000f), (int)Mathf.Round(p.Z * 10000f));
+            for (int i = 0; i + 2 < bv.Length; i += 3)
+                for (int k = 0; k < 3; k++)
+                {
+                    var (a, b) = (K(bv[i + k]), K(bv[i + (k + 1) % 3]));
+                    var key = a.CompareTo(b) < 0 ? (a.Item1, a.Item2, a.Item3, b.Item1, b.Item2, b.Item3)
+                                                 : (b.Item1, b.Item2, b.Item3, a.Item1, a.Item2, a.Item3);
+                    edges[key] = edges.TryGetValue(key, out var n) ? n + 1 : 1;
+                }
+            // The stump is NOT a closed solid, and should not be asserted as one -- the model omits its buried
+            // bottom face (Z=-1.0) exactly the way it omits the bulb's top, because nobody can see underground.
+            // The property that actually matters is that nothing is open where a player can LOOK: a cut that
+            // sliced the plinth's top off would leave the stump an open shell you can see down into, and that
+            // shows up here as a boundary edge above ground while a triangle count notices nothing.
+            int openAbove = 0, openBuried = 0;
+            foreach (var kv in edges)
+            {
+                if (kv.Value == 2) continue;
+                if (kv.Key.Item3 > 1 || kv.Key.Item6 > 1) openAbove++;   // keys are mm-ish ints; >0 = above ground
+                else openBuried++;
+            }
+            T.Check($"the stump has no hole above ground ({openAbove} open, {openBuried} buried/at-grade)", openAbove == 0);
+            T.Check($"...and it does keep a top face (max Z {topZ:0.##})", Mathf.IsEqualApprox(topZ, 1.0f));
+
+            var again = ObjMesh.SplitBelow(body, 1.0f);
+            T.Check("the cut is cached rather than rebuilt per placement",
+                    ReferenceEquals(again.Below, baseMesh) && ReferenceEquals(again.Above, upper));
+            yield break;
+        }
+    }
 }

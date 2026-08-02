@@ -3809,13 +3809,25 @@ namespace UnturnedGodot
                     if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
                 }
                 else bodyMat.AlbedoColor = new Color(0.17f, 0.17f, 0.18f);
-                AddChild(new MeshInstance3D { Mesh = bodyMesh ?? propMesh, MaterialOverride = bodyMat, Basis = propBasis });
+                // UG_LIGHTBREAK=1 renders the SMASHED state: WorldBuilder keeps the plinth out of the destructible's
+                // mesh list, so a broken lamp is "upper hidden, base still standing". The harness has to be able to
+                // show that or the stump can never be eyeballed -- the third state in two days this scene could not
+                // express (it was night-only, then glow-less).
+                bool broken = System.Environment.GetEnvironmentVariable("UG_LIGHTBREAK") == "1";
+                var (baseMesh, upperMesh) = ObjMesh.SplitBelow(bodyMesh ?? propMesh, 1.0f);
+                if (baseMesh != null && upperMesh != null)
+                {
+                    AddChild(new MeshInstance3D { Mesh = baseMesh, MaterialOverride = bodyMat, Basis = propBasis });   // survives the break
+                    AddChild(new MeshInstance3D { Mesh = upperMesh, MaterialOverride = bodyMat, Basis = propBasis, Visible = !broken });
+                }
+                else AddChild(new MeshInstance3D { Mesh = bodyMesh ?? propMesh, MaterialOverride = bodyMat, Basis = propBasis });
                 if (lensMesh != null)
                 {
                     lensMi = new MeshInstance3D { Mesh = lensMesh, Basis = propBasis, MaterialOverride = bodyMat };   // bodyMat = its UNLIT look
                     AddChild(lensMi);
                     lampLocal = lensMesh.GetAabb().GetCenter();   // emit from the bulb, same as WorldBuilder
                 }
+                if (broken) GD.Print($"[LIGHTTEST] BROKEN state: base kept ({baseMesh?.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length / 3 ?? 0} tri), pole hidden");
                 GD.Print($"[LIGHTTEST] prop lens split: lens={(lensMesh != null ? "yes" : "NONE")} localCentre={lampLocal}");
             }
             else
@@ -3828,6 +3840,7 @@ namespace UnturnedGodot
 
             var lampPos = propBasis * lampLocal;
             var lamp = StreetLight.Make(lampPos, Mathf.Max(4f, lampPos.Y), lensMi);
+            if (System.Environment.GetEnvironmentVariable("UG_LIGHTBREAK") == "1") lamp.SetBroken(true);   // pole smashed -> lamp dark, lens goes with it
             AddChild(lamp);
             bool lampOff = System.Environment.GetEnvironmentVariable("UG_LIGHTOFF") == "1";
             lamp.SetNight(!lampOff); lamp.SetPowered(!lampOff);

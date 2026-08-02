@@ -152,6 +152,52 @@ namespace UnturnedGodot
             return res;
         }
 
+        // ---- stump split --------------------------------------------------------------------------------
+        // Destroying a prop currently hides every mesh it owns, so a smashed streetlight vanishes off the pavement
+        // entirely. Retail leaves the footing behind. SplitBelow carves the part that should SURVIVE a break onto
+        // its own surface, so the caller can register only the rest with the destructible field.
+        //
+        // The rule is "every vertex below the cut", which deliberately sends a straddling triangle UPWARD. On
+        // Street_Light_0 the plinth is a closed box from local Z -1.0 to +1.0 while the pole's side faces are
+        // full-height quads running Z 0 -> 6.07, so they cross the cut; sending them up means the pole leaves
+        // cleanly and the stump that remains is a sealed block rather than a box with a slice taken out of it.
+        // No clipping, no new geometry -- the model already separates at exactly the right place.
+        static readonly Dictionary<(ArrayMesh, int), (ArrayMesh Below, ArrayMesh Above)> _cutCache = new();
+
+        public static (ArrayMesh Below, ArrayMesh Above) SplitBelow(ArrayMesh src, float cut, int axis = 2)
+        {
+            if (src == null) return (null, null);
+            var key = (src, (int)(cut * 1000f) * 4 + axis);
+            if (_cutCache.TryGetValue(key, out var hit)) return hit;
+            if (src.GetSurfaceCount() < 1) return _cutCache[key] = (null, src);
+
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3) return _cutCache[key] = (null, src);
+
+            var bv = new List<Vector3>(); var bn = new List<Vector3>(); var bu = new List<Vector2>(); var bc = new List<Color>();
+            var av = new List<Vector3>(); var an = new List<Vector3>(); var au = new List<Vector2>(); var ac = new List<Color>();
+            float Axis(Vector3 p) => axis == 0 ? p.X : axis == 1 ? p.Y : p.Z;
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                bool below = Axis(V[i]) <= cut + 1e-4f && Axis(V[i + 1]) <= cut + 1e-4f && Axis(V[i + 2]) <= cut + 1e-4f;
+                var dv = below ? bv : av; var dn = below ? bn : an; var du = below ? bu : au; var dc = below ? bc : ac;
+                for (int k = 0; k < 3; k++)
+                {
+                    dv.Add(V[i + k]);
+                    dn.Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    du.Add(i + k < U.Length ? U[i + k] : Vector2.Zero);
+                    dc.Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            var res = (Build(bv, bn, bu, bc), Build(av, an, au, ac));
+            _cutCache[key] = res;
+            return res;
+        }
+
         static ArrayMesh Build(List<Vector3> v, List<Vector3> n, List<Vector2> u, List<Color> c)
         {
             if (v.Count == 0) return null;
