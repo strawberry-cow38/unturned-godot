@@ -31,6 +31,37 @@ namespace UnturnedGodot
         static readonly string[] DayModes     = { "Short", "Default", "Long", "Endless Day" };
         static readonly string[] CombatModes  = { "PvE", "PvP" };
 
+        // The per-map gameplay options above are plain fields that reset to their defaults every launch. Persist
+        // them to user:// (Godot's writable per-user dir -- survives restart AND works in an exported build, unlike
+        // the res:// content the in-editor Save targets) so a player's chosen mode sticks across restarts.
+        const string MapSettingsPath = "user://map_settings.cfg";
+
+        void LoadMapSettings()   // restore saved options BEFORE BuildMapSelector reads the fields into the rows
+        {
+            var cfg = new ConfigFile();
+            if (cfg.Load(MapSettingsPath) != Error.Ok) return;   // nothing saved yet -> keep defaults
+            _optDifficulty = cfg.GetValue("map", "difficulty", _optDifficulty).AsInt32();
+            _optZombies    = cfg.GetValue("map", "zombies",    _optZombies).AsInt32();
+            _optLoot       = cfg.GetValue("map", "loot",       _optLoot).AsInt32();
+            _optDay        = cfg.GetValue("map", "day",        _optDay).AsInt32();
+            _optCombat     = cfg.GetValue("map", "combat",     _optCombat).AsInt32();
+            _optCheats     = cfg.GetValue("map", "cheats",     _optCheats).AsBool();
+            _optPermadeath = cfg.GetValue("map", "permadeath", _optPermadeath).AsBool();
+        }
+
+        void SaveMapSettings()   // called on every option change so the choice persists immediately
+        {
+            var cfg = new ConfigFile();
+            cfg.SetValue("map", "difficulty", _optDifficulty);
+            cfg.SetValue("map", "zombies",    _optZombies);
+            cfg.SetValue("map", "loot",       _optLoot);
+            cfg.SetValue("map", "day",        _optDay);
+            cfg.SetValue("map", "combat",     _optCombat);
+            cfg.SetValue("map", "cheats",     _optCheats);
+            cfg.SetValue("map", "permadeath", _optPermadeath);
+            cfg.Save(MapSettingsPath);
+        }
+
         // official Unturned maps. `key` = the ported icon/preview basename (content/menu/mapicon_<key>.png +
         // mappreview_<key>.png, copied from the retail install's Maps/<Name>/Icon.png + Preview.png). PEI is the
         // only world we actually ported (playable); the other real maps show their REAL icon + preview but aren't
@@ -72,6 +103,7 @@ namespace UnturnedGodot
 
         void BuildMapSelector(CanvasLayer layer)
         {
+            LoadMapSettings();   // restore persisted gameplay options so the rows below open on the saved values
             var panel = new PanelContainer { Position = new Vector2(240f, 148f), Visible = false };
             var margin = new MarginContainer();
             foreach (var s in new[] { "margin_left", "margin_right", "margin_top", "margin_bottom" })
@@ -149,13 +181,13 @@ namespace UnturnedGodot
 
             right.AddChild(new HSeparator());
             right.AddChild(Header("GAMEPLAY OPTIONS", 16));
-            right.AddChild(OptionRow("Difficulty", Difficulties, _optDifficulty, i => _optDifficulty = i));
-            right.AddChild(OptionRow("Zombies",    ZombieModes,  _optZombies,    i => _optZombies = i));   // REAL
-            right.AddChild(OptionRow("Loot",       LootModes,    _optLoot,       i => _optLoot = i));
-            right.AddChild(OptionRow("Day Cycle",  DayModes,     _optDay,        i => _optDay = i));
-            right.AddChild(OptionRow("Combat",     CombatModes,  _optCombat,     i => _optCombat = i));
-            right.AddChild(ToggleRow("Cheats",     _optCheats,     v => _optCheats = v));
-            right.AddChild(ToggleRow("Permadeath", _optPermadeath, v => _optPermadeath = v));
+            right.AddChild(OptionRow("Difficulty", Difficulties, _optDifficulty, i => { _optDifficulty = i; SaveMapSettings(); }));
+            right.AddChild(OptionRow("Zombies",    ZombieModes,  _optZombies,    i => { _optZombies = i; SaveMapSettings(); }));   // REAL
+            right.AddChild(OptionRow("Loot",       LootModes,    _optLoot,       i => { _optLoot = i; SaveMapSettings(); }));
+            right.AddChild(OptionRow("Day Cycle",  DayModes,     _optDay,        i => { _optDay = i; SaveMapSettings(); }));
+            right.AddChild(OptionRow("Combat",     CombatModes,  _optCombat,     i => { _optCombat = i; SaveMapSettings(); }));
+            right.AddChild(ToggleRow("Cheats",     _optCheats,     v => { _optCheats = v; SaveMapSettings(); }));
+            right.AddChild(ToggleRow("Permadeath", _optPermadeath, v => { _optPermadeath = v; SaveMapSettings(); }));
             right.AddChild(AdvancedButton());   // reveals the full vanilla ModeConfigData options (MainMenuAdvanced.cs)
 
             right.AddChild(new Control { CustomMinimumSize = new Vector2(0f, 6f) });   // spacer
