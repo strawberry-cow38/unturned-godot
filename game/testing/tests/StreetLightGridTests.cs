@@ -26,13 +26,15 @@ namespace UnturnedGodot.Testing
 
             T.Check("a lamp is lit at night while the grid is live", lamp.LitSpotForTest);
 
+            // The sweep throttles its mains check (~4Hz), so poll rather than assuming a fixed tick count --
+            // a hardcoded wait here silently encodes the throttle period and breaks when it is tuned.
             PowerNet.SetGlobalPower(false);
-            yield return Ticks(6);
+            yield return Until(() => !lamp.LitSpotForTest, 3);
             T.Check("toggling global power OFF darkens the lamp", !lamp.LitSpotForTest);
             T.Check("...and its cone", !lamp.LitConeForTest);
 
             PowerNet.SetGlobalPower(true);
-            yield return Ticks(6);
+            yield return Until(() => lamp.LitSpotForTest, 3);
             T.Check("toggling it back ON relights the lamp", lamp.LitSpotForTest);
         }
     }

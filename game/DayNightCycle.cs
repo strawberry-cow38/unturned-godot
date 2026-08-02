@@ -163,7 +163,7 @@ void sky() {
         public override void _Process(double delta)
         {
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
-            if (VisualsEnabled) { Apply(); DriveStreetlights(); DriveMoteFade(); }
+            if (VisualsEnabled) { Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }
         }
 
         // Street lamps light dusk->dawn AND only while the town grid is live (auto-grid municipal consumers -- the
@@ -171,12 +171,12 @@ void sky() {
         // flips (a handful of times per session), never per-frame -- PEI has hundreds of lamps. Dedicated skips it
         // (VisualsEnabled is false; no visual lamps there anyway).
         bool? _lampsNight, _lampsGrid;
-        void DriveStreetlights()
+        void DriveStreetlights(float delta)
         {
             var tree = GetTree();
             if (tree == null) return;   // out-of-tree _Process (some headless harnesses) -> nothing to sweep
             bool night = IsNightTime(Time);
-            bool grid = MainsLive(tree);
+            bool grid = MainsLive(tree, delta);
             if (_lampsNight == night && _lampsGrid == grid) return;
             _lampsNight = night; _lampsGrid = grid;
             foreach (Node n in tree.GetNodesInGroup("streetlights"))
@@ -195,9 +195,11 @@ void sky() {
         // run every frame -- PEI has hundreds of deployables. 4Hz is imperceptible for a mains switch.
         float _mainsCheckT;
         bool _mainsCached = true;
-        bool MainsLive(SceneTree tree)
+        bool MainsLive(SceneTree tree, float delta)
         {
-            _mainsCheckT -= 1f / 60f;
+            _mainsCheckT -= delta;   // REAL delta: a hardcoded 1/60 made the throttle expire after a fixed
+                                     // COUNT of calls rather than a fixed time, so the mains-flip latency moved
+                                     // with the frame rate (and made a 6-tick test pass or fail on timing).
             if (_mainsCheckT > 0f) return _mainsCached;
             _mainsCheckT = 0.25f;
             bool sawSource = false, live = false;

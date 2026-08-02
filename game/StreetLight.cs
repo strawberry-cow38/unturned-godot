@@ -12,6 +12,8 @@ namespace UnturnedGodot
         public static float Energy     = 12.0f;    // ground-pool brightness (master: reined in from nuclear; raised source still gives the weight)
         public static int   MoteCount     = 26;     // dust/bug motes per lamp -- one additive quad each; 0 disables them entirely
         public static float MoteCullRange = 22f;    // motes retire well inside the cone's own draw distance: a close-up detail
+        public static float MoteOpacity    = 0.5f;  // base mote opacity (strawberry). The time-of-day fade SCALES this,
+                                                    // so lowering it lowers the whole curve rather than only its peak
         public static float MoteFadeMargin = 7f;    // distance band over which motes fade in/out instead of popping
         public static float MoteFadeLead   = 0.05f; // how far ahead of the lamp (in day fraction) the motes fade
         public static float MoteFadeGap    = 0.012f;// ...and how far BEFORE lights-off they finish fading (strawberry)
@@ -197,7 +199,7 @@ namespace UnturnedGodot
                 float coneR = len * Mathf.Tan(Mathf.DegToRad(half));
                 var moteMat = new StandardMaterial3D
                 {
-                    AlbedoColor = new Color(col.R, col.G, col.B, 0.95f * _worn),
+                    AlbedoColor = new Color(col.R, col.G, col.B, MoteOpacity * _worn),
                     EmissionEnabled = true, Emission = col, EmissionEnergyMultiplier = 2.6f,
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
