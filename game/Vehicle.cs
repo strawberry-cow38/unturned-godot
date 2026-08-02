@@ -162,6 +162,10 @@ namespace UnturnedGodot
         public bool HeadlightsOn => _headlightsOn;
         public bool TaillightsOn => _taillightsOn;          // MP §3.6: replicated light/brake flags (read-only views of the SP state)
         public bool SirenOn => _sirenOn;
+        /// <summary>L1 only: whether this car is an "alarmed" one. Spawn rolls it at 5%, so a test that needs
+        /// the alarm has to set it rather than hope. Paired with AlarmActiveForTest to observe the loop.</summary>
+        public bool AlarmedForTest { get => _alarmed; set => _alarmed = value; }
+        public bool AlarmActiveForTest => _alarmTimer > 0f;
         public bool BrakingNow => _braking;
         public float SteerAngleDegrees => _steerAngle;      // MP §3.6: the wheel-steer summary the snapshot carries
         public float SpeedMaxMps => _speedMax;              // MP Part A: the spec Speed_Max -- the server envelope's horizontal cap derives from it (spec-derived, never hardcoded)
@@ -333,6 +337,15 @@ namespace UnturnedGodot
             ApplyTorqueImpulse(new Vector3(2800f, 0f, 0f));   // source AddTorque(16,0,0)
             EngineOn = false;
             SetHeadlights(false); SetTaillights(false);   // a corpse's lamps go dark -- kill the head + tail lights (master)
+            // ...but killing the lamps here is NOT enough on its own, and that was the bug: an alarmed car's
+            // blip loop below re-lights them every 0.5s and honks, on a burning wreck. Worse, once the hulk
+            // settles it becomes a _husk and the per-frame sim early-returns for good -- so whatever the blip
+            // left behind is frozen there permanently, lamps ON if it stopped in the lit half of the cycle.
+            // A corpse is dead: end the alarm outright rather than relying on it to expire.
+            _alarmed = false; _alarmTimer = 0f; _alarmBlip = 0f; _alarmLit = false;
+            _sirenOn = false;   // the lightbar block already gates on !_exploded, but clear the state too so nothing can re-arm it
+            if (_sirenAudio != null && _sirenAudio.Playing) _sirenAudio.Stop();
+            if (_engineAudio != null) _engineAudio.VolumeDb = -80f;   // EngineOn=false silences it next tick; do it now in case the wreck husks first
             if (_fire != null) _fire.Emitting = true;
             if (_fireLight != null) { _fireLight.Visible = true; _fireLight.LightEnergy = 3f; }
             _burnTime = 0f;   // start the fire lifecycle (dies down at 40s, out at 60s, despawns 5 min later)
@@ -1654,7 +1667,7 @@ namespace UnturnedGodot
             _hornAudio.Play();
             SoundBus.Emit(GetTree(), GlobalPosition, SoundBus.Horn);   // Phase 3 sound bus: horn loudness (source tellHorn AlertTool.alert(pos,32))
         }
-        void TriggerAlarm() { if (_alarmed && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master)
+        void TriggerAlarm() { if (_alarmed && !_exploded && _alarmTimer <= 0f) { _alarmTimer = 30f; _alarmBlip = 0f; } }   // start the ~30s honk+lights alarm loop (master); a wreck never alarms -- damage still lands on corpses
 
         public void ToggleHeadlights() { if (_alarmTimer > 0f) return; SetHeadlights(!_headlightsOn); }   // source tellHeadlights; blocked while the alarm owns the lights (master)
         void SetHeadlights(bool on)
@@ -1964,7 +1977,7 @@ namespace UnturnedGodot
                 Battery = Mathf.Max(0f, Battery - BatteryBurnRate * (float)delta);
                 if (Battery <= 0f) SetHeadlights(false);
             }
-            if (_alarmed)   // "alarmed" car (master): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies
+            if (_alarmed && !_exploded)   // "alarmed" car (master): proximity (player/zombie) or damage sets off a ~30s honk+lights blip loop that lures zombies. NOT on a wreck -- Explode clears the state, and this guard means even a re-arm can't relight a corpse
             {
                 if (_alarmTimer <= 0f)   // idle -> watch for a proximity trigger (throttled)
                 {
