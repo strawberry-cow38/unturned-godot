@@ -203,7 +203,6 @@ namespace UnturnedGodot
         {
             var mesh = ShelfMesh();
             if (!RenderMesh) return;   // BACK side of a double-sided shelf: shares the FRONT twin's mesh+label, just manages its own display (ShelfMesh() still cached for tier maths)
-            float top = 2.8f;
             if (mesh != null)
             {
                 var mi = new MeshInstance3D { Mesh = mesh, MaterialOverride = ShelfMat(), Basis = _upright };
@@ -216,20 +215,11 @@ namespace UnturnedGodot
                     MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
                 };
                 AddChild(_shelfGlow);
-                var box = StoodAabb(mesh); top = box.Position.Y + box.Size.Y + 0.3f;   // float the label just above the standing prop (fridge/counter are shorter)
             }
-            // A doored container (fridge/wardrobe/counter/shipping-container) layers its swinging leaf on top of
-            // the body above and drops the floating name ENTIRELY (master); a plain shelf/crate/bookcase keeps its
-            // billboard label. TrySpawnDoors returns true iff this prop is in the door catalog.
-            if (!TrySpawnDoors(mesh))
-                AddChild(new Label3D
-                {
-                    Text = LabelText,
-                    Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                    Modulate = new Color(0.8f, 0.85f, 0.95f),
-                    PixelSize = 0.007f, Position = new Vector3(0, top, 0),
-                    NoDepthTest = true, FontSize = 56, OutlineSize = 10,
-                });
+            // Doored containers layer their swinging leaf on top of the body above. NO floating billboard name on
+            // ANY container/shelf anymore (master: kill the remaining billboards). TrySpawnDoors is still called for
+            // its door-spawn side effect; its return value no longer gates a label.
+            TrySpawnDoors(mesh);
         }
 
         // Layer this container's openable door leaf/leaves on top of the already-built body. The body .obj drew
