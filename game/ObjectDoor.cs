@@ -153,6 +153,19 @@ namespace UnturnedGodot
             return true;
         }
 
+        /// <summary>Drive to an EXPLICIT open/closed target (no cooldown, no flip) -- for a door owned by
+        /// something else (StoreShelf swings a container's door with its inventory open/close). Idempotent:
+        /// a no-op if already in that state. Plays the audio + brings the multi-leaf group along only on a
+        /// real change, so reopening a container mid-swing lands deterministically instead of a Toggle()
+        /// flip that could refuse on the cooldown gate and desync door-vs-inventory.</summary>
+        public void SetOpen(bool open)
+        {
+            if (IsOpen == open) return;
+            IsOpen = open;
+            SyncGroup();
+            _audio?.Play();
+        }
+
         /// <summary>Bring every OTHER door in this leaf's group to the SAME open/closed state THIS one
         /// just toggled to -- directly (no cooldown check, no recursive Toggle/SyncGroup call): the
         /// trigger already passed the cooldown gate, and re-entering Toggle on a sibling would try to

@@ -2204,6 +2204,7 @@ namespace UnturnedGodot
         }
 
         StorageCrate _openCrate;
+        StoreShelf _openDoorShelf;   // the doored container (fridge/wardrobe/counter) whose leaf is swung open by the current open inventory -- tracked apart from _openCrate/_openCrateNetId so the door shuts on BOTH the SP and MP close paths
 
         // F: open the nearest storage crate within ~2.5 m -- loads its grid into the STORAGE page (7) so the existing
         // dashboard + TryDrag handle it, and opens the dashboard.
@@ -2230,6 +2231,7 @@ namespace UnturnedGodot
         {
             if (crate == null) return false;
             if (crate is StoreShelf shelf) crate = shelf.ResolveSide(GlobalPosition);   // double-sided gondola: open the side the player is on
+            _openDoorShelf = crate as StoreShelf; _openDoorShelf?.SetDoorsOpen(true);   // a doored container (fridge/wardrobe/counter): swing its leaf open the instant you interact -- BEFORE the replicated early-return so it fires in SP + MP alike (local cosmetic)
             // B9: a REPLICATED container (server-owned, NetId != 0) opens over the WIRE -- its local grid is only a
             // display mirror; the server holds the authoritative contents (StorageOpened + the owner echo carry them
             // into STORAGE page 7, and OnReplicatedStorageOpened opens the dashboard on the fact, never on the send).
@@ -2248,6 +2250,7 @@ namespace UnturnedGodot
         // save the open crate's contents back and clear the STORAGE view (called when the dashboard closes)
         void CloseCrate()
         {
+            _openDoorShelf?.SetDoorsOpen(false); _openDoorShelf = null;   // swing a doored container's leaf shut on close -- at the top so it covers BOTH the SP copy-back and the MP _openCrateNetId early-return below
             if (NetCloseStorage != null && _openCrateNetId != 0)
             {
                 // MP: the server saves the STORAGE page back into the crate and clears it; the owner
@@ -3451,7 +3454,7 @@ namespace UnturnedGodot
             if (NetAvatar) return;   // a server avatar is driven ONLY through the Scripted* seams, never local input
             // Inventory dashboard open -> EAT ALL game input except Tab (to close it) + Escape: no firing / world interactions /
             // reloading / look through the open UI. (The UI Controls still get their own clicks; those don't reach _UnhandledInput.) (master)
-            if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape })) return;
+            if (_invUI != null && _invUI.IsOpen && !(@event is InputEventKey { Keycode: Key.Tab or Key.Escape or Key.F })) return;   // F also allowed through -> closes an open container inventory (handled at the top of the F branch), master
             // while driving, only E (exit) / V (cam) / L (lights) / Escape + LMB (horn) / RMB (lights) are live -- no fire, aim, reload, etc.
             // (riding a replicated puppet gates identically -- the vehicle-side keys just no-op below in v1)
             if (_driving != null || _riding != null)
@@ -3537,7 +3540,8 @@ namespace UnturnedGodot
             }
             else if (@event is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F })   // F = INTERACT (moved off E, strawberry): exit/hitch/pickup/enter/harvest/open-crate; nothing to interact with -> inspect the held weapon. Echo:false so HOLDING F can't double-fire the hitch toggle (uncouple then instantly re-couple).
             {
-                if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
+                if (_invUI != null && _invUI.IsOpen) { SaveGunState(); CloseCrate(); _invUI.Close(); Input.MouseMode = Input.MouseModeEnum.Captured; }   // F while a container inventory is open -> CLOSE it (CloseCrate swings the door shut too), same as Escape (master)
+                else if (_driving != null && !DrivingPredicted) ExitVehicle();  // hop out (SP direct exit; a Part A predicted drive falls through to the server REQUEST below)
                 else if (RequestExitPuppet()) { }                          // riding a replicated vehicle: ask the server to free the seat (C6)
                 else if (TryToggleHitch()) { }                             // on foot at a trailer hitch: couple / uncouple
                 else if (_focusShelfItem != null || _focusItem != null) TryPickup();   // looking at a SHELF item or a dropped item: grab it (shelf item takes priority in TryPickup)

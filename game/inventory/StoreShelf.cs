@@ -23,6 +23,8 @@ namespace UnturnedGodot
         float _syncT;
         public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
         MeshInstance3D _shelfGlow;                         // whole-shelf outline silhouette, shown while the shelf is looked at
+        readonly List<ObjectDoor> _doors = new();          // this container's swinging door leaf/leaves (fridge/wardrobe/counter/container) -- empty for a plain shelf/crate/bookcase; driven by the inventory open/close, not F-toggled directly
+        public bool HasDoors => _doors.Count > 0;
 
         // per-shelf-type tier layout: TierY = shelf-surface heights as fractions of the STANDING AABB; PerTier = item
         // slots across the width; WidthUse = fraction of width used (end margins); FrontZ = how far toward the front face.
@@ -58,6 +60,13 @@ namespace UnturnedGodot
 
         static readonly Dictionary<string, ArrayMesh> _meshes = new();
         static readonly Dictionary<string, Material> _mats = new();
+
+        // The openable-door catalog, shared verbatim with the world-door path (WorldBuilder.LoadDoorCatalog) so a
+        // container prop that ALSO has a door (fridge/wardrobe/counter/shipping-container) swings the SAME leaf,
+        // pivot, axis + easing production uses. Loaded once, lazily.
+        static Dictionary<string, List<WorldBuilder.DoorCatalogEntry>> _doorCat;
+        static Dictionary<string, List<WorldBuilder.DoorCatalogEntry>> DoorCatalog()
+            => _doorCat ??= WorldBuilder.LoadDoorCatalog(ProjectSettings.GlobalizePath("res://content/objects/"));
 
         // per-item icon POSE: FRONT (detail face -- medkit cross, MRE text, OJ label) + UP (top of the icon -- bottle
         // cap, tomato stem) axes in the Godot mesh frame, ripped from each prefab's "Icon" transform (the pose the game
@@ -205,15 +214,62 @@ namespace UnturnedGodot
                 AddChild(_shelfGlow);
                 var box = StoodAabb(mesh); top = box.Position.Y + box.Size.Y + 0.3f;   // float the label just above the standing prop (fridge/counter are shorter)
             }
-            AddChild(new Label3D
-            {
-                Text = LabelText,
-                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                Modulate = new Color(0.8f, 0.85f, 0.95f),
-                PixelSize = 0.007f, Position = new Vector3(0, top, 0),
-                NoDepthTest = true, FontSize = 56, OutlineSize = 10,
-            });
+            // A doored container (fridge/wardrobe/counter/shipping-container) layers its swinging leaf on top of
+            // the body above and drops the floating name ENTIRELY (master); a plain shelf/crate/bookcase keeps its
+            // billboard label. TrySpawnDoors returns true iff this prop is in the door catalog.
+            if (!TrySpawnDoors(mesh))
+                AddChild(new Label3D
+                {
+                    Text = LabelText,
+                    Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                    Modulate = new Color(0.8f, 0.85f, 0.95f),
+                    PixelSize = 0.007f, Position = new Vector3(0, top, 0),
+                    NoDepthTest = true, FontSize = 56, OutlineSize = 10,
+                });
         }
+
+        // Layer this container's openable door leaf/leaves on top of the already-built body. The body .obj drew
+        // WITHOUT the leaf (a retail door leaf is a separate single-bone SkinnedMeshRenderer, invisible to the
+        // combined-mesh loader -- the whole reason extract_doors.py exists), so this is additive, not duplicate
+        // geometry. The leaf renders in the SAME frame as the body MeshInstance3D (Basis = _upright) -- the catalog
+        // pivot/axis/leaf are in the identical raw prop-local .obj space, so a rigid _upright of the whole assembly
+        // keeps the swing correct RELATIVE to the body. The door is inventory-driven (SetDoorsOpen), never F-toggled
+        // on its own, so its look-focus collider is cleared -- the shelf body owns the interact ray. Starts CLOSED
+        // (a container opens when you open its inventory), overriding the retail default-open.
+        bool TrySpawnDoors(ArrayMesh bodyMesh)
+        {
+            var cat = DoorCatalog();
+            if (cat == null || !cat.TryGetValue(MeshName, out var leaves) || leaves.Count == 0) return false;
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var mat = ShelfMat();
+            var doorXform = new Transform3D(_upright, Vector3.Zero);
+            foreach (var e in leaves)
+            {
+                var leafMesh = ObjMesh.Load(dir + e.MeshFile);
+                if (leafMesh == null) continue;
+                string curveBase = e.MeshFile.EndsWith("_door.obj") ? e.MeshFile.Substring(0, e.MeshFile.Length - "_door.obj".Length) : MeshName;
+                var d = ObjectDoor.Spawn(this, doorXform, e.Pivot, e.Axis, e.AngleDeg, e.DurationSec, leafMesh, mat,
+                    startOpen: false,
+                    openCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "open"),
+                    closeCurve: WorldBuilder.LoadDoorCurve(dir, curveBase, "close"),
+                    soundName: e.Sound);
+                d.CollisionLayer = 0;   // the shelf body owns the F-interact; the door just follows the inventory
+                _doors.Add(d);
+            }
+            if (_doors.Count > 1) foreach (var d in _doors) d.SetGroup(_doors);   // wardrobe/double-door: both leaves swing together, one sound
+            return _doors.Count > 0;
+        }
+
+        // Swing this container's door(s) to a target state -- called by the crate open/close (PlayerController).
+        // Grouped multi-leaf props swing together off the first SetOpen (SyncGroup), so the rest no-op: one sound.
+        public void SetDoorsOpen(bool open)
+        {
+            foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(open);
+        }
+
+        // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
+        public float DebugDoorSwing() => (_doors.Count > 0 && IsInstanceValid(_doors[0])) ? _doors[0].DebugSwing : -1f;
+        public void TickDoorsForTest(double delta) { foreach (var d in _doors) if (IsInstanceValid(d)) d._PhysicsProcess(delta); }
 
         public override void _Ready()
         {

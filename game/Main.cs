@@ -68,6 +68,7 @@ namespace UnturnedGodot
             bool fluidTest = false;
             bool doorTest = false;
             string doorTestName = null;
+            bool containerTest = false; string containerTestName = null;
             bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
@@ -81,6 +82,8 @@ namespace UnturnedGodot
                 else if (arg == "--fluidtest") fluidTest = true;   // F2 verify: source -> hose -> storage flows + fills (headless log check)
                 else if (arg == "--doortest") { doorTest = true; doorTestName = "Fridge_0"; }   // openable prop door MVP: place one a few metres from the camera; UG_DOOR_OPEN=1 spawns it already open
                 else if (arg.StartsWith("--doortest=")) { doorTest = true; doorTestName = arg["--doortest=".Length..]; }   // e.g. --doortest=Wardrobe_0 -- any prop with a doors.txt entry
+                else if (arg == "--containertest") { containerTest = true; containerTestName = "Fridge_0"; }   // lootable+openable merge: spawn the doored prop as a REAL StoreShelf container + render its door; UG_CONTAINER_OPEN=1 opens it
+                else if (arg.StartsWith("--containertest=")) { containerTest = true; containerTestName = arg["--containertest=".Length..]; }
                 else if (arg == "--zombietest") zombieTest = true;   // OFFLINE verify: sync world -> bucket Animals.dat into pockets -> check planned spawns land ON the baked navmesh
                 else if (arg == "--zdirtest") zdirTest = true;       // OFFLINE verify: boot the REWRITE on PEI -> do rows tier, query paths and actually MOVE? (implies --newzombies)
                 else if (arg.StartsWith("--proptest=")) { proptest = arg["--proptest=".Length..]; _shotRequested = proptest; }   // spawn ONE named prop at identity + RGB axes -> diagnose mirror/orientation/material
@@ -264,6 +267,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(1280, 720);
                 _shotPath = shot; _shotRequested = shot;
                 BuildDoorTest(doorTestName);
+                return;
+            }
+
+            if (containerTest)   // lootable+openable merge: spawn the doored prop as a REAL StoreShelf + render its swinging door (UG_CONTAINER_OPEN=1 for the open pose)
+            {
+                GetWindow().Size = new Vector2I(1280, 720);
+                _shotPath = shot; _shotRequested = shot;
+                BuildContainerTest(containerTestName);
                 return;
             }
 
@@ -1401,6 +1412,56 @@ namespace UnturnedGodot
             Vector3 pivotWorld = xform * (pivotSum / (float)spawnedDoors.Count);
             Vector3 outward = pivotWorld - bodyCenterWorld; outward.Y = 0f;
             if (outward.LengthSquared() < 0.01f) outward = -xform.Basis.Z;   // degenerate fallback: straight back
+            outward = outward.Normalized();
+            float r = Mathf.Max(bodyAabb.Size.X, Mathf.Max(bodyAabb.Size.Y, bodyAabb.Size.Z));
+            if (r < 0.01f) r = 1f;
+            Vector3 lookAt = bodyCenterWorld + Vector3.Up * (r * 0.15f);
+            var cam = new Camera3D { Current = true, Fov = 55f, Far = 10000f };
+            AddChild(cam);
+            cam.Position = lookAt + outward * (r * 1.6f + 2.0f) + Vector3.Up * (r * 0.6f);
+            cam.LookAt(lookAt, Vector3.Up);
+        }
+
+        // --containertest[=NAME]: spawn the doored prop (Fridge_0/Wardrobe_0/Counter_0..) as a REAL StoreShelf
+        // container + render its swinging door leaf -- verifies the lootable+openable merge in StoreShelf's own
+        // _upright frame (not the door-test placement frame). UG_CONTAINER_OPEN=1 opens the door for the open shot.
+        void BuildContainerTest(string name)
+        {
+            if (string.IsNullOrEmpty(name)) name = "Fridge_0";
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.32f, 0.36f, 0.44f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.7f, 0.7f, 0.72f), AmbientLightEnergy = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-45f, -35f, 0f), LightEnergy = 1.2f });
+
+            string dir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var bodyMesh = ObjMesh.Load(dir + name + ".obj");
+            if (bodyMesh == null) { GD.Print($"[CONTAINERTEST] no body mesh {name}"); GetTree().Quit(1); return; }
+
+            // The REAL container node: serverOwned=true skips the loot roll (no LootTables dependency for a pure
+            // door render), showItems=false = a solid F-open prop. Exercises StoreShelf.BuildVisual's actual
+            // door-spawn path, so what renders here is exactly what the world spawns.
+            var shelf = StoreShelf.Spawn(this, Vector3.Zero, name, 0, 0f, false, name, true, true);
+            bool open = System.Environment.GetEnvironmentVariable("UG_CONTAINER_OPEN") == "1";
+            if (open) { shelf.SetDoorsOpen(true); for (int i = 0; i < 40; i++) shelf.TickDoorsForTest(1.0 / 60.0); }   // settle the swing headlessly so a --shot (not just a movie) catches the open pose
+            GD.Print($"[CONTAINERTEST] {name} hasDoors={shelf.HasDoors} open={open} settledSwing={shelf.DebugDoorSwing():0.00}");
+
+            // Camera from the door side, in StoreShelf's _upright frame (shelf spawned at yaw=0/pos=0 -> its
+            // transform is identity, so body/door world = _upright * local), mirroring BuildDoorTest's framing.
+            var upright = new Basis(Vector3.Right, Mathf.DegToRad(270f));
+            var cat = WorldBuilder.LoadDoorCatalog(dir);
+            Vector3 pivotSum = Vector3.Zero; int nLeaves = 1;
+            if (cat.TryGetValue(name, out var leaves) && leaves.Count > 0)
+            { pivotSum = Vector3.Zero; foreach (var e in leaves) pivotSum += e.Pivot; nLeaves = leaves.Count; }
+            var bodyAabb = bodyMesh.GetAabb();
+            Vector3 bodyCenterWorld = upright * bodyAabb.GetCenter();
+            Vector3 pivotWorld = upright * (pivotSum / (float)nLeaves);
+            Vector3 outward = pivotWorld - bodyCenterWorld; outward.Y = 0f;
+            if (outward.LengthSquared() < 0.01f) outward = -upright.Z;
             outward = outward.Normalized();
             float r = Mathf.Max(bodyAabb.Size.X, Mathf.Max(bodyAabb.Size.Y, bodyAabb.Size.Z));
             if (r < 0.01f) r = 1f;
