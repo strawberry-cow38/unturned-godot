@@ -429,6 +429,7 @@ namespace UnturnedGodot
                             var sab = baseMesh.GetAabb();
                             var stumpBody = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = 1u << 6 };   // small remnant -> see-through layer (won't block item LOS); the player collides with it regardless
                             stumpBody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                            if (destIndex >= 0) stumpBody.SetMeta(DestructibleField.MetaKey, destIndex);   // route base-hits to the SAME destructible destBody uses: this box is coincident with the intact trimesh and both sit on the bullet mask, so a shot that returns THIS collider would otherwise do nothing = bulletproof base while intact. No-op after the break (prop already dead). [tinyclaw catch on 847a3fad]
                             stumpBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = sab.Size }, Position = sab.GetCenter() });
                             root.AddChild(stumpBody);
                         }
