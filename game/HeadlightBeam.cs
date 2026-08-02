@@ -202,32 +202,63 @@ namespace UnturnedGodot
                 return pts;
             }
 
-            int m = 4 * n + 2;
-            // Rings bunch toward the LENS. Everything that changes shape -- the waist opening from a pinch into
-            // one volume -- happens inside the first mergeAt of the throw; past that it is a straight taper that
-            // two rings describe as well as ten. Uniform spacing spent most of its rings on the boring part.
+            // TWO SEPARATE TUBES when not merging. The single-loop-with-a-waist trick is only needed to fuse the
+            // lobes; with Merge off it actively hurts, because the waist point sits at mid-X on the lamps' vertical
+            // CENTRE while each lobe's inner edge is at its own top and bottom -- so the strip between them is a
+            // real triangular wedge spanning the gap, not the degenerate sliver I claimed. strawberry saw it
+            // immediately: "they still seem connected by something in the middle". They were.
+            // Rings bunch toward the LENS: everything that changes shape happens near the car, and past that it
+            // is a straight taper two rings describe as well as ten.
             float Depth(int r) => Mathf.Pow((float)r / rings, 1.7f);
-            for (int r = 0; r < rings; r++)
+
+            void Strip(System.Func<float, Vector3[]> ring, int mm)
             {
-                float t0 = Depth(r), t1 = Depth(r + 1);
-                var a = Ring(t0); var b = Ring(t1);
-                for (int i = 0; i < m; i++)
+                for (int r = 0; r < rings; r++)
                 {
-                    int j = (i + 1) % m;
-                    // v runs 0 at the lens -> 1 at the far end; ConeGradient is sampled so the shaft fades out
-                    // with distance rather than ending in a rim (strawberry: "fade towards the end of the cone")
-                    Vector2 ua = new((float)i / m, t0), ub = new((float)(i + 1) / m, t0);
-                    Vector2 uc = new((float)i / m, t1), ud = new((float)(i + 1) / m, t1);
-                    void Tri(Vector3 p0, Vector3 p1, Vector3 p2, Vector2 q0, Vector2 q1, Vector2 q2)
+                    float t0 = Depth(r), t1 = Depth(r + 1);
+                    var a = ring(t0); var b = ring(t1);
+                    for (int i = 0; i < mm; i++)
                     {
-                        var fn = (p1 - p0).Cross(p2 - p0).Normalized();
-                        v.Add(p0); v.Add(p1); v.Add(p2);
-                        nrm.Add(fn); nrm.Add(fn); nrm.Add(fn);
-                        uv.Add(q0); uv.Add(q1); uv.Add(q2);
+                        int j = (i + 1) % mm;
+                        Vector2 ua = new((float)i / mm, t0), ub = new((float)(i + 1) / mm, t0);
+                        Vector2 uc = new((float)i / mm, t1), ud = new((float)(i + 1) / mm, t1);
+                        void Tri(Vector3 p0, Vector3 p1, Vector3 p2, Vector2 q0, Vector2 q1, Vector2 q2)
+                        {
+                            var fn = (p1 - p0).Cross(p2 - p0).Normalized();
+                            v.Add(p0); v.Add(p1); v.Add(p2);
+                            nrm.Add(fn); nrm.Add(fn); nrm.Add(fn);
+                            uv.Add(q0); uv.Add(q1); uv.Add(q2);
+                        }
+                        Tri(a[i], b[i], a[j], ua, uc, ub);
+                        Tri(a[j], b[i], b[j], ub, uc, ud);
                     }
-                    Tri(a[i], b[i], a[j], ua, uc, ub);
-                    Tri(a[j], b[i], b[j], ub, uc, ud);
                 }
+            }
+
+            if (Merge) Strip(Ring, 4 * n + 2);
+            else
+            {
+                // one closed loop per lamp: its own upper chain out, its own lower chain back. Nothing between them.
+                Vector3[] Lobe(Vector2[] up, Vector2[] lo, Vector2 c, float t)
+                {
+                    float grow = 1f + spread * t, growY = 1f + spreadY * t;
+                    float z = -t * len;
+                    var pts = new Vector3[2 * n];
+                    for (int i = 0; i < n; i++)
+                    {
+                        var p = c + new Vector2((up[i].X - c.X) * grow, (up[i].Y - c.Y) * growY);
+                        pts[i] = new Vector3(p.X, p.Y, z);
+                    }
+                    for (int i = 0; i < n; i++)
+                    {
+                        var q = lo[n - 1 - i];
+                        var p = c + new Vector2((q.X - c.X) * grow, (q.Y - c.Y) * growY);
+                        pts[n + i] = new Vector3(p.X, p.Y, z);
+                    }
+                    return pts;
+                }
+                Strip(t => Lobe(lUp, lLo, lc, t), 2 * n);
+                Strip(t => Lobe(rUp, rLo, rc, t), 2 * n);
             }
             if (v.Count == 0) return null;
             var arr = new Godot.Collections.Array();
