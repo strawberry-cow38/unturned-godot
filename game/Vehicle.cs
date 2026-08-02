@@ -1701,7 +1701,7 @@ namespace UnturnedGodot
             if (n < 3) return;
             c /= n;
             var hull = HeadlightBeam.Hull(left);
-            var mesh = HeadlightBeam.Build(hull, c, new Vector2(-c.X, c.Y), BeamLength);
+            var mesh = HeadlightBeam.Build(hull, c, new Vector2(-c.X, c.Y), BeamLength, BeamSpread, 0.30f, BeamVertical);
             if (mesh == null) return;
 
             // Warmer than the lens itself (strawberry) and additive, so it reads as light in the air rather than a
@@ -1736,6 +1736,8 @@ namespace UnturnedGodot
         // the full gradient, so matching that look means the albedo alpha IS the density -- 0.055 rendered as a
         // solid tan slab, 2.5x the tuned streetlight.
         public static float BeamAlpha  = 0.020f;
+        public static float BeamVertical = 0.40f;   // vertical spread as a fraction of horizontal
+        public static float BeamSpread = 16f;   // how much each lobe grows over the throw (strawberry: much wider)
         public static float BeamLength = 22f;   // how far the shaft throws
         public static float BeamCull   = 90f;   // it is a close-range detail; retire it well before the car does
 

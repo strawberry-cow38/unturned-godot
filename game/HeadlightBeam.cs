@@ -107,9 +107,11 @@ namespace UnturnedGodot
         /// <param name="spread">how much each lobe grows by the far end (1 = doubles)</param>
         /// <param name="mergeAt">fraction of the throw by which the waist is fully open (the two lobes are one)</param>
         public static ArrayMesh Build(Vector2[] left, Vector2 lc, Vector2 rc, float len,
-                                      float spread = 3.2f, float mergeAt = 0.30f, int n = 0, int rings = 12)
+                                      float spread = 3.2f, float mergeAt = 0.30f, float vertical = 0.45f,
+                                      int n = 0, int rings = 12)
         {
             if (left == null || left.Length < 3) return null;
+            float spreadY = spread * vertical;   // a headlight throws WIDE and comparatively flat, not a round cone
             // Sample each chain at the resolution the OUTLINE actually has, not a fixed number. A jeep lamp hulls
             // to 6 points -- 3 per chain -- so resampling to 10 spent seven vertices per chain interpolating
             // points along straight edges: 1512 triangles where ~400 draws the identical silhouette. Clamped low
@@ -131,20 +133,25 @@ namespace UnturnedGodot
             // One ring = upper chain (left lobe -> waist -> right lobe) then the lower chain back. 4n+2 points.
             Vector3[] Ring(float t)
             {
-                float grow = 1f + spread * t;
+                float grow = 1f + spread * t;          // horizontal
+                float growY = 1f + spreadY * t;        // vertical, deliberately less
                 float open = Mathf.SmoothStep(0f, 1f, Mathf.Clamp(t / mergeAt, 0f, 1f));   // waist: shut at the lens, open by mergeAt
                 var pts = new Vector3[4 * n + 2];   // upper: n + waist + n, lower: n + waist + n
                 float z = -t * len;
-                Vector2 P(Vector2 p, Vector2 c) => c + (p - c) * grow + (c - mid) * (grow - 1f) * 0.15f;   // lobes grow and drift apart slightly
+                Vector2 P(Vector2 p, Vector2 c) => c + new Vector2((p.X - c.X) * grow, (p.Y - c.Y) * growY)
+                                                     + (c - mid) * (grow - 1f) * 0.15f;   // grow, and drift apart a little
                 float waistY = 0f, waistTop, waistBot;
                 {
                     // the waist sits between the lamps; it is a single point at the lens (pinched) and opens to
                     // the lobes' own height by mergeAt, which is what turns two tips into one solid volume
-                    float hUp = 0f, hLo = 0f;
+                    // seeded from the DATA, not 0 -- these are vehicle-space Y (~0.76 on a jeep), so a 0 seed
+                    // made hLo stay 0, dropped the waist centre half a metre and then multiplied that error by
+                    // grow: the beam came out 12.5m tall, taller than it was wide.
+                    float hUp = float.MinValue, hLo = float.MaxValue;
                     for (int i = 0; i < n; i++) { hUp = Mathf.Max(hUp, lUp[i].Y); hLo = Mathf.Min(hLo, lLo[i].Y); }
                     waistY = (hUp + hLo) * 0.5f;
-                    waistTop = waistY + (hUp - waistY) * grow * open;
-                    waistBot = waistY + (hLo - waistY) * grow * open;
+                    waistTop = waistY + (hUp - waistY) * growY * open;
+                    waistBot = waistY + (hLo - waistY) * growY * open;
                 }
                 int k = 0;
                 for (int i = 0; i < n; i++) { var p = P(lUp[i], lc); pts[k++] = new Vector3(p.X, p.Y, z); }
