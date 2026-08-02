@@ -223,6 +223,10 @@ void sky() {
             _lastMoteFade = a;
             foreach (Node n in tree.GetNodesInGroup("streetlights"))
                 if (n is StreetLight sl) sl.SetMoteFade(a);
+            // Vehicle headlight beams ride the SAME curve and the same stepped sweep -- strawberry asked for the
+            // identical fade in/out timings, so they read one value rather than each deriving its own.
+            foreach (Node n in tree.GetNodesInGroup("vehicles"))
+                if (n is Vehicle vh) vh.SetHeadlightMoteFade(a);
         }
 
         // Sun sits at the horizon at t=0.25 (dawn) / 0.75 (dusk); lamps are lit while it's below, with a small dusk margin.

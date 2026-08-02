@@ -146,7 +146,8 @@ namespace UnturnedGodot
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;
-        MeshInstance3D _headlightBeam;   // the visible shaft in front of the lamps (HeadlightBeam) -- ONE mesh for both, shown with the lights   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
+        MeshInstance3D _headlightBeam;
+        CpuParticles3D _headlightMotes; Color _hlMoteBase; float _hlMoteFade = 0f;   // dust in the beam -- night only, on the STREETLIGHT clock   // the visible shaft in front of the lamps (HeadlightBeam) -- ONE mesh for both, shown with the lights   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
         StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
@@ -1677,6 +1678,7 @@ namespace UnturnedGodot
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights
             if (_headlights != null) _headlights.Visible = _headlightsOn;
             if (_headlightBeam != null) _headlightBeam.Visible = _headlightsOn;
+            ApplyHeadlightMotes();
             if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
             {
                 _headlightMat.EmissionEnabled = _headlightsOn;
@@ -1729,6 +1731,83 @@ namespace UnturnedGodot
                 VisibilityRangeEnd = BeamCull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
             };
             AddChild(_headlightBeam);
+
+            // DUST IN THE BEAM (strawberry) -- night only, on the SAME fade curve as the streetlight motes, and
+            // culled the same way. The timing is not re-derived here: StreetLight.MoteFadeFor IS the curve, so
+            // when it is retuned both follow. Copying it is how the "one definition of lit" bug happened earlier.
+            if (StreetLight.MoteCount > 0)
+            {
+                var mm = new StandardMaterial3D
+                {
+                    AlbedoColor = new Color(1f, 0.90f, 0.72f, StreetLight.MoteOpacity),
+                    EmissionEnabled = true, Emission = new Color(1f, 0.90f, 0.72f), EmissionEnergyMultiplier = 2.2f,
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
+                    DisableReceiveShadows = true,
+                };
+                var ab = mesh.GetAabb();
+                _headlightMotes = new CpuParticles3D
+                {
+                    Position = new Vector3(0f, 0f, frontZ),
+                    Amount = StreetLight.MoteCount, Lifetime = 7f, Preprocess = 7f,   // start at steady state
+                    Randomness = 1f, Emitting = false, Visible = false,
+                    Mesh = new QuadMesh { Size = new Vector2(0.0495f, 0.0495f) },
+                    EmissionShape = CpuParticles3D.EmissionShapeEnum.Points,
+                    EmissionPoints = BeamPoints(ab, 56),
+                    Direction = Vector3.Up, Spread = 180f,
+                    InitialVelocityMin = 0.02f, InitialVelocityMax = 0.14f,
+                    Gravity = new Vector3(0f, -0.03f, 0f),
+                    ScaleAmountMin = 0.6f, ScaleAmountMax = 1.5f,
+                    AngleMin = -180f, AngleMax = 180f,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    VisibilityRangeEnd = StreetLight.MoteCullRange,
+                    VisibilityRangeEndMargin = StreetLight.MoteFadeMargin,
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
+                    CustomAabb = ab.Grow(0.5f),   // explicit: a slow drifter's auto bounds collapse toward the
+                                                   // emitter and the whole system pops out at glancing angles
+                    MaterialOverride = mm,
+                };
+                _hlMoteBase = mm.AlbedoColor;
+                AddChild(_headlightMotes);
+            }
+        }
+
+        /// <summary>Points sampled INSIDE the beam volume for the mote emitter -- sampled against the mesh's own
+        /// bounds and tapered with depth, so dust sits in the light rather than in the dark corners of a box.</summary>
+        static Vector3[] BeamPoints(Aabb ab, int n)
+        {
+            var pts = new Vector3[n];
+            uint seed = 0x9E3779B9;
+            float Rnd() { seed = seed * 1664525u + 1013904223u; return (seed >> 8) * (1f / 16777216f); }
+            for (int i = 0; i < n; i++)
+            {
+                float t = Mathf.Pow(Rnd(), 0.65f);                 // bias toward the car, where the beam is bright
+                float z = -t * Mathf.Abs(ab.Size.Z);
+                float hw = Mathf.Lerp(0.2f, ab.Size.X * 0.5f, t);  // taper with the beam
+                float hh = Mathf.Lerp(0.15f, ab.Size.Y * 0.5f, t);
+                pts[i] = new Vector3((Rnd() * 2f - 1f) * hw, ab.Position.Y + ab.Size.Y * 0.5f + (Rnd() * 2f - 1f) * hh, z);
+            }
+            return pts;
+        }
+
+        /// <summary>Drive the beam dust from the world clock. Night-only falls out of the curve itself -- it is
+        /// zero through the day -- and the lamps still have to be ON.</summary>
+        public void SetHeadlightMoteFade(float a)
+        {
+            _hlMoteFade = Mathf.Clamp(a, 0f, 1f);
+            ApplyHeadlightMotes();
+        }
+
+        void ApplyHeadlightMotes()
+        {
+            if (_headlightMotes == null) return;
+            float a = (_headlightsOn && !_exploded) ? _hlMoteFade : 0f;
+            _headlightMotes.Emitting = a > 0.001f;
+            _headlightMotes.Visible = a > 0.001f;
+            if (_headlightMotes.MaterialOverride is StandardMaterial3D m)
+                m.AlbedoColor = new Color(_hlMoteBase.R, _hlMoteBase.G, _hlMoteBase.B, _hlMoteBase.A * a);
         }
 
         // Effective density = BeamAlpha * the gradient. The streetlight shaft lands at ~0.022 (0.07 albedo x a

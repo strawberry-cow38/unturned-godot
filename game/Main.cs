@@ -925,7 +925,14 @@ namespace UnturnedGodot
             _veh.EngineOn = true;                      // engine running -> fuel gauge ticks down
             if (_demo) { _veh.Fuel = _veh.FuelMax * 0.62f; _veh.Health = _veh.HealthMax * 0.85f; _veh.Battery = 4200f; }   // --demo: varied gauge levels (else full/spawn)
             AddChild(new HUD { Vehicle = _veh });       // vehicle status HUD (no Player, so the on-foot HUD stays hidden)
-            if (_night) _veh.ToggleHeadlights();        // headlights on for the night demo
+            if (_night)
+            {
+                _veh.ToggleHeadlights();                // headlights on for the night demo
+                // In game DayNightCycle.DriveMoteFade feeds this from the world clock; this harness has no
+                // cycle node, so without driving it here the beam dust can never appear in a --night shot --
+                // the third harness in two days that could not express the state being judged.
+                _veh.SetHeadlightMoteFade(1f);
+            }
         }
 
         // --drivetest=DIR : a player beside a jeep; scripts entering + driving to verify enter/exit + the chase cam.
