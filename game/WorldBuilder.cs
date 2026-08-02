@@ -548,7 +548,7 @@ namespace UnturnedGodot
                 if ((name == "Lamp_0" || name == "Lamp_1") && mode != WorldMode.Dedicated)
                 {
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
-                    root.AddChild(LampLight.Make(gpos + basis * lampCenter));
+                    root.AddChild(LampLight.Make(gpos + basis * lampCenter, mainMi));   // hand the prop mesh in so the fixture itself glows when lit
                 }
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
