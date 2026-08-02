@@ -69,7 +69,7 @@ namespace UnturnedGodot
             bool doorTest = false;
             string doorTestName = null;
             bool containerTest = false; string containerTestName = null;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, trafficTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -157,6 +157,7 @@ namespace UnturnedGodot
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
                 else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
+                else if (arg == "--trafficlight") trafficTest = true;   // one signal, both heads (UG_TL_STATE=green|amber|red|flash|dark, UG_TL_SIDE=1 for the side-road mast, UG_TL_DAY=1 for daylight)
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
                 else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
@@ -389,6 +390,14 @@ namespace UnturnedGodot
                 _shotPath = shot;
                 GetWindow().Size = new Vector2I(1280, 720);
                 BuildStreetLightDemo();
+                return;
+            }
+
+            if (trafficTest)   // one traffic signal, one aspect, held -- the flash beats last 0.6s and are otherwise unlookable
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildTrafficLightDemo();
                 return;
             }
 
@@ -3777,6 +3786,83 @@ namespace UnturnedGodot
         // dust motes are a LOOK, not a value -- there is nothing an assert can check here, so this exists to be
         // rendered and eyeballed. UG_LIGHTCAM=under puts the camera beneath the lamp looking up, which is the
         // view that was empty before the cone stopped back-face culling.
+        // One Traffic_Light_0, one aspect, HELD. Every state this prop has must be renderable on demand: the flash
+        // beats last 0.6s and the drained-battery state only arrives two in-game days after a blackout, so neither
+        // could ever be eyeballed by waiting. UG_TL_STATE picks the aspect, UG_TL_SIDE=1 makes it a side-road mast
+        // (flashes red, not amber), UG_TL_DAY=1 lights it as daytime -- the unlit lenses have to look right too, and
+        // a night-only harness is how the streetlight's unlit bulb went unlooked-at for two days.
+        void BuildTrafficLightDemo()
+        {
+            bool day = System.Environment.GetEnvironmentVariable("UG_TL_DAY") == "1";
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = day ? new Color(0.42f, 0.55f, 0.72f) : new Color(0.02f, 0.03f, 0.05f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = day ? new Color(0.55f, 0.60f, 0.70f) : new Color(0.05f, 0.06f, 0.09f),
+                AmbientLightEnergy = 1f,
+                // Glow, or the one thing being judged -- how hot a lit lens reads against its housing -- cannot appear.
+                GlowEnabled = true, GlowIntensity = 0.8f, GlowBloom = 0.1f, GlowHdrThreshold = 0.9f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+            if (day) AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-52f, 34f, 0f), LightEnergy = 1.1f });
+
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(80, 80) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.20f, 0.19f), Roughness = 1f };
+            AddChild(gmesh);
+
+            // Placed the way WorldBuilder places it: the raw mesh lies flat with the pole along +Z, so ex=270 stands
+            // it up. That puts the two signal heads ~6.5m up, strung along the mast arm at world Z -2.5 and -8.
+            var propBasis = new Basis(new Vector3(1, 0, 0), Mathf.DegToRad(270f));
+            string objDir = ProjectSettings.GlobalizePath("res://content/objects/");
+            var propMesh = ObjMesh.Load(objDir + "Traffic_Light_0.obj");
+            if (propMesh == null) { GD.PrintErr("[trafficlight] Traffic_Light_0.obj missing"); return; }
+
+            // The prop's REAL palette texture. NEAREST is mandatory -- it is a 4x2 palette and linear sampling would
+            // blend the red lens into the amber one two texels away.
+            var bodyMat = new StandardMaterial3D { Roughness = 0.8f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                                                   TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+            string texPath = objDir + "Traffic_Light_0_tex.png";
+            if (System.IO.File.Exists(texPath))
+            {
+                var img = Image.LoadFromFile(texPath);
+                if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+            }
+
+            var parts = ObjMesh.SplitTrafficLenses(propMesh);
+            AddChild(new MeshInstance3D { Mesh = parts[3] ?? propMesh, MaterialOverride = bodyMat, Basis = propBasis });
+            var lens = new MeshInstance3D[3];
+            for (int i = 0; i < 3; i++)
+            {
+                if (parts[i] == null) continue;
+                lens[i] = new MeshInstance3D { Mesh = parts[i], MaterialOverride = bodyMat, Basis = propBasis };   // bodyMat = the UNLIT lens
+                AddChild(lens[i]);
+            }
+
+            var tl = TrafficLight.Make(Vector3.Zero, 0f, lens[0], lens[1], lens[2]);
+            tl.SideRoad = System.Environment.GetEnvironmentVariable("UG_TL_SIDE") == "1";
+            AddChild(tl);
+            var state = (System.Environment.GetEnvironmentVariable("UG_TL_STATE") ?? "red").ToLowerInvariant();
+            tl.ForcePhase(state switch
+            {
+                "green" => TrafficLight.Phase.Green,
+                "amber" => TrafficLight.Phase.Amber,
+                "dark" => TrafficLight.Phase.Off,                                          // blink dark beat / drained battery
+                "flash" => tl.SideRoad ? TrafficLight.Phase.FlashRed : TrafficLight.Phase.FlashAmber,
+                _ => TrafficLight.Phase.Red,
+            });
+
+            // Looking along +X at the lens faces -- the lenses sit on the housing's -X side, and the mast arm runs to
+            // world Z -8.9, so the two heads sit at roughly Z -2.5 and -8. AddChild BEFORE aiming: LookAt resolves
+            // against the global transform, so calling it on a node still outside the tree aims at nothing and the
+            // prop renders off-frame.
+            var cam = new Camera3D { Current = true, Fov = 55f };
+            AddChild(cam);
+            cam.Position = new Vector3(-9f, 6.6f, -5.4f);
+            cam.LookAt(new Vector3(0f, 6.3f, -5.4f), Vector3.Up);
+            GD.Print($"[TRAFFICLIGHT] state={state} side={tl.SideRoad} day={day} phase={tl.CurrentPhase} lens={TrafficLight.LensIndexFor(tl.CurrentPhase)}");
+        }
+
         void BuildStreetLightDemo()
         {
             var env = new Godot.Environment

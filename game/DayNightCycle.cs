@@ -199,6 +199,8 @@ void sky() {
                 if (n is StreetLight sl) sl.FlickerPulse(durationSec);
             foreach (Node n in tree.GetNodesInGroup("gridlights"))
                 if (n is GridLight gl) gl.FlickerPulse(durationSec);   // indoor lamps ride the same brownout pulse
+            foreach (Node n in tree.GetNodesInGroup("traffic_lights"))
+                if (n is TrafficLight tl) tl.FlickerPulse(durationSec);   // signals stutter too -- the one grid consumer that ignored a brownout looked like a bug
         }
 
         // Fire each scheduled warning brownout as its evening-time arrives (once), then kill the grid for good on the
@@ -227,6 +229,10 @@ void sky() {
                 if (n is StreetLight sl) { sl.SetNight(night, animate: true); sl.SetPowered(grid, animate: true); }   // reaction-delay + flicker so the street powers up/down raggedly, not all at once (master)
             foreach (Node n in tree.GetNodesInGroup("gridlights"))
                 if (n is GridLight gl) gl.SetPowered(grid, animate: true);   // indoor lamps follow the grid only -- always-on when powered, not night-gated
+            // Traffic signals ride the same mains edge but NOT the night edge -- a junction runs its cycle around the
+            // clock. Losing the grid drops them to a backup flash rather than dark; TrafficLight owns that state.
+            foreach (Node n in tree.GetNodesInGroup("traffic_lights"))
+                if (n is TrafficLight tl) tl.SetPowered(grid);
         }
 
 

@@ -1,0 +1,14 @@
+# Traffic_Light_0 placements that are on the SIDE road of their junction.
+# In a power-outage flash, these blink RED (stop, treat as a 4-way) while the main road blinks AMBER.
+# Matched against placements.txt by position. Edit freely -- one line per prop, "x z" to 3dp.
+# Seeded per junction: the axis carrying FEWER signals is the side road (ties -> lower yaw axis is main),
+# so every junction has exactly one axis flashing red. All-amber at a 4-way is a collision, not a style.
+-608.325 171.594
+-107.784 598.522
+-106.670 672.879
+-82.759 583.727
+-33.593 692.632
+-8.568 677.837
+-4.980 -430.747
+23.022 -438.562
+47.098 -480.262

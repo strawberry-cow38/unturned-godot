@@ -152,6 +152,67 @@ namespace UnturnedGodot
             return res;
         }
 
+        // ---- multi-way UV split -------------------------------------------------------------------------
+        // SplitLens is binary (lens vs body) because a streetlight has one bulb. A traffic light has THREE
+        // lenses that must light independently, so this generalises it: N predicates over a triangle's UVs, N+1
+        // meshes back (one per predicate, plus whatever matched nothing).
+        //
+        // Predicates are given in GODOT uv space -- Load V-flips, so a texel at OBJ v[0.5,1) arrives at v(0,0.5].
+        // Deriving the cells from the palette beforehand means no texture load at runtime and no colour matching.
+        static readonly Dictionary<(ArrayMesh, int), ArrayMesh[]> _multiCache = new();
+
+        public static ArrayMesh[] SplitByUv(ArrayMesh src, int key, params System.Func<Vector2, Vector2, Vector2, bool>[] preds)
+        {
+            if (src == null || preds.Length == 0) return null;
+            if (_multiCache.TryGetValue((src, key), out var hit)) return hit;
+            if (src.GetSurfaceCount() < 1) return null;
+
+            var a0 = src.SurfaceGetArrays(0);
+            var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+            var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+            var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+            if (V.Length < 3 || U.Length != V.Length) return null;
+
+            int n = preds.Length + 1;   // last bucket = the body
+            var vs = new List<Vector3>[n]; var ns = new List<Vector3>[n];
+            var us = new List<Vector2>[n]; var cs = new List<Color>[n];
+            for (int i = 0; i < n; i++) { vs[i] = new(); ns[i] = new(); us[i] = new(); cs[i] = new(); }
+
+            for (int i = 0; i + 2 < V.Length; i += 3)
+            {
+                int b = preds.Length;   // default: body
+                for (int p = 0; p < preds.Length; p++)
+                    if (preds[p](U[i], U[i + 1], U[i + 2])) { b = p; break; }
+                for (int k = 0; k < 3; k++)
+                {
+                    vs[b].Add(V[i + k]);
+                    ns[b].Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                    us[b].Add(U[i + k]);
+                    cs[b].Add(i + k < C.Length ? C[i + k] : Colors.White);
+                }
+            }
+            var outp = new ArrayMesh[n];
+            for (int i = 0; i < n; i++) outp[i] = Build(vs[i], ns[i], us[i], cs[i]);
+            _multiCache[(src, key)] = outp;
+            return outp;
+        }
+
+        /// <summary>Traffic_Light_0's three lens groups, derived from its 4x2 palette: red at u[.50,.75),
+        /// amber at u[.75,1), both on the upper texel row (godot v&lt;.5); green spans u[.50,1) on the lower row
+        /// (godot v&gt;.5). Returns {red, amber, green, body} -- 4 tris per lens, 2 signal heads per prop.</summary>
+        public static ArrayMesh[] SplitTrafficLenses(ArrayMesh src)
+        {
+            static bool Up(Vector2 a, Vector2 b, Vector2 c) => a.Y < 0.5f && b.Y < 0.5f && c.Y < 0.5f;
+            static bool Lo(Vector2 a, Vector2 b, Vector2 c) => a.Y > 0.5f && b.Y > 0.5f && c.Y > 0.5f;
+            static bool InU(Vector2 a, Vector2 b, Vector2 c, float lo, float hi)
+                => a.X >= lo && a.X < hi && b.X >= lo && b.X < hi && c.X >= lo && c.X < hi;
+            return SplitByUv(src, 1,
+                (a, b, c) => Up(a, b, c) && InU(a, b, c, 0.50f, 0.75f),   // red
+                (a, b, c) => Up(a, b, c) && InU(a, b, c, 0.75f, 1.01f),   // amber
+                (a, b, c) => Lo(a, b, c) && InU(a, b, c, 0.50f, 1.01f));  // green
+        }
+
         // ---- stump split --------------------------------------------------------------------------------
         // Destroying a prop currently hides every mesh it owns, so a smashed streetlight vanishes off the pavement
         // entirely. Retail leaves the footing behind. SplitBelow carves the part that should SURVIVE a break onto

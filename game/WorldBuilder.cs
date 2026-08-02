@@ -284,6 +284,21 @@ namespace UnturnedGodot
             }
             var cache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
             var doorCatalog = LoadDoorCatalog(dir);   // openable prop doors (MVP: Fridge_0) -- tools/extract_doors.py doors.txt
+            // SIDE-ROAD SIGNALS (strawberry: "add a per prop flag for 'side road'"). Which road a mast is on cannot be
+            // derived at runtime -- an independent per-prop timer has no junction to ask -- so it is data, keyed by
+            // placement position like the rest of content/objects/. Absent file = every signal flashes amber, which is
+            // wrong at a 4-way but harmless; the shipped file marks 9 of the 21 so each junction has exactly one axis
+            // flashing red. Rounded to 0.1m: the file is generated FROM placements.txt, so this only has to survive
+            // float formatting, not match an independently-authored coordinate.
+            var sideRoads = new System.Collections.Generic.HashSet<(int, int)>();
+            if (System.IO.File.Exists(dir + "traffic_side_roads.txt"))
+                foreach (var line in System.IO.File.ReadLines(dir + "traffic_side_roads.txt"))
+                {
+                    if (line.Length == 0 || line[0] == '#') continue;
+                    var p = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                    if (p.Length >= 2 && float.TryParse(p[0], out var sx) && float.TryParse(p[1], out var sz))
+                        sideRoads.Add((Mathf.RoundToInt(sx * 10f), Mathf.RoundToInt(sz * 10f)));
+                }
             var doorMeshCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();
             var folCache = new System.Collections.Generic.Dictionary<string, ArrayMesh>();   // separate tree-leaf meshes (own leaf material)
             var shapeCache = new System.Collections.Generic.Dictionary<string, ConcavePolygonShape3D>();   // one trimesh collider per unique prop mesh, shared across instances
@@ -435,6 +450,34 @@ namespace UnturnedGodot
                         }
                     }
                 }
+                // TRAFFIC SIGNALS (strawberry): Traffic_Light_0 is a mast arm carrying TWO signal heads, and its
+                // red/amber/green lenses are already in the prop mesh -- three coplanar 2-tri quads per head on the
+                // head fronts -- drawn with the same material as the yellow housing. Split each colour onto its own
+                // instance so TrafficLight can light one at a time. Verified against the real 4x2 palette rather than
+                // assumed: red is texel (2,0)=(154,116,116), amber (3,0)=(195,187,154), green (2,1)=(131,147,120),
+                // and the 72-tri housing is the saturated yellow at (1,1). Both heads' lenses of a colour share a
+                // texel, so ONE instance drives both heads -- which is what we want, since a mast arm shows the same
+                // aspect from every head on it.
+                MeshInstance3D[] trafficLenses = null;
+                if (name == "Traffic_Light_0" && mode != WorldMode.Dedicated)
+                {
+                    var parts = ObjMesh.SplitTrafficLenses(mesh);   // [red, amber, green, body]
+                    if (parts != null && parts.Length == 4 && parts[3] != null)
+                    {
+                        visMesh = parts[3];
+                        trafficLenses = new MeshInstance3D[3];
+                        for (int li = 0; li < 3; li++)
+                        {
+                            if (parts[li] == null) continue;
+                            // Starts on the PROP's own material, which doubles as the unlit lens -- same reason the
+                            // streetlight bulb does: the lens is real geometry and must keep rendering when dark, or
+                            // the signal head has three holes punched in its face.
+                            trafficLenses[li] = new MeshInstance3D { Mesh = parts[li], Transform = new Transform3D(basis, gpos), MaterialOverride = MatFor(matName),
+                                VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                            root.AddChild(trafficLenses[li]);
+                        }
+                    }
+                }
                 var mainMi = new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
                     VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };   // individual props already frustum-cull behind the player; add a distance cutoff (master)
                 root.AddChild(mainMi);
@@ -549,6 +592,15 @@ namespace UnturnedGodot
                 {
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
                     root.AddChild(LampLight.Make(gpos + basis * lampCenter, mainMi));   // hand the prop mesh in so the fixture itself glows when lit
+                }
+                // Each signal runs its OWN dumb timer (strawberry's explicit call) -- no junction sync, so crossing
+                // roads can both show green. The offset is hashed off world position, so the signals differ from each
+                // other and every client agrees without replicating a thing.
+                if (trafficLenses != null)
+                {
+                    var tl = TrafficLight.Make(gpos, ey, trafficLenses[0], trafficLenses[1], trafficLenses[2]);
+                    tl.SideRoad = sideRoads.Contains((Mathf.RoundToInt(gpos.X * 10f), Mathf.RoundToInt(gpos.Z * 10f)));
+                    root.AddChild(tl);
                 }
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
