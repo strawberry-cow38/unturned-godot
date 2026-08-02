@@ -213,11 +213,19 @@ namespace UnturnedGodot
             ApplyMoteFade();
         }
 
+        /// <summary>THE single definition of "this lamp is emitting". It exists because it was previously written
+        /// out twice -- Refresh and ApplyMoteFade each computed it -- and adding the shot-out bulb to one of them
+        /// left the other behind: a lamp you shot went dark but kept its dust drifting in a beam that was no longer
+        /// there. Two copies of a condition drift the moment a term is added to it, so there is only one.</summary>
+        bool Lit => _night && _powered && !_broken && !_bulbOut;
+
         void ApplyMoteFade()
         {
             if (_motes == null) return;
-            bool lit = _night && _powered && !_broken;
-            float a = lit ? _moteFade : 0f;
+            // INSTANTLY, not faded (strawberry): Visible=false cuts the already-live motes on the spot, where
+            // Emitting=false alone would only stop new ones and leave the existing cloud drifting for its
+            // remaining lifetime -- seconds of dust hanging under a lamp that is visibly out.
+            float a = Lit ? _moteFade : 0f;
             _motes.Emitting = a > 0.001f;
             _motes.Visible = a > 0.001f;
             if (_motes.MaterialOverride is StandardMaterial3D m)
@@ -452,12 +460,15 @@ namespace UnturnedGodot
         public bool LensPresentForTest => _panel != null && _panel.Visible;
         public bool LitConeForTest => _cone != null && _cone.Visible;
         public bool LitMotesForTest => _motes != null && _motes.Emitting;
+        // Emitting and Visible are different failures: stopping emission still leaves the live cloud drifting for
+        // its lifetime, which is exactly what "kill the particles INSTANTLY" rules out. Asserted separately.
+        public bool MotesVisibleForTest => _motes != null && _motes.Visible;
 
         // A lamp glows only when it's dark AND the grid is feeding it -- and isn't smashed. Toggles the real
         // spot + the emissive lens + the cone.
         void Refresh()
         {
-            bool lit = _night && _powered && !_broken && !_bulbOut;
+            bool lit = Lit;
             if (_spot != null) _spot.LightEnergy = lit ? Energy * _worn : 0f;
             _panelLit = lit;
             if (_panel != null)
