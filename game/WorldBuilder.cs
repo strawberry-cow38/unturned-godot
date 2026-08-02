@@ -419,6 +419,19 @@ namespace UnturnedGodot
                         root.AddChild(new MeshInstance3D { Mesh = baseMesh, MaterialOverride = MatFor(matName),
                             Transform = new Transform3D(basis, gpos), VisibilityRangeEnd = cull,
                             VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
+                        // The stump is kept OUT of the destructible mesh set so it survives the break -- but it was
+                        // visual-only, so a smashed streetlight left a walk-through footing. Give it its OWN static
+                        // collider, independent of destBody (which the break disables), so the base stays SOLID whether
+                        // the streetlight is intact or destroyed (master). A box off the sealed plinth's AABB, not a
+                        // trimesh -- fully solid + cheap, and the plinth already IS a box in the model.
+                        if (colliders)
+                        {
+                            var sab = baseMesh.GetAabb();
+                            var stumpBody = new StaticBody3D { Transform = new Transform3D(basis, gpos), CollisionLayer = 1u << 6 };   // small remnant -> see-through layer (won't block item LOS); the player collides with it regardless
+                            stumpBody.SetMeta(PlayerController.SurfMeta, (int)PlayerController.Surf.Concrete);
+                            stumpBody.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = sab.Size }, Position = sab.GetCenter() });
+                            root.AddChild(stumpBody);
+                        }
                     }
                 }
                 var mainMi = new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
