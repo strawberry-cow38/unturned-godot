@@ -25,6 +25,8 @@ namespace UnturnedGodot
         CpuParticles3D _motes;   // dust/bugs drifting in the beam (strawberry); null when MoteCount is 0
         MeshInstance3D _cone, _panel;
         MeshInstance3D _lens;    // the prop's real bulb geometry, owned by the placement, adopted as _panel when present
+        Material _lensOffMat, _lensLitMat;   // dark (the prop's own, whatever type that is) vs emissive; swapped instead of hiding the bulb
+        bool _panelLit;          // whether the lens is EMITTING -- not the same as visible, since real geometry stays put
         float _reach = 12f;
         float _worn = 1f;   // per-lamp brightness jitter (±5%) so fixtures read old/worn, not identical
         bool _night = false;    // dark enough to be lit (driven by DayNightCycle); starts off, self-inits in _Ready
@@ -258,7 +260,13 @@ namespace UnturnedGodot
             };
             if (_lens != null)
             {
-                _lens.MaterialOverride = lensMat;
+                // The lens is REAL GEOMETRY, so it must not be hidden when the lamp is off -- the bulb triangles were
+                // taken out of the body mesh, and hiding them leaves an empty socket in the fixture in broad daylight
+                // (strawberry). Only the MATERIAL changes: the prop's own material when dark, so the bulb reads as the
+                // warm tan it is textured with, and the emissive one when lit. WorldBuilder hands the dark material in
+                // as the node's starting MaterialOverride; falling back to lensMat just means it never goes dark.
+                _lensOffMat = _lens.MaterialOverride ?? lensMat;
+                _lensLitMat = lensMat;
                 _lens.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
                 _panel = _lens;   // adopted, NOT reparented: it keeps the placement basis that puts it in the fixture
             }
@@ -392,7 +400,10 @@ namespace UnturnedGodot
         /// fake additive cone. "The light went out" has three independent failure modes, so a test asserts each
         /// rather than trusting one to stand for the others.</summary>
         public bool LitSpotForTest => _spot != null && _spot.LightEnergy > 0f;
-        public bool LitPanelForTest => _panel != null && _panel.Visible;
+        // EMITTING, not merely visible: an adopted lens stays in the scene when the lamp is off (it is the prop's own
+        // bulb), so visibility stopped being the signal for "lit" the moment real geometry replaced the stand-in disc.
+        public bool LitPanelForTest => _panel != null && _panelLit;
+        public bool LensPresentForTest => _panel != null && _panel.Visible;
         public bool LitConeForTest => _cone != null && _cone.Visible;
         public bool LitMotesForTest => _motes != null && _motes.Emitting;
 
@@ -402,7 +413,18 @@ namespace UnturnedGodot
         {
             bool lit = _night && _powered && !_broken;
             if (_spot != null) _spot.LightEnergy = lit ? Energy * _worn : 0f;
-            if (_panel != null) _panel.Visible = lit;
+            _panelLit = lit;
+            if (_panel != null)
+            {
+                if (_lens != null)
+                {
+                    // real bulb geometry: present whenever the fixture is, only its material changes. It disappears
+                    // ONLY with the prop itself, i.e. when the pole is smashed and DestructibleField hides the rest.
+                    _panel.Visible = !_broken;
+                    _panel.MaterialOverride = lit ? _lensLitMat : _lensOffMat;
+                }
+                else _panel.Visible = lit;   // the stand-in disc is pure glow -- there is nothing to show when dark
+            }
             if (_cone != null) _cone.Visible = lit;
             ApplyMoteFade();   // folds the lit state together with the time-of-day fade; zero = no sim cost at all
         }

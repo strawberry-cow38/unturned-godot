@@ -393,9 +393,10 @@ namespace UnturnedGodot
                     if (lensMesh != null && bodyMesh != null)
                     {
                         visMesh = bodyMesh;
-                        // Starts hidden and material-less: StreetLight._Ready owns both, and an unstyled lens showing
-                        // for the frame before that would flash a white box on every lamp in the town.
-                        lensMi = new MeshInstance3D { Mesh = lensMesh, Transform = new Transform3D(basis, gpos), Visible = false,
+                        // Starts with the PROP's own material, which is also its unlit state: the bulb is real geometry
+                        // and has to keep rendering when the lamp is off, or the fixture has an empty socket in it all
+                        // day. StreetLight keeps this material and swaps to an emissive one only while lit.
+                        lensMi = new MeshInstance3D { Mesh = lensMesh, Transform = new Transform3D(basis, gpos), MaterialOverride = MatFor(matName),
                             VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
                         root.AddChild(lensMi);
                     }

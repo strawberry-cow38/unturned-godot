@@ -3793,12 +3793,22 @@ namespace UnturnedGodot
             if (propMesh != null)
             {
                 var (bodyMesh, lensMesh) = ObjMesh.SplitLens(propMesh);
-                var bodyMat = new StandardMaterial3D { AlbedoColor = new Color(0.17f, 0.17f, 0.18f), Roughness = 0.8f,
-                                                       CullMode = BaseMaterial3D.CullModeEnum.Disabled };
+                // The prop's REAL palette texture, so the unlit lens shows its actual colour rather than a stand-in
+                // grey. NEAREST filtering is mandatory: Street_Light_0_tex is a 2x2 palette and linear sampling
+                // would blend the bulb's warm tan into the neighbouring greys.
+                var bodyMat = new StandardMaterial3D { Roughness = 0.8f, CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                                                       TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
+                string texPath = ProjectSettings.GlobalizePath("res://content/objects/") + "Street_Light_0_tex.png";
+                if (System.IO.File.Exists(texPath))
+                {
+                    var img = Image.LoadFromFile(texPath);
+                    if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
+                }
+                else bodyMat.AlbedoColor = new Color(0.17f, 0.17f, 0.18f);
                 AddChild(new MeshInstance3D { Mesh = bodyMesh ?? propMesh, MaterialOverride = bodyMat, Basis = propBasis });
                 if (lensMesh != null)
                 {
-                    lensMi = new MeshInstance3D { Mesh = lensMesh, Basis = propBasis, Visible = false };
+                    lensMi = new MeshInstance3D { Mesh = lensMesh, Basis = propBasis, MaterialOverride = bodyMat };   // bodyMat = its UNLIT look
                     AddChild(lensMi);
                     lampLocal = lensMesh.GetAabb().GetCenter();   // emit from the bulb, same as WorldBuilder
                 }
@@ -3815,7 +3825,18 @@ namespace UnturnedGodot
             var lampPos = propBasis * lampLocal;
             var lamp = StreetLight.Make(lampPos, Mathf.Max(4f, lampPos.Y), lensMi);
             AddChild(lamp);
-            lamp.SetNight(true); lamp.SetPowered(true);
+            bool lampOff = System.Environment.GetEnvironmentVariable("UG_LIGHTOFF") == "1";
+            lamp.SetNight(!lampOff); lamp.SetPowered(!lampOff);
+            if (lampOff)
+            {
+                // UG_LIGHTOFF=1: the fixture UNLIT, in daylight -- the state that actually shows whether the lens
+                // still reads as part of the lamp when it is not glowing. A dark scene hides that entirely.
+                env.BackgroundColor = new Color(0.45f, 0.55f, 0.70f);
+                env.AmbientLightColor = new Color(0.60f, 0.63f, 0.68f);
+                env.AmbientLightEnergy = 1.1f;
+                var sun = new DirectionalLight3D { RotationDegrees = new Vector3(-52f, 38f, 0f), LightEnergy = 1.1f };
+                AddChild(sun);
+            }
 
             var cam = new Camera3D { Current = true, Fov = 60f };
             AddChild(cam);

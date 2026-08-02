@@ -95,7 +95,8 @@ namespace UnturnedGodot.Testing
         {
             var host = new Node3D();
             World.AddChild(host);
-            var lens = new MeshInstance3D { Mesh = new BoxMesh() };
+            var dark = new StandardMaterial3D { AlbedoColor = new Color(0.7f, 0.63f, 0.52f) };   // the prop's own material
+            var lens = new MeshInstance3D { Mesh = new BoxMesh(), MaterialOverride = dark };
             host.AddChild(lens);
 
             var lamp = StreetLight.Make(new Vector3(0f, 5f, 0f), 5f, lens);
@@ -103,20 +104,31 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
 
             T.Check("the lens stays parented to the prop, not the lamp", lens.GetParent() == host);
-            T.Check("the lamp dressed it with an emissive material", lens.MaterialOverride is StandardMaterial3D m && m.EmissionEnabled);
-            T.Check("...and stopped it casting shadows", lens.CastShadow == GeometryInstance3D.ShadowCastingSetting.Off);
+            T.Check("...and the lamp stopped it casting shadows", lens.CastShadow == GeometryInstance3D.ShadowCastingSetting.Off);
 
             lamp.SetNight(true); lamp.SetPowered(true);
             yield return Ticks(1);
-            T.Check("a lit lamp shows the adopted lens", lens.Visible && lamp.LitPanelForTest);
+            T.Check("a lit lamp emits from the adopted lens", lamp.LitPanelForTest);
+            T.Check("...by giving it an EMISSIVE material", lens.MaterialOverride is StandardMaterial3D lm && lm.EmissionEnabled);
 
+            // THE REGRESSION. The bulb triangles were taken OUT of the body mesh, so hiding the lens when the lamp is
+            // off leaves an empty socket in the fixture in broad daylight. It must stay in the scene and go dark --
+            // asserting only "not lit" would pass against a lens that vanished, which is exactly the bug.
             lamp.SetPowered(false);
             yield return Ticks(1);
-            T.Check("cutting the grid hides it", !lens.Visible && !lamp.LitPanelForTest);
+            T.Check("cutting the grid stops it emitting", !lamp.LitPanelForTest);
+            T.Check("...but the bulb is STILL THERE, not a hole in the lamp", lens.Visible && lamp.LensPresentForTest);
+            T.Check("...wearing the prop's own material again, not an emissive one",
+                    ReferenceEquals(lens.MaterialOverride, dark));
 
             lamp.SetPowered(true); yield return Ticks(1);
+            T.Check("and it lights back up", lamp.LitPanelForTest && !ReferenceEquals(lens.MaterialOverride, dark));
+
+            // Broken is the one case where it really should disappear -- the prop it belongs to is rubble.
             lamp.SetBroken(true); yield return Ticks(1);
-            T.Check("smashing the pole hides it too", !lens.Visible);
+            T.Check("smashing the pole removes the bulb with it", !lens.Visible && !lamp.LitPanelForTest);
+            lamp.SetBroken(false); yield return Ticks(1);
+            T.Check("and a respawned pole brings it back", lens.Visible);
 
             // Fallback: no lens handed in -> the lamp builds its own disc and still has something to light.
             var bare = StreetLight.Make(new Vector3(20f, 5f, 0f), 5f);
