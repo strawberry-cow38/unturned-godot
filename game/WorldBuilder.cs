@@ -541,6 +541,15 @@ namespace UnturnedGodot
                     placedLamp = StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y), lensMi);
                     root.AddChild(placedLamp);
                 }
+                // INDOOR LAMPS (master): Lamp_0 (ceiling) / Lamp_1 (standing) are always-on grid consumers --
+                // NOT night-gated like a streetlight (LampLight.NightGated=false) -- sharing the same grid-power
+                // + reaction-delay-flicker machinery via GridLight. Simple OmniLight3D + glow bulb; no lens to
+                // split off (no prop lens like Street_Light_0) and no fake beam cone (indoors, short throw).
+                if ((name == "Lamp_0" || name == "Lamp_1") && mode != WorldMode.Dedicated)
+                {
+                    var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
+                    root.AddChild(LampLight.Make(gpos + basis * lampCenter));
+                }
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
                 // catalogs the door leaf mesh plus hinge pivot/axis/angle/duration per LEAF -- a prop can

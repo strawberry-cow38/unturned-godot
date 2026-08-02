@@ -197,6 +197,8 @@ void sky() {
             if (tree == null) return;
             foreach (Node n in tree.GetNodesInGroup("streetlights"))
                 if (n is StreetLight sl) sl.FlickerPulse(durationSec);
+            foreach (Node n in tree.GetNodesInGroup("gridlights"))
+                if (n is GridLight gl) gl.FlickerPulse(durationSec);   // indoor lamps ride the same brownout pulse
         }
 
         // Fire each scheduled warning brownout as its evening-time arrives (once), then kill the grid for good on the
@@ -223,6 +225,8 @@ void sky() {
             _lampsNight = night; _lampsGrid = grid;
             foreach (Node n in tree.GetNodesInGroup("streetlights"))
                 if (n is StreetLight sl) { sl.SetNight(night, animate: true); sl.SetPowered(grid, animate: true); }   // reaction-delay + flicker so the street powers up/down raggedly, not all at once (master)
+            foreach (Node n in tree.GetNodesInGroup("gridlights"))
+                if (n is GridLight gl) gl.SetPowered(grid, animate: true);   // indoor lamps follow the grid only -- always-on when powered, not night-gated
         }
 
 
