@@ -12,6 +12,8 @@ namespace UnturnedGodot
         public static float Energy     = 12.0f;    // ground-pool brightness (master: reined in from nuclear; raised source still gives the weight)
         public static int   MoteCount     = 26;     // dust/bug motes per lamp -- one additive quad each; 0 disables them entirely
         public static float MoteCullRange = 22f;    // motes retire well inside the cone's own draw distance: a close-up detail
+        public static float ConeExtend     = 1.10f; // the visual cone runs 10% past the lamp's reach so it still covers
+                                                    // ground that sits higher than the pole base -- kerbs, sidewalks (strawberry)
         public static float MoteOpacity    = 0.5f;  // base mote opacity (strawberry). The time-of-day fade SCALES this,
                                                     // so lowering it lowers the whole curve rather than only its peak
         public static float MoteFadeMargin = 7f;    // distance band over which motes fade in/out instead of popping
@@ -162,12 +164,14 @@ namespace UnturnedGodot
 
             // 3) THE FAKE CONE: a WIDE truncated cone that fades (gradient) from the lamp to transparent by the base, soft +
             //    additive. Wider at the base per master; the fade dissolves it into the ground pool.
+            float coneLen = len * ConeExtend;   // the SHAFT runs past the reach; motes below still use `len` so they
+                                                //  never drift under the pavement
             _cone = new MeshInstance3D
             {
-                Position = under + new Vector3(0f, -len / 2f, 0f),
+                Position = under + new Vector3(0f, -coneLen / 2f, 0f),
                 Mesh = new CylinderMesh
                 {
-                    TopRadius = 0.14f, BottomRadius = len * Mathf.Tan(Mathf.DegToRad(half)) * 1.035f, Height = len,   // master: cone 10% smaller
+                    TopRadius = 0.14f, BottomRadius = coneLen * Mathf.Tan(Mathf.DegToRad(half)) * 1.035f, Height = coneLen,   // master: cone 10% smaller
                     RadialSegments = 20, Rings = 1, CapTop = false, CapBottom = false,
                 },
                 MaterialOverride = new StandardMaterial3D
