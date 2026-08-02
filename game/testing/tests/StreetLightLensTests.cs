@@ -130,6 +130,8 @@ namespace UnturnedGodot.Testing
             lamp.SetBroken(false); yield return Ticks(1);
             T.Check("and a respawned pole brings it back", lens.Visible);
 
+            // (bulb shoot-out lives in StreetLightShootOutTests)
+
             // Fallback: no lens handed in -> the lamp builds its own disc and still has something to light.
             var bare = StreetLight.Make(new Vector3(20f, 5f, 0f), 5f);
             World.AddChild(bare);
@@ -137,6 +139,78 @@ namespace UnturnedGodot.Testing
             bare.SetNight(true); bare.SetPowered(true);
             yield return Ticks(1);
             T.Check("a lamp with no prop lens falls back to its own panel", bare.LitPanelForTest);
+        }
+    }
+
+    // "shooting out the lightbulb should turn em off too" (strawberry). A streetlight's collider is ONE trimesh
+    // over the whole prop, so a shot at the lamp head arrives indistinguishable from a shot at the post -- the
+    // lens's own bounds are what separate them. That makes DISCRIMINATION the thing worth asserting: a test that
+    // only proved "shooting the bulb kills the lamp" would pass just as happily against a lamp that dies when you
+    // shoot its base, which would be a worse bug than the missing feature.
+    public sealed class StreetLightShootOutTests : GameTest
+    {
+        public override string Name => "props.streetlight_bulb_shoots_out";
+
+        public override IEnumerable<Step> Run()
+        {
+            var host = new Node3D();
+            World.AddChild(host);
+            // a lens shaped like the real bulb: wider in Z than X, so a rotation actually changes the answer
+            var lens = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.40f, 0.20f, 0.70f) },
+                                            MaterialOverride = new StandardMaterial3D() };
+            host.AddChild(lens);
+            lens.Position = new Vector3(0f, 6.4f, 0f);
+
+            var lamp = StreetLight.Make(new Vector3(0f, 6.4f, 0f), 6f, lens);
+            World.AddChild(lamp);
+            yield return Ticks(2);
+            lamp.SetNight(true); lamp.SetPowered(true);
+            yield return Ticks(1);
+            T.Check("the lamp starts lit", lamp.LitSpotForTest);
+
+            // Geometry first: the bulb test has to say NO to the rest of the prop.
+            T.Check("a point at the lens centre is a bulb hit", lamp.IsBulbHit(new Vector3(0f, 6.4f, 0f)));
+            T.Check("...the pole two metres down is NOT", !lamp.IsBulbHit(new Vector3(0f, 4.4f, 0f)));
+            T.Check("...the arm behind the head is NOT", !lamp.IsBulbHit(new Vector3(0f, 6.4f, -1.2f)));
+            T.Check("...and the ground is NOT", !lamp.IsBulbHit(new Vector3(0f, 0f, 0f)));
+
+            // The bounds must follow the PROP's rotation, not world axes. The probe has to be chosen so the
+            // rotation actually changes the answer: offset along world Z, which unrotated lands on the box's LONG
+            // axis (0.30 vs half 0.35 + 0.06 margin -> inside) and after a quarter turn lands on the SHORT one
+            // (0.30 vs half 0.20 + 0.06 -> outside). Offsetting along X instead does not discriminate: it maps
+            // onto the long axis when turned and stays inside either way, which is how the first version of this
+            // assertion failed against correct code.
+            var probe = new Vector3(0f, 6.4f, 0.30f);
+            T.Check("a point just inside the unrotated lens reads as a hit", lamp.IsBulbHit(probe));
+            lens.RotationDegrees = new Vector3(0f, 90f, 0f);
+            yield return Ticks(1);
+            T.Check("...and the SAME point misses once the fixture is turned 90deg", !lamp.IsBulbHit(probe));
+            lens.RotationDegrees = Vector3.Zero;
+            yield return Ticks(1);
+
+            // The actual behaviour.
+            T.Check("shooting the bulb reports a hit", lamp.ShootOutBulb());
+            yield return Ticks(1);
+            T.Check("the lamp goes dark", !lamp.LitSpotForTest);
+            T.Check("...its cone with it", !lamp.LitConeForTest);
+            T.Check("...and it stops emitting", !lamp.LitPanelForTest);
+            T.Check("but the glass is STILL THERE -- the pole is standing", lens.Visible && lamp.LensPresentForTest);
+            T.Check("shooting an already-dead bulb reports nothing to do", !lamp.ShootOutBulb());
+
+            // Same shape as the smashed-pole regression: Refresh recomputes lit on every day/night tick and grid
+            // toggle, so a lamp merely switched off would light itself again at the next dusk.
+            lamp.SetNight(false); yield return Ticks(1);
+            lamp.SetNight(true);  yield return Ticks(1);
+            T.Check("nightfall cannot relight a shot-out bulb", !lamp.LitSpotForTest);
+            lamp.SetPowered(false); yield return Ticks(1);
+            lamp.SetPowered(true);  yield return Ticks(1);
+            T.Check("a grid toggle cannot relight it either", !lamp.LitSpotForTest);
+
+            // Rubble reset rebuilds the prop, so the bulb comes back with it.
+            lamp.SetBroken(true);  yield return Ticks(1);
+            T.Check("smashing the pole also takes the glass", !lens.Visible);
+            lamp.SetBroken(false); yield return Ticks(1);
+            T.Check("and a respawned pole has a working bulb again", lamp.LitSpotForTest && lens.Visible);
         }
     }
 }

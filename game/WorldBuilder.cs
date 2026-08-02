@@ -552,6 +552,10 @@ namespace UnturnedGodot
                         body.AddChild(new CollisionShape3D { Shape = shp });
                         root.AddChild(body);
                         destBody = body;   // the collider a server bullet/melee ray tags for destructible damage
+                        // A streetlight's collider carries the lamp too, so a bullet landing on the fixture can ask
+                        // whether it hit the BULB (StreetLight.IsBulbHit) and shoot it out instead of just chipping
+                        // the post. One trimesh covers the whole prop, so the lens bounds are what tell them apart.
+                        if (placedLamp != null) body.SetMeta(StreetLight.HitMeta, placedLamp);
                     }
                 }
                 // destructible prop: bind this placement's live nodes to its deterministic index + tag the

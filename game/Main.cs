@@ -3775,6 +3775,10 @@ namespace UnturnedGodot
                 AmbientLightSource = Godot.Environment.AmbientSource.Color,
                 AmbientLightColor = new Color(0.05f, 0.06f, 0.09f),
                 AmbientLightEnergy = 1f,
+                // GLOW, matching DayNightCycle's night environment. Without it this harness cannot show bloom at
+                // all -- so the one thing being judged here (how hot the lens reads) would be invisible in every
+                // shot, exactly like the harness being night-only hid the unlit bulb.
+                GlowEnabled = true, GlowIntensity = 0.8f, GlowBloom = 0.1f, GlowHdrThreshold = 0.9f,
             };
             AddChild(new WorldEnvironment { Environment = env });
 

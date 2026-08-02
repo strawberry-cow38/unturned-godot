@@ -10,6 +10,8 @@ namespace UnturnedGodot
     {
         public static float ColorTempK = 2000f;   // 2000K warm sodium ... 5000K cold LED
         public static float Energy     = 12.0f;    // ground-pool brightness (master: reined in from nuclear; raised source still gives the weight)
+        public static float LensEmission = 3.0f;   // lens emission multiplier -- on a SHADED material, so it reaches HDR and blooms
+                                                   // (headlights sit at 2f the same way; see the lens material for why Unshaded killed it)
         public static int   MoteCount     = 26;     // dust/bug motes per lamp -- one additive quad each; 0 disables them entirely
         public static float MoteCullRange = 22f;    // motes retire well inside the cone's own draw distance: a close-up detail
         public static float ConeExtend     = 1.10f; // the visual cone runs 10% past the lamp's reach so it still covers
@@ -253,10 +255,17 @@ namespace UnturnedGodot
             //
             //    Fallback is the old flat disc on the head's underside, for callers with no prop mesh to split --
             //    the --lighttest harness and the L1 tests build bare lamps with no Street_Light_0 behind them.
+            // NOT Unshaded. Unshaded outputs ALBEDO and drops EMISSION, so the 4.5x multiplier this material has
+            // carried since the stand-in disc was doing precisely nothing -- the lens was a flat albedo-coloured
+            // rectangle that could never cross the environment's 0.9 glow threshold and therefore never bloomed.
+            // The vehicle headlights read hotter with a multiplier of only 2f for exactly this reason: their lens
+            // material is normally shaded, so emission lands in HDR and the glow pass picks it up (strawberry:
+            // "more intense glow on the bulb like we do with headlights").
             var lensMat = new StandardMaterial3D
             {
-                AlbedoColor = col, EmissionEnabled = true, Emission = col, EmissionEnergyMultiplier = 4.5f * _worn,
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                AlbedoColor = col, EmissionEnabled = true, Emission = col,
+                EmissionEnergyMultiplier = LensEmission * _worn,
+                Metallic = 0f, Roughness = 0.4f,
             };
             if (_lens != null)
             {
@@ -393,8 +402,45 @@ namespace UnturnedGodot
         /// rather than a one-shot "turn it off": Refresh() re-derives lit from night+power on every day/night
         /// tick and every grid toggle, so a lamp merely switched off would light itself again at the next dusk
         /// while its pole lay in rubble. Same shape as the vehicle alarm relighting a wreck.</summary>
-        public void SetBroken(bool broken) { if (_broken == broken) return; _broken = broken; Refresh(); }
+        public void SetBroken(bool broken)
+        {
+            if (_broken == broken) return;
+            _broken = broken;
+            // A rubble RESET rebuilds the prop, so it comes back with an intact bulb. Without this a lamp that was
+            // shot out once would stay dark through every respawn, permanently, with no way to tell why.
+            if (!broken) _bulbOut = false;
+            Refresh();
+        }
         bool _broken;
+
+        /// <summary>Collider meta carrying the lamp, so a bullet that lands on a Street_Light_0 can find it.</summary>
+        public static readonly StringName HitMeta = "streetlight";
+
+        bool _bulbOut;
+        public bool BulbOutForTest => _bulbOut;
+
+        /// <summary>Is this world point on the BULB rather than the pole or the housing? The prop's collider is one
+        /// trimesh over the whole mesh, so a shot at the lamp head arrives indistinguishable from a shot at the
+        /// post -- the lens's own bounds are what separate them. Deliberately NOT a second collider on the lens:
+        /// the trimesh already covers those faces, so a coincident box would just race it for the raycast hit.</summary>
+        public bool IsBulbHit(Vector3 worldPoint)
+        {
+            if (_lens?.Mesh == null || !IsInstanceValid(_lens)) return false;
+            var local = _lens.GlobalTransform.AffineInverse() * worldPoint;
+            var box = _lens.Mesh.GetAabb().Grow(0.06f);   // bullets land ON the surface, i.e. exactly on the boundary
+            return box.HasPoint(local);
+        }
+
+        /// <summary>Shoot the bulb out: this lamp goes dark and STAYS dark, with the pole still standing. Distinct
+        /// from SetBroken -- broken means the prop is rubble and the lens goes with it; a shot-out bulb keeps its
+        /// geometry and simply stops emitting, which is what a smashed lamp actually looks like from the street.</summary>
+        public bool ShootOutBulb()
+        {
+            if (_bulbOut || _broken) return false;
+            _bulbOut = true;
+            Refresh();
+            return true;
+        }
 
         /// <summary>L1: a lamp lights with THREE separate things -- the real spot, the emissive lens, and the
         /// fake additive cone. "The light went out" has three independent failure modes, so a test asserts each
@@ -411,7 +457,7 @@ namespace UnturnedGodot
         // spot + the emissive lens + the cone.
         void Refresh()
         {
-            bool lit = _night && _powered && !_broken;
+            bool lit = _night && _powered && !_broken && !_bulbOut;
             if (_spot != null) _spot.LightEnergy = lit ? Energy * _worn : 0f;
             _panelLit = lit;
             if (_panel != null)

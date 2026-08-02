@@ -3977,7 +3977,18 @@ namespace UnturnedGodot
                         // destructible prop: route the hit to the authoritative destructible system (server-owned health).
                         // In the loopback NetDamageObject -> Server.DestructibleHost.DamageObject; the break replicates +
                         // the DestructibleNetSync mirror hides the mesh. (Cosmetic MP bullets never reach here -- line 3061.)
-                        if (collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
+                        // SHOOT THE BULB OUT (strawberry): a hit on the lens kills that lamp and leaves the post
+                        // standing. Checked BEFORE the destructible routing and consuming the hit, so a bulb shot
+                        // does not also chip the prop's health -- you are breaking the light, not the pole.
+                        bool bulbShot = false;
+                        if (collider is Node sln && sln.HasMeta(StreetLight.HitMeta)
+                            && sln.GetMeta(StreetLight.HitMeta).As<StreetLight>() is StreetLight slamp
+                            && IsInstanceValid(slamp) && slamp.IsBulbHit(point))
+                        {
+                            bulbShot = slamp.ShootOutBulb();
+                            sf = Surf.Metal;   // no glass surface in the impact set; metal reads closest for a fixture
+                        }
+                        if (!bulbShot && collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
                             NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), b.ObjectDamage);
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), sf);
                     }
