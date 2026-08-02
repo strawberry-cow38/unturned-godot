@@ -18,6 +18,9 @@ namespace UnturnedGodot
     // is an ordinary quad strip between consecutive rings.
     public static class HeadlightBeam
     {
+        /// <summary>Do the two lobes fuse into one volume? Off: they stay separate for the whole throw.</summary>
+        public static bool Merge = false;
+
         /// <summary>Convex hull (monotone chain) of a lamp's vertices projected on the car's XY plane -- the real
         /// lens outline, so the beam tip is the shape of the thing emitting it rather than a generic disc.</summary>
         public static Vector2[] Hull(IEnumerable<Vector2> pts)
@@ -106,12 +109,41 @@ namespace UnturnedGodot
         /// <param name="len">how far the shaft throws, along -Z</param>
         /// <param name="spread">how much each lobe grows by the far end (1 = doubles)</param>
         /// <param name="mergeAt">fraction of the throw by which the waist is fully open (the two lobes are one)</param>
+        /// <summary>Depth (0..1 of the throw) at which the two lobes' inner edges meet -- below this the beams are
+        /// genuinely separate and anything between them is dark.</summary>
+        public static float TouchDepth(Vector2[] left, Vector2 lc, Vector2 rc, float spread)
+        {
+            float halfW = 0.001f;
+            foreach (var q in left) halfW = Mathf.Max(halfW, Mathf.Abs(q.X - lc.X));
+            return Mathf.Clamp((Mathf.Abs(rc.X - lc.X) / (2f * halfW) - 1f) / Mathf.Max(spread, 0.001f), 0f, 1f);
+        }
+
+        /// <summary>Half-extents of ONE lobe at depth t -- what the mote sampler needs to stay inside the light.</summary>
+        public static Vector2 LobeHalf(Vector2[] left, Vector2 lc, float spread, float vertical, float t)
+        {
+            float hw = 0.001f, hh = 0.001f;
+            foreach (var q in left) { hw = Mathf.Max(hw, Mathf.Abs(q.X - lc.X)); hh = Mathf.Max(hh, Mathf.Abs(q.Y - lc.Y)); }
+            return new Vector2(hw * (1f + spread * t), hh * (1f + spread * vertical * t));
+        }
+
         public static ArrayMesh Build(Vector2[] left, Vector2 lc, Vector2 rc, float len,
                                       float spread = 3.2f, float mergeAt = 0.30f, float vertical = 0.45f,
                                       int n = 0, int rings = 12)
         {
             if (left == null || left.Length < 3) return null;
             float spreadY = spread * vertical;   // a headlight throws WIDE and comparatively flat, not a round cone
+
+            // WHERE the lobes merge is geometry, not a schedule (strawberry: "only merge at the point where they
+            // meet naturally ... beams stay separated until they touch"). mergeAt used to open the waist over a
+            // fixed fraction of the throw, so light appeared between the lamps well before the two cones actually
+            // reached each other. Solve for the depth at which the inner edges meet:
+            //     centreGap = 2 * halfW * (1 + spread * t)   ->   t = (centreGap / (2*halfW) - 1) / spread
+            // and it re-solves itself per vehicle, so a wide-set truck merges later than a quad.
+            float halfW = 0.001f;
+            foreach (var q in left) halfW = Mathf.Max(halfW, Mathf.Abs(q.X - lc.X));
+            float centreGap = Mathf.Abs(rc.X - lc.X);
+            float tTouch = Mathf.Clamp((centreGap / (2f * halfW) - 1f) / Mathf.Max(spread, 0.001f), 0f, 1f);
+            float tFull = Mathf.Min(1f, tTouch + 0.18f);   // and a short blend once they do meet, not a hard seam
             // Sample each chain at the resolution the OUTLINE actually has, not a fixed number. A jeep lamp hulls
             // to 6 points -- 3 per chain -- so resampling to 10 spent seven vertices per chain interpolating
             // points along straight edges: 1512 triangles where ~400 draws the identical silhouette. Clamped low
@@ -135,11 +167,17 @@ namespace UnturnedGodot
             {
                 float grow = 1f + spread * t;          // horizontal
                 float growY = 1f + spreadY * t;        // vertical, deliberately less
-                float open = Mathf.SmoothStep(0f, 1f, Mathf.Clamp(t / mergeAt, 0f, 1f));   // waist: shut at the lens, open by mergeAt
+                // MERGE OFF by default (strawberry, revised): the two beams stay separate the whole length. The
+                // waist stays pinched to a point, so the loop still closes -- the sliver between the lobes has zero
+                // height and therefore no area, and nothing renders between the lamps. Merge is kept as a switch
+                // rather than deleted because the machinery is the same either way: with it on, the waist opens at
+                // tTouch, the depth the lobes' inner edges actually meet, not on a fixed schedule.
+                float open = Merge ? Mathf.SmoothStep(tTouch, tFull, t) : 0f;
                 var pts = new Vector3[4 * n + 2];   // upper: n + waist + n, lower: n + waist + n
                 float z = -t * len;
-                Vector2 P(Vector2 p, Vector2 c) => c + new Vector2((p.X - c.X) * grow, (p.Y - c.Y) * growY)
-                                                     + (c - mid) * (grow - 1f) * 0.15f;   // grow, and drift apart a little
+                // No outward drift: it widened the centre gap as the lobes grew, which fought the touch solve above
+                // and delayed the merge past where the geometry says it happens.
+                Vector2 P(Vector2 p, Vector2 c) => c + new Vector2((p.X - c.X) * grow, (p.Y - c.Y) * growY);
                 float waistY = 0f, waistTop, waistBot;
                 {
                     // the waist sits between the lamps; it is a single point at the lens (pinched) and opens to

@@ -147,6 +147,13 @@ namespace UnturnedGodot
         public float BatteryNorm => Battery / BatteryMax;
         Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;
         MeshInstance3D _headlightBeam;
+        // Lamp tint, decided by the lens SHAPE. Round lamps read as older/halogen and go considerably warmer than
+        // rectangular ones (strawberry). Derived from the hull the beam already computes -- a hexagonal outline IS
+        // the round one on these low-poly meshes -- and fed to the emitter, the lens emission, the shaft and the
+        // dust together, so the whole fixture agrees rather than three places each picking a cream.
+        Color _lampTint = new(0.97f, 0.96f, 0.83f); bool _lampRound;
+        public static float LampKelvinRound = 3000f;   // warm halogen
+        public static float LampKelvinRect  = 4300f;   // cooler, whiter
         CpuParticles3D _headlightMotes; Color _hlMoteBase; float _hlMoteFade = 0f;   // dust in the beam -- night only, on the STREETLIGHT clock   // the visible shaft in front of the lamps (HeadlightBeam) -- ONE mesh for both, shown with the lights   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
@@ -1279,7 +1286,7 @@ namespace UnturnedGodot
 
             if (s.SpotPos != null)   // headlights: source "Headlights" node -- 2 warm spot beams + 1 omni fill at the front, off until 'L'
             {
-                var warm = new Color(0.97f, 0.96f, 0.83f);
+                var warm = v._lampTint;   // the EMITTER matches the lens it sits behind, per lamp shape
                 v._headlights = new Node3D { Visible = false };
                 foreach (var p in s.SpotPos)
                 {
@@ -1682,7 +1689,7 @@ namespace UnturnedGodot
             if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
             {
                 _headlightMat.EmissionEnabled = _headlightsOn;
-                if (_headlightsOn) { _headlightMat.Emission = new Color(0.97f, 0.96f, 0.83f); _headlightMat.EmissionEnergyMultiplier = 2f; }
+                if (_headlightsOn) { _headlightMat.Emission = _lampTint; _headlightMat.EmissionEnergyMultiplier = 2f; }
             }
         }
 
@@ -1703,6 +1710,9 @@ namespace UnturnedGodot
             if (n < 3) return;
             c /= n;
             var hull = HeadlightBeam.Hull(left);
+            // 4 corners = rectangle; more = a polygon standing in for a round lamp (a jeep hulls to 6).
+            _lampRound = hull.Length >= 5;
+            _lampTint = StreetLight.KelvinToColor(_lampRound ? LampKelvinRound : LampKelvinRect);
             var mesh = HeadlightBeam.Build(hull, c, new Vector2(-c.X, c.Y), BeamLength, BeamSpread, 0.30f, BeamVertical);
             if (mesh == null) return;
 
@@ -1712,7 +1722,7 @@ namespace UnturnedGodot
             // (CylinderMesh reserves the top half of v for its caps -- see StreetLight.BeamMesh).
             var mat = new StandardMaterial3D
             {
-                AlbedoColor = new Color(1.0f, 0.86f, 0.62f, BeamAlpha),
+                AlbedoColor = new Color(_lampTint.R, _lampTint.G, _lampTint.B, BeamAlpha),
                 AlbedoTexture = BeamGradient(),
                 Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                 BlendMode = BaseMaterial3D.BlendModeEnum.Add,
@@ -1739,8 +1749,8 @@ namespace UnturnedGodot
             {
                 var mm = new StandardMaterial3D
                 {
-                    AlbedoColor = new Color(1f, 0.90f, 0.72f, StreetLight.MoteOpacity),
-                    EmissionEnabled = true, Emission = new Color(1f, 0.90f, 0.72f), EmissionEnergyMultiplier = 2.2f,
+                    AlbedoColor = new Color(_lampTint.R, _lampTint.G, _lampTint.B, StreetLight.MoteOpacity),
+                    EmissionEnabled = true, Emission = _lampTint, EmissionEnergyMultiplier = 2.2f,
                     Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
                     BlendMode = BaseMaterial3D.BlendModeEnum.Add,
                     ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
@@ -1755,7 +1765,7 @@ namespace UnturnedGodot
                     Randomness = 1f, Emitting = false, Visible = false,
                     Mesh = new QuadMesh { Size = new Vector2(0.0495f, 0.0495f) },
                     EmissionShape = CpuParticles3D.EmissionShapeEnum.Points,
-                    EmissionPoints = BeamPoints(ab, 56),
+                    EmissionPoints = BeamPoints(hull, c, 56),
                     Direction = Vector3.Up, Spread = 180f,
                     InitialVelocityMin = 0.02f, InitialVelocityMax = 0.14f,
                     Gravity = new Vector3(0f, -0.03f, 0f),
@@ -1774,20 +1784,25 @@ namespace UnturnedGodot
             }
         }
 
-        /// <summary>Points sampled INSIDE the beam volume for the mote emitter -- sampled against the mesh's own
-        /// bounds and tapered with depth, so dust sits in the light rather than in the dark corners of a box.</summary>
-        static Vector3[] BeamPoints(Aabb ab, int n)
+        /// <summary>Points sampled inside the LOBES themselves, never the space between them (strawberry: "the
+        /// motes should be killed when they are outside of the cones"). The previous version sampled one box
+        /// spanning both beams and tapered it with depth, which scattered dust down the dark gap between the two
+        /// cones -- visible as motes hanging in unlit air. Each point now picks a side and lands within that
+        /// lobe's own cross-section at its depth, so every mote is inside light by construction.</summary>
+        static Vector3[] BeamPoints(Vector2[] hull, Vector2 lc, int n)
         {
             var pts = new Vector3[n];
             uint seed = 0x9E3779B9;
             float Rnd() { seed = seed * 1664525u + 1013904223u; return (seed >> 8) * (1f / 16777216f); }
             for (int i = 0; i < n; i++)
             {
-                float t = Mathf.Pow(Rnd(), 0.65f);                 // bias toward the car, where the beam is bright
-                float z = -t * Mathf.Abs(ab.Size.Z);
-                float hw = Mathf.Lerp(0.2f, ab.Size.X * 0.5f, t);  // taper with the beam
-                float hh = Mathf.Lerp(0.15f, ab.Size.Y * 0.5f, t);
-                pts[i] = new Vector3((Rnd() * 2f - 1f) * hw, ab.Position.Y + ab.Size.Y * 0.5f + (Rnd() * 2f - 1f) * hh, z);
+                float t = Mathf.Pow(Rnd(), 0.65f);            // bias toward the car, where the beam is brightest
+                var half = HeadlightBeam.LobeHalf(hull, lc, BeamSpread, BeamVertical, t);
+                float side = Rnd() < 0.5f ? 1f : -1f;          // one lamp or the other
+                float cxs = side * Mathf.Abs(lc.X);
+                pts[i] = new Vector3(cxs + (Rnd() * 2f - 1f) * half.X,
+                                     lc.Y + (Rnd() * 2f - 1f) * half.Y,
+                                     -t * BeamLength);
             }
             return pts;
         }
@@ -1816,8 +1831,8 @@ namespace UnturnedGodot
         // solid tan slab, 2.5x the tuned streetlight.
         public static float BeamAlpha  = 0.020f;
         public static float BeamVertical = 0.40f;   // vertical spread as a fraction of horizontal
-        public static float BeamSpread = 16f;   // how much each lobe grows over the throw (strawberry: much wider)
-        public static float BeamLength = 22f;   // how far the shaft throws
+        public static float BeamSpread = 22f;   // wider (strawberry)   // how much each lobe grows over the throw (strawberry: much wider)
+        public static float BeamLength = 14f;   // shorter throw (strawberry)
         public static float BeamCull   = 90f;   // it is a close-range detail; retire it well before the car does
 
         // bright at the lamp, gone by the far end -- v runs 0 at the lens to 1 at the tip of the throw
