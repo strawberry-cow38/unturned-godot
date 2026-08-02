@@ -22,6 +22,14 @@ namespace UnturnedGodot
         // a rewind (negative timeAdd) repositions the clock but never decrements Day (spoilage doesn't reverse).
         public int Day;
 
+        // --- lore blackout (master): global power dies for GOOD on a random day (14..30), decided once at load, with
+        // 1-2 warning brownouts each of the 2 nights before. SESSION-BASED -- no world save yet, so it re-rolls every
+        // load (dateset/timeadd to test). BlackoutDay 0 = not decided.
+        public int BlackoutDay;
+        bool _blackoutFired;
+        readonly System.Collections.Generic.List<(int day, float time)> _brownouts = new();
+        readonly System.Collections.Generic.HashSet<int> _brownoutFired = new();
+
         // MP Phase 8 (§3.7): a net sync owns Time (server: tick-derived; client: derived from the synced
         // clock + snapshot tick) -- _Process stops free-running it. SP default (false) is byte-identical.
         public bool ExternalTime;
@@ -158,12 +166,20 @@ void sky() {
 }
 ";
 
-        public override void _Ready() => AddToGroup("daynight");   // so the dev console (time/timeSpeed/dayLength cmds) can find it
+        public override void _Ready()
+        {
+            AddToGroup("daynight");   // so the dev console (time/timeSpeed/dayLength/date cmds) can find it
+            BlackoutDay = (int)GD.RandRange(14, 31);   // [14..30] inclusive; the day the grid dies for good
+            for (int d = BlackoutDay - 2; d <= BlackoutDay - 1; d++)
+                for (int i = 0, n = (int)GD.RandRange(1, 3); i < n; i++)   // 1-2 brownouts that night
+                    _brownouts.Add((d, 0.77f + GD.Randf() * 0.20f));       // a random EVENING-night time (streetlights lit)
+        }
 
         public override void _Process(double delta)
         {
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
             if (VisualsEnabled) { Apply(); DriveStreetlights((float)delta); DriveMoteFade(); }
+            DriveBlackout();   // gameplay (sets the grid flag) -> runs even headless/server, unlike the visual sweep
         }
 
         // Street lamps light dusk->dawn AND only while the town grid is live (auto-grid municipal consumers -- the
@@ -171,6 +187,31 @@ void sky() {
         // flips (a handful of times per session), never per-frame -- PEI has hundreds of lamps. Dedicated skips it
         // (VisualsEnabled is false; no visual lamps there anyway).
         bool? _lampsNight, _lampsGrid;
+        // The whole town dips: global power off, then back on after a short beat. Streetlights + consumers flicker
+        // off then on via their normal grid-follow (StreetLight reaction/flicker). Only makes sense on a live grid.
+        // Real-time timer (ignoreTimeScale) so the dip is ~this long regardless of timeSpeed/simSpeed.
+        public void TriggerGlobalBrownout(float durationSec = 0.6f)
+        {
+            if (!PowerNet.GlobalPower) return;
+            PowerNet.SetGlobalPower(false);
+            var t = GetTree()?.CreateTimer(durationSec, processAlways: true, processInPhysics: false, ignoreTimeScale: true);
+            if (t != null) t.Timeout += () => PowerNet.SetGlobalPower(true);
+        }
+
+        // Fire each scheduled warning brownout as its evening-time arrives (once), then kill the grid for good on the
+        // blackout day. Cheap -- a 2-4 item list checked off the day/night clock.
+        void DriveBlackout()
+        {
+            for (int i = 0; i < _brownouts.Count; i++)
+            {
+                if (_brownoutFired.Contains(i)) continue;
+                var (bd, bt) = _brownouts[i];
+                if (Day == bd && Time >= bt) { _brownoutFired.Add(i); TriggerGlobalBrownout(); }
+                else if (Day > bd) _brownoutFired.Add(i);   // clock jumped past it (dateset/timeadd) -> mark missed, don't fire late
+            }
+            if (!_blackoutFired && BlackoutDay > 0 && Day >= BlackoutDay) { _blackoutFired = true; PowerNet.SetGlobalPower(false); }
+        }
+
         void DriveStreetlights(float delta)
         {
             var tree = GetTree();

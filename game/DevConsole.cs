@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -173,6 +173,34 @@ namespace UnturnedGodot
                 }
                 return;
             }
+            // date / dateset <day> / whenBlackout / triggerGlobalBrownout (strawberry) -- the lore blackout. Above the
+            // arg guard so bare forms work: date=show the day, whenBlackout=report the doom day, triggerGlobalBrownout=
+            // dip the whole grid off->on now, dateset=jump the day (to test the brownouts/blackout).
+            if (verb == "date" || verb == "dateset" || verb == "whenblackout" || verb == "triggerglobalbrownout")
+            {
+                var dnc = DayNight();
+                if (dnc == null) { Log("no day/night cycle in this scene"); return; }
+                if (verb == "date") { Log($"day {dnc.Day}  {FormatTime(dnc.Time)}"); return; }
+                if (verb == "whenblackout")
+                {
+                    int away = dnc.BlackoutDay - dnc.Day;
+                    Log($"global blackout on day {dnc.BlackoutDay}  ({(away > 0 ? $"{away} day{(away == 1 ? "" : "s")} away" : away == 0 ? "TODAY" : "already happened")})");
+                    return;
+                }
+                if (verb == "triggerglobalbrownout")
+                {
+                    if (!PowerNet.GlobalPower) { Log("grid's already dark -- nothing to brown out"); return; }
+                    dnc.TriggerGlobalBrownout();
+                    Log("brownout -- grid dipped off->on");
+                    return;
+                }
+                if (arg.Length == 0) { Log($"usage: dateset <day>  (currently day {dnc.Day})"); return; }
+                if (!int.TryParse(arg, out int nd) || nd < 0) { Log("usage: dateset <whole day number>"); return; }
+                dnc.Day = nd;
+                Log($"date set to day {nd}");
+                return;
+            }
+
             // fill <fluid>[:<flag>] [amount] / empty -- set the contents of the HELD fluid container, else the looked-at
             // placed tank (strawberry). Held bottle wins if both; a fitting (splitter/pump) has no tank -> not a target.
             if (verb == "fill" || verb == "empty")
