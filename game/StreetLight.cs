@@ -531,6 +531,18 @@ namespace UnturnedGodot
             // already mid-transition (the grid flapped): keep the running delay, just re-aim at the new target.
         }
 
+        // A brownout FLICKER SIGNAL: stutter briefly, then settle back to the SAME lit state -- a visual dip, not a
+        // power change. Reuses the transition machinery with target = current state, so the lamp blinks off then
+        // recovers over durationSec. No-op on a dark lamp. Driven by DayNightCycle.TriggerGlobalBrownout.
+        public void FlickerPulse(float durationSec = 0.6f)
+        {
+            if (!Lit) return;   // gate on the AUTHORITATIVE Lit, not cached _shownLit -- a raw ApplyLit blink must never resurrect a smashed pole / shot-out bulb (tinyclaw)
+            _targetLit = true; _transitioning = true; _transT = 0f; _flickT = 0f; _flickShow = true;
+            _reaction = Mathf.Max(0.05f, durationSec);
+            if (_motes != null) _motes.Emitting = true;   // keep a cloud to blink through the dip
+            SetProcess(true);
+        }
+
         public override void _Process(double delta)
         {
             if (!_transitioning) return;

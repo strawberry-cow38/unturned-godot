@@ -189,9 +189,8 @@ namespace UnturnedGodot
                 }
                 if (verb == "triggerglobalbrownout")
                 {
-                    if (!PowerNet.GlobalPower) { Log("grid's already dark -- nothing to brown out"); return; }
                     dnc.TriggerGlobalBrownout();
-                    Log("brownout -- grid dipped off->on");
+                    Log("brownout -- streetlights flicker");
                     return;
                 }
                 if (arg.Length == 0) { Log($"usage: dateset <day>  (currently day {dnc.Day})"); return; }

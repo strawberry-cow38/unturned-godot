@@ -187,15 +187,16 @@ void sky() {
         // flips (a handful of times per session), never per-frame -- PEI has hundreds of lamps. Dedicated skips it
         // (VisualsEnabled is false; no visual lamps there anyway).
         bool? _lampsNight, _lampsGrid;
-        // The whole town dips: global power off, then back on after a short beat. Streetlights + consumers flicker
-        // off then on via their normal grid-follow (StreetLight reaction/flicker). Only makes sense on a live grid.
-        // Real-time timer (ignoreTimeScale) so the dip is ~this long regardless of timeSpeed/simSpeed.
+        // A brownout is a FLICKER SIGNAL, not a real power cut (master): the lights just stutter briefly while the
+        // grid stays up. This side-steps MainsLive's 0.25s poll entirely (a short physical dip fell between samples
+        // and was never seen), and keeps the warning brownouts purely cosmetic -- the actual blackout below is the
+        // only real power loss. Supplies/deployables could get the same pulse (follow-up).
         public void TriggerGlobalBrownout(float durationSec = 0.6f)
         {
-            if (!PowerNet.GlobalPower) return;
-            PowerNet.SetGlobalPower(false);
-            var t = GetTree()?.CreateTimer(durationSec, processAlways: true, processInPhysics: false, ignoreTimeScale: true);
-            if (t != null) t.Timeout += () => PowerNet.SetGlobalPower(true);
+            var tree = GetTree();
+            if (tree == null) return;
+            foreach (Node n in tree.GetNodesInGroup("streetlights"))
+                if (n is StreetLight sl) sl.FlickerPulse(durationSec);
         }
 
         // Fire each scheduled warning brownout as its evening-time arrives (once), then kill the grid for good on the
