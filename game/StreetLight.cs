@@ -11,7 +11,10 @@ namespace UnturnedGodot
         public static float ColorTempK = 2000f;   // 2000K warm sodium ... 5000K cold LED
         public static float Energy     = 12.0f;    // ground-pool brightness (master: reined in from nuclear; raised source still gives the weight)
         public static int   MoteCount     = 26;     // dust/bug motes per lamp -- one additive quad each; 0 disables them entirely
-        public static float MoteCullRange = 38f;    // motes retire well inside the cone's own draw distance: a close-up detail
+        public static float MoteCullRange = 22f;    // motes retire well inside the cone's own draw distance: a close-up detail
+        public static float MoteFadeMargin = 7f;    // distance band over which motes fade in/out instead of popping
+        public static float MoteFadeLead   = 0.05f; // how far ahead of the lamp (in day fraction) the motes fade
+        public static float MoteFadeGap    = 0.012f;// ...and how far BEFORE lights-off they finish fading (strawberry)
         public const  float Watts      = 200f;     // realistic high-pressure-sodium draw (grid consumer)
 
         SpotLight3D _spot;
@@ -76,6 +79,49 @@ namespace UnturnedGodot
             }
             return pts;
         }
+
+
+        /// <summary>Mote opacity for a time of day (0..1). Pure + static so the curve is testable -- the visual
+        /// half needs an eyeball, but "reaches zero BEFORE the lamp cuts out" is a property, not a matter of taste.
+        ///
+        /// Lamps switch at DayNightCycle.IsNightTime's thresholds (off at dawn 0.26, on at dusk 0.74). Motes fade
+        /// OUT over MoteFadeLead ending MoteFadeGap early, so the beam is already dust-free when the lamp dies
+        /// rather than losing both at once; and fade IN just after dusk lights it (strawberry).</summary>
+        public static float MoteFadeFor(float timeOfDay)
+        {
+            const float dawn = 0.26f, dusk = 0.74f;   // must track DayNightCycle.IsNightTime
+            float t = Mathf.PosMod(timeOfDay, 1f);
+            float outEnd = dawn - MoteFadeGap, outStart = outEnd - MoteFadeLead;
+            float inStart = dusk + MoteFadeGap, inEnd = inStart + MoteFadeLead;
+            if (t < outStart) return 1f;                                   // deep night
+            if (t < outEnd) return 1f - (t - outStart) / MoteFadeLead;     // fading out ahead of lights-off
+            if (t < inStart) return 0f;                                    // day (and the last moments before lights-off)
+            if (t < inEnd) return (t - inStart) / MoteFadeLead;            // fading in after dusk lights the lamp
+            return 1f;
+        }
+
+        float _moteFade = 1f;
+        /// <summary>Drive the mote opacity from the world clock. Emission stops entirely at zero so a daytime lamp
+        /// simulates nothing at all.</summary>
+        public void SetMoteFade(float a)
+        {
+            a = Mathf.Clamp(a, 0f, 1f);
+            if (Mathf.IsEqualApprox(_moteFade, a)) return;
+            _moteFade = a;
+            ApplyMoteFade();
+        }
+
+        void ApplyMoteFade()
+        {
+            if (_motes == null) return;
+            bool lit = _night && _powered && !_broken;
+            float a = lit ? _moteFade : 0f;
+            _motes.Emitting = a > 0.001f;
+            _motes.Visible = a > 0.001f;
+            if (_motes.MaterialOverride is StandardMaterial3D m)
+                m.AlbedoColor = new Color(_moteBase.R, _moteBase.G, _moteBase.B, _moteBase.A * a);
+        }
+        Color _moteBase = Colors.White;
 
         public override void _Ready()
         {
@@ -182,10 +228,13 @@ namespace UnturnedGodot
                                                           // (the material billboards in Particles mode, which honours the angle)
                     CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                     VisibilityRangeEnd = MoteCullRange,
-                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled,
+                    VisibilityRangeEndMargin = MoteFadeMargin,
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,   // dissolve over the margin
+                                                                                                     // rather than blinking out at the line
                     CustomAabb = new Aabb(new Vector3(-coneR, -len, -coneR), new Vector3(coneR * 2f, len * 1.1f, coneR * 2f)),
                     MaterialOverride = moteMat,
                 };
+                _moteBase = moteMat.AlbedoColor;
                 AddChild(_motes);
             }
 
@@ -225,7 +274,7 @@ namespace UnturnedGodot
             if (_spot != null) _spot.LightEnergy = lit ? Energy * _worn : 0f;
             if (_panel != null) _panel.Visible = lit;
             if (_cone != null) _cone.Visible = lit;
-            if (_motes != null) { _motes.Visible = lit; _motes.Emitting = lit; }   // no sim cost at all on an unlit/broken lamp
+            ApplyMoteFade();   // folds the lit state together with the time-of-day fade; zero = no sim cost at all
         }
     }
 }
