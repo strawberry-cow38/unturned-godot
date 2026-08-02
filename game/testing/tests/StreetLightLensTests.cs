@@ -197,6 +197,13 @@ namespace UnturnedGodot.Testing
             T.Check("but the glass is STILL THERE -- the pole is standing", lens.Visible && lamp.LensPresentForTest);
             T.Check("shooting an already-dead bulb reports nothing to do", !lamp.ShootOutBulb());
 
+            // THE DUST. Refresh and ApplyMoteFade each used to compute "lit" separately, so adding the shot-out
+            // state to one left the other behind and a dead lamp kept its motes drifting in a beam that was gone.
+            // INSTANTLY is the requirement: Emitting=false alone would stop new motes and leave the live cloud
+            // hanging for its remaining lifetime, so visibility is asserted too, on the same tick.
+            T.Check("the dust stops emitting the moment the bulb goes", !lamp.LitMotesForTest);
+            T.Check("...and the live cloud is gone with it, not left drifting", !lamp.MotesVisibleForTest);
+
             // Same shape as the smashed-pole regression: Refresh recomputes lit on every day/night tick and grid
             // toggle, so a lamp merely switched off would light itself again at the next dusk.
             lamp.SetNight(false); yield return Ticks(1);
