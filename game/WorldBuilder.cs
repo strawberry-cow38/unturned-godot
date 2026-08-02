@@ -86,15 +86,15 @@ namespace UnturnedGodot
             ["f463c0c6285544ac86845d98a07d73a9"] = ("Shelf_2", 21, false, "Bookcase"),    // bookcase x62 -> Civilian Canada
             ["91dbbf923c8c401bb6b2d56084783f73"] = ("Fridge_0", 6, false, "Fridge"),      // fridge x17 -> Food
             ["8388edfa33b84f78ad7f5d277412433b"] = ("Wardrobe_0", 19, false, "Wardrobe"), // wardrobe x24 -> Cloth
+            ["7259ea03530a4ff880e857ca62a0c662"] = ("Cooler_0", 6, false, "Cooler"),      // drink cooler -> Food (master 2026-08-02: washer/dryer/cooler ARE containers now)
+            ["68339521990c4d70903dfd68da2cd886"] = ("Washer_0", 19, false, "Washer"),      // washing machine -> Cloth
+            ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", 19, false, "Dryer"),        // dryer -> Cloth
             ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
             ["0aeeefaf364f46f9906aff76c40c6d2b"] = ("Counter_1", 17, false, "Counter"),   // counter x22 -> Kitchen
             ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", 17, false, "Counter"),   // counter x23 -> Kitchen
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
             ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
-            ["aa7fd5bc5e634a0c846770a28ff6cd65"] = ("Container_0", 2, false, "Container"), // shipping container x15 -> Military Canada
-            ["d010fb4c4feb4f8fab81f1a5695617ba"] = ("Container_1", 2, false, "Container"), // shipping container x20 -> Military Canada
-            ["4f2b60ecae204b899eec282891a79e05"] = ("Container_2", 2, false, "Container"), // shipping container x19 -> Military Canada
         };
 
         // MP (A1): the DISTINCT container kinds (mesh/display/label), sorted deterministically, so ContainerSchema can
@@ -535,7 +535,7 @@ namespace UnturnedGodot
                     }
                     if (spawnedDoors.Count > 1)
                         foreach (var d in spawnedDoors) d.SetGroup(spawnedDoors);
-                    if (spawnedDoors.Count > 0)   // issue 3/5: link the prop body + a whole-prop outline to the door(s)
+                    if (spawnedDoors.Count > 0 && !name.StartsWith("Container_"))   // issue 3/5: whole-prop body-link + outline -- SHIPPING CONTAINERS excluded (master): door-only interact (look at the doors, not the whole big prop)
                     {
                         doorForBody = spawnedDoors[0];
                         var bodyGlow = new MeshInstance3D { Mesh = mesh, Transform = new Transform3D(basis, gpos), Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
