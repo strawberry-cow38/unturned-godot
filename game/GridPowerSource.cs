@@ -56,6 +56,10 @@ namespace UnturnedGodot
             set { if (_netProducing != value) { _netProducing = value; PowerNet.MarkDirty(); } }
         }
         bool Producing => _netProducing ?? PowerNet.GlobalPower;   // replica: the replicated mains bit; direct SP: the global flag
+        /// <summary>Is this breaker actually feeding the grid? Other municipal consumers (streetlights) must ask
+        /// THIS rather than PowerNet.GlobalPower -- on a joined client the mains live in the replicated bit and the
+        /// process-global flag never moves.</summary>
+        public bool IsProducing => Producing;
 
         // look-at outline (glow duplicate on the overlay layer) + the generator-style info billboard
         MeshInstance3D _glow;

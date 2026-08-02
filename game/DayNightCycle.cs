@@ -163,7 +163,7 @@ void sky() {
         public override void _Process(double delta)
         {
             if (!ExternalTime) Advance((float)delta * Speed / DayLength);   // Speed = the console timeSpeed multiplier
-            if (VisualsEnabled) { Apply(); DriveStreetlights(); }
+            if (VisualsEnabled) { Apply(); DriveStreetlights(); DriveMoteFade(); }
         }
 
         // Street lamps light dusk->dawn AND only while the town grid is live (auto-grid municipal consumers -- the
@@ -176,11 +176,51 @@ void sky() {
             var tree = GetTree();
             if (tree == null) return;   // out-of-tree _Process (some headless harnesses) -> nothing to sweep
             bool night = IsNightTime(Time);
-            bool grid = PowerNet.GlobalPower;
+            bool grid = MainsLive(tree);
             if (_lampsNight == night && _lampsGrid == grid) return;
             _lampsNight = night; _lampsGrid = grid;
             foreach (Node n in tree.GetNodesInGroup("streetlights"))
                 if (n is StreetLight sl) { sl.SetNight(night); sl.SetPowered(grid); }
+        }
+
+
+        // The mains have TWO representations, and the lamps were only reading one -- which is why toggling global
+        // power left the streetlights burning. Direct SP flips the process-global PowerNet.GlobalPower. A joined
+        // client / consuming loopback routes the console toggle to the SERVER, which flips each GridPowerSource's
+        // replicated ToggledOn; the local flag never moves. So derive the mains the way an actual consumer does --
+        // believe the breakers when the world has any, and fall back to the flag only when it has none (a bare
+        // test sandbox, or a map with no Circuit_0 placed).
+        //
+        // Throttled: DriveStreetlights is called per-frame and early-returns on no change, so this scan must not
+        // run every frame -- PEI has hundreds of deployables. 4Hz is imperceptible for a mains switch.
+        float _mainsCheckT;
+        bool _mainsCached = true;
+        bool MainsLive(SceneTree tree)
+        {
+            _mainsCheckT -= 1f / 60f;
+            if (_mainsCheckT > 0f) return _mainsCached;
+            _mainsCheckT = 0.25f;
+            bool sawSource = false, live = false;
+            foreach (Node n in tree.GetNodesInGroup("deployables"))
+                if (n is GridPowerSource g) { sawSource = true; if (g.IsProducing) { live = true; break; } }
+            _mainsCached = sawSource ? live : PowerNet.GlobalPower;
+            return _mainsCached;
+        }
+
+
+        // Mote opacity tracks the clock CONTINUOUSLY (unlike the lamps, which are a hard on/off edge), so this
+        // cannot ride the edge-triggered sweep above. Stepped: only re-sweeps when the fade actually moved a
+        // couple of percent, which is ~50 sweeps spread across each dusk/dawn rather than one per frame.
+        float _lastMoteFade = -1f;
+        void DriveMoteFade()
+        {
+            var tree = GetTree();
+            if (tree == null) return;
+            float a = StreetLight.MoteFadeFor(Time);
+            if (_lastMoteFade >= 0f && Mathf.Abs(a - _lastMoteFade) < 0.02f) return;
+            _lastMoteFade = a;
+            foreach (Node n in tree.GetNodesInGroup("streetlights"))
+                if (n is StreetLight sl) sl.SetMoteFade(a);
         }
 
         // Sun sits at the horizon at t=0.25 (dawn) / 0.75 (dusk); lamps are lit while it's below, with a small dusk margin.
