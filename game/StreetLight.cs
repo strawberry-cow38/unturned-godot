@@ -72,6 +72,95 @@ namespace UnturnedGodot
         }
 
 
+        // THE BEAM SHAFT. Was a plain truncated cone with a 0.14 top radius -- NARROWER than the lens it hangs off
+        // (0.435 x 0.738) -- so the shaft pinched in right below the fixture and flared out again underneath, which
+        // reads as two separate cones stacked on each other (strawberry). Lofting it fixes the silhouette at the
+        // source: the top ring is a RECTANGLE matching the lens footprint, and it morphs to a circle over the first
+        // stretch of the drop, so the beam leaves the lamp as exactly the shape of the thing emitting it and is round
+        // by the time anyone reads it as a cone.
+        //
+        // Built by hand rather than with a CylinderMesh because no primitive changes cross-section along its length.
+        static ArrayMesh BeamMesh(float len, float halfA, float halfB, float baseR, float morphEnd = 0.38f, int seg = 24, int rings = 16)
+        {
+            // Cross-section at depth t (0 = at the lens, 1 = at the base): a rectangle blended toward a circle.
+            // The rectangle point for an angle is the circle point pushed out to the rect boundary (max-norm), which
+            // keeps the two parametrisations in step so corresponding points lerp without the surface twisting.
+            Vector3 Section(float th, float t)
+            {
+                float a = Mathf.Lerp(halfA, baseR, t), b = Mathf.Lerp(halfB, baseR, t);
+                float ct = Mathf.Cos(th), st = Mathf.Sin(th);
+                float m = Mathf.Max(Mathf.Abs(ct), Mathf.Abs(st));
+                if (m < 0.0001f) m = 0.0001f;
+                var rect = new Vector2(a * ct / m, b * st / m);
+                float r = (a + b) * 0.5f;
+                var circ = new Vector2(r * ct, r * st);
+                var p = rect.Lerp(circ, Mathf.SmoothStep(0f, 1f, Mathf.Clamp(t / morphEnd, 0f, 1f)));
+                return new Vector3(p.X, -t * len, p.Y);
+            }
+
+            var v = new System.Collections.Generic.List<Vector3>();
+            var n = new System.Collections.Generic.List<Vector3>();
+            var u = new System.Collections.Generic.List<Vector2>();
+            for (int ri = 0; ri < rings; ri++)
+            {
+                float t0 = (float)ri / rings, t1 = (float)(ri + 1) / rings;
+                for (int si = 0; si < seg; si++)
+                {
+                    float th0 = Mathf.Tau * si / seg, th1 = Mathf.Tau * (si + 1) / seg;
+                    Vector3 p00 = Section(th0, t0), p10 = Section(th1, t0), p01 = Section(th0, t1), p11 = Section(th1, t1);
+                    // v = t * SideV, reproducing Godot's CylinderMesh UV exactly so swapping the mesh changes the
+                    // silhouette and NOTHING else. Two non-obvious things are baked into that factor, both measured
+                    // off the real meshes rather than assumed:
+                    //
+                    //  1. CylinderMesh gives the SIDE only v in [0, 0.5] -- the top half of UV space is reserved for
+                    //     the caps even with CapTop/CapBottom off. So the shipped beam has only ever sampled the
+                    //     bottom half of ConeGradient, peaking at 0.5^1.7 ~= 0.31 alpha, not 1.0. Mapping the full
+                    //     [0,1] range (the obvious thing to write) made the shaft ~2x denser at every depth.
+                    //  2. v=0 is at the TOP, so the gradient runs faint-at-the-lamp -> dense-at-the-ground. That is
+                    //     the opposite of what ConeGradient's own comment claims ("bright at the lamp end ... mesh V
+                    //     runs base->lamp"), but it is the look the night tuning was built against, so it stands.
+                    //     Flipping it, and using the gradient's unused top half, is a taste call, not a bug fix.
+                    const float SideV = 0.5f;
+                    Vector2 u00 = new((float)si / seg, t0 * SideV), u10 = new((float)(si + 1) / seg, t0 * SideV);
+                    Vector2 u01 = new((float)si / seg, t1 * SideV), u11 = new((float)(si + 1) / seg, t1 * SideV);
+                    void Emit(Vector3 a, Vector3 b, Vector3 c, Vector2 ua, Vector2 ub, Vector2 uc)
+                    {
+                        var fn = (b - a).Cross(c - a).Normalized();
+                        v.Add(a); v.Add(b); v.Add(c);
+                        n.Add(fn); n.Add(fn); n.Add(fn);
+                        u.Add(ua); u.Add(ub); u.Add(uc);
+                    }
+                    Emit(p00, p01, p10, u00, u01, u10);
+                    Emit(p10, p01, p11, u10, u01, u11);
+                }
+            }
+            var arr = new Godot.Collections.Array();
+            arr.Resize((int)Mesh.ArrayType.Max);
+            arr[(int)Mesh.ArrayType.Vertex] = v.ToArray();
+            arr[(int)Mesh.ArrayType.Normal] = n.ToArray();
+            arr[(int)Mesh.ArrayType.TexUV] = u.ToArray();
+            var m2 = new ArrayMesh();
+            m2.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arr);
+            return m2;
+        }
+
+        // The lens is a box in the PROP's frame, so on a rotated lamp its footprint is rotated too -- a beam whose
+        // top rectangle is world-axis-aligned would sit visibly crooked under the fixture. Take whichever of the
+        // box's three axes is most vertical as "down"; the other two span the footprint the beam should start as.
+        static (float A, float B, float Yaw) LensFootprint(MeshInstance3D lens)
+        {
+            var b = lens.Transform.Basis;
+            var half = lens.Mesh.GetAabb().Size * 0.5f;
+            var axes = new[] { b.X * half.X, b.Y * half.Y, b.Z * half.Z };
+            int vert = 0;
+            for (int i = 1; i < 3; i++)
+                if (Mathf.Abs(axes[i].Normalized().Y) > Mathf.Abs(axes[vert].Normalized().Y)) vert = i;
+            var h0 = axes[(vert + 1) % 3]; h0 = new Vector3(h0.X, 0f, h0.Z);
+            var h1 = axes[(vert + 2) % 3]; h1 = new Vector3(h1.X, 0f, h1.Z);
+            if (h0.Length() < 0.01f || h1.Length() < 0.01f) return (0.22f, 0.22f, 0f);
+            return (h0.Length(), h1.Length(), Mathf.Atan2(-h0.Z, h0.X));
+        }
+
         // Points inside the light cone (apex at the lamp, opening downward), for the mote emitter. Radius grows
         // with depth so the cloud is cone-shaped rather than a box that overhangs the beam. Deterministic per
         // lamp is unnecessary -- these are cosmetic dust, not simulation -- but the cloud is fixed at build time
@@ -185,18 +274,20 @@ namespace UnturnedGodot
                 AddChild(_panel);
             }
 
-            // 3) THE FAKE CONE: a WIDE truncated cone that fades (gradient) from the lamp to transparent by the base, soft +
-            //    additive. Wider at the base per master; the fade dissolves it into the ground pool.
+            // 3) THE FAKE BEAM: a wide lofted shaft that fades (gradient) from the lamp to transparent by the base, soft +
+            //    additive. Wider at the base per master; the fade dissolves it into the ground pool. Its cross-section
+            //    starts as the LENS RECTANGLE and rounds off on the way down -- see BeamMesh for why it is not a cone.
             float coneLen = len * ConeExtend;   // the SHAFT runs past the reach; motes below still use `len` so they
                                                 //  never drift under the pavement
+            float baseR = coneLen * Mathf.Tan(Mathf.DegToRad(half)) * 1.035f;   // master: cone 10% smaller
+            // Start the shaft as the lens's own rectangle. Falls back to a near-square top for a lamp built without a
+            // prop lens (the --lighttest fallback and the L1 tests), which is just the old look.
+            var (topA, topB, topYaw) = _lens?.Mesh != null ? LensFootprint(_lens) : (0.16f, 0.16f, 0f);
             _cone = new MeshInstance3D
             {
-                Position = under + new Vector3(0f, -coneLen / 2f, 0f),
-                Mesh = new CylinderMesh
-                {
-                    TopRadius = 0.14f, BottomRadius = coneLen * Mathf.Tan(Mathf.DegToRad(half)) * 1.035f, Height = coneLen,   // master: cone 10% smaller
-                    RadialSegments = 20, Rings = 1, CapTop = false, CapBottom = false,
-                },
+                Position = under,
+                Rotation = new Vector3(0f, topYaw, 0f),
+                Mesh = BeamMesh(coneLen, topA, topB, baseR),
                 MaterialOverride = new StandardMaterial3D
                 {
                     AlbedoColor = new Color(col.R, col.G, col.B, 0.07f * _worn),   // overall softness; the texture fades it lamp->base
