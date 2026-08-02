@@ -145,7 +145,8 @@ namespace UnturnedGodot
         public float FuelNorm => FuelMax > 0f ? Fuel / FuelMax : 0f;
         public float HealthNorm => HealthMax > 0f ? Health / HealthMax : 0f;
         public float BatteryNorm => Battery / BatteryMax;
-        Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
+        Node3D _headlights; bool _headlightsOn; StandardMaterial3D _headlightMat;
+        MeshInstance3D _headlightBeam;   // the visible shaft in front of the lamps (HeadlightBeam) -- ONE mesh for both, shown with the lights   // headlights ('L'): source "Headlights" node (2 spot + 1 omni) + emission + battery burn
         Node3D _taillights; bool _taillightsOn; StandardMaterial3D _taillightMat;   // running taillights: red glow while driven (source synchronizeTaillights = isDriven && canTurnOnLights)
         bool _braking;   // cab: is the brake being applied this frame (hand/foot) -> passed through to the trailer's brake lights while towing
         StandardMaterial3D _sirenMat0, _sirenMat1; OmniLight3D _sirenLight0, _sirenLight1; bool _sirenOn; float _sirenFlash;   // emergency lightbar (police/fire/ambulance): ctrl toggles; red + blue lenses alternate every 0.33s (source UpdateSirenVisuals) + cast real colored light from each side
@@ -1237,6 +1238,7 @@ namespace UnturnedGodot
                     }
                     else v.AddChild(mi);
                     if (txt.Contains("headlight")) v._headlightMat = pm;   // capture so the lamp glows when the headlights are on
+                    if (txt.Contains("headlight") && mi.Mesh != null) v.BuildHeadlightBeam(mi.Mesh);   // the visible shaft, shaped from these very lenses
                     if (txt.Contains("taillight")) v._taillightMat = pm;   // capture so the taillight glows red while driving
                     if (txt.Contains("siren0")) { v._sirenMat0 = pm; v._sirenLight0 = AddSirenLight(mi, new Color(1f, 0.05f, 0.05f)); }   // red lens: glow the material + cast a real red light from that side (master)
                     if (txt.Contains("siren1")) { v._sirenMat1 = pm; v._sirenLight1 = AddSirenLight(mi, new Color(0.2f, 0.3f, 1f)); }      // blue lens: material glow + real blue light from the other side
@@ -1674,11 +1676,80 @@ namespace UnturnedGodot
         {
             _headlightsOn = on && Battery > 0f;   // a dead battery can't power the lights
             if (_headlights != null) _headlights.Visible = _headlightsOn;
+            if (_headlightBeam != null) _headlightBeam.Visible = _headlightsOn;
             if (_headlightMat != null)   // source: lamp emission = colour*2 when lit, off otherwise
             {
                 _headlightMat.EmissionEnabled = _headlightsOn;
                 if (_headlightsOn) { _headlightMat.Emission = new Color(0.97f, 0.96f, 0.83f); _headlightMat.EmissionEnergyMultiplier = 2f; }
             }
+        }
+
+        // THE HEADLIGHT SHAFT (strawberry). Built from the vehicle's OWN headlight lens mesh, so the beam leaves
+        // the car as the shape of the lamps emitting it -- a jeep's hexagons, a sedan's rectangles -- and merges
+        // into one solid volume rather than two cones that cross and double-brighten. See HeadlightBeam.
+        void BuildHeadlightBeam(Mesh lensMesh)
+        {
+            if (_headlightBeam != null) return;
+            var verts = lensMesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            if (verts.Length < 3) return;
+            float mnX = 9e9f, mxX = -9e9f, frontZ = 9e9f;
+            foreach (var q in verts) { mnX = Mathf.Min(mnX, q.X); mxX = Mathf.Max(mxX, q.X); frontZ = Mathf.Min(frontZ, q.Z); }
+            float midX = (mnX + mxX) * 0.5f;
+            var left = new System.Collections.Generic.List<Vector2>();
+            Vector2 c = Vector2.Zero; int n = 0;
+            foreach (var q in verts) if (q.X < midX) { left.Add(new Vector2(q.X, q.Y)); c += new Vector2(q.X, q.Y); n++; }
+            if (n < 3) return;
+            c /= n;
+            var hull = HeadlightBeam.Hull(left);
+            var mesh = HeadlightBeam.Build(hull, c, new Vector2(-c.X, c.Y), BeamLength);
+            if (mesh == null) return;
+
+            // Warmer than the lens itself (strawberry) and additive, so it reads as light in the air rather than a
+            // surface. The gradient runs bright at the lamp -> transparent by the far end, which is the fade being
+            // asked for; unlike the streetlight cone this samples the FULL v range because the mesh is hand-built
+            // (CylinderMesh reserves the top half of v for its caps -- see StreetLight.BeamMesh).
+            var mat = new StandardMaterial3D
+            {
+                AlbedoColor = new Color(1.0f, 0.86f, 0.62f, BeamAlpha),
+                AlbedoTexture = BeamGradient(),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                BlendMode = BaseMaterial3D.BlendModeEnum.Add,
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                DisableReceiveShadows = true,
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
+                TextureRepeat = false,   // linear sampling wraps v=0 into the bright end otherwise -- the phantom
+                                          // band that read as a second cone on the streetlight (StreetLight)
+            };
+            _headlightBeam = new MeshInstance3D
+            {
+                Name = "HeadlightBeam", Mesh = mesh, MaterialOverride = mat,
+                Position = new Vector3(0f, 0f, frontZ), Visible = false,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                VisibilityRangeEnd = BeamCull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
+            };
+            AddChild(_headlightBeam);
+        }
+
+        // Effective density = BeamAlpha * the gradient. The streetlight shaft lands at ~0.022 (0.07 albedo x a
+        // gradient that only reaches 0.31 because CylinderMesh gives its side half the v range). This mesh samples
+        // the full gradient, so matching that look means the albedo alpha IS the density -- 0.055 rendered as a
+        // solid tan slab, 2.5x the tuned streetlight.
+        public static float BeamAlpha  = 0.020f;
+        public static float BeamLength = 22f;   // how far the shaft throws
+        public static float BeamCull   = 90f;   // it is a close-range detail; retire it well before the car does
+
+        // bright at the lamp, gone by the far end -- v runs 0 at the lens to 1 at the tip of the throw
+        static ImageTexture BeamGradient()
+        {
+            int n = 64;
+            var img = Image.CreateEmpty(1, n, false, Image.Format.Rgba8);
+            for (int y = 0; y < n; y++)
+            {
+                float t = (float)y / (n - 1);
+                img.SetPixel(0, y, new Color(1f, 1f, 1f, Mathf.Pow(1f - t, 1.9f)));
+            }
+            return ImageTexture.CreateFromImage(img);
         }
 
         void SetTaillights(bool on)   // running taillights: red glow while driven (source: emission = colour*2)
