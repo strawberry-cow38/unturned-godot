@@ -180,7 +180,7 @@ void sky() {
             if (_lampsNight == night && _lampsGrid == grid) return;
             _lampsNight = night; _lampsGrid = grid;
             foreach (Node n in tree.GetNodesInGroup("streetlights"))
-                if (n is StreetLight sl) { sl.SetNight(night); sl.SetPowered(grid); }
+                if (n is StreetLight sl) { sl.SetNight(night, animate: true); sl.SetPowered(grid, animate: true); }   // reaction-delay + flicker so the street powers up/down raggedly, not all at once (master)
         }
 
 

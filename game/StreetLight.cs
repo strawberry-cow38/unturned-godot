@@ -34,6 +34,16 @@ namespace UnturnedGodot
         bool _night = false;    // dark enough to be lit (driven by DayNightCycle); starts off, self-inits in _Ready
         bool _powered = true;   // grid feeding the fixture (default on until a grid says otherwise)
 
+        // --- power-transition flicker (master: a street should power down RAGGEDLY, not all at once). A lamp does
+        // NOT snap on/off: it waits a per-lamp REACTION delay while blinking irregularly toward the new state, then
+        // settles clean. The random delay is what staggers the street. Cosmetic + SP-local (like the shot-out bulb),
+        // but the DELAY is deterministic per position so every MP client staggers identically. Mirrors Deployable's
+        // ramp flicker. Ticks (_Process) ONLY while mid-transition -- idle lamps cost nothing (PEI has hundreds).
+        public static float ReactionMax = 2.2f;   // per-lamp on/off delay = this * (0.15..1.0); the spread does the staggering
+        float _reactionFrac;   // [0,1] deterministic per-lamp -> reaction delay = ReactionMax*(0.15+0.85*frac)
+        float _reaction, _transT, _flickT;
+        bool _transitioning, _targetLit, _shownLit, _flickShow;
+
         // Blackbody colour-temperature -> sRGB (Tanner Helland approximation). low K = orange, high K = blue-white.
         public static Color KelvinToColor(float kelvin)
         {
@@ -57,7 +67,10 @@ namespace UnturnedGodot
             // so a given fixture is always the same brightness -- identical every load and for every MP player, no flicker.
             float h = Mathf.Sin(lampWorldPos.X * 12.9898f + lampWorldPos.Z * 78.233f) * 43758.5453f;
             float worn = 0.95f + (h - Mathf.Floor(h)) * 0.10f;   // 0.95 .. 1.05
-            return new StreetLight { Position = lampWorldPos, TopLevel = true, _reach = Mathf.Max(4f, reach), _worn = worn, _lens = lens };
+            // a SECOND independent hash (different constants) so a lamp's reaction delay isn't correlated with its
+            // brightness -- deterministic per position so every client staggers the street the same way.
+            float h2 = Mathf.Sin(lampWorldPos.X * 39.3468f + lampWorldPos.Z * 11.7654f) * 24634.6345f;
+            return new StreetLight { Position = lampWorldPos, TopLevel = true, _reach = Mathf.Max(4f, reach), _worn = worn, _lens = lens, _reactionFrac = h2 - Mathf.Floor(h2) };
         }
 
         // Vertical fade for the cone: bright at the lamp end, transparent by the base -- so the shaft dissolves into the
@@ -398,13 +411,15 @@ namespace UnturnedGodot
             _night = dn == null || DayNightCycle.IsNightTime(dn.Time);   // no cycle in this mode -> default to "night" (lit if grid on)
             _powered = PowerNet.GlobalPower;                              // municipal grid feed (the town mains switch); default on
             Refresh();
+            SetProcess(false);   // idle lamps do NOT tick every frame -- _Process runs ONLY while a transition is flickering (PEI has hundreds)
         }
 
-        // Grid hook: the fixture is drawing its Watts. Composited with the day/night state in Refresh().
-        public void SetPowered(bool on) { if (_powered == on) return; _powered = on; Refresh(); }
+        // Grid hook: the fixture is drawing its Watts. Composited with the day/night state in Refresh(). animate=true
+        // (the DayNightCycle sweep) plays the reaction-delay + flicker; the default snaps instantly (tests, spawn).
+        public void SetPowered(bool on, bool animate = false) { if (_powered == on) return; _powered = on; if (animate) BeginTransition(); else Refresh(); }
 
         // Day/night hook (driven by DayNightCycle): street lamps light dusk->dawn and go dark by day.
-        public void SetNight(bool on) { if (_night == on) return; _night = on; Refresh(); }
+        public void SetNight(bool on, bool animate = false) { if (_night == on) return; _night = on; if (animate) BeginTransition(); else Refresh(); }
 
         /// <summary>Smashed pole -> the lamp is dead for good (until the prop respawns). This has to be STATE
         /// rather than a one-shot "turn it off": Refresh() re-derives lit from night+power on every day/night
@@ -454,6 +469,7 @@ namespace UnturnedGodot
         /// fake additive cone. "The light went out" has three independent failure modes, so a test asserts each
         /// rather than trusting one to stand for the others.</summary>
         public bool LitSpotForTest => _spot != null && _spot.LightEnergy > 0f;
+        public bool TransitioningForTest => _transitioning;   // still mid reaction-delay/flicker, not settled
         // EMITTING, not merely visible: an adopted lens stays in the scene when the lamp is off (it is the prop's own
         // bulb), so visibility stopped being the signal for "lit" the moment real geometry replaced the stand-in disc.
         public bool LitPanelForTest => _panel != null && _panelLit;
@@ -468,7 +484,17 @@ namespace UnturnedGodot
         // spot + the emissive lens + the cone.
         void Refresh()
         {
+            if (_transitioning) { _transitioning = false; SetProcess(false); }   // a HARD state change (spawn / broken / shot-out) cancels any in-flight flicker
             bool lit = Lit;
+            _shownLit = lit;
+            ApplyLit(lit);
+            ApplyMoteFade();   // folds the lit state together with the time-of-day fade; zero = no sim cost at all
+        }
+
+        // Apply a lit/dark state to the three emitters (spot + emissive lens + cone). Split out of Refresh so the
+        // transition flicker can drive an intermediate (blinking) state without re-deriving Lit or touching the motes.
+        void ApplyLit(bool lit)
+        {
             if (_spot != null) _spot.LightEnergy = lit ? Energy * _worn : 0f;
             _panelLit = lit;
             if (_panel != null)
@@ -483,7 +509,44 @@ namespace UnturnedGodot
                 else _panel.Visible = lit;   // the stand-in disc is pure glow -- there is nothing to show when dark
             }
             if (_cone != null) _cone.Visible = lit;
-            ApplyMoteFade();   // folds the lit state together with the time-of-day fade; zero = no sim cost at all
+        }
+
+        // The grid or the day/night clock flipped this lamp and asked to ANIMATE it: don't snap. Wait a per-lamp
+        // reaction delay while blinking irregularly toward the new state (odds of showing the NEW state ramp 0->1
+        // across the delay), then settle clean. The random per-lamp delay staggers the whole street (master).
+        void BeginTransition()
+        {
+            bool target = Lit;
+            if (target == _shownLit && !_transitioning) return;   // no visible change (e.g. daytime) and nothing in flight
+            _targetLit = target;
+            if (!_transitioning)
+            {
+                _transitioning = true;
+                _transT = 0f; _flickT = 0f; _flickShow = _shownLit;
+                _reaction = ReactionMax * (0.15f + 0.85f * _reactionFrac);
+                SetProcess(true);
+            }
+            // already mid-transition (the grid flapped): keep the running delay, just re-aim at the new target.
+        }
+
+        public override void _Process(double delta)
+        {
+            if (!_transitioning) return;
+            _transT += (float)delta;
+            _flickT -= (float)delta;
+            if (_flickT <= 0f)
+            {
+                float p = Mathf.Clamp(_transT / Mathf.Max(0.05f, _reaction), 0f, 1f);   // 0 at the start -> 1 at settle
+                _flickShow = GD.Randf() < p ? _targetLit : !_targetLit;                  // early: mostly the OLD state; late: mostly the NEW
+                _flickT = 0.04f + GD.Randf() * 0.08f;                                    // irregular ~8-25 Hz stutter, like the deployable lamp
+                ApplyLit(_flickShow);
+            }
+            if (_transT >= _reaction)   // settle to the clean final state (+ motes)
+            {
+                _transitioning = false;
+                SetProcess(false);
+                Refresh();
+            }
         }
     }
 }
