@@ -10,7 +10,7 @@ namespace UnturnedGodot
     {
         public static float ColorTempK = 2000f;   // 2000K warm sodium ... 5000K cold LED
         public static float Energy     = 12.0f;    // ground-pool brightness (master: reined in from nuclear; raised source still gives the weight)
-        public static int   MoteCount     = 14;     // dust/bug motes per lamp -- one additive quad each; 0 disables them entirely
+        public static int   MoteCount     = 26;     // dust/bug motes per lamp -- one additive quad each; 0 disables them entirely
         public static float MoteCullRange = 38f;    // motes retire well inside the cone's own draw distance: a close-up detail
         public const  float Watts      = 200f;     // realistic high-pressure-sodium draw (grid consumer)
 
@@ -168,7 +168,7 @@ namespace UnturnedGodot
                                        // lamp sits visibly empty for a full 7s every time night falls or it comes into
                                        // view -- which is most of the time you actually look at one.
                     Randomness = 1f,
-                    Mesh = new QuadMesh { Size = new Vector2(0.055f, 0.055f) },   // ~5cm: a mote you can actually see at walking distance without being a firefly
+                    Mesh = new QuadMesh { Size = new Vector2(0.0495f, 0.0495f) },   // ~5cm, trimmed 10% (strawberry)
                     // Emit from POINTS sampled inside the actual cone, not a box: a box around a cone spawns motes in
                     // the corners it never fills, so dust drifted in the dark outside the beam. Radius scales with
                     // depth so the cloud tapers exactly as the cone does.
@@ -178,6 +178,8 @@ namespace UnturnedGodot
                     InitialVelocityMin = 0.02f, InitialVelocityMax = 0.14f,
                     Gravity = new Vector3(0f, -0.03f, 0f),           // barely settling, so motes hang in the beam
                     ScaleAmountMin = 0.6f, ScaleAmountMax = 1.5f,
+                    AngleMin = -180f, AngleMax = 180f,   // random spin per mote so they don't all read as the same aligned square
+                                                          // (the material billboards in Particles mode, which honours the angle)
                     CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                     VisibilityRangeEnd = MoteCullRange,
                     VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled,
