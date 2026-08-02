@@ -68,7 +68,7 @@ namespace UnturnedGodot
             bool fluidTest = false;
             bool doorTest = false;
             string doorTestName = null;
-            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
+            bool play = false, demo = false, netdemo = false, server = false, dedicated = false, client = false, smoke = false, hurtdemo = false, invdemo = false, invsel = false, invequip = false, invdrop = false, invloot = false, invcrate = false, daynight = false, lightTest = false, buildmode = false, firetest = false, supp = false, terrain = false, peiplay = false, objects = false, peidrive = false, craftui = false, bakenav = false, navPathTest = false, zombieTest = false, zdirTest = false, editorMode = false;
             foreach (var arg in OS.GetCmdlineUserArgs())
             {
                 if (arg.StartsWith("--catalog=")) catalog = arg["--catalog=".Length..];
@@ -153,6 +153,7 @@ namespace UnturnedGodot
                 else if (arg == "--invloot") invloot = true;
                 else if (arg == "--invcrate") invcrate = true;
                 else if (arg == "--daynight") daynight = true;
+                else if (arg == "--lighttest") lightTest = true;   // one lit streetlight at night: cone + motes eyeball (UG_LIGHTCAM=under looks up from inside)
                 else if (arg == "--build") buildmode = true;
                 else if (arg == "--extractblueprints") { RunExtractBlueprints(); GetTree().Quit(); return; }   // walk retail item .dats -> content/blueprints.tsv catalog
                 else if (arg == "--tests" || arg.StartsWith("--tests="))   // L1 in-engine test host (phase 2): boot once, run all GameTests, self-quit 0/1. `--tests=power.*` globs.
@@ -369,6 +370,14 @@ namespace UnturnedGodot
                 GetWindow().Size = new Vector2I(2560, 1440);
                 _shotPath = shot;   // UG_SHELFDEMO renders a StoreShelf instead -> capture at the settle frame + quit
                 BuildCrateDemo(gun);
+                return;
+            }
+
+            if (lightTest)   // one streetlight, lit, at night -- the cone/mote look is only checkable by eye
+            {
+                _shotPath = shot;
+                GetWindow().Size = new Vector2I(1280, 720);
+                BuildStreetLightDemo();
                 return;
             }
 
@@ -3692,6 +3701,49 @@ namespace UnturnedGodot
         }
 
         // A reference scene under a fast day/night cycle -- montage the --write-movie to see dawn -> noon -> dusk -> night.
+        // --lighttest: a single lit streetlight over a dark ground plane. The cone's inside faces and the
+        // dust motes are a LOOK, not a value -- there is nothing an assert can check here, so this exists to be
+        // rendered and eyeballed. UG_LIGHTCAM=under puts the camera beneath the lamp looking up, which is the
+        // view that was empty before the cone stopped back-face culling.
+        void BuildStreetLightDemo()
+        {
+            var env = new Godot.Environment
+            {
+                BackgroundMode = Godot.Environment.BGMode.Color,
+                BackgroundColor = new Color(0.02f, 0.03f, 0.05f),
+                AmbientLightSource = Godot.Environment.AmbientSource.Color,
+                AmbientLightColor = new Color(0.05f, 0.06f, 0.09f),
+                AmbientLightEnergy = 1f,
+            };
+            AddChild(new WorldEnvironment { Environment = env });
+
+            var gmesh = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60, 60) } };
+            gmesh.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.20f, 0.20f, 0.19f), Roughness = 1f };
+            AddChild(gmesh);
+
+            var pole = new MeshInstance3D { Position = new Vector3(0f, 3f, 0f), Mesh = new CylinderMesh { TopRadius = 0.08f, BottomRadius = 0.10f, Height = 6f, RadialSegments = 8 } };
+            pole.MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.16f, 0.16f, 0.17f), Roughness = 0.8f };
+            AddChild(pole);
+
+            var lamp = StreetLight.Make(new Vector3(0f, 6f, 0f), 6f);
+            AddChild(lamp);
+            lamp.SetNight(true); lamp.SetPowered(true);
+
+            var cam = new Camera3D { Current = true, Fov = 60f };
+            AddChild(cam);
+            if (System.Environment.GetEnvironmentVariable("UG_LIGHTCAM") == "under")
+            {
+                cam.Position = new Vector3(0.6f, 0.9f, 0.6f);      // standing under it, looking up into the cone
+                cam.LookAt(new Vector3(0f, 6f, 0f), Vector3.Up);
+            }
+            else
+            {
+                cam.Position = new Vector3(7.5f, 3.2f, 7.5f);      // side-on: cone shaft + ground pool together
+                cam.LookAt(new Vector3(0f, 3.4f, 0f), Vector3.Up);
+            }
+            GD.Print($"[LIGHTTEST] one streetlight, motes={StreetLight.MoteCount}, cam={(System.Environment.GetEnvironmentVariable("UG_LIGHTCAM") ?? "side")}");
+        }
+
         void BuildDayNightDemo()
         {
             var env = new Godot.Environment

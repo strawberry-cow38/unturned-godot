@@ -468,10 +468,12 @@ namespace UnturnedGodot
                 // Colour temperature is tweakable (StreetLight.ColorTempK: warm sodium default; a city map sets it cold LED).
                 // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
                 // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
+                StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
                 {
                     var lampWorld = gpos + basis * new Vector3(0f, 2.35f, 6.48f);
-                    root.AddChild(StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y)));
+                    placedLamp = StreetLight.Make(lampWorld, System.Math.Max(4f, lampWorld.Y - gpos.Y));
+                    root.AddChild(placedLamp);
                 }
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
@@ -533,7 +535,13 @@ namespace UnturnedGodot
                     all.AddRange(lodMis);
                     if (folMi != null) all.Add(folMi);
                     var mis = all.ToArray();
-                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId);
+                    // A Street_Light_0's SpotLight3D + glow cone live on a SEPARATE world-space node, not in `mis`, so
+                    // hiding the meshes left a lit cone hanging over the rubble. Darken the lamp with the pole, and
+                    // relight it when the prop respawns (rubble reset) -- SetBroken is state, so the day/night Refresh
+                    // cannot resurrect a smashed lamp at the next dusk.
+                    var lamp = placedLamp;
+                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId,
+                                       lamp != null ? (System.Action<bool>)(alive => { if (GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive); }) : null);
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));

@@ -26,6 +26,10 @@ namespace UnturnedGodot
             public long ResetTicks;
             public int EffectId;              // Rubble_Effect id -> the retail break VFX
             public bool Alive = true;
+            public System.Action<bool> OnAliveChanged;   // extra teardown/restore a prop needs beyond hiding meshes:
+                                                        // a Street_Light_0 owns a SpotLight3D + glow cone that are NOT
+                                                        // in Meshes (separate world-space node), so hiding meshes alone
+                                                        // leaves a lit cone floating over the rubble.
         }
 
         /// <summary>Collider meta key carrying a destructible's index -- the server hit resolution
@@ -60,13 +64,14 @@ namespace UnturnedGodot
 
         /// <summary>Bind a built destructible's live nodes + rubble scalars to its deterministic index. Grows
         /// the backing array to fit (Register runs before SetCount in the WorldBuilder scan order).</summary>
-        public void Register(int index, StaticBody3D body, MeshInstance3D[] meshes, float maxHealth, long resetTicks, int effectId = 0)
+        public void Register(int index, StaticBody3D body, MeshInstance3D[] meshes, float maxHealth, long resetTicks, int effectId = 0, System.Action<bool> onAliveChanged = null)
         {
             if (index < 0) return;
             EnsureSize(index + 1);
             if (_recs[index] == null) BuiltCount++;
             _recs[index] = new Rec { Meshes = meshes, Body = body, BodyLayer = body?.CollisionLayer ?? 0u,
-                                     MaxHealth = maxHealth, ResetTicks = resetTicks, EffectId = effectId };
+                                     MaxHealth = maxHealth, ResetTicks = resetTicks, EffectId = effectId,
+                                     OnAliveChanged = onAliveChanged };
         }
 
         /// <summary>Break (false) or respawn (true) one prop by index: hide/show its mesh(es) and toggle its
@@ -81,6 +86,7 @@ namespace UnturnedGodot
                 foreach (var m in r.Meshes)
                     if (m != null && GodotObject.IsInstanceValid(m)) m.Visible = alive;
             if (r.Body != null && GodotObject.IsInstanceValid(r.Body)) r.Body.CollisionLayer = alive ? r.BodyLayer : 0u;
+            r.OnAliveChanged?.Invoke(alive);   // lights/effects the prop owns outside Meshes (see the field's comment)
         }
 
         /// <summary>Play the one-shot break VFX for a prop that just shattered. Plays the prop's ACTUAL retail
