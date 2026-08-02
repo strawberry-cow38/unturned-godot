@@ -69,6 +69,11 @@ namespace UnturnedGodot
     // the capture/demo scripting; this owns the nodes.
     public static class WorldBuilder
     {
+        /// <summary>Prop-local height that separates a Street_Light_0's surviving plinth from the pole that falls.
+        /// The model is Z-up here (raw Unity coords, ObjMesh CONV=1): the plinth is a closed box spanning Z -1.0
+        /// to +1.0 with roughly half of it buried, so this cut leaves a ~1m square stump standing.</summary>
+        const float StreetLightBaseCut = 1.0f;
+
         // Leaves cull closer than the trunk. The old flat pair was 240/320, so keep that 0.75 ratio now the
         // trunk distance is per-prop instead of constant.
         const float FoliageCullFraction = 0.75f;
@@ -400,6 +405,20 @@ namespace UnturnedGodot
                         lensMi = new MeshInstance3D { Mesh = lensMesh, Transform = new Transform3D(basis, gpos), MaterialOverride = MatFor(matName),
                             VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
                         root.AddChild(lensMi);
+                    }
+                    // THE STUMP (strawberry): "fully destroying a streetlight should leave the base piece where it
+                    // once stood". Breaking a prop hides every mesh in `mis`, so the whole fixture used to vanish off
+                    // the pavement. The plinth is a closed box in the model (local Z -1.0..+1.0, half of it buried),
+                    // and the pole's side faces are full-height quads that cross that line -- so cutting at Z=1.0
+                    // with "all verts below" leaves a sealed block behind and lets the pole leave whole.
+                    // Rendered as its OWN instance and deliberately kept OUT of `mis`, which is what makes it survive.
+                    var (baseMesh, upperMesh) = ObjMesh.SplitBelow(visMesh, StreetLightBaseCut);
+                    if (baseMesh != null && upperMesh != null)
+                    {
+                        visMesh = upperMesh;
+                        root.AddChild(new MeshInstance3D { Mesh = baseMesh, MaterialOverride = MatFor(matName),
+                            Transform = new Transform3D(basis, gpos), VisibilityRangeEnd = cull,
+                            VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled });
                     }
                 }
                 var mainMi = new MeshInstance3D { Mesh = visMesh, MaterialOverride = MatFor(matName), Transform = new Transform3D(basis, gpos),
