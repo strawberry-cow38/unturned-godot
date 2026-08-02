@@ -1449,6 +1449,7 @@ namespace UnturnedGodot
             bool open = System.Environment.GetEnvironmentVariable("UG_CONTAINER_OPEN") == "1";
             if (open) { shelf.SetDoorsOpen(true); for (int i = 0; i < 40; i++) shelf.TickDoorsForTest(1.0 / 60.0); }   // settle the swing headlessly so a --shot (not just a movie) catches the open pose
             GD.Print($"[CONTAINERTEST] {name} hasDoors={shelf.HasDoors} open={open} settledSwing={shelf.DebugDoorSwing():0.00}");
+            if (System.Environment.GetEnvironmentVariable("UG_CONTAINER_FOCUS") == "1") shelf.SetShelfFocused(true);   // debug: force the whole-prop focus so a --shot shows the container's outline meshes present -- body (_shelfGlow) + each swinging door leaf (_leafOutline)
 
             // Camera from the door side, in StoreShelf's _upright frame (shelf spawned at yaw=0/pos=0 -> its
             // transform is identity, so body/door world = _upright * local), mirroring BuildDoorTest's framing.

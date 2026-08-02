@@ -35,7 +35,7 @@ namespace UnturnedGodot
         System.Collections.Generic.List<Vector2> _closeCurve;
 
         Node3D _pivot;
-        StandardMaterial3D _leafMatInstance;   // a PER-DOOR instance (Duplicate of the shared prop material) so SetLookFocused's emission glow doesn't light up every fridge that shares the cached material
+        StandardMaterial3D _leafMatInstance;   // a PER-DOOR instance (Duplicate of the shared prop material) -- kept per-door so a leaf's own material state never bleeds across fridges that share the cached source material
         float _swing;                          // 0 = closed, 1 = fully open -- also doubles as the curve's t_norm (see SampleEasing)
 
         // Whole-PROP outline silhouette (the BODY mesh on OutlineOverlay's layer), built + assigned by
@@ -43,6 +43,7 @@ namespace UnturnedGodot
         // glow, so looking anywhere on the prop highlights the WHOLE thing, not just the door (master). Null for
         // a container door (StoreShelf owns its own outline) or --doortest.
         public MeshInstance3D BodyOutline;
+        MeshInstance3D _leafOutline;   // the swinging LEAF's own white outline (child of _pivot so it swings with the leaf); toggled by SetLookFocused so a doored prop highlights the WHOLE thing -- body outline + leaf outline together (master)
 
         public bool IsOpen { get; private set; }
         double _lastToggleSec = double.NegativeInfinity;
@@ -109,6 +110,11 @@ namespace UnturnedGodot
                 _leafMatInstance.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
                 var leafMi = new MeshInstance3D { Mesh = _leafMesh, MaterialOverride = _leafMatInstance, Position = -_pivotLocal }; if (_cull > 0f) { leafMi.VisibilityRangeEnd = _cull; leafMi.VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled; }
                 _pivot.AddChild(leafMi);
+                // Whole-prop highlight: the leaf's OWN white outline silhouette on the OutlineOverlay layer, a child
+                // of _pivot so it swings with the leaf. Hidden until SetLookFocused. Same recipe as StoreShelf._shelfGlow
+                // (the body's outline) -- together they light up the entire prop, body + door, when looked at (master).
+                _leafOutline = new MeshInstance3D { Mesh = _leafMesh, Position = -_pivotLocal, Visible = false, Layers = OutlineOverlay.OutlineLayer, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled } };
+                _pivot.AddChild(_leafOutline);
 
                 // A fixed (non-swinging) box collider sized from the leaf's OWN closed-pose AABB -- which is
                 // already in ObjectDoor-local space (leafMi sits at ObjectDoor-local origin at rest: pivot at
@@ -252,10 +258,8 @@ namespace UnturnedGodot
         /// <summary>Look-focus highlight (F-focus outline), matching Door.SetLookFocused.</summary>
         public void SetLookFocused(bool on)
         {
-            if (BodyOutline != null && IsInstanceValid(BodyOutline)) BodyOutline.Visible = on;   // issue 5: whole-prop white rim silhouette (the body), toggled with the leaf glow below
-            if (_leafMatInstance == null) return;
-            _leafMatInstance.EmissionEnabled = on;
-            _leafMatInstance.Emission = new Color(0.35f, 0.30f, 0.12f);
+            if (BodyOutline != null && IsInstanceValid(BodyOutline)) BodyOutline.Visible = on;      // whole-prop white rim silhouette (the body)
+            if (_leafOutline != null && IsInstanceValid(_leafOutline)) _leafOutline.Visible = on;   // ...and the swinging leaf's OWN white rim -- together the ENTIRE prop outlines uniformly (master: fridge door highlights the whole thing). Replaces the old amber leaf-emission glow so the leaf matches the body outline instead of standing out.
         }
 
         // --- test/debug seams ---
