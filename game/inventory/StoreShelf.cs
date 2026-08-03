@@ -23,7 +23,9 @@ namespace UnturnedGodot
         float _syncT;
         public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
         MeshInstance3D _shelfGlow;                         // whole-shelf outline silhouette, shown while the shelf is looked at
-        OmniLight3D _glow;                                 // interior light for a fridge/cooler; visibility = (glass-front OR door open) AND global power (master)
+        OmniLight3D _glow;                                 // dim bulb: the light that spills out onto the floor when lit
+        MeshInstance3D _glowBodyMi;                        // COOLER only: body mesh whose material swaps to an emissive copy while lit -- an even, N.L-free interior glow at zero extra light cost (tinyclaw)
+        Material _glowOffMat, _glowLitMat;                 // cooler body: normal vs emissive-lit material
         bool _glowAlways;                                  // glass-front display cooler -> lit whenever powered even when closed; opaque fridge -> only when open
         bool _doorsOpen;                                   // last door open/close state, for RefreshGlow
         readonly List<ObjectDoor> _doors = new();          // this container's swinging door leaf/leaves (fridge/wardrobe/counter/container) -- empty for a plain shelf/crate/bookcase; driven by the inventory open/close, not F-toggled directly
@@ -227,10 +229,22 @@ namespace UnturnedGodot
                     var box = StoodAabb(mesh);
                     _glow = new OmniLight3D
                     {
-                        LightColor = glowCol.Value, OmniRange = 1.5f, LightEnergy = 0.8f, ShadowEnabled = false,
+                        LightColor = glowCol.Value, OmniRange = 1.5f, LightEnergy = 0.7f, ShadowEnabled = false,
                         Visible = false, Position = box.Position + box.Size * 0.5f,   // interior centre of the standing body
                     };
                     AddChild(_glow);
+                    // Glass-front cooler: ALSO swap the body mesh to an emissive copy while lit. Emission ignores N.L,
+                    // so the shelf undersides glow as bright as their tops = an even glow, no point-light wedges, at
+                    // ZERO extra light cost (coolers line up in rows, dozens on screen -- tinyclaw). Same trick as
+                    // LampLight's fixture. The opaque fridge is only seen open + head-on, so it keeps just the bulb.
+                    if (MeshName.StartsWith("Cooler"))
+                    {
+                        _glowBodyMi = mi;
+                        _glowOffMat = mi.MaterialOverride;
+                        var lit = (_glowOffMat as StandardMaterial3D)?.Duplicate() as StandardMaterial3D ?? new StandardMaterial3D();
+                        lit.EmissionEnabled = true; lit.Emission = glowCol.Value; lit.EmissionEnergyMultiplier = 0.35f;   // SHADED -> reaches HDR/bloom
+                        _glowLitMat = lit;
+                    }
                     _glowAlways = MeshName.StartsWith("Cooler");   // a glass-front display cooler shows its lit interior even when closed (master); an opaque fridge only when open
                     AddToGroup("glowcontainers");                  // DayNightCycle's power sweep calls RefreshGlow on a grid change
                     RefreshGlow();                                 // light a powered glass cooler immediately (a fridge stays dark until opened)
@@ -301,7 +315,9 @@ namespace UnturnedGodot
         // the next open/close.
         public void RefreshGlow()
         {
-            if (_glow != null) _glow.Visible = (_glowAlways || _doorsOpen) && PowerNet.GlobalPower;
+            bool on = (_glowAlways || _doorsOpen) && PowerNet.GlobalPower;
+            if (_glow != null) _glow.Visible = on;
+            if (_glowBodyMi != null && IsInstanceValid(_glowBodyMi)) _glowBodyMi.MaterialOverride = on ? _glowLitMat : _glowOffMat;   // cooler: emissive body while lit
         }
 
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
