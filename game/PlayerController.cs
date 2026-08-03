@@ -1987,6 +1987,8 @@ namespace UnturnedGodot
         public int DebugPellets() => UsesShells && ShellAsset != null ? System.Math.Max(1, ShellAsset.pellets) : System.Math.Max(1, Gun?.Pellets ?? 1);   // test: rays per shot (shotgun = shell pellets)
         public void DebugSetHeldItem(SDG.Unturned.Item it) => _heldItem = it;      // test: link a backing item to the held gun
         public void DebugSaveGunState() => SaveGunState();                          // test: mirror live gun state to the backing item
+        public void DebugStartReload() => StartReload();                            // test: begin a real reload (timer + anim), so a swap can land MID-reload
+        public bool DebugIsReloading => _reloading;                                 // test: is a reload still in flight?
         public void DebugRestoreGunState(SDG.Unturned.Item it) => RestoreGunState(it);   // test: restore a gun's state from an item
         public int DebugFiremodeIdx() => (int)_firemode;                            // test: current fire-mode index
         public void DebugSetFiremode(int m) => _firemode = (FireMode)m;             // test: set the fire mode
