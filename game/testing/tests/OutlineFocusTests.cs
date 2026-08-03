@@ -66,6 +66,39 @@ namespace UnturnedGodot.Testing
             tv.SetLookFocused(false);
             T.Check("...and leaves an unfocus alone", WorldItem.FocusColor == Rare);
 
+            // THE HELPER'S CONTRACT (a0891045 collapsed 9 hand-rolled sites onto OutlineOverlay.ShowOutline).
+            // The refactor's whole risk lives here: this is now the ONLY place a rim colour gets claimed, so if it
+            // ever hardcoded white it would silently strip the rarity rim off every item in the game -- the exact
+            // inverse of the container bug that started this. Tested against a NON-white colour for that reason.
+            var mesh = OutlineOverlay.MakeOutline(new BoxMesh());
+            World.AddChild(mesh);
+            yield return Ticks(1);
+            T.Check("a fresh outline mesh starts hidden", !mesh.Visible);
+            T.Check("...on the outline layer", (mesh.Layers & OutlineOverlay.OutlineLayer) != 0);
+
+            var rarity = new Color(0.55f, 0.20f, 0.85f);   // stand-in for an EPIC item's rim
+            WorldItem.FocusColor = Colors.White;
+            OutlineOverlay.ShowOutline(true, rarity, mesh);
+            T.Check($"ShowOutline claims the colour it was GIVEN, not white ({WorldItem.FocusColor})",
+                WorldItem.FocusColor == rarity);
+            T.Check("...and shows the silhouette", mesh.Visible);
+
+            WorldItem.FocusColor = Rare;
+            OutlineOverlay.ShowOutline(false, rarity, mesh);
+            T.Check("...and hiding it leaves the static alone", WorldItem.FocusColor == Rare && !mesh.Visible);
+
+            // The two-mesh overload (a doored prop: body + swinging leaf) must claim once and toggle both.
+            var a = OutlineOverlay.MakeOutline(new BoxMesh());
+            var b = OutlineOverlay.MakeOutline(new BoxMesh());
+            World.AddChild(a); World.AddChild(b);
+            yield return Ticks(1);
+            WorldItem.FocusColor = Rare;
+            OutlineOverlay.ShowOutline(true, Colors.White, a, b);
+            T.Check("the body+leaf overload claims once and shows BOTH",
+                WorldItem.FocusColor == Colors.White && a.Visible && b.Visible);
+            OutlineOverlay.ShowOutline(false, Colors.White, a, b);
+            T.Check("...and hides both", !a.Visible && !b.Visible);
+
             WorldItem.FocusColor = saved;
         }
     }
