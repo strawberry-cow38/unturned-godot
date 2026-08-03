@@ -138,6 +138,24 @@ namespace UnturnedGodot.Testing
 
             // Installed state travels with the ITEM -- that is the whole point of putting it there. Two guns hold
             // their own attachments independently, which is what "installed across weapons" requires.
+            // ---- FACTORY IRONS RENDER when re-attached. Before this was derived, only 7 items had a mesh mapping,
+            // so taking a maplestrike's irons off and putting them back left the slot recorded and the sight
+            // INVISIBLE -- no error, and the gun looks the same as a gun whose sights you never touched.
+            AttachmentFit.ResetIronsMeshCache();
+            T.Check($"eaglefire irons (5) have a mesh ({AttachmentFit.MeshFor(5) ?? "<none>"})", AttachmentFit.MeshFor(5) != null);
+            int ironsWithMesh = 0, ironsTotal = 0;
+            foreach (var a2 in Assets.all())
+            {
+                if (string.IsNullOrEmpty(a2.gunName)) continue;
+                int ir = AttachmentFit.DefaultIronsId(a2.itemName);
+                if (ir < 0) continue;
+                ironsTotal++;
+                if (AttachmentFit.MeshFor((ushort)ir) != null) ironsWithMesh++;
+            }
+            T.Check($"most ported guns' factory irons resolve a mesh ({ironsWithMesh}/{ironsTotal})",
+                ironsTotal > 0 && ironsWithMesh >= ironsTotal - 3);
+            T.Check("...and a non-attachment id still resolves to nothing", AttachmentFit.MeshFor(13) == null);
+
             var g3 = new Item(4);
             AttachmentFit.SetInstalledId(g3, "Sight", 5);
             T.Check($"a second gun keeps its own sight ({AttachmentFit.InstalledId(g3, "Sight")} vs {AttachmentFit.InstalledId(g1, "Sight")})",

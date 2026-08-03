@@ -147,7 +147,43 @@ namespace UnturnedGodot
         /// Fits() because fitting is a rules question and having a model is an asset question -- an attachment with
         /// no mesh still attaches and still applies its stats, it just renders nothing, and conflating the two would
         /// hide every un-ripped attachment from a menu that is supposed to show what you own.</summary>
-        public static string MeshFor(ushort id) => Meshes.TryGetValue(id, out var m) ? m : null;
+        public static string MeshFor(ushort id)
+        {
+            if (Meshes.TryGetValue(id, out var m)) return m;
+            _irons ??= BuildIronsMeshes();
+            return _irons.TryGetValue(id, out var im) ? im : null;
+        }
+
+        static System.Collections.Generic.Dictionary<ushort, string> _irons;
+        public static void ResetIronsMeshCache() => _irons = null;   // L1: the catalog is re-registered between sandboxes
+
+        /// <summary>Every gun's FACTORY IRONS mesh, keyed by the iron-sight item id, joined out of data already on
+        /// disk instead of hand-listed: content/sights.tsv gives gun-content-name -> sight mesh, the catalog gives
+        /// gun-content-name -> gun item -> "&lt;Gun&gt; Iron Sights" -> item id.
+        ///
+        /// Without this, taking a gun's irons off and putting them back renders NOTHING -- the item is real, the slot
+        /// records it, and the sight is simply invisible. The hand-written table below only ever covered seven items,
+        /// so every gun past the eaglefire had that hole. Deriving it means a newly ported gun's irons render the day
+        /// its sights.tsv row lands, with no extra wiring -- the same reason the gun table reads the .dat files.</summary>
+        static System.Collections.Generic.Dictionary<ushort, string> BuildIronsMeshes()
+        {
+            var byGunName = new System.Collections.Generic.Dictionary<string, string>();   // gun content name -> mesh
+            string sp = Godot.ProjectSettings.GlobalizePath("res://content/sights.tsv");
+            if (System.IO.File.Exists(sp))
+                foreach (var line in System.IO.File.ReadAllLines(sp))
+                {
+                    var c = line.Split('\t');
+                    if (c.Length >= 2 && c[0].Length > 0 && c[1].Length > 0) byGunName[c[0]] = c[1];
+                }
+            var outp = new System.Collections.Generic.Dictionary<ushort, string>();
+            foreach (var a in Assets.all())
+            {
+                if (string.IsNullOrEmpty(a.gunName) || !byGunName.TryGetValue(a.gunName, out var mesh)) continue;
+                int irons = DefaultIronsId(a.itemName);
+                if (irons >= 0) outp[(ushort)irons] = mesh;
+            }
+            return outp;
+        }
 
         // Item id -> ripped mesh. Only the handful that exist in content/ today; the rest attach model-less until
         // someone rips them. Deliberately a table rather than a name guess: item names ("8x Scope") do not map onto
