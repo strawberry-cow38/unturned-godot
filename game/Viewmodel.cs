@@ -391,15 +391,15 @@ namespace UnturnedGodot
                     _isScope = gv.Gun != null && gv.Gun.Contains("augewehr");
                     if (_isScope && ironMesh != null)
                     {
-                        _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = true };   // OwnWorld3D + bind the REAL world each frame (below) -- NOT the VM's isolated arms-world
+                        _scopeVp = new SubViewport { Size = new Vector2I(720, 720), RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled, OwnWorld3D = false };   // NOT OwnWorld3D: that DUPLICATES the world (copies the sky env but a FRESH EMPTY scenario = no geometry -> lens shows only sky). Leave it false + bind World3D to the REAL main world below so the optic renders actual geometry. (This is a SEPARATE viewport from the arms _vp -- that one stays OwnWorld3D-isolated.)
                         AddChild(_scopeVp);
-                        _scopeCam = new Camera3D { Current = true, Fov = 18f };
+                        _scopeCam = new Camera3D { Current = true, Fov = 25.7f };   // retail scope fov = 90/Zoom off the sight .dat; aug 3.5x -> 25.7deg (master-tunable), NOT a hand-picked 18
                         _scopeVp.AddChild(_scopeCam);
                         var lensMat = new StandardMaterial3D { AlbedoTexture = _scopeVp.GetTexture(), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, CullMode = BaseMaterial3D.CullModeEnum.Disabled, BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled, TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear };   // the magnified world render; billboard = always faces the eye
                         _scopeLens = new MeshInstance3D { Name = "ScopeLens", Mesh = new QuadMesh { Size = new Vector2(0.22f, 0.22f) }, MaterialOverride = lensMat, Visible = false, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
                         var _iron = mi.GetNodeOrNull<MeshInstance3D>("IronSights");
                         (_iron ?? mi).AddChild(_scopeLens);
-                        _scopeLens.Position = new Vector3(0f, 0f, -0.06f);   // aug scope tube axis (X=0, Z=-0.06); billboarded so it faces the eye
+                        _scopeLens.Position = new Vector3(0f, -0.14f, -0.06f);   // aug scope tube axis (Z=-0.06 up); Y=-0.14 = inset toward the ocular/player end (barrel is +Y); billboarded to face the eye
                     }   // per-gun sight mount (extracted); eaglefire/maplestrike keep the tuned hardcoded pos
 
                     // Real default Magazine (item 6 = Military_30, GUID dbfb1d0d) — item.prefab Model_0 from
@@ -826,7 +826,7 @@ namespace UnturnedGodot
                 if (_on)
                 {
                     if (_scopeVp.World3D != _main.GetWorld3D()) _scopeVp.World3D = _main.GetWorld3D();   // render the REAL world, not the VM's isolated arms-world (tinyclaw)
-                    _scopeCam.GlobalTransform = _main.GlobalTransform;   // look where the player aims; scope cam keeps its narrow FOV (18deg ~ 3.3x)
+                    _scopeCam.GlobalTransform = _main.GlobalTransform;   // look where the player aims; scope cam keeps its narrow FOV (25.7deg ~ 3.5x)
                     _scopeVp.RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
                     _scopeLens.Visible = true; _scopeWasOn = true;
                 }
