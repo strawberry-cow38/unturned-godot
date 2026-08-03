@@ -367,7 +367,7 @@ namespace UnturnedGodot
                         foreach (var (_dc, _dm) in sightDots)
                         {
                             if (_dm == null) continue;
-                            var dotMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _dc, EmissionEnabled = true, Emission = _dc, EmissionEnergyMultiplier = 3f, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
+                            var dotMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _dc, EmissionEnabled = true, Emission = _dc, EmissionEnergyMultiplier = 1.5f, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
                             mi.AddChild(new MeshInstance3D { Name = "SightGlow", Mesh = _dm, MaterialOverride = dotMat });
                         }
                     // Real Eaglefire_Iron_Sights model (item 5) — sight.prefab from core.masterbundle, extracted via
