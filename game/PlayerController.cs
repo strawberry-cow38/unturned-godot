@@ -4715,10 +4715,11 @@ namespace UnturnedGodot
             // (X = crouch, Z = prone, sprint overlay, broken-legs demotion, headroom gate -- MP_PLAN §3.4).
             // NetAvatar never polls the keys -- PlayerNetSync forces ScriptedStance from the MoveInput
             // stance bits instead, so the avatar integrates at the stance the client shell predicted at.
-            bool xNow = !NetAvatar && !UiInputBlocked && (Input.IsPhysicalKeyPressed(Key.X) || (Input.IsPhysicalKeyPressed(Key.C) && !(_build?.Active ?? false)));   // C = hold-to-crouch (master); build mode keeps C as cycle-structure
+            bool xNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
             bool zNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
             bool sprintNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
-            StepStanceOnce(xNow, zNow, sprintNow, ScriptedStance);
+            bool cHeld = !NetAvatar && !UiInputBlocked && !(_build?.Active ?? false) && Input.IsPhysicalKeyPressed(Key.C);   // C = HOLD-to-crouch (master): forces CROUCH while held; X stays the stand<->crouch TOGGLE. build mode keeps C as cycle-structure
+            StepStanceOnce(xNow, zNow, sprintNow, cHeld ? EPlayerStance.CROUCH : ScriptedStance);   // C-hold forces crouch via scriptedStance -> _move.Stance + the MP stance bits both follow (hold-to-crouch)
             if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
 
             float forward, strafe;
@@ -4772,7 +4773,7 @@ namespace UnturnedGodot
         EPlayerStance _recoilStance = EPlayerStance.STAND; float _recoilStanceTime;
         const float StanceSettle = 0.35f;
         float StanceRecoilMul() => _recoilStanceTime < StanceSettle ? 1f
-            : _move.Stance switch { EPlayerStance.CROUCH => 0.6f, EPlayerStance.PRONE => 0.35f, _ => 1f };
+            : _move.Stance switch { EPlayerStance.CROUCH => 0.85f, EPlayerStance.PRONE => 0.7f, _ => 1f };   // subtler than 0.6/0.35 -- a flat mult scales hardest on the punchiest guns, keep it gentle (master/tinyclaw)
 
         /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).</summary>
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
