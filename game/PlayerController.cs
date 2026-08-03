@@ -2911,30 +2911,7 @@ namespace UnturnedGodot
         int _loadedMagId;           // the magazine item loaded in the gun (its ammo = Ammo); set to Gun.MagazineId on equip
         SDG.Unturned.Item _heldItem;   // the inventory/world Item backing the held gun -> where its ammo/firemode/mag PERSIST (master)
         // Mirror the held gun's live state onto its backing item so it survives hands<->inventory<->drop (source: equipment.state).
-        // A gun with NO inventory item behind it -- a console/dev equip, the viewmodel test scene -- used to have
-        // nowhere to write its state, so holstering it and pulling it out again handed back a FULL magazine. That is
-        // strawberry's "putting away a gun and pulling it out reloads it fully?", and it is the ONLY route it happens
-        // on: driving the three inventory-backed paths (same-slot hotbar, explicit holster, swap to another gun and
-        // back) all preserve ammo correctly -- see gun.reequip_keeps_ammo, which was written to find this.
-        // Keyed by gun name because that is all an itemless gun has to be identified by; two of the same gun with no
-        // items behind them are genuinely indistinguishable here, and share a slot rather than each getting a refill.
-        readonly System.Collections.Generic.Dictionary<string, (int Ammo, int Firemode, int MagId)> _itemlessGunState = new();
-
-        void SaveGunState()
-        {
-            if (Gun == null) return;
-            if (_heldItem != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
-            else if (!string.IsNullOrEmpty(_gunName)) _itemlessGunState[_gunName] = (Ammo, (int)_firemode, _loadedMagId);
-        }
-
-        // The itemless counterpart to RestoreGunState, applied only when there is no backing item to read from.
-        void RestoreItemlessGunState(string gunName)
-        {
-            if (string.IsNullOrEmpty(gunName) || !_itemlessGunState.TryGetValue(gunName, out var s)) return;
-            Ammo = s.Ammo;
-            if (s.Firemode >= 0 && System.Enum.IsDefined(typeof(FireMode), s.Firemode)) _firemode = (FireMode)s.Firemode;
-            if (s.MagId >= 0) _loadedMagId = s.MagId;
-        }
+        void SaveGunState() { if (_heldItem != null && Gun != null) { _heldItem.gunAmmo = Ammo; _heldItem.gunFiremode = (int)_firemode; _heldItem.gunMagId = _loadedMagId; if (_viewmodel != null && _viewmodel.IsGunViewmodel) _heldItem.gunAttach = _viewmodel.GetAttachMask(); } }   // only save the attach mask from the GUN's own viewmodel -- a consumable/fists viewmodel returns 0 and would wipe the gun's attachments (strawberry)
         void RestoreGunState(SDG.Unturned.Item item)
         {
             if (item == null || item.gunAmmo < 0) return;   // a fresh gun with no saved state keeps its LoadGun defaults
@@ -3418,7 +3395,6 @@ namespace UnturnedGodot
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
             RestoreGunState(backingItem);   // a gun coming from inventory/world remembers its ammo/firemode/mag
-            if (backingItem == null) RestoreItemlessGunState(_gunName);   // ...and one with no item behind it remembers via the player
             _melee = null; _heldConsumable = null; _heldFuelItem = null; _heldFluidItem = null; _heldMeleeName = null; ClearDeployable();   // equipping a gun REPLACES the held consumable/melee/deployable (not a layer) -- master
             _viewmodel?.QueueFree();
             _viewmodel = new Viewmodel { GunName = _gunName };
