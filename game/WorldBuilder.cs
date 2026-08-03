@@ -462,29 +462,35 @@ namespace UnturnedGodot
                 }
                 // TRAFFIC SIGNALS (strawberry): Traffic_Light_0 is a mast arm carrying TWO signal heads, and its
                 // red/amber/green lenses are already in the prop mesh -- three coplanar 2-tri quads per head on the
-                // head fronts -- drawn with the same material as the yellow housing. Split each colour onto its own
-                // instance so TrafficLight can light one at a time. Verified against the real 4x2 palette rather than
-                // assumed: red is texel (2,0)=(154,116,116), amber (3,0)=(195,187,154), green (2,1)=(131,147,120),
-                // and the 72-tri housing is the saturated yellow at (1,1). Both heads' lenses of a colour share a
-                // texel, so ONE instance drives both heads -- which is what we want, since a mast arm shows the same
-                // aspect from every head on it.
-                MeshInstance3D[] trafficLenses = null;
+                // head fronts -- drawn with the same material as the yellow housing. Verified against the real 4x2
+                // palette rather than assumed: red is texel (2,0)=(154,116,116), amber (3,0)=(195,187,154), green
+                // (2,1)=(131,147,120), and the 72-tri housing is the saturated yellow at (1,1).
+                //
+                // Split PER HEAD, not just per colour (strawberry: "split each prop into 2 separate signals on
+                // separate timers"). Both heads' lenses of a colour share a palette texel, so a UV split alone cannot
+                // separate them -- ObjMesh cuts on the gap along the mast axis as well, giving each head its own
+                // three lenses and therefore its own TrafficLight, timer and emitter.
+                MeshInstance3D[][] trafficHeads = null;
                 if (name == "Traffic_Light_0" && mode != WorldMode.Dedicated)
                 {
-                    var parts = ObjMesh.SplitTrafficLenses(mesh);   // [red, amber, green, body]
-                    if (parts != null && parts.Length == 4 && parts[3] != null)
+                    var (heads, tlBody) = ObjMesh.SplitTrafficLensesPerHead(mesh);
+                    if (heads != null && tlBody != null)
                     {
-                        visMesh = parts[3];
-                        trafficLenses = new MeshInstance3D[3];
-                        for (int li = 0; li < 3; li++)
+                        visMesh = tlBody;
+                        trafficHeads = new MeshInstance3D[heads.Length][];
+                        for (int hd = 0; hd < heads.Length; hd++)
                         {
-                            if (parts[li] == null) continue;
-                            // Starts on the PROP's own material, which doubles as the unlit lens -- same reason the
-                            // streetlight bulb does: the lens is real geometry and must keep rendering when dark, or
-                            // the signal head has three holes punched in its face.
-                            trafficLenses[li] = new MeshInstance3D { Mesh = parts[li], Transform = new Transform3D(basis, gpos), MaterialOverride = MatFor(matName),
-                                VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
-                            root.AddChild(trafficLenses[li]);
+                            trafficHeads[hd] = new MeshInstance3D[3];
+                            for (int li = 0; li < 3; li++)
+                            {
+                                if (heads[hd][li] == null) continue;
+                                // Starts on the PROP's own material, which doubles as the unlit lens -- same reason
+                                // the streetlight bulb does: the lens is real geometry and must keep rendering when
+                                // dark, or the signal head has three holes punched in its face.
+                                trafficHeads[hd][li] = new MeshInstance3D { Mesh = heads[hd][li], Transform = new Transform3D(basis, gpos), MaterialOverride = MatFor(matName),
+                                    VisibilityRangeEnd = cull, VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled };
+                                root.AddChild(trafficHeads[hd][li]);
+                            }
                         }
                     }
                 }
@@ -581,6 +587,7 @@ namespace UnturnedGodot
                 // Auto-grid municipal consumer: lit only when it's NIGHT and the town grid is live (DayNightCycle drives
                 // both; StreetLight.Watts is the nominal draw). toggleGlobalPower darkens the whole town.
                 StreetLight placedLamp = null;   // captured so a break can darken it (see the Register call below)
+                var placedSignals = new System.Collections.Generic.List<TrafficLight>();   // both heads of a mast, same reason
                 if (name == "Street_Light_0" && mode != WorldMode.Dedicated)
                 {
                     // Emit from the BULB, not from a hand-measured point. (0, 2.35, 6.48) was eyeballed off the far
@@ -603,15 +610,22 @@ namespace UnturnedGodot
                     var lampCenter = mesh != null ? mesh.GetAabb().GetCenter() : Vector3.Zero;
                     root.AddChild(LampLight.Make(gpos + basis * lampCenter, mainMi));   // hand the prop mesh in so the fixture itself glows when lit
                 }
-                // Each signal runs its OWN dumb timer (strawberry's explicit call) -- no junction sync, so crossing
-                // roads can both show green. The offset is hashed off world position, so the signals differ from each
-                // other and every client agrees without replicating a thing.
-                if (trafficLenses != null)
+                // Each HEAD runs its OWN dumb timer (strawberry's explicit call) -- no junction sync and no mast sync,
+                // so crossing roads can both show green and the two heads on one arm drift apart. The offset is
+                // hashed off world position AND head index, so heads differ from each other and from their
+                // neighbours, and every client agrees without replicating a thing.
+                if (trafficHeads != null)
                 {
-                    var tl = TrafficLight.Make(gpos, ey, trafficLenses[0], trafficLenses[1], trafficLenses[2]);
-                    tl.SideRoad = sideRoads.Contains(SideRoadKey(gpos));
-                    signals++; if (tl.SideRoad) signalsSide++;
-                    root.AddChild(tl);
+                    bool sideRoad = sideRoads.Contains(SideRoadKey(gpos));
+                    for (int hd = 0; hd < trafficHeads.Length; hd++)
+                    {
+                        var h = trafficHeads[hd];
+                        var tl = TrafficLight.Make(gpos, ey, h[0], h[1], h[2], hd);
+                        tl.SideRoad = sideRoad;
+                        signals++; if (sideRoad) signalsSide++;
+                        root.AddChild(tl);
+                        placedSignals.Add(tl);
+                    }
                 }
                 // OPENABLE PROP DOORS (MVP: Fridge_0 + Wardrobe_0, SP-local -- mirrors the Tower_Water_0
                 // Playable-only gating above: no dedicated/MP support yet). doors.txt (tools/extract_doors.py)
@@ -670,6 +684,14 @@ namespace UnturnedGodot
                         // whether it hit the BULB (StreetLight.IsBulbHit) and shoot it out instead of just chipping
                         // the post. One trimesh covers the whole prop, so the lens bounds are what tell them apart.
                         if (placedLamp != null) body.SetMeta(StreetLight.HitMeta, placedLamp);
+                        // Same deal for a signal, except a mast carries TWO independently-timed heads, so the meta is
+                        // an ARRAY and the shot is resolved against whichever head's lens bounds it landed in.
+                        if (placedSignals.Count > 0)
+                        {
+                            var arr = new Godot.Collections.Array();
+                            foreach (var s in placedSignals) arr.Add(s);
+                            body.SetMeta(TrafficLight.HitMeta, arr);
+                        }
                         if (doorForBody != null) body.SetMeta("objectdoor", doorForBody);   // issue 3: look-at the body resolves to the door (PlayerController)
                     }
                 }
@@ -685,14 +707,31 @@ namespace UnturnedGodot
                     var all = new System.Collections.Generic.List<MeshInstance3D>(lodMis.Count + 2) { mainMi };
                     all.AddRange(lodMis);
                     if (folMi != null) all.Add(folMi);
+                    // THE LENSES TOO (strawberry: "the actual light pieces arent being destroyed when the traffic
+                    // light is"). They were split onto their own instances so each aspect can light independently,
+                    // which quietly took them out of the destructible's mesh set -- so a smashed mast left six lens
+                    // quads floating in the air. Anything split off the prop mesh has to be put back here.
+                    if (trafficHeads != null)
+                        foreach (var h in trafficHeads)
+                            foreach (var lm in h) if (lm != null) all.Add(lm);
                     var mis = all.ToArray();
                     // A Street_Light_0's SpotLight3D + glow cone live on a SEPARATE world-space node, not in `mis`, so
                     // hiding the meshes left a lit cone hanging over the rubble. Darken the lamp with the pole, and
                     // relight it when the prop respawns (rubble reset) -- SetBroken is state, so the day/night Refresh
                     // cannot resurrect a smashed lamp at the next dusk.
                     var lamp = placedLamp;
-                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId,
-                                       lamp != null ? (System.Action<bool>)(alive => { if (GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive); }) : null);
+                    // Signals need the same treatment: hiding the meshes alone left both heads still cycling their
+                    // omni lights over the rubble, and a rubble reset has to bring them back.
+                    var sigs = placedSignals.Count > 0 ? placedSignals.ToArray() : null;
+                    System.Action<bool> onAlive = null;
+                    if (lamp != null || sigs != null)
+                        onAlive = alive =>
+                        {
+                            if (lamp != null && GodotObject.IsInstanceValid(lamp)) lamp.SetBroken(!alive);
+                            if (sigs != null)
+                                foreach (var s in sigs) if (GodotObject.IsInstanceValid(s)) s.SetBroken(!alive);
+                        };
+                    destField.Register(destIndex, destBody, mis, rub.Health, rub.ResetTicks, rub.EffectId, onAlive);
                 }
                 placed++;
                 var cell = new Vector2I(Mathf.FloorToInt(px / 96f), Mathf.FloorToInt(pz / 96f));

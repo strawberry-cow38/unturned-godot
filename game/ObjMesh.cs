@@ -213,6 +213,72 @@ namespace UnturnedGodot
                 (a, b, c) => Lo(a, b, c) && InU(a, b, c, 0.50f, 1.01f));  // green
         }
 
+        // ---- per-HEAD traffic split ---------------------------------------------------------------------
+        // A mast arm carries TWO signal heads, and strawberry wants them on independent timers, so each head needs
+        // its own geometry rather than sharing one surface per colour. The heads separate cleanly along the mast
+        // axis (mesh-local Y): on Traffic_Light_0 the lower head's lenses sit at Y 2.7-4.1 and the upper at 6.7-8.1.
+        //
+        // The cut is FOUND, not hardcoded: sort the lens triangles by centroid along the axis and take the largest
+        // gap. A hardcoded 5.5 would work here and quietly mis-split the moment a prop has differently-spaced heads
+        // or a third aspect, and a wrong split shows up as one head that never lights -- easy to miss in a screenshot.
+        static readonly Dictionary<ArrayMesh, (ArrayMesh[][] Heads, ArrayMesh Body)> _headCache = new();
+
+        /// <summary>Traffic_Light_0 split per signal HEAD: Heads[h] = {red, amber, green} for head h (ordered low to
+        /// high along the mast), plus the shared body. Two heads on this prop; the count follows the geometry.</summary>
+        public static (ArrayMesh[][] Heads, ArrayMesh Body) SplitTrafficLensesPerHead(ArrayMesh src)
+        {
+            if (src == null) return (null, null);
+            if (_headCache.TryGetValue(src, out var hit)) return hit;
+
+            var parts = SplitTrafficLenses(src);
+            if (parts == null || parts.Length != 4) return (null, null);
+
+            // Every lens triangle's centroid along the mast axis, from all three colours together -- one head's
+            // three lenses are far closer to each other than to the other head's, so the biggest gap is between heads.
+            var cents = new List<float>();
+            for (int c = 0; c < 3; c++)
+            {
+                if (parts[c] == null) continue;
+                var v = parts[c].SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                for (int i = 0; i + 2 < v.Length; i += 3) cents.Add((v[i].Y + v[i + 1].Y + v[i + 2].Y) / 3f);
+            }
+            if (cents.Count < 2) return _headCache[src] = (null, parts[3]);
+            cents.Sort();
+            float cut = 0f, best = 0f;
+            for (int i = 1; i < cents.Count; i++)
+                if (cents[i] - cents[i - 1] > best) { best = cents[i] - cents[i - 1]; cut = (cents[i] + cents[i - 1]) * 0.5f; }
+            // No meaningful gap = a single-head prop. Return it as one head rather than inventing an empty second.
+            if (best < 0.5f) return _headCache[src] = (new[] { new[] { parts[0], parts[1], parts[2] } }, parts[3]);
+
+            var heads = new ArrayMesh[2][];
+            for (int h = 0; h < 2; h++) heads[h] = new ArrayMesh[3];
+            for (int c = 0; c < 3; c++)
+            {
+                if (parts[c] == null) continue;
+                var a0 = parts[c].SurfaceGetArrays(0);
+                var V = a0[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var N = a0[(int)Mesh.ArrayType.Normal].AsVector3Array();
+                var U = a0[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+                var C = a0[(int)Mesh.ArrayType.Color].AsColorArray();
+                var vs = new List<Vector3>[2]; var ns = new List<Vector3>[2];
+                var us = new List<Vector2>[2]; var cs = new List<Color>[2];
+                for (int h = 0; h < 2; h++) { vs[h] = new(); ns[h] = new(); us[h] = new(); cs[h] = new(); }
+                for (int i = 0; i + 2 < V.Length; i += 3)
+                {
+                    int h = (V[i].Y + V[i + 1].Y + V[i + 2].Y) / 3f < cut ? 0 : 1;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        vs[h].Add(V[i + k]);
+                        ns[h].Add(i + k < N.Length ? N[i + k] : Vector3.Up);
+                        us[h].Add(U[i + k]);
+                        cs[h].Add(i + k < C.Length ? C[i + k] : Colors.White);
+                    }
+                }
+                for (int h = 0; h < 2; h++) heads[h][c] = Build(vs[h], ns[h], us[h], cs[h]);
+            }
+            return _headCache[src] = (heads, parts[3]);
+        }
+
         // ---- stump split --------------------------------------------------------------------------------
         // Destroying a prop currently hides every mesh it owns, so a smashed streetlight vanishes off the pavement
         // entirely. Retail leaves the footing behind. SplitBelow carves the part that should SURVIVE a break onto

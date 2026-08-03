@@ -3993,6 +3993,20 @@ namespace UnturnedGodot
                             bulbShot = slamp.ShootOutBulb();
                             sf = Surf.Metal;   // no glass surface in the impact set; metal reads closest for a fixture
                         }
+                        // Same for a traffic signal, per ASPECT (strawberry: "add the ability to shoot out each light
+                        // piece"). The meta is an array because one mast is two independently-timed heads; the first
+                        // head whose lens bounds contain the impact owns the shot. A dead aspect stays dark while the
+                        // head keeps cycling, so you can shoot out just the green and leave the rest working.
+                        if (!bulbShot && collider is Node tln && tln.HasMeta(TrafficLight.HitMeta))
+                            foreach (var e in tln.GetMeta(TrafficLight.HitMeta).AsGodotArray())
+                                if (e.As<TrafficLight>() is TrafficLight sig && IsInstanceValid(sig))
+                                {
+                                    int li = sig.LensHit(point);
+                                    if (li < 0) continue;
+                                    bulbShot = sig.ShootOutLens(li);   // false if already dead -> the shot falls through to the mast's health
+                                    sf = Surf.Metal;
+                                    break;
+                                }
                         if (!bulbShot && collider is Node dn && dn.HasMeta(DestructibleField.MetaKey))
                             NetDamageObject?.Invoke((int)dn.GetMeta(DestructibleField.MetaKey), b.ObjectDamage);
                         SpawnSurfaceImpact(point, hit["normal"].AsVector3(), sf);

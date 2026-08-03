@@ -1,14 +1,32 @@
 # Traffic_Light_0 placements that are on the SIDE road of their junction.
-# In a power-outage flash, these blink RED (stop, treat as a 4-way) while the main road blinks AMBER.
-# Matched against placements.txt by position. Edit freely -- one line per prop, "x z" to 3dp.
-# Seeded per junction: the axis carrying FEWER signals is the side road (ties -> lower yaw axis is main),
-# so every junction has exactly one axis flashing red. All-amber at a 4-way is a collision, not a style.
--608.325 171.594
--107.784 598.522
--106.670 672.879
--82.759 583.727
--33.593 692.632
--8.568 677.837
--4.980 -430.747
-23.022 -438.562
-47.098 -480.262
+#
+# In a power-outage flash a flagged signal blinks RED (stop, treat it as a 4-way); everything else
+# blinks AMBER (proceed with caution).
+#
+# DEFAULT: EMPTY -- every signal slow-blinks amber (strawberry, 2026-08-02). The seeded guess below
+# came from placement geometry ("the axis carrying fewer signals is the side road"); she checked it
+# against the map and a lot of them were wrong. Geometry cannot tell you which road is major, and a
+# confident wrong flag is worse than none, so nothing is flagged until a human assigns them on a
+# real map.
+#
+# TO ASSIGN: uncomment a line below, or add your own. One prop per line, "x z" copied straight out
+# of placements.txt -- its RAW coordinates. WorldBuilder negates Z on load; the lookup negates back
+# (WorldBuilder.SideRoadKey), so what goes here is the placements.txt value, not the world one.
+# Matched to 0.1m.
+#
+# Anything here that does NOT match a real placement fails props.traffic_light_side_road_data, so a
+# typo or a coordinate-convention slip is caught by the tests rather than silently flagging nothing
+# -- which is indistinguishable from this file being empty on purpose, as it now is.
+#
+# The lines below are the old geometric guess, kept ONLY as a starting point to edit. They are real
+# placement coordinates and the test still validates them; they are simply not active.
+#
+#-608.325 171.594
+#-107.784 598.522
+#-106.670 672.879
+#-82.759 583.727
+#-33.593 692.632
+#-8.568 677.837
+#-4.980 -430.747
+#23.022 -438.562
+#47.098 -480.262

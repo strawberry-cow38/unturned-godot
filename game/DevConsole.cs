@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "infFuel", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleBbat", "infFuel", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -123,6 +123,22 @@ namespace UnturnedGodot
                                      : f == "off" || f == "0" || f == "false" ? false
                                      : !Vehicle.InfiniteFuel;
                 Log($"infFuel {(Vehicle.InfiniteFuel ? "ON -- cars won't burn fuel" : "OFF -- fuel drains normally")}");
+                return;
+            }
+
+            // toggleBbat [on|off]  -- battery back-up in the signal cabinets. TRAFFIC LIGHTS ONLY (strawberry: "i
+            // dont want bback for street lights and lamps. its JUST for traffic lights") -- a real BBS is a signal
+            // cabinet thing, street lighting just goes out with the grid. ON by default; bare form FLIPS it.
+            // Above the arg guard so the no-arg toggle works. SP-local static, not networked.
+            if (verb == "togglebbat")
+            {
+                string b = arg.ToLowerInvariant();
+                TrafficLight.BatteryBackup = b == "on" || b == "1" || b == "true" ? true
+                                           : b == "off" || b == "0" || b == "false" ? false
+                                           : !TrafficLight.BatteryBackup;
+                Log(TrafficLight.BatteryBackup
+                    ? $"signal battery backup ON -- junctions breathe amber for {TrafficLight.BatteryDays:0.#} in-game days after a blackout, then flicker out"
+                    : "signal battery backup OFF -- junctions die with the grid");
                 return;
             }
 

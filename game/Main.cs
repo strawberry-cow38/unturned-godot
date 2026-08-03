@@ -2465,6 +2465,29 @@ namespace UnturnedGodot
             // (res.Player == null) so it early-returns regardless. gameDefault=false keeps the harnesses direct.
             AttachMpLoopback(res, gameDefault: _peiPlayable && !_bakeNav);
             if (res.Ready) _worldReady = true;   // async world fully built (terrain..trees) -> the --shot harness can now capture a loaded frame
+            // UG_MAPSHOT=<half-extent-metres>: a top-down ORTHOGRAPHIC map capture. Orthographic and axis-aligned on
+            // purpose -- it makes world->pixel an exact linear mapping, so an overlay (signal positions, spawns,
+            // whatever) lands where the thing actually is instead of being nudged into place by eye against a
+            // perspective frame. Centre with UG_MAPSHOT_AT="x,z"; the printed [mapshot] line is the projection.
+            string mapShot = System.Environment.GetEnvironmentVariable("UG_MAPSHOT");
+            if (!string.IsNullOrEmpty(mapShot) && float.TryParse(mapShot, out var half) && half > 0f)
+            {
+                float mcx = 0f, mcz = 0f;
+                var at = (System.Environment.GetEnvironmentVariable("UG_MAPSHOT_AT") ?? "").Split(',');
+                if (at.Length == 2) { float.TryParse(at[0], out mcx); float.TryParse(at[1], out mcz); }
+                var mcam = new Camera3D
+                {
+                    Current = true, Far = 8000f,
+                    Projection = Camera3D.ProjectionType.Orthogonal, Size = half * 2f,
+                    // Height matters even though ORTHO framing doesn't depend on it: props carry per-instance
+                    // VisibilityRangeEnd (64/256/512m), so a camera parked at 2km renders an empty tan plane --
+                    // everything is past its cull distance. Sit just high enough to clear PEI's terrain.
+                    Position = new Vector3(mcx, float.TryParse(System.Environment.GetEnvironmentVariable("UG_MAPSHOT_Y"), out var my) ? my : 220f, mcz),
+                    RotationDegrees = new Vector3(-90f, 0f, 0f),   // straight down; world +X = screen right, world +Z = screen DOWN
+                };
+                AddChild(mcam);
+                GD.Print($"[mapshot] ortho top-down centre=({mcx},{mcz}) halfExtent={half}m size={half * 2f}m");
+            }
             if (_peiPlayable) { SpawnEditorLootCrates(); SpawnEditorStoreShelves(); SpawnEditorGridPower(); SpawnEditorGasPump(); if (!_loopbackConsuming) SpawnMapContainers(res); }   // stock the map with loot containers (A1: the StorageReplicaView materializes them under a consuming loopback) + grid-power boxes + gas pumps
         }
 
@@ -3829,28 +3852,38 @@ namespace UnturnedGodot
                 if (img != null) bodyMat.AlbedoTexture = ImageTexture.CreateFromImage(img);
             }
 
-            var parts = ObjMesh.SplitTrafficLenses(propMesh);
-            AddChild(new MeshInstance3D { Mesh = parts[3] ?? propMesh, MaterialOverride = bodyMat, Basis = propBasis });
-            var lens = new MeshInstance3D[3];
-            for (int i = 0; i < 3; i++)
+            // PER HEAD, matching WorldBuilder: the mast's two heads run independent timers, so the harness has to be
+            // able to show them disagreeing. Building one TrafficLight over both here would hide exactly the bug the
+            // split exists to prevent.
+            var (headMeshes, tlBody) = ObjMesh.SplitTrafficLensesPerHead(propMesh);
+            AddChild(new MeshInstance3D { Mesh = tlBody ?? propMesh, MaterialOverride = bodyMat, Basis = propBasis });
+            bool side = System.Environment.GetEnvironmentVariable("UG_TL_SIDE") == "1";
+            // UG_TL_STATE takes ONE state, or two separated by a slash to drive the heads apart ("red/green").
+            var states = (System.Environment.GetEnvironmentVariable("UG_TL_STATE") ?? "red").ToLowerInvariant().Split('/');
+            float level = float.TryParse(System.Environment.GetEnvironmentVariable("UG_TL_LEVEL"), out var lv) ? lv : 1f;
+            for (int h = 0; h < (headMeshes?.Length ?? 0); h++)
             {
-                if (parts[i] == null) continue;
-                lens[i] = new MeshInstance3D { Mesh = parts[i], MaterialOverride = bodyMat, Basis = propBasis };   // bodyMat = the UNLIT lens
-                AddChild(lens[i]);
+                var lens = new MeshInstance3D[3];
+                for (int i = 0; i < 3; i++)
+                {
+                    if (headMeshes[h][i] == null) continue;
+                    lens[i] = new MeshInstance3D { Mesh = headMeshes[h][i], MaterialOverride = bodyMat, Basis = propBasis };   // bodyMat = the UNLIT lens
+                    AddChild(lens[i]);
+                }
+                var tl = TrafficLight.Make(Vector3.Zero, 0f, lens[0], lens[1], lens[2], h);
+                tl.SideRoad = side;
+                AddChild(tl);
+                string st = states[h % states.Length];
+                tl.ForcePhase(st switch
+                {
+                    "green" => TrafficLight.Phase.Green,
+                    "amber" => TrafficLight.Phase.Amber,
+                    "dark" => TrafficLight.Phase.Off,                                       // drained battery / smashed
+                    "flash" => side ? TrafficLight.Phase.FlashRed : TrafficLight.Phase.FlashAmber,
+                    _ => TrafficLight.Phase.Red,
+                }, level);
+                GD.Print($"[TRAFFICLIGHT] head {h}: state={st} phase={tl.CurrentPhase} lens={TrafficLight.LensIndexFor(tl.CurrentPhase)} level={level:F2}");
             }
-
-            var tl = TrafficLight.Make(Vector3.Zero, 0f, lens[0], lens[1], lens[2]);
-            tl.SideRoad = System.Environment.GetEnvironmentVariable("UG_TL_SIDE") == "1";
-            AddChild(tl);
-            var state = (System.Environment.GetEnvironmentVariable("UG_TL_STATE") ?? "red").ToLowerInvariant();
-            tl.ForcePhase(state switch
-            {
-                "green" => TrafficLight.Phase.Green,
-                "amber" => TrafficLight.Phase.Amber,
-                "dark" => TrafficLight.Phase.Off,                                          // blink dark beat / drained battery
-                "flash" => tl.SideRoad ? TrafficLight.Phase.FlashRed : TrafficLight.Phase.FlashAmber,
-                _ => TrafficLight.Phase.Red,
-            });
 
             // Looking along +X at the lens faces -- the lenses sit on the housing's -X side, and the mast arm runs to
             // world Z -8.9, so the two heads sit at roughly Z -2.5 and -8. AddChild BEFORE aiming: LookAt resolves
@@ -3860,7 +3893,7 @@ namespace UnturnedGodot
             AddChild(cam);
             cam.Position = new Vector3(-9f, 6.6f, -5.4f);
             cam.LookAt(new Vector3(0f, 6.3f, -5.4f), Vector3.Up);
-            GD.Print($"[TRAFFICLIGHT] state={state} side={tl.SideRoad} day={day} phase={tl.CurrentPhase} lens={TrafficLight.LensIndexFor(tl.CurrentPhase)}");
+            GD.Print($"[TRAFFICLIGHT] side={side} day={day} heads={headMeshes?.Length ?? 0}");
         }
 
         void BuildStreetLightDemo()
