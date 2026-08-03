@@ -233,6 +233,10 @@ void sky() {
             // clock. Losing the grid drops them to a backup flash rather than dark; TrafficLight owns that state.
             foreach (Node n in tree.GetNodesInGroup("traffic_lights"))
                 if (n is TrafficLight tl) tl.SetPowered(grid);
+            // Glass-front coolers (lit even closed) + any open fridge re-check global power here so their interior
+            // glow drops with the grid -- it goes dark at the blackout, not only when you next open the door.
+            foreach (Node n in tree.GetNodesInGroup("glowcontainers"))
+                if (n is StoreShelf ss) ss.RefreshGlow();
         }
 
 

@@ -23,7 +23,9 @@ namespace UnturnedGodot
         float _syncT;
         public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
         MeshInstance3D _shelfGlow;                         // whole-shelf outline silhouette, shown while the shelf is looked at
-        OmniLight3D _glow;                                 // interior light for a fridge/cooler -- lit only while the door is open AND the grid is live (master)
+        OmniLight3D _glow;                                 // interior light for a fridge/cooler; visibility = (glass-front OR door open) AND global power (master)
+        bool _glowAlways;                                  // glass-front display cooler -> lit whenever powered even when closed; opaque fridge -> only when open
+        bool _doorsOpen;                                   // last door open/close state, for RefreshGlow
         readonly List<ObjectDoor> _doors = new();          // this container's swinging door leaf/leaves (fridge/wardrobe/counter/container) -- empty for a plain shelf/crate/bookcase; driven by the inventory open/close, not F-toggled directly
         public bool HasDoors => _doors.Count > 0;
 
@@ -229,6 +231,9 @@ namespace UnturnedGodot
                         Visible = false, Position = box.Position + box.Size * 0.5f,   // interior centre of the standing body
                     };
                     AddChild(_glow);
+                    _glowAlways = MeshName.StartsWith("Cooler");   // a glass-front display cooler shows its lit interior even when closed (master); an opaque fridge only when open
+                    AddToGroup("glowcontainers");                  // DayNightCycle's power sweep calls RefreshGlow on a grid change
+                    RefreshGlow();                                 // light a powered glass cooler immediately (a fridge stays dark until opened)
                 }
             }
             // Doored containers layer their swinging leaf on top of the body above. NO floating billboard name on
@@ -286,7 +291,17 @@ namespace UnturnedGodot
         public void SetDoorsOpen(bool open)
         {
             foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(open);
-            if (_glow != null) _glow.Visible = open && PowerNet.GlobalPower;   // interior light: on only while open AND the grid's live (master)
+            _doorsOpen = open;
+            RefreshGlow();
+        }
+
+        // Interior glow visibility: a glass-front cooler (_glowAlways) is lit whenever the grid is live, even closed;
+        // an opaque fridge only while its door is open. Reads PowerNet.GlobalPower LIVE so DayNightCycle's power sweep
+        // (via the "glowcontainers" group) can drop it the instant the grid dies -- e.g. the blackout -- not just at
+        // the next open/close.
+        public void RefreshGlow()
+        {
+            if (_glow != null) _glow.Visible = (_glowAlways || _doorsOpen) && PowerNet.GlobalPower;
         }
 
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
