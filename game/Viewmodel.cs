@@ -431,9 +431,9 @@ namespace UnturnedGodot
                     // the viewmodel SubViewport (the player's own gun sound is non-positional anyway).
                     // Full-auto: each shot must ring out FULLY, not restart-cut the previous (master). A lone
                     // AudioStreamPlayer restarts on Play(); an AudioStreamPolyphonic mixes each shot as its OWN
-                    // voice so they overlap like real gunfire. Play() arms it once; PlayShoot() adds a voice per shot.
+                    // voice so they overlap like real gunfire. Play() arms it once; PlayShoot() adds a voice per shot. Polyphony 32 = headroom past the worst full-auto (zubeknakov ~18 voices = 1.78s x 600rpm); 16 exhausted + PlayStream silently dropped the shot -> cut out on sustained fire (master).
                     _shootStream = LoadOgg($"res://content/{gv.Shoot}");
-                    _shootSnd = new AudioStreamPlayer { Stream = new AudioStreamPolyphonic { Polyphony = 16 }, VolumeDb = -3f };
+                    _shootSnd = new AudioStreamPlayer { Stream = new AudioStreamPolyphonic { Polyphony = 32 }, VolumeDb = -3f };
                     mi.AddChild(_shootSnd);
                     _shootSnd.Play();
                     _shootPoly = _shootSnd.GetStreamPlayback() as AudioStreamPlaybackPolyphonic;
