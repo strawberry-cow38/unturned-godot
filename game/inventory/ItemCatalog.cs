@@ -188,29 +188,44 @@ namespace SDG.Unturned
             GD.Print($"[items] wired clothing armor for {n} items (fall + explosion whole-body multipliers)");
         }
 
-        // Wire gunName on the extracted PEI gun items (content/<name>.dat's numeric ID -> ItemAsset.gunName) so equipping
-        // or picking up the item loads the right viewmodel via EquipHeldGun. Gun names come from content/guns_visual.tsv.
+        // Wire gunName on the extracted PEI gun items (content/<name>.dat's numeric ID -> ItemAsset.gunName) so
+        // equipping or picking up the item loads the right viewmodel via EquipHeldGun.
+        //
+        // THE CONTENT decides what is a gun -- a <name>.dat with a companion <name>_gun.txt model. It used to be
+        // guns_visual.tsv, which is the VISUAL table, and that mismatch is a bug with a very confusing symptom: a gun
+        // fully ported (dat, model, sounds, albedo) but absent from the visual table got no gunName, so it sat in the
+        // inventory doing nothing when you pressed its hotbar key. No error, no message -- the item simply refused to
+        // be held. That was masterkey (strawberry: "also masterkey wasnt letting me equip it either"), and it would
+        // have been the next ported gun too, every time, until someone remembered the second file.
+        //
+        // Keying on the .dat also means a gun that IS ported but has no visual row gets named here and reported below,
+        // instead of being invisible to the catalog entirely.
         static void WireExtractedGuns()
         {
-            const string gv = "res://content/guns_visual.tsv";
-            if (!Godot.FileAccess.FileExists(gv)) return;
-            using var f = Godot.FileAccess.Open(gv, Godot.FileAccess.ModeFlags.Read);
+            string dir = ProjectSettings.GlobalizePath("res://content/");
+            if (!System.IO.Directory.Exists(dir)) return;
             int n = 0;
-            while (f != null && !f.EofReached())
+            var noVisual = new System.Collections.Generic.List<string>();
+            foreach (var datPath in System.IO.Directory.GetFiles(dir, "*.dat"))
             {
-                string line = f.GetLine();
-                if (string.IsNullOrEmpty(line)) continue;
-                string name = line.Split('\t')[0];
-                string datPath = ProjectSettings.GlobalizePath($"res://content/{name}.dat");
-                if (!System.IO.File.Exists(datPath)) continue;
+                string name = System.IO.Path.GetFileNameWithoutExtension(datPath);
+                if (!System.IO.File.Exists(dir + name + "_gun.txt")) continue;   // a .dat without a gun model isn't a gun
                 try
                 {
                     var d = new DatParser().Parse(System.IO.File.ReadAllText(datPath));
-                    if (ushort.TryParse(d.GetString("ID"), out var id)) { var a = Assets.find(id); if (a != null) { a.gunName = name; n++; } }
+                    if (!ushort.TryParse(d.GetString("ID"), out var id)) continue;
+                    var a = Assets.find(id);
+                    if (a == null) continue;
+                    a.gunName = name; n++;
+                    if (!UnturnedGodot.Viewmodel.IsKnownGun(name)) noVisual.Add(name);   // this file lives in SDG.Unturned
                 }
                 catch { /* skip a malformed .dat */ }
             }
-            GD.Print($"[items] wired {n} extracted guns for in-game equip");
+            GD.Print($"[items] wired {n} guns for in-game equip (from content/*.dat + _gun.txt)");
+            // Named loudly rather than left to be discovered in play: these equip to a REFUSAL (see
+            // PlayerController.EquipHeldGun), which is the honest outcome but still a missing row someone must add.
+            if (noVisual.Count > 0)
+                GD.PushWarning($"[items] {noVisual.Count} ported gun(s) have no guns_visual.tsv row and will refuse to equip: {string.Join(", ", noVisual)}");
         }
 
         // Wire meleeName on the extracted PEI melee items (content/<folder>.dat's ID -> ItemAsset.meleeName) so equipping

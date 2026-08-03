@@ -17,3 +17,5 @@ honeybadger	honeybadger_sight.txt	-0.0,0.1441,-0.118	0.463,0.427,0.353
 crossbow	crossbow_sight.txt	-0.0,-0.1031,-0.1161	0.275,0.275,0.275
 bow_compound	bow_compound_sight.txt	0.027,0.2607,0.0573	0.118,0.118,0.118
 launcher_rocket	launcher_rocket_sight.txt	-0.0,-0.0104,-0.1241	0.275,0.275,0.275
+eaglefire	eaglefire_iron_sights.txt	0,0,0
+maplestrike	maplestrike_iron_sights.txt	0,0,0

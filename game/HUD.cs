@@ -27,6 +27,22 @@ namespace UnturnedGodot
         readonly System.Collections.Generic.List<(Control box, System.Func<bool> on)> _status = new();
         Label _ammo;
         Label _fireMode;
+        Label _alert; float _alertLeft;   // centre-screen transient error (unknown gun); _alertLeft = seconds remaining
+
+        /// <summary>The live HUD, so a non-UI system can surface a player-facing error without threading a reference
+        /// through every call site. Null under --headless / in a test sandbox, which is why every caller null-checks
+        /// rather than this being a hard dependency -- an error report must never be the thing that crashes.</summary>
+        public static HUD Current;
+
+        /// <summary>Flash a message across the centre of the screen for `seconds`, then fade. Static so the equip path
+        /// can report a content problem it can't fix; a no-op when there is no HUD (dedicated server, tests).</summary>
+        public static void Alert(string text, float seconds = 3f)
+        {
+            GD.Print($"[alert] {text}");   // always logged, HUD or not -- a headless run still records it
+            if (Current == null || !GodotObject.IsInstanceValid(Current) || Current._alert == null) return;
+            Current._alert.Text = text;
+            Current._alertLeft = seconds;
+        }
         ColorRect _pain;   // PlayerUI colorOverlayImage: full-screen COLOR_R tint, alpha = the player's painAlpha
 
         // PlayerUI messageBox (VEHICLE_ENTER): bottom-centre dark box with the vehicle's fuel/health/battery bars, shown while driving
@@ -37,6 +53,7 @@ namespace UnturnedGodot
         public override void _Ready()
         {
             Layer = 10;   // draw over the viewmodel composite (CanvasLayer 5)
+            Current = this;
 
             var root = new Control();
             root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
@@ -98,6 +115,23 @@ namespace UnturnedGodot
             root.AddChild(_fireMode);
             _playerOnly.Add(_fireMode);
             _playerOnly.Add(_ammo);
+
+            // CENTRE-SCREEN ALERT (strawberry: "unknown gun should spit an error center screen and fallback to
+            // unarmed"). A transient line just above the crosshair -- high enough to read without covering what you
+            // are aiming at, and it holds then fades rather than vanishing on the next frame, because the thing it
+            // reports is a content problem the player can't act on and shouldn't have to catch.
+            // Deliberately NOT in _playerOnly: a content error is worth showing even on a HUD with no player bound.
+            _alert = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
+            _alert.AddThemeFontSizeOverride("font_size", 26);
+            _alert.AddThemeColorOverride("font_color", new Color(0.98f, 0.42f, 0.35f));   // error red, readable on grass and on sky
+            _alert.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _alert.AddThemeConstantOverride("outline_size", 6);
+            _alert.SetAnchorsPreset(Control.LayoutPreset.CenterTop);
+            _alert.AnchorLeft = 0f; _alert.AnchorRight = 1f; _alert.AnchorTop = 0.5f; _alert.AnchorBottom = 0.5f;
+            _alert.OffsetTop = -120f; _alert.OffsetBottom = -84f;
+            _alert.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _alert.Modulate = new Color(1f, 1f, 1f, 0f);
+            root.AddChild(_alert);
 
             // vehicle status box (PlayerUI messageBox on VEHICLE_ENTER): 300-wide dark box, bottom-centre, 80px above the
             // screen bottom. Rows pack from y=45 at 30px: Fuel (COLOR_Y), Health (COLOR_R), Battery (COLOR_Y, Stamina icon).
@@ -201,6 +235,14 @@ namespace UnturnedGodot
         public override void _Process(double delta)
         {
             foreach (var c in _playerOnly) c.Visible = Player != null;   // hide the on-foot HUD in a vehicle-only view
+
+            // centre-screen alert: hold at full opacity, then fade over the last second so it clears itself
+            if (_alert != null && _alertLeft > 0f)
+            {
+                _alertLeft -= (float)delta;
+                _alert.Modulate = new Color(1f, 1f, 1f, Mathf.Clamp(_alertLeft, 0f, 1f));
+                if (_alertLeft <= 0f) _alert.Text = "";
+            }
 
             foreach (var (fill, val) in _vitals)
                 fill.AnchorRight = Mathf.Clamp(val(), 0f, 1f);   // foreground.SizeScale_X = state

@@ -105,22 +105,64 @@ namespace UnturnedGodot
         // AlbedoTint multiplies the albedo (Godot AlbedoColor*AlbedoTexture): the masterkey's base albedo is a mostly
         // WHITE paint-base that the game tints dark, so we tint it to a dark gunmetal (the eaglefire's is already dark).
         struct GunVisual { public string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer; public Vector3 AimHook, MuzzleHook, ViewOffset, SightPos; public Color AlbedoTint, SightColor; public bool Ejects; }
-        static GunVisual Visual(string name) => name switch
+        // EVERY gun now comes from content/guns_visual.tsv (strawberry: "could we un-hardcode eaglefire n maplestrike
+        // to be in line with the rest of the weapons"). The three that used to live here as switch arms -- eaglefire,
+        // maplestrike, masterkey -- are ordinary rows in the table, using the optional mag/tint columns added for
+        // them. Their exact former values are pinned in gun.visual_table_lossless so the move can't have quietly
+        // changed how they look.
+        static GunVisual Visual(string name) => ExtraVisual(name);
+
+        /// <summary>A read-only view of a gun's RESOLVED visual, for the test that pins the three formerly-hardcoded
+        /// guns to their exact former values. GunVisual itself stays private (it's an internal build recipe with a
+        /// dozen fields nothing outside should depend on); this exposes only what a lossless-move check has to
+        /// compare, and exposes it as data rather than opening the table up.</summary>
+        public readonly struct GunVisualInfo
         {
-            "masterkey"   => new GunVisual { Gun = "masterkey_gun.txt",   Sight = null,                          Mag = null,                Albedo = "masterkey_albedo.png",  Shoot = "masterkey_shoot.ogg", Reload = "masterkey_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.40f, -0.19f),    MuzzleHook = new Vector3(0f, 0.615f, -0.042f), ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.46f, 0.28f, 0.13f), Ejects = false },   // masterkey = shotgun: no per-shot shell eject
-            "maplestrike" => new GunVisual { Gun = "maplestrike_gun.txt", Sight = "maplestrike_iron_sights.txt", Mag = "eaglefire_mag.txt", Albedo = "maplestrike_albedo.png", Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", Hammer = "maplestrike_hammer.ogg", AimHook = new Vector3(0f, -0.4388f, -0.2291f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.44f, 0.40f, 0.28f), Ejects = true },
-            "eaglefire"   => new GunVisual { Gun = "eaglefire_gun.txt",   Sight = "eaglefire_iron_sights.txt",   Mag = "eaglefire_mag.txt", Albedo = "eaglefire_albedo.png",  Shoot = "eaglefire_shoot.ogg", Reload = "eaglefire_reload.ogg", Hammer = "eaglefire_hammer.ogg", AimHook = new Vector3(0f, -0.4688f, -0.2098f), MuzzleHook = new Vector3(0f, 0.78f, -0.079f),  ViewOffset = Vector3.Zero, AlbedoTint = new Color(0.40f, 0.36f, 0.32f), Ejects = true },
-            _             => ExtraVisual(name),   // the bulk PEI arsenal: extracted content + content/guns_visual.tsv
-        };
+            public readonly string Gun, Sight, Mag, Albedo, Shoot, Reload, Hammer;
+            public readonly Vector3 AimHook, MuzzleHook;
+            public readonly Color Tint;
+            public readonly bool Ejects;
+            public GunVisualInfo(string gun, string sight, string mag, string albedo, string shoot, string reload,
+                                 string hammer, Vector3 aim, Vector3 muzzle, Color tint, bool ejects)
+            {
+                Gun = gun; Sight = sight; Mag = mag; Albedo = albedo;
+                Shoot = shoot; Reload = reload; Hammer = hammer;
+                AimHook = aim; MuzzleHook = muzzle; Tint = tint; Ejects = ejects;
+            }
+        }
+        public static GunVisualInfo VisualForTest(string name)
+        {
+            var g = Visual(name);
+            return new GunVisualInfo(g.Gun, g.Sight, g.Mag, g.Albedo, g.Shoot, g.Reload, g.Hammer,
+                                     g.AimHook, g.MuzzleHook, g.AlbedoTint, g.Ejects);
+        }
+
+        /// <summary>Is this a gun the visual table knows about? The equip path asks BEFORE putting it in your hands,
+        /// because the honest answer to an unknown gun is to refuse, not to hand you something else wearing its name
+        /// (strawberry: "unknown gun should spit an error center screen and fallback to unarmed").</summary>
+        public static bool IsKnownGun(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            _extraVisuals ??= LoadExtraVisuals();
+            return _extraVisuals.ContainsKey(name);
+        }
 
         // GunVisuals for the bulk PEI arsenal, loaded from content/guns_visual.tsv (emitted by tools/extract_gun.py).
         // Line: name \t muzzle(x,y,z) \t aim(x,y,z) \t ejects(1|0). Sight/Mag null + real _MainTex albedo (white tint)
         // as the first pass -- per-gun ADS/mag/sight tuning is polish.
         static System.Collections.Generic.Dictionary<string, GunVisual> _extraVisuals;
+        // An UNKNOWN gun used to silently become an eaglefire here. That is the worst possible answer: the gun fires,
+        // reloads and looks like a working weapon, so the missing table row never gets noticed and the bug is reported
+        // as "the dragonfang looks wrong" months later. The equip path now refuses unknown guns outright (see
+        // IsKnownGun / PlayerController.EquipHeldGun), so reaching this fallback means something bypassed that check;
+        // it's kept as a last resort so a stray call renders SOMETHING rather than throwing, and it says so loudly.
         static GunVisual ExtraVisual(string name)
         {
             _extraVisuals ??= LoadExtraVisuals();
-            return _extraVisuals.TryGetValue(name, out var gv) ? gv : Visual("eaglefire");
+            if (_extraVisuals.TryGetValue(name, out var gv)) return gv;
+            GD.PushWarning($"[gun] no guns_visual.tsv row for '{name}' -- falling back to the eaglefire model. " +
+                           "The equip path should have refused this; something built a Viewmodel directly.");
+            return _extraVisuals.TryGetValue("eaglefire", out var ef) ? ef : default;
         }
         static System.Collections.Generic.Dictionary<string, GunVisual> LoadExtraVisuals()
         {
@@ -131,13 +173,19 @@ namespace UnturnedGodot
             {
                 var c = line.Split('\t');
                 if (c.Length < 4) continue;
+                // Columns 5 and 6 are OPTIONAL and exist for the three guns that used to be hardcoded in C#: a
+                // magazine mesh, and an albedo tint for a texture the game darkens rather than using at face value.
+                // The 28 extracted rows have neither and are untouched by their addition -- no mag, white tint, which
+                // is what they had before. Blank is treated the same as absent so a row can carry a tint without a mag.
+                string mag = c.Length >= 5 && c[4].Trim().Length > 0 ? c[4].Trim() : null;
+                var tint = c.Length >= 6 && c[5].Trim().Length > 0 ? Col(c[5]) : new Color(1f, 1f, 1f);
                 d[c[0]] = new GunVisual
                 {
-                    Gun = c[0] + "_gun.txt", Albedo = c[0] + "_albedo.png", Sight = null, Mag = null,
+                    Gun = c[0] + "_gun.txt", Albedo = c[0] + "_albedo.png", Sight = null, Mag = mag,
                     Shoot = Snd(c[0] + "_shoot.ogg", "eaglefire_shoot.ogg"), Reload = Snd(c[0] + "_reload.ogg", "eaglefire_reload.ogg"),   // real per-gun sounds; fall back to eaglefire's if a clip is missing
                     Hammer = Snd(c[0] + "_hammer.ogg", "eaglefire_hammer.ogg"),   // rack / bolt-cycle sound (per-gun once ripped; eaglefire's for now)
                     MuzzleHook = V3(c[1]), AimHook = V3(c[2]), ViewOffset = Vector3.Zero,
-                    AlbedoTint = new Color(1f, 1f, 1f), Ejects = c[3].Trim() == "1",
+                    AlbedoTint = tint, Ejects = c[3].Trim() == "1",
                 };
             }
             // per-gun DEFAULT iron sights (content/sights.tsv: name \t sight_model \t mount(x,y,z)) extracted from each
@@ -154,6 +202,7 @@ namespace UnturnedGodot
                 }
             return d;
         }
+        static Color Col(string s) { var v = V3(s); return new Color(v.X, v.Y, v.Z); }
         static Vector3 V3(string s)
         {
             var p = s.Split(',');

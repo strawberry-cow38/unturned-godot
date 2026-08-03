@@ -3377,6 +3377,20 @@ namespace UnturnedGodot
         // and by the inventory's Equip action (equipping a gun makes it the held weapon).
         public void EquipHeldGun(string gunName, SDG.Unturned.Item backingItem = null)
         {
+            // AN UNKNOWN GUN IS REFUSED, LOUDLY (strawberry: "unknown gun should spit an error center screen and
+            // fallback to unarmed"). Before, a gun with no guns_visual.tsv row silently rendered as an EAGLEFIRE --
+            // it fired, reloaded, and looked like a finished weapon, so a missing row was indistinguishable from a
+            // working port and only surfaced as "why does the dragonfang look like that" much later. Failing here
+            // costs the player one hotbar press and tells them exactly what is wrong.
+            //
+            // Checked BEFORE SaveGunState so a refusal can't disturb the gun already in hand -- you end up unarmed
+            // with your previous weapon's ammo intact, not with its state stashed against a gun that never equipped.
+            if (!Viewmodel.IsKnownGun(gunName))
+            {
+                HUD.Alert($"Cannot equip {gunName ?? "<null>"}: no viewmodel data for this gun");
+                EquipUnarmed();
+                return;
+            }
             SaveGunState();   // stash the OUTGOING gun's live state onto its item before we swap away
             LoadGun($"res://content/{gunName}.dat");   // sets Gun + _gunName + Ammo + firemode (fresh defaults)
             _heldItem = backingItem;
