@@ -59,6 +59,7 @@ namespace UnturnedGodot
         ShaderMaterial _flashMat;   // muzzle flash billboard material (roll uniform set per shot)
         float _flashRoll;           // ACCUMULATED flash roll -- each shot rolls it L/R by an amount, remembering the last (master)
         AudioStreamPlayer _shootSnd, _reloadSnd, _hammerSnd, _drySnd;   // real per-gun Shoot / Reload / Hammer(rack) sounds; dry-fire = its own click (none shipped yet)
+        AudioStream _shootStream; AudioStreamPlaybackPolyphonic _shootPoly;   // shoot = overlapping polyphonic voices so full-auto shots ring out fully (no restart-cut)
         // Case ejection (master-requested feel add 2026-07-08 — the vanilla Eaglefire has no Shell effect, so this
         // is non-vanilla): a generic 5.56 casing (yellow rectangle cube) tossed from the gun's Eject hook each shot,
         // arcing out to the right + tumbling under gravity, then despawning. Lives in the viewmodel viewport world.
@@ -428,8 +429,14 @@ namespace UnturnedGodot
                     // real gun sounds — the Eaglefire's Shoot/Reload AudioClips from the bundle (-> ogg). Non-3D
                     // AudioStreamPlayers output to the Master bus, so they're audible even though the gun lives in
                     // the viewmodel SubViewport (the player's own gun sound is non-positional anyway).
-                    _shootSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Shoot}"), VolumeDb = -3f };
+                    // Full-auto: each shot must ring out FULLY, not restart-cut the previous (master). A lone
+                    // AudioStreamPlayer restarts on Play(); an AudioStreamPolyphonic mixes each shot as its OWN
+                    // voice so they overlap like real gunfire. Play() arms it once; PlayShoot() adds a voice per shot.
+                    _shootStream = LoadOgg($"res://content/{gv.Shoot}");
+                    _shootSnd = new AudioStreamPlayer { Stream = new AudioStreamPolyphonic { Polyphony = 16 }, VolumeDb = -3f };
                     mi.AddChild(_shootSnd);
+                    _shootSnd.Play();
+                    _shootPoly = _shootSnd.GetStreamPlayback() as AudioStreamPlaybackPolyphonic;
                     _reloadSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Reload}"), VolumeDb = -3f };
                     mi.AddChild(_reloadSnd);
                     _hammerSnd = new AudioStreamPlayer { Stream = LoadOgg($"res://content/{gv.Hammer}"), VolumeDb = -3f };   // the rack / bolt-cycle sound (source ItemGunAsset.hammer) -> plays with the Hammer animation
@@ -465,7 +472,7 @@ namespace UnturnedGodot
         // maps x=pitch, y=z=yaw). Both spring back to rest. STAND stance = 1x (crouch/prone scale handled at fire).
         public void Kick(Vector3 shakeMin, Vector3 shakeMax, float recoilPitch, float recoilYaw)
         {
-            _flash = 0.05f; EjectCasing(); _shootSnd?.Play();
+            _flash = 0.05f; EjectCasing(); PlayShoot();   // overlapping voice per shot -- full-auto rings out fully
             // roll the muzzle flash L/R by a random amount each shot, accumulating from the last (master)
             _flashRoll += (_rng.Randf() < 0.5f ? -1f : 1f) * _rng.RandfRange(0.35f, 1.0f);
             _flashMat?.SetShaderParameter("roll", _flashRoll);
@@ -497,6 +504,13 @@ namespace UnturnedGodot
         public void SetLocomotion(bool moving, EPlayerStance stance) { _moving = moving; _stance = stance; }
 
         public void PlayDryFire() { _drySnd?.Play(); }   // hammer click when the trigger's pulled on empty
+
+        void PlayShoot()   // one OVERLAPPING polyphonic voice per shot so full-auto shots don't restart-cut each other (master)
+        {
+            if (_shootStream == null) return;
+            _shootPoly ??= _shootSnd?.GetStreamPlayback() as AudioStreamPlaybackPolyphonic;   // (re)fetch lazily in case Play() armed it a frame late
+            _shootPoly?.PlayStream(_shootStream);
+        }
 
         public void SwingMelee(bool strong = false)   // play this melee's OWN Weak/Strong swing (source UseableMelee), falling back to the generic knife clip if it wasn't ripped
         {
