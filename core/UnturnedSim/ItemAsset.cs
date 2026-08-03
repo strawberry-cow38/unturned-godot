@@ -120,6 +120,10 @@ namespace SDG.Unturned
         // these four are its siblings. -1 = nothing installed. Living on the ITEM, not the viewmodel, is what makes
         // a fitted scope survive holstering, dropping and picking the gun back up -- the same reason gunAmmo does.
         public int gunSightId = -1, gunBarrelId = -1, gunGripId = -1, gunTacticalId = -1;
+        // Has this gun already been given its factory attachments? A SEPARATE flag because -1 cannot carry it:
+        // -1 has to mean both "never fitted" and "the player took it off", and seeding keys on -1, so without
+        // this every re-equip silently re-installs the sight the player just removed.
+        public bool gunAttachSeeded;
         // Fuel carried on the item (strawberry): a generator REMEMBERS its tank through pickup <-> inventory <-> drop
         // <-> re-place, and a gas can holds the fuel pumped into it. HP rides on `quality` (0-100 %); fuel is its own
         // float. -1 = fresh -> full (a picked-up gen = its tank; a fresh can = its fuelCapacity).

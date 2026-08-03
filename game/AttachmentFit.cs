@@ -138,7 +138,9 @@ namespace UnturnedGodot
         /// Only fills an UNSET slot (-1), so it can run on every equip without overwriting what the player fitted.</summary>
         public static void SeedDefaults(Item gunItem, string gunItemName)
         {
-            if (gunItem == null || gunItem.gunSightId != -1) return;
+            if (gunItem == null || gunItem.gunAttachSeeded) return;
+            gunItem.gunAttachSeeded = true;   // set FIRST: a gun with no irons item must still count as seeded,
+                                              // or it re-runs this lookup on every single equip forever.
             int irons = DefaultIronsId(gunItemName);
             if (irons >= 0) gunItem.gunSightId = irons;
         }

@@ -149,6 +149,26 @@ namespace UnturnedGodot.Testing
             yield return Ticks(2);
             bool? afterOff = DragOneCell(ui, inv, 5, out string ad);
             T.Check($"a sight taken OFF A GUN drags like any other item ({ad})", afterOff == true);
+
+            // ---- THE ACTUAL BUG (strawberry: "if i re-equip the gun the sight is back on the gun").
+            // SeedDefaults keyed on gunSightId == -1, but -1 means BOTH "never fitted" and "the player took it off".
+            // So every re-equip re-installed the sight that was just removed -- and the player is left holding a
+            // second copy in the bag, which is why dragging another item onto it made one vanish.
+            int sightsInBag = CountOf(inv, 5);
+            p2.EquipUnarmed();
+            yield return Ticks(2);
+            p2.EquipHotbar(1);            // re-equip the same gun
+            yield return Ticks(3);
+
+            T.Check($"re-equipping does NOT put the removed sight back on ({AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight")})",
+                AttachmentFit.InstalledId(p2.HeldItemForTest, "Sight") == -1);
+            T.Check($"...and does not conjure a duplicate ({sightsInBag} in bag before, {CountOf(inv, 5)} after)",
+                CountOf(inv, 5) == sightsInBag);
+
+            // A gun with no separate irons item must still count as seeded, or the lookup re-runs every equip.
+            var noIrons = new Item(120);   // a pistol-class item: no "<name> Iron Sights" exists
+            AttachmentFit.SeedDefaults(noIrons, "Cobra");
+            T.Check("a gun with no irons item is still marked seeded", noIrons.gunAttachSeeded);
         }
     }
 }
