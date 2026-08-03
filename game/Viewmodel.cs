@@ -333,7 +333,18 @@ namespace UnturnedGodot
                         : Visual(GunName);
                     _ejects = gv.Ejects;
                     _armsPos += gv.ViewOffset;   // per-gun hip-pose nudge (ADS re-aligns via the aim hook regardless)
-                    var mi = new MeshInstance3D { Mesh = ContentProvider.ParseObj($"res://content/{gv.Gun}") };
+                    // gun body -- peel painted sight-dot markers onto their own emissive surface(s) (rendered below). Some
+                    // pistols model tritium 3-dot sights as saturated-colour tris in the albedo; retail draws them flat, we glow
+                    // them. ONLY real guns are split (not melee/consumable/deployable/tool), so a red apple never lights up.
+                    // albedoImg is loaded once here + reused for the body texture.
+                    bool isGunBody = MeleeMesh == null && ConsumableMesh == null && DeployableMesh == null && ToolMesh == null;
+                    Image albedoImg = null;
+                    if (gv.Albedo != null) { string _ap = ProjectSettings.GlobalizePath($"res://content/{gv.Albedo}"); if (System.IO.File.Exists(_ap)) albedoImg = Image.LoadFromFile(_ap); }
+                    System.Collections.Generic.List<(Color color, ArrayMesh mesh)> sightDots = null;
+                    ArrayMesh bodyMesh;
+                    if (isGunBody) { var _sp = ContentProvider.ParseObjSplitByAlbedoMarker($"res://content/{gv.Gun}", albedoImg); bodyMesh = _sp.body; sightDots = _sp.markers; }
+                    else bodyMesh = ContentProvider.ParseObj($"res://content/{gv.Gun}");
+                    var mi = new MeshInstance3D { Mesh = bodyMesh };
                     // TextureFilter = Nearest: runtime ImageTexture (Image.LoadFromFile) has NO mipmaps, so the default
                     // Linear-mipmap filter samples BLACK once the gun texture minifies -> the "guns render totally black"
                     // bug (same root as the icon-render black-gun). Nearest samples mip 0 always, so the texture shows.
@@ -343,12 +354,22 @@ namespace UnturnedGodot
                     // Fully matte: Unturned guns are non-reflective. MetallicSpecular=0 kills the dielectric specular
                     // highlight (the 3 viewmodel lights were kicking a "shiny" sheen off the body at Roughness 0.85).
                     var mat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f, TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest };
-                    var tex = LoadTex($"res://content/{gv.Albedo}");
+                    var tex = albedoImg != null ? ImageTexture.CreateFromImage(albedoImg) : null;   // texture from the image loaded above (== LoadTex)
                     // no albedo texture: a consumable uses its real flat _Color (cheese/potato); anything else falls back to the neutral gray.
                     if (tex != null) mat.AlbedoTexture = tex; else mat.AlbedoColor = (ConsumableMesh != null || ToolMesh != null) ? gv.AlbedoTint : new Color(0.24f, 0.24f, 0.26f);
                     mi.MaterialOverride = mat;
                     att.AddChild(mi);
                     _gun = mi;
+                    // glowing sight dots: each peeled marker surface rendered emissive in its OWN source colour (ace red,
+                    // avenger/desert_falcon green, cobra white). Children of the body so they ride its transform. Energy is
+                    // tunable -- it pushes the dot into HDR so the viewport glow blooms it.
+                    if (sightDots != null)
+                        foreach (var (_dc, _dm) in sightDots)
+                        {
+                            if (_dm == null) continue;
+                            var dotMat = new StandardMaterial3D { CullMode = BaseMaterial3D.CullModeEnum.Disabled, AlbedoColor = _dc, EmissionEnabled = true, Emission = _dc, EmissionEnergyMultiplier = 3f, Metallic = 0f, MetallicSpecular = 0f, Roughness = 1f };
+                            mi.AddChild(new MeshInstance3D { Name = "SightGlow", Mesh = _dm, MaterialOverride = dotMat });
+                        }
                     // Real Eaglefire_Iron_Sights model (item 5) — sight.prefab from core.masterbundle, extracted via
                     // UnityPy and converted to the port gun frame (x,y,z)->(-x,y,-z), same pipeline as the gun body.
                     // Mounted exactly as Attachments.cs does: Instantiate(sightAsset.sight) parented to the Sight hook

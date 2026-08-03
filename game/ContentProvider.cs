@@ -245,5 +245,84 @@ namespace UnturnedGodot
             }
             return (nBody > 0 ? stBody.Commit() : null, nA > 0 ? stA.Commit() : null, nB > 0 ? stB.Commit() : null);
         }
+
+        // Split a gun mesh into its body + emissive SIGHT-DOT surfaces. Some Unturned pistols (ace/avenger/cobra/
+        // desert_falcon) model their tritium 3-dot iron sights as tris painted a single SATURATED marker colour in the
+        // albedo (red/green/white) -- the ONLY saturated colour on the gun, every other face being dark gunmetal.
+        // Retail draws them flat, but they read as glowing dots, so we peel those faces onto their own surface(s) to
+        // render emissive. Markers are SCATTERED across the UV sheet (not one region), so we sample the albedo at each
+        // face's UV centroid and test the actual RGB -- a UV-region split (like the prop lenses) would miss them.
+        // Returns the body + one (colour, mesh) per distinct marker colour; markers is empty for a gun with no painted
+        // dots (colt, every rifle) or a null albedo. Same V-flip + per-corner uv/normal as ParseObj.
+        public static (ArrayMesh body, List<(Color color, ArrayMesh mesh)> markers) ParseObjSplitByAlbedoMarker(string path, Image albedo)
+        {
+            var txt = ReadText(path);
+            if (txt == null) { GD.PushError($"[ContentProvider] obj not found: {path}"); return (null, new List<(Color, ArrayMesh)>()); }
+            var ci = CultureInfo.InvariantCulture;
+            var verts = new List<Vector3>(); var norms = new List<Vector3>(); var uvs = new List<Vector2>();
+            var fv = new List<int>(); var ft = new List<int>(); var fn = new List<int>();
+            foreach (var raw in txt.Split('\n'))
+            {
+                var line = raw.TrimEnd('\r');
+                if (line.Length == 0 || line[0] == '#') continue;
+                var t = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                if (t.Length == 0) continue;
+                switch (t[0])
+                {
+                    case "v":  verts.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
+                    case "vn": norms.Add(new Vector3(float.Parse(t[1], ci), float.Parse(t[2], ci), float.Parse(t[3], ci))); break;
+                    case "vt": uvs.Add(new Vector2(float.Parse(t[1], ci), 1f - float.Parse(t[2], ci))); break;
+                    case "f":
+                        for (int i = 1; i <= 3 && i < t.Length; i++)
+                        {
+                            var p = t[i].Split('/');
+                            fv.Add(int.Parse(p[0], ci) - 1);
+                            ft.Add(p.Length > 1 && p[1].Length > 0 ? int.Parse(p[1], ci) - 1 : -1);
+                            fn.Add(p.Length > 2 && p[2].Length > 0 ? int.Parse(p[2], ci) - 1 : -1);
+                        }
+                        break;
+                }
+            }
+            int W = albedo?.GetWidth() ?? 0, H = albedo?.GetHeight() ?? 0;
+            // a marker texel is BRIGHT and either saturated (red/green) or near-white; dark gunmetal never qualifies.
+            Color? MarkerAt(Vector2 uv)
+            {
+                if (albedo == null || W == 0 || H == 0) return null;
+                int x = Mathf.Clamp((int)Mathf.Round(uv.X * (W - 1)), 0, W - 1);
+                int y = Mathf.Clamp((int)Mathf.Round(uv.Y * (H - 1)), 0, H - 1);
+                Color c = albedo.GetPixel(x, y);
+                if (c.A < 0.5f) return null;
+                float mx = Mathf.Max(c.R, Mathf.Max(c.G, c.B)), mn = Mathf.Min(c.R, Mathf.Min(c.G, c.B));
+                if (mx > 0.85f && (mx - mn > 0.4f || mn > 0.85f)) return c;
+                return null;
+            }
+            var stBody = new SurfaceTool(); stBody.Begin(Mesh.PrimitiveType.Triangles); int nBody = 0;
+            var markerSt = new Dictionary<(int, int, int), (Color rep, SurfaceTool tool)>();   // grouped by quantised colour so a multi-colour gun still splits right
+            for (int f = 0; f + 2 < fv.Count; f += 3)
+            {
+                Vector2 cuv = Vector2.Zero; int nUv = 0;
+                for (int k = 0; k < 3; k++) { int ti = ft[f + k]; if (ti >= 0 && ti < uvs.Count) { cuv += uvs[ti]; nUv++; } }
+                Color? mc = nUv == 3 ? MarkerAt(cuv / 3f) : null;
+                SurfaceTool st;
+                if (mc.HasValue)
+                {
+                    var c = mc.Value;
+                    var key = ((int)Mathf.Round(c.R * 4f), (int)Mathf.Round(c.G * 4f), (int)Mathf.Round(c.B * 4f));
+                    if (!markerSt.TryGetValue(key, out var e)) { e = (c, new SurfaceTool()); e.tool.Begin(Mesh.PrimitiveType.Triangles); markerSt[key] = e; }
+                    st = e.tool;
+                }
+                else { st = stBody; nBody++; }
+                for (int k = 0; k < 3; k++)
+                {
+                    int i = f + k;
+                    if (ft[i] >= 0 && ft[i] < uvs.Count) st.SetUV(uvs[ft[i]]);
+                    if (fn[i] >= 0 && fn[i] < norms.Count) st.SetNormal(norms[fn[i]]);
+                    st.AddVertex(verts[fv[i]]);
+                }
+            }
+            var markers = new List<(Color color, ArrayMesh mesh)>();
+            foreach (var e in markerSt.Values) markers.Add((e.rep, e.tool.Commit()));
+            return (nBody > 0 ? stBody.Commit() : null, markers);
+        }
     }
 }
