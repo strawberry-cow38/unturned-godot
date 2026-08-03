@@ -28,7 +28,7 @@ namespace UnturnedGodot
 
         LineEdit _input;
         Label _log;
-        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleBbat", "infFuel", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
+        static readonly string[] Verbs = { "give", "vehicle", "teleport", "plant", "skill", "xp", "hold", "deploy", "unarmed", "survival", "toggleGlobalPower", "toggleGlobalWater", "toggleBbat", "infFuel", "wear", "unwear", "fluid", "date", "dateset", "whenBlackout", "triggerGlobalBrownout" };
         static readonly EItemType[] ClothingTypes = { EItemType.SHIRT, EItemType.PANTS, EItemType.HAT, EItemType.VEST, EItemType.MASK, EItemType.GLASSES, EItemType.BACKPACK };
         readonly System.Collections.Generic.List<string> _history = new();
         int _histIdx;
@@ -123,6 +123,22 @@ namespace UnturnedGodot
                                      : f == "off" || f == "0" || f == "false" ? false
                                      : !Vehicle.InfiniteFuel;
                 Log($"infFuel {(Vehicle.InfiniteFuel ? "ON -- cars won't burn fuel" : "OFF -- fuel drains normally")}");
+                return;
+            }
+
+            // toggleGlobalWater [on|off]  -- the MAINS. While ON, fire hydrants / water towers / sinks are infinite
+            // supplies; while OFF they go inert and you are back to rain, rivers and storage (strawberry). ON by
+            // default; bare form FLIPS it. Above the arg guard so the no-arg toggle works. SP-local static, not
+            // networked -- the fluid fixtures are SP-local too (MP replication of map fluid IO is fast-follow).
+            if (verb == "toggleglobalwater" || verb == "globalwater" || verb == "water")
+            {
+                string w = arg.ToLowerInvariant();
+                FluidNet.SetGlobalWater(w == "on" || w == "1" || w == "true" ? true
+                                      : w == "off" || w == "0" || w == "false" ? false
+                                      : !FluidNet.GlobalWater);
+                Log(FluidNet.GlobalWater
+                    ? "mains water ON -- hydrants (tainted, 4 outlets) / towers (tainted) / sinks (clean) are infinite"
+                    : "mains water OFF -- every municipal source is dead; rain, rivers and what you stored");
                 return;
             }
 

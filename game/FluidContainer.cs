@@ -49,6 +49,14 @@ namespace UnturnedGodot
         // input nor produces output (FluidNet zeroes its port rates + never latches TransformActive). Ignored by non-transformers.
         public virtual bool TransformEnabled => true;
 
+        // A Source/Storage supplies only while this is true. Base = always (a filled tank feeds whatever it is hosed to).
+        // The MUNICIPAL sources -- hydrants, water towers, sinks -- override it with FluidNet.GlobalWater, so the whole
+        // mains goes inert together when the water shuts off (strawberry). Deliberately the same shape and the same
+        // place as TransformEnabled above rather than three prop classes each special-casing themselves: a source that
+        // is off must go dead in the SOLVER, or it keeps advertising supply that never arrives and every pump on its
+        // line stays awake waiting for it.
+        public virtual bool SupplyEnabled => true;
+
         // Machine status shown on an at-a-glance billboard (strawberry polish: "machines are silent about why they're
         // dead"). Returns (text, colour); text == null = no status billboard (a passive splitter/combiner). Green = doing
         // its job; grey = idle-but-fine (nothing to move); orange = a fixable problem (no power); red = deliberately off.

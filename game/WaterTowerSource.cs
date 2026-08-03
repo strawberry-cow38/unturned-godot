@@ -20,6 +20,11 @@ namespace UnturnedGodot
             PortLocalPos = new Vector3(0f, 1.3f, 2.0f),   // an output spigot at the tower BASE: 1.3 m up, 2 m out past the legs
         };
 
+        // Municipal supply, so it dies with the mains (strawberry's toggleGlobalWater). Infinite still means infinite --
+        // the reservoir does not drain when the town's water is shut off, it just stops being fed to you. Gated in the
+        // SOLVER rather than by emptying the tank, so pumps on its line idle instead of waiting on a phantom supply.
+        public override bool SupplyEnabled => FluidNet.GlobalWater;
+
         protected override void BuildVisuals() { }   // rides the Tower_Water_0 prop mesh -- no own tank body / fill bar
     }
 }

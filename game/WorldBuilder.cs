@@ -91,6 +91,15 @@ namespace UnturnedGodot
         // CONTAINERS in singleplayer instead of plain decoration -- a StoreShelf spawns at the placement transform and
         // the decoration mesh is skipped. Registry = object guid -> PEI item table. First pass: the Shelf_1 store shelf
         // (24 placed in the map's shops). Extend the map as more prop->container mappings are dialed in.
+        /// <summary>Which counter variants are SINKS -- read off the meshes, not the names. Counter_1 and Counter_3
+        /// share one shape (24/10/8/62 tris over identical Z bands) carrying a metal basin recessed into the top plus
+        /// a fitting above it; Counter_0 and Counter_2 are the plain 116-tri wood counters with no such geometry.
+        /// Counter_1 is wood-bodied, Counter_3 all-steel -- material, not shape.
+        ///
+        /// This corrects a comment that used to sit in ContainerShelf claiming "Counter_3/4 are SINKS": there is no
+        /// Counter_4 in guid_mesh.txt at all, and Counter_1 is a sink too despite being a loot container.</summary>
+        public static bool IsSinkProp(string mesh) => mesh == "Counter_1" || mesh == "Counter_3";
+
         static readonly System.Collections.Generic.Dictionary<string, (string mesh, int table, bool display, string label)> ContainerShelf = new()
         {
             // OPEN-tier shelves -> loot SHOWN on the tiers
@@ -105,7 +114,7 @@ namespace UnturnedGodot
             ["90da84de3f214d129de92b6ee8df60af"] = ("Dryer_0", 19, false, "Dryer"),        // dryer -> Cloth
             ["050dbe869b1c4fd5b215c552d145effd"] = ("Counter_0", 17, false, "Counter"),   // counter x103 -> Kitchen
             ["0aeeefaf364f46f9906aff76c40c6d2b"] = ("Counter_1", 17, false, "Counter"),   // counter x22 -> Kitchen
-            ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", 17, false, "Counter"),   // counter x23 -> Kitchen (Counter_3/4 are SINKS, kept OUT)
+            ["02923364713c4385a2bdaa7221d717ae"] = ("Counter_2", 17, false, "Counter"),   // counter x23 -> Kitchen
             // business/industrial containers (crates + shipping containers) -> prime in-genre loot
             ["cb0d8bf87fca47e3b73f634959a9f523"] = ("Crate_0", 8, false, "Crate"),         // business crate x31 -> Construction
             ["054a9392fed9484e950ff92d13631f06"] = ("Crate_3", 8, false, "Crate"),         // business crate x20 -> Construction
@@ -363,6 +372,7 @@ namespace UnturnedGodot
             var cellSum = new System.Collections.Generic.Dictionary<Vector2I, Vector3>();
             Vector2I bestCell = Vector2I.Zero; int bestN = 0; int placed = 0; int lodMissing = 0; int lodLevels = 0;
             int signals = 0, signalsSide = 0;   // side-road flags are matched by POSITION; a silent miss would flash every junction amber
+            int waterSources = 0;               // hydrants + towers + sinks; a silent zero here means the mains exist only in the console
             var lodMis = new System.Collections.Generic.List<MeshInstance3D>();   // this placement's extra LOD instances, reused per prop
             var lodLoadSw = System.Diagnostics.Stopwatch.StartNew(); long lodLoadTicks = 0; int lodMeshesLoaded = 0;   // isolated cost of the LOD mesh parses
             // UG_NOLOD=1 skips the table so every prop falls back to the old flat 320m -- the A/B control for
@@ -572,13 +582,28 @@ namespace UnturnedGodot
                 // hose from -- attached SP-local in Playable (MP replication of map fluid fixtures = fast-follow, like the
                 // rest of the fluid system). It rides this prop's mesh; just adds an output spigot at the base. One shared
                 // FluidManager ticks them (created lazily, deduped by the group check).
-                if (name == "Tower_Water_0" && mode == WorldMode.Playable)
+                // MUNICIPAL WATER (strawberry): the tower, plus fire hydrants (4 outlets, tainted) and kitchen sinks
+                // (clean). All three are infinite while the mains are up and inert once `toggleGlobalWater` shuts them
+                // off. Same attach pattern for each -- SP-local in Playable, riding the prop's own mesh, one shared
+                // FluidManager created lazily.
+                //
+                // WHICH COUNTERS ARE SINKS is read off the mesh palette rather than guessed: Counter_1/Counter_3 carry
+                // grey metal texels (a basin recessed into the top plus a fitting above it) that the all-wood
+                // Counter_0/Counter_2 do not. See SinkSource for the texel evidence.
+                FluidContainer mains = name switch
                 {
-                    var tower = WaterTowerSource.Make();
-                    tower.Position = gpos;
-                    tower.RotationDegrees = new Vector3(0f, 180f - ey, 0f);
-                    root.AddChild(tower);
-                    if (tower.GetTree() != null && tower.GetTree().GetNodesInGroup("fluid_managers").Count == 0) root.AddChild(new FluidManager());
+                    "Tower_Water_0" => WaterTowerSource.Make(),
+                    "Fire_Hydrant_0" => FireHydrantSource.Make(),
+                    _ when IsSinkProp(name) => SinkSource.Make(),   // Counter_3 reaches here; Counter_1 is intercepted as a container and gets its tap in TryContainer
+                    _ => null,
+                };
+                if (mains != null && mode == WorldMode.Playable)
+                {
+                    mains.Position = gpos;
+                    mains.RotationDegrees = new Vector3(0f, 180f - ey, 0f);
+                    root.AddChild(mains);
+                    waterSources++;
+                    if (mains.GetTree() != null && mains.GetTree().GetNodesInGroup("fluid_managers").Count == 0) root.AddChild(new FluidManager());
                 }
                 // STREETLIGHTS (strawberry): each Street_Light_0 gets a cheap + pretty downward sodium light (StreetLight) --
                 // shadowless spotlight + fake additive cone + glowing lens, placed in WORLD space at the lamp head (the raw
@@ -745,6 +770,20 @@ namespace UnturnedGodot
             bool TryContainer(string[] q)
             {
                 if (mode != WorldMode.Playable || !ContainerShelf.TryGetValue(q[0], out var cfg)) return false;
+                // A SINK THAT IS ALSO A CONTAINER. Counter_1 is a lootable kitchen counter AND a sink unit -- the mesh
+                // is the same shape as Counter_3 (identical 24/10/8/62 tri split at identical Z bands), just a wood
+                // body instead of all-steel. Being in this table means it never reaches PlaceObject, so its tap has to
+                // be attached here or 22 of the map's 28 sinks silently have no water. Both things are true of a real
+                // kitchen counter, so it is a container AND a source rather than a choice between them.
+                if (cfg.mesh == "Counter_1" && IsSinkProp(cfg.mesh))
+                {
+                    var sink = SinkSource.Make();
+                    sink.Position = new Vector3(F(q[1]), F(q[2]), -F(q[3]));
+                    sink.RotationDegrees = new Vector3(0f, 180f - F(q[5]), 0f);
+                    root.AddChild(sink);
+                    waterSources++;
+                    if (sink.GetTree() != null && sink.GetTree().GetNodesInGroup("fluid_managers").Count == 0) root.AddChild(new FluidManager());
+                }
                 // FLAG it (skip the decoration mesh) -> the caller spawns the real container post-build (asset DB ready).
                 result.Containers.Add((cfg.mesh, cfg.table, cfg.display, cfg.label, new Vector3(F(q[1]), F(q[2]), -F(q[3])), 180f - F(q[5])));
                 result.ContainerRots.Add(new Basis(new Vector3(0,1,0), Mathf.DegToRad(180f - F(q[5]))) * new Basis(new Vector3(1,0,0), Mathf.DegToRad(F(q[4]))) * new Basis(new Vector3(0,0,1), Mathf.DegToRad(-F(q[6]))));   // ex=270/ez=0 upright -> yaw only
@@ -773,6 +812,7 @@ namespace UnturnedGodot
             if (converted > 0) GD.Print($"[containers] flagged {converted} map props for post-build container spawn");
             var focus = placed > 0 ? cellSum[bestCell] / bestN : Vector3.Zero;
             GD.Print($"[OBJECTS] placed {placed} objects ({cache.Count} meshes); densest cluster {bestN} near {focus}; holiday-gated {holidaySkipped}{(deferredHoliday != null ? $", deferred {deferredHoliday.Count} to the join handshake" : "")} (active={activeHoliday})");
+            if (waterSources > 0) GD.Print($"[water] {waterSources} municipal water sources placed (hydrants + towers + sinks); mains {(FluidNet.GlobalWater ? "ON" : "OFF")}");
             if (signals > 0) GD.Print($"[signals] {signals} traffic signals, {signalsSide} flagged side-road (flash RED); {signals - signalsSide} main-road (flash amber)");
             GD.Print($"[lod] {placed - lodMissing}/{placed} placements got a retail draw distance; {lodMissing} fell back to the flat 320m; {lodLevels} extra LOD mesh instances");
             GD.Print($"[lod] LOD mesh parse cost: {lodMeshesLoaded} files in {lodLoadTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F0} ms (the load-time price of the runtime triangle saving)");

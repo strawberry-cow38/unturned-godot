@@ -24,6 +24,19 @@ namespace UnturnedGodot
     // rates, then MOVE the actual fluid — source.Drain(load·dt), storage.Fill(received·dt), consumers delete.
     public static class FluidNet
     {
+        // Global MAINS-WATER flag (SP), the fluid mirror of PowerNet.GlobalPower. While ON the municipal sources --
+        // fire hydrants, water towers and sinks -- are infinite supplies; while OFF the mains are dead and you are
+        // back to rain, rivers and whatever you stored (strawberry). Default ON: the town has running water until it
+        // doesn't. The F1 console `toggleGlobalWater` flips it.
+        //
+        // No MarkDirty() equivalent is needed: unlike the wire graph, FluidNet re-solves from scratch every frame, so
+        // a flag flip is picked up on the next tick with nothing to invalidate.
+        static bool _globalWater = true;
+        public static bool GlobalWater => _globalWater;
+        public static bool ToggleGlobalWater() { _globalWater = !_globalWater; return _globalWater; }
+        public static void SetGlobalWater(bool on) { _globalWater = on; }
+        public static void ResetForTests() { _globalWater = true; }   // L1 isolation between sandboxes, mirroring PowerNet
+
         // The effective fluid type at a port, resolved THROUGH tankless relay fittings (splitter/combiner/pump/valve): they
         // have no tank so their own EffectiveType is None, but the hose-tool type-lock must see the fluid their network
         // actually carries (else fuel pipes into a water tank across a fitting). Walk the committed hose graph out of a
@@ -177,7 +190,7 @@ namespace UnturnedGodot
                     // input flowed last tick (1-tick lag); a valve/broken container blocks.
                     bool hasFluid = hasTank && c.Tank.Amount > 0.001f;
                     bool supplying = c.Role == FluidRole.Transformer ? c.TransformActive
-                                   : ((c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && hasFluid);
+                                   : ((c.Role == FluidRole.Source || c.Role == FluidRole.Storage) && hasFluid && c.SupplyEnabled);
                     float boost = (ceiling.TryGetValue(c, out var cl) && cl > float.NegativeInfinity) ? PumpBoost : 1f;   // on a powered pump's line -> 5x
                     var dev = new FluidDevice { Supplying = supplying, Blocked = c.Blocked };
                     foreach (var p in c.Ports)
