@@ -3888,19 +3888,20 @@ namespace UnturnedGodot
             _fireCd = Gun != null ? (Gun.Firerate + 1) / 50f : 0.1f;   // interval = firerate+1 ticks: source fires when clock-lastFire > firerate (STRICT >, UseableGun.tockShoot), so the real gap is firerate+1. Off-by-one made fast guns (zube firerate 4: 750rpm vs correct 600) fire ~25% too hot -- master's "very high ROF"
             Ammo--;
             // fire feedback + the gun's real per-shot viewmodel shake (Shake_Min/Max_*); zero if no gun loaded
+            float stanceMul = StanceRecoilMul();   // crouch/prone recoil steadier once settled -- scales the kick + the aim-climb below (master)
             if (Gun != null)
             {
-                float rvPitch = _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY);   // vertical recoil -> muzzle climb
-                float rvYaw = _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX);     // horizontal recoil -> gun yaw
-                _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ),
-                                 new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ), rvPitch, rvYaw);
+                float rvPitch = _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * stanceMul;   // vertical recoil -> muzzle climb
+                float rvYaw = _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * stanceMul;     // horizontal recoil -> gun yaw
+                _viewmodel?.Kick(new Vector3(Gun.ShakeMinX, Gun.ShakeMinY, Gun.ShakeMinZ) * stanceMul,
+                                 new Vector3(Gun.ShakeMaxX, Gun.ShakeMaxY, Gun.ShakeMaxZ) * stanceMul, rvPitch, rvYaw);
             }
             else _viewmodel?.Kick(Vector3.Zero, Vector3.Zero, 0f, 0f);
             float sharp = Skills.SharpshooterRecoilMultiplier();   // SHARPSHOOTER: up to -40% recoil + spread at max level (source UseableGun)
             if (Gun != null)   // additive recoil: each shot kicks the AIM up + random-sign yaw (scaled by Recover); it accumulates and STAYS -- player pulls back down (master)
             {
-                _recoilPending += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY * sharp;
-                _recoilYawPending += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f) * sharp;
+                _recoilPending += _rng.RandfRange(Gun.RecoilMinY, Gun.RecoilMaxY) * Gun.RecoverY * sharp * stanceMul;
+                _recoilYawPending += _rng.RandfRange(Gun.RecoilMinX, Gun.RecoilMaxX) * Gun.RecoverX * (_rng.Randf() < 0.5f ? -1f : 1f) * sharp * stanceMul;
             }
 
             Vector3 from = _cam.GlobalPosition;
@@ -4710,10 +4711,11 @@ namespace UnturnedGodot
             // (X = crouch, Z = prone, sprint overlay, broken-legs demotion, headroom gate -- MP_PLAN §3.4).
             // NetAvatar never polls the keys -- PlayerNetSync forces ScriptedStance from the MoveInput
             // stance bits instead, so the avatar integrates at the stance the client shell predicted at.
-            bool xNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.X);
+            bool xNow = !NetAvatar && !UiInputBlocked && (Input.IsPhysicalKeyPressed(Key.X) || (Input.IsPhysicalKeyPressed(Key.C) && !(_build?.Active ?? false)));   // C = hold-to-crouch (master); build mode keeps C as cycle-structure
             bool zNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Z);
             bool sprintNow = !NetAvatar && !UiInputBlocked && Input.IsPhysicalKeyPressed(Key.Shift);
             StepStanceOnce(xNow, zNow, sprintNow, ScriptedStance);
+            if (_move.Stance == _recoilStance) _recoilStanceTime += (float)delta; else { _recoilStance = _move.Stance; _recoilStanceTime = 0f; }   // stance-settle timer for the recoil bonus (reset on any change) -- master
 
             float forward, strafe;
             if (ScriptedInput.HasValue) { strafe = ScriptedInput.Value.x; forward = ScriptedInput.Value.y; }
@@ -4759,6 +4761,14 @@ namespace UnturnedGodot
         // ---- the movement kernel: the ONE deterministic movement step, split in two halves because
         // the live tick interleaves per-tick client work (viewmodel locomotion, vitals, footstep
         // noise) between the stance decision and the move. Everything physics-relevant lives HERE. ----
+
+        // Stance-based recoil (master): crouched/prone steadies the gun, but ONLY after being fully settled in the
+        // stance for a beat (StanceSettle) -- so spam-crouch / crawl mid-burst can't cheese it. Shell-side (recoil is a
+        // local feel thing, separate from the MP-replicated PlayerStanceSim).
+        EPlayerStance _recoilStance = EPlayerStance.STAND; float _recoilStanceTime;
+        const float StanceSettle = 0.35f;
+        float StanceRecoilMul() => _recoilStanceTime < StanceSettle ? 1f
+            : _move.Stance switch { EPlayerStance.CROUCH => 0.6f, EPlayerStance.PRONE => 0.35f, _ => 1f };
 
         /// <summary>Stance half: one stance-FSM step + the capsule resize (source HeightForStance).</summary>
         void StepStanceOnce(bool crouchKey, bool proneKey, bool sprintKey, EPlayerStance? scriptedStance)
