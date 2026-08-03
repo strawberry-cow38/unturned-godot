@@ -70,10 +70,32 @@ namespace UnturnedGodot
             int caliber = Player?.Gun?.Caliber ?? 0;
             var opts = AttachmentFit.InBag(Player?.Inventory, slot, caliber);
 
-            // DETACH first, and only when something is actually on the slot -- an always-present Detach on an empty
-            // slot is a button that does nothing, which reads as broken rather than as empty.
-            if (VM.SlotHasModel(slot) && VM.SlotAttached(slot))
-                AddOption(slot, "Detach", null, 0, () => { VM.SetSlotAttached(slot, false); Refresh(); });
+            // DETACH first, and only when something is actually on the slot. Removing an attachment RETURNS THE ITEM
+            // TO THE BAG (strawberry) -- it's a real object, not a flag, so taking a scope off one gun has to leave
+            // you holding a scope you can put on another.
+            int installed = AttachmentFit.InstalledId(Player?.HeldItemForTest, slot);
+            if (installed >= 0 || (VM.SlotHasModel(slot) && VM.SlotAttached(slot)))
+            {
+                var held = Player?.HeldItemForTest;
+                AddOption(slot, installed >= 0 ? $"Detach {Assets.find((ushort)installed)?.itemName ?? "attachment"}" : "Detach",
+                    installed >= 0 ? (ushort)installed : null, 0, () =>
+                {
+                    // Give it back BEFORE clearing the slot, and only clear if the bag actually took it -- a full bag
+                    // must refuse the detach rather than delete the attachment. Dropping it on the floor instead would
+                    // be the other defensible answer; silently destroying it is not.
+                    if (installed >= 0)
+                    {
+                        if (Player?.Inventory != null && !Player.Inventory.tryAddItem(new Item((ushort)installed)))
+                        {
+                            HUD.Alert("No room to remove that — free a slot first");
+                            return;
+                        }
+                        AttachmentFit.SetInstalledId(held, slot, -1);
+                    }
+                    VM.SetSlotAttached(slot, false);
+                    Refresh();
+                });
+            }
 
             foreach (var (asset, count) in opts)
             {
@@ -82,6 +104,13 @@ namespace UnturnedGodot
                 string mesh = AttachmentFit.MeshFor(a.id);
                 AddOption(slot, label, a.id, count, () =>
                 {
+                    var held = Player?.HeldItemForTest;
+                    // Swapping onto an occupied slot returns the OUTGOING attachment first, so a swap is a swap and
+                    // not a quiet destruction of whatever was already fitted.
+                    int prev = AttachmentFit.InstalledId(held, slot);
+                    if (prev >= 0 && prev != a.id) Player?.Inventory?.tryAddItem(new Item((ushort)prev));
+                    if (!TakeFromBag(a.id)) return;                  // consume the one being installed
+                    AttachmentFit.SetInstalledId(held, slot, a.id);
                     // An attachment with no ripped mesh still ATTACHES -- it just renders nothing. Hiding those would
                     // hide most of the arsenal from a menu whose whole job is showing what you own.
                     if (mesh != null) VM.SetSlotMesh(slot, mesh);
@@ -94,6 +123,23 @@ namespace UnturnedGodot
                 AddOption(slot, "— nothing that fits —", null, 0, null);
 
             LayoutFan();
+        }
+
+        // Remove ONE of `id` from the bag -- the attachment is now on the gun, so it must not still be in your
+        // pockets. Scans the same page range the options came from; false = it wasn't there (a stale fan after the
+        // bag changed underneath), in which case the caller does nothing rather than fitting an item you don't own.
+        bool TakeFromBag(ushort id)
+        {
+            var inv = Player?.Inventory;
+            if (inv == null) return true;   // no bag (the --attach viewmodel harness): nothing to consume, still fit it
+            for (byte b = 0; b < (byte)(PlayerInventory.PAGES - 2); b++)
+            {
+                var pg = inv.items[b];
+                if (pg == null) continue;
+                for (byte i = 0; i < pg.getItemCount(); i++)
+                    if (pg.getItem(i)?.item?.id == id) { pg.removeItem(i); return true; }
+            }
+            return false;
         }
 
         void AddOption(string slot, string label, ushort? iconId, int count, System.Action onPress)

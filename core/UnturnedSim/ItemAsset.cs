@@ -114,6 +114,12 @@ namespace SDG.Unturned
         public int gunFiremode = -1;   // fire-mode index (Safety/Semi/Burst/Auto)
         public int gunMagId = -1;      // the magazine item id currently loaded
         public int gunAttach = -1;     // attachment bitmask (which slots are attached; -1 = unset -> gun's defaults)
+        // WHICH attachment item is installed in each slot -- an ITEM ID, not a flag, because an attachment is a
+        // real object that came out of your bag and has to go back into it (strawberry: "irons are their own item
+        // and can be installed across weapons"). The magazine slot already had gunMagId above and keeps using it;
+        // these four are its siblings. -1 = nothing installed. Living on the ITEM, not the viewmodel, is what makes
+        // a fitted scope survive holstering, dropping and picking the gun back up -- the same reason gunAmmo does.
+        public int gunSightId = -1, gunBarrelId = -1, gunGripId = -1, gunTacticalId = -1;
         // Fuel carried on the item (strawberry): a generator REMEMBERS its tank through pickup <-> inventory <-> drop
         // <-> re-place, and a gas can holds the fuel pumped into it. HP rides on `quality` (0-100 %); fuel is its own
         // float. -1 = fresh -> full (a picked-up gen = its tank; a fresh can = its fuelCapacity).

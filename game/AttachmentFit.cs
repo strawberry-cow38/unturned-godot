@@ -86,6 +86,63 @@ namespace UnturnedGodot
             return outp;
         }
 
+        // ---- INSTALLED STATE: which attachment item sits in which slot, stored on the GUN'S ITEM ----
+        // Read/written through here rather than by touching the fields directly, so "which field backs the Magazine
+        // slot" (gunMagId, which predates the other four) is answered in exactly one place.
+
+        public static int InstalledId(Item gun, string slot)
+        {
+            if (gun == null) return -1;
+            return slot switch
+            {
+                "Sight" => gun.gunSightId, "Barrel" => gun.gunBarrelId,
+                "Grip" => gun.gunGripId, "Tactical" => gun.gunTacticalId,
+                "Magazine" => gun.gunMagId, _ => -1,
+            };
+        }
+
+        public static void SetInstalledId(Item gun, string slot, int id)
+        {
+            if (gun == null) return;
+            switch (slot)
+            {
+                case "Sight": gun.gunSightId = id; break;
+                case "Barrel": gun.gunBarrelId = id; break;
+                case "Grip": gun.gunGripId = id; break;
+                case "Tactical": gun.gunTacticalId = id; break;
+                case "Magazine": gun.gunMagId = id; break;
+            }
+        }
+
+        /// <summary>The iron-sight ITEM a gun ships with, derived from the catalog by name -- retail names every one
+        /// "&lt;Gun&gt; Iron Sights" (34 of them). Derived rather than tabulated so a newly ported gun's irons resolve
+        /// with no extra wiring, the same reason the gun table reads the .dat files instead of a list.
+        ///
+        /// Returns -1 for a gun with no such item, which is not a failure: the pistols carry their sights baked into
+        /// the body mesh (verified when the glowing-sight markers were traced) and have no separate irons to remove.</summary>
+        public static int DefaultIronsId(string gunItemName)
+        {
+            if (string.IsNullOrEmpty(gunItemName)) return -1;
+            string want = gunItemName + " Iron Sights";
+            foreach (var a in Assets.all())
+                if (a.type == EItemType.SIGHT && string.Equals(a.itemName, want, System.StringComparison.OrdinalIgnoreCase))
+                    return a.id;
+            return -1;
+        }
+
+        /// <summary>Give a gun item its factory sight the first time it's picked up, so the irons you can see on the
+        /// weapon are the same object you get back when you take them off. Without this, detaching a stock gun's
+        /// sights would return nothing and the sight would simply cease to exist -- the gun looks the same either
+        /// way, which is what makes the loss invisible.
+        ///
+        /// Only fills an UNSET slot (-1), so it can run on every equip without overwriting what the player fitted.</summary>
+        public static void SeedDefaults(Item gunItem, string gunItemName)
+        {
+            if (gunItem == null || gunItem.gunSightId != -1) return;
+            int irons = DefaultIronsId(gunItemName);
+            if (irons >= 0) gunItem.gunSightId = irons;
+        }
+
         /// <summary>The in-hand MESH for an attachment item, or null if this port never ripped one. Separate from
         /// Fits() because fitting is a rules question and having a model is an asset question -- an attachment with
         /// no mesh still attaches and still applies its stats, it just renders nothing, and conflating the two would

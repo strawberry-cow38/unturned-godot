@@ -97,6 +97,51 @@ namespace UnturnedGodot.Testing
             // A null bag must degrade to "no options", not throw -- the menu opens in the --attach viewmodel harness
             // where there is no player at all.
             T.Check("a player-less menu asks an empty bag and survives", AttachmentFit.InBag(null, "Sight", 1).Count == 0);
+
+            // ---- ATTACHMENTS ARE OBJECTS, not flags (strawberry: "irons are their own item and can be installed
+            // across weapons"). Installed state lives on the GUN'S ITEM so it survives holstering and travels with
+            // the weapon, and taking something off has to hand it back.
+            var g1 = new Item(4);      // an Eaglefire
+            T.Check($"a fresh gun has nothing recorded in its sight slot ({AttachmentFit.InstalledId(g1, "Sight")})",
+                AttachmentFit.InstalledId(g1, "Sight") == -1);
+
+            // Factory irons are DERIVED from the catalog by name, so a newly ported gun needs no extra wiring.
+            T.Check($"Eaglefire's factory irons resolve to item 5 ({AttachmentFit.DefaultIronsId("Eaglefire")})",
+                AttachmentFit.DefaultIronsId("Eaglefire") == 5);
+            T.Check($"Timberwolf's resolve to 19 ({AttachmentFit.DefaultIronsId("Timberwolf")})",
+                AttachmentFit.DefaultIronsId("Timberwolf") == 19);
+            // Pistols carry their sights in the body mesh and have no separate irons item -- -1 is the right answer,
+            // not a lookup failure.
+            T.Check($"a pistol with no separate irons resolves to -1 ({AttachmentFit.DefaultIronsId("Cobra")})",
+                AttachmentFit.DefaultIronsId("Cobra") == -1);
+            T.Check("...and an unknown name doesn't throw", AttachmentFit.DefaultIronsId("Not A Gun") == -1);
+
+            AttachmentFit.SeedDefaults(g1, "Eaglefire");
+            T.Check($"seeding installs the factory irons ({AttachmentFit.InstalledId(g1, "Sight")})",
+                AttachmentFit.InstalledId(g1, "Sight") == 5);
+            // Seeding runs on every equip, so it must never stomp what the player fitted.
+            AttachmentFit.SetInstalledId(g1, "Sight", 21);
+            AttachmentFit.SeedDefaults(g1, "Eaglefire");
+            T.Check($"...and re-seeding leaves a player-fitted scope alone ({AttachmentFit.InstalledId(g1, "Sight")})",
+                AttachmentFit.InstalledId(g1, "Sight") == 21);
+
+            // Each slot is its own field; writing one must not disturb the others. The Magazine slot in particular is
+            // backed by the pre-existing gunMagId, so a careless mapping would silently overwrite a loaded magazine.
+            var g2 = new Item(4);
+            AttachmentFit.SetInstalledId(g2, "Magazine", 6);
+            AttachmentFit.SetInstalledId(g2, "Barrel", 7);
+            T.Check($"the Magazine slot writes through to gunMagId ({g2.gunMagId})", g2.gunMagId == 6);
+            T.Check($"...and the Barrel slot didn't disturb it ({g2.gunMagId}, {g2.gunBarrelId})",
+                g2.gunMagId == 6 && g2.gunBarrelId == 7);
+            T.Check($"...and the sight slot is still empty ({AttachmentFit.InstalledId(g2, "Sight")})",
+                AttachmentFit.InstalledId(g2, "Sight") == -1);
+
+            // Installed state travels with the ITEM -- that is the whole point of putting it there. Two guns hold
+            // their own attachments independently, which is what "installed across weapons" requires.
+            var g3 = new Item(4);
+            AttachmentFit.SetInstalledId(g3, "Sight", 5);
+            T.Check($"a second gun keeps its own sight ({AttachmentFit.InstalledId(g3, "Sight")} vs {AttachmentFit.InstalledId(g1, "Sight")})",
+                AttachmentFit.InstalledId(g3, "Sight") == 5 && AttachmentFit.InstalledId(g1, "Sight") == 21);
             yield break;
         }
     }
