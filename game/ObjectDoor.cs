@@ -46,6 +46,7 @@ namespace UnturnedGodot
         MeshInstance3D _leafOutline;   // the swinging LEAF's own white outline (child of _pivot so it swings with the leaf); toggled by SetLookFocused so a doored prop highlights the WHOLE thing -- body outline + leaf outline together (master)
         CollisionShape3D _leafCollider;   // look-ray + solidity hitbox (bit 6). DIRECT child of this StaticBody -- Godot needs a shape direct-to-body to collide, so it can't parent to the swinging _pivot; ApplySwing rotates its transform about the hinge so the hitbox TRACKS the leaf (master: the look-at orb followed the outline but the collider stayed pinned at the closed pose).
         Vector3 _leafColliderCenter;      // collider box's closed-pose centre (leaf AABB centre); ApplySwing re-places it about the pivot each frame
+        bool _pendingSolid;   // at an endpoint but the collider is held OFF because a body stands in its volume (see TrySolidify)
 
         public bool IsOpen { get; private set; }
         double _lastToggleSec = double.NegativeInfinity;
@@ -214,7 +215,7 @@ namespace UnturnedGodot
         public override void _PhysicsProcess(double delta)
         {
             float want = IsOpen ? 1f : 0f;
-            if (Mathf.IsEqualApprox(_swing, want)) return;
+            if (Mathf.IsEqualApprox(_swing, want)) { if (_pendingSolid) TrySolidify(); return; }
             float step = (float)delta / _duration;
             _swing = Mathf.MoveToward(_swing, want, step);
             ApplySwing(_swing);
@@ -236,7 +237,37 @@ namespace UnturnedGodot
             // the hinge _pivotLocal, so the collider (rest-centred at _leafColliderCenter) maps to
             // swing*(centre - pivot) + pivot with the swung basis -- identical motion to the visible leaf.
             if (_leafCollider != null)
+            {
                 _leafCollider.Transform = new Transform3D(swing, swing * (_leafColliderCenter - _pivotLocal) + _pivotLocal);
+                bool atRest = t <= 0.001f || t >= 0.999f;
+                if (atRest) TrySolidify();                                       // endpoint: solid ONLY if the door's volume is clear
+                else { _leafCollider.Disabled = true; _pendingSolid = false; }   // mid-swing: never solid (master)
+            }
+        }
+
+        // SOLID only at the endpoints (master: "openable doors solid only when fully open or closed"), and only once
+        // the door's volume is CLEAR: snapping the collider on TOP of a body makes Jolt eject it, sometimes through a
+        // wall (tinyclaw). So overlap-check first; if a player/zombie is in the way, stay non-solid and hold
+        // _pendingSolid so _PhysicsProcess retries every frame until it clears -- degrading to "briefly non-solid
+        // while you're standing in it", the harmless direction.
+        void TrySolidify()
+        {
+            if (_leafCollider == null) return;
+            bool clear = ColliderClear();
+            _leafCollider.Disabled = !clear;
+            _pendingSolid = !clear;
+        }
+
+        bool ColliderClear()
+        {
+            if (_leafCollider.Shape == null || GetWorld3D() == null) return true;
+            var q = new PhysicsShapeQueryParameters3D
+            {
+                Shape = _leafCollider.Shape,
+                Transform = _leafCollider.GlobalTransform,
+                CollisionMask = (1u << 3) | (1u << 1),   // player (bit 3) + zombies (bit 1) -- don't solidify on top of one
+            };
+            return GetWorld3D().DirectSpaceState.IntersectShape(q, 1).Count == 0;
         }
 
         /// <summary>_swing (0=closed..1=open) doubles as the curve's t_norm: OPENING plays _openCurve directly
