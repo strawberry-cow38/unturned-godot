@@ -13,6 +13,7 @@ namespace UnturnedGodot
         readonly PlayerStanceSim _stance = new PlayerStanceSim();   // intertwined stance state machine (X = crouch, Z = prone), extracted to the engine-free sim-core (MP_PLAN §3.4)
         CapsuleShape3D _capsule; CollisionShape3D _hitbox; float _capStance = -1f;   // hitbox capsule, resized per stance (source HeightForStance)
         Camera3D _cam;
+        ScopeOverlay _scope;   // real PiP scope (aug): reads the look cam + ADS blend + magnification from this controller
         Vector3 _interpPrev, _interpCurr; bool _interpReady;   // render interpolation: smooth the VISUAL position between the 50Hz physics ticks (master); rotation stays per-frame so the mouse is instant
         Viewmodel _viewmodel;
         public PlayerInventory Inventory;   // the ported 9-page inventory model
@@ -1684,6 +1685,10 @@ namespace UnturnedGodot
         // A gun is genuinely OUT only when one is loaded AND nothing else is in hand. A melee/held item is mutually
         // exclusive with the gun, so it fully disarms: no firing, no ammo HUD, no reload/firemode logic (master).
         public bool HasGunOut => Gun != null && _melee == null && _heldConsumable == null && _deployable == null;
+        // Scope (PiP): the ScopeOverlay reads these each frame -- the look camera's ADS blend and the per-gun
+        // magnification (>1 only for the augewehr for now; scoped view only renders while a scope gun is aimed).
+        public float CurrentAimAlpha => _viewmodel?.AimAlpha ?? 0f;
+        public float ScopeMag => (HasGunOut && _viewmodel?.GunName == "augewehr") ? 3.5f : 0f;
 
         // Equip a consumable to the hands from the inventory: hold its model; LMB to eat/drink.
         // captureRevert=false only for the auto-re-equip of the NEXT of the same stack (keeps the original revert target).
@@ -3465,6 +3470,8 @@ namespace UnturnedGodot
             if (_body != null) { _body.Visible = false; CallDeferred(Node.MethodName.AddSibling, _body); }
             _viewmodel = new Viewmodel { GunName = _gunName };   // per-gun visuals
             AddChild(_viewmodel);
+            _scope = new ScopeOverlay { Pc = this };   // PiP scope (aug); builds lazily once the look cam has a world
+            AddChild(_scope);
             _rng.Randomize();
 
             // the ported inventory + its dashboard. Demo-populate it (real items) so there's something to show.
