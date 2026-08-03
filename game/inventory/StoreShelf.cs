@@ -23,6 +23,7 @@ namespace UnturnedGodot
         float _syncT;
         public const uint ShelfItemHitLayer = 1u << 11;   // shelf display items' look-ray hitboxes -- the player's look-sphere tests this bit (like WorldItem.ItemHitLayer)
         MeshInstance3D _shelfGlow;                         // whole-shelf outline silhouette, shown while the shelf is looked at
+        OmniLight3D _glow;                                 // interior light for a fridge/cooler -- lit only while the door is open AND the grid is live (master)
         readonly List<ObjectDoor> _doors = new();          // this container's swinging door leaf/leaves (fridge/wardrobe/counter/container) -- empty for a plain shelf/crate/bookcase; driven by the inventory open/close, not F-toggled directly
         public bool HasDoors => _doors.Count > 0;
 
@@ -215,6 +216,20 @@ namespace UnturnedGodot
                     MaterialOverride = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = Colors.White, CullMode = BaseMaterial3D.CullModeEnum.Disabled },
                 };
                 AddChild(_shelfGlow);
+                // Interior glow: a fridge/cooler lights up inside when opened (master). A subtle omni at the interior
+                // centre, coloured by kind (warm bulb / cold blue), starts hidden -- SetDoorsOpen gates it on door-open
+                // AND global power. Other doored kinds (wardrobe/counter/washer/dryer) get no colour -> no glow.
+                var glowCol = GlowColorFor(MeshName);
+                if (glowCol.HasValue)
+                {
+                    var box = StoodAabb(mesh);
+                    _glow = new OmniLight3D
+                    {
+                        LightColor = glowCol.Value, OmniRange = 1.5f, LightEnergy = 0.8f, ShadowEnabled = false,
+                        Visible = false, Position = box.Position + box.Size * 0.5f,   // interior centre of the standing body
+                    };
+                    AddChild(_glow);
+                }
             }
             // Doored containers layer their swinging leaf on top of the body above. NO floating billboard name on
             // ANY container/shelf anymore (master: kill the remaining billboards). TrySpawnDoors is still called for
@@ -261,9 +276,17 @@ namespace UnturnedGodot
 
         // Swing this container's door(s) to a target state -- called by the crate open/close (PlayerController).
         // Grouped multi-leaf props swing together off the first SetOpen (SyncGroup), so the rest no-op: one sound.
+        // Fridge -> warm interior bulb, Cooler -> cold blue; every other container kind -> no interior glow (null).
+        static Color? GlowColorFor(string mesh) =>
+            string.IsNullOrEmpty(mesh) ? (Color?)null
+          : mesh.StartsWith("Fridge") ? new Color(1.0f, 0.82f, 0.45f)   // warm interior bulb
+          : mesh.StartsWith("Cooler") ? new Color(0.45f, 0.72f, 1.0f)   // cold blue
+          : (Color?)null;
+
         public void SetDoorsOpen(bool open)
         {
             foreach (var d in _doors) if (IsInstanceValid(d)) d.SetOpen(open);
+            if (_glow != null) _glow.Visible = open && PowerNet.GlobalPower;   // interior light: on only while open AND the grid's live (master)
         }
 
         // --containertest debug: settle + read the door swing without a render loop (0=closed..1=open, -1=no door).
